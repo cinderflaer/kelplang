@@ -1123,6 +1123,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "io_streams",
         "process_spawn",
         "net_loopback",
+        "net_poll",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1524,6 +1525,14 @@ fn the_net_check_matches_the_host_as_written() {
         &project("caps_net_denied").join("main.x"),
         "127.0.0.1:*",
     );
+}
+
+#[test]
+fn a_socket_reports_readiness_without_blocking() {
+    // `poll` on a connected socket: false on a bounded wait with nothing sent,
+    // true once the peer writes, and true again at end of file after
+    // `shutdown_write` — the three answers a single-threaded event loop needs.
+    assert_compiles_and_runs("tests/fixtures/net_poll.x", "false\ntrue\ntrue\nnow\ntrue\ntrue\n");
 }
 
 #[test]

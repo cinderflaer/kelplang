@@ -143,6 +143,25 @@ fun recv(s: Socket, max: usize).R: Bytes = recv_raw(s.fd, max)
 // Panics: if the receive fails.
 fun recv_into(s: Socket, buf: mut Bytes, at: usize).R: usize = recv_into_raw(s.fd, buf, at)
 
+// Waits up to `timeout_ms` for the socket to become readable, then returns
+// whether it did. This is `poll(2)`, the same primitive `io.File` exposes, and
+// it is what makes one thread enough for many sockets. A timeout above
+// `INT_MAX` milliseconds means "forever".
+//
+// Panics: if `poll` fails.
+fun Socket.wait_readable(timeout_ms: u64).R: bool {
+    val f = io.File(fd = fd)
+    return f.wait_readable(timeout_ms)
+}
+
+// As `wait_readable`, for writability.
+//
+// Panics: if `poll` fails.
+fun Socket.wait_writable(timeout_ms: u64).R: bool {
+    val f = io.File(fd = fd)
+    return f.wait_writable(timeout_ms)
+}
+
 // The port this listener is bound to, from `getsockname`. With
 // `net.listen(0)` this is how the kernel-assigned port is learned.
 //
