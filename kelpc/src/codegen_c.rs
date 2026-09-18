@@ -905,6 +905,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         maps: map_values,
         closures: closure_tys,
         coerced: coerced_tys,
+        shims: shim_tys,
     } = collection;
     let mut containers: Vec<Ty> = list_elems
         .iter()
@@ -927,12 +928,13 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
         // The widening's own C, right after the closure typedefs it names and
         // before the `datac`s: its environment holds a function pointer, so it
-        // needs no complete `datac` either (A-4 phase E).
+        // needs no complete `datac` either (A-4 phase E). The thunk itself is
+        // emitted after the `datac`s, because it returns a value by type.
         if !coerced_tys.is_empty() {
             let mut coerced: Vec<&Ty> = coerced_tys.iter().collect();
             coerced.sort_by_key(|t| container_name(t));
             for ty in coerced {
-                write_coerce(&mut out, ty);
+                write_coerce_env(&mut out, ty);
             }
         }
         for ty in &containers {
@@ -986,6 +988,17 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         }
     }
 
+    // The widening's thunks: each returns the wrapped function's value, so it
+    // comes after every `datac` and container typedef (A-4 phase E).
+    if !coerced_tys.is_empty() {
+        let mut coerced: Vec<&Ty> = coerced_tys.iter().collect();
+        coerced.sort_by_key(|t| container_name(t));
+        for ty in coerced {
+            write_coerce_thunk(&mut out, ty);
+        }
+        out.push('\n');
+    }
+
     // Each `fun` literal that captured something has an environment struct and
     // a drop function (A-4 phase E). They go here — after every typedef, since
     // a field holds its captured value by value, and before every function, so
@@ -1008,6 +1021,18 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push_str(";\n");
     }
     out.push('\n');
+
+    // The shims for widened values whose function is statically known: each
+    // calls the function it wraps, so it needs the prototypes above and
+    // nothing else.
+    if !shim_tys.is_empty() {
+        let mut shims: Vec<&(String, Ty)> = shim_tys.iter().collect();
+        shims.sort_by_key(|(key, ty)| (container_name(ty), key.clone()));
+        for (key, ty) in shims {
+            write_shim(&mut out, key, ty);
+        }
+        out.push('\n');
+    }
 
     write_pd_globals(&mut out, &program.pds, &program.enums, drops, &owned, sources);
 
@@ -1377,7 +1402,7 @@ fn coerce_mangle(ty: &Ty) -> String {
 /// first, exactly as a literal's generated function does, so the resulting
 /// value is a closure like any other and an indirect call needs no special
 /// case for it.
-fn write_coerce(out: &mut String, ty: &Ty) {
+fn write_coerce_env(out: &mut String, ty: &Ty) {
     let Ty::Closure { params, ret } = ty else {
         unreachable!("not a closure: {}", ty.display())
     };
@@ -1395,6 +1420,23 @@ fn write_coerce(out: &mut String, ty: &Ty) {
         if param_types.is_empty() { "void".to_string() } else { param_types.join(", ") }
     )
     .unwrap();
+}
+
+/// The thunk and the environment's destructor for one closed-over signature
+/// (A-4 phase E). Split from `write_coerce_env` because a function *definition*
+/// needs its return type complete: the environment typedef only mentions it in
+/// a pointer, which a forward-declared `datac` tag satisfies, while the thunk
+/// returns it by value and so comes after the `datac` typedefs.
+fn write_coerce_thunk(out: &mut String, ty: &Ty) {
+    let Ty::Closure { params, ret } = ty else {
+        unreachable!("not a closure: {}", ty.display())
+    };
+    let env = coerce_env_c_type(ty);
+    let param_types = params
+        .iter()
+        .map(crate::types::container_elem_c_type)
+        .collect::<Vec<_>>();
+    let names: Vec<String> = (0..params.len()).map(|i| format!("p{i}")).collect();
     // The environment holds a function pointer, which owns nothing, so the
     // destructor is just the `free`.
     writeln!(
@@ -1429,6 +1471,58 @@ fn write_coerce(out: &mut String, ty: &Ty) {
         writeln!(out, "    return {call};").unwrap();
     }
     out.push_str("}\n\n");
+}
+
+/// The generated `fn` member of a widened *known* function value (A-4 phase
+/// E): a shim that takes the environment a closure's `fn` member is called
+/// with and ignores it, then calls the function it wraps with the arguments.
+/// So the common widening — `list.map(xs, double)`, `Holder(cb = fun(x: i32)
+/// .R: i32 = x)` — costs no allocation and no indirection a `fun` value would
+/// not have had, and only a widening of a function value whose identity is not
+/// statically known needs the heap wrapper.
+fn write_shim(out: &mut String, key: &str, ty: &Ty) {
+    let Ty::Closure { params, ret } = ty else {
+        unreachable!("not a closure: {}", ty.display())
+    };
+    let param_types = params
+        .iter()
+        .map(crate::types::container_elem_c_type)
+        .collect::<Vec<_>>();
+    let names: Vec<String> = (0..params.len()).map(|i| format!("p{i}")).collect();
+    let decls = if param_types.is_empty() {
+        "void* env_raw".to_string()
+    } else {
+        let rest = param_types
+            .iter()
+            .zip(&names)
+            .map(|(p, n)| format!("{p} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("void* env_raw, {rest}")
+    };
+    writeln!(
+        out,
+        "static {} {}({decls}) {{",
+        ret.c_type(),
+        coerce_shim_name(key, ty)
+    )
+    .unwrap();
+    out.push_str("    (void)env_raw;\n");
+    let call = format!("{}({})", c_name(key), names.join(", "));
+    if **ret == Ty::Unit {
+        writeln!(out, "    {call};").unwrap();
+    } else {
+        writeln!(out, "    return {call};").unwrap();
+    }
+    out.push_str("}\n");
+}
+
+fn coerce_shim_name(key: &str, ty: &Ty) -> String {
+    format!(
+        "kelp_shim__{}__{}",
+        crate::types::c_ident(key),
+        coerce_mangle(ty)
+    )
 }
 
 /// One closure instantiation's function set — which is one function: the
@@ -1935,6 +2029,12 @@ struct Instantiations {
     /// Closure signatures that a plain function value is widened into
     /// somewhere in the program, so each needs its thunk (A-4 phase E).
     coerced: HashSet<Ty>,
+    /// Widened values whose function is a *known* one — a declared `fun`
+    /// named as a value, or a literal that captured nothing (whose value is a
+    /// `FnRef` too). Each needs a shim instead of a thunk and a heap
+    /// environment: the wrapper has nothing to hold, so `env` is `NULL` and
+    /// the conversion allocates nothing (A-4 phase E).
+    shims: HashSet<(String, Ty)>,
 }
 
 fn collect_containers(program: &Program, out: &mut Instantiations) {
@@ -2015,8 +2115,12 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                 }
             }
             // A widened function value: the target signature needs its thunk,
-            // and the value being wrapped needs the walk too.
+            // and the value being wrapped needs the walk too. A value that is
+            // a known function needs a shim instead of the heap wrapper.
             ExprKind::FnToClosure { func } => {
+                if let ExprKind::FnRef(key) = &func.kind {
+                    out.shims.insert((key.clone(), expr.ty.clone()));
+                }
                 out.coerced.insert(expr.ty.clone());
                 note_expr(func, out);
             }
@@ -2574,12 +2678,22 @@ impl<'a> Gen<'a> {
             }
             // `val f: closure(i32).R: i32 = double` (A-4 phase E): a plain
             // function value widened into a closure by giving it a one-field
-            // environment and a thunk to call through.
+            // environment and a thunk to call through. A value that *names* a
+            // function needs neither the environment nor the indirection: the
+            // shim is that function's own signature with the ignored hidden
+            // parameter, so `env` is `NULL` and the conversion allocates
+            // nothing.
             ExprKind::FnToClosure { func } => {
-                let env_ty = coerce_env_c_type(&expr.ty);
                 let closure_ty = expr.ty.c_type();
-                let env_tmp = fresh_temp();
                 let value_tmp = fresh_temp();
+                if let ExprKind::FnRef(key) = &func.kind {
+                    return format!(
+                        "({{ {closure_ty} {value_tmp}; {value_tmp}.fn = {}; {value_tmp}.env = NULL; {value_tmp}.drop = NULL; {value_tmp}; }})",
+                        coerce_shim_name(key, &expr.ty)
+                    );
+                }
+                let env_ty = coerce_env_c_type(&expr.ty);
+                let env_tmp = fresh_temp();
                 format!(
                     "({{ {env_ty}* {env_tmp} = ({env_ty}*)malloc(sizeof({env_ty})); if ({env_tmp} == NULL) {{ kelp_panic(\"out of memory\"); }} {env_tmp}->f = {}; {closure_ty} {value_tmp}; {value_tmp}.fn = {}; {value_tmp}.env = {env_tmp}; {value_tmp}.drop = {}; {value_tmp}; }})",
                     self.expr_value(func),

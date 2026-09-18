@@ -5,11 +5,16 @@
 // a function that can fail exactly one way returns `Option<T>` and its caller
 // writes `val x = f(...)?`.
 //
-// The combinators take a function value (A-4) and read the payload through a
-// *borrow*: `map`'s callback is `fun(&T).R: U`, not `fun(T).R: U`, because a
-// `when` arm binds an owned payload as a shared borrow. That is also why they
-// work at every instantiation — a `Copy` payload is copied into the arm and
-// auto-borrowed at the call, an owned one is already a borrow.
+// The combinators take a callback (A-4) and read the payload through a
+// *borrow*: `map`'s callback is `closure(&T).R: U`, not `closure(T).R: U`,
+// because a `when` arm binds an owned payload as a shared borrow. That is also
+// why they work at every instantiation — a `Copy` payload is copied into the
+// arm and auto-borrowed at the call, an owned one is already a borrow.
+//
+// The callback is a *closure* (A-4 phase E), so it may capture a binding from
+// the frame that passes it. A plain function value is widened into one at the
+// call, through a generated shim, so passing a declared `fun` still allocates
+// nothing.
 //
 // What is deliberately absent, and why:
 //
@@ -68,7 +73,7 @@ fun expect<T>(o: &Option<T>, message: &str).R: T {
 
 // Transform the payload through `f`, or pass `None` through. The callback
 // borrows the payload, so this works for any `T`: the result is a fresh `U`.
-fun map<T, U>(o: &Option<T>, f: fun(&T).R: U).R: Option<U> = when o {
+fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U> = when o {
     Some(v) -> Option.Some(value = f(v))
     None -> Option.None
 }
@@ -76,14 +81,14 @@ fun map<T, U>(o: &Option<T>, f: fun(&T).R: U).R: Option<U> = when o {
 // Chain a second fallible step: `and_then`'s callback returns an `Option`
 // itself, which is what makes a sequence of fallible steps readable without
 // nesting `if let`. Works for any `T`, for the same reason `map` does.
-fun and_then<T, U>(o: &Option<T>, f: fun(&T).R: Option<U>).R: Option<U> = when o {
+fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U> = when o {
     Some(v) -> f(v)
     None -> Option.None
 }
 
 // The option, or `f()` when it is empty. `T` must be `Copy`: the `Some` arm
 // rebuilds the payload out of the borrow it was handed, which is a copy.
-fun or_else<T>(o: &Option<T>, f: fun().R: Option<T>).R: Option<T> = when o {
+fun or_else<T>(o: &Option<T>, f: closure().R: Option<T>).R: Option<T> = when o {
     Some(v) -> Option.Some(value = v)
     None -> f()
 }
@@ -91,7 +96,7 @@ fun or_else<T>(o: &Option<T>, f: fun().R: Option<T>).R: Option<T> = when o {
 // Run `f` over the payload, if there is one, and discard the result — the
 // `Unit` case of `map`, written as its own call so a side effect reads like
 // one. Works for any `T`.
-fun each<T>(o: &Option<T>, f: fun(&T)) {
+fun each<T>(o: &Option<T>, f: closure(&T)) {
     when o {
         Some(v) -> f(v)
         None -> {}

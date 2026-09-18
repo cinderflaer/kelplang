@@ -144,6 +144,15 @@ pub struct Lexer<'a> {
     /// while this is > 0 — this is what lets a `datac`'s field-list parens,
     /// or any parenthesized sub-expression, span multiple lines.
     paren_depth: usize,
+    /// The `paren_depth` in force when each unclosed `{` was opened. A block
+    /// *inside* parens is where the rule above stops: `{` opens a statement
+    /// block, and statements are separated by newlines, so those are tokenized
+    /// again however deep the parens are — which is what lets a `fun` literal
+    /// with a multi-statement body be written as a call argument
+    /// (`f(fun(x: i32) { a\n b\n })`). A function body's own braces are at
+    /// paren depth 0, so a wrapped argument list inside it still ignores
+    /// newlines (A-4 phase E).
+    brace_parens: Vec<usize>,
     /// Tokens produced by a single source construct but consumed one at a
     /// time — only string templates use this: one `"..."` literal expands to
     /// a whole token run, and `next_token` drains the run before reading
@@ -164,6 +173,7 @@ impl<'a> Lexer<'a> {
             bytes: src.as_bytes(),
             pos: 0,
             paren_depth: 0,
+            brace_parens: Vec::new(),
             pending: VecDeque::new(),
         }
     }
@@ -240,7 +250,13 @@ impl<'a> Lexer<'a> {
                     self.pos += 1;
                     self.skip_trivia();
                 }
-                if self.paren_depth == 0 {
+                // Significant at the top level, and inside a block whose own
+                // braces were opened inside parens — otherwise parens win.
+                let in_paren_block = self
+                    .brace_parens
+                    .last()
+                    .is_some_and(|&depth| depth > 0);
+                if self.paren_depth == 0 || in_paren_block {
                     return Ok(Some(Token {
                         kind: TokenKind::Newline,
                         span: Span::new(nl_start, self.pos),
@@ -272,10 +288,12 @@ impl<'a> Lexer<'a> {
                 }
                 b'{' => {
                     self.advance();
+                    self.brace_parens.push(self.paren_depth);
                     TokenKind::LBrace
                 }
                 b'}' => {
                     self.advance();
+                    self.brace_parens.pop();
                     TokenKind::RBrace
                 }
                 b'[' => {

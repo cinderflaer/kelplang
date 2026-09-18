@@ -1230,9 +1230,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_list_callbacks",
         // A-4 phase E: a closure owns its environment, and the fixture below
         // frees exactly one per capture; `closure_move` covers the three drop
-        // points (block end, early `return`, one per loop iteration).
+        // points (block end, early `return`, one per loop iteration), and the
+        // stdlib fixture hands environments to the shipped callbacks.
         "closure_basic",
         "closure_move",
+        "stdlib_closure_callbacks",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2724,6 +2726,21 @@ fn a_closure_is_dropped_where_its_binding_dies() {
     assert_compiles_and_runs(
         "tests/fixtures/closure_move.kp",
         "5\n7\n0\n10\n11\n12\n",
+    );
+}
+
+#[test]
+fn the_stdlib_callbacks_take_closures() {
+    // Also in the AddressSanitizer list: every capturing callback here owns an
+    // environment, and one of them captured an owned `String`. Covers a
+    // capturing callback through `map`/`any`/`each`, a declared function and a
+    // non-capturing literal (widened through a generated shim, so no
+    // allocation), a function value whose identity is known only at the call
+    // (widened into a one-field environment), and the same widening through
+    // `option` and `result`.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_closure_callbacks.kp",
+        "3\n9\ntrue\nv=1v=2v=3\n2\ntrue\n4\n107\n5\n12\n",
     );
 }
 

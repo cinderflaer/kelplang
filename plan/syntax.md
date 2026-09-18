@@ -520,7 +520,7 @@ print(k)
 
 A literal whose body captures nothing is *not* a closure: it stays a plain `fun` value — `Copy`, no environment, no drop — so nothing about the phase before this one changes. The two types are separate, and one widening connects them:
 
-- A plain **function value used where a closure is expected** (`val f: closure(i32).R: i32 = double`, `Holder(cb = fun(x: i32).R: i32 = x)`) is wrapped in a one-field environment holding the pointer, with a generated thunk calling through it. The signatures must match; there is no conversion in the other direction, because a closure carries an environment a `fun` value has no room for.
+- A plain **function value used where a closure is expected** (`val f: closure(i32).R: i32 = double`, `Holder(cb = fun(x: i32).R: i32 = x)`, `list.map(xs, inc)`) is wrapped in a one-field environment holding the pointer, with a generated thunk calling through it. When the value *names* a function — a declared `fun`, or a literal that captured nothing — the wrapper needs no environment at all, so the compiler generates a shim with the ignored hidden parameter and the conversion allocates nothing; only a function value whose identity is known at the call (`val g = pick(true)` then `list.map(xs, g)`) pays for the heap wrapper. The signatures must match, and there is no conversion in the other direction, because a closure carries an environment a `fun` value has no room for.
 
 What a literal still cannot do:
 
@@ -1390,15 +1390,15 @@ fun is_none<T>(o: &Option<T>).R: bool
 fun unwrap_or<T>(o: &Option<T>, fallback: T).R: T   // `T` must be Copy
 fun unwrap<T>(o: &Option<T>).R: T                   // `T` must be Copy; panics on None
 
-fun map<T, U>(o: &Option<T>, f: fun(&T).R: U).R: Option<U>
-fun and_then<T, U>(o: &Option<T>, f: fun(&T).R: Option<U>).R: Option<U>
+fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U>
+fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U>
 fun or_else<T>(o: &Option<T>, f: fun().R: Option<T>).R: Option<T>   // `T` must be Copy
-fun each<T>(o: &Option<T>, f: fun(&T))
+fun each<T>(o: &Option<T>, f: closure(&T))
 ```
 
 The enum is the point: `Some`/`None` is one of the two shapes `?` (5) and `if let` (6.1) understand, so a function that can fail one way returns `Option<T>` and its caller writes `val x = f(...)?`. Nothing in the compiler knows this module exists — the *shape* is the contract, so a program's own `Option` works identically.
 
-The **callbacks borrow the payload** (`fun(&T).R: U`), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is already a borrow, so `map` needs no `Copy` and hands nothing on:
+The **callbacks borrow the payload** (`closure(&T).R: U`, so a plain function value is widened into one), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is already a borrow, so `map` needs no `Copy` and hands nothing on:
 
 ```kelp
 val text = option.Option.Some(value = String.from_str("hello"))
@@ -1422,11 +1422,11 @@ fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).R: T   // `T` must be Copy
 fun unwrap<T, E>(r: &Result<T, E>).R: T                   // `T` must be Copy; panics on Err
 fun unwrap_err<T, E>(r: &Result<T, E>).R: E               // `E` must be Copy; panics on Ok
 
-fun map<T, U, E>(r: &Result<T, E>, f: fun(&T).R: U).R: Result<U, E>      // `E` must be Copy
-fun map_err<T, E, F>(r: &Result<T, E>, f: fun(&E).R: F).R: Result<T, F>  // `T` must be Copy
-fun and_then<T, U, E>(r: &Result<T, E>, f: fun(&T).R: Result<U, E>).R: Result<U, E>
-fun or_else<T, E, F>(r: &Result<T, E>, f: fun(&E).R: Result<T, F>).R: Result<T, F>
-fun each<T, E>(r: &Result<T, E>, f: fun(&T))
+fun map<T, U, E>(r: &Result<T, E>, f: closure(&T).R: U).R: Result<U, E>      // `E` must be Copy
+fun map_err<T, E, F>(r: &Result<T, E>, f: closure(&E).R: F).R: Result<T, F>  // `T` must be Copy
+fun and_then<T, U, E>(r: &Result<T, E>, f: closure(&T).R: Result<U, E>).R: Result<U, E>
+fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E).R: Result<T, F>).R: Result<T, F>
+fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 ```
 
 `Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
@@ -1435,15 +1435,15 @@ The `Copy` requirements here are on the *other* side of the result: the arm that
 
 ### 16.15 `std/list`
 
-The element-wise API of `List<T>` (`len`, `get`, `push`, `sort`, …) is builtin, because a list is monomorphized and its methods are generated C per element type (12.1). The operations that need a **function value** cannot be generated without knowing what the callback returns, so they are free functions in a module — `list.map(xs, f)` — the same shape `str.*` and `math.*` have.
+The element-wise API of `List<T>` (`len`, `get`, `push`, `sort`, …) is builtin, because a list is monomorphized and its methods are generated C per element type (12.1). The operations that need a **callback** cannot be generated without knowing what the callback returns, so they are free functions in a module — `list.map(xs, f)` — the same shape `str.*` and `math.*` have.
 
 ```kelp
-fun map<T, U>(xs: &List<T>, f: fun(&T).R: U).R: List<U>
-fun filter<T>(xs: &List<T>, f: fun(&T).R: bool).R: List<T>          // `T` must be Copy
-fun each<T>(xs: &List<T>, f: fun(&T))
-fun find_index<T>(xs: &List<T>, f: fun(&T).R: bool).R: Option<usize>
-fun any<T>(xs: &List<T>, f: fun(&T).R: bool).R: bool
-fun all<T>(xs: &List<T>, f: fun(&T).R: bool).R: bool
+fun map<T, U>(xs: &List<T>, f: closure(&T).R: U).R: List<U>
+fun filter<T>(xs: &List<T>, f: closure(&T).R: bool).R: List<T>          // `T` must be Copy
+fun each<T>(xs: &List<T>, f: closure(&T))
+fun find_index<T>(xs: &List<T>, f: closure(&T).R: bool).R: Option<usize>
+fun any<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool
+fun all<T>(xs: &List<T>, f: closure(&T).R: bool).R: bool
 ```
 
 Every callback borrows the element, so nothing is ever moved out of the list and the same functions work for a `Copy` and an owned element type:
