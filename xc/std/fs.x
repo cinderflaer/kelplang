@@ -1,3 +1,5 @@
+impl "std/str"
+
 // std/fs — the gated filesystem namespace (M7).
 //
 // The domain gate is compile-time: a module without the `fs` capability
@@ -21,6 +23,7 @@ extern fun rename_raw(from: &str, to: &str)
 extern fun mkdir_raw(path: &str)
 extern fun append_raw(path: &str, data: Bytes)
 extern fun sync_raw(path: &str)
+extern fun list_raw(path: &str).R: String
 
 // The whole file, as owned bytes.
 // Panics: if the file cannot be read.
@@ -83,4 +86,22 @@ fun append(path: &str, data: Bytes) {
 // Panics: if the file cannot be opened or synced.
 fun sync(path: &str) {
     sync_raw(path)
+}
+
+// The entries of one directory, sorted by name (`.` and `..` are dropped by
+// the raw walk). Each entry is a name, not a path: join it to a directory to
+// build something `fs` will accept.
+//
+// Returning *N* items needed the growable sequence type, which is why this
+// arrived with the collections milestone rather than M7 — the raw walk hands
+// back one newline-separated buffer (`str.split` then turns it into a
+// `List<String>`).
+// Panics: if the directory cannot be read.
+fun list(path: &str).R: List<String> {
+    val raw = list_raw(path)
+    if str.len(raw.as_str()) == 0 {
+        var empty: List<String> = List.empty()
+        return empty
+    }
+    return str.split(raw.as_str(), "\n")
 }

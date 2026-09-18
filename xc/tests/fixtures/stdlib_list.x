@@ -1,0 +1,26 @@
+// Collections unlocking the stdlib: `str.split` produces a `List<String>`
+// and `str.join` consumes one. Both are ordinary X code in `std/str`; the
+// buffer they build is sized first and filled once, because v1 buffers are
+// fixed-size.
+impl "std/str"
+
+fun main() {
+    val parts = str.split(s = "a,b,,c", sep = ",")
+    print(parts.len())
+    print(str.join(parts = parts, sep = "|"))
+    var i: usize = 0
+    while i < parts.len() {
+        print!("[")
+        print!(parts.get(i).as_str())
+        print!("]")
+        i = i + 1
+    }
+    print("")
+    print(str.split(s = "", sep = ",").len())
+    print(str.split(s = "no separator here", sep = ",").len())
+    val words = str.split(s = "a b  c", sep = " ")
+    print(words.len())
+    print(str.join(words, "-"))
+    print(str.split(s = "x", sep = "").len())
+    print(str.join(parts = List.of(String.from_str("solo")), sep = "-"))
+}

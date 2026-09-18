@@ -174,6 +174,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "list_raw",
+        "    struct dirent** names;\n    int n = scandir(x_path, &names, NULL, alphasort);\n    if (n < 0) {\n        x_panic(\"fs.list: cannot read directory\");\n    }\n    size_t total = 0;\n    for (int i = 0; i < n; i++) {\n        if (strcmp(names[i]->d_name, \".\") == 0 || strcmp(names[i]->d_name, \"..\") == 0) {\n            continue;\n        }\n        total += strlen(names[i]->d_name) + 1;\n    }\n    x_Bytes b = x_bytes_alloc_raw(total);\n    size_t at = 0;\n    for (int i = 0; i < n; i++) {\n        if (strcmp(names[i]->d_name, \".\") == 0 || strcmp(names[i]->d_name, \"..\") == 0) {\n            free(names[i]);\n            continue;\n        }\n        size_t len = strlen(names[i]->d_name);\n        memcpy(b.data + at, names[i]->d_name, len);\n        at += len;\n        b.data[at++] = '\\n';\n        free(names[i]);\n    }\n    free(names);\n    if (at > 0) {\n        at--;\n    }\n    b.data[at] = 0;\n    b.len = at;\n    return x_String__from_bytes(b);\n",
+    ),
+    (
+        "std/fs",
         "sync_raw",
         "    int fd = open(x_path, O_RDONLY);\n    if (fd < 0) {\n        x_panic(\"fs.sync: cannot open file\");\n    }\n    if (fsync(fd) != 0) {\n        close(fd);\n        x_panic(\"fs.sync: fsync failed\");\n    }\n    close(fd);\n",
     ),

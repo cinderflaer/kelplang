@@ -755,12 +755,17 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
             let at = ctx.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
             let checked = check_value(e, ctx);
             if ctx.scopes.len() == mark {
-                let released: Vec<String> = ctx
+                let scope = ctx
                     .scopes
                     .last_mut()
-                    .expect("the scope stack is never empty inside a function")
-                    .scope_borrows
-                    .split_off(at);
+                    .expect("the scope stack is never empty inside a function");
+                // A branch merge (`if`) rebuilds the scope and deliberately
+                // drops its borrow list, since both arms' scope-durable
+                // borrows are released as their own blocks pop — so a mark
+                // taken before the statement can be past the end afterwards.
+                // Releasing only what is still recorded is the honest answer.
+                let at = at.min(scope.scope_borrows.len());
+                let released: Vec<String> = scope.scope_borrows.split_off(at);
                 for root in released {
                     ctx.end_borrow(&root);
                 }

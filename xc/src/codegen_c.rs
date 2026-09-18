@@ -485,6 +485,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // Included unconditionally: `std/math`'s externs call the C library
     // directly, and an unused declaration costs nothing.
     out.push_str("#include <limits.h>\n");
+    out.push_str("#include <dirent.h>\n");
     out.push_str("#include <fcntl.h>\n");
     out.push_str("#include <math.h>\n");
     out.push_str("#include <sys/stat.h>\n");
@@ -579,7 +580,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             out.push('\n');
             continue;
         }
-        let mut gen = Gen::new(drops, f.name.clone(), f.module.clone(), &caps, sources);
+        let mut gen = Gen::new(drops, &owned, f.name.clone(), f.module.clone(), &caps, sources);
         gen.write_function(f, !program.pds.is_empty());
         out.push_str(&gen.out);
         out.push('\n');
@@ -639,7 +640,7 @@ fn write_pd_globals(
         gated: HashMap::new(),
         patterns: HashMap::new(),
     };
-    let gen = Gen::new(drops, String::new(), String::new(), &no_caps, sources);
+    let gen = Gen::new(drops, owned, String::new(), String::new(), &no_caps, sources);
     out.push_str("// passdowns: assigned once by x_init_pds(), read-only afterwards\n");
     for pd in pds {
         writeln!(
@@ -923,6 +924,9 @@ fn write_signature(out: &mut String, f: &Function) {
 struct Gen<'a> {
     out: String,
     drops: &'a DropPlan,
+    /// Which `datac`s own heap memory, so a temporary hoisted for a borrowed
+    /// call argument can be freed after the call (see `call_value`).
+    owned: &'a HashSet<String>,
     function: String,
     /// The module the current function was declared in: capability checks use
     /// *that* module's patterns, which is what makes a grant a property of
@@ -937,6 +941,7 @@ struct Gen<'a> {
 impl<'a> Gen<'a> {
     fn new(
         drops: &'a DropPlan,
+        owned: &'a HashSet<String>,
         function: String,
         module: String,
         caps: &'a CapTable,
@@ -945,6 +950,7 @@ impl<'a> Gen<'a> {
         Gen {
             out: String::new(),
             drops,
+            owned,
             function,
             module,
             caps,
@@ -957,6 +963,7 @@ impl<'a> Gen<'a> {
     fn sub(&self) -> Gen<'a> {
         Gen::new(
             self.drops,
+            self.owned,
             self.function.clone(),
             self.module.clone(),
             self.caps,
@@ -1274,7 +1281,17 @@ impl<'a> Gen<'a> {
                     return self.expr_value(sub);
                 }
                 let inner = self.expr_value(sub);
-                format!("(&{inner})")
+                if is_place(sub) {
+                    return format!("(&{inner})");
+                }
+                // A shared borrow of a *temporary* (`str.join(str.split(s,
+                // sep), sep)`) has no address to take, so the temporary is
+                // hoisted into a C variable first. Its lifetime is the
+                // enclosing expression — the same duration the borrow has,
+                // which is why `infer.rs` only allows this for a shared
+                // borrow of something that is not itself returned.
+                let tmp = fresh_temp();
+                format!("({{ {} {tmp} = {inner}; &{tmp}; }})", sub.ty.c_type())
             }
             ExprKind::Deref { expr: sub } => {
                 // `*p` on a `&str` view is the view itself: a `str` is
@@ -1493,14 +1510,34 @@ impl<'a> Gen<'a> {
             return format!("printf(\"{fmt}{newline}\", {value})");
         }
 
-        let mut s = format!("{}(", c_name(callee));
-        for (i, a) in args.iter().enumerate() {
-            if i > 0 {
-                s.push_str(", ");
+        // A shared borrow of a *temporary* (`str.join(str.split(s, sep),
+        // sep)`) has no address to take, so the temporary is hoisted into a C
+        // variable that lives exactly as long as the call — and is freed
+        // right after it, since nothing else owns it. The whole call becomes
+        // one statement expression so the temporary is still alive when the
+        // call runs; hoisting it into the *argument* alone would not do,
+        // because a GNU statement expression's temporaries die when it ends,
+        // before the call it is an argument to.
+        let mut prelude = String::new();
+        let mut args_text: Vec<String> = Vec::new();
+        let mut hoisted: Vec<(String, Ty)> = Vec::new();
+        for a in args {
+            if let ExprKind::Ref { expr: sub, .. } = &a.kind {
+                let is_str_view =
+                    matches!(&a.ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str));
+                if !is_str_view && !is_place(sub) {
+                    let tmp = fresh_temp();
+                    writeln!(prelude, "{} {tmp} = {};", sub.ty.c_type(), self.expr_value(sub))
+                        .unwrap();
+                    args_text.push(format!("&{tmp}"));
+                    hoisted.push((tmp, sub.ty.clone()));
+                    continue;
+                }
             }
-            s.push_str(&self.expr_value(a));
+            args_text.push(self.expr_value(a));
         }
-        s.push(')');
+
+        let mut s = format!("{}({})", c_name(callee), args_text.join(", "));
         // `List<T>` methods are monomorphized: the C name carries the
         // element type, which comes from the receiver argument (or, for the
         // associated `List.of(v)`, from `v` itself).
@@ -1522,12 +1559,42 @@ impl<'a> Gen<'a> {
                 } else {
                     op
                 };
-                let call = format!("{base}__{suffix}({})", args.iter().map(|a| self.expr_value(a)).collect::<Vec<_>>().join(", "));
-                return self.cap_checked_call(callee, call, args, span);
+                s = format!("{base}__{suffix}({})", args_text.join(", "));
             }
         }
-        let s = s;
-        self.cap_checked_call(callee, s, args, span)
+        let call = self.cap_checked_call(callee, s, args, span);
+        let owned_hoisted: Vec<&(String, Ty)> = hoisted
+            .iter()
+            .filter(|(_, ty)| needs_drop(ty, self.owned))
+            .collect();
+        if prelude.is_empty() {
+            return call;
+        }
+        // The call's value cannot be the statement expression's last
+        // statement when a hoisted temporary has to be freed after it (a drop
+        // call returns void), so the result goes through a temporary of its
+        // own and the frees follow. With nothing hoisted, and only for a
+        // non-`unit` result, the call itself can be the last statement.
+        if owned_hoisted.is_empty() && *ret != Ty::Unit {
+            return format!("({{ {prelude}{call}; }})");
+        }
+        let mut body = prelude;
+        if *ret == Ty::Unit {
+            writeln!(body, "{call};").unwrap();
+        } else {
+            let result_tmp = fresh_temp();
+            writeln!(body, "{} {result_tmp} = {call};", ret.c_type()).unwrap();
+            for (tmp, ty) in &owned_hoisted {
+                writeln!(body, "{}(&{tmp});", drop_fn_name(ty)).unwrap();
+            }
+            writeln!(body, "{result_tmp};").unwrap();
+        }
+        if *ret == Ty::Unit {
+            for (tmp, ty) in &owned_hoisted {
+                writeln!(body, "{}(&{tmp});", drop_fn_name(ty)).unwrap();
+            }
+        }
+        format!("({{ {body}}})")
     }
 
     /// `base.field` in C: `->` when `base` is reached through a borrow
@@ -1615,6 +1682,17 @@ fn indent(out: &mut String, depth: usize) {
     for _ in 0..depth {
         out.push_str("    ");
     }
+}
+
+/// Whether a `tir` expression has stable storage: an `Ident`, a `.field`
+/// chain rooted in one, or a dereferenced borrow. Mirrors
+/// `infer::is_tir_place` — used here only to decide whether a borrow needs a
+/// hoisted temporary.
+fn is_place(expr: &Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Ident(_) | ExprKind::FieldAccess { .. } | ExprKind::Deref { .. }
+    )
 }
 
 fn fresh_temp() -> String {

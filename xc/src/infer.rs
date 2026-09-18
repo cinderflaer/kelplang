@@ -2487,6 +2487,48 @@ fn match_args(
 /// (an explicit `&expr`, or forwarding an existing `Ref`-typed parameter)
 /// type-matches directly instead of double-wrapping; a shared parameter
 /// accepts an exclusive argument (implicit downgrade), never the reverse.
+/// A call whose result *borrows from an argument* (the elision rule) cannot
+/// borrow from a temporary: the temporary is freed at the end of the
+/// enclosing statement, and codegen would have to drop it before the borrow
+/// could be used. Argument matching itself allows a temporary for a shared
+/// borrow — that is what makes `str.join(str.split(s, sep), sep)` legal — so
+/// the one case where the lifetime actually matters is checked here, where
+/// the callee's return type and its elided root are both known.
+///
+/// Only a *freshly auto-borrowed temporary* is the problem. An argument that
+/// is already a borrow value (a `&String` from `l.get(i)`, a `&str` from
+/// `s.as_str()`) is a pointer whose own chain `borrowck.rs` walks to its
+/// root, so it is left alone.
+fn require_place_for_borrowed_arg(
+    params: &[(String, Ty)],
+    ret: &Ty,
+    args: &[tir::Expr],
+    span: Span,
+) -> Result<()> {
+    if !matches!(ret, Ty::Ref { .. }) {
+        return Ok(());
+    }
+    let Some(idx) = borrow_root_param(params) else {
+        return Ok(());
+    };
+    let Some(arg) = args.get(idx) else {
+        return Ok(());
+    };
+    let tir::ExprKind::Ref { expr: inner, .. } = &arg.kind else {
+        return Ok(());
+    };
+    if !is_tir_place(inner) {
+        return Err(TypeError {
+            message: format!(
+                "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field — a temporary would be freed before the borrow could be used",
+                params[idx].0
+            ),
+            span,
+        });
+    }
+    Ok(())
+}
+
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
     let Ty::Ref { mutable, inner } = pty else {
         let checked = check_expr(arg_expr, ctx, Some(pty))?;
@@ -2512,13 +2554,20 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
     let checked = check_expr(arg_expr, ctx, Some(inner))?;
     match &checked.ty {
         t if t == inner.as_ref() => {
-            if !is_tir_place(&checked) {
-                return Err(TypeError {
-                    message: format!("argument '{pname}' must be a variable or field, not a temporary value"),
-                    span: arg_expr.span(),
-                });
-            }
+            // A *shared* borrow may be taken of a temporary (`str.join(parts
+            // = str.split(s, sep), sep = "-")`): the temporary lives for the
+            // whole enclosing expression, which is exactly how long a
+            // call-scoped borrow lasts, and `codegen_c.rs` hoists it into a C
+            // temporary to take its address. An *exclusive* borrow still
+            // needs a place, since the callee may write through it and a
+            // temporary has nowhere for a write to land.
             if *mutable {
+                if !is_tir_place(&checked) {
+                    return Err(TypeError {
+                        message: format!("argument '{pname}' must be a variable or field, not a temporary value"),
+                        span: arg_expr.span(),
+                    });
+                }
                 check_target_writable(&checked, ctx)?;
             }
             let span = checked.span;
@@ -2544,8 +2593,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
     }
 }
 
-fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
-    if callee == "main" {
+fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {    if callee == "main" {
         // `main` is emitted as `int main(void)` — it takes no arguments, so
         // there is no way to hand it the passdowns it may reference.
         return Err(TypeError {
@@ -2650,6 +2698,7 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         span,
         ctx,
     )?;
+    require_place_for_borrowed_arg(&sig.params, &sig.ret, &checked, span)?;
     checked.extend(hidden_args(&key, span, ctx)?);
 
     Ok(tir::Expr {
@@ -2895,6 +2944,9 @@ fn check_method_call(
     let mut checked_args = Vec::with_capacity(sig.params.len());
     checked_args.push(check_call_arg("self", &sig.params[0].1, receiver, ctx)?);
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
+    // A method whose result borrows from its receiver (`s.as_str()`) has the
+    // same rule as a free function.
+    require_place_for_borrowed_arg(&sig.params, &sig.ret, &checked_args, span)?;
     // Receiver methods can reference passdowns too; the call site passes the
     // same hidden arguments a free-function call would.
     checked_args.extend(hidden_args(&key, span, ctx)?);

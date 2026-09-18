@@ -945,6 +945,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "list_basic",
         "list_owned",
         "list_field",
+        "stdlib_list",
+        "borrow_temp_arg",
+        "list_datac_element",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1078,4 +1081,39 @@ fn an_empty_list_needs_its_element_type() {
 #[test]
 fn popping_an_empty_list_panics() {
     assert_fixture_panics("list_pop_empty", "List.pop: the list is empty");
+}
+
+#[test]
+fn split_returns_a_list_of_owned_pieces_and_join_consumes_one() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_list.x",
+        "4\na|b||c\n[a][b][][c]\n1\n1\n4\na-b--c\n1\nsolo\n",
+    );
+}
+
+#[test]
+fn a_datac_can_be_a_list_element() {
+    assert_compiles_and_runs("tests/fixtures/list_datac_element.x", "2\nspades\n2\nspades\n");
+}
+
+#[test]
+fn a_shared_borrow_of_a_temporary_is_allowed_for_a_call() {
+    assert_compiles_and_runs("tests/fixtures/borrow_temp_arg.x", "3\n18\n");
+}
+
+#[test]
+fn a_returned_borrow_cannot_come_from_a_temporary() {
+    assert_rejected("tests/fixtures/borrow_temp_returned.x");
+}
+
+#[test]
+fn fs_list_returns_a_granted_directories_entries() {
+    // A granted `stdlib/fs` module listing a directory it owns: the entries
+    // come back as a `List<String>`, sorted, and a recursive clear built on
+    // the same function leaves the directory gone.
+    assert_project_runs(
+        "caps_list",
+        &project("caps_list").join("main.x"),
+        "3\na.txt,b.txt,sub\na.txt b.txt sub \nfalse\n",
+    );
 }

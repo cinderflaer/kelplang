@@ -212,3 +212,86 @@ fun repeat(s: &str, n: usize).R: String {
     }
     return String.from_bytes(out)
 }
+
+// Copies bytes [from, to) of `s` into a fresh owned `String`. A range that
+// is neither a prefix nor a suffix cannot be a view (a `&str` is a
+// NUL-terminated C string), so it is copied — the same reason `prefix`
+// allocates.
+fun copy_range(s: &str, from: usize, to: usize).R: String {
+    var out = mem.alloc(to - from)
+    var i: usize = 0
+    while i < to - from {
+        out.set(i, byte(s, from + i))
+        i = i + 1
+    }
+    return String.from_bytes(out)
+}
+
+// Splits `s` on every occurrence of `sep`. An empty `sep` yields one piece
+// (the whole string) rather than an infinite number of empty ones.
+//
+// The last piece is always returned, including the empty one after a
+// trailing separator: "a," splits into ["a", ""].
+fun split(s: &str, sep: &str).R: List<String> {
+    var out: List<String> = List.empty()
+    val ls = len(s)
+    val lsep = len(sep)
+    if lsep == 0 {
+        out.push(String.from_str(s))
+        return out
+    }
+    var start: usize = 0
+    var i: usize = 0
+    while i + lsep <= ls {
+        if starts_with_at(s, sep, i) {
+            out.push(copy_range(s, start, i))
+            i = i + lsep
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    out.push(copy_range(s, start, ls))
+    return out
+}
+
+// Copies `src` into `dst` at byte offset `at` and returns the offset just
+// past the end. The pieces of `join` cannot be written with one `String`
+// operation, so this is the byte-level form it is built from.
+fun copy_into(dst: mut Bytes, at: usize, src: &str).R: usize {
+    val n = len(src)
+    var i: usize = 0
+    while i < n {
+        dst.set(at + i, byte(src, i))
+        i = i + 1
+    }
+    return at + n
+}
+
+// `parts` joined with `sep` between them. The result is sized first and
+// filled once: v1 has fixed-size buffers, so a builder that grows would have
+// to reallocate per piece.
+fun join(parts: List<String>, sep: &str).R: String {
+    val count = parts.len()
+    val lsep = len(sep)
+    var total: usize = 0
+    var i: usize = 0
+    while i < count {
+        if i > 0 {
+            total = total + lsep
+        }
+        total = total + len(parts.get(i).as_str())
+        i = i + 1
+    }
+    var out = mem.alloc(total)
+    var at: usize = 0
+    i = 0
+    while i < count {
+        if i > 0 {
+            at = copy_into(out, at, sep)
+        }
+        at = copy_into(out, at, parts.get(i).as_str())
+        i = i + 1
+    }
+    return String.from_bytes(out)
+}

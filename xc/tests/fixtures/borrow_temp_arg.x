@@ -1,0 +1,13 @@
+// A shared borrow of a *temporary* is allowed when the call does not hand
+// the borrow back: the temporary lives for the whole enclosing expression,
+// which is exactly how long a call-scoped borrow lasts, and codegen hoists it
+// into a C variable covering the call. Passing a `datac` literal this way is
+// the ordinary case.
+datac Pair(val a: i32, val b: i32)
+
+fun sum(p: Pair).R: i32 = p.a + p.b
+
+fun main() {
+    print(sum(Pair(a = 1, b = 2)))
+    print(sum(Pair(a = 3, b = 4)) + sum(Pair(a = 5, b = 6)))
+}

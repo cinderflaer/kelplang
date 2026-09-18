@@ -1,0 +1,54 @@
+// Collections behind the gate: `fs.list` returns a `List<String>`. The grant
+// covers one scratch directory; the program clears it first (a recursive
+// remove built on `fs.list` itself), then creates, lists and removes known
+// contents, so the run is repeatable and depends on nothing already on disk.
+impl "std/str"
+impl "std/fs" with caps(fs = ["/tmp/xc_caps_list_test/**"])
+
+fun path_of(dir: &str, name: &str).R: String {
+    var parts: List<String> = List.empty()
+    parts.push(String.from_str(dir))
+    parts.push(String.from_str("/"))
+    parts.push(String.from_str(name))
+    return str.join(parts, "")
+}
+
+fun clear(dir: &str) {
+    if fs.exists(dir) {
+        val entries = fs.list(dir)
+        var i: usize = 0
+        while i < entries.len() {
+            val p = path_of(dir, entries.get(i).as_str())
+            if fs.is_dir(p.as_str()) {
+                clear(p.as_str())
+            } else {
+                fs.remove(p.as_str())
+            }
+            i = i + 1
+        }
+        fs.remove(dir)
+    }
+}
+
+fun main() {
+    val dir = "/tmp/xc_caps_list_test"
+    clear(dir)
+    fs.mkdir(dir)
+    fs.write_text("/tmp/xc_caps_list_test/b.txt", String.from_str("b"))
+    fs.write_text("/tmp/xc_caps_list_test/a.txt", String.from_str("a"))
+    fs.mkdir("/tmp/xc_caps_list_test/sub")
+
+    val entries = fs.list(dir)
+    print(entries.len())
+    print(str.join(entries, sep = ","))
+    var i: usize = 0
+    while i < entries.len() {
+        print!(entries.get(i).as_str())
+        print!(" ")
+        i = i + 1
+    }
+    print("")
+
+    clear(dir)
+    print(fs.exists(dir))
+}
