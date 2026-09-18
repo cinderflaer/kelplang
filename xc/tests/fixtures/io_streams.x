@@ -1,0 +1,38 @@
+impl "std/io"
+impl "std/mem"
+
+// A user-held `BufReader`: the buffered type is an owned `datac`, so a caller
+// threads it explicitly instead of reaching for the process-wide one.
+fun main() {
+    var reader = io.buf_reader(io.stdin())
+
+    var first = String.empty()
+    print(reader.read_line_into(first))
+    print(first.as_str())
+
+    // What the chunked reader already holds plus the rest of the stream.
+    val whole = reader.read_all()
+    print(whole.len())
+    print(whole.as_str())
+
+    print(reader.file.is_open())
+    reader.file.flush()
+
+    // `read_into` fills a buffer the caller sized, so the length is the
+    // caller's promise about the read. At end of file it reports 0 and leaves
+    // the buffer alone.
+    var buf = mem.alloc(4)
+    print(reader.file.read_into(buf, 0))
+    print(buf.len())
+
+    // A timeout of zero asks without waiting, so this reports only whether the
+    // descriptor is already writable.
+    print(io.stdout().wait_writable(0))
+
+    // `is_open` asks the kernel rather than reading a flag, so closing the
+    // descriptor changes the answer.
+    var extra = io.stdin()
+    print(extra.is_open())
+    extra.close()
+    print(extra.is_open())
+}

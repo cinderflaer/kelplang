@@ -257,6 +257,85 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "unsupported_unit",
         "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n",
     ),
+    // ---- std/io (S2) -------------------------------------------------------
+    (
+        "std/io",
+        "is_open_raw",
+        "    /* Not a cached flag: the kernel is asked. A `File` is only a\n       descriptor, so this is the honest question, and it costs one `fcntl`. */\n    return fcntl(x_fd, F_GETFD) >= 0;\n",
+    ),
+    (
+        "std/io",
+        "read_raw",
+        "    x_Bytes b = x_bytes_alloc_raw(x_max);\n    ssize_t n = read(x_fd, b.data, x_max);\n    if (n < 0) {\n        x_panic(\"io.read: read failed\");\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+    ),
+    (
+        "std/io",
+        "read_into_raw",
+        "    /* `buf`'s length is the capacity of this read: the caller sized it.\n       Filling it does not change that length, so `at + n` may never pass it\n       and the NUL terminator slot is always inside the allocation. */\n    size_t room = x_at < x_buf->len ? x_buf->len - x_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n = read(x_fd, x_buf->data + x_at, room);\n    if (n < 0) {\n        x_panic(\"io.read_into: read failed\");\n    }\n    x_buf->data[x_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/io",
+        "write_bytes_raw",
+        "    /* A pipe may take fewer bytes than asked for, so a write is a loop,\n       not one call. EINTR is a retry, not a failure. */\n    x_io_flush_stdio(x_fd);\n    size_t off = 0;\n    while (off < x_data->len) {\n        ssize_t n = write(x_fd, x_data->data + off, x_data->len - off);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            x_panic(\"io.write: write failed\");\n        }\n        off += (size_t)n;\n    }\n    return off;\n",
+    ),
+    (
+        "std/io",
+        "write_text_raw",
+        "    x_io_flush_stdio(x_fd);\n    size_t off = 0;\n    while (off < x_text->len) {\n        ssize_t n = write(x_fd, x_text->data + off, x_text->len - off);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            x_panic(\"io.write_text: write failed\");\n        }\n        off += (size_t)n;\n    }\n    return off;\n",
+    ),
+    (
+        "std/io",
+        "write_str_raw",
+        "    x_io_flush_stdio(x_fd);\n    size_t len = strlen(x_s);\n    size_t off = 0;\n    while (off < len) {\n        ssize_t n = write(x_fd, x_s + off, len - off);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            x_panic(\"io.write_str: write failed\");\n        }\n        off += (size_t)n;\n    }\n    return off;\n",
+    ),
+    (
+        "std/io",
+        "close_raw",
+        "    if (close(x_fd) != 0) {\n        x_panic(\"io.close: close failed\");\n    }\n",
+    ),
+    (
+        "std/io",
+        "set_nonblocking_raw",
+        "    int flags = fcntl(x_fd, F_GETFL, 0);\n    if (flags < 0) {\n        x_panic(\"io.set_nonblocking: fcntl failed\");\n    }\n    if (x_on) {\n        flags |= O_NONBLOCK;\n    } else {\n        flags &= ~O_NONBLOCK;\n    }\n    if (fcntl(x_fd, F_SETFL, flags) != 0) {\n        x_panic(\"io.set_nonblocking: fcntl failed\");\n    }\n",
+    ),
+    (
+        "std/io",
+        "wait_readable_raw",
+        "    struct pollfd p;\n    p.fd = x_fd;\n    p.events = POLLIN;\n    p.revents = 0;\n    /* > INT_MAX ms is 24 days: the same answer as forever, and `poll`'s\n       only spelling of forever is a negative timeout. */\n    int t = x_timeout_ms > 2147483647ULL ? -1 : (int)x_timeout_ms;\n    int r;\n    do {\n        r = poll(&p, 1, t);\n    } while (r < 0 && errno == EINTR);\n    if (r < 0) {\n        x_panic(\"io.wait_readable: poll failed\");\n    }\n    /* HUP/ERR mean \"read now\" too: the read that follows returns 0. */\n    return r > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR)) != 0;\n",
+    ),
+    (
+        "std/io",
+        "wait_writable_raw",
+        "    struct pollfd p;\n    p.fd = x_fd;\n    p.events = POLLOUT;\n    p.revents = 0;\n    int t = x_timeout_ms > 2147483647ULL ? -1 : (int)x_timeout_ms;\n    int r;\n    do {\n        r = poll(&p, 1, t);\n    } while (r < 0 && errno == EINTR);\n    if (r < 0) {\n        x_panic(\"io.wait_writable: poll failed\");\n    }\n    return r > 0 && (p.revents & (POLLOUT | POLLHUP | POLLERR)) != 0;\n",
+    ),
+    // ---- std/process (S2) --------------------------------------------------
+    (
+        "std/process",
+        "arg_count_raw",
+        "    return (size_t)x_argc;\n",
+    ),
+    (
+        "std/process",
+        "arg_at_raw",
+        "    if (x_i >= (size_t)x_argc) {\n        x_panic(\"process.arg_at: index out of bounds\");\n    }\n    return x_String__from_str(x_argv[x_i]);\n",
+    ),
+    (
+        "std/process",
+        "spawn_raw",
+        "    /* `x_List__String` is named literally here on purpose: an `extern`\n       body is C text, so it has to know the monomorphized container's name\n       and the `x_String` field layout (`data`/`len`). That is the cost of\n       marshalling an X list into `execvp`'s `char*[]` without a generic\n       container type. */\n    int in_pipe[2];\n    int out_pipe[2];\n    int err_pipe[2];\n    if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {\n        x_panic(\"process.spawn: cannot create a pipe\");\n    }\n    pid_t pid = fork();\n    if (pid < 0) {\n        x_panic(\"process.spawn: fork failed\");\n    }\n    if (pid == 0) {\n        /* The child: wire the pipes to stdio, close every copy it does not\n           need, then exec. `_exit` (not `exit`) on the way out, so an\n           inherited stdio buffer is never flushed a second time. */\n        dup2(in_pipe[0], 0);\n        dup2(out_pipe[1], 1);\n        dup2(err_pipe[1], 2);\n        close(in_pipe[0]);\n        close(in_pipe[1]);\n        close(out_pipe[0]);\n        close(out_pipe[1]);\n        close(err_pipe[0]);\n        close(err_pipe[1]);\n        size_t n = x_args->len;\n        char** argv = (char**)malloc((n + 2) * sizeof(char*));\n        if (argv == NULL) {\n            fprintf(stderr, \"process.spawn: out of memory\\n\");\n            _exit(127);\n        }\n        argv[0] = (char*)x_program;\n        for (size_t i = 0; i < n; i++) {\n            argv[i + 1] = (char*)x_args->data[i].data;\n        }\n        argv[n + 1] = NULL;\n        execvp(x_program, argv);\n        fprintf(stderr, \"process.spawn: cannot exec '%s'\\n\", x_program);\n        _exit(127);\n    }\n    /* The parent keeps only its own ends: the child's stdin write end, and\n       the read ends of its output. */\n    close(in_pipe[0]);\n    close(out_pipe[1]);\n    close(err_pipe[1]);\n    *x_pid = (int32_t)pid;\n    *x_stdin_fd = in_pipe[1];\n    *x_stdout_fd = out_pipe[0];\n    *x_stderr_fd = err_pipe[0];\n",
+    ),
+    (
+        "std/process",
+        "reap_raw",
+        "    /* The `-1` below is \"still running\", not a user-visible sentinel:\n       `Child.is_running` is the only caller that asks for it, and it turns\n       it into a `bool` before anything outside this module sees it. */\n    int status = 0;\n    pid_t r;\n    do {\n        r = waitpid(x_pid, &status, x_block ? 0 : WNOHANG);\n    } while (r < 0 && errno == EINTR);\n    if (r == 0) {\n        return -1;\n    }\n    if (r < 0) {\n        x_panic(\"process.wait: waitpid failed\");\n    }\n    if (WIFEXITED(status)) {\n        return WEXITSTATUS(status);\n    }\n    if (WIFSIGNALED(status)) {\n        return 128 + WTERMSIG(status);\n    }\n    return 0;\n",
+    ),
+    (
+        "std/process",
+        "kill_raw",
+        "    if (kill(x_pid, x_signal) != 0) {\n        x_panic(\"process.kill: kill failed\");\n    }\n",
+    ),
+    ("std/process", "exit_raw", "    exit(x_code);\n"),
+    ("std/process", "getpid_raw", "    return (int64_t)getpid();\n"),
 ];
 
 /// The C body for an `extern fun` in `module`, or `None` when the compiler

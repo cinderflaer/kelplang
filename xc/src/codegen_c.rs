@@ -48,6 +48,25 @@ static void x_panic(const char* msg) {
     exit(1);
 }
 
+/* The process's own argv, saved by the emitted `main` (S2). Both live for
+   the whole process, so a `&str` view of `x_argv[i]` stays valid for as long
+   as any X value can hold it — which is what `process.arg_at` hands out. */
+static int x_argc = 0;
+static char** x_argv = NULL;
+
+/* The builtin `print` and string templates go through stdio's buffer while
+   `std/io`'s `File` writes straight to the descriptor, so a write to the
+   process's own stdout or stderr has to flush that buffer first — otherwise
+   the two APIs are observed out of order whenever stdout is not a terminal
+   (stdio block-buffers a pipe). A no-op for every other descriptor. */
+static void x_io_flush_stdio(int fd) {
+    if (fd == 1) {
+        fflush(stdout);
+    } else if (fd == 2) {
+        fflush(stderr);
+    }
+}
+
 static void x_assert(bool cond) {
     if (!cond) {
         x_panic("assertion failed");
@@ -102,8 +121,17 @@ static bool x_utf8_valid(const unsigned char* p, size_t n) {
 }
 
 static x_Bytes x_Bytes__empty(void) {
+    /* One allocated zero byte rather than a NULL pointer, so an empty buffer
+       still has a valid NUL terminator at `data[0]`: that is the same
+       invariant every non-empty buffer keeps (`data[len] == 0`), and it means
+       `as_str()` and `printf("%s")` can never be handed NULL. */
+    unsigned char* p = (unsigned char*)malloc(1);
+    if (p == NULL) {
+        x_panic("out of memory");
+    }
+    p[0] = 0;
     x_Bytes b;
-    b.data = NULL;
+    b.data = p;
     b.len = 0;
     b.cap = 0;
     return b;
@@ -204,8 +232,14 @@ typedef struct {
 } x_String;
 
 static x_String x_String__empty(void) {
+    /* As `x_Bytes__empty`: an empty string points at a NUL byte, never NULL. */
+    unsigned char* p = (unsigned char*)malloc(1);
+    if (p == NULL) {
+        x_panic("out of memory");
+    }
+    p[0] = 0;
     x_String s;
-    s.data = NULL;
+    s.data = p;
     s.len = 0;
     s.cap = 0;
     return s;
@@ -602,8 +636,10 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     out.push_str("#include <dirent.h>\n");
     out.push_str("#include <fcntl.h>\n");
     out.push_str("#include <math.h>\n");
+    out.push_str("#include <poll.h>\n");
     out.push_str("#include <sys/stat.h>\n");
     out.push_str("#include <sys/types.h>\n");
+    out.push_str("#include <sys/wait.h>\n");
     out.push_str("#include <time.h>\n");
     out.push_str("#include <unistd.h>\n");
     out.push_str("#include <stdint.h>\n");
@@ -624,13 +660,16 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 
     // Each module's granted patterns, as constant data. No API can widen
     // these at runtime, and no stdlib function accepts a capability as a
-    // value, so a grant cannot be smuggled through an argument.
+    // value, so a grant cannot be smuggled through an argument. An empty
+    // pattern list is emitted as `{ NULL }` rather than skipped: a module can
+    // hold a domain with no patterns (that is how `process.args` and
+    // `process.exit` are reachable without granting any program), and a call
+    // that *does* name a resource still has to have an array to deny against
+    // — skipping it left the generated C referring to a symbol that was never
+    // defined.
     if cap_needed {
         out.push_str("// capability allowlists, compiled in per module\n");
         for g in &program.caps {
-            if g.patterns.is_empty() {
-                continue;
-            }
             writeln!(
                 out,
                 "static const char* {}[] = {{ {}NULL }};",
@@ -704,16 +743,20 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         }
     }
 
-    write_pd_globals(&mut out, &program.pds, drops, &owned, sources);
-
+    // Prototypes come first: a `pd` initializer may call a function
+    // (`pd var r = buf_reader(...)`), and `write_pd_globals` emits
+    // `x_init_pds` — so the declarations have to be in scope before that
+    // definition, not after it.
     for f in &program.functions {
         if f.name == "main" {
-            continue; // defined (not just declared) below, with its special `int main(void)` signature
+            continue; // defined (not just declared) below, with its special `int main(...)` signature
         }
         write_signature(&mut out, f);
         out.push_str(";\n");
     }
     out.push('\n');
+
+    write_pd_globals(&mut out, &program.pds, drops, &owned, sources);
 
     for f in &program.functions {
         if f.extern_ {
@@ -1342,7 +1385,13 @@ impl<'a> Gen<'a> {
             }
             body.write_function_body(&f.body, 1, &f.ret);
             let rendered = body.out.replace("return;\n", "return 0;\n");
-            self.out.push_str("int main(void) {\n");
+            // `argv` reaches X through two saved globals rather than through
+            // `pd`: `process.args()` is the only reader, and a passdown would
+            // have to be initialized by the one function that cannot have
+            // parameters (`main`). The signature change is the whole compiler
+            // cost of argv (S2, open item 50).
+            self.out.push_str("int main(int argc, char** argv) {\n");
+            self.out.push_str("    x_argc = argc;\n    x_argv = argv;\n");
             self.out.push_str(&rendered);
             self.out.push_str("}\n");
             return;

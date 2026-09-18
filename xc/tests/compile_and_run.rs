@@ -2,8 +2,9 @@
 //! binary, then either runs the resulting binary and checks its stdout, or
 //! (for fixtures that should be rejected) checks that `xc build` fails.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn xc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_xc"))
@@ -179,6 +180,90 @@ fn mut_receiver_method_on_val_binding_is_rejected() {
 // it; a directory with no manifest is supported too, in which case the file's
 // own directory is the module root.
 // ---------------------------------------------------------------------------
+
+/// Compiles a fixture, pipes `stdin` into it, and asserts its stdout. This is
+/// the only way to test `io`: its input is stdin, so it cannot be a
+/// command-line argument, and `Command::output()` gives the child no stdin at
+/// all (every read is end of file).
+fn assert_fixture_runs_with_stdin(name: &str, stdin: &str, expected: &str) {
+    run_fixture_with_stdin(name, name, stdin, expected)
+}
+
+/// The general form, for a fixture whose two tests need two binaries: the
+/// binary name is a per-test `tag` so two concurrently running tests do not
+/// race for one output file.
+fn run_fixture_with_stdin(tag: &str, name: &str, stdin: &str, expected: &str) {
+    let source = format!("tests/fixtures/{name}.x");
+    let bin = out_path(tag);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture(&source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let mut child = Command::new(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to run compiled binary");
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(stdin.as_bytes())
+        .expect("failed to write to the child's stdin");
+    let run = child.wait_with_output().expect("failed to wait for compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the binary for '{name}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for '{name}'"
+    );
+}
+
+/// As `assert_project_runs`, with arguments appended to `argv` — which is what
+/// `process.args()` reads back.
+fn assert_project_runs_with_args(name: &str, target: &Path, args: &[&str], expected: &str) {
+    let bin = out_path(name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected project '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin)
+        .args(args)
+        .output()
+        .expect("failed to run the compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the binary for '{name}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for project '{name}'"
+    );
+}
 
 fn project(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1034,6 +1119,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "box_recursive",
         "recursive_datac",
         "box_field_take",
+        "io_stdio",
+        "io_streams",
+        "process_spawn",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1287,5 +1375,106 @@ fn fs_list_returns_a_granted_directories_entries() {
         "caps_list",
         &project("caps_list").join("main.x"),
         "3\na.txt,b.txt,sub\na.txt b.txt sub \nfalse\n",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S2: `io` (the standard descriptors as streams, buffered line reading) and
+// `process` (argv, running a program, spawning one).
+//
+// `io` is ungated, so its fixtures are ordinary single files; `process` is
+// gated, so its granted and denied cases live in projects, where the grant is
+// written at the `impl` line.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn io_reads_stdin_as_lines_and_writes_the_standard_descriptors() {
+    // One `io.read_line`, then `io.read_lines` for the rest, through the same
+    // process-wide reader; a `File` over stdout writing a borrowed view; and
+    // `eprint` on stderr, which the harness checks only for "did not fail".
+    // The last line is deliberately not newline-terminated: the reader has to
+    // return it at end of file rather than dropping it, which is the case a
+    // `read_line` written as "read until newline" gets wrong.
+    assert_fixture_runs_with_stdin(
+        "io_stdio",
+        "a\nb\nc\nd",
+        "a\n3\nb\nc\nd\ndirect6\ntrue\ntrue\n",
+    );
+}
+
+#[test]
+fn io_reports_end_of_file_instead_of_a_line() {
+    // The same program with nothing on stdin: `ok = false` on the first read,
+    // no lines, and a clean exit.
+    run_fixture_with_stdin(
+        "io_stdio_eof",
+        "io_stdio",
+        "",
+        "(no header)\n0\ndirect6\ntrue\ntrue\n",
+    );
+}
+
+#[test]
+fn a_held_buf_reader_reads_lines_and_consumes_the_rest() {
+    // The buffered type is an owned `datac`, so this is the caller-threaded
+    // form: one line out, the remainder of the stream, then `read_into` at end
+    // of file (0 bytes, buffer untouched).
+    assert_fixture_runs_with_stdin(
+        "io_streams",
+        "l1\nl2\n",
+        "true\nl1\n3\nl2\n\ntrue\n0\n4\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn process_runs_a_program_with_argv_and_spawns_one_with_pipes() {
+    // `run` with a real argv array (the child prints its own `$1`/`$2`), an
+    // exit code, separated stdout/stderr capture, then `spawn` with a write to
+    // the child's stdin and a read of its stdout, `is_running`/`kill`/`wait`
+    // on a child that is blocked, and a failed `exec` reported as code 127.
+    // Also under AddressSanitizer, where the parent's buffers and pipes are
+    // leak-checked.
+    assert_compiles_and_runs(
+        "tests/fixtures/process_spawn.x",
+        "0\none-two\n7\n0\n0\noops\n0\nhello\n\ntrue\n137\nfalse\n127\ntrue\n1\ntrue\ntrue\n",
+    );
+}
+
+#[test]
+fn a_granted_module_runs_a_program_and_reads_its_own_argv() {
+    // The grant is `runner`'s, not `main`'s: `process.run` is checked against
+    // the patterns of the module that named it, and `process.args` is behind
+    // the same gate even though it names no resource.
+    assert_project_runs_with_args(
+        "process_run",
+        &project("process_run").join("main.x"),
+        &["one", "two"],
+        "0\nhi\n3\noops\none,two\n3\n",
+    );
+}
+
+#[test]
+fn reading_argv_needs_the_gate_but_no_program_grant() {
+    // An empty pattern list is a real grant: `runner` may name `std/process`
+    // (so `process.args`/`process.exit` resolve) and may not execute anything.
+    // It also pins the emitted allowlist for an empty grant, which used to be
+    // skipped and left the generated C naming a symbol that did not exist.
+    assert_project_runs_with_args(
+        "process_argv_only",
+        &project("process_argv_only").join("main.x"),
+        &["alpha", "beta"],
+        "3\nalpha,beta\n",
+    );
+}
+
+#[test]
+fn a_granted_module_cannot_run_a_program_outside_its_grant() {
+    // `runner` holds `process = ["/bin/true"]` and asks for `/bin/sh`; the
+    // check runs before the fork, and the denial names the module, the call
+    // site, and the grant.
+    assert_project_denied_at_runtime(
+        "process_denied",
+        &project("process_denied").join("main.x"),
+        "is outside the process capability granted to module 'runner'",
     );
 }

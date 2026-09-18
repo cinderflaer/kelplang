@@ -1,0 +1,23 @@
+// The `process` grant goes to `runner`, not to `main`: the capability is
+// received by the module that names `process.run`, and the runtime check that
+// follows uses *that* module's patterns. `/bin/sh` is a symlink into
+// `/nix/store` on a NixOS machine, and the check resolves symlinks before
+// matching (the same rule `fs` follows), so both spellings are granted.
+impl "runner" with caps(process = ["/bin/**", "/nix/store/**"])
+
+fun main() {
+    val ok = runner.run_echo()
+    print(ok.code)
+    print(ok.out)
+
+    val bad = runner.run_exit()
+    print(bad.code)
+
+    val noisy = runner.run_stderr()
+    print(noisy.err)
+
+    // `process.args` is behind the same gate even though it names no
+    // resource, so reading this process's own argv is `runner`'s job too.
+    print(runner.tail_args())
+    print(runner.arg_count())
+}

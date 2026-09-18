@@ -25,6 +25,8 @@ pub fn source(id: &str) -> Option<&'static str> {
         "std/rand" => include_str!("../std/rand.x"),
         "std/env" => include_str!("../std/env.x"),
         "std/fmt" => include_str!("../std/fmt.x"),
+        "std/io" => include_str!("../std/io.x"),
+        "std/process" => include_str!("../std/process.x"),
         _ => return None,
     })
 }
@@ -34,7 +36,7 @@ pub fn source(id: &str) -> Option<&'static str> {
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
-        "std/fmt",
+        "std/fmt", "std/io", "std/process",
     ]
 }
 

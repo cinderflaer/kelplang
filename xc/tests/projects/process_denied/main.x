@@ -1,0 +1,8 @@
+// `runner` is granted one specific program, and calls another one. The check
+// happens before the fork, so nothing is ever started: this is the runtime
+// half of the gate, reachable only because `runner` *does* hold `process`.
+impl "runner" with caps(process = ["/bin/true"])
+
+fun main() {
+    runner.try_it()
+}

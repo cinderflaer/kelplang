@@ -76,8 +76,8 @@ struct Ctx {
     /// available. This is what stops an initializer from reading a
     /// passdown that is still zero-initialized at that point.
     init_state: Option<std::collections::HashSet<String>>,
-    /// True only while checking `main`'s body. `main` is emitted as
-    /// `int main(void)` — it cannot receive hidden parameters — so its
+    /// True only while checking `main`'s body. `main` is emitted with a
+    /// fixed C signature — it cannot receive hidden parameters — so its
     /// passdown references take the address of the generated global instead
     /// of naming a parameter. Every other function that references a
     /// passdown is wired and uses its parameter.
@@ -206,6 +206,16 @@ impl Ctx {
             return Ok(());
         };
         if self.caps.contains_key(domain) {
+            return Ok(());
+        }
+        // A module's own items are reachable from inside it with no grant:
+        // the gate exists to stop *other* modules from naming the resource,
+        // and a gated stdlib module has to be able to call its own helpers
+        // (`process.run` is `spawn` plus a drain loop, and `std/net` will
+        // want the same shape). Nothing outside the compiler can declare a
+        // gated item — `stdlib::domain_of` only knows stdlib ids — so this
+        // exemption cannot widen a user module's authority.
+        if !self.prefix.is_empty() && key.starts_with(self.prefix.as_str()) {
             return Ok(());
         }
         Err(TypeError {
@@ -2019,10 +2029,10 @@ fn check_function(
         .and_then(|_| struct_name_of(&sig.params[0].1).map(|s| s.to_string()));
     // Passdowns this function references become trailing hidden parameters
     // (see `PdInfo::arg` for the call-site side). `main` is the exception
-    // downstream, not here: `codegen_c.rs` emits `int main(void)` regardless
-    // of parameters, and the body's `pd#...` identifiers then resolve to the
-    // file-scope globals — which is why the hidden name and the global name
-    // are the same string.
+    // downstream, not here: `codegen_c.rs` emits a fixed `main(argc, argv)`
+    // regardless of parameters, and the body's `pd#...` identifiers then
+    // resolve to the file-scope globals — which is why the hidden name and
+    // the global name are the same string.
     let hidden = if key == "main" {
         Vec::new()
     } else {
@@ -2861,8 +2871,9 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
 }
 
 fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {    if callee == "main" {
-        // `main` is emitted as `int main(void)` — it takes no arguments, so
-        // there is no way to hand it the passdowns it may reference.
+        // `main` is the program entry point; it takes no arguments, so there
+        // is no way to hand it the passdowns it may reference, and its own
+        // `argv` is reached through `process.args()` instead.
         return Err(TypeError {
             message: "cannot call 'main': it is the program entry point".to_string(),
             span,

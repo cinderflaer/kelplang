@@ -1,0 +1,9 @@
+impl "std/process"
+
+fun try_it() {
+    var args: List<String> = List.empty()
+    args.push(String.from_str("-c"))
+    args.push(String.from_str("printf nope"))
+    val r = process.run("/bin/sh", args)
+    print(r.code)
+}

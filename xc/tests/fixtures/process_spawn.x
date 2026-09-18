@@ -1,0 +1,83 @@
+impl "std/process"
+impl "std/str"
+
+// `process`: argv, running a program and capturing it, and the spawn form
+// that keeps the pipes (S2). The entry module holds every capability, so no
+// delegation is needed here; `process_denied` and `process_run` cover the
+// grant.
+fun sh(script: &str).R: List<String> {
+    var args: List<String> = List.empty()
+    args.push(String.from_str("-c"))
+    args.push(String.from_str(script))
+    return args
+}
+
+fun main() {
+    // `run`: argv reaches the child as an array, and the whole of stdout comes
+    // back. `$1`/`$2` are the child's own positional parameters, so printing
+    // "one-two" is the proof that the array was marshalled and passed
+    // through rather than dropped on the way to `execvp`.
+    var positional: List<String> = List.empty()
+    positional.push(String.from_str("-c"))
+    positional.push(String.from_str("printf %s-%s \"$1\" \"$2\""))
+    positional.push(String.from_str("sh"))
+    positional.push(String.from_str("one"))
+    positional.push(String.from_str("two"))
+    val greeting = process.run("/bin/sh", positional)
+    print(greeting.code)
+    print(greeting.out)
+
+    // A nonzero exit code, with nothing on stdout.
+    val bad = process.run("/bin/sh", sh("exit 7"))
+    print(bad.code)
+    print(bad.out.len())
+
+    // stderr is captured separately, and stderr alone.
+    val noisy = process.run("/bin/sh", sh("printf oops >&2"))
+    print(noisy.out.len())
+    print(noisy.err)
+
+    // `spawn`: the pipes stay open, so the child can be fed and read. Closing
+    // stdin is what gives the child its end of file.
+    var child = process.spawn("/bin/sh", sh("cat"))
+    child.stdin.write_text(String.from_str("hello\n"))
+    child.stdin.close()
+    var out = Bytes.empty()
+    var open = true
+    while open {
+        if child.stdout.wait_readable(2000) {
+            val chunk = child.stdout.read(8192)
+            if chunk.is_empty() {
+                open = false
+            } else {
+                out.append(chunk)
+            }
+        }
+    }
+    child.stdout.close()
+    print(child.wait())
+    print(out)
+
+    // A child that cannot exit on its own (blocked on `read`) is killed by
+    // signal: `is_running` sees it, `kill` sends 9, and `wait` reports
+    // 128 + signal rather than an exit status.
+    var blocked = process.spawn("/bin/sh", sh("read x"))
+    print(blocked.is_running())
+    blocked.kill(9)
+    print(blocked.wait())
+    print(blocked.is_running())
+
+    // A program that passes the capability check but does not exist: the fork
+    // succeeds, the `exec` does not, and the child reports it and exits 127
+    // (which `run` returns as the code, with the message in `err`).
+    val missing = process.run("/definitely/not/a/program", sh("x"))
+    print(missing.code)
+    print(str.starts_with(missing.err.as_str(), "process.spawn: cannot exec"))
+
+    // `argv` is this process's, saved by the emitted `main`. Bound to a local
+    // rather than read twice: each `process.args()` builds a fresh list.
+    val argv = process.args()
+    print(argv.len())
+    print(str.len(argv.get(0).as_str()) > 0)
+    print(process.getpid() > 0)
+}

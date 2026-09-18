@@ -1,0 +1,35 @@
+impl "std/io"
+
+// io: the standard descriptors as streams (S2). Everything here reads from
+// stdin, which the test harness pipes in.
+fun main() {
+    val header = io.read_line()
+    if header.ok {
+        print(header.text.as_str())
+    } else {
+        print("(no header)")
+    }
+
+    // The rest of stdin, as lines. `io.read_lines` shares the one process-wide
+    // buffered reader with `io.read_line` above, so nothing is skipped.
+    val rest = io.read_lines()
+    print(rest.len())
+    var i: usize = 0
+    while i < rest.len() {
+        io.print(rest.get(i).as_str())
+        i = i + 1
+    }
+
+    // A `File` over stdout, writing a borrowed view; `print`/`print!` are the
+    // same stream through the same stdio buffer, so the order is the order
+    // written.
+    val out = io.stdout()
+    val n = out.write_str("direct")
+    print(n)
+    print(out.is_open())
+
+    // stderr, through the same stream type.
+    io.eprint("warning")
+    io.eprint_bare("!")
+    print(out.wait_writable(1000))
+}

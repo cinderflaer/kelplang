@@ -1,0 +1,43 @@
+impl "std/process"
+
+// This module holds `process` because `main.x` delegated it. Every call below
+// is checked against the patterns it received, before the fork happens.
+
+fun sh(script: &str).R: List<String> {
+    var args: List<String> = List.empty()
+    args.push(String.from_str("-c"))
+    args.push(String.from_str(script))
+    return args
+}
+
+// The whole `RunResult` comes back rather than just its `out`: v1 has no
+// partial moves, so `r.out` cannot be taken out of a local `RunResult` — the
+// value moves as a whole. The type is spelled `process.RunResult` because an
+// imported type is always module-qualified.
+fun run_echo().R: process.RunResult = process.run("/bin/sh", sh("printf hi"))
+
+fun run_exit().R: process.RunResult = process.run("/bin/sh", sh("exit 3"))
+
+fun run_stderr().R: process.RunResult = process.run("/bin/sh", sh("printf oops >&2"))
+
+// Everything after `argv[0]`, joined with commas. The arguments the harness
+// passes are the visible part of `process.args`.
+fun tail_args().R: String {
+    val args = process.args()
+    val n = args.len()
+    var out = String.with_capacity(16)
+    var i: usize = 1
+    while i < n {
+        if i > 1 {
+            out.push_str(",")
+        }
+        out.push_str(args.get(i).as_str())
+        i = i + 1
+    }
+    return out
+}
+
+fun arg_count().R: usize {
+    val args = process.args()
+    return args.len()
+}
