@@ -1041,8 +1041,97 @@ fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     }
     out.push_str("    self->len = 0;\n}\n\n");
 
+    write_list_s1(out, elem, &list, &elem_c, owned);
+
     writeln!(out, "static void {}({list}* self) {{", crate::types::drop_fn_name(&Ty::List(Box::new(elem.clone())))).unwrap();
     writeln!(out, "    {list}__clear(self);\n    free(self->data);\n    self->data = NULL;\n    self->cap = 0;\n}}\n").unwrap();
+}
+
+/// The S1 half of a `List<T>` function set: ordering, membership, a copied
+/// range, and the two operations that shift elements around. Which of these
+/// exist depends on the element type, exactly as `infer::list_sig` decides
+/// when it offers the signature — `types::list_sortable_elem` and its
+/// siblings are the single source of truth for both passes.
+fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: &HashSet<String>) {
+    if crate::types::list_sortable_elem(elem) {
+        // One comparator per element kind, so the sort itself stays one
+        // insertion sort. `String`/`Bytes` compare length-aware: `strcmp`
+        // would stop at an embedded NUL and ignore everything after it.
+        writeln!(out, "static int {list}__cmp(const {elem_c}* a, const {elem_c}* b) {{").unwrap();
+        match elem {
+            Ty::Bool => {
+                out.push_str("    return (*a ? 1 : 0) - (*b ? 1 : 0);\n}\n\n");
+            }
+            Ty::String | Ty::Bytes => {
+                out.push_str("    size_t n = a->len < b->len ? a->len : b->len;\n");
+                out.push_str("    if (n > 0) {\n        int c = memcmp(a->data, b->data, n);\n        if (c != 0) {\n            return c < 0 ? -1 : 1;\n        }\n    }\n");
+                out.push_str("    return a->len < b->len ? -1 : (a->len > b->len ? 1 : 0);\n}\n\n");
+            }
+            _ => {
+                out.push_str("    return (*a > *b) - (*a < *b);\n}\n\n");
+            }
+        }
+
+        writeln!(out, "static void {list}__sort({list}* self) {{").unwrap();
+        out.push_str("    /* insertion sort: stable, no comparator indirection, and\n       in-place for an owned element because the shifts are moves */\n");
+        writeln!(out, "    for (size_t i = 1; i < self->len; i++) {{").unwrap();
+        writeln!(out, "        {elem_c} v = self->data[i];").unwrap();
+        out.push_str("        size_t j = i;\n");
+        writeln!(
+            out,
+            "        while (j > 0 && {list}__cmp(&self->data[j - 1], &v) > 0) {{\n            self->data[j] = self->data[j - 1];\n            j--;\n        }}"
+        )
+        .unwrap();
+        out.push_str("        self->data[j] = v;\n    }\n}\n\n");
+    }
+
+    writeln!(out, "static void {list}__reverse({list}* self) {{").unwrap();
+    out.push_str("    size_t i = 0;\n    size_t j = self->len;\n    while (i + 1 < j) {\n        j--;\n");
+    writeln!(out, "        {elem_c} t = self->data[i];\n        self->data[i] = self->data[j];\n        self->data[j] = t;\n        i++;\n    }}\n}}\n").unwrap();
+
+    if crate::types::list_comparable_elem(elem) {
+        let (param, eq) = match elem {
+            Ty::String | Ty::Bytes => (
+                format!("const {elem_c}*"),
+                format!(
+                    "self->data[i].len == v->len && (v->len == 0 || memcmp(self->data[i].data, v->data, v->len) == 0)"
+                ),
+            ),
+            _ => (elem_c.to_string(), "self->data[i] == v".to_string()),
+        };
+        writeln!(out, "static bool {list}__contains(const {list}* self, {param} v) {{").unwrap();
+        writeln!(out, "    for (size_t i = 0; i < self->len; i++) {{\n        if ({eq}) {{\n            return true;\n        }}\n    }}\n    return false;\n}}\n").unwrap();
+    }
+
+    if crate::types::list_clonable_elem(elem) {
+        writeln!(out, "static {list} {list}__slice(const {list}* self, size_t from, size_t to) {{").unwrap();
+        out.push_str("    if (from > to || to > self->len) {\n        x_panic(\"List.slice: range out of bounds\");\n    }\n");
+        writeln!(out, "    {list} out = {list}__empty();").unwrap();
+        writeln!(out, "    {list}__reserve(&out, to - from);").unwrap();
+        writeln!(out, "    for (size_t i = from; i < to; i++) {{").unwrap();
+        match elem {
+            Ty::String => {
+                writeln!(out, "        out.data[out.len++] = x_String__clone(&self->data[i]);").unwrap();
+            }
+            Ty::Bytes => {
+                writeln!(out, "        out.data[out.len++] = x_Bytes__clone(&self->data[i]);").unwrap();
+            }
+            _ => {
+                writeln!(out, "        out.data[out.len++] = self->data[i];").unwrap();
+            }
+        }
+        out.push_str("    }\n    return out;\n}\n\n");
+    }
+
+    writeln!(out, "static void {list}__insert({list}* self, size_t i, {elem_c} v) {{").unwrap();
+    out.push_str("    if (i > self->len) {\n        x_panic(\"List.insert: index out of bounds\");\n    }\n");
+    writeln!(out, "    {list}__reserve(self, self->len + 1);").unwrap();
+    out.push_str("    for (size_t j = self->len; j > i; j--) {\n        self->data[j] = self->data[j - 1];\n    }\n    self->data[i] = v;\n    self->len++;\n}\n\n");
+
+    writeln!(out, "static {elem_c} {list}__remove({list}* self, size_t i) {{").unwrap();
+    out.push_str("    if (i >= self->len) {\n        x_panic(\"List.remove: index out of bounds\");\n    }\n");
+    writeln!(out, "    {elem_c} v = self->data[i];").unwrap();
+    out.push_str("    for (size_t j = i; j + 1 < self->len; j++) {\n        self->data[j] = self->data[j + 1];\n    }\n    self->len--;\n    return v;\n}\n\n");
 }
 
 /// Every container instantiation the program mentions, so `generate` knows

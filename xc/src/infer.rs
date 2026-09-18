@@ -820,8 +820,44 @@ fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
             ret: elem.clone(),
         },
         "List#clear" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
+        // S1's additions. Three of them are only meaningful for an element
+        // type that has an order / equality / a clone, so an unsupported
+        // element type falls through to the "no method" diagnostic rather
+        // than getting a signature codegen cannot emit (see
+        // `types::list_sortable_elem` and friends).
+        "List#sort" if crate::types::list_sortable_elem(elem) => {
+            FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit }
+        }
+        "List#reverse" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
+        "List#contains" if crate::types::list_comparable_elem(elem) => FnSig {
+            params: vec![p("self", shared), p("v", contains_param(elem))],
+            ret: Ty::Bool,
+        },
+        "List#slice" if crate::types::list_clonable_elem(elem) => FnSig {
+            params: vec![p("self", shared), p("from", Ty::Usize), p("to", Ty::Usize)],
+            ret: list.clone(),
+        },
+        "List#insert" => FnSig {
+            params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
+            ret: Ty::Unit,
+        },
+        "List#remove" => FnSig {
+            params: vec![p("self", exclusive), p("i", Ty::Usize)],
+            ret: elem.clone(),
+        },
         _ => return None,
     })
+}
+
+/// How `List.contains` takes its needle: a `Copy` element by value, an owned
+/// one by borrow. Taking a `String` by value would move it into a membership
+/// test, which is never what the caller meant.
+fn contains_param(elem: &Ty) -> Ty {
+    if elem.is_copy() {
+        elem.clone()
+    } else {
+        Ty::Ref { mutable: false, inner: Box::new(elem.clone()) }
+    }
 }
 
 /// The signature a builtin key resolves to, if it is one.
@@ -3172,8 +3208,30 @@ fn check_method_call(
         .or_else(|| builtin_sig(&key))
         .ok_or_else(|| TypeError {
             message: match (&container_elem, owner.as_str()) {
+                // Three List methods are defined only for an element type that
+                // can be ordered, compared, or copied, so the generic "no
+                // method" text would be misleading for exactly these three.
+                (Some(e), "List")
+                    if matches!(e, Ty::Struct(_))
+                        && matches!(method, "sort" | "contains" | "slice") =>
+                {
+                    format!(
+                        "List<{}>.{method} is not defined: a 'datac' element has no {}, so it cannot be {} — use a scalar, 'String' or 'Bytes' element",
+                        e.display(),
+                        match method {
+                            "sort" => "order",
+                            "contains" => "equality",
+                            _ => "copy",
+                        },
+                        match method {
+                            "sort" => "sorted",
+                            "contains" => "searched for",
+                            _ => "copied into a new list",
+                        }
+                    )
+                }
                 (Some(e), "List") => format!(
-                    "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear",
+                    "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear, sort, reverse, contains, slice, insert, remove",
                     e.display()
                 ),
                 (Some(e), _) => format!(

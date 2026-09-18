@@ -1028,6 +1028,8 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_list",
         "borrow_temp_arg",
         "list_datac_element",
+        "stdlib_sort",
+        "list_slice_insert",
         "box_basic",
         "box_recursive",
         "recursive_datac",
@@ -1124,6 +1126,32 @@ fn assert_fixture_panics(name: &str, needle: &str) {
         stderr.contains(needle),
         "expected the panic for '{name}' to mention '{needle}', got:\n{stderr}"
     );
+}
+
+#[test]
+fn a_list_sorts_reverses_searches_and_slices() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_sort.x",
+        "1\n2\n3\n3\n1\ntrue\nfalse\n2\n3\n3\nfalse\ntrue\n0\n",
+    );
+}
+
+#[test]
+fn sorting_and_slicing_a_list_of_owned_elements_moves_them_safely() {
+    // The element shifts are moves, so this fixture runs under
+    // AddressSanitizer: a double free or a leak here would be a real one.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_slice_insert.x",
+        "apple\nfig\npear\ntrue\nfalse\n2\nfig\n4\nfig\napple\nfig\n3\npear\n",
+    );
+}
+
+#[test]
+fn list_sort_and_slice_reject_what_they_cannot_do() {
+    // A `datac` element has no order, so `sort` names the reason rather than
+    // failing in codegen; a `slice` range past the end panics at runtime.
+    assert_rejected("tests/fixtures/list_unsortable_element.x");
+    assert_fixture_panics("list_slice_bounds", "List.slice: range out of bounds");
 }
 
 #[test]

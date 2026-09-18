@@ -197,6 +197,30 @@ pub fn owned_structs(structs: &[StructDef]) -> std::collections::HashSet<String>
     owned
 }
 
+/// Whether a `List<T>` element type has an order, so `List.sort` means
+/// something. Numbers and `bool` compare by value; `String`/`Bytes` compare
+/// byte-wise (length-aware, not `strcmp` — an embedded NUL is possible). A
+/// `datac` element has no defined order, and a borrow can never be an element
+/// at all.
+pub fn list_sortable_elem(ty: &Ty) -> bool {
+    ty.is_numeric() || matches!(ty, Ty::Bool | Ty::String | Ty::Bytes)
+}
+
+/// Whether a `List<T>` element type has equality, so `List.contains` means
+/// something. Same set as `list_sortable_elem`, for the same reason: a
+/// `datac` has no `==` in v1.
+pub fn list_comparable_elem(ty: &Ty) -> bool {
+    list_sortable_elem(ty)
+}
+
+/// Whether a `List<T>` element can be copied out of the list, which is what
+/// `List.slice` does: a scalar is copied, `String`/`Bytes` are cloned (their
+/// own buffer), and a `datac` cannot be (v1 has no deep copy, and a shallow
+/// one would be a second owner).
+pub fn list_clonable_elem(ty: &Ty) -> bool {
+    ty.is_copy() || matches!(ty, Ty::String | Ty::Bytes)
+}
+
 /// Whether a value of `ty` has to be freed — the builtin owned types, or a
 /// `datac` that (transitively) holds one.
 pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) -> bool {
