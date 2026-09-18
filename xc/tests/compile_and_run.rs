@@ -115,3 +115,23 @@ fn when_desugars_to_if_else_chain() {
 fn named_and_positional_args_match_correctly() {
     assert_compiles_and_runs("tests/fixtures/named_args.x", "7\n7\n7\n");
 }
+
+#[test]
+fn use_after_move_is_rejected() {
+    assert_rejected("tests/fixtures/use_after_move.x");
+}
+
+#[test]
+fn double_move_in_loop_is_rejected() {
+    assert_rejected("tests/fixtures/double_move_in_loop.x");
+}
+
+#[test]
+fn move_then_reinit_is_allowed() {
+    assert_compiles_and_runs("tests/fixtures/move_then_reinit.x", "3\n3\n7\n");
+}
+
+#[test]
+fn field_read_does_not_move_the_container() {
+    assert_compiles_and_runs("tests/fixtures/field_read_does_not_move.x", "3\n4\n7\n");
+}

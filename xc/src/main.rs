@@ -1,6 +1,5 @@
-#![allow(dead_code)] // spans and struct fields go unused until borrow-checking lands (M3+)
-
 mod ast;
+mod borrowck;
 mod codegen_c;
 mod driver;
 mod infer;
@@ -73,6 +72,11 @@ fn build(path: &str, out_path: &Path) -> bool {
             return false;
         }
     };
+
+    if let Err(e) = borrowck::check_program(&typed) {
+        report_error(path, &src, &e.message, e.span);
+        return false;
+    }
 
     let c_source = codegen_c::generate(&typed);
 

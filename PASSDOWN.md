@@ -2,26 +2,30 @@
 
 Status snapshot for picking this back up.
 
-## Current state: syntax rewrite is DONE and committed
+## Current state: syntax rewrite AND M3 (moves) are DONE and committed
 
 The pivot described in earlier versions of this doc is complete: `xc`
 now implements `syntax&shii.md`'s grammar end-to-end (lexer → parser →
-type-checker → C codegen), not the old `fn`/`let`/`struct`/`println`
-grammar. `cargo test` is green: 31 unit tests (lexer + parser) + 10
-end-to-end fixture tests (`xc/tests/compile_and_run.rs`, which compiles
-`.x` fixtures with the real `xc` binary and checks stdout / rejection),
-zero warnings.
+type-checker → borrow/move-checker → C codegen), not the old
+`fn`/`let`/`struct`/`println` grammar. `cargo test` is green: 31 unit
+tests (lexer + parser) + 14 end-to-end fixture tests
+(`xc/tests/compile_and_run.rs`, which compiles `.x` fixtures with the
+real `xc` binary and checks stdout / rejection), zero warnings.
 
 Commits, in order:
 - `0269405` `plan.md` (original milestone plan, old syntax — now stale
   on syntax, milestone *structure* still roughly the reference).
 - `08f192e`/`ca4af6a`/`4c9f914` — old-syntax M0/M1/M2 (superseded by the
   rewrite below, kept in history).
-- `7932cab` — threaded `Span` through `tir::Expr` (still valid, needed by
-  the still-unimplemented move checker, see below).
+- `7932cab` — threaded `Span` through `tir::Expr` (used by the M3 move
+  checker below).
 - `aa8221e` — earlier version of this passdown doc, written mid-rewrite.
-- `1b616c5` — **the syntax rewrite**, current HEAD. Full lexer/parser/
-  types/infer/codegen_c rewrite onto `syntax&shii.md`'s grammar.
+- `1b616c5` — **the syntax rewrite**, full lexer/parser/types/infer/
+  codegen_c rewrite onto `syntax&shii.md`'s grammar.
+- (current HEAD, uncommitted at time of writing) — **M3 move checker**,
+  `xc/src/borrowck.rs`, wired into `main.rs`'s `build()` between
+  `infer::check_program` and `codegen_c::generate`. See "M3" section
+  below, which now describes what's implemented rather than a plan.
 
 ### What the rewrite actually implements
 
@@ -122,31 +126,74 @@ discarded instead of returned" bug shows up elsewhere in codegen.
 - **`stdlib.md`** (repo root) — separate, much larger companion doc about
   stdlib namespaces/`Bytes`/capability wiring. Out of scope until asked.
 
-### M3 (ownership/moves) — still not implemented, plan below is unchanged and still valid
+### M3 (ownership/moves) — DONE
 
-No `borrowck.rs` exists. Plan (syntax-independent, still applies):
-Copy-vs-non-Copy rule (primitives are Copy, `datac` values are not);
-move-state tracked per-scope the same way `infer.rs` tracks variable
-scopes; a bare `Ident` read of a non-Copy value moves it; a `.field`
-read of a Copy-typed field does not move the containing value (only a
-bare whole-value `Ident` read does, under the current grammar, since
-there's still no way to take a reference in expression position). Spans
-are already threaded through `tir::Expr` (see `7932cab`) specifically so
-move-checker diagnostics can be Rust-style "value moved here" / "used
-here" pairs.
+`xc/src/borrowck.rs` implements it, run from `main.rs::build()` right
+after `infer::check_program` succeeds and before `codegen_c::generate`.
+Operates purely on `tir` (doesn't need the struct/fn tables — every
+`tir::Expr` already carries its resolved `Ty`, so Copy-ness is read
+straight off `expr.ty`).
 
-**Bonus for when M3 resumes**: `datac`'s per-field `val`/`var` model
-(built properly in this rewrite, not deferred) is exactly the kind of
-per-field bookkeeping partial-move reasoning will eventually want, so
-this rewrite wasn't a detour from M3 — it's groundwork for it.
+- **Copy rule**: everything except `Ty::Struct(_)` is Copy (this
+  includes `Ty::Str`, since there's no owned-string type yet — a `&str`
+  is just a borrowed pointer, see the syntax-rewrite section above).
+- **Move points**: a bare `Ident` read as a whole value (function call
+  arg, RHS of `=`/`let`, tail/return expression, operand of a binary
+  op, etc.) moves a non-Copy binding. A `.field` read walks the place
+  chain (`check_place`, mirrors `infer.rs`'s `root_ident`) without
+  moving anything — there's no way to move a single field out in v1's
+  grammar, so `p.x` never consumes `p`, only a bare `p` used as a value
+  does. Assigning *to* a variable (`p = ...`) reinitializes it (clears
+  moved state) rather than requiring it to be live first.
+- **State tracking**: per-scope `HashMap<String, VarState>`
+  (`is_copy`, `moved_at: Option<Span>`), stack mirrors `infer.rs`'s
+  scope stack exactly, pushed/popped in `check_block`.
+- **`if`/`else` merge**: each branch is checked from an independent
+  snapshot of the pre-branch state; after, a variable is moved if it
+  was moved down *either* branch (conservative — matches "can't know
+  statically which branch ran"). Verified manually: moving a `datac`
+  value in only the `then` branch correctly makes a post-`if` use an
+  error.
+- **`while` loops**: checked twice in sequence — second pass starts
+  from the state the first pass left behind, which catches a value
+  that would be double-moved on a second iteration (a real bug: moving
+  a non-Copy value inside a loop body is essentially always wrong
+  unless it's reinitialized every iteration). The loop's own state
+  after is then merged with the *pre-loop* snapshot, since the loop
+  might run zero times.
+- **Error type**: `BorrowError { message, span }`, same shape as
+  `infer::TypeError`, reported through the same `report_error` path in
+  `main.rs`. Only single-span diagnostics for now (no separate "moved
+  here" / "used here" pair yet, even though the doc comment motivating
+  `7932cab`'s span-threading mentioned that as the eventual goal) —
+  would need `BorrowError` to carry a second `Span` and `report_error`
+  to print two locations; left as a follow-up polish item, not blocking.
+- **Test coverage** (`xc/tests/fixtures/`): `use_after_move.x` (rejected),
+  `double_move_in_loop.x` (rejected — the two-pass loop check's reason
+  for existing), `move_then_reinit.x` (accepted — move, reassign, move
+  again, each is a fresh binding), `field_read_does_not_move.x`
+  (accepted — reading fields doesn't consume the whole value). All
+  pre-existing fixtures (notably `datac_basic.x`, which passes a
+  `datac` by value to `dist_sq`) still pass unchanged — none of them
+  happened to reuse a value after moving it, confirming the move
+  checker doesn't newly break any real program written so far.
+
+**What `datac`'s per-field `val`/`var` model set up for this**: not
+actually used yet — this pass only tracks whole-value moves per
+variable, not partial/per-field moves. Real partial-move tracking (move
+`p.x` out while leaving `p.y` usable) is still open, and would be the
+natural next use of that per-field bookkeeping.
 
 ## Recommended next steps
 
-1. M3 (moves) on the new syntax, using the plan above.
-2. M4 (borrowing) — needs real `&`/`&mut`/deref support in expression
+1. M4 (borrowing) — needs real `&`/`&mut`/deref support in expression
    position, which the parser doesn't have yet (only in type-annotation
-   position, and only as a no-op `&` prefix accepted for `&str`).
-3. Only then reconsider the deferred syntax features above, prioritized
+   position, and only as a no-op `&` prefix accepted for `&str`). This
+   is also prerequisite for receiver-form methods with `mut` receivers.
+2. Optional polish on M3 before moving on: two-span "moved here" / "used
+   here" diagnostics (needs a second `Span` on `BorrowError` and a
+   two-location `report_error`); partial/per-field move tracking.
+3. Then reconsider the deferred syntax features (see above), prioritized
    by what's actually needed to keep writing example programs (probably
    `impl` multi-file next, since a real program wants more than one
    file — then receivers, since methods are used pervasively in
