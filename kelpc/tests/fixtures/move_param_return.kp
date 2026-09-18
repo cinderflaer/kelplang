@@ -1,0 +1,40 @@
+// A-4: a moved parameter is an owned local, so the frame's drops have to cover
+// it on every path out — the tail, an early `return`, and a `return` inside a
+// loop. Each of the three functions below hands the value in and leaves it
+// behind; this fixture is in the AddressSanitizer list, so a missed drop is a
+// leak and a double drop is a double free.
+impl "std/option"
+
+// Returns a value derived from the owned argument, so the argument itself is
+// still owned at the `return` and has to be freed there.
+fun taken(s: move String, take: bool).R: option.Option<usize> {
+    if !take {
+        return option.Option.None
+    }
+    return option.Option.Some(value = s.len())
+}
+
+// A `return` from inside a loop is the same drop point.
+fun length_if_any(s: move String, n: i32).R: usize {
+    var i = 0
+    while i < n {
+        return s.len()
+    }
+    return 0
+}
+
+// Falling off the end of the body is the third drop point.
+fun measure(s: move String).R: usize {
+    val n = s.len()
+    if n > 3 {
+        print("long")
+    }
+    return n
+}
+
+fun main() {
+    print(option.expect(o = taken(String.from_str("abcd"), take = true), message = "x"))
+    print(option.is_none(o = taken(String.from_str("abcd"), take = false)))
+    print(length_if_any(String.from_str("abc"), n = 1))
+    print(measure(String.from_str("hello")))
+}

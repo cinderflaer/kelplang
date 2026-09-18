@@ -1,0 +1,7 @@
+// A-4: `mut T` says "I write through your value", `move T` says "I own it";
+// one parameter cannot say both.
+fun consume(s: mut move String).R: usize = s.len()
+
+fun main() {
+    print(1)
+}

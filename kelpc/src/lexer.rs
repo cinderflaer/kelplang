@@ -47,6 +47,9 @@ pub enum TokenKind {
     Val,
     Var,
     Mut,
+    /// `fun consume(s: move String)` — a parameter that takes ownership of
+    /// its argument (A-4), the counterpart of `mut T`'s exclusive borrow.
+    Move,
     If,
     Else,
     While,
@@ -446,6 +449,7 @@ impl<'a> Lexer<'a> {
                         "val" => TokenKind::Val,
                         "var" => TokenKind::Var,
                         "mut" => TokenKind::Mut,
+                        "move" => TokenKind::Move,
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
                         "while" => TokenKind::While,
