@@ -1,6 +1,6 @@
-# The "X" language basic structure
+# The "Kelp" language basic structure
 
-Part 1 of 4 of the X language plan. The other files:
+Part 1 of 4 of the Kelp language plan. The other files:
 
 - `syntax.md` the syntax and style authority.
 - `done.md` the milestone record of what has shipped, milestone by milestone.
@@ -10,7 +10,7 @@ Part 1 of 4 of the X language plan. The other files:
 
 ## Context
 
-The user wants a new statically-typed, systems-level programming language (files end in `.x`), aiming for Rust/C/C++-class runtime performance, with Kotlin-flavored braces syntax and a Rust-style ownership + borrowing memory model (no GC, no ARC). This is a from-scratch project built purely as a personal/for-fun engineering project no external users or deadlines, but the user wants a real foundation, not a toy that cuts corners on the core mechanics (ownership/borrowing) they specifically asked for.
+The user wants a new statically-typed, systems-level programming language (files end in `.kp`), aiming for Rust/C/C++-class runtime performance, with Kotlin-flavored braces syntax and a Rust-style ownership + borrowing memory model (no GC, no ARC). This is a from-scratch project built purely as a personal/for-fun engineering project no external users or deadlines, but the user wants a real foundation, not a toy that cuts corners on the core mechanics (ownership/borrowing) they specifically asked for.
 
 Decisions locked in via discussion:
 - **Memory model**: full ownership + borrowing (moves, borrows, borrow checker) attempted from the start, not deferred to "moves only."
@@ -19,22 +19,22 @@ Decisions locked in via discussion:
 - **Syntax**: brace-delimited, Kotlin-shaped surface (`fun`, `val`/`var`, `datac`, `.R: T`, no semicolons, receivers instead of `self`/`impl` blocks) over a Rust-shaped memory model. Full spec in the "Syntax & style" section below.
 - **Implementation language**: Rust (good fit for tree-walking, pattern matching over ASTs, and enums for typed IR).
 
-Because a full borrow checker is the hardest single component here, the plan is phased so that each milestone produces a compiler that actually builds and runs `.x` programs, with borrowing arriving once the simpler layers (lexer → parser → types → C codegen) are solid and tested. This avoids the failure mode of building a borrow checker against a language/compiler that doesn't exist yet.
+Because a full borrow checker is the hardest single component here, the plan is phased so that each milestone produces a compiler that actually builds and runs `.kp` programs, with borrowing arriving once the simpler layers (lexer → parser → types → C codegen) are solid and tested. This avoids the failure mode of building a borrow checker against a language/compiler that doesn't exist yet.
 
 **Distinguishing feature resolved: capability-based security as a language feature, not an OS layer.** Instead of every import getting implicit access to the filesystem, network, process spawning, and environment, each `impl` is granted an explicit, delegated subset of capabilities, and code without a grant has no *name* to reach that resource with not a runtime-guarded call that happens to reject it, but a symbol that plain doesn't resolve. See "Capability-based security" below. (Other candidates considered and shelved: Zig-style comptime instead of generics/traits/macros; arena/region allocation as an ownership alternative; Go-style structural interfaces worth revisiting as *additional* features later, but capabilities is the headline one.)
 
 ## Compiler crate layout
 
-What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `preprocess.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, `externs.rs`, `stdlib.rs`, `tests/`, and `std/` all exist now. The `Bytes`/`String` runtime (allocation, bounds checks, `free`) lives in `codegen_c.rs` as a fixed C preamble; the three stdlib primitives that cannot be written in X live in `externs.rs`.
+What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `preprocess.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, `externs.rs`, `stdlib.rs`, `tests/`, and `std/` all exist now. The `Bytes`/`String` runtime (allocation, bounds checks, `free`) lives in `codegen_c.rs` as a fixed C preamble; the three stdlib primitives that cannot be written in Kelp live in `externs.rs`.
 
 Cargo workspace at repo root:
 
 ```
 x/
   Cargo.toml                # workspace
-  xc/                        # the compiler binary crate
+  kelpc/                        # the compiler binary crate
     src/
-      main.rs                # CLI: `xc build <file.x | project-dir>`, `xc run <same>`, later `xc fmt`
+      main.rs                # CLI: `kelpc build <file.kp | project-dir>`, `kelpc run <same>`, later `kelpc fmt`
       lexer.rs                # source -> tokens (span-carrying, newline-sensitive, utf-8 aware in literals)
       ast.rs                  # parsed syntax tree types
       parser.rs               # tokens -> AST (recursive descent + Pratt for expressions)
@@ -50,60 +50,60 @@ x/
       preprocess.rs            # `%*alias*%` expansion, runs before the parser (MK2-S1-M3, done)
       externs.rs              # compiler-supplied C bodies for `extern fun` (MK3-S1-M2, done)
       stdlib.rs               # compiler-shipped stdlib sources + capability domains (MK3-S1-M2/MK4-S1-M1, done)
-    std/                       # stdlib, written in X (MK3-S1-M2–MK5-S3)
-      mem.x  str.x  path.x  math.x  fmt.x  io.x    # ungated: arithmetic, text, streams
-      fs.x  time.x  rand.x  env.x  net.x  process.x # gated: one capability domain each
+    std/                       # stdlib, written in Kelp (MK3-S1-M2–MK5-S3)
+      mem.kp  str.kp  path.kp  math.kp  fmt.kp  io.kp    # ungated: arithmetic, text, streams
+      fs.kp  time.kp  rand.kp  env.kp  net.kp  process.kp # gated: one capability domain each
                                                    # (`env`'s bodies are still stubs)
     tests/
-      compile_and_run.rs       # end-to-end: compile .x fixtures, run binary, assert stdout
+      compile_and_run.rs       # end-to-end: compile .kp fixtures, run binary, assert stdout
       stdlib/                  # per-module stdlib fixtures (MK3+; they live in fixtures/ today)
-      fixtures/*.x             # 111 today one loose file per single-file test
-      projects/*/              # 39 multi-file projects today (MK2-S1-M1–MK5-S4: x.toml or manifest-less)
+      fixtures/*.kp             # 111 today one loose file per single-file test
+      projects/*/              # 39 multi-file projects today (MK2-S1-M1–MK5-S4: coral.toml or manifest-less)
   examples/
-    hello.x
-    fib.x
-    download.x               # fetch a URL and write it to a file (MK5-S4) the
+    hello.kp
+    fib.kp
+    download.kp               # fetch a URL and write it to a file (MK5-S4) the
                              # first example that needs a capability, and the
                              # only one the suite runs against a live server
 ```
 
-Fixtures live in `xc/tests/fixtures/*.x` (111 today), in three groups, because the harness does three different things with them. **Compiled and run, with an exact expected stdout** (66): `aliases`, `borrow_basic`, `borrow_temp_arg`, `box_basic`, `box_field_take`, `box_recursive`, `bytes_build`, `caps_time_rand`, `consts`, `datac_basic`, `datac_embeds_datac`, `field_read_does_not_move`, `heap_branches`, `heap_bytes`, `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`, `heap_reassign`, `heap_returned`, `heap_scope_drop`, `heap_temporary_print`, `if_expr`, `int_conversions`, `io_stdio`, `io_streams`, `list_basic`, `list_datac_element`, `list_field`, `list_owned`, `list_slice_insert`, `move_then_reinit`, `named_args`, `net_loopback`, `net_poll`, `net_resolve`, `passdown_datac`, `passdowns`, `path_normalize`, `path_parts`, `pd_owned`, `pd_shadowed`, `pd_var_copy_read_twice`, `pd_var_double_borrow`, `pd_var_write`, `process_spawn`, `receiver_methods`, `recursive_datac`, `stdlib_build`, `stdlib_fmt`, `stdlib_list`, `stdlib_math`, `stdlib_mem`, `stdlib_parse`, `stdlib_path`, `stdlib_sort`, `stdlib_str`, `string_basic`, `string_build`, `string_field`, `string_views`, `templates`, `view_released_at_scope_end`, `when_expr`, `while_accumulator`. **Compiled and run, then expected to panic with a specific message** (7): `assert_fail`, `box_empty_panic`, `int_conversion_overflow`, `list_pop_empty`, `list_slice_bounds`, `net_timeout`, `panic_msg`. **Rejected by the compiler** (39): `alias_cycle`, `alias_unknown`, `assign_to_immutable`, `borrow_conflict`, `borrow_temp_returned`, `box_borrow_element`, `compare_owned`, `const_not_constant`, `datac_forward_reference`, `datac_self_value`, `datac_str_field`, `double_move_in_loop`, `elision_not_from_param`, `elision_wrong_param`, `escapes`, `extern_no_body`, `extern_receiver`, `grow_while_borrowed`, `heap_use_after_move`, `list_borrow_element`, `list_container_element`, `list_moved_element`, `list_no_element_type`, `list_unsortable_element`, `move_while_borrowed`, `owned_field_read`, `owned_statement`, `pd_forward_read`, `pd_val_write`, `push_to_val_string`, `receiver_mut_on_val`, `same_call_aliasing`, `str_comparison`, `template_not_printed`, `type_mismatch`, `unknown_escape`, `use_after_move`, `val_field_immutable`, `view_pins_owner`, `write_through_shared_borrow`. `xc/tests/compile_and_run.rs` compiles every one with the real `xc` binary and checks stdout, the expected rejection, or the expected panic text no fixture asserts on generated C, and only the owning ones are rebuilt under AddressSanitizer (the list is in the Verification section).
+Fixtures live in `kelpc/tests/fixtures/*.kp` (111 today), in three groups, because the harness does three different things with them. **Compiled and run, with an exact expected stdout** (66): `aliases`, `borrow_basic`, `borrow_temp_arg`, `box_basic`, `box_field_take`, `box_recursive`, `bytes_build`, `caps_time_rand`, `consts`, `datac_basic`, `datac_embeds_datac`, `field_read_does_not_move`, `heap_branches`, `heap_bytes`, `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`, `heap_reassign`, `heap_returned`, `heap_scope_drop`, `heap_temporary_print`, `if_expr`, `int_conversions`, `io_stdio`, `io_streams`, `list_basic`, `list_datac_element`, `list_field`, `list_owned`, `list_slice_insert`, `move_then_reinit`, `named_args`, `net_loopback`, `net_poll`, `net_resolve`, `passdown_datac`, `passdowns`, `path_normalize`, `path_parts`, `pd_owned`, `pd_shadowed`, `pd_var_copy_read_twice`, `pd_var_double_borrow`, `pd_var_write`, `process_spawn`, `receiver_methods`, `recursive_datac`, `stdlib_build`, `stdlib_fmt`, `stdlib_list`, `stdlib_math`, `stdlib_mem`, `stdlib_parse`, `stdlib_path`, `stdlib_sort`, `stdlib_str`, `string_basic`, `string_build`, `string_field`, `string_views`, `templates`, `view_released_at_scope_end`, `when_expr`, `while_accumulator`. **Compiled and run, then expected to panic with a specific message** (7): `assert_fail`, `box_empty_panic`, `int_conversion_overflow`, `list_pop_empty`, `list_slice_bounds`, `net_timeout`, `panic_msg`. **Rejected by the compiler** (39): `alias_cycle`, `alias_unknown`, `assign_to_immutable`, `borrow_conflict`, `borrow_temp_returned`, `box_borrow_element`, `compare_owned`, `const_not_constant`, `datac_forward_reference`, `datac_self_value`, `datac_str_field`, `double_move_in_loop`, `elision_not_from_param`, `elision_wrong_param`, `escapes`, `extern_no_body`, `extern_receiver`, `grow_while_borrowed`, `heap_use_after_move`, `list_borrow_element`, `list_container_element`, `list_moved_element`, `list_no_element_type`, `list_unsortable_element`, `move_while_borrowed`, `owned_field_read`, `owned_statement`, `pd_forward_read`, `pd_val_write`, `push_to_val_string`, `receiver_mut_on_val`, `same_call_aliasing`, `str_comparison`, `template_not_printed`, `type_mismatch`, `unknown_escape`, `use_after_move`, `val_field_immutable`, `view_pins_owner`, `write_through_shared_borrow`. `kelpc/tests/compile_and_run.rs` compiles every one with the real `kelpc` binary and checks stdout, the expected rejection, or the expected panic text no fixture asserts on generated C, and only the owning ones are rebuilt under AddressSanitizer (the list is in the Verification section).
 
-Multi-file work lives in `xc/tests/projects/<name>/` instead, because a module graph needs a directory (39 today). **Working projects**: `shapes` (manifest + nested imports + methods), `alias` (`impl "." as u`, qualified type in a signature), `same_name` (two modules both declaring `Item` + `describe`), `loose` (manifest-less sibling import), `self_call` (a module calling and constructing its own items bare), `alias_xconf` (an `alias.xconf` substitution used as an `impl` path), `alias_cross_file` (an inline `alias` from an imported module used in the importer), `alias_xconf_cycle` (a cycle spanning `alias.xconf` and `main.x`, the two-file diagnostic case), the MK4-S1-M1 grants `caps_granted`, `caps_write`, `caps_denied` (a path outside the grant), `caps_symlink` (a link inside the grant pointing outside it), `caps_env` (the gated stub) MK5-S2-M1's `process_run`, `process_argv_only` (an empty grant: the module's own-process functions resolve, nothing executable does), MK5-S3's `caps_net` (a delegated `127.0.0.1:*` grant, loopback round trip), `caps_net_denied` (the same machine under another name), `caps_net_resolve_denied`, MK3-S2-M1's `caps_list` (a granted directory listed and cleared recursively through `fs.list`), and MK5-S4's four HTTP projects `http_get` (five requests on one pooled connection), `http_redirect` (a relative redirect followed on the pooled connection, then a POST on a fresh one), `http_pool_off` (`http_pool = 0`, two requests, two connections) and `http_redirect_denied` (a redirect to a host the grant does not name). **Rejected projects**, one per rule: `cycle`, `unknown_module`, `duplicate_alias`, `dotdot`, `bad_path`, `unknown_member`, `unqualified_import`, `stdlib_import` (now `std/tls`, "module 'tls' is not implemented yet" `std/http` shipped in MK5-S4 and moved off this test), `pd_module_scope`, `caps_ungranted`, `caps_escalation`, `caps_bad_pattern`, `caps_bad_path_pattern`, `caps_bad_domain`, `caps_bad_net_pattern`, `process_denied`.
+Multi-file work lives in `kelpc/tests/projects/<name>/` instead, because a module graph needs a directory (39 today). **Working projects**: `shapes` (manifest + nested imports + methods), `alias` (`impl "." as u`, qualified type in a signature), `same_name` (two modules both declaring `Item` + `describe`), `loose` (manifest-less sibling import), `self_call` (a module calling and constructing its own items bare), `alias_kpconf` (an `alias.kpconf` substitution used as an `impl` path), `alias_cross_file` (an inline `alias` from an imported module used in the importer), `alias_kpconf_cycle` (a cycle spanning `alias.kpconf` and `main.kp`, the two-file diagnostic case), the MK4-S1-M1 grants `caps_granted`, `caps_write`, `caps_denied` (a path outside the grant), `caps_symlink` (a link inside the grant pointing outside it), `caps_env` (the gated stub) MK5-S2-M1's `process_run`, `process_argv_only` (an empty grant: the module's own-process functions resolve, nothing executable does), MK5-S3's `caps_net` (a delegated `127.0.0.1:*` grant, loopback round trip), `caps_net_denied` (the same machine under another name), `caps_net_resolve_denied`, MK3-S2-M1's `caps_list` (a granted directory listed and cleared recursively through `fs.list`), and MK5-S4's four HTTP projects `http_get` (five requests on one pooled connection), `http_redirect` (a relative redirect followed on the pooled connection, then a POST on a fresh one), `http_pool_off` (`http_pool = 0`, two requests, two connections) and `http_redirect_denied` (a redirect to a host the grant does not name). **Rejected projects**, one per rule: `cycle`, `unknown_module`, `duplicate_alias`, `dotdot`, `bad_path`, `unknown_member`, `unqualified_import`, `stdlib_import` (now `std/tls`, "module 'tls' is not implemented yet" `std/http` shipped in MK5-S4 and moved off this test), `pd_module_scope`, `caps_ungranted`, `caps_escalation`, `caps_bad_pattern`, `caps_bad_path_pattern`, `caps_bad_domain`, `caps_bad_net_pattern`, `process_denied`.
 
 Single crate is fine at this scale (a compiler is inherently one pipeline); no need to over-modularize into multiple crates.
 
-## Imports & project structure for `.x` projects
+## Imports & project structure for `.kp` projects
 
 Explicit reaction against Java/Kotlin's convention (package must mirror deeply-nested directory path, plus a Gradle/Maven build-tool layer with its own DSL files, wrapper scripts, and cache dirs). Instead:
 
-- **One manifest file**, `x.toml`, at the project root name, version, entry point. No separate build-tool layer; `xc` itself is the build tool. **As shipped (MK2-S1-M1): the manifest is optional.** `xc build <dir>` needs one; `xc build <file.x>` walks up looking for one and, finding none, treats that file's own directory as the module root. Everything in `xc/tests/fixtures/` and `examples/` relies on the manifest-less path a single loose file is still a complete program.
+- **One manifest file**, `coral.toml`, at the project root name, version, entry point. No separate build-tool layer; `kelpc` itself is the build tool. **As shipped (MK2-S1-M1): the manifest is optional.** `kelpc build <dir>` needs one; `kelpc build <file.kp>` walks up looking for one and, finding none, treats that file's own directory as the module root. Everything in `kelpc/tests/fixtures/` and `examples/` relies on the manifest-less path a single loose file is still a complete program.
 - **`src/` holds everything**, flat by default, with subfolders only when the user actually wants to group files a file's path is never required to match any declared namespace.
-- **Imports are path-based**, not namespace-based: `impl "shapes/circle"` pulls in `src/shapes/circle.x` by its file path relative to `src/`, and you refer to its items as `circle.Circle` (last path segment becomes the default alias). No `mod` declarations needed to "announce" a file into a tree the file existing under `src/` is enough.
+- **Imports are path-based**, not namespace-based: `impl "shapes/circle"` pulls in `src/shapes/circle.kp` by its file path relative to `src/`, and you refer to its items as `circle.Circle` (last path segment becomes the default alias). No `mod` declarations needed to "announce" a file into a tree the file existing under `src/` is enough.
 - **File names are therefore part of the API**: the last path segment becomes the alias, so file names must be valid identifiers `snake_case`, no dashes, no dots.
 - **v1 is local-files-only**: `impl` can only reach files inside the current project's `src/`. No external/third-party dependency support yet (no registry, no git-url deps, no lockfile). The stdlib is the one exception: `impl "std/fs"` reaches compiler-shipped modules, not project files. **As shipped (MK2-S1-M1): `std/...` is reserved but unimplemented** it is rejected with an explicit MK3/MK4-S1-M1 message rather than reported as a missing file, so the reservation is visible in the error.
 
 Example:
 ```
 myproject/
-  x.toml
+  coral.toml
   src/
-    main.x          # impl "shapes/circle"  ...  fun main() { ... }
+    main.kp          # impl "shapes/circle"  ...  fun main() { ... }
     shapes/
-      circle.x
-      square.x
+      circle.kp
+      square.kp
 ```
 
 `resolve.rs` handles turning an `impl "shapes/circle"` path into a loaded/parsed file plus a name binding for its exported items; this is pure file-path resolution, no separate package-registry concept to build.
 
 **How MK2-S1-M1 implements the namespace (as shipped).** Strict module-qualified, not a flat merge: after loading, every module's top-level names are prefixed with the module's dotted path (`Circle` in `shapes/circle` → `shapes.circle.Circle`), and the *entry* module is left unprefixed so a file's own items stay bare inside that file, and imported items are reachable only as `alias.Item`. Two modules may therefore both declare `Item` and `describe` with no collision (fixture: `same_name`). A module alias is shadowed by a local of the same name, exactly like any other name lookup. Referencing an imported item unqualified is a compile error that names the qualified form (`did you mean 'prov.Thing'?`). See the MK2-S1-M1 milestone entry for the rest, including the one thing this rules out in v1: extension methods on an imported type (`fun circle.Circle.helper()`) are not expressible.
 
-**General alias/expansion system (`alias.xconf` + inline `alias` declarations)**: a flat, global, purely-textual substitution mechanism, deliberately simple (no parameters, no hygiene, no scoping).
+**General alias/expansion system (`alias.kpconf` + inline `alias` declarations)**: a flat, global, purely-textual substitution mechanism, deliberately simple (no parameters, no hygiene, no scoping).
 
-- **Reference syntax**: `%*name*%` used anywhere in `.x` source (including inside an `impl "..."` path string). The sigil exists specifically so it can never be confused with a real identifier/variable the lexer/preprocessor recognizes it unambiguously and substitutes before real parsing happens.
-- **Definition site 1 `alias.xconf`** (project-root config file, zsh-alias-flavored): `name="replacement text"` per line. e.g. `shared="../../shared/utils"` or `chttps="http_client.new(timeout = 30, tls = true, retries = 3)"`.
-- **Definition site 2 inline in `.x` source**: a dedicated `alias` declaration keyword, distinct from `val`, so the parser stores the RHS as a raw token stream (macro text) instead of type-checking/evaluating it as an expression: `alias %*chttps*% = http_client.new(timeout = 30, retries = 3)`. Needing a separate keyword (rather than reusing `val`) is exactly the "extra stuff" needed so it isn't mistaken for a normal variable.
-- **Mechanics**: a preprocessing pass (`preprocess.rs`) runs on the token stream *before* the real parser: (1) collect all alias definitions across `alias.xconf` and every source file's `alias` declarations into one flat table; (2) expand every `%*name*%` occurrence with its registered text; (3) hand the fully-expanded token stream to the existing parser (the lexer already ran, once, on the raw source as shipped there is no second lexing step). Cyclic aliases (an alias whose expansion transitively references itself) are rejected the same way import cycles are, and eagerly: an unused cycle still fails.
+- **Reference syntax**: `%*name*%` used anywhere in `.kp` source (including inside an `impl "..."` path string). The sigil exists specifically so it can never be confused with a real identifier/variable the lexer/preprocessor recognizes it unambiguously and substitutes before real parsing happens.
+- **Definition site 1 `alias.kpconf`** (project-root config file, zsh-alias-flavored): `name="replacement text"` per line. e.g. `shared="../../shared/utils"` or `chttps="http_client.new(timeout = 30, tls = true, retries = 3)"`.
+- **Definition site 2 inline in `.kp` source**: a dedicated `alias` declaration keyword, distinct from `val`, so the parser stores the RHS as a raw token stream (macro text) instead of type-checking/evaluating it as an expression: `alias %*chttps*% = http_client.new(timeout = 30, retries = 3)`. Needing a separate keyword (rather than reusing `val`) is exactly the "extra stuff" needed so it isn't mistaken for a normal variable.
+- **Mechanics**: a preprocessing pass (`preprocess.rs`) runs on the token stream *before* the real parser: (1) collect all alias definitions across `alias.kpconf` and every source file's `alias` declarations into one flat table; (2) expand every `%*name*%` occurrence with its registered text; (3) hand the fully-expanded token stream to the existing parser (the lexer already ran, once, on the raw source as shipped there is no second lexing step). Cyclic aliases (an alias whose expansion transitively references itself) are rejected the same way import cycles are, and eagerly: an unused cycle still fails.
 - **Known tradeoff, stated explicitly**: because this is pure text substitution, a bad alias can produce nonsense that only surfaces as a type error at the (already-expanded) use site accepted as the cost of keeping this "pretty simple" rather than a hygienic macro system. **As shipped (MK2-S1-M3)**, errors point back to both ends: the alias's definition span and its use span, the latter as a `Diagnostic` note that may live in a different file.
 - Import-path aliasing is just this same mechanism applied to `impl "..."` strings no separate implementation needed once general expansion exists.
 
@@ -137,7 +137,7 @@ Each domain has a corresponding bare built-in namespace (`fs`, `net`, `process`,
 
 **A library module does not re-grant, and the check uses the patterns it *received*** (verified while planning MK5-S4, and the mechanism the HTTP client relies on): a module with a plain `impl "std/net"` and no clause of its own is governed entirely by whatever its importer wrote on the `impl` line that reached it, and the runtime check uses *those* patterns. So `std/http` carries no policy of its own, and the no-escalation rule only constrains clauses a module actually writes. One consequence for tests: a denial prints the *resolved* path (`/etc/hosts` → `/nix/store/...`), so a fixture must assert on the module name or the granted pattern, never on the path as written.
 
-**Delegation/no-escalation rule**: a module's capability set is *received* from whoever imports it, never self-declared. When module A does `impl "B" with caps(net = [...])`, the resolver requires that grant to be a subset of A's own capability set a module can delegate less than it has, never more. The root/entry module (`main`) implicitly holds the full set granted by `x.toml` (or by default, everything, until a later milestone adds a way to restrict `main` itself).
+**Delegation/no-escalation rule**: a module's capability set is *received* from whoever imports it, never self-declared. When module A does `impl "B" with caps(net = [...])`, the resolver requires that grant to be a subset of A's own capability set a module can delegate less than it has, never more. The root/entry module (`main`) implicitly holds the full set granted by `coral.toml` (or by default, everything, until a later milestone adds a way to restrict `main` itself).
 
 **Scope note**: every domain now has a real implementation except `env`, whose domain, grant and variable-name check are real and whose bodies are the remaining stub. `fs`, `process` and `net` match paths, program paths and hosts respectively; `time` and `rand` have no named resource to match at all, so the check is the domain gate alone.
 
@@ -174,7 +174,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 
 Everything listed above as v1 scope now exists except what is named under "Not shipped, and known" in "Current state": the `env` bodies, `fs.mkdir_all`, and the length-carrying view that a few `str`/`path` functions are waiting for. See "Current state".
 
-Deferred beyond v1 (explicitly out of scope for now, revisit later): **user-declarable** generics (`Box<T>`/`List<T>` are compiler builtins, so `datac Pair<A, B>` is not expressible), traits/interfaces, enums/pattern matching, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Heap collections are the one item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and a `for` loop to iterate a sequence is still open see open items 27 and 46. This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `xc` and a *deep-systems* X would each still need, is `roadmap.md`'s **Far future additions** section.
+Deferred beyond v1 (explicitly out of scope for now, revisit later): **user-declarable** generics (`Box<T>`/`List<T>` are compiler builtins, so `datac Pair<A, B>` is not expressible), traits/interfaces, enums/pattern matching, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Heap collections are the one item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and a `for` loop to iterate a sequence is still open see open items 27 and 46. This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is `roadmap.md`'s **Far future additions** section.
 
 ## Standard library
 
@@ -184,7 +184,7 @@ Merged from the former `stdlib.md` (now a pointer stub outside the project). Wha
 
 1. **`Bytes` before `fs`.** The builtin owned byte buffer lands *before* the fs milestone, not after. Rationale: `fs` with no content transfer (`exists`/`size`/`mkdir`/`remove` only) is a fake feature that would have to be rewritten, and the heap milestone is needed regardless to make ownership/moves have runtime consequence. Doing the heap once, before `fs`, means `fs` is implemented once. Cost is contained by scope: one builtin type with one fixed drop rule, no user-defined destructors, no generics, no growable-buffer machinery.
 2. **Failure model: panic + error `datac`.** Panic for programmer errors and unrecoverable IO; a small error `datac` for recoverable cases people actually branch on. No `-1` sentinels, no out-param `try_` family. Both are replaced by `Option`/`Result` when generics arrive.
-3. **Stdlib implemented as `.x` sources shipped with the compiler**, with an `extern` declaration form whose body the compiler supplies. The raw syscall exists only inside the gated module (`std/fs.x`), and the compiler inserts the allowlist check at that boundary which keeps the capability story structurally honest rather than a wrapper convention.
+3. **Stdlib implemented as `.kp` sources shipped with the compiler**, with an `extern` declaration form whose body the compiler supplies. The raw syscall exists only inside the gated module (`std/fs.kp`), and the compiler inserts the allowlist check at that boundary which keeps the capability story structurally honest rather than a wrapper convention.
 4. **Stdlib-only argument-type overloading.** `math.abs`/`min`/`max`/`clamp` resolve on argument type. The rule lives in `infer.rs` and is available only to compiler-shipped modules, so user code gains no new complexity and no user-defined overloading is implied.
 5. **Buffers are fixed-size in v1** *superseded in part.* This decision said no reallocation and no length/capacity distinction; MK3-S2-M1 broke it for `List<T>`, and MK5-S1-M1 broke it for `String`/`Bytes`, which now carry a `cap` and grow in place (`push`/`push_str`/`append`/`reserve`/`with_capacity`). What is left of the original intent: `mem.alloc(n)` returns a fixed-size buffer, and a *borrow* of a buffer that then grows is a compile error, so growth is always visible in the types (`&mut`). The old text is kept below because it shaped everything built before MK5-S1 "a `List` is how you build *N* items" was true for four milestones. ~~In-place buffer growth (`String.push`, `String.concat`, `Bytes.append`) is still deferred; a `List` is how you build *N* items for now.~~
 
@@ -340,7 +340,7 @@ Blocks that stayed blocked on these two types, and no longer are: returning *N* 
 | 5 (MK5-S1) | growable `String`/`Bytes` + `str.concat`/`from_i64`/`from_f64`/`parse_*` + `replace`/`char_at`; `std/fmt`; `List` sort/reverse/slice/insert/remove/contains; `panic`/`assert` | **MK5-S1 done** (parts 1, 2a, 2b, 3) `index_of` deferred to MK5-S6-M1, open item 42 |
 | 6 (MK5-S2-M1) | `io` (`File`, `Line`, `BufReader`, streams, `read_line`/`read_all`/`read_lines`); `process` (`run`/`spawn`/`args`/`exit`/`getpid`) | **MK5-S2-M1 done** plus the `main(argc, argv)` codegen change argv needed, open item 50 |
 | 7 (MK5-S3) | `net` for real (sockets, listener, DNS, `poll` readiness, timeouts) + the capability vocabulary fix | **MK5-S3 done** `127.0.0.1:*` is now a grant a program can write |
-| 8 (MK5-S4) | `http`: keep-alive, response framing (Content-Length, chunked, read-to-EOF), the connection `Pool`/`Lease`, redirects, timeouts, header lookup; `https` is MK5-S4b-M1 | **MK5-S4 done** plus three compiler changes: `x.toml`'s numeric `http_pool` key spliced into the shipped source, `\r` as a string escape, and CR escaping in the C string-literal emitter |
+| 8 (MK5-S4) | `http`: keep-alive, response framing (Content-Length, chunked, read-to-EOF), the connection `Pool`/`Lease`, redirects, timeouts, header lookup; `https` is MK5-S4b-M1 | **MK5-S4 done** plus three compiler changes: `coral.toml`'s numeric `http_pool` key spliced into the shipped source, `\r` as a string escape, and CR escaping in the C string-literal emitter |
 | 9 (MK5-S5) | `Map<V>`; `fs` breadth (`mkdir_all`/`remove_all`/`walk`/`copy`/`open`/`metadata`/`temp_path`/`read_lines`); `path` polish; real `env` bodies | **MK5-S5 done** (parts 1, 2, 3) plus two capability-matcher gaps: `open`'s mode string was matched as a path, and a trailing `/**` did not admit the granted directory itself |
 | 10 (MK5-S6-M1+) | `Option`/`Result` (language-gated), generic containers, TLS, a length-carrying view, `for`, threads | blocked on language work |
 | 11 (MK6-S1-M1) | **Process threads** a language milestone: function references, a move-taking parameter, a per-thread panic and cleanup story, atomics/`Mutex`, a `Send`-shaped rule | after MK5-S6-M1; MK5-S7-M1 records every prerequisite |
@@ -412,7 +412,7 @@ C signed overflow is UB, so it must be defined:
 
 #### str (borrowed `&str` in; `&str`, `String`, or `Bytes` out)
 
-**Shipped in MK3-S1-M2** (`xc/std/str.x`): `str.len`, `str.byte` (the bounds-checked one the section below does not name, but which `to_upper`/`join` are built on), `str.is_empty`, `str.to_upper`, `str.to_lower`, `str.repeat`; MK2-S2-M1 added the `&str`-returning half and `path`; MK3-S2-M1 added `split`/`join`/`copy_range`/`copy_into`, which are the `List<String>` entry and exit. Still unwritten and needing no new rule: `replace`, `from_i64`, `from_f64`, `concat` (see open item 25 concatenation still has no spelling, which is why a path is built with `path.join` or `str.join`).
+**Shipped in MK3-S1-M2** (`kelpc/std/str.kp`): `str.len`, `str.byte` (the bounds-checked one the section below does not name, but which `to_upper`/`join` are built on), `str.is_empty`, `str.to_upper`, `str.to_lower`, `str.repeat`; MK2-S2-M1 added the `&str`-returning half and `path`; MK3-S2-M1 added `split`/`join`/`copy_range`/`copy_into`, which are the `List<String>` entry and exit. Still unwritten and needing no new rule: `replace`, `from_i64`, `from_f64`, `concat` (see open item 25 concatenation still has no spelling, which is why a path is built with `path.join` or `str.join`).
 
 ```x
 fun str.len(s: &str).R: usize              // bytes, not chars
@@ -449,7 +449,7 @@ Receiver form is available and preferred in user code: `name.trim()`, `s.contain
 
 #### path (pure; allocation-returning parts need `Bytes`/`String`)
 
-**Shipped in MK3-S1-M2** (`xc/std/path.x`): `path.is_absolute` and `path.join`. The predicate/slicing family below (`file_name`, `parent`, `extension`, `stem`) returns `&str` and waits on return elision with the rest of `str`. `path.normalize` is deferred *on purpose* it is the same lexical normalization the MK4-S1-M1 capability matcher needs for its `..` rejection, so it should be written once, against the grant matcher, rather than written here and then re-derived there. `path.join` does not normalize (`a/` + `b` collapses the duplicate separator, which is what users mean, but `..` is left alone).
+**Shipped in MK3-S1-M2** (`kelpc/std/path.kp`): `path.is_absolute` and `path.join`. The predicate/slicing family below (`file_name`, `parent`, `extension`, `stem`) returns `&str` and waits on return elision with the rest of `str`. `path.normalize` is deferred *on purpose* it is the same lexical normalization the MK4-S1-M1 capability matcher needs for its `..` rejection, so it should be written once, against the grant matcher, rather than written here and then re-derived there. `path.join` does not normalize (`a/` + `b` collapses the duplicate separator, which is what users mean, but `..` is left alone).
 
 ```x
 fun path.is_absolute(s: &str).R: bool
@@ -515,7 +515,7 @@ fun io.read_lines().R: List<String>
 datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
 ```
 
-`io` is ungated on purpose (open item 38): writing to your own stdout, sleeping and exiting are not authority over anything shared, and the WASI-flavoured alternative gating stdin can arrive with `x.toml [caps]` when `main` itself becomes restrictable (open item 18). **Shipped in MK5-S2-M1**, with the sketch's `File` surface (`read`/`read_into`/`read_all`/`write`/`write_text`/`write_str`/`close`/`flush`/`set_nonblocking`/`wait_readable`/`wait_writable`), `Line` + `io.read_line`/`read_lines`/`io.read_all`, a `BufReader` with `read_line_into`/`read_line`/`read_all`, and the three standard descriptors as ordinary `File`s. The old "stdin is unreadable" note is obsolete: `io` is a streaming API over a descriptor, which is exactly what made `fs.read("/dev/stdin")` the wrong tool.
+`io` is ungated on purpose (open item 38): writing to your own stdout, sleeping and exiting are not authority over anything shared, and the WASI-flavoured alternative gating stdin can arrive with `coral.toml [caps]` when `main` itself becomes restrictable (open item 18). **Shipped in MK5-S2-M1**, with the sketch's `File` surface (`read`/`read_into`/`read_all`/`write`/`write_text`/`write_str`/`close`/`flush`/`set_nonblocking`/`wait_readable`/`wait_writable`), `Line` + `io.read_line`/`read_lines`/`io.read_all`, a `BufReader` with `read_line_into`/`read_line`/`read_all`, and the three standard descriptors as ordinary `File`s. The old "stdin is unreadable" note is obsolete: `io` is a streaming API over a descriptor, which is exactly what made `fs.read("/dev/stdin")` the wrong tool.
 
 #### fmt (ungated, pure)
 
@@ -529,7 +529,7 @@ fun fmt.pad_right(s: &str, width: usize, fill: u8).R: String
 fun fmt.bytes(b: Bytes).R: String                 // "1f 8b 08" the first debugging printer
 ```
 
-`fmt` is MK5-S1 and has no gate: it is arithmetic and byte shuffling. Variadic formatting is explicitly not in scope it needs generics or macros, neither of which exists (open item 43 for concatenation, and the non-goals below). **Shipped in MK5-S1-M3** (`xc/std/fmt.x`), on top of `std/str`; the only C in it is `snprintf("%llx")` for `hex` and the byte-dump loop for `bytes`.
+`fmt` is MK5-S1 and has no gate: it is arithmetic and byte shuffling. Variadic formatting is explicitly not in scope it needs generics or macros, neither of which exists (open item 43 for concatenation, and the non-goals below). **Shipped in MK5-S1-M3** (`kelpc/std/fmt.kp`), on top of `std/str`; the only C in it is `snprintf("%llx")` for `hex` and the byte-dump loop for `bytes`.
 
 #### Map (a compiler builtin, `String` keys)
 
@@ -559,7 +559,7 @@ impl "std/str"
 impl "std/fmt"
 impl "std/mem"
 
-const pool_size: usize = __X_HTTP_POOL__      // from x.toml's http_pool, spliced in by the compiler
+const pool_size: usize = __KELP_HTTP_POOL__      // from coral.toml's http_pool, spliced in by the compiler
 
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
 fun http.parse_url(s: &str).R: Url               // Panics: no scheme/host, or unsupported scheme
@@ -579,7 +579,7 @@ datac Lease(val handle: i32, val socket: Socket, val reused: bool)
 // Kept-alive connections to one host:port, keyed on the host as written.
 datac Pool(val host: String, val port: u16, val size: usize, var slots: List<Socket>, var free: List<i32>)
 
-fun http.pool(host: &str, port: u16).R: Pool      // size from x.toml, not from an argument
+fun http.pool(host: &str, port: u16).R: Pool      // size from coral.toml, not from an argument
 fun Pool.size().R: usize                         // the configured ceiling
 fun Pool.len().R: usize                          // sockets currently open
 fun mut Pool.warm()                              // opens up to `size` now (optional)
@@ -667,7 +667,7 @@ fun env.unset(name: &str)
 
 **Shipped in MK5-S5**: the bodies are real (`getenv`/`setenv`/`unsetenv` behind four externs), and the check is on the *name*, before the call, so a grant of `["PATH"]` does not let the holder ask whether `HOME` exists. `env.names()` remains deliberately absent: listing the environment reads *all* of it, which a grant of one name should not permit.
 
-### What would make X genuinely useful for real programs
+### What would make Kelp genuinely useful for real programs
 
 Ranked by how much the absence hurts, with the shortest path. "Pain" is the question "could I write a program I would actually want to run?"
 
@@ -680,17 +680,17 @@ Ranked by how much the absence hurts, with the shortest path. "Pain" is the ques
 7. ~~**HTTP client** the stated goal, and the payoff.~~ **Shipped in MK5-S4**, with keep-alive and the pool rather than the one-shot client the sketch described: parsing, all four body-length cases, redirects, and a connection pool whose leases are ownership-checked. What is left of the original gap is `https` (MK5-S4b-M1, TLS) and chunked *request* bodies.
 8. **A keyed container** (`Map<String, V>`) today a lookup is a linear scan over `List<String>`. *Moderate.* MK5-S5.
 9. **Being able to *see* your data** `print` rejects a `datac` and a `List` (both probed), so there is no debug printer and nothing in the stdlib substitutes; `fmt.bytes` is the first step, and a generated per-`datac` debug function the honest fix. *Moderate, and it makes debugging everything else worse.* MK5-S1 if it has room.
-10. **`fs` breadth** (`mkdir_all`, `remove_all`, `walk`, metadata, temp files) cheap now that `List` exists; mostly an afternoon of X, and the first three could ship today. *Low pain, high frequency.* MK5-S5.
+10. **`fs` breadth** (`mkdir_all`, `remove_all`, `walk`, metadata, temp files) cheap now that `List` exists; mostly an afternoon of Kelp, and the first three could ship today. *Low pain, high frequency.* MK5-S5.
 11. **`env`** the shape is proven; the bodies are one extern each. *Low.* MK5-S5.
 12. **`Option`/`Result`, views, threads** real, deferred, not blocking anything. *Low today, rising.* MK5-S6-M1/MK5-S7-M1 and open items 44/46.
 
-Bluntly: **real** gaps are 1, 2, 3 and 6 (and 5 as a precondition for 6) without them X cannot replace a shell script, which is the lowest bar there is. **Real but not blocking**: 8, 9, 10, 11. **Tolerable**: 12 the error-`datac` convention genuinely works, and the `for`-loop gap is ugly (`while` + index), not impossible. **Toy gaps left alone on purpose**: a big stdlib `json`, `regex`, `log`, `cli`, a test framework are all downstream of views/generics/collections and would each be rewritten once those land. Write them after MK5-S5, not before.
+Bluntly: **real** gaps are 1, 2, 3 and 6 (and 5 as a precondition for 6) without them Kelp cannot replace a shell script, which is the lowest bar there is. **Real but not blocking**: 8, 9, 10, 11. **Tolerable**: 12 the error-`datac` convention genuinely works, and the `for`-loop gap is ugly (`while` + index), not impossible. **Toy gaps left alone on purpose**: a big stdlib `json`, `regex`, `log`, `cli`, a test framework are all downstream of views/generics/collections and would each be rewritten once those land. Write them after MK5-S5, not before.
 
 ### Non-goals for the MK5 stages
 
 - **TLS/`https` inside MK5-S4.** MK5-S4b-M1, because the dependency decision is the owner's (open item 37). Hand-rolled TLS is never in scope.
 - **`async`/`await`, green threads, thread pools, `Select`-style combinators.** `async` needs function values, a state-machine transform and an executor (MK7-shaped work); OS threads are MK6-S1-M1's subject, and they are a *language* milestone, not a stdlib one. Note the ordering the owner set: MK6-S1-M1 (threads) precedes MK6-S2-M1 (concurrent downloads) but threads are the *third* right answer for downloading, behind poll multiplexing and behind nothing at all. See MK6-S1-M1 and MK6-S2-M1.
-- **JSON, `regex`, `log`, `cli` parsing, a test framework, variadic `fmt`, `xc fmt`.** All downstream of MK5-S1–MK5-S5, and each would be rewritten once views/generics/collections land.
+- **JSON, `regex`, `log`, `cli` parsing, a test framework, variadic `fmt`, `kelpc fmt`.** All downstream of MK5-S1–MK5-S5, and each would be rewritten once views/generics/collections land.
 - **HTTP servers beyond a minimal one, HTTP/2, WebSockets, gzip/brotli, cookies, proxies.** The minimal server exists to test the client and to prove `poll`. Connection pooling is **no longer** on this list: it is MK5-S4, and so is keep-alive.
 - **Generic containers and `Option`/`Result`.** MK3-S2-M2's neighbourhood; `Map<V>` is the deliberate stopgap.
 - **Grapheme-aware Unicode, case folding, normalization.** Tables and algorithms out of proportion to the value here; the scope is codepoint-level (`str.char_at`, `str.byte_index`), ASCII-only case ops, documented (open item 48).
@@ -699,10 +699,10 @@ Bluntly: **real** gaps are 1, 2, 3 and 6 (and 5 as a precondition for 6) without
 
 ### Distribution and implementation strategy
 
-Stdlib as `.x` sources shipped with the compiler (`std/fs.x`, `std/math.x`, ...), with a small intrinsic escape hatch for the actual syscalls. Dogfoods the language, keeps the API reviewable as X code, and lets the capability wrapper live in the same file as the gated namespace.
+Stdlib as `.kp` sources shipped with the compiler (`std/fs.kp`, `std/math.kp`, ...), with a small intrinsic escape hatch for the actual syscalls. Dogfoods the language, keeps the API reviewable as Kelp code, and lets the capability wrapper live in the same file as the gated namespace.
 
 ```x
-// std/fs.x
+// std/fs.kp
 extern fun fs_read_raw(path: &str).R: Bytes     // compiler-provided body
 
 fun fs.read(path: &str).R: Bytes {
@@ -710,12 +710,12 @@ fun fs.read(path: &str).R: Bytes {
 }
 ```
 
-Locked (decision 3), and **as of MK4-S1-M1 the whole sentence holds**: `extern fun` parses, bodies come from `externs.rs`, `xc/std/*.x` ships inside the compiler binary, and the compiler-inserted allowlist check runs at every gated call site. The raw syscall lives only inside the gated module (`std/fs.x`'s externs), the check lives at the boundary where a *user* module names the public function, and the allowlist is compiled in as constant data that no API can widen.
+Locked (decision 3), and **as of MK4-S1-M1 the whole sentence holds**: `extern fun` parses, bodies come from `externs.rs`, `kelpc/std/*.kp` ships inside the compiler binary, and the compiler-inserted allowlist check runs at every gated call site. The raw syscall lives only inside the gated module (`std/fs.kp`'s externs), the check lives at the boundary where a *user* module names the public function, and the allowlist is compiled in as constant data that no API can widen.
 
-The rejected alternative: emit stdlib bodies directly from `codegen_c.rs` as C snippets. No new syntax, but the API becomes unreviewable non-X code and every doc/example is divorced from the body.
+The rejected alternative: emit stdlib bodies directly from `codegen_c.rs` as C snippets. No new syntax, but the API becomes unreviewable non-Kelp code and every doc/example is divorced from the body.
 
 Details:
-- Stdlib version is pinned to the compiler version. No `[stdlib]` section in `x.toml`, no registry, no third-party deps in v1.
+- Stdlib version is pinned to the compiler version. No `[stdlib]` section in `coral.toml`, no registry, no third-party deps in v1.
 - Externals are linked through `cc`; `math` needs `-lm`.
 - Generated C for stdlib is cached per compiler build, not per user build.
 
@@ -742,34 +742,34 @@ Details:
 | Builtin owned sequence `List<T>` | `fs.list`, `str.split`, argv, anything returning *N* items | Medium: a monomorphized type, one C struct and function set per element type, and a drop that frees elements before the buffer | MK3-S2-M1 (done) `Ty::List`, `infer::list_sig`, `codegen_c::write_list`/`collect_list_elems` |
 | `&str` return elision (borrow from first ref param) | the `&str`-returning half of `str`, `path` | Small, but unblocks a whole namespace | MK2-S2-M1 (done) `resolve_return` produces a `Ty::Ref`, and `borrowck.rs` enforces the rooting rule at both ends |
 | `const NAME: T = expr` at top level, compile-time folded | `math.PI`, `math.E` | Small parser + const-fold in `infer.rs` | MK2-S2-M1 (done) |
-| `extern` declarations with compiler-supplied bodies | stdlib written in X | Small parser surface, new codegen path | MK3-S1-M2 (done) |
+| `extern` declarations with compiler-supplied bodies | stdlib written in Kelp | Small parser surface, new codegen path | MK3-S1-M2 (done) |
 | Argument-type overloading, stdlib-only | `math.abs/min/max/clamp` across numeric types | Medium: overload resolution in `infer.rs`; kept stdlib-only to avoid user-facing complexity | MK2-S2-M1 (done) |
 | `u8`, `u16`, `usize`, `isize` | byte buffers, indices, `Bytes.len` | Small; `usize`/`isize` needed regardless for indexing | MK3-S1-M1 (done) |
 | Integer conversions `t.to_<T>()` | MK5-S1 (number formatting/parsing, `str.char_at`, `fmt.hex`/`bytes`), every byte-level algorithm | small: a generated `BUILTINS` block, an inline checked cast in `codegen_c.rs`; no syntax | MK5-S1-M2 (done) `builtin_type_name`, `integer_conversion`/`int_bounds` |
-| Growable `Bytes`/`String` (`cap` + `push`/`append`/`reserve`) | MK5-S1, MK5-S4, MK5-S5; every program that builds text | compiler builtin: a `cap` field in `RUNTIME` (and the 3 extern bodies that build those structs field-by-field), ~8 new builtins | MK5-S1-M1 (done) `x_buf_reserve`, `cap` on both structs |
-| `panic(msg)` / `assert(cond)` | MK5-S1; any program with a deliberate failure | compiler builtin: the C exists (`x_panic`), only the names were missing | MK5-S1-M1 (done) `x_assert` + two bare-name `BUILTINS` entries |
+| Growable `Bytes`/`String` (`cap` + `push`/`append`/`reserve`) | MK5-S1, MK5-S4, MK5-S5; every program that builds text | compiler builtin: a `cap` field in `RUNTIME` (and the 3 extern bodies that build those structs field-by-field), ~8 new builtins | MK5-S1-M1 (done) `kelp_buf_reserve`, `cap` on both structs |
+| `panic(msg)` / `assert(cond)` | MK5-S1; any program with a deliberate failure | compiler builtin: the C exists (`kelp_panic`), only the names were missing | MK5-S1-M1 (done) `kelp_assert` + two bare-name `BUILTINS` entries |
 | `List#sort`/`reverse`/`slice`/`insert`/`remove` | MK5-S1, MK5-S5; deterministic output | compiler builtin, one comparator per element kind (monomorphization makes this nearly free) | small–medium MK5-S1 |
-| `main(argc, argv)` + saved argv globals | MK5-S2-M1 (`process.args`) | compiler codegen: change the emitted signature, stash the two values, one extern to read them | **done in MK5-S2-M1** `process.arg_count`/`arg_at`, `process.args` in X |
+| `main(argc, argv)` + saved argv globals | MK5-S2-M1 (`process.args`) | compiler codegen: change the emitted signature, stash the two values, one extern to read them | **done in MK5-S2-M1** `process.arg_count`/`arg_at`, `process.args` in Kelp |
 | `Map<V>` with `String` keys | MK5-S5; headers, config, counters | compiler builtin generic the second one, ≈ MK3-S2-M1's cost (`Ty::Map`, `map_sig`, `write_map`, drop) | medium MK5-S5 |
-| `net` capability vocabulary (`host[:port]`, matcher, checked args) | MK5-S3, MK5-S4 | compiler: `stdlib.rs` (`CapCheck`), `resolve.rs::validate_net_pattern`, an emitted `x_cap_check_hostport`/`x_cap_check_host`/`x_cap_check_port` | **done in MK5-S3** `validate_net_pattern` + `x_host_glob`, and the `Vec<CapCheck>` redesign the sketch did not foresee (open item 32) |
+| `net` capability vocabulary (`host[:port]`, matcher, checked args) | MK5-S3, MK5-S4 | compiler: `stdlib.rs` (`CapCheck`), `resolve.rs::validate_net_pattern`, an emitted `kelp_cap_check_hostport`/`kelp_cap_check_host`/`kelp_cap_check_port` | **done in MK5-S3** `validate_net_pattern` + `kelp_host_glob`, and the `Vec<CapCheck>` redesign the sketch did not foresee (open item 32) |
 | `poll` readiness | MK5-S3, MK5-S5 (single-threaded servers) | extern only | **done in MK5-S3** `Socket.wait_readable`/`wait_writable` reach `io`'s existing `poll` through a `File` over the socket's descriptor, so no new extern |
-| errno + `strerror` in panic messages | MK5-S5 diagnostics | runtime + builtin (`x_panic_errno`) | small MK5-S6-M1's cheap part (open item 47) |
+| errno + `strerror` in panic messages | MK5-S5 diagnostics | runtime + builtin (`kelp_panic_errno`) | small MK5-S6-M1's cheap part (open item 47) |
 | TLS for `https` | MK5-S4b-M1 | a dependency decision *then* externs (`-lssl`/`-lcrypto`, or the system's `libtls`) | large-ish: the first real link dependency open item 37 |
 | A length-carrying borrowed view (`&[u8]`-shaped) | zero-copy parsing (MK5-S4/MK5-S5), `String.slice`, arena allocation; collapses open items 22 and 29 | language + *syntax*: a new type with pointer+length, allowed as a field/param/return; needs a spelling agreed with `syntax.md` §1/§13 | large open item 44 |
 | `for` loop / iteration | every list walk in MK5-S1–MK5-S5 | syntax + a parser desugar to `while` (the pattern `when` and compound assignment already use) | small, but `syntax.md` must gain it (§10) open item 27 |
 | Function values + move-taking parameters, per-thread panic policy, atomics/`Mutex`, a `Send`-shaped rule | MK6-S1-M1 (threads), MK6-S2-M1 | language: parser/types/borrowck/codegen + runtime | large MK5-S7-M1 records why threads wait for exactly these, and MK6-S1-M1 records the narrow shape recommended (function *references* with one move-taking parameter, not closures) |
 | String escapes that mean what they say (`\r`, and an error for anything unknown) | MK5-S4 (an HTTP request is CRLF-framed); any program writing a protocol | compiler: one arm in the lexer's escape match, and a catch-all that returns a diagnostic instead of the bare character | **done in MK5-S4** the fallback used to make `"\q"` mean `"q"`, so `"\r"` meant `"r"` and every request was malformed with no diagnostic |
 | A C string-literal emitter that escapes every control byte | MK5-S4's `\r`; any literal with a byte below 0x20 | compiler: `codegen_c::c_string_literal` (+ `printf_text` for template text), CR as `\r` and the rest as three-digit octal | **done in MK5-S4** a raw CR inside a generated C string literal is not a string literal |
-| A numeric `x.toml` key spliced into a shipped stdlib source (`http_pool`) | MK5-S4's pool ceiling | compiler: a manifest parser that accepts a bare integer, a `__X_HTTP_POOL__` substitution in `stdlib::source_configured`, one new field on `Manifest`/`Loader` | small the first *config-driven* stdlib constant; also the prerequisite for `x.toml [caps]` (open item 18) |
-| `Transfer-Encoding: chunked` decoding | MK5-S4 (keep-alive makes it mandatory) | stdlib only: a hex size-line decoder in X over `str.byte`/`str.parse_u64`, plus exact-length reads | small, and it replaces a panic |
-| A connection pool with ownership-checked leases | MK5-S4's payoff | stdlib only: `Pool`/`Lease` as plain `datac`s, moves in and out, no lock, no refcount | small the language already has everything it needs (this is the point of doing it in X) |
+| A numeric `coral.toml` key spliced into a shipped stdlib source (`http_pool`) | MK5-S4's pool ceiling | compiler: a manifest parser that accepts a bare integer, a `__KELP_HTTP_POOL__` substitution in `stdlib::source_configured`, one new field on `Manifest`/`Loader` | small the first *config-driven* stdlib constant; also the prerequisite for `coral.toml [caps]` (open item 18) |
+| `Transfer-Encoding: chunked` decoding | MK5-S4 (keep-alive makes it mandatory) | stdlib only: a hex size-line decoder in Kelp over `str.byte`/`str.parse_u64`, plus exact-length reads | small, and it replaces a panic |
+| A connection pool with ownership-checked leases | MK5-S4's payoff | stdlib only: `Pool`/`Lease` as plain `datac`s, moves in and out, no lock, no refcount | small the language already has everything it needs (this is the point of doing it in Kelp) |
 | Multi-fd `poll` + a would-block signal from `send`/`recv` | MK5-S4c (the no-language-work route to concurrent downloads) | stdlib only: `Socket.set_nonblocking`, a `would_block`-carrying send/recv result, and `poll(fds[])` instead of one fd per call (open item 41) | small, and it is the honest answer for I/O-bound concurrency |
 | Type parameters (a function over any `List<T>`) | `process.run(argv)`, `env.args`, generic containers, `List` *of* `List` | Large the whole generics dimension | MK3-S2-M2's neighbourhood, post-v1 |
 | `Option`/`Result` + generics | replaces error `datac`s | Large | post-v1 |
 
 ### Testing the stdlib
 
-- Fixture suite per module, same compile-run-diff-stdout harness as the language fixtures. **As shipped** they live in `xc/tests/fixtures/` (single-file: `stdlib_mem`, `stdlib_str`, `stdlib_path`, `stdlib_math`, `stdlib_list`, MK5-S1's `stdlib_build`/`stdlib_parse`/`stdlib_fmt`/`stdlib_sort`/`list_slice_insert`, MK5-S2-M1's `io_stdio`/`io_streams`/`process_spawn`, and MK5-S3's `net_loopback`/`net_poll`/`net_resolve`/`net_timeout`) and `xc/tests/projects/` (anything that needs a *grant*: the MK4-S1-M1 `caps_*` projects including `caps_list`, MK5-S2-M1's `process_run`/`process_argv_only`/`process_denied`, and MK5-S3's `caps_net`/`caps_net_denied`/`caps_net_resolve_denied`/`caps_bad_net_pattern`), because the harness takes one path and a granted module needs a project with an importer. `tests/stdlib/` still has not earned its own directory. The stdlib fixtures that complete normally are in the AddressSanitizer pass, which is what makes "the stdlib's allocations are freed" a test result rather than a claim; a fixture that *panics on purpose* is not, because it is expected to leave its buffers behind.
+- Fixture suite per module, same compile-run-diff-stdout harness as the language fixtures. **As shipped** they live in `kelpc/tests/fixtures/` (single-file: `stdlib_mem`, `stdlib_str`, `stdlib_path`, `stdlib_math`, `stdlib_list`, MK5-S1's `stdlib_build`/`stdlib_parse`/`stdlib_fmt`/`stdlib_sort`/`list_slice_insert`, MK5-S2-M1's `io_stdio`/`io_streams`/`process_spawn`, and MK5-S3's `net_loopback`/`net_poll`/`net_resolve`/`net_timeout`) and `kelpc/tests/projects/` (anything that needs a *grant*: the MK4-S1-M1 `caps_*` projects including `caps_list`, MK5-S2-M1's `process_run`/`process_argv_only`/`process_denied`, and MK5-S3's `caps_net`/`caps_net_denied`/`caps_net_resolve_denied`/`caps_bad_net_pattern`), because the harness takes one path and a granted module needs a project with an importer. `tests/stdlib/` still has not earned its own directory. The stdlib fixtures that complete normally are in the AddressSanitizer pass, which is what makes "the stdlib's allocations are freed" a test result rather than a claim; a fixture that *panics on purpose* is not, because it is expected to leave its buffers behind.
 - A stdlib module is imported exactly like a project module (`impl "std/mem"`), so `std/str` importing `std/mem`, and `std/path` importing both, are the ordinary `impl` rules no special case in the loader beyond where the text comes from.
 - Capability tests are the ones that matter, and **as shipped (MK4-S1-M1, extended in MK5-S2-M1 and MK5-S3)** every one of them exists: a granted path reads a file (`caps_granted`); an ungranted reference is a resolution error (`caps_ungranted`); an in-grant path writes, renames, sizes and removes (`caps_write`); an out-of-grant path panics at runtime (`caps_denied`); a symlink inside the grant pointing outside it is denied after resolution (`caps_symlink`, and MK5-S2-M1's `process` grant exercises the same rule on a *program* path); a narrower grant cannot be over-delegated to a sub-import (`caps_escalation`); a `..` pattern is rejected at the `impl` line (`caps_bad_pattern`), as is a `net` pattern that is not a host (`caps_bad_net_pattern`); a granted module runs a program inside its grant (`process_run`) and is denied one outside it (`process_denied`, asserted through the module name *and* the resolved path, per the determinism rule below); an **empty** grant admits the module's own-process functions while authorizing nothing executable (`process_argv_only`); the three `net` checks each have a negative case the host as written (`caps_net_denied`: a grant for `127.0.0.1`, a call to `localhost`), the no-port host form (`caps_net_resolve_denied`), and the port-only form, which `caps_net`'s own grant exercises positively since nothing can call `listen` outside its grant without a second binary; and the entry module's `*` is pinned by `net_loopback`, which has no `with caps(...)` clause at all. Still missing: a table of *which* of `fs.rename`'s two paths is checked the code checks both by construction (`checked_args` returns every `str` argument for `fs`), but nothing exercises the negative case with only one path granted.
 - Glob table-driven test: patterns × paths × expected verdict, as data, so the matcher is tested without touching a filesystem.
@@ -781,23 +781,23 @@ Details:
 
 - **Error reporting**: every AST node carries a source span from day one retrofitting spans later is much more painful than carrying them from the lexer onward, and `7932cab` did exactly that threading into `tir`. `%*alias*%` expansion keeps both the definition span and the use span so alias-induced type errors stay debuggable.
 - **Move/borrow checking as a separate pass, not entangled with type inference**: `infer.rs` produces a typed AST; `borrowck.rs` walks the typed AST separately. Keeps each pass comprehensible and testable in isolation, which matters a lot once borrow-checker bugs need debugging.
-- **C codegen strategy**: generate readable, `#line`-annotated C (mapping generated lines back to `.x` source lines) so that `gdb`/`printf`-debugging the *generated* C during compiler development is tractable, and so a future "debug the .x program itself" story is easier to bolt on.
+- **C codegen strategy**: generate readable, `#line`-annotated C (mapping generated lines back to `.kp` source lines) so that `gdb`/`printf`-debugging the *generated* C during compiler development is tractable, and so a future "debug the .kp program itself" story is easier to bolt on.
 - **Signed overflow must be defined**, since C leaves it UB: build with `-fwrapv` so `i32`/`i64` wrap deterministically, and expose `math.checked_*` / `math.saturating_*` for callers who want to know.
 - **`mut` does two jobs** (`var` binding vs exclusive borrow) and error messages must distinguish them clearly, since a wrong guess produces a confusing diagnostic.
 - **No generics/traits in v1**: keeps type inference and borrow checking tractable; monomorphization is a large added dimension best tackled once the non-generic core works end-to-end.
 
 ## Verification
 
-- `cargo test` in `xc/` runs 65 unit tests plus the end-to-end suite (`tests/compile_and_run.rs`, 144 tests as of MK5-S3): for each `examples/*.x` / `tests/fixtures/*.x`, either (a) compile, run the resulting binary, and diff stdout against an expected value, (b) compile, run, and assert the program panics with a specific message, or (c) compile and assert a specific compiler error is produced (for move/borrow violation fixtures). A multi-file project is built the same way, through its `main.x`.
-- Manual smoke test after each milestone: `cargo run -p xc -- build examples/hello.x && ./hello` (and similarly for `fib.x`, etc.) to confirm the CLI path works, not just the test harness.
-- After MK1-S4-M1, deliberately write a handful of "should fail" `.x` snippets (double move, two simultaneous exclusive borrows, use of a borrow after its owner's scope ends) and confirm the compiler rejects each with a sensible error this is the actual proof that the borrow checker works, not just that "well-behaved" programs compile. MK1-S3-M1's fixtures (`use_after_move.x`, `double_move_in_loop.x`) are the first two entries in that set. MK3-S1-M2 added four more ("an `extern` needs a compiler body", "an `extern` takes no receiver", "comparing owned values has no meaning", "an owned value in statement position would never be freed").
+- `cargo test` in `kelpc/` runs 65 unit tests plus the end-to-end suite (`tests/compile_and_run.rs`, 144 tests as of MK5-S3): for each `examples/*.kp` / `tests/fixtures/*.kp`, either (a) compile, run the resulting binary, and diff stdout against an expected value, (b) compile, run, and assert the program panics with a specific message, or (c) compile and assert a specific compiler error is produced (for move/borrow violation fixtures). A multi-file project is built the same way, through its `main.kp`.
+- Manual smoke test after each milestone: `cargo run -p kelpc -- build examples/hello.kp && ./hello` (and similarly for `fib.kp`, etc.) to confirm the CLI path works, not just the test harness.
+- After MK1-S4-M1, deliberately write a handful of "should fail" `.kp` snippets (double move, two simultaneous exclusive borrows, use of a borrow after its owner's scope ends) and confirm the compiler rejects each with a sensible error this is the actual proof that the borrow checker works, not just that "well-behaved" programs compile. MK1-S3-M1's fixtures (`use_after_move.kp`, `double_move_in_loop.kp`) are the first two entries in that set. MK3-S1-M2 added four more ("an `extern` needs a compiler body", "an `extern` takes no receiver", "comparing owned values has no meaning", "an owned value in statement position would never be freed").
 - **Heap fixtures are run under AddressSanitizer** (MK3-S1-M1, extended in MK3-S1-M2, MK3-S2-M1, MK5-S2-M1 and MK5-S3): `heap_fixtures_are_double_free_and_leak_clean` builds every fixture that owns memory the `Bytes` ones, the `String` ones, the owned-`pd` ones, the stdlib ones, the `List` ones, MK3-S2-M2's `box_basic`/`box_recursive`/`recursive_datac`/`box_field_take`, MK5-S2-M1's `io_stdio`/`io_streams`/`process_spawn`, and MK5-S3's `net_loopback`/`net_poll`/`net_resolve` rebuilds the generated C with `-fsanitize=address -O1`, and runs it. (A fixture that *panics on purpose* is excluded: `net_timeout` is expected to leave its buffers behind, so instrumenting it would assert the opposite of what it tests.) A double free, a use-after-free, or a leak fails the suite, which is what turns "the `atexit` drop works" and "a struct drops its fields" into test results rather than claims. This is the only test that depends on a toolchain feature, so it skips itself if `cc` has no AddressSanitizer which means the memory-safety claim is verified on every machine that can verify it, and the rest still pass. Note what the sanitizer does *not* cover: the MK3-S1-M2 field-assignment leak (open item 15) is real and would be caught by ASAN if a fixture exercised it, so no fixture does.
 - **Two benchmarks under `bench/`**, both with a recorded `results.txt`:
-  `write_20gb/` writes 20 GiB in four languages (Rust, X, C++, Python) and
+  `write_20gb/` writes 20 GiB in four languages (Rust, Kelp, C++, Python) and
   shows the workload is entirely device-bound all four within 2% at
   ~1650-1700 MiB/s and `speed/` runs four CPU-bound workloads with
   cross-language checksums, which is where a language difference is actually
-  visible (X, C++ and Rust level to within ~1%; Python 27-87x slower
+  visible (Kelp, C++ and Rust level to within ~1%; Python 27-87x slower
   depending on the workload). The `speed/` README records the method and the
   caveats, including the one worth remembering: an unconstrained naive `fib`
   is rewritten into a loop by LLVM at 0.5 ns/op, so the call-cost workload

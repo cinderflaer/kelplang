@@ -159,3 +159,43 @@ Counterpoint, stated plainly: the codebase is *not* small (15.8k LOC, 396 KB of
 docs, 209 source files), and Coral and Lighthouse are not renames — they are
 names for unwritten software. This document makes the rename cheap and the
 naming final; it does not build either tool.
+
+## Executed
+
+Done on branch `rebrand/x-to-kelp`. Every open decision was taken as proposed
+above:
+
+| # | Question | Taken |
+|---|---|---|
+| 1 | Compiler binary | `kelpc` |
+| 2 | Does `coral` replace `xc` now? | (a) rename `xc` to `kelpc` now; `coral` arrives with MK13 |
+| 3 | Manifest filename | `coral.toml` |
+| 4 | Alias table filename | `alias.kpconf` |
+| 5 | Repository name | not renamed (not a code change) |
+| 6 | Stdlib module namespace | unchanged (`std/…`) |
+
+What each phase produced:
+
+| Phase | Result |
+|---|---|
+| 0. Constants | `resolve::EXT`, `resolve::MANIFEST_NAME`, `main::BIN_NAME`; every literal routed through them, so a future rebrand changes values, not call sites. `preprocess::XCONF_*` became `preprocess::KPCONF_*`. |
+| 1. Compiler identity | crate directory `xc/` became `kelpc/`; `[package]`/`[[bin]]` name, `CARGO_BIN_EXE_kelpc`, `cargo build -p kelpc`, `target/release/kelpc`, bench `KELPC=`. |
+| 2. Manifest and alias file | `x.toml` to `coral.toml`, `alias.xconf` to `alias.kpconf`; test projects `alias_xconf`/`alias_xconf_cycle` to `alias_kpconf`/`alias_kpconf_cycle`. |
+| 3. Extension | 209 files `.x` to `.kp`; `include_str!` paths, manifest `entry` values, fixtures, examples, bench. |
+| 4. Generated-C ABI | `x_` to `kelp_` in `codegen_c.rs`, `externs.rs` and `types.rs` (plus comments in `infer.rs`, the e2e suite, and `std/io.kp`); `__X_HTTP_POOL__` to `__KELP_HTTP_POOL__`. |
+| 5. Prose | `plan/*.md`, code comments and bench docs: `X` to `Kelp`, `.x` to `.kp`, `x.toml` to `coral.toml`, `xc` to `kelpc`, `alias.xconf` to `alias.kpconf`. Articles were corrected by hand where the word swap read wrong (`an Kelp` to `a Kelp`, `an coral.toml` to `a coral.toml`). |
+| 6. External | repository name left alone; `coral` and `lighthouse` remain names without code. |
+
+Names that were **not** touched, because they are ordinary identifiers: field
+and variable spellings such as `p.x`, `q.x`, `origin.x`, `(*r).x` and `bag.xs`
+in sources and docs; and the `box_`/`prefix_`/`index_` families in the compiler.
+
+Verification: `cargo test` green after the rename — 65 unit tests plus 160
+end-to-end tests, which include the ASAN and leak checks.
+
+Unchanged from the analysis above: Coral and Lighthouse exist as names only.
+`kelpc build` and `kelpc run` are the working commands until MK13 lands;
+`coral build` and `coral run` do not exist yet.
+
+The file paths in this document (`xc/src/`, `bench/*/run.sh`, `xc/tests/…`)
+describe the tree *before* the rename; that crate directory is `kelpc/` today.

@@ -1,6 +1,6 @@
-# The X language
+# The Kelp language
 
-X is a small compiled language. `xc` lexes and parses an X source tree, checks types and ownership, emits C, and calls `cc` to produce a native binary. Programs link nothing beyond libc, have no garbage collector, and reach the outside world only through capabilities a module declares.
+Kelp is a small compiled language. `kelpc` lexes and parses a Kelp source tree, checks types and ownership, emits C, and calls `cc` to produce a native binary. Programs link nothing beyond libc, have no garbage collector, and reach the outside world only through capabilities a module declares.
 
 This file is the language reference. It is written to be read start to finish by someone who wants to write a program, so it starts with the toolchain and ends with a complete example. Where another plan file disagrees with this one about syntax or style, this file is correct.
 
@@ -16,54 +16,54 @@ This file is the language reference. It is written to be read start to finish by
 ### 1.1 Build the compiler
 
 ```sh
-cargo build --release -p xc      # produces target/release/xc
+cargo build --release -p kelpc  # produces target/release/kelpc
 ```
 
-`xc` takes two commands:
+`kelpc` takes two commands:
 
 ```sh
-xc build <file.x|project-dir> [-o <output>]   # default output: the file stem
-xc run   <file.x|project-dir>                 # build, then run
+kelpc build <file.kp|project-dir> [-o <output>]   # default output: the file stem
+kelpc run   <file.kp|project-dir>                 # build, then run
 ```
 
-`xc run` does not forward arguments to the program. Build first and run the binary directly when the program needs `argv`.
+`kelpc run` does not forward arguments to the program. Build first and run the binary directly when the program needs `argv`.
 
 The compiler needs a C compiler on `PATH` (`cc`, or `clang` through `CC`). The C stage is how a binary is produced today.
 
 ### 1.2 Hello world
 
 ```x
-// hello.x
+// hello.kp
 fun main() {
     print("hello, world")
 }
 ```
 
 ```sh
-xc run hello.x
+kelpc run hello.kp
 ```
 
 `main` is the entry point. It takes no parameters and returns nothing, and it is reached through `process.args()` rather than an argument list.
 
 ### 1.3 Projects
 
-A project is a directory with an `x.toml`, sources under `src/`, and optionally an `alias.xconf`:
+A project is a directory with a `coral.toml`, sources under `src/`, and optionally an `alias.kpconf`:
 
 ```
 myproject/
-    x.toml
-    src/main.x              # entry module, the only one with unprefixed names
-    src/shapes/circle.x     # impl "shapes/circle"
-    alias.xconf             # optional, see 15.3
+    coral.toml
+    src/main.kp              # entry module, the only one with unprefixed names
+    src/shapes/circle.kp     # impl "shapes/circle"
+    alias.kpconf             # optional, see 15.3
 ```
 
 ```sh
-xc build myproject/
+kelpc build myproject/
 ```
 
-A loose `.x` file that is not inside a project still compiles, and is then its own module root.
+A loose `.kp` file that is not inside a project still compiles, and is then its own module root.
 
-### 1.4 `x.toml`
+### 1.4 `coral.toml`
 
 The manifest is flat: one `key = value` per line, `#` starts a comment, sections are refused, and an unknown key is an error rather than an ignored line.
 
@@ -71,13 +71,13 @@ The manifest is flat: one `key = value` per line, `#` starts a comment, sections
 | --- | --- | --- | --- |
 | `name` | quoted string | none | project name |
 | `version` | quoted string | none | project version, unvalidated free text |
-| `entry` | quoted string | `"src/main.x"` | path of the entry file, relative to the project root |
+| `entry` | quoted string | `"src/main.kp"` | path of the entry file, relative to the project root |
 | `http_pool` | number | `4` | kept-alive connections per `host:port` in `std/http`; `0` disables pooling |
 
 ```toml
 name = "myproject"
 version = "0.1.0"
-entry = "src/main.x"
+entry = "src/main.kp"
 http_pool = 4
 ```
 
@@ -645,7 +645,7 @@ impl "std/str"
 impl "std/time" as t
 ```
 
-- The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.x` extension is not written.
+- The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.kp` extension is not written.
 - `impl` lines come first in the file.
 - The namespace is the last path segment: `impl "shapes/circle"` gives `circle.area(...)`, and `impl "std/fs"` gives `fs.read(...)`. `as name` overrides it.
 - Imports are transitive: a file that imports a module also loads what that module imports.
@@ -674,7 +674,7 @@ alias %*db*% = "storage/postgres"
 impl %*db*%
 ```
 
-Aliases come from two places: an inline `alias %*name*% = <raw text to end of line>` declaration, and `alias.xconf` at the project root, one `name="replacement text"` per line. Substitution has no parameters, no scoping and no hygiene; `%*a*%` defined as `%*b*% * 2` with `%*b*%` defined as `40 + 2` prints `84`, because precedence is whatever the expanded text happens to produce.
+Aliases come from two places: an inline `alias %*name*% = <raw text to end of line>` declaration, and `alias.kpconf` at the project root, one `name="replacement text"` per line. Substitution has no parameters, no scoping and no hygiene; `%*a*%` defined as `%*b*% * 2` with `%*b*%` defined as `40 + 2` prints `84`, because precedence is whatever the expanded text happens to produce.
 
 ## 14. Constants and passdowns
 
@@ -754,7 +754,7 @@ net.connect("api.example.com", 443)
 A denial panics with the call site, the attempted resource and the granted patterns:
 
 ```
-demo.x:12:10: panic: '/etc/passwd' is outside the fs capability granted to module 'demo'
+demo.kp:12:10: panic: '/etc/passwd' is outside the fs capability granted to module 'demo'
   granted:
     /var/log/myapp/**
 ```
@@ -1026,7 +1026,7 @@ fun Response.header(name: &str).R: String
 fun Response.text().R: String
 ```
 
-Responses frame their body by `Content-Length`, chunked encoding, a bodyless rule or end-of-file, and a reusable connection returns to the per-`host:port` pool sized by `http_pool` in `x.toml`. `http.get` panics on a URL it cannot parse, a connection failure, or a capability denial; a response with a non-2xx status is not a panic, it is a `Response`.
+Responses frame their body by `Content-Length`, chunked encoding, a bodyless rule or end-of-file, and a reusable connection returns to the per-`host:port` pool sized by `http_pool` in `coral.toml`. `http.get` panics on a URL it cannot parse, a connection failure, or a capability denial; a response with a non-2xx status is not a panic, it is a `Response`.
 
 ## 17. Limits in v1
 
@@ -1041,7 +1041,7 @@ These are deliberate, and each one has a workaround in this document:
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`.
 - No character literal, and no `char` values.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
-- `xc` has no formatter or linter command yet, and `xc run` cannot pass arguments to the program.
+- `kelpc` has no formatter or linter command yet, and `kelpc run` cannot pass arguments to the program.
 - Capability patterns are static text: they cannot be computed, narrowed or revoked at runtime.
 
 ## 18. Errors you will hit
@@ -1068,7 +1068,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'str' is a borrowed view` | an owned field, element or value is needed; use `String` |
 | `cannot find module 'x': expected '<path>'` | the `impl` path is wrong, or the file is missing |
 | `import cycle: a -> b -> a` | remove the cycle |
-| `x.toml sections are not supported` / `unknown key 'x' in x.toml` | the manifest is flat: `name`, `version`, `entry`, `http_pool` |
+| `coral.toml sections are not supported` / `unknown key 'x' in coral.toml` | the manifest is flat: `name`, `version`, `entry`, `http_pool` |
 | `no 'main' function found` | the entry module needs `fun main()` |
 | `'fs.read' needs the 'fs' capability, which module 'm' was not granted` | grant it at the `impl` line: `impl "m" with caps(fs = ["/path/**"])` |
 | `datac 'Bad' cannot hold itself by value` | a recursive field needs indirection: `Box<Bad>` or `List<Bad>` |
@@ -1094,7 +1094,7 @@ panic: String.from_bytes: input is not valid utf-8
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
 - Comments are `//`, written as full sentences when they explain a decision and never to restate the next line.
 
-No formatter ships yet. `xc` currently has no `fmt` or `lint` command, so these rules are a review convention rather than a check.
+No formatter ships yet. `kelpc` currently has no `fmt` or `lint` command, so these rules are a review convention rather than a check.
 
 ## 20. Grammar summary
 
@@ -1139,7 +1139,7 @@ arg          := [ ident "=" ] expr
 
 ## 21. A complete program
 
-`wordcount.x` counts how often each word appears in a file, prints the words in order with their counts, and prints the total. It compiles with `xc build wordcount.x -o wordcount` and runs as `./wordcount /abs/path/input.txt`.
+`wordcount.kp` counts how often each word appears in a file, prints the words in order with their counts, and prints the total. It compiles with `kelpc build wordcount.kp -o wordcount` and runs as `./wordcount /abs/path/input.txt`.
 
 ```x
 // wordcount: count how often each word appears in a file.
