@@ -6,6 +6,7 @@ mod driver;
 mod infer;
 mod lexer;
 mod parser;
+mod preprocess;
 mod pretty;
 mod resolve;
 mod tir;

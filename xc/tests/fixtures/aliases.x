@@ -1,0 +1,16 @@
+// M5.3: `%*alias*%` substitution. Inline declarations, a chain (one alias's
+// text referencing another), and a reference inside a plain string literal.
+//
+// `%*doubled*%` prints 44, not 84: substitution is pure text, so
+// `%*answer*% * 2` becomes `40 + 2 * 2`. That is the tradeoff the plan
+// states explicitly (no hygiene, no parameters) — write the parens into the
+// alias text if you want the other grouping.
+alias %*answer*% = 40 + 2
+alias %*doubled*% = %*answer*% * 2
+alias %*word*% = aliasword
+
+fun main() {
+    print(%*answer*%)
+    print(%*doubled*%)
+    print("say %*word*%")
+}

@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 
 use crate::lexer::Span;
 
+/// A secondary location attached to a diagnostic. Used where an error has a
+/// natural second site that lives in *another* file — an alias's definition
+/// versus the `%*name*%` that used it (M5.3), which is the case that stops a
+/// single `(module, span)` pair from being enough.
+#[derive(Debug, Clone)]
+pub struct DiagnosticNote {
+    pub message: String,
+    pub span: Span,
+    pub module: String,
+}
+
 #[derive(Debug)]
 pub struct Diagnostic {
     pub message: String,
@@ -19,6 +30,8 @@ pub struct Diagnostic {
     /// the `.x` suffix (`"shapes/circle"`). The entry module has one too
     /// (its own path), even though its *symbol prefix* is empty.
     pub module: String,
+    /// Extra locations, rendered after the primary one.
+    pub notes: Vec<DiagnosticNote>,
 }
 
 impl Diagnostic {
@@ -27,7 +40,23 @@ impl Diagnostic {
             message,
             span,
             module: module.into(),
+            notes: Vec::new(),
         }
+    }
+
+    /// Attaches a secondary location in its own module/file.
+    pub fn with_note(
+        mut self,
+        message: String,
+        span: Span,
+        module: impl Into<String>,
+    ) -> Self {
+        self.notes.push(DiagnosticNote {
+            message,
+            span,
+            module: module.into(),
+        });
+        self
     }
 }
 
@@ -63,22 +92,30 @@ impl SourceMap {
     }
 
     pub fn render(&self, d: &Diagnostic) -> String {
-        match self.files.get(&d.module) {
+        let mut out = self.render_at(&d.message, d.span, &d.module, "error: ");
+        for note in &d.notes {
+            out.push('\n');
+            out.push_str(&self.render_at(&note.message, note.span, &note.module, "  note: "));
+        }
+        out
+    }
+
+    fn render_at(&self, message: &str, span: Span, module: &str, label: &str) -> String {
+        match self.files.get(module) {
             Some(f) => {
-                let (line, col) = line_col(&f.text, d.span.start);
+                let (line, col) = line_col(&f.text, span.start);
                 format!(
-                    "error: {}\n  --> {}:{line}:{col}",
-                    d.message,
+                    "{label}{message}\n  --> {}:{line}:{col}",
                     f.path.display()
                 )
             }
             // Module `""` is the sentinel for a diagnostic raised before (or
             // instead of) loading a module — a bad CLI path, a missing
             // `x.toml` — so there is no file to point at.
-            None if d.module.is_empty() => format!("error: {}", d.message),
+            None if module.is_empty() => format!("{label}{message}"),
             // Only reachable if a diagnostic was produced for a module whose
             // file was never registered — a compiler bug, not a user error.
-            None => format!("error: {}\n  --> <module '{}'>", d.message, d.module),
+            None => format!("{label}{message}\n  --> <module '{module}'>"),
         }
     }
 }

@@ -419,6 +419,68 @@ fn a_passdown_is_not_visible_from_another_module() {
 }
 
 // ---------------------------------------------------------------------------
+// M5.3: `%*alias*%` text substitution (`alias.xconf` + inline `alias`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn aliases_substitute_text_in_expressions_and_strings() {
+    // Also pins the pure-text semantics: `%*doubled*%` is `40 + 2 * 2`.
+    assert_compiles_and_runs(
+        "tests/fixtures/aliases.x",
+        "42\n44\nsay aliasword\n",
+    );
+}
+
+#[test]
+fn an_alias_xconf_entry_can_be_an_impl_path() {
+    assert_project_runs("alias_xconf", &project("alias_xconf"), "42\n");
+}
+
+#[test]
+fn an_alias_from_an_imported_module_is_visible() {
+    // The table is flat and global: `%*greeting*%` is declared in `util.x`
+    // and used in `main.x`.
+    assert_project_runs(
+        "alias_cross_file",
+        &project("alias_cross_file"),
+        "hello from an imported alias\n",
+    );
+}
+
+#[test]
+fn an_alias_cycle_is_rejected_even_when_unused() {
+    assert_rejected("tests/fixtures/alias_cycle.x");
+}
+
+#[test]
+fn an_unknown_alias_is_rejected() {
+    assert_rejected("tests/fixtures/alias_unknown.x");
+}
+
+#[test]
+fn an_alias_cycle_across_two_files_names_both_sites() {
+    // `a` is defined in `alias.xconf`, `b` in `main.x`; the diagnostic points
+    // at the reference that closed the cycle and notes the definition, so
+    // both files appear.
+    let bin = out_path("alias_xconf_cycle");
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(project("alias_xconf_cycle"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(!build.status.success(), "expected a rejection");
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    for needle in ["alias cycle: a -> b -> a", "alias.xconf:", "main.x:"] {
+        assert!(
+            stderr.contains(needle),
+            "expected the error to mention '{needle}', got:\n{stderr}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Struct emission order. `structs` used to be collected from a `HashMap`, so
 // a `datac` embedding another one compiled or failed at random. Declaration
 // order is a valid topological order because a `datac` may only name datacs

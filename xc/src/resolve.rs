@@ -27,8 +27,9 @@ use std::path::{Path, PathBuf};
 
 use crate::ast;
 use crate::diag::{Diagnostic, SourceMap};
-use crate::lexer::{Lexer, Span};
+use crate::lexer::{Lexer, Span, Token, TokenKind};
 use crate::parser::Parser;
+use crate::preprocess::{self, AliasTable};
 
 /// One loaded module, as seen by the rest of the compiler.
 #[derive(Debug, Clone)]
@@ -160,17 +161,27 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
 
     let entry = module_id_of(&entry_file, &src_dir)?;
 
+    // `alias.xconf` lives at the project root — the directory holding
+    // `x.toml`, or the entry file's own directory for a manifest-less file.
+    let xconf_path = match &root {
+        Some(r) => r.join(preprocess::XCONF_FILE_NAME),
+        None => src_dir.join(preprocess::XCONF_FILE_NAME),
+    };
+
     let mut loader = Loader {
         src_dir: src_dir.clone(),
         entry: entry.clone(),
+        xconf_path,
         sources,
+        aliases: AliasTable::new(),
+        raw: HashMap::new(),
         parsed: HashMap::new(),
         state: HashMap::new(),
         stack: Vec::new(),
         modules: Vec::new(),
         prefixes: HashMap::new(),
     };
-    loader.visit(&entry, Span::new(0, 0), "")?;
+    loader.load_project()?;
 
     let mut program = ast::Program {
         impls: Vec::new(),
@@ -236,7 +247,15 @@ struct Loader<'a> {
     src_dir: PathBuf,
     /// Module id of the entry module — the only one with an empty prefix.
     entry: String,
+    /// `<project root>/alias.xconf`, whether or not it exists.
+    xconf_path: PathBuf,
     sources: &'a mut SourceMap,
+    /// The one flat, global alias table: `alias.xconf` plus every inline
+    /// declaration in the project.
+    aliases: AliasTable,
+    /// Raw, unexpanded token streams per module, kept so a later round can
+    /// re-expand against a table that has grown.
+    raw: HashMap<String, Vec<Token>>,
     parsed: HashMap<String, ast::Program>,
     /// 1 = currently being loaded (on `stack`), 2 = finished.
     state: HashMap<String, u8>,
@@ -245,8 +264,129 @@ struct Loader<'a> {
     prefixes: HashMap<String, String>,
 }
 
+/// Bound on alias-driven re-expansion. Each discovery round only ever *adds*
+/// modules, so this is a guard against a pathological case, not an expected
+/// limit.
+const MAX_ALIAS_ROUNDS: usize = 8;
+
 impl Loader<'_> {
-    fn visit(&mut self, id: &str, at: Span, from: &str) -> Result<(), Diagnostic> {
+    /// Reads `alias.xconf`, discovers the module graph, then loads it for
+    /// real.
+    ///
+    /// Two phases, because the two halves of M5.3 need each other: an `impl`
+    /// path may contain `%*alias*%`, so the file graph is only knowable after
+    /// expansion, while the alias table is only complete once every file is
+    /// known. Discovery therefore tolerates what it cannot yet resolve — a
+    /// file that fails to expand or parse is skipped, an unresolvable import
+    /// is ignored — and just collects aliases; the final strict round runs
+    /// against the complete table, where every failure is a real error.
+    fn load_project(&mut self) -> Result<(), Diagnostic> {
+        self.load_alias_xconf()?;
+
+        let mut last_error = None;
+        for _ in 0..MAX_ALIAS_ROUNDS {
+            // Discovery: close over every file reachable without the aliases
+            // this round has not collected yet.
+            loop {
+                let before = self.raw.len();
+                self.reset_round();
+                let entry = self.entry.clone();
+                // Discovery never fails: it skips what it cannot resolve yet.
+                let _ = self.visit(&entry, Span::new(0, 0), "", false);
+                if self.raw.len() == before {
+                    break;
+                }
+            }
+
+            let before = self.raw.len();
+            self.reset_round();
+            let entry = self.entry.clone();
+            let result = self.visit(&entry, Span::new(0, 0), "", true);
+            if self.raw.len() == before {
+                // Nothing new was loaded, so no later round could resolve
+                // more aliases: this result is final.
+                result?;
+                // Catches a cycle nothing references; expansion only finds
+                // one it actually expands.
+                return self.aliases.check_cycles();
+            }
+            // The strict round found a file via an aliased path, which may in
+            // turn have contributed the alias an earlier error was about.
+            last_error = result.err();
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            Diagnostic::new(
+                format!("alias expansion did not settle after {MAX_ALIAS_ROUNDS} rounds"),
+                Span::new(0, 0),
+                "",
+            )
+        }))
+    }
+
+    fn reset_round(&mut self) {
+        self.state.clear();
+        self.stack.clear();
+        self.modules.clear();
+        self.prefixes.clear();
+        self.parsed.clear();
+    }
+
+    fn load_alias_xconf(&mut self) -> Result<(), Diagnostic> {
+        let Ok(text) = fs::read_to_string(&self.xconf_path) else {
+            return Ok(()); // the file is optional
+        };
+        self.sources
+            .insert(preprocess::XCONF_MODULE, &self.xconf_path, text.clone());
+        for def in preprocess::parse_xconf(&text)? {
+            self.aliases.define(def)?;
+        }
+        Ok(())
+    }
+
+    /// `strict == false` is the discovery round: every failure is skipped, so
+    /// a file loaded later can still contribute the alias an earlier file
+    /// used.
+    fn visit(&mut self, id: &str, at: Span, from: &str, strict: bool) -> Result<(), Diagnostic> {
+        let depth = self.stack.len();
+        let result = self.visit_body(id, at, from, strict);
+        if result.is_err() {
+            // A failed visit must not leave the module looking half-loaded —
+            // a sibling import should be free to try it again.
+            self.stack.truncate(depth);
+            self.state.remove(id);
+        }
+        result
+    }
+
+    /// The raw token stream for one module, loaded from disk on first sight.
+    /// Inline `alias` declarations are collected here, from the *unexpanded*
+    /// tokens, so every file the walk reaches contributes its aliases.
+    fn tokens_of(&mut self, id: &str, at: Span, from: &str) -> Result<Vec<Token>, Diagnostic> {
+        if let Some(tokens) = self.raw.get(id) {
+            return Ok(tokens.clone());
+        }
+        let path = self.src_dir.join(format!("{id}.x"));
+        let text = fs::read_to_string(&path).map_err(|_| {
+            Diagnostic::new(
+                format!("cannot find module '{id}': expected '{}'", path.display()),
+                at,
+                from,
+            )
+        })?;
+        self.sources.insert(id, &path, text.clone());
+
+        let tokens = Lexer::new(&text)
+            .tokenize()
+            .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
+        for def in preprocess::scan_inline_aliases(&tokens, &text, id)? {
+            self.aliases.define(def)?;
+        }
+        self.raw.insert(id.to_string(), tokens.clone());
+        Ok(tokens)
+    }
+
+    fn visit_body(&mut self, id: &str, at: Span, from: &str, strict: bool) -> Result<(), Diagnostic> {
         match self.state.get(id) {
             Some(2) => return Ok(()),
             Some(_) => {
@@ -262,20 +402,28 @@ impl Loader<'_> {
             _ => {}
         }
 
-        let path = self.src_dir.join(format!("{id}.x"));
-        let text = fs::read_to_string(&path).map_err(|_| {
-            Diagnostic::new(
-                format!("cannot find module '{id}': expected '{}'", path.display()),
-                at,
-                from,
-            )
-        })?;
-        self.sources.insert(id, &path, text.clone());
+        let tokens = self.tokens_of(id, at, from)?;
 
-        let tokens = Lexer::new(&text)
-            .tokenize()
-            .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
-        let program = Parser::new(tokens)
+        if !strict {
+            // Discovery. Imports come straight off the raw token stream, so a
+            // file whose body cannot expand yet — it uses an alias another
+            // file has still to contribute — nevertheless contributes its own
+            // aliases and its unaliased imports. Unresolvable paths are
+            // skipped here and become real errors in the strict round.
+            self.state.insert(id.to_string(), 1);
+            self.stack.push(id.to_string());
+            for (path, span) in raw_imports(&tokens) {
+                if validate_impl_path(&path, span, id).is_ok() {
+                    let _ = self.visit(&path, span, id, false);
+                }
+            }
+            self.stack.pop();
+            self.state.insert(id.to_string(), 2);
+            return Ok(());
+        }
+
+        let expanded = self.aliases.expand_file(&tokens, id)?;
+        let program = Parser::new(expanded)
             .parse_program()
             .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
 
@@ -300,7 +448,7 @@ impl Loader<'_> {
             }
             let target = imp.path.clone();
             aliases.insert(alias, target.clone());
-            self.visit(&target, imp.span, id)?;
+            self.visit(&target, imp.span, id, strict)?;
         }
 
         self.stack.pop();
@@ -327,6 +475,26 @@ impl Loader<'_> {
 /// The alias used when `as` is not written: the last path segment.
 fn default_alias(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+/// Every `impl "path"` in a raw, unexpanded token stream. The discovery
+/// round walks these instead of a parsed AST, which is what lets it find the
+/// files that define the aliases a file's own body cannot expand without.
+fn raw_imports(tokens: &[Token]) -> Vec<(String, Span)> {
+    let mut imports = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        if !matches!(token.kind, TokenKind::Impl) {
+            continue;
+        }
+        if let Some(Token {
+            kind: TokenKind::StringLit(path),
+            span,
+        }) = tokens.get(i + 1)
+        {
+            imports.push((path.clone(), *span));
+        }
+    }
+    imports
 }
 
 fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
@@ -492,7 +660,7 @@ fn validate_alias(alias: &str, span: Span, module: &str) -> Result<(), Diagnosti
     Ok(())
 }
 
-fn is_ident(s: &str) -> bool {
+pub(crate) fn is_ident(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
@@ -501,7 +669,7 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn is_keyword(s: &str) -> bool {
+pub(crate) fn is_keyword(s: &str) -> bool {
     matches!(
         s,
         "fun" | "val"
@@ -517,6 +685,8 @@ fn is_keyword(s: &str) -> bool {
             | "datac"
             | "impl"
             | "as"
+            | "pd"
+            | "alias"
             | "print"
     )
 }
