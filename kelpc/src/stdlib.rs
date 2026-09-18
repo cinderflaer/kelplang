@@ -58,6 +58,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/process" => include_str!("../std/process.kp"),
         "std/net" => include_str!("../std/net.kp"),
         "std/http" => include_str!("../std/http.kp"),
+        "std/list" => include_str!("../std/list.kp"),
         "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
         _ => return None,
@@ -69,7 +70,8 @@ fn raw_source(id: &str) -> Option<&'static str> {
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
-        "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/option", "std/result",
+        "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/list", "std/option",
+        "std/result",
     ]
 }
 

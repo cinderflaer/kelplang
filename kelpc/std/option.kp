@@ -5,17 +5,22 @@
 // a function that can fail exactly one way returns `Option<T>` and its caller
 // writes `val x = f(...)?`.
 //
+// The combinators take a function value (A-4) and read the payload through a
+// *borrow*: `map`'s callback is `fun(&T).R: U`, not `fun(T).R: U`, because a
+// `when` arm binds an owned payload as a shared borrow. That is also why they
+// work at every instantiation — a `Copy` payload is copied into the arm and
+// auto-borrowed at the call, an owned one is already a borrow.
+//
 // What is deliberately absent, and why:
 //
-// - `map`, `and_then`, `or_else` need function values (A-4). They are the
-//   helpers everyone reaches for first, and they are the ones v1 cannot write.
-// - Anything that hands the payload *out* by value needs either a move-taking
-//   parameter or a clone, and v1 has neither: a parameter of a non-`Copy` type
-//   is a borrow. So `unwrap_or`/`unwrap` are offered for a `Copy` payload and
-//   are a compile error at any other instantiation — the same rule
-//   `List.get` follows, and the reason there is no `Option<String>.unwrap()`.
-// - `ok_or` (turning an `Option` into a `Result`) would have to consume the
-//   option to move its payload into `Ok`, which is the same missing piece.
+// - Anything that hands the payload *out* by value needs a move out of the
+//   enum, and v1's `when` binds a payload as a borrow: so `unwrap_or`/`unwrap`
+//   are offered for a `Copy` payload and are a compile error at any other
+//   instantiation — the same rule `List.get` follows, and the reason there is
+//   no `Option<String>.unwrap()`. `or_else` is in the same group: rebuilding
+//   `Some` from the payload it was handed needs a copy.
+// - `ok_or` (turning an `Option` into a `Result`) would have to move its
+//   payload into `Ok`, which is that same missing piece.
 
 enum Option<T> {
     Some(val value: T)
@@ -59,4 +64,36 @@ fun expect<T>(o: &Option<T>, message: &str).R: T {
         return v
     }
     panic(message)
+}
+
+// Transform the payload through `f`, or pass `None` through. The callback
+// borrows the payload, so this works for any `T`: the result is a fresh `U`.
+fun map<T, U>(o: &Option<T>, f: fun(&T).R: U).R: Option<U> = when o {
+    Some(v) -> Option.Some(value = f(v))
+    None -> Option.None
+}
+
+// Chain a second fallible step: `and_then`'s callback returns an `Option`
+// itself, which is what makes a sequence of fallible steps readable without
+// nesting `if let`. Works for any `T`, for the same reason `map` does.
+fun and_then<T, U>(o: &Option<T>, f: fun(&T).R: Option<U>).R: Option<U> = when o {
+    Some(v) -> f(v)
+    None -> Option.None
+}
+
+// The option, or `f()` when it is empty. `T` must be `Copy`: the `Some` arm
+// rebuilds the payload out of the borrow it was handed, which is a copy.
+fun or_else<T>(o: &Option<T>, f: fun().R: Option<T>).R: Option<T> = when o {
+    Some(v) -> Option.Some(value = v)
+    None -> f()
+}
+
+// Run `f` over the payload, if there is one, and discard the result — the
+// `Unit` case of `map`, written as its own call so a side effect reads like
+// one. Works for any `T`.
+fun each<T>(o: &Option<T>, f: fun(&T)) {
+    when o {
+        Some(v) -> f(v)
+        None -> {}
+    }
 }

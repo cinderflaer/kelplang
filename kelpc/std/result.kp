@@ -6,12 +6,17 @@
 // want to know *why* it failed, and `expr?` propagates the `E` unchanged into
 // the enclosing function's `Result<_, E>`.
 //
+// The combinators take a function value (A-4) and read the payload through a
+// *borrow*, so a callback never takes ownership: `map`'s is
+// `fun(&T).R: U`. The arm that has to *rebuild* the other side of the result
+// is the one with the `Copy` requirement — `map` rebuilds `Err`, so its `E`
+// must be `Copy`; `map_err` rebuilds `Ok`, so its `T` must be.
+//
 // What is deliberately absent, and why:
 //
-// - `map`, `map_err`, `and_then` need function values (A-4).
 // - `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out by value, which needs
-//   a move-taking parameter or a clone, so they are offered for a `Copy`
-//   payload and are a compile error at any other instantiation.
+//   a move out of the enum, so they are offered for a `Copy` payload and are a
+//   compile error at any other instantiation.
 // - There is no error *conversion*: `?` requires the operand's failure payload
 //   type and the enclosing function's to be identical, so `From`-style lifting
 //   of one error into another is where a trait would go (A-12).
@@ -69,4 +74,42 @@ fun expect_err<T, E>(r: &Result<T, E>, message: &str).R: E {
         return e
     }
     panic(message)
+}
+
+// Transform the success payload through `f`. `E` must be `Copy`: the failure
+// arm rebuilds `Err` out of the borrow it was handed.
+fun map<T, U, E>(r: &Result<T, E>, f: fun(&T).R: U).R: Result<U, E> = when r {
+    Ok(v) -> Result.Ok(value = f(v))
+    Err(e) -> Result.Err(error = e)
+}
+
+// Transform the failure payload through `f`. `T` must be `Copy`, for the
+// mirror-image reason.
+fun map_err<T, E, F>(r: &Result<T, E>, f: fun(&E).R: F).R: Result<T, F> = when r {
+    Ok(v) -> Result.Ok(value = v)
+    Err(e) -> Result.Err(error = f(e))
+}
+
+// Chain a second fallible step: `f` returns a `Result` itself, which is what
+// makes a sequence of fallible steps readable without nesting `if let`.
+// `E` must be `Copy`, since the failure arm rebuilds `Err`.
+fun and_then<T, U, E>(r: &Result<T, E>, f: fun(&T).R: Result<U, E>).R: Result<U, E> = when r {
+    Ok(v) -> f(v)
+    Err(e) -> Result.Err(error = e)
+}
+
+// The result, or `f(e)` when it failed. `T` must be `Copy`, since the success
+// arm rebuilds `Ok`.
+fun or_else<T, E, F>(r: &Result<T, E>, f: fun(&E).R: Result<T, F>).R: Result<T, F> = when r {
+    Ok(v) -> Result.Ok(value = v)
+    Err(e) -> f(e)
+}
+
+// Run `f` over the success payload, if there is one, and discard the result.
+// Works for any `T`.
+fun each<T, E>(r: &Result<T, E>, f: fun(&T)) {
+    when r {
+        Ok(v) -> f(v)
+        Err(_) -> {}
+    }
 }

@@ -1,0 +1,74 @@
+// A-4 phase D: `option.map`/`and_then`/`or_else`/`each` and
+// `result.map`/`map_err`/`and_then`/`or_else`/`each` — the helpers
+// MK5-S6-M1 recorded as waiting on function values.
+//
+// Every callback takes a *borrow* of the payload (`fun(&T).R: U`), which is
+// what makes `map` work at any instantiation, owned payload included, and what
+// keeps the callback from taking ownership. What a function *cannot* do is
+// rebuild the variant it was handed without a copy — those are the `Copy`
+// instantiations the two modules document, and the reason the error type here
+// is an `i32` rather than a `datac`.
+//
+// In the AddressSanitizer list: `map` builds owned `String`s and frees them.
+impl "std/option"
+impl "std/result"
+impl "std/str"
+
+fun half(n: i32).R: option.Option<i32> {
+    if n % 2 == 0 {
+        return option.Option.Some(value = n / 2)
+    }
+    return option.Option.None
+}
+
+fun parse_positive(n: i32).R: result.Result<i32, i32> {
+    if n > 0 {
+        return result.Result.Ok(value = n)
+    }
+    return result.Result.Err(error = 0 - n)
+}
+
+fun main() {
+    // `map` over an owned payload: the callback borrows the `String`, and the
+    // result is a fresh owned value. Reading it back out goes through the
+    // borrow, because `option.expect` is offered for a `Copy` payload.
+    val text = option.Option.Some(value = String.from_str("hello"))
+    val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
+    print(option.expect(o = len, message = "none"))
+
+    val shout = option.map(o = text, f = fun(s: &String).R: String = str.to_upper(s.as_str()))
+    if let Some(s) = shout {
+        print(s)
+    }
+
+    // Chaining fallible steps does not nest.
+    print(option.expect(o = option.and_then(o = half(8), f = half), message = "none"))
+    print(option.is_none(o = option.and_then(o = half(9), f = half)))
+
+    // `or_else` needs a `Copy` payload: it rebuilds `Some` from a copy.
+    val empty: option.Option<i32> = option.Option.None
+    val seven = option.or_else(
+        o = empty,
+        f = fun().R: option.Option<i32> = option.Option.Some(value = 7)
+    )
+    print(option.unwrap_or(o = seven, fallback = 0))
+
+    // `each` is the `Unit` case of `map`.
+    option.each(o = seven, f = fun(v: &i32) { print(v) })
+
+    // Result: `map` needs a `Copy` error, `map_err` a `Copy` success.
+    val ok = result.map(r = parse_positive(21), f = fun(n: &i32).R: i32 = n * 2)
+    print(result.expect(r = ok, message = "err"))
+    val failed = result.map_err(r = parse_positive(-5), f = fun(e: &i32).R: i32 = e + 100)
+    print(result.expect_err(r = failed, message = "ok"))
+
+    // `and_then` chains, `or_else` recovers, `each` observes.
+    val chained = result.and_then(r = parse_positive(4), f = parse_positive)
+    print(result.expect(r = chained, message = "err"))
+    val recovered = result.or_else(
+        r = parse_positive(-1),
+        f = fun(e: &i32).R: result.Result<i32, i32> = result.Result.Ok(value = e + 10)
+    )
+    print(result.expect(r = recovered, message = "err"))
+    result.each(r = chained, f = fun(n: &i32) { print(n) })
+}

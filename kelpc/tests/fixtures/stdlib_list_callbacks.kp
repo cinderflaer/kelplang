@@ -1,0 +1,48 @@
+// A-4 phase D: `std/list` — the callback-shaped operations on `List<T>`.
+//
+// The element-wise API is builtin (a list is monomorphized, so its methods are
+// generated C per element type); what needs a function value cannot be
+// generated without knowing what the callback returns, so those live in a
+// module and are called as `list.map(xs, f)`. Every callback borrows the
+// element, so the same functions work for a `Copy` and for an owned element
+// type. In the AddressSanitizer list.
+impl "std/list"
+impl "std/option"
+impl "std/str"
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+
+    val doubled = list.map(xs = xs, f = fun(x: &i32).R: i32 = x * 2)
+    print(doubled.get(2))
+
+    val odds = list.filter(xs = xs, f = fun(x: &i32).R: bool = x % 2 == 1)
+    print(odds.len())
+
+    list.each(xs = xs, f = fun(x: &i32) { print!(x) })
+    print("")
+
+    print(list.any(xs = xs, f = fun(x: &i32).R: bool = x > 2))
+    print(list.all(xs = xs, f = fun(x: &i32).R: bool = x > 0))
+
+    val at = list.find_index(xs = xs, f = fun(x: &i32).R: bool = x == 3)
+    print(option.expect(o = at, message = "none"))
+
+    // An owned element type: the callback borrows, so nothing is moved out of
+    // the list and the list is still usable afterwards.
+    var names: List<String> = List.empty()
+    names.push(String.from_str("ab"))
+    names.push(String.from_str("cdef"))
+
+    val lens = list.map(xs = names, f = fun(s: &String).R: usize = s.len())
+    print(lens.get(0))
+    print(lens.get(1))
+
+    val long = list.find_index(names, fun(s: &String).R: bool = s.len() > 2)
+    print(option.expect(o = long, message = "none"))
+    print(list.any(names, fun(s: &String).R: bool = str.starts_with(s.as_str(), "cd")))
+    print(names.len())
+}
