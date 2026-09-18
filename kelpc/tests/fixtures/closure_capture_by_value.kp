@@ -1,0 +1,9 @@
+// A-4 phase E: an owned capture is read out of the environment through a
+// borrow — that is what a capture is for. Reading it out as a whole value
+// would give two owners of one buffer, which is the partial move v1 has no
+// rule for.
+fun main() {
+    val text = String.from_str("x")
+    val f = fun() .R: String = text
+    print(f().len())
+}

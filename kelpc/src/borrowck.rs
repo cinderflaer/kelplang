@@ -887,12 +887,54 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // A function reference is a value with no owner: nothing to move,
         // nothing to drop (A-4).
         tir::ExprKind::FnRef(_) => Ok(()),
+        // A `fun` literal that captured something (A-4 phase E): the value it
+        // produces *owns* its environment, so it is a value like any other
+        // owned one (its drop is planned by whoever binds or passes it), and
+        // each captured binding is moved in exactly as `val b = a` moves one.
+        // A `Copy` capture is a copy, which is what the type says.
+        tir::ExprKind::ClosureLit { captures, .. } => {            for init in captures {
+                if is_copy(&init.ty) {
+                    // A `Copy` value is copied into the environment, so the
+                    // enclosing binding stays usable and nothing is tracked.
+                    continue;
+                }
+                match &init.kind {
+                    tir::ExprKind::Ident(name) => ctx.use_value_moving(name, init.span),
+                    // A nested literal copying out of the enclosing closure's
+                    // environment: only `Copy` values get here, so the read
+                    // moves nothing.
+                    tir::ExprKind::Capture { .. } => Ok(()),
+                    _ => Ok(()),
+                }?;
+            }
+            Ok(())
+        }
+        // A plain function value widened into a closure (A-4 phase E): the
+        // value being wrapped is read as a whole value — a `fun` is `Copy`, so
+        // that moves nothing, and the wrapper itself is an owned temporary
+        // exactly like a closure literal.
+        tir::ExprKind::FnToClosure { func } => check_value(func, ctx),
+        // A read of one field of the enclosing closure's environment (A-4
+        // phase E). The environment owns the value, so reading it out whole
+        // would be a partial move — the same rule an owned `datac` field and
+        // an owned enum payload already follow.
+        tir::ExprKind::Capture { .. } => {
+            if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
+                return Err(BorrowError {
+                    message: "cannot read a captured value out of the closure's environment by value: v1 has no partial moves, so this would give two owners of the same buffer — use it through a borrow (read a field of it, call a method on it, pass it to a parameter), or capture a `Copy` value instead".to_string(),
+                    span: expr.span,
+                });
+            }
+            Ok(())
+        }
         tir::ExprKind::Call { .. } => check_call(expr, ctx),
         // A call through a function value (A-4): the callee is read as a
-        // value — a function value is Copy, so that read moves nothing — and
-        // the arguments follow exactly the rule a named call's do.
+        // *place*, not as a whole value — a function value is `Copy`, and a
+        // closure is called through a borrow of the binding that holds it, so
+        // calling one must not move it — and the arguments follow exactly the
+        // rule a named call's do.
         tir::ExprKind::IndirectCall { callee, args } => {
-            check_value(callee, ctx)?;
+            check_place(callee, ctx)?;
             let taken = take_call_arguments(args, ctx)?;
             release_call_borrows(&taken, ctx);
             Ok(())
@@ -1021,6 +1063,10 @@ fn check_place(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         tir::ExprKind::Ident(name) => ctx.use_place(name, base.span),
         tir::ExprKind::FieldAccess { base: inner, .. } => check_place(inner, ctx),
         tir::ExprKind::EnumField { base: inner, .. } => check_place(inner, ctx),
+        // A capture is a place too (A-4 phase E): reading it through a
+        // borrow or calling a method on it is exactly what an owned capture
+        // is for.
+        tir::ExprKind::Capture { .. } => Ok(()),
         tir::ExprKind::Deref { expr: inner } => check_value(inner, ctx),
         _ => check_value(base, ctx),
     }

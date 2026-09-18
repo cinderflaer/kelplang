@@ -63,6 +63,25 @@ pub struct Function {
     /// `extern fun` (M6.2): the body below is synthetic (empty) and
     /// `codegen_c.rs` writes the compiler-supplied C for it instead.
     pub extern_: bool,
+    /// The environment this function receives, when it is a `fun` literal that
+    /// captured something (A-4 phase E): `Some` makes the generated C
+    /// signature start with a hidden `void*` environment parameter that the
+    /// body's `ExprKind::Capture` reads go through. `None` for every ordinary
+    /// function and for a literal that captured nothing.
+    pub env: Option<ClosureEnv>,
+}
+
+/// One literal's environment (A-4 phase E); see `Function::env`.
+#[derive(Debug, Clone)]
+pub struct ClosureEnv {
+    /// The generated C struct (`kelp_Env__#funlit3`), one field per capture.
+    pub struct_name: String,
+    /// The generated function that drops each owned field and frees the
+    /// struct (`kelp_env_drop__#funlit3`).
+    pub drop_name: String,
+    /// Field name (`c0`, `c1`, …) and type, in the order `ExprKind::Capture`
+    /// indexes them.
+    pub fields: Vec<(String, Ty)>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +216,33 @@ pub enum ExprKind {
     /// function reference carries no environment, so the C function *is* the
     /// value and there is nothing to allocate or drop.
     FnRef(String),
+    /// A `fun` literal that captured something (A-4 phase E): the value is a
+    /// *closure* — a function pointer, the heap environment its captures were
+    /// moved into, and the environment's drop. `key` names the generated
+    /// function (whose signature starts with the hidden environment
+    /// parameter), and `captures` holds one initializer per environment field,
+    /// in field order, each written in the enclosing function's terms: a
+    /// local by name, or a read of an enclosing closure's environment.
+    ClosureLit {
+        key: String,
+        captures: Vec<Expr>,
+    },
+    /// A read of one field of the enclosing closure's environment (A-4 phase
+    /// E), inside the generated function that literal became. It is a *place*
+    /// (the environment owns the value), which is what lets an owned capture
+    /// be borrowed — calling a method on it, passing it to a parameter — while
+    /// reading it out as a whole value is the partial move `borrowck.rs`
+    /// refuses.
+    Capture { index: usize },
+    /// A plain function value used where a closure is expected (A-4 phase E):
+    /// the widening that makes `val f: closure(i32).R: i32 = double` and
+    /// `Holder(cb = fun(x: i32).R: i32 = x)` mean what they read as. A `fun`
+    /// value is a bare code pointer with no environment, so the value is
+    /// wrapped in a one-field environment holding the pointer, plus a thunk
+    /// generated per signature that calls through it. The alternative — a
+    /// hidden first parameter on every declared function — is not C's calling
+    /// convention, so a wrapper is the honest cost of one type.
+    FnToClosure { func: Box<Expr> },
     /// A call through a function value: `f(x)`, where `f` is a local (or,
     /// later, a field) of a `Ty::Fn` type. `callee` is a value expression, so
     /// codegen parenthesizes it before the argument list. Distinct from

@@ -1,0 +1,60 @@
+// A-4 phase E: captures. A `fun` literal that names a binding from the
+// enclosing scope becomes a *closure* — a function value plus the heap
+// environment those captures were moved into — and its type is written
+// `closure(T).R: U`, the function type one keyword apart.
+//
+// A `Copy` capture is copied into the environment (the binding stays usable);
+// an owned one is *moved* in, and the environment owns it from then on. The
+// closure outlives the frame that made it, which is the whole point.
+//
+// In the AddressSanitizer list: every owned capture here is freed exactly
+// once, through the environment's generated drop.
+impl "std/str"
+
+datac Holder(val cb: closure(i32).R: i32)
+
+fun apply(f: closure(i32).R: i32, x: i32).R: i32 = f(x)
+
+fun own(f: move closure(i32).R: i32, x: i32).R: i32 = f(x)
+
+fun make(prefix: move String).R: closure(i32).R: i32 {
+    return fun(x: i32).R: i32 = x + prefix.len().to_i32()
+}
+
+fun main() {
+    // A `Copy` capture: copied in, and the binding is still usable after.
+    val k = 10
+    val add_k = fun(x: i32).R: i32 = x + k
+    print(add_k(1))
+    print(k)
+
+    // An owned capture: moved into the environment and read through a borrow
+    // there, so calling the closure does not move the captured value out.
+    val suffix = String.from_str("!")
+    val shout = fun(s: str).R: usize = str.len(s) + suffix.len()
+    print(shout("hi"))
+
+    // A capturing literal passed straight to a closure parameter — borrowed
+    // by the parameter, and moved by a `move` parameter.
+    print(apply(fun(x: i32).R: i32 = x * k, 3))
+    print(own(fun(x: i32).R: i32 = x - k, 4))
+
+    // A closure returned out of the frame that made it: its environment
+    // outlives the `move` parameter it captured.
+    val f = make(String.from_str("abcd"))
+    print(f(10))
+
+    // A closure in a `datac` field, and one in a `Box` — the optional-callback
+    // shape, since `List<closure(...)>` is refused (a list's elements are
+    // inline).
+    val h = Holder(cb = fun(x: i32).R: i32 = x + k)
+    print(h.cb(5))
+    val boxed: Box<closure(i32).R: i32> = Box.of(fun(x: i32).R: i32 = x * 2)
+    val bf = boxed.get()
+    print(bf(21))
+
+    // A closure the frame already holds, called from inside another literal:
+    // the inner literal captures it and calls through its own environment.
+    val reuse = fun(x: i32).R: i32 = add_k(x) + 1
+    print(reuse(2))
+}

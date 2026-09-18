@@ -44,6 +44,13 @@ pub enum TokenKind {
 
     // keywords
     Fun,
+    /// `closure(i32).R: i32` — the type of a `fun` literal that captures
+    /// (A-4, phase E): a function *value* that carries an environment, so it
+    /// is owned (not Copy) and drops that environment. A keyword rather than
+    /// a contextual name, for the reason `fun` is one: the spelling is a type
+    /// constructor, and a program that named a variable `closure` would
+    /// shadow a type name.
+    Closure,
     Val,
     Var,
     Mut,
@@ -446,6 +453,7 @@ impl<'a> Lexer<'a> {
                     let text = &self.src[start..self.pos];
                     match text {
                         "fun" => TokenKind::Fun,
+                        "closure" => TokenKind::Closure,
                         "val" => TokenKind::Val,
                         "var" => TokenKind::Var,
                         "mut" => TokenKind::Mut,

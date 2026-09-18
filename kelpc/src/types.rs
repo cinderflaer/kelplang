@@ -73,11 +73,31 @@ pub enum Ty {
     /// declaration's signature the same type when they spell the same thing.
     ///
     /// A bare name of a declared `fun` is how a value of this type is made;
-    /// calling one goes through `tir::ExprKind::IndirectCall`. Anonymous
-    /// `fun` literals and closures (a value that carries an environment) are
-    /// later A-4 phases, and would be a separate variant: this one is
-    /// deliberately the environment-free half.
+    /// calling one goes through `tir::ExprKind::IndirectCall`. A `fun`
+    /// literal that captured nothing is the same value; one that *captured*
+    /// something is a `Ty::Closure` below, which carries the environment it
+    /// captured. This variant is deliberately the environment-free half: a
+    /// plain C function pointer, `Copy` (A-4 phases B/C).
     Fn { params: Vec<Ty>, ret: Box<Ty> },
+    /// A function value that carries an environment (A-4 phase E): what a
+    /// `fun` literal whose body names a binding from the enclosing scope
+    /// becomes. Written `closure(T).R: U` — the same shape as a function
+    /// type, under the `closure` keyword, because it is called the same way.
+    ///
+    /// The representation differs from `Ty::Fn` in exactly the ways that
+    /// matter to every pass: a closure is `{ fn, env, drop }` — a *fat*
+    /// pointer, monomorphized per signature — so it is **not `Copy`**, it
+    /// owns the heap environment the captures were moved into, and it drops
+    /// that environment when it dies. A `Ty::Fn` stays a plain C function
+    /// pointer: a declared function, and a literal that captured nothing,
+    /// have no environment to carry (see `codegen_c.rs::write_closure`).
+    ///
+    /// Calling one goes through `tir::ExprKind::IndirectCall`, exactly as a
+    /// `Ty::Fn` does; codegen is what knows a closure's call spelling
+    /// (`c.fn(c.env, ...)`). A capturing literal is the only way a value of
+    /// this type is made, so a program cannot build a closure without
+    /// something to capture.
+    Closure { params: Vec<Ty>, ret: Box<Ty> },
 }
 
 impl Ty {
@@ -109,7 +129,13 @@ impl Ty {
     pub fn is_copy(&self) -> bool {
         !matches!(
             self,
-            Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(..)
+            Ty::Struct(_)
+                | Ty::Bytes
+                | Ty::String
+                | Ty::List(_)
+                | Ty::Box(_)
+                | Ty::Map(..)
+                | Ty::Closure { .. }
         )
     }
 
@@ -118,7 +144,10 @@ impl Ty {
     /// available — a `datac` with an owned field owns memory too, and out of
     /// context `Ty::Struct(_)` cannot know that.
     pub fn owns_heap(&self) -> bool {
-        matches!(self, Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(..))
+        matches!(
+            self,
+            Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Closure { .. }
+        )
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -182,6 +211,11 @@ impl Ty {
             Ty::Fn { params, ret } => {
                 format!("{} (*)({})", ret.c_type(), fn_params_c(params))
             }
+            // A closure is an ordinary C struct (a fat pointer), so it is
+            // named by its typedef and never needs the declarator trick
+            // above — including in a return position, which is why a
+            // function may return a closure but not a bare function value.
+            Ty::Closure { params, ret } => closure_c_type(params, ret),
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
@@ -227,6 +261,16 @@ impl Ty {
                 }
                 s
             }
+            Ty::Closure { params, ret } => {
+                // The closure type reads exactly as the function type does,
+                // one keyword apart, because the two are called identically
+                // and differ only in what the value owns.
+                let mut s = format!("closure({})", join_types(params));
+                if **ret != Ty::Unit {
+                    s.push_str(&format!(".R: {}", ret.display()));
+                }
+                s
+            }
         }
     }
 
@@ -261,6 +305,45 @@ fn fn_params_c(params: &[Ty]) -> String {
 /// `T, U` for a diagnostic or a written type.
 fn join_types(types: &[Ty]) -> String {
     types.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ")
+}
+
+/// The mangled signature fragment a closure instantiation is named by:
+/// `i32__i32` is `closure(i32).R: i32`. Parameters first, in order, then the
+/// return — the same order `ty_mangle`'s function-type arm uses, under a
+/// different prefix.
+pub fn closure_mangle(params: &[Ty], ret: &Ty) -> String {
+    format!(
+        "Closure__{}{}",
+        params.iter().map(|p| format!("{}__", ty_mangle(p))).collect::<String>(),
+        ty_mangle(ret)
+    )
+}
+
+/// The generated C struct tag for a closure instantiation (A-4 phase E):
+/// `{ fn, env, drop }`, where `fn` takes the environment as its hidden first
+/// parameter. Monomorphized per signature, like a container, so the C
+/// function-pointer member is typed rather than `void*`.
+pub fn closure_c_type(params: &[Ty], ret: &Ty) -> String {
+    format!("kelp_{}", closure_mangle(params, ret))
+}
+
+/// The name of one field of a literal's environment (`c0`, `c1`, …). One
+/// place names them, because `infer.rs` writes the environment's field list
+/// and `codegen_c.rs` emits the reads.
+pub fn capture_field(index: usize) -> String {
+    format!("c{index}")
+}
+
+/// The generated C struct tag for a literal's environment, and the function
+/// that frees it (A-4 phase E). One place names both, because `infer.rs`
+/// records them on the generated function and `codegen_c.rs` emits them.
+pub fn env_struct_name(literal_key: &str) -> String {
+    format!("kelp_Env__{}", c_ident(literal_key))
+}
+
+/// See `env_struct_name`.
+pub fn env_drop_name(literal_key: &str) -> String {
+    format!("kelp_env_drop__{}", c_ident(literal_key))
 }
 
 /// Which user-declared types own heap memory, transitively: a `datac` whose
@@ -357,6 +440,9 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Map(key, value) => {
             format!("kelp_map_drop__{}__{}", ty_mangle(key), ty_mangle(value))
         }
+        Ty::Closure { params, ret } => {
+            format!("kelp_closure_drop__{}", closure_mangle(params, ret))
+        }
         other => unreachable!("no drop rule for type '{}'", other.display()),
     }
 }
@@ -405,7 +491,13 @@ pub fn is_map_key(ty: &Ty) -> bool {
 /// lifetime.
 pub fn is_box_element(ty: &Ty) -> bool {
     match ty {
-        Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) => true,
+        // A closure is an ordinary C struct, and it is emitted before every
+        // `Box` instantiation that names one (A-4 phase E), so a box is the
+        // one container that can hold a closure — `Box<closure().R: i32>` is
+        // how an *optional* callback is written (`Box.empty()`).
+        Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Closure { .. } => {
+            true
+        }
         Ty::Ref { .. } | Ty::Str | Ty::Unit => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
@@ -435,6 +527,11 @@ pub fn ty_mangle(ty: &Ty) -> String {
             params.iter().map(|p| format!("{}__", ty_mangle(p))).collect::<String>(),
             ty_mangle(ret)
         ),
+        // A closure signature mangles the same way, under its own prefix, so
+        // a program using both spellings of one signature gets two distinct C
+        // types — which is the point: one is a pointer, the other owns an
+        // environment.
+        Ty::Closure { params, ret } => closure_mangle(params, ret),
         other => other.display().replace('&', "ref"),
     }
 }

@@ -1,0 +1,11 @@
+// A-4 phase E: a closure is not `Copy` (it owns an environment), so handing it
+// to a `move closure(...)` parameter moves it, and using it afterwards is a
+// use of a moved value.
+fun take(f: move closure().R: i32).R: i32 = f()
+
+fun main() {
+    val k = 1
+    val g = fun() .R: i32 = k
+    print(take(g))
+    print(g())
+}

@@ -267,8 +267,9 @@ pub struct TypeExpr {
     pub amp: bool,
     /// `fun(i32, String).R: bool` — the parameters, when this is a function
     /// type (A-4). `Some`, even when empty (`fun()`), is what marks it as one;
-    /// `None` for every ordinary type. `name` is `"fun"` in that case, which
-    /// cannot collide with a real name because `fun` is a keyword.
+    /// `None` for every ordinary type. `name` is `"fun"` in that case, or
+    /// `"closure"` for the owned, environment-carrying form (A-4 phase E);
+    /// neither can collide with a real name because both are keywords.
     pub fn_params: Option<Vec<FnTypeParam>>,
     /// The `.R: T` of a function type. `None` means `Unit`, exactly as it
     /// does on a declaration.
@@ -290,7 +291,13 @@ impl TypeExpr {
         }
     }
 
-    /// Whether this is a function type (`fun(i32).R: i32`).
+    /// Whether this is a closure type (`closure(i32).R: i32`) — the owned,
+    /// environment-carrying form of a function type (A-4 phase E).
+    pub fn is_closure(&self) -> bool {
+        self.fn_params.is_some() && self.name == "closure"
+    }
+
+    /// Whether this is a plain function type (`fun(i32).R: i32`).
     pub fn is_fn(&self) -> bool {
         self.fn_params.is_some()
     }
@@ -298,8 +305,11 @@ impl TypeExpr {
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
         let mut s = if let Some(params) = &self.fn_params {
+            // A function type and a closure type differ by one keyword and
+            // nothing else, so the keyword written is the keyword shown
+            // (A-4 phase E).
             let args: Vec<String> = params.iter().map(|p| p.display()).collect();
-            format!("fun({})", args.join(", "))
+            format!("{}({})", self.name, args.join(", "))
         } else if self.args.is_empty() {
             self.name.clone()
         } else {
@@ -463,10 +473,10 @@ pub enum Expr {
         span: Span,
     },
     /// `fun(x: i32).R: i32 = x * 2` — an anonymous function (A-4), written
-    /// where an expression is expected. It takes no captures yet (that is a
-    /// later phase), so its body sees its own parameters and nothing else
-    /// from the enclosing scope; `infer.rs` synthesizes one top-level
-    /// function per literal and the expression's value is a reference to it.
+    /// where an expression is expected. `infer.rs` synthesizes one top-level
+    /// function per literal; the expression's value is a function value when
+    /// the body captured nothing, and a *closure* (a function value plus an
+    /// environment holding what it captured) when it did.
     FnLit {
         params: Vec<Param>,
         /// The `.R: T`. `None` means `Unit`, exactly as on a declaration —

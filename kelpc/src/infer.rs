@@ -244,15 +244,30 @@ struct Ctx {
     /// passdown is wired and uses its parameter.
     pd_global_borrow: bool,
     /// True while checking the body of a `fun` literal (A-4). A literal is
-    /// its own function, so two diagnostics need to know: a name it cannot
-    /// see is a *capture* it is not allowed to make yet, and a passdown is a
-    /// hidden argument it cannot receive.
+    /// its own function, so two diagnostics need to know: a name it does not
+    /// bind itself is a *capture*, and a passdown is a hidden argument it
+    /// cannot receive.
     in_fn_literal: bool,
-    /// The names bound by the scopes a literal's body was checked *inside*
-    /// (A-4). The body itself cannot see them — that is the point — but the
-    /// diagnostic has to tell "this is a capture" apart from "this name does
-    /// not exist at all", which is what a typo or a missing `impl` is.
-    outer_locals: std::collections::HashSet<String>,
+    /// The *types* of the bindings that were in scope where the literal
+    /// currently being checked was written (A-4 phase E), plus whatever the
+    /// enclosing literal had already captured. A name the literal's own body
+    /// does not bind that appears here is a capture; a name that appears
+    /// nowhere is a typo or a missing `impl`, and the two read differently.
+    outer_bindings: HashMap<String, Ty>,
+    /// The captures this literal has collected so far, in the order its body
+    /// first named them (A-4 phase E). The body check fills this in, and
+    /// `check_fn_literal` reads it afterwards to decide whether the literal
+    /// is a plain function value or a closure, and what its environment
+    /// holds. Empty outside a literal body, which is also how a nested
+    /// literal finds the *enclosing* literal's captures (indices into the
+    /// enclosing environment).
+    captures: Vec<(String, Ty)>,
+    /// The `datac` whose body the literal was written in, when the literal is
+    /// inside a receiver-form method (A-4 phase E). Its fields are names the
+    /// literal can *see* but cannot capture: reading one out of a borrowed
+    /// receiver is a partial move (A-11), so the diagnostic says that instead
+    /// of reporting an undefined name.
+    outer_receiver: Option<String>,
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
@@ -366,6 +381,28 @@ impl Ctx {
     fn receiver_field_ty(&self, name: &str) -> Option<Ty> {
         let sname = self.receiver_struct.as_deref()?;
         self.struct_def(sname)?.field(name).map(|f| f.ty.clone())
+    }
+
+    /// Whether `name` is a field of the named `datac` — used only to tell a
+    /// literal's diagnostic "this is a field of the receiver you are in, and
+    /// reading it by value is a partial move" apart from "undefined name"
+    /// (A-4 phase E).
+    fn field_of(&self, owner: &str, name: &str) -> Option<Ty> {
+        self.struct_def(owner)?.field(name).map(|f| f.ty.clone())
+    }
+
+    /// Records `name` as a capture of the `fun` literal being checked and
+    /// returns its type, or `None` when the name is not an enclosing binding
+    /// (A-4 phase E). One per distinct name, in the order the body first
+    /// names them, because that order is the environment's field order: the
+    /// body's `ExprKind::Capture` indices and the environment `codegen_c.rs`
+    /// writes have to agree.
+    fn note_capture(&mut self, name: &str) -> Option<Ty> {
+        let ty = self.outer_bindings.get(name).cloned()?;
+        if !self.captures.iter().any(|(n, _)| n == name) {
+            self.captures.push((name.to_string(), ty.clone()));
+        }
+        Some(ty)
     }
 
     /// The capability gate (M7): a gated module's item is reachable only
@@ -554,8 +591,12 @@ impl TypeScope<'_> {
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
         // A function type (A-4): `fun(i32, String).R: bool`. Checked before
         // every name, because it is the one written type that is not one —
-        // and `fun` cannot be a name at all, since it is a keyword.
+        // and `fun` cannot be a name at all, since it is a keyword. A closure
+        // type (A-4 phase E) is the same shape under `closure`.
         if let Some(params) = &ty.fn_params {
+            if ty.is_closure() {
+                return self.resolve_closure_type(ty, params);
+            }
             return self.resolve_fn_type(ty, params);
         }
         // A type parameter in scope (`datac Pair<A, B>`'s `A`) is whatever
@@ -1019,6 +1060,48 @@ impl TypeScope<'_> {
         Ok(Ty::Fn { params: resolved, ret: Box::new(ret) })
     }
 
+    fn resolve_closure_type(&self, ty: &ast::TypeExpr, params: &[ast::FnTypeParam]) -> Result<Ty> {
+        if ty.amp {
+            return Err(TypeError {
+                message: format!(
+                    "'&' cannot be written on the closure type '{}' — a closure is an owned value, and a parameter of that type already borrows it; write the type without '&', or 'move {}' to take ownership",
+                    ty.display(),
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        let mut resolved = Vec::with_capacity(params.len());
+        for p in params {
+            resolved.push(self.resolve_param_mode(&p.ty, p.mode)?);
+        }
+        if let Some(r) = &ty.fn_ret {
+            if r.amp {
+                return Err(TypeError {
+                    message: format!(
+                        "a closure type cannot return a borrow ('&{}') — the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a closure is called through a value; return an owned value instead",
+                        r.display()
+                    ),
+                    span: r.span,
+                });
+            }
+        }
+        let ret = match &ty.fn_ret {
+            Some(r) if r.is_fn() || r.is_closure() => {
+                return Err(TypeError {
+                    message: format!(
+                        "a closure type cannot return a function type ('{}') — C cannot write that declarator, and a closure's result is a value rather than a call target; return a 'datac' holding the function value instead",
+                        ty.display()
+                    ),
+                    span: r.span,
+                })
+            }
+            Some(r) => self.resolve(r, false)?,
+            None => Ty::Unit,
+        };
+        Ok(Ty::Closure { params: resolved, ret: Box::new(ret) })
+    }
+
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
         // A receiver names a *type*, so a generic type needs its arguments
         // — and there is no spelling for them on a receiver yet. Say that
@@ -1143,11 +1226,21 @@ fn function_value_at(
 fn indirect_callee(
     name: &str,
     span: Span,
-    ctx: &Ctx,
+    ctx: &mut Ctx,
 ) -> Result<Option<(tir::Expr, Ty)>> {
+    // A parameter of a closure type is a *borrow* of one (the parameter rule
+    // borrows an owned type), so the callee's type may be `&closure(..)` —
+    // codegen dereferences it. A `fun` is `Copy`, so it is never borrowed.
+    let callable = |ty: &Ty| -> Option<Ty> {
+        match ty {
+            Ty::Fn { .. } => Some(ty.clone()),
+            Ty::Closure { .. } => Some(ty.clone()),
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => Some(ty.clone()),
+            _ => None,
+        }
+    };
     if let Some(info) = ctx.lookup(name) {
-        if matches!(info.ty, Ty::Fn { .. }) {
-            let ty = info.ty.clone();
+        if let Some(ty) = callable(&info.ty) {
             return Ok(Some((
                 tir::Expr {
                     kind: tir::ExprKind::Ident(name.to_string()),
@@ -1159,13 +1252,36 @@ fn indirect_callee(
         }
         return Ok(None);
     }
+    if ctx.in_fn_literal {
+        // A closure the enclosing frame holds, called from inside this
+        // literal (A-4 phase E): the literal captures it like any other
+        // binding, and the call goes through the capture. The capture is
+        // registered here, which is why this takes `&mut Ctx`.
+        if let Some(ty) = ctx.note_capture(name) {
+            if matches!(ty, Ty::Fn { .. } | Ty::Closure { .. }) {
+                let index = ctx
+                    .captures
+                    .iter()
+                    .position(|(n, _)| n == name)
+                    .expect("note_capture records the name");
+                return Ok(Some((
+                    tir::Expr {
+                        kind: tir::ExprKind::Capture { index },
+                        ty: ty.clone(),
+                        span,
+                    },
+                    ty,
+                )));
+            }
+        }
+    }
     // A passdown holding a function value is the same thing one module up:
     // its storage is the generated global (or the hidden parameter), so the
     // callee expression is whatever a read of that passdown already is.
     if let Some(pd) = ctx.pds.get(name) {
-        if !matches!(pd.value_ty, Ty::Fn { .. }) {
+        let Some(ty) = callable(&pd.value_ty) else {
             return Ok(None);
-        }
+        };
         if !ctx.pd_initialized(&pd.hidden) {
             return Err(TypeError {
                 message: format!(
@@ -1175,7 +1291,7 @@ fn indirect_callee(
                 span,
             });
         }
-        return Ok(Some((pd.value(span, ctx.pd_global_borrow), pd.value_ty.clone())));
+        return Ok(Some((pd.value(span, ctx.pd_global_borrow), ty)));
     }
     Ok(None)
 }
@@ -1194,8 +1310,21 @@ fn check_indirect_call_expr(
     ctx: &mut Ctx,
     what: &str,
 ) -> Result<tir::Expr> {
-    let Ty::Fn { params, ret } = fn_ty else {
-        unreachable!("an indirect call is only reached with a function type")
+    // A closure parameter is a borrow of a closure, and a borrow is not a
+    // value: look through it for the signature (A-4 phase E). The callee
+    // expression keeps its borrowed type, which is what codegen uses to pick
+    // `->` over `.`.
+    let ty = match fn_ty {
+        Ty::Ref { inner, .. } => inner.as_ref(),
+        other => other,
+    };
+    let (params, ret) = match ty {
+        Ty::Fn { params, ret } => (params, ret),
+        Ty::Closure { params, ret } => (params, ret),
+        other => unreachable!(
+            "an indirect call is only reached with a function type, found '{}'",
+            other.display()
+        ),
     };
     if args.len() != params.len() {
         return Err(TypeError {
@@ -1530,13 +1659,23 @@ fn borrowed_element_reason(ty: &Ty) -> Option<String> {
 /// prefix. The way round it is a one-field `datac`, which is what a program
 /// needing a table of callbacks should write anyway.
 fn fn_element_reason(ty: &Ty, container: &str) -> Option<String> {
-    if !matches!(ty, Ty::Fn { .. }) {
-        return None;
+    match ty {
+        Ty::Fn { .. } => Some(format!(
+            "'{}' cannot be a '{container}' element yet — a function value is a plain inline value, but a container's generated C type names its element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead",
+            ty.display()
+        )),
+        // A closure *is* nameable (it is an ordinary C struct), so the honest
+        // reason is different: it owns an environment, and a container holds
+        // its elements inline, so every element would have to be moved in and
+        // dropped out through the container's own generated functions — which
+        // is the same shape a function value is refused for, one level up
+        // (A-4 phase E).
+        Ty::Closure { .. } => Some(format!(
+            "'{}' cannot be a '{container}' element yet — a closure owns the environment its captures were moved into, and a container's elements are held inline; put it in a 'Box' or a one-field 'datac' instead",
+            ty.display()
+        )),
+        _ => None,
     }
-    Some(format!(
-        "'{}' cannot be a '{container}' element yet — a function value is a plain inline value, but a container's generated C type names its element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead",
-        ty.display()
-    ))
 }
 
 /// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
@@ -3187,7 +3326,9 @@ fn base_ctx(
         init_state: None,
         pd_global_borrow: false,
         in_fn_literal: false,
-        outer_locals: std::collections::HashSet::new(),
+        outer_bindings: HashMap::new(),
+        captures: Vec::new(),
+        outer_receiver: None,
         receiver_struct: None,
     }
 }
@@ -3419,7 +3560,13 @@ fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
         Ty::Ref { mutable: true, inner: Box::new(base) }
     } else if matches!(
         base,
-        Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(..)
+        Ty::Struct(_)
+            | Ty::Bytes
+            | Ty::String
+            | Ty::List(_)
+            | Ty::Box(_)
+            | Ty::Map(..)
+            | Ty::Closure { .. }
     ) {
         Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
@@ -3487,6 +3634,10 @@ fn is_tir_place(expr: &tir::Expr) -> bool {
         tir::ExprKind::Ident(_)
             | tir::ExprKind::FieldAccess { .. }
             | tir::ExprKind::EnumField { .. }
+            // A capture is a place too: the environment holds the value (A-4
+            // phase E), so `prefix.as_str()` inside a literal borrows it
+            // rather than borrowing a temporary.
+            | tir::ExprKind::Capture { .. }
             | tir::ExprKind::Deref { .. }
     )
 }
@@ -3733,6 +3884,9 @@ fn check_function(
         body,
         module: f.module.clone(),
         extern_: f.extern_,
+        // Only a `fun` literal that captured something has an environment;
+        // a declaration never does (A-4 phase E).
+        env: None,
     })
 }
 
@@ -3918,18 +4072,34 @@ fn check_fn_literal(
         st.literal_count += 1;
         format!("#funlit{}", st.literal_count)
     };
-    // The body's own scope. The enclosing locals are *not* visible: a literal
-    // that captured something would be a closure, which is a later phase, so
-    // this is the honest boundary rather than a silent borrow of a name the
-    // generated C function cannot see.
-    let outer_locals: std::collections::HashSet<String> = ctx
-        .scopes
-        .iter()
-        .flat_map(|scope| scope.keys().cloned())
-        .collect();
+    // The body's own scope. The enclosing locals are not *bindings* here —
+    // they are the names the body may capture, which is what makes the
+    // literal a closure when it names one (A-4 phase E). The lookup map
+    // carries their types, because a capture's type is the captured
+    // binding's type. Three sources, because a literal can be nested:
+    //
+    // * the enclosing frame's locals,
+    // * the enclosing literal's own captures (a literal inside a literal),
+    // * and everything *that* literal could see, transitively — which is how
+    //   `fun` inside `fun` reaches a binding of the function two frames up
+    //   (the enclosing closure captures it in turn).
+    let mut outer_bindings: HashMap<String, Ty> = ctx.outer_bindings.clone();
+    for scope in ctx.scopes.iter() {
+        for (k, v) in scope.iter() {
+            outer_bindings.insert(k.clone(), v.ty.clone());
+        }
+    }
+    for (name, ty) in &ctx.captures {
+        outer_bindings.insert(name.clone(), ty.clone());
+    }
     let mut inner = (*ctx).clone();
     inner.scopes = vec![HashMap::new()];
-    inner.outer_locals = outer_locals;
+    inner.outer_bindings = outer_bindings;
+    inner.captures = Vec::new();
+    inner.outer_receiver = ctx
+        .receiver_struct
+        .clone()
+        .or_else(|| ctx.outer_receiver.clone());
     inner.ret_ty = ret.clone();
     inner.receiver_struct = None;
     inner.init_state = None;
@@ -3971,9 +4141,86 @@ fn check_fn_literal(
             span,
         });
     }
-    let fn_ty = Ty::Fn {
-        params: params.iter().map(|(_, t)| t.clone()).collect(),
-        ret: Box::new(ret.clone()),
+    let capture_list = inner.captures.clone();
+    // The environment: one field per capture, filled at the point the literal
+    // is *evaluated* — which is where a capture moves its value out of the
+    // enclosing frame. Each field's initializer is written in the enclosing
+    // function's terms: a local by name, or — for a literal nested in a
+    // literal — a read of the enclosing closure's environment.
+    let mut captures = Vec::with_capacity(capture_list.len());
+    let mut env_fields: Vec<(String, Ty)> = Vec::with_capacity(capture_list.len());
+    for (i, (name, ty)) in capture_list.iter().enumerate() {
+        if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+            return Err(TypeError {
+                message: format!(
+                    "a 'fun' literal cannot capture '{name}': it is a borrow ('{}'), and the environment it would be stored in outlives the frame the borrow points into — capture an owned value, or pass it as a parameter of the literal",
+                    ty.display()
+                ),
+                span,
+            });
+        }
+        let init = if ctx.lookup(name).is_some() {
+            // A binding of the frame the literal was written in: the value
+            // moves (or, for `Copy`, copies) into the environment, and the
+            // enclosing binding is marked moved by `borrowck.rs`.
+            tir::Expr {
+                kind: tir::ExprKind::Ident(name.clone()),
+                ty: ty.clone(),
+                span,
+            }
+        } else if ctx.note_capture(name).is_some() {
+            // The name belongs to the environment of the literal this one was
+            // written inside — so the enclosing literal captures it too, and
+            // this literal copies it out of that environment. Moving it out
+            // instead would be a partial move (A-11), which is why only a
+            // `Copy` capture can be nested this way.
+            if !ty.is_copy() {
+                return Err(TypeError {
+                    message: format!(
+                        "cannot capture '{name}' into this literal: it belongs to the enclosing closure's environment, and moving it out of there is a partial move (v1 has no partial-move rule) — capture an owned value from the frame that owns it, or copy a `Copy` one"
+                    ),
+                    span,
+                });
+            }
+            let index = ctx
+                .captures
+                .iter()
+                .position(|(n, _)| n == name)
+                .expect("note_capture records the name");
+            tir::Expr {
+                kind: tir::ExprKind::Capture { index },
+                ty: ty.clone(),
+                span,
+            }
+        } else {
+            unreachable!("a capture is always an enclosing local or an enclosing capture")
+        };
+        env_fields.push((crate::types::capture_field(i), ty.clone()));
+        captures.push(init);
+    }
+    let fn_ty = if env_fields.is_empty() {
+        // Nothing captured: this is a plain function value, exactly the value
+        // phase C produced. Keeping the two apart is what keeps every
+        // existing `fun(...)` placement (a `datac` field, a container
+        // element's absence, a `Copy` binding) meaning what it did.
+        Ty::Fn {
+            params: params.iter().map(|(_, t)| t.clone()).collect(),
+            ret: Box::new(ret.clone()),
+        }
+    } else {
+        Ty::Closure {
+            params: params.iter().map(|(_, t)| t.clone()).collect(),
+            ret: Box::new(ret.clone()),
+        }
+    };
+    let env = if env_fields.is_empty() {
+        None
+    } else {
+        Some(tir::ClosureEnv {
+            struct_name: crate::types::env_struct_name(&key),
+            drop_name: crate::types::env_drop_name(&key),
+            fields: env_fields,
+        })
     };
     ctx.fns.instances.borrow_mut().literals.push(tir::Function {
         name: key.clone(),
@@ -3982,15 +4229,31 @@ fn check_fn_literal(
         body: checked,
         module: ctx.module.clone(),
         extern_: false,
+        env,
     });
+    let kind = match captures.is_empty() {
+        true => tir::ExprKind::FnRef(key),
+        false => tir::ExprKind::ClosureLit { key, captures },
+    };
     Ok(tir::Expr {
-        kind: tir::ExprKind::FnRef(key),
+        kind,
         ty: fn_ty,
         span,
     })
 }
 
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
+    // A plain function value where a closure is expected (A-4 phase E): the
+    // one widening in this phase, handled here so that every site which knows
+    // the expected type gets it — a call argument, a `val` with a written
+    // type, a `return`, a `datac` field, `Box.of(x)`. The value is checked
+    // with no expectation of its own (nothing about a `fun` literal depends
+    // on the closure type it will be widened into) and then wrapped.
+    if let Some(Ty::Closure { .. }) = expected {
+        let expected = expected.expect("matched above");
+        let value = check_expr(expr, ctx, None)?;
+        return Ok(coerce_fn_to_closure(expected.clone(), value));
+    }
     match expr {
         // A `fun` literal (A-4): one synthesized top-level function per
         // literal, and the expression's value is a reference to it.
@@ -4110,18 +4373,40 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 value.span = *span;
                 return Ok(value);
             }
-            // Inside a `fun` literal, a name that is none of the above can
-            // only have come from the enclosing scope — which is a capture,
-            // and captures are a later phase (A-4). Say that rather than
-            // "undefined variable", because the name *is* defined one frame
-            // up and the reader needs to know why that does not help.
-            if ctx.in_fn_literal && ctx.outer_locals.contains(name) {
-                return Err(TypeError {
-                    message: format!(
-                        "a 'fun' literal cannot capture '{name}' from the enclosing scope yet — a function value is a plain pointer to code, with no environment to carry it; pass it as a parameter, or as a 'move' parameter to hand over ownership"
-                    ),
-                    span: *span,
-                });
+            // Inside a `fun` literal, a name that is none of the above and
+            // *is* an enclosing binding is a capture (A-4 phase E): the
+            // literal becomes a closure, the value is moved (or, for a `Copy`
+            // type, copied) into an environment when the literal is
+            // evaluated, and the body reads it out of that environment. The
+            // read is recorded here, once per distinct name, in the order the
+            // body first names them, which is the environment's field order.
+            if ctx.in_fn_literal {
+                if let Some(ty) = ctx.note_capture(name) {
+                    let index = ctx
+                        .captures
+                        .iter()
+                        .position(|(n, _)| n == name)
+                        .expect("note_capture records the name");
+                    return Ok(tir::Expr {
+                        kind: tir::ExprKind::Capture { index },
+                        ty,
+                        span: *span,
+                    });
+                }
+                // A field of the receiver the literal was written in is a
+                // name the reader can *see*, but reading it out of a borrowed
+                // receiver is a partial move (A-11) — which is why the field
+                // itself, not just the literal, has to be the reason.
+                if let Some(owner) = &ctx.outer_receiver {
+                    if ctx.field_of(owner, name).is_some() {
+                        return Err(TypeError {
+                            message: format!(
+                                "a 'fun' literal cannot capture '{name}': it is a field of '{owner}', and reading a field out of a borrowed receiver by value is a partial move (v1 has no partial-move rule) — bind a `Copy` field to a local first (`val {name}0 = {name}`) and capture that, or take the whole receiver as a 'move' parameter"
+                            ),
+                            span: *span,
+                        });
+                    }
+                }
             }
             Err(TypeError {
                 message: match ctx.foreign_pds.get(name) {
@@ -4617,14 +4902,20 @@ fn bind_type_params(
     // structurally: the parameters in order, then the return. This is what
     // lets `map<T, U>(o: &Option<T>, f: fun(&T).R: U)` take both `T` and `U`
     // from its arguments, and it is the only place a function type is bound.
+    // A closure type (A-4 phase E) pairs the same way, which is what lets a
+    // callback written as `f: closure(&T).R: U` infer `U` from a literal.
     if let Some(written_params) = &written.fn_params {
-        if let Ty::Fn { params: actual_params, ret } = actual {
+        let implied = match actual {
+            Ty::Fn { params, ret } | Ty::Closure { params, ret } => Some((params, ret)),
+            _ => None,
+        };
+        if let Some((actual_params, actual_ret)) = implied {
             if written_params.len() == actual_params.len() {
                 for (w, a) in written_params.iter().zip(actual_params.iter()) {
                     bind_type_params(env, prefix, aliases, &w.ty, a, params, out);
                 }
                 if let Some(written_ret) = &written.fn_ret {
-                    bind_type_params(env, prefix, aliases, written_ret, ret, params, out);
+                    bind_type_params(env, prefix, aliases, written_ret, actual_ret, params, out);
                 }
             }
         }
@@ -5758,6 +6049,9 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             });
         }
         if checked.ty != *pty {
+            if let Some(why) = closure_kind_mismatch(pty, &checked.ty) {
+                return Err(TypeError { message: why, span: arg_expr.span() });
+            }
             return Err(TypeError {
                 message: format!(
                     "argument {pname} has type '{}', expected '{}'",
@@ -5806,9 +6100,58 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             Ok(checked)
         }
         other => Err(TypeError {
-            message: format!("argument {pname} has type '{}', expected '{}'", other.display(), pty.display()),
+            message: closure_kind_mismatch(pty, other).unwrap_or_else(|| {
+                format!("argument {pname} has type '{}', expected '{}'", other.display(), pty.display())
+            }),
             span: arg_expr.span(),
         }),
+    }
+}
+
+/// The one widening a function value gets (A-4 phase E): a plain `fun` value
+/// used where a closure is expected is wrapped, so the two are separate types
+/// but one *value* can be written either way. A signature mismatch is left
+/// alone — the caller's own type comparison reports it, and a coerced value
+/// whose signature does not fit would hide which half was wrong.
+fn coerce_fn_to_closure(expected: Ty, value: tir::Expr) -> tir::Expr {
+    let Ty::Closure { params, ret } = &expected else {
+        return value;
+    };
+    let Ty::Fn { params: actual_params, ret: actual_ret } = &value.ty else {
+        return value;
+    };
+    if actual_params != params || actual_ret != ret {
+        return value;
+    }
+    let span = value.span;
+    tir::Expr {
+        kind: tir::ExprKind::FnToClosure {
+            func: Box::new(value),
+        },
+        ty: expected.clone(),
+        span,
+    }
+}
+
+/// The one sentence that explains why a plain function value and a closure are
+/// different types, when one is passed where the other is expected (A-4 phase
+/// E). The two are the same shape of value and are called identically, so a
+/// bare `expected 'closure(i32).R: i32', found 'fun(i32).R: i32'` would leave
+/// the reader to guess which half is missing. The expected side is looked
+/// through a borrow, because a parameter of a closure type is one.
+fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
+    let expected = match expected {
+        Ty::Ref { inner, .. } => inner.as_ref(),
+        other => other,
+    };
+    match (expected, actual) {
+        (Ty::Closure { .. }, Ty::Fn { .. }) => Some(
+            "this is a plain function value, not a closure: its body captured nothing, so it carries no environment — a `fun` literal becomes a closure when it names a binding from the enclosing scope, and a declared `fun` is always a plain function value".to_string(),
+        ),
+        (Ty::Fn { .. }, Ty::Closure { .. }) => Some(
+            "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for — write the expected type as 'closure(...)' (the same parameter list and '.R:'), or pass a declared function instead".to_string(),
+        ),
+        _ => None,
     }
 }
 
@@ -6427,7 +6770,9 @@ fn check_method_call(
     // the type does — so this is only consulted when there is no such method.
     if ctx.sig_of(&format!("{owner}#{method}")).is_none() {
         if let Some(fn_ty) = fn_field_ty(&probe.ty, method, ctx) {
-            if matches!(fn_ty, Ty::Fn { .. }) {
+            // A field holding a closure is callable the same way (A-4 phase
+            // E): the call goes through the pair the field holds.
+            if matches!(fn_ty, Ty::Fn { .. } | Ty::Closure { .. }) {
                 let callee = tir::Expr {
                     kind: tir::ExprKind::FieldAccess {
                         base: Box::new(probe),

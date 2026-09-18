@@ -897,10 +897,15 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     //
     // One prototype per container drop comes before step 3: a `datac` that
     // owns a container drops it, and that function is defined in step 4.
-    let mut list_elems: HashSet<Ty> = HashSet::new();
-    let mut box_elems: HashSet<Ty> = HashSet::new();
-    let mut map_values: HashSet<(Ty, Ty)> = HashSet::new();
-    collect_containers(program, &mut list_elems, &mut box_elems, &mut map_values);
+    let mut collection = Instantiations::default();
+    collect_containers(program, &mut collection);
+    let Instantiations {
+        lists: list_elems,
+        boxes: box_elems,
+        maps: map_values,
+        closures: closure_tys,
+        coerced: coerced_tys,
+    } = collection;
     let mut containers: Vec<Ty> = list_elems
         .iter()
         .map(|e| Ty::List(Box::new(e.clone())))
@@ -910,6 +915,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
                 .iter()
                 .map(|(k, v)| Ty::Map(Box::new(k.clone()), Box::new(v.clone()))),
         )
+        .chain(closure_tys.iter().cloned())
         .collect();
     containers.sort_by_key(|t| (container_depth(t), container_name(t)));
     if !containers.is_empty() {
@@ -919,6 +925,16 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             write_container_typedef(&mut out, ty);
         }
         out.push('\n');
+        // The widening's own C, right after the closure typedefs it names and
+        // before the `datac`s: its environment holds a function pointer, so it
+        // needs no complete `datac` either (A-4 phase E).
+        if !coerced_tys.is_empty() {
+            let mut coerced: Vec<&Ty> = coerced_tys.iter().collect();
+            coerced.sort_by_key(|t| container_name(t));
+            for ty in coerced {
+                write_coerce(&mut out, ty);
+            }
+        }
         for ty in &containers {
             writeln!(
                 out,
@@ -961,7 +977,22 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             Ty::List(elem) => write_list(&mut out, elem, &owned),
             Ty::Box(elem) => write_box(&mut out, elem, &owned),
             Ty::Map(key, value) => write_map(&mut out, key, value, &owned),
+            // A closure's shared function set is one drop: the `fn` member is
+            // whatever generated (or converted) function the value holds, and
+            // the environment is dropped through the pointer stored beside
+            // it, so nothing else here depends on the signature.
+            Ty::Closure { .. } => write_closure(&mut out, ty),
             other => unreachable!("not a container: {}", other.display()),
+        }
+    }
+
+    // Each `fun` literal that captured something has an environment struct and
+    // a drop function (A-4 phase E). They go here — after every typedef, since
+    // a field holds its captured value by value, and before every function, so
+    // a literal's body and its drop exist before anything names them.
+    for f in &program.functions {
+        if f.env.is_some() {
+            write_env(&mut out, f, &owned);
         }
     }
 
@@ -1227,6 +1258,9 @@ fn write_enum(out: &mut String, e: &EnumDef, owned: &HashSet<String>) {
 /// (`container_elem_c_type`), which is forward-declared by `write_tags`.
 fn write_container_typedef(out: &mut String, ty: &Ty) {
     match ty {
+        Ty::Closure { params, ret } => {
+            write_closure_typedef(out, params, ret);
+        }
         Ty::List(elem) => {
             let name = crate::types::list_c_type(elem);
             writeln!(
@@ -1272,6 +1306,151 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
     }
 }
 
+/// One closure instantiation's C typedef (A-4 phase E): the fat pointer a
+/// capturing `fun` literal becomes. Three members, and each earns its place:
+///
+/// * `fn` — the generated function, whose first parameter is the environment.
+///   Making it typed (rather than `void*`) is why the closure is
+///   monomorphized per signature, exactly like a container.
+/// * `env` — the environment itself, type-erased: the layout belongs to the
+///   one literal that made it, and casting it back inside the generated
+///   function is what keeps that layout out of the type system.
+/// * `drop` — how to free the environment. The value cannot know its own
+///   layout, so it carries the destructor beside the pointer; without that a
+///   closure could not drop what it captured.
+///
+/// A parameter or return type that is a `datac` is spelled by its struct tag
+/// here, like a container element: this typedef is emitted before every
+/// `datac`, and `write_tags` has forward-declared the tags.
+fn write_closure_typedef(out: &mut String, params: &[Ty], ret: &Ty) {
+    let name = crate::types::closure_c_type(params, ret);
+    // The `fn` member's own parameter list: the environment first, then the
+    // closure's declared parameters.
+    let list = if params.is_empty() {
+        "void*".to_string()
+    } else {
+        let rest = params
+            .iter()
+            .map(crate::types::container_elem_c_type)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("void*, {rest}")
+    };
+    writeln!(
+        out,
+        "typedef struct {{\n    {} (*fn)({});\n    void* env;\n    void (*drop)(void* env);\n}} {name};",
+        crate::types::container_elem_c_type(ret),
+        list
+    )
+    .unwrap();
+}
+
+/// The generated names for the widening of one closure signature (A-4 phase
+/// E): the environment that holds a plain function pointer, the function that
+/// frees it, and the thunk that calls through it. One thunk per *signature*,
+/// not per function, because what it does is the same for every `fun` value of
+/// that shape.
+fn coerce_env_c_type(ty: &Ty) -> String {
+    format!("kelp_CoerceEnv__{}", coerce_mangle(ty))
+}
+
+fn coerce_drop_name(ty: &Ty) -> String {
+    format!("kelp_coerce_drop__{}", coerce_mangle(ty))
+}
+
+fn coerce_thunk_name(ty: &Ty) -> String {
+    format!("kelp_coerce__{}", coerce_mangle(ty))
+}
+
+fn coerce_mangle(ty: &Ty) -> String {
+    match ty {
+        Ty::Closure { params, ret } => crate::types::closure_mangle(params, ret),
+        other => unreachable!("not a closure: {}", other.display()),
+    }
+}
+
+/// The machinery behind `tir::ExprKind::FnToClosure` (A-4 phase E): a plain
+/// function value has no environment, so widening it into a closure means
+/// giving it one — a one-field heap struct holding the code pointer — and
+/// calling through a generated thunk. Emitted with the closure typedefs,
+/// because it is C shape rather than data: the thunk takes the environment
+/// first, exactly as a literal's generated function does, so the resulting
+/// value is a closure like any other and an indirect call needs no special
+/// case for it.
+fn write_coerce(out: &mut String, ty: &Ty) {
+    let Ty::Closure { params, ret } = ty else {
+        unreachable!("not a closure: {}", ty.display())
+    };
+    let env = coerce_env_c_type(ty);
+    let param_types = params
+        .iter()
+        .map(crate::types::container_elem_c_type)
+        .collect::<Vec<_>>();
+    let names: Vec<String> = (0..params.len()).map(|i| format!("p{i}")).collect();
+    writeln!(out, "// ---- {env} (A-4 phase E) {}", "-".repeat(26)).unwrap();
+    writeln!(
+        out,
+        "typedef struct {{\n    {} (*f)({});\n}} {env};",
+        crate::types::container_elem_c_type(ret),
+        if param_types.is_empty() { "void".to_string() } else { param_types.join(", ") }
+    )
+    .unwrap();
+    // The environment holds a function pointer, which owns nothing, so the
+    // destructor is just the `free`.
+    writeln!(
+        out,
+        "static void {}(void* raw) {{\n    free(raw);\n}}\n",
+        coerce_drop_name(ty)
+    )
+    .unwrap();
+    let decls = if param_types.is_empty() {
+        "void* raw".to_string()
+    } else {
+        let rest = param_types
+            .iter()
+            .zip(&names)
+            .map(|(p, n)| format!("{p} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("void* raw, {rest}")
+    };
+    writeln!(
+        out,
+        "static {} {}({decls}) {{",
+        ret.c_type(),
+        coerce_thunk_name(ty)
+    )
+    .unwrap();
+    writeln!(out, "    {env}* e = ({env}*)raw;").unwrap();
+    let call = format!("(e->f)({})", names.join(", "));
+    if **ret == Ty::Unit {
+        writeln!(out, "    {call};").unwrap();
+    } else {
+        writeln!(out, "    return {call};").unwrap();
+    }
+    out.push_str("}\n\n");
+}
+
+/// One closure instantiation's function set — which is one function: the
+/// drop. Everything else about a closure is the generated literal's or the
+/// caller's, and both are emitted elsewhere.
+fn write_closure(out: &mut String, ty: &Ty) {
+    let Ty::Closure { .. } = ty else {
+        unreachable!("not a closure: {}", ty.display())
+    };
+    let name = ty.c_type();
+    let drop = drop_fn_name(ty);
+    writeln!(out, "// ---- {name} (A-4) {}", "-".repeat(34)).unwrap();
+    // The environment is `NULL` exactly when the closure was made from a
+    // plain function value, and then there is nothing to free: the `env` test
+    // comes first because such a value's destructor pointer is `NULL` too.
+    writeln!(
+        out,
+        "static void {drop}({name}* c) {{\n    if (c->env != NULL) {{\n        c->drop(c->env);\n        c->env = NULL;\n    }}\n}}\n"
+    )
+    .unwrap();
+}
+
 /// `struct tag_Foo;` for every `datac`, so a container typedef can hold a
 /// pointer to a struct whose body comes later.
 fn write_tags(out: &mut String, structs: &[StructDef], enums: &[EnumDef]) {
@@ -1293,19 +1472,30 @@ fn container_name(ty: &Ty) -> String {
         Ty::List(elem) => crate::types::list_c_type(elem),
         Ty::Box(elem) => crate::types::box_c_type(elem),
         Ty::Map(key, value) => crate::types::map_c_type(key, value),
+        Ty::Closure { .. } => ty.c_type(),
         other => unreachable!("not a container: {}", other.display()),
     }
 }
 
 /// How deeply containers nest: `List<i32>` is 1, `Box<List<i32>>` is 2. Used
 /// to emit a container after the containers it contains, so every typedef and
-/// every function it calls already exists.
+/// every function it calls already exists. A closure counts here for the same
+/// reason: one may name another in its signature, and the inner one has to
+/// exist first.
 fn container_depth(ty: &Ty) -> usize {
     match ty {
         Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
         // A `Map<V>` value is never a container (`is_map_element` refuses
         // one), so a map is always one level deep.
         Ty::Map(..) => 1,
+        Ty::Closure { params, ret } => {
+            1 + params
+                .iter()
+                .map(container_depth)
+                .chain(std::iter::once(container_depth(ret)))
+                .max()
+                .unwrap_or(0)
+        }
         _ => 0,
     }
 }
@@ -1729,158 +1919,217 @@ fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: 
 /// another container (`Box<List<String>>`), so the walk recurses; a borrow
 /// of a container (`&List<T>` — every `List` parameter and method receiver)
 /// is looked through.
-fn collect_containers(
-    program: &Program,
-    lists: &mut HashSet<Ty>,
-    boxes: &mut HashSet<Ty>,
-    maps: &mut HashSet<(Ty, Ty)>,
-) {
-    fn note_ty(
-        ty: &Ty,
-        lists: &mut HashSet<Ty>,
-        boxes: &mut HashSet<Ty>,
-        maps: &mut HashSet<(Ty, Ty)>,
-    ) {
+/// Every container and closure instantiation the program uses (M8, A-4
+/// phase E): one C typedef plus, for a container, one function set per
+/// element type, and for a closure one drop function per signature. Collected
+/// in one walk, because the emitters need the same list and the same order.
+#[derive(Default)]
+struct Instantiations {
+    lists: HashSet<Ty>,
+    boxes: HashSet<Ty>,
+    maps: HashSet<(Ty, Ty)>,
+    /// Closure signatures (A-4 phase E). A closure's C type is `{ fn, env,
+    /// drop }` monomorphized per signature, so it is emitted exactly like a
+    /// container: before the `datac`s, with the datac tags forward-declared.
+    closures: HashSet<Ty>,
+    /// Closure signatures that a plain function value is widened into
+    /// somewhere in the program, so each needs its thunk (A-4 phase E).
+    coerced: HashSet<Ty>,
+}
+
+fn collect_containers(program: &Program, out: &mut Instantiations) {
+    fn note_ty(ty: &Ty, out: &mut Instantiations) {
         match ty {
             Ty::List(elem) => {
-                lists.insert((**elem).clone());
-                note_ty(elem, lists, boxes, maps);
+                out.lists.insert((**elem).clone());
+                note_ty(elem, out);
             }
             Ty::Box(elem) => {
-                boxes.insert((**elem).clone());
-                note_ty(elem, lists, boxes, maps);
+                out.boxes.insert((**elem).clone());
+                note_ty(elem, out);
             }
             Ty::Map(key, value) => {
-                maps.insert(((**key).clone(), (**value).clone()));
+                out.maps.insert(((**key).clone(), (**value).clone()));
                 // `keys()`/`values()` are emitted with every map and return
                 // `List<K>`/`List<V>`, so both instantiations have to exist
                 // even when the program never calls them.
-                lists.insert((**key).clone());
-                lists.insert((**value).clone());
-                note_ty(key, lists, boxes, maps);
-                note_ty(value, lists, boxes, maps);
+                out.lists.insert((**key).clone());
+                out.lists.insert((**value).clone());
+                note_ty(key, out);
+                note_ty(value, out);
             }
-            Ty::Ref { inner, .. } => note_ty(inner, lists, boxes, maps),
+            // A closure is emitted once per signature, and its parameters and
+            // return type may name another closure or a container.
+            Ty::Closure { params, ret } => {
+                out.closures.insert(ty.clone());
+                for p in params {
+                    note_ty(p, out);
+                }
+                note_ty(ret, out);
+            }
+            Ty::Ref { inner, .. } => note_ty(inner, out),
             _ => {}
         }
     }
-    fn note_expr(
-        expr: &Expr,
-        lists: &mut HashSet<Ty>,
-        boxes: &mut HashSet<Ty>,
-        maps: &mut HashSet<(Ty, Ty)>,
-    ) {
-        note_ty(&expr.ty, lists, boxes, maps);
+    fn note_expr(expr: &Expr, out: &mut Instantiations) {
+        note_ty(&expr.ty, out);
         match &expr.kind {
             ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } | ExprKind::Deref { expr } => {
-                note_expr(expr, lists, boxes, maps)
+                note_expr(expr, out)
             }
             ExprKind::Binary { lhs, rhs, .. } | ExprKind::Assign { target: lhs, value: rhs } => {
-                note_expr(lhs, lists, boxes, maps);
-                note_expr(rhs, lists, boxes, maps);
+                note_expr(lhs, out);
+                note_expr(rhs, out);
             }
             ExprKind::Call { args, .. } => {
                 for a in args {
-                    note_expr(a, lists, boxes, maps);
+                    note_expr(a, out);
                 }
             }
             ExprKind::IndirectCall { callee, args } => {
-                note_expr(callee, lists, boxes, maps);
+                note_expr(callee, out);
                 for a in args {
-                    note_expr(a, lists, boxes, maps);
+                    note_expr(a, out);
                 }
             }
-            ExprKind::FieldAccess { base, .. } => note_expr(base, lists, boxes, maps),
+            ExprKind::FieldAccess { base, .. } => note_expr(base, out),
             ExprKind::StructLit { fields, .. } => {
                 for (_, v) in fields {
-                    note_expr(v, lists, boxes, maps);
+                    note_expr(v, out);
                 }
             }
             ExprKind::EnumLit { fields, .. } => {
                 for v in fields {
-                    note_expr(v, lists, boxes, maps);
+                    note_expr(v, out);
                 }
             }
             ExprKind::EnumTag { expr: base, .. } | ExprKind::EnumField { base, .. } => {
-                note_expr(base, lists, boxes, maps)
+                note_expr(base, out)
+            }
+            // A closure literal's initializers are expressions in the
+            // *enclosing* function, so their types need the same walk as any
+            // other value's.
+            ExprKind::ClosureLit { captures, .. } => {
+                for c in captures {
+                    note_expr(c, out);
+                }
+            }
+            // A widened function value: the target signature needs its thunk,
+            // and the value being wrapped needs the walk too.
+            ExprKind::FnToClosure { func } => {
+                out.coerced.insert(expr.ty.clone());
+                note_expr(func, out);
             }
             ExprKind::If {
                 cond,
                 then_block,
                 else_block,
             } => {
-                note_expr(cond, lists, boxes, maps);
-                note_block(then_block, lists, boxes, maps);
+                note_expr(cond, out);
+                note_block(then_block, out);
                 if let Some(b) = else_block {
-                    note_block(b, lists, boxes, maps);
+                    note_block(b, out);
                 }
             }
-            ExprKind::Block(b) => note_block(b, lists, boxes, maps),
+            ExprKind::Block(b) => note_block(b, out),
             ExprKind::Template { pieces, .. } => {
                 for p in pieces {
                     if let TemplatePiece::Value(v) = p {
-                        note_expr(v, lists, boxes, maps);
+                        note_expr(v, out);
                     }
                 }
             }
             _ => {}
         }
     }
-    fn note_block(
-        block: &Block,
-        lists: &mut HashSet<Ty>,
-        boxes: &mut HashSet<Ty>,
-        maps: &mut HashSet<(Ty, Ty)>,
-    ) {
+    fn note_block(block: &Block, out: &mut Instantiations) {
         for s in &block.stmts {
             match s {
                 Stmt::Let { ty, init, .. } => {
-                    note_ty(ty, lists, boxes, maps);
-                    note_expr(init, lists, boxes, maps);
+                    note_ty(ty, out);
+                    note_expr(init, out);
                 }
                 Stmt::While { cond, body } => {
-                    note_expr(cond, lists, boxes, maps);
-                    note_block(body, lists, boxes, maps);
+                    note_expr(cond, out);
+                    note_block(body, out);
                 }
                 Stmt::Return { value, .. } => {
                     if let Some(v) = value {
-                        note_expr(v, lists, boxes, maps);
+                        note_expr(v, out);
                     }
                 }
-                Stmt::Expr(e) => note_expr(e, lists, boxes, maps),
+                Stmt::Expr(e) => note_expr(e, out),
             }
         }
         if let Some(t) = &block.tail {
-            note_expr(t, lists, boxes, maps);
+            note_expr(t, out);
         }
     }
 
     for s in &program.structs {
         for f in &s.fields {
-            note_ty(&f.ty, lists, boxes, maps);
+            note_ty(&f.ty, out);
         }
     }
     // An enum payload is a struct field as far as containers are concerned: a
     // `List<Shape>` payload needs its instantiation emitted like any other.
     for e in &program.enums {
-        note_ty(&Ty::Struct(e.name.clone()), lists, boxes, maps);
+        note_ty(&Ty::Struct(e.name.clone()), out);
         for v in &e.variants {
             for f in &v.fields {
-                note_ty(&f.ty, lists, boxes, maps);
+                note_ty(&f.ty, out);
             }
         }
     }
     for pd in &program.pds {
-        note_ty(&pd.value_ty, lists, boxes, maps);
-        note_expr(&pd.init, lists, boxes, maps);
+        note_ty(&pd.value_ty, out);
+        note_expr(&pd.init, out);
     }
     for f in &program.functions {
-        note_ty(&f.ret, lists, boxes, maps);
+        note_ty(&f.ret, out);
         for (_, t) in &f.params {
-            note_ty(t, lists, boxes, maps);
+            note_ty(t, out);
         }
-        note_block(&f.body, lists, boxes, maps);
+        // A literal's environment fields are values the generated function
+        // holds, so their types need instantiations too.
+        if let Some(env) = &f.env {
+            for (_, t) in &env.fields {
+                note_ty(t, out);
+            }
+        }
+        note_block(&f.body, out);
     }
+}
+
+/// One `fun` literal's environment (A-4 phase E): the struct its captures were
+/// moved into, and the function that frees it. Emitted immediately before the
+/// generated function that receives it, because nothing else names either.
+///
+/// Each owned field is dropped through `types::drop_fn_name`, then the struct
+/// itself is freed — the same order a `datac`'s drop uses, one level down.
+fn write_env(out: &mut String, f: &Function, owned: &HashSet<String>) {
+    let Some(env) = &f.env else {
+        return;
+    };
+    writeln!(out, "// ---- {} (A-4 phase E) {}", env.struct_name, "-".repeat(28)).unwrap();
+    out.push_str("typedef struct {\n");
+    for (name, ty) in &env.fields {
+        writeln!(out, "    {};", ty.c_decl(name)).unwrap();
+    }
+    writeln!(out, "}} {};\n", env.struct_name).unwrap();
+    writeln!(out, "static void {}(void* raw) {{", env.drop_name).unwrap();
+    writeln!(
+        out,
+        "    {}* e = ({}*)raw;",
+        env.struct_name, env.struct_name
+    )
+    .unwrap();
+    for (name, ty) in &env.fields {
+        if needs_drop(ty, owned) {
+            writeln!(out, "    {}(&e->{name});", drop_fn_name(ty)).unwrap();
+        }
+    }
+    out.push_str("    free(e);\n}\n\n");
 }
 
 fn write_signature(out: &mut String, f: &Function) {
@@ -1889,7 +2138,10 @@ fn write_signature(out: &mut String, f: &Function) {
     // parameter list has to be attached to the name, before this function's.
     // One level is what a function type is allowed to be here (a function
     // type may not return a function type — `infer.rs` refuses that), so one
-    // level is what this handles.
+    // level is what this handles. A literal that captured something has a
+    // hidden environment parameter (A-4 phase E), which goes first in either
+    // spelling.
+    let env = f.env.is_some();
     match &f.ret {
         Ty::Fn { params, ret } => {
             write!(
@@ -1899,7 +2151,7 @@ fn write_signature(out: &mut String, f: &Function) {
                 c_name(&f.name)
             )
             .unwrap();
-            write_params(out, &f.params);
+            write_params(out, &f.params, env);
             write!(out, "))({})", fn_params_of(params)).unwrap();
             return;
         }
@@ -1907,22 +2159,31 @@ fn write_signature(out: &mut String, f: &Function) {
             write!(out, "{} {}(", other.c_type(), c_name(&f.name)).unwrap();
         }
     }
-    write_params(out, &f.params);
+    write_params(out, &f.params, env);
     out.push(')');
 }
 
 /// The parenthesized parameter list of a function's own signature — `void`
-/// when it takes none, which is what a C definition requires.
-fn write_params(out: &mut String, params: &[(String, Ty)]) {
-    if params.is_empty() {
+/// when it takes none, which is what a C definition requires. A literal that
+/// captured something receives its environment first, as a `void*` the body
+/// casts back to the literal's own environment struct: the environment's
+/// layout stays out of the type system, which is what lets two closures of one
+/// signature share a C type.
+fn write_params(out: &mut String, params: &[(String, Ty)], env: bool) {
+    let mut first = true;
+    if env {
+        out.push_str("void* env_raw");
+        first = false;
+    }
+    if params.is_empty() && first {
         out.push_str("void");
-    } else {
-        for (i, (name, ty)) in params.iter().enumerate() {
-            if i > 0 {
-                out.push_str(", ");
-            }
-            out.push_str(&ty.c_decl(&c_name(name)));
+    }
+    for (name, ty) in params.iter() {
+        if !first {
+            out.push_str(", ");
         }
+        first = false;
+        out.push_str(&ty.c_decl(&c_name(name)));
     }
 }
 
@@ -2048,6 +2309,17 @@ impl<'a> Gen<'a> {
         }
         write_signature(&mut self.out, f);
         self.out.push_str(" {\n");
+        // A literal that captured something receives its environment as the
+        // hidden first parameter; binding it here is what makes every
+        // `ExprKind::Capture` in the body an `env->cN` read (A-4 phase E).
+        if let Some(env) = &f.env {
+            writeln!(
+                self.out,
+                "    {}* env = ({}*)env_raw;",
+                env.struct_name, env.struct_name
+            )
+            .unwrap();
+        }
         self.write_function_body(&f.body, 1, &f.ret);
         self.out.push_str("}\n");
     }
@@ -2267,13 +2539,81 @@ impl<'a> Gen<'a> {
             // Every function in the program is emitted with a prototype, so
             // naming one here needs nothing else.
             ExprKind::FnRef(key) => c_name(key),
+            // A `fun` literal that captured something (A-4 phase E): build its
+            // environment on the heap, move (or copy) each capture into it,
+            // and hand back the fat pointer. One statement expression, so the
+            // whole thing is a value like any other — and so the captures are
+            // evaluated exactly once, in field order.
+            ExprKind::ClosureLit { key, captures } => {
+                let env_ty = crate::types::env_struct_name(key);
+                let env_drop = crate::types::env_drop_name(key);
+                let closure_ty = expr.ty.c_type();
+                let env_tmp = fresh_temp();
+                let value_tmp = fresh_temp();
+                let mut code = format!(
+                    "({{ {env_ty}* {env_tmp} = ({env_ty}*)malloc(sizeof({env_ty})); if ({env_tmp} == NULL) {{ kelp_panic(\"out of memory\"); }}"
+                );
+                for (i, init) in captures.iter().enumerate() {
+                    code.push_str(&format!(
+                        " {env_tmp}->{} = {};",
+                        crate::types::capture_field(i),
+                        self.expr_value(init)
+                    ));
+                }
+                code.push_str(&format!(
+                    " {closure_ty} {value_tmp}; {value_tmp}.fn = {}; {value_tmp}.env = {env_tmp}; {value_tmp}.drop = {env_drop}; {value_tmp}; }})",
+                    c_name(key)
+                ));
+                code
+            }
+            // A read of one field of the enclosing closure's environment
+            // (A-4 phase E). `env` is the pointer the generated function's
+            // prologue bound.
+            ExprKind::Capture { index } => {
+                format!("env->{}", crate::types::capture_field(*index))
+            }
+            // `val f: closure(i32).R: i32 = double` (A-4 phase E): a plain
+            // function value widened into a closure by giving it a one-field
+            // environment and a thunk to call through.
+            ExprKind::FnToClosure { func } => {
+                let env_ty = coerce_env_c_type(&expr.ty);
+                let closure_ty = expr.ty.c_type();
+                let env_tmp = fresh_temp();
+                let value_tmp = fresh_temp();
+                format!(
+                    "({{ {env_ty}* {env_tmp} = ({env_ty}*)malloc(sizeof({env_ty})); if ({env_tmp} == NULL) {{ kelp_panic(\"out of memory\"); }} {env_tmp}->f = {}; {closure_ty} {value_tmp}; {value_tmp}.fn = {}; {value_tmp}.env = {env_tmp}; {value_tmp}.drop = {}; {value_tmp}; }})",
+                    self.expr_value(func),
+                    coerce_thunk_name(&expr.ty),
+                    coerce_drop_name(&expr.ty)
+                )
+            }
             // A call through a function value: the callee is an expression
-            // (a local, and later a field), so it is parenthesized before
-            // the argument list — `(f)(x)`.
+            // (a local, or a field), so it is parenthesized before the
+            // argument list — `(f)(x)`. A closure is a fat pointer, so the
+            // call names its code pointer and passes the environment as the
+            // hidden first argument; the callee is bound to a temporary
+            // first, so a field or a dereference is evaluated once.
             ExprKind::IndirectCall { callee, args } => {
-                let callee = self.expr_value(callee);
                 let rendered: Vec<String> = args.iter().map(|a| self.expr_value(a)).collect();
-                format!("({callee})({})", rendered.join(", "))
+                let arglist = rendered.join(", ");
+                match closure_access(&callee.ty) {
+                    Some((fn_member, env_member)) => {
+                        let tmp = fresh_temp();
+                        let value = self.expr_value(callee);
+                        let code_ptr = format!("{tmp}{fn_member}");
+                        let env_ptr = format!("{tmp}{env_member}");
+                        let call = if arglist.is_empty() {
+                            format!("({code_ptr})({env_ptr})")
+                        } else {
+                            format!("({code_ptr})({env_ptr}, {arglist})")
+                        };
+                        format!("({{ {} = {value}; {call}; }})", callee.ty.c_decl(&tmp))
+                    }
+                    None => {
+                        let callee = self.expr_value(callee);
+                        format!("({callee})({arglist})")
+                    }
+                }
             }
             ExprKind::Template { newline, pieces } => {
                 // One `printf` with a generated format string: literal chunks
@@ -2956,6 +3296,8 @@ impl<'a> Gen<'a> {
             // format for a pointer to code), so this is unreachable rather
             // than a missing case.
             Ty::Fn { .. } => unreachable!("a function value cannot be printed"),
+            // Same, for a closure: `infer.rs` refuses one in `print` too.
+            Ty::Closure { .. } => unreachable!("a closure cannot be printed"),
             // A borrowed `Bytes`/`String` is the only way `print` sees one —
             // `infer.rs` auto-borrows an owned place — so `->` is the accessor
             // that applies. The length is cast because `%.*s` takes an `int`.
@@ -3002,7 +3344,20 @@ fn is_place(expr: &Expr) -> bool {
             | ExprKind::FieldAccess { .. }
             | ExprKind::EnumField { .. }
             | ExprKind::Deref { .. }
+            | ExprKind::Capture { .. }
     )
+}
+
+/// How a closure callee reaches its code pointer and its environment: `.fn` /
+/// `.env` on a closure value, `->fn` / `->env` when the callee is a borrow of
+/// one (a parameter of the type borrows it, per the parameter rule). `None`
+/// for a plain function value, which is the pointer itself (A-4 phase E).
+fn closure_access(ty: &Ty) -> Option<(&'static str, &'static str)> {
+    match ty {
+        Ty::Closure { .. } => Some((".fn", ".env")),
+        Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => Some(("->fn", "->env")),
+        _ => None,
+    }
 }
 
 fn fresh_temp() -> String {
