@@ -1125,6 +1125,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "list_datac_element",
         "stdlib_sort",
         "list_slice_insert",
+        "path_polish",
         "box_basic",
         "box_recursive",
         "recursive_datac",
@@ -1432,6 +1433,29 @@ fn fs_list_returns_a_granted_directories_entries() {
         "caps_list",
         &project("caps_list").join("main.x"),
         "3\na.txt,b.txt,sub\na.txt b.txt sub \nfalse\n",
+    );
+}
+
+#[test]
+fn fs_breadth_creates_walks_stats_copies_opens_and_removes_under_one_grant() {
+    // MK5-S5: `mkdir_all`, `read_lines`, `metadata`, `copy`, `open` (its mode
+    // string is not a path), `touch`, `walk`, `temp_path`, `remove_all` — all
+    // behind the one `fs` grant, all in a scratch directory the program
+    // creates and removes itself.
+    assert_project_runs(
+        "caps_fs_breadth",
+        &project("caps_fs_breadth").join("main.x"),
+        "2\nline one\nline two\n18\ntrue\nfalse\ntrue\nfalse\ntop\ntrue\n7\n/tmp/xc_fs_breadth_test/a/b/c/note.txt\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn path_stem_extension_and_component_helpers() {
+    // `stem` allocates (a prefix cannot be a view); `split` drops empty
+    // components; `join_all` applies `join`'s absolute-part rule.
+    assert_compiles_and_runs(
+        "tests/fixtures/path_polish.x",
+        "archive.tar\nMakefile\n.bashrc\ntrue\nfalse\n2\na\nb\n/a/b/c\n/etc/x\n",
     );
 }
 

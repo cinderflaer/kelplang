@@ -143,12 +143,7 @@ pub enum CapCheck {
 /// (`connect`, not `std.net.connect`).
 pub fn checked_args(domain: &str, callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
     match domain {
-        "fs" => arg_is_str
-            .iter()
-            .enumerate()
-            .filter(|(_, is_str)| **is_str)
-            .map(|(i, _)| CapCheck::Path(i))
-            .collect(),
+        "fs" => fs_checked_args(callee, arg_is_str),
         "env" => first_str_arg(arg_is_str)
             .map(|i| vec![CapCheck::Name(i)])
             .unwrap_or_default(),
@@ -162,6 +157,24 @@ pub fn checked_args(domain: &str, callee: &str, arg_is_str: &[bool]) -> Vec<CapC
 
 fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
     arg_is_str.iter().position(|is_str| *is_str)
+}
+
+/// `fs`'s resource arguments. Nearly every `str` argument is a path
+/// (`rename` and `copy` have two), but `open`'s second argument is a mode
+/// (`"r"`/`"w"`/`"a"`/`"rw"`) and must not be normalised and matched as
+/// one. This is the same shape `net` needed: the call's own name decides.
+fn fs_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
+    if callee == "open" {
+        return first_str_arg(arg_is_str)
+            .map(|i| vec![CapCheck::Path(i)])
+            .unwrap_or_default();
+    }
+    arg_is_str
+        .iter()
+        .enumerate()
+        .filter(|(_, is_str)| **is_str)
+        .map(|(i, _)| CapCheck::Path(i))
+        .collect()
 }
 
 /// `net`'s resource arguments, by function. The host is argument 0 and the

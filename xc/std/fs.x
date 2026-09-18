@@ -1,4 +1,6 @@
 impl "std/str"
+impl "std/path" as p
+impl "std/io"
 
 // std/fs — the gated filesystem namespace (M7).
 //
@@ -21,9 +23,21 @@ extern fun size_raw(path: &str).R: u64
 extern fun remove_raw(path: &str)
 extern fun rename_raw(from: &str, to: &str)
 extern fun mkdir_raw(path: &str)
+extern fun mkdir_all_raw(path: &str)
 extern fun append_raw(path: &str, data: Bytes)
 extern fun sync_raw(path: &str)
 extern fun list_raw(path: &str).R: String
+extern fun open_raw(path: &str, mode: &str).R: i32
+extern fun copy_raw(from: &str, to: &str)
+extern fun touch_raw(path: &str)
+extern fun temp_path_raw(prefix: &str).R: String
+extern fun mtime_raw(path: &str).R: i64
+extern fun mode_raw(path: &str).R: u32
+
+// A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
+// bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
+// on.
+datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, val is_file: bool)
 
 // The whole file, as owned bytes.
 // Panics: if the file cannot be read.
@@ -105,3 +119,143 @@ fun list(path: &str).R: List<String> {
     }
     return str.split(raw.as_str(), "\n")
 }
+
+// --- MK5-S5: breadth --------------------------------------------------------
+//
+// Everything below is ordinary X over the primitives above, except the five
+// new externs at the top of this file. The two recursive functions walk
+// `p`refixed paths one component at a time; every path they build is passed
+// through the same call-site capability check as a caller-written one,
+// because the check sits on the public `fs` functions, not on the syscalls.
+
+// Creates every missing component of `path`, in order, treating an existing
+// component as success — so repeated setup is idempotent. The walk happens
+// inside one `extern` rather than in X: the whole path is checked against the
+// grant once, at the call site, and a recursive X version would have to check
+// each prefix, including the ones *above* the granted root (which is exactly
+// what a grant on `/var/lib/app/**` does not admit).
+//
+// Panics: if any directory along the way cannot be created.
+fun mkdir_all(path: &str) {
+    mkdir_all_raw(path)
+}
+
+// Removes `path`, recursively when it is a directory. A symlink to a
+// directory is treated as a directory (there is no `lstat` form in v1), so a
+// link inside the grant pointing outside it would be followed — the same
+// caveat `fs.list` has, and the reason the grant is the boundary.
+//
+// Panics: if anything cannot be removed.
+fun remove_all(path: &str) {
+    if is_dir(path) {
+        val entries = list(path)
+        var i: usize = 0
+        while i < entries.len() {
+            val child = p.join(path, entries.get(i).as_str())
+            remove_all(child.as_str())
+            i = i + 1
+        }
+    }
+    remove_raw(path)
+}
+
+// Every name under `dir`, recursively, each joined to its parent. A
+// depth-first walk driven by an explicit stack: `fs.list` is sorted per
+// directory, so the output is deterministic. Entries are popped off the
+// stack, which is also why the pending list is mutated without a live borrow
+// of itself (`List.get` would hold one for the whole loop body).
+//
+// Panics: if any directory cannot be read.
+fun walk(dir: &str).R: List<String> {
+    var out: List<String> = List.empty()
+    var pending: List<String> = List.empty()
+    pending.push(String.from_str(dir))
+    while pending.len() > 0 {
+        val current = pending.pop()
+        val entries = list(current.as_str())
+        var i: usize = 0
+        while i < entries.len() {
+            // Three joins, deliberately: a borrow of a local lasts to the end
+            // of the block in v1, so the value `is_dir` probes cannot then be
+            // moved into `pending`. `probe` stays put and is dropped at the
+            // end of the iteration; the pushed value is a fresh one.
+            val name = p.join(current.as_str(), entries.get(i).as_str())
+            out.push(name)
+            val probe = p.join(current.as_str(), entries.get(i).as_str())
+            val is_directory = is_dir(probe.as_str())
+            if is_directory {
+                pending.push(p.join(current.as_str(), entries.get(i).as_str()))
+            }
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// Copies `from` to `to`, creating or truncating `to`. One `sendfile(2)`
+// loop, so a large file is never held in memory: a read/write loop would
+// buffer the whole thing at 20 GiB, and the repo already benchmarks that.
+//
+// Both paths are checked against the grant — `copy`, like `rename`, is a
+// two-resource call.
+// Panics: if either path is outside the grant, or the copy fails.
+fun copy(from: &str, to: &str) {
+    copy_raw(from, to)
+}
+
+// Creates `path` when it is missing and sets its modification time to now
+// when it exists.
+// Panics: if the file cannot be created or its timestamp cannot be set.
+fun touch(path: &str) {
+    touch_raw(path)
+}
+
+// A `File` over `path`. `mode` is one of `"r"`, `"w"`, `"a"`, `"rw"`; the
+// returned value is `std/io`'s `File`, so `fs.open` is the bridge from a
+// path to the descriptor API. `"w"` and `"a"` create, `"rw"` creates and
+// does not truncate.
+//
+// Panics: if the mode is unknown or the file cannot be opened.
+fun open(path: &str, mode: &str).R: io.File {
+    return io.File(fd = open_raw(path, mode))
+}
+
+// Every line of a text file, without the line endings and without the empty
+// string a trailing newline would otherwise leave at the end (the same shape
+// `io.read_lines` produces).
+//
+// Panics: if the file cannot be read or is not valid utf-8.
+fun read_lines(path: &str).R: List<String> {
+    val text = read_text(path)
+    val s = text.as_str()
+    if str.len(s) == 0 {
+        var empty: List<String> = List.empty()
+        return empty
+    }
+    val parts = str.split(s, "\n")
+    if str.len(parts.get(parts.len() - 1).as_str()) == 0 {
+        return parts.slice(0, parts.len() - 1)
+    }
+    return parts
+}
+
+// A fresh, empty file whose name starts with `prefix` (the `XXXXXX` suffix
+// is filled in by `mkstemp`). The prefix is what the grant is checked
+// against, so the random suffix cannot escape it; the file is created, not
+// just named.
+//
+// Panics: if the file cannot be created.
+fun temp_path(prefix: &str).R: String = temp_path_raw(prefix)
+
+// Each field of `Metadata` is its own `stat`, because v1's `extern` returns
+// one value and a `datac`-returning body would have to name the generated
+// struct; five `stat` calls for one `metadata` is the accepted cost.
+//
+// Panics: if the path cannot be stat-ed.
+fun metadata(path: &str).R: Metadata = Metadata(
+    size = size_raw(path),
+    mtime = mtime_raw(path),
+    mode = mode_raw(path),
+    is_dir = is_dir_raw(path),
+    is_file = is_file_raw(path),
+)

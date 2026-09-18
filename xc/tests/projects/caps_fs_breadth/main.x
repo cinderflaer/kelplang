@@ -1,0 +1,52 @@
+// MK5-S5 fs breadth behind one grant: `mkdir_all`, `read_lines`, `metadata`,
+// `copy`, `open`, `touch`, `walk`, `temp_path`, `remove_all`. The scratch
+// directory is created and removed by the program, so the run depends on
+// nothing already on disk.
+impl "std/str"
+impl "std/fs" with caps(fs = ["/tmp/xc_fs_breadth_test/**"])
+
+fun main() {
+    val root = "/tmp/xc_fs_breadth_test"
+    if fs.exists(root) {
+        fs.remove_all(root)
+    }
+    fs.mkdir_all("/tmp/xc_fs_breadth_test/a/b/c")
+    fs.write_text("/tmp/xc_fs_breadth_test/a/b/c/note.txt", String.from_str("line one\nline two\n"))
+    fs.write_text("/tmp/xc_fs_breadth_test/top.txt", String.from_str("top"))
+
+    val lines = fs.read_lines("/tmp/xc_fs_breadth_test/a/b/c/note.txt")
+    print(lines.len())
+    print(lines.get(0).as_str())
+    print(lines.get(1).as_str())
+
+    val m = fs.metadata("/tmp/xc_fs_breadth_test/a/b/c/note.txt")
+    print(m.size)
+    print(m.is_file)
+    print(m.is_dir)
+    val d = fs.metadata("/tmp/xc_fs_breadth_test/a")
+    print(d.is_dir)
+    print(d.is_file)
+
+    fs.copy("/tmp/xc_fs_breadth_test/top.txt", "/tmp/xc_fs_breadth_test/copy.txt")
+    {
+        val f = fs.open("/tmp/xc_fs_breadth_test/copy.txt", "r")
+        val data = f.read_all()
+        print!(data.as_str())
+        print("")
+        f.close()
+    }
+
+    fs.touch("/tmp/xc_fs_breadth_test/touched.txt")
+    print(fs.exists("/tmp/xc_fs_breadth_test/touched.txt"))
+
+    val walked = fs.walk(root)
+    print(walked.len())
+    print(walked.get(walked.len() - 1).as_str())
+
+    val tmp = fs.temp_path("/tmp/xc_fs_breadth_test/tmp-")
+    print(str.starts_with(tmp.as_str(), "/tmp/xc_fs_breadth_test/tmp-"))
+    print(fs.is_file(tmp.as_str()))
+
+    fs.remove_all(root)
+    print(fs.exists(root))
+}

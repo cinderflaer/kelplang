@@ -46,6 +46,76 @@ fun extension(s: &str).R: &str {
     return str.substring(s, n)
 }
 
+// The final component without its extension: `"a/b.txt"` becomes `"b"`. A
+// leading dot is part of the name, not an extension (".bashrc" has no
+// extension), so its stem is the whole name. Owned rather than a view: this
+// is a *prefix* of the string, and a prefix cannot be a view (the same
+// reason `parent` below allocates).
+fun stem(s: &str).R: String {
+    val start = last_sep(s)
+    val n = str.len(s)
+    var cut: usize = n
+    var i: usize = n
+    while i > start {
+        if str.byte(s, i - 1) == 46 && i - 1 > start {
+            cut = i - 1
+            i = start
+        } else {
+            i = i - 1
+        }
+    }
+    if cut < n {
+        return str.copy_range(s, start, cut)
+    }
+    return str.copy_range(s, start, n)
+}
+
+// Whether the final component ends with `.ext`.
+fun has_extension(s: &str, ext: &str).R: bool = str.eq(extension(s), ext)
+
+// `s` split into its non-empty components on `/`: a leading, trailing or
+// doubled separator contributes no empty piece, so `"/a//b/"` is `["a",
+// "b"]`. Absolute-ness is not recorded; the components are.
+fun split(s: &str).R: List<String> {
+    var out: List<String> = List.empty()
+    val n = str.len(s)
+    var start: usize = 0
+    var i: usize = 0
+    while i <= n {
+        if i == n || str.byte(s, i) == 47 {
+            if i > start {
+                out.push(str.copy_range(s, start, i))
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Every part joined with `/`, left to right, so a later absolute part
+// replaces everything before it — `join`'s rule, applied repeatedly.
+fun join_all(parts: List<String>).R: String {
+    var out = String.empty()
+    var first = true
+    var i: usize = 0
+    while i < parts.len() {
+        val part = parts.get(i).as_str()
+        if is_absolute(part) {
+            out = String.from_str(part)
+            first = false
+        } else if first {
+            out.push_str(part)
+            first = false
+        } else {
+            out.push_str("/")
+            out.push_str(part)
+        }
+        i = i + 1
+    }
+    return out
+}
+
 // The directory part, as an owned copy: a prefix cannot be a view (see
 // `str.trim_end` on why truncation allocates). The empty string means "no
 // directory part", which is the honest answer for a bare file name.

@@ -199,6 +199,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "mkdir_all_raw",
+        "    char buf[PATH_MAX];\n    size_t n = strlen(x_path);\n    if (n == 0 || n >= sizeof buf) {\n        x_panic(\"fs.mkdir_all: path is empty or too long\");\n    }\n    memcpy(buf, x_path, n + 1);\n    /* Every prefix, in order: an existing component is success, anything\n       else is a failure. Done here rather than in X so that the grant is\n       checked once, on the whole path, and never on a prefix above it. */\n    for (size_t i = 1; i <= n; i++) {\n        if (buf[i] == '/' || buf[i] == 0) {\n            char saved = buf[i];\n            buf[i] = 0;\n            if (mkdir(buf, 0777) != 0 && errno != EEXIST) {\n                x_panic(\"fs.mkdir_all: cannot create directory\");\n            }\n            buf[i] = saved;\n        }\n    }\n",
+    ),
+    (
+        "std/fs",
         "append_raw",
         "    FILE* f = fopen(x_path, \"ab\");\n    if (f == NULL) {\n        x_panic(\"fs.append: cannot open file\");\n    }\n    if (x_data->len > 0 && fwrite(x_data->data, 1, x_data->len, f) != x_data->len) {\n        fclose(f);\n        x_panic(\"fs.append: short write\");\n    }\n    fclose(f);\n",
     ),
@@ -211,6 +216,36 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "std/fs",
         "sync_raw",
         "    int fd = open(x_path, O_RDONLY);\n    if (fd < 0) {\n        x_panic(\"fs.sync: cannot open file\");\n    }\n    if (fsync(fd) != 0) {\n        close(fd);\n        x_panic(\"fs.sync: fsync failed\");\n    }\n    close(fd);\n",
+    ),
+    (
+        "std/fs",
+        "open_raw",
+        "    int flags;\n    if (strcmp(x_mode, \"r\") == 0) {\n        flags = O_RDONLY;\n    } else if (strcmp(x_mode, \"w\") == 0) {\n        flags = O_WRONLY | O_CREAT | O_TRUNC;\n    } else if (strcmp(x_mode, \"a\") == 0) {\n        flags = O_WRONLY | O_CREAT | O_APPEND;\n    } else if (strcmp(x_mode, \"rw\") == 0) {\n        flags = O_RDWR | O_CREAT;\n    } else {\n        x_panic(\"fs.open: mode must be \\\"r\\\", \\\"w\\\", \\\"a\\\" or \\\"rw\\\"\");\n        return -1;\n    }\n    int fd = open(x_path, flags, 0666);\n    if (fd < 0) {\n        x_panic(\"fs.open: cannot open file\");\n    }\n    return fd;\n",
+    ),
+    (
+        "std/fs",
+        "copy_raw",
+        "    int in = open(x_from, O_RDONLY);\n    if (in < 0) {\n        x_panic(\"fs.copy: cannot open source\");\n    }\n    struct stat st;\n    if (fstat(in, &st) != 0) {\n        close(in);\n        x_panic(\"fs.copy: cannot stat source\");\n    }\n    int out = open(x_to, O_WRONLY | O_CREAT | O_TRUNC, 0666);\n    if (out < 0) {\n        close(in);\n        x_panic(\"fs.copy: cannot open destination\");\n    }\n    off_t at = 0;\n    while (at < st.st_size) {\n        ssize_t n = sendfile(out, in, &at, (size_t)(st.st_size - at));\n        if (n < 0) {\n            close(in);\n            close(out);\n            x_panic(\"fs.copy: copy failed\");\n        }\n        if (n == 0) {\n            break;\n        }\n    }\n    close(in);\n    close(out);\n",
+    ),
+    (
+        "std/fs",
+        "touch_raw",
+        "    int fd = open(x_path, O_WRONLY | O_CREAT, 0666);\n    if (fd < 0) {\n        x_panic(\"fs.touch: cannot create file\");\n    }\n    close(fd);\n    if (utimensat(AT_FDCWD, x_path, NULL, 0) != 0) {\n        x_panic(\"fs.touch: cannot update timestamp\");\n    }\n",
+    ),
+    (
+        "std/fs",
+        "temp_path_raw",
+        "    char tmpl[PATH_MAX];\n    int written = snprintf(tmpl, sizeof tmpl, \"%sXXXXXX\", x_prefix);\n    if (written < 0 || (size_t)written >= sizeof tmpl) {\n        x_panic(\"fs.temp_path: prefix is too long\");\n    }\n    int fd = mkstemp(tmpl);\n    if (fd < 0) {\n        x_panic(\"fs.temp_path: cannot create temporary file\");\n    }\n    close(fd);\n    return x_String__from_str(tmpl);\n",
+    ),
+    (
+        "std/fs",
+        "mtime_raw",
+        "    struct stat st;\n    if (stat(x_path, &st) != 0) {\n        x_panic(\"fs.metadata: cannot stat file\");\n    }\n    return (int64_t)st.st_mtime;\n",
+    ),
+    (
+        "std/fs",
+        "mode_raw",
+        "    struct stat st;\n    if (stat(x_path, &st) != 0) {\n        x_panic(\"fs.metadata: cannot stat file\");\n    }\n    return (uint32_t)(st.st_mode & 07777);\n",
     ),
     (
         "std/time",

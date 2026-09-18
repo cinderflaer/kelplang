@@ -478,6 +478,13 @@ const CAP_RUNTIME: &str = r#"// ---- X capability runtime (M7) -----------------
    only as a whole segment; no other metacharacters, no regex. */
 static bool x_glob_match(const char* pat, const char* path) {
     while (*pat != 0) {
+        /* A trailing '/**' also matches the directory itself: `**` is zero
+           or more segments, and `fs.mkdir_all`/`fs.remove_all` walk up to
+           (and back down to) the grant root, so a grant on a tree has to
+           admit the tree's own root. */
+        if (pat[0] == '/' && pat[1] == '*' && pat[2] == '*' && pat[3] == 0 && *path == 0) {
+            return true;
+        }
         if (pat[0] == '*' && pat[1] == '*') {
             const char* rest = pat + 2;
             if (*rest == '/') {
@@ -788,6 +795,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     out.push_str("#include <netinet/in.h>\n");
     out.push_str("#include <poll.h>\n");
     out.push_str("#include <sys/socket.h>\n");
+    out.push_str("#include <sys/sendfile.h>\n");
     out.push_str("#include <sys/stat.h>\n");
     out.push_str("#include <sys/types.h>\n");
     out.push_str("#include <sys/wait.h>\n");
