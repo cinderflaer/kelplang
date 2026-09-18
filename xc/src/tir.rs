@@ -8,7 +8,24 @@ use crate::types::{StructDef, Ty};
 #[derive(Debug, Clone)]
 pub struct Program {
     pub structs: Vec<StructDef>,
+    /// Passdowns (M5.2) in initialization order — module load order, then
+    /// declaration order within a module. `codegen_c.rs` emits one global
+    /// per entry plus a generated init function that runs before `main`'s
+    /// body.
+    pub pds: Vec<Pd>,
     pub functions: Vec<Function>,
+}
+
+/// One checked passdown. `name` is the internal `pd#<qualified>` name shared
+/// by the generated C global and the hidden parameter every referencing
+/// function receives (see `infer::PdInfo`).
+#[derive(Debug, Clone)]
+pub struct Pd {
+    pub name: String,
+    /// Module-prefixed name, for diagnostics and comments in the C output.
+    pub qualified: String,
+    pub value_ty: Ty,
+    pub init: Expr,
 }
 
 #[derive(Debug, Clone)]
@@ -112,4 +129,21 @@ pub enum ExprKind {
     Deref {
         expr: Box<Expr>,
     },
+    /// A `print`/`print!` of an interpolated string template, kept as its
+    /// pieces so `codegen_c.rs` can emit exactly one `printf` with one
+    /// generated format string (rather than concatenating anything, which v1
+    /// has no owned string type to do).
+    Template {
+        /// `true` for `print(...)`, `false` for `print!(...)`.
+        newline: bool,
+        pieces: Vec<TemplatePiece>,
+    },
+}
+
+/// One piece of a template: literal text, or an interpolated value that has
+/// already been checked to be printable.
+#[derive(Debug, Clone)]
+pub enum TemplatePiece {
+    Text(String),
+    Value(Expr),
 }

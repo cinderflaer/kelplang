@@ -174,11 +174,18 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
 
     let mut program = ast::Program {
         impls: Vec::new(),
+        pds: Vec::new(),
         datacs: Vec::new(),
         functions: Vec::new(),
     };
     for m in &loader.modules {
         let parsed = &loader.parsed[&m.id];
+        for p in &parsed.pds {
+            let mut p = p.clone();
+            p.name = format!("{}{}", m.prefix, p.name);
+            p.module = m.id.clone();
+            program.pds.push(p);
+        }
         for d in &parsed.datacs {
             let mut d = d.clone();
             d.name = format!("{}{}", m.prefix, d.name);

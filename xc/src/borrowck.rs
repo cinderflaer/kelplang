@@ -359,6 +359,14 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_value(rhs, ctx)
         }
         tir::ExprKind::Call { args, .. } => check_call(args, ctx),
+        tir::ExprKind::Template { pieces, .. } => {
+            for piece in pieces {
+                if let tir::TemplatePiece::Value(v) = piece {
+                    check_value(v, ctx)?;
+                }
+            }
+            Ok(())
+        }
         tir::ExprKind::StructLit { fields, .. } => {
             for (_, v) in fields {
                 check_value(v, ctx)?;

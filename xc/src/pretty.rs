@@ -237,5 +237,19 @@ fn print_expr(out: &mut String, expr: &Expr) {
             }
             out.push(')');
         }
+        Expr::Template { parts, .. } => {
+            out.push('"');
+            for p in parts {
+                match p {
+                    TemplatePart::Text(t) => out.push_str(t),
+                    TemplatePart::Expr(e) => {
+                        out.push_str("${");
+                        print_expr(out, e);
+                        out.push('}');
+                    }
+                }
+            }
+            out.push('"');
+        }
     }
 }

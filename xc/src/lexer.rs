@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -19,8 +21,26 @@ pub enum TokenKind {
     // literals
     IntLit(i64),
     FloatLit(f64),
+    /// A string with no `$` interpolation in it, stored decoded (escapes
+    /// already processed). A string *with* interpolation becomes the
+    /// `TemplateStart` ... `TemplateEnd` sequence below instead, so every
+    /// existing string in every existing test keeps this exact token.
     StringLit(String),
     Ident(String),
+
+    // string-template pieces (`"a$b${c}"`), all emitted in one flat run:
+    // `TemplateStart StrChunk("a") ExprStart Ident(b) ExprEnd
+    //  StrChunk("") ExprStart <expr tokens> ExprEnd StrChunk("") TemplateEnd`.
+    // Splitting templates in the lexer is what keeps the sub-expressions'
+    // spans *absolute* (no offset arithmetic to get `file:line:col` right)
+    // and lets a template nest inside its own `${...}`.
+    TemplateStart,
+    /// Literal text between interpolations. Always present, possibly empty,
+    /// and always one before `TemplateEnd`, so the shape is regular.
+    StrChunk(String),
+    TemplateExprStart,
+    TemplateExprEnd,
+    TemplateEnd,
 
     // keywords
     Fun,
@@ -35,6 +55,9 @@ pub enum TokenKind {
     True,
     False,
     Datac,
+    /// `pd val name = expr` / `pd var name = expr` — a passdown
+    /// (`syntax&shii.md` §9).
+    Pd,
     /// `impl "path/to/module"` — the import keyword (`syntax&shii.md` §8;
     /// `impl` method blocks do not exist, receivers replaced them).
     Impl,
@@ -97,6 +120,11 @@ pub struct Lexer<'a> {
     /// while this is > 0 — this is what lets a `datac`'s field-list parens,
     /// or any parenthesized sub-expression, span multiple lines.
     paren_depth: usize,
+    /// Tokens produced by a single source construct but consumed one at a
+    /// time — only string templates use this: one `"..."` literal expands to
+    /// a whole token run, and `next_token` drains the run before reading
+    /// more source.
+    pending: VecDeque<Token>,
 }
 
 #[derive(Debug)]
@@ -112,6 +140,7 @@ impl<'a> Lexer<'a> {
             bytes: src.as_bytes(),
             pos: 0,
             paren_depth: 0,
+            pending: VecDeque::new(),
         }
     }
 
@@ -154,6 +183,30 @@ impl<'a> Lexer<'a> {
     pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         loop {
+            match self.next_token()? {
+                Some(t) => tokens.push(t),
+                None => {
+                    tokens.push(Token {
+                        kind: TokenKind::Eof,
+                        span: Span::new(self.pos, self.pos),
+                    });
+                    break;
+                }
+            }
+        }
+        Ok(tokens)
+    }
+
+    /// The next token, or `None` at end of input. Newline tokens are
+    /// *returned* (at `paren_depth == 0`) rather than skipped, since
+    /// statement termination depends on them.
+    fn next_token(&mut self) -> Result<Option<Token>, LexError> {
+        loop {
+            // A single string literal can expand to a whole run of tokens
+            // (a template); those queue up here and drain first.
+            if let Some(t) = self.pending.pop_front() {
+                return Ok(Some(t));
+            }
             self.skip_trivia();
             let start = self.pos;
 
@@ -164,21 +217,23 @@ impl<'a> Lexer<'a> {
                     self.skip_trivia();
                 }
                 if self.paren_depth == 0 {
-                    tokens.push(Token {
+                    return Ok(Some(Token {
                         kind: TokenKind::Newline,
                         span: Span::new(nl_start, self.pos),
-                    });
+                    }));
                 }
                 continue;
             }
 
             let Some(b) = self.peek() else {
-                tokens.push(Token {
-                    kind: TokenKind::Eof,
-                    span: Span::new(start, start),
-                });
-                break;
+                return Ok(None);
             };
+
+            if b == b'"' {
+                self.advance();
+                self.lex_string(start)?;
+                continue; // the tokens (one, or a template's run) are queued
+            }
 
             let kind = match b {
                 b'(' => {
@@ -326,33 +381,8 @@ impl<'a> Lexer<'a> {
                 }
                 b'"' => {
                     self.advance();
-                    let mut s = String::new();
-                    loop {
-                        match self.advance() {
-                            Some(b'"') => break,
-                            Some(b'\\') => match self.advance() {
-                                Some(b'n') => s.push('\n'),
-                                Some(b't') => s.push('\t'),
-                                Some(b'"') => s.push('"'),
-                                Some(b'\\') => s.push('\\'),
-                                Some(c) => s.push(c as char),
-                                None => {
-                                    return Err(LexError {
-                                        message: "unterminated string literal".to_string(),
-                                        span: Span::new(start, self.pos),
-                                    })
-                                }
-                            },
-                            Some(c) => s.push(c as char),
-                            None => {
-                                return Err(LexError {
-                                    message: "unterminated string literal".to_string(),
-                                    span: Span::new(start, self.pos),
-                                })
-                            }
-                        }
-                    }
-                    TokenKind::StringLit(s)
+                    self.lex_string(start)?;
+                    continue;
                 }
                 b'0'..=b'9' => {
                     while matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -406,6 +436,7 @@ impl<'a> Lexer<'a> {
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "datac" => TokenKind::Datac,
+                        "pd" => TokenKind::Pd,
                         "impl" => TokenKind::Impl,
                         "as" => TokenKind::As,
                         _ => TokenKind::Ident(text.to_string()),
@@ -419,12 +450,149 @@ impl<'a> Lexer<'a> {
                 }
             };
 
-            tokens.push(Token {
+            return Ok(Some(Token {
                 kind,
+                span: Span::new(start, self.pos),
+            }));
+        }
+    }
+
+    /// Lexes a string literal, having consumed the opening quote; `start` is
+    /// that quote's offset.
+    ///
+    /// Without interpolation this queues the single `StringLit` token it
+    /// always did. With interpolation it queues the flat template run
+    /// (`TemplateStart StrChunk ... TemplateEnd`), lexing each `${...}`'s
+    /// tokens through `next_token` — which is what makes nested strings,
+    /// nested templates, and absolute spans work with no offset math.
+    fn lex_string(&mut self, start: usize) -> Result<(), LexError> {
+        let mut text = String::new();
+        let mut chunk_start = self.pos;
+        let mut parts: Vec<Token> = Vec::new();
+        let mut is_template = false;
+
+        loop {
+            match self.advance() {
+                Some(b'"') => break,
+                Some(b'\\') => match self.advance() {
+                    Some(b'n') => text.push('\n'),
+                    Some(b't') => text.push('\t'),
+                    Some(b'"') => text.push('"'),
+                    Some(b'\\') => text.push('\\'),
+                    Some(c) => text.push(c as char),
+                    None => {
+                        return Err(LexError {
+                            message: "unterminated string literal".to_string(),
+                            span: Span::new(start, self.pos),
+                        })
+                    }
+                },
+                Some(b'$') if self.at_interpolation() => {
+                    if !is_template {
+                        is_template = true;
+                        parts.push(Token {
+                            kind: TokenKind::TemplateStart,
+                            span: Span::new(start, start + 1),
+                        });
+                    }
+                    parts.push(Token {
+                        kind: TokenKind::StrChunk(std::mem::take(&mut text)),
+                        span: Span::new(chunk_start, self.pos - 1),
+                    });
+                    if self.peek() == Some(b'{') {
+                        let brace = self.pos;
+                        self.advance();
+                        parts.push(Token {
+                            kind: TokenKind::TemplateExprStart,
+                            span: Span::new(brace, brace + 2),
+                        });
+                        let mut depth = 0usize;
+                        loop {
+                            let Some(tok) = self.next_token()? else {
+                                return Err(LexError {
+                                    message: "unterminated '${' in string template".to_string(),
+                                    span: Span::new(brace, self.pos),
+                                });
+                            };
+                            match &tok.kind {
+                                // Newlines inside `${...}` are insignificant:
+                                // a template may wrap a multi-line expression.
+                                TokenKind::Newline => continue,
+                                TokenKind::LBrace => depth += 1,
+                                TokenKind::RBrace if depth == 0 => break,
+                                TokenKind::RBrace => depth -= 1,
+                                _ => {}
+                            }
+                            parts.push(tok);
+                        }
+                        let close = self.pos - 1;
+                        parts.push(Token {
+                            kind: TokenKind::TemplateExprEnd,
+                            span: Span::new(close, close + 1),
+                        });
+                    } else {
+                        // `$name` — an identifier, nothing more (use
+                        // `${name.field}` for anything compound). Wrapped in
+                        // the same start/end pair as `${...}` so the parser
+                        // has one uniform shape to read.
+                        let ident_start = self.pos;
+                        while matches!(self.peek(), Some(c) if c == b'_' || c.is_ascii_alphanumeric()) {
+                            self.pos += 1;
+                        }
+                        let name = &self.src[ident_start..self.pos];
+                        parts.push(Token {
+                            kind: TokenKind::TemplateExprStart,
+                            span: Span::new(ident_start - 1, ident_start),
+                        });
+                        parts.push(Token {
+                            kind: TokenKind::Ident(name.to_string()),
+                            span: Span::new(ident_start, self.pos),
+                        });
+                        parts.push(Token {
+                            kind: TokenKind::TemplateExprEnd,
+                            span: Span::new(self.pos, self.pos),
+                        });
+                    }
+                    chunk_start = self.pos;
+                }
+                Some(c) => text.push(c as char),
+                None => {
+                    return Err(LexError {
+                        message: "unterminated string literal".to_string(),
+                        span: Span::new(start, self.pos),
+                    })
+                }
+            }
+        }
+
+        if is_template {
+            parts.push(Token {
+                kind: TokenKind::StrChunk(text),
+                span: Span::new(chunk_start, self.pos - 1),
+            });
+            parts.push(Token {
+                kind: TokenKind::TemplateEnd,
+                span: Span::new(self.pos - 1, self.pos),
+            });
+            self.pending.extend(parts);
+        } else {
+            self.pending.push_back(Token {
+                kind: TokenKind::StringLit(text),
                 span: Span::new(start, self.pos),
             });
         }
-        Ok(tokens)
+        Ok(())
+    }
+
+    /// True right after a `$` that starts an interpolation: `$name` or
+    /// `${expr}`. A `$` followed by anything else (a space, a digit, end of
+    /// string) stays literal text, so `"cost $5"` needs no escaping.
+    fn at_interpolation(&self) -> bool {
+        match self.peek() {
+            Some(b'{') => true,
+            Some(c) => c == b'_' || c.is_ascii_alphabetic(),
+            None => false,
+        }
     }
 }
 
@@ -605,5 +773,122 @@ mod tests {
     #[test]
     fn rejects_unknown_character() {
         assert!(Lexer::new("$").tokenize().is_err());
+    }
+
+    #[test]
+    fn plain_strings_are_unchanged_by_templates_existing() {
+        // No `$`: the single `StringLit` token every earlier milestone relied
+        // on, same span covering both quotes.
+        let tokens = Lexer::new("\"cost $5\"").tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StringLit("cost $5".to_string()));
+        assert_eq!(tokens[0].span, Span::new(0, 9));
+    }
+
+    #[test]
+    fn lexes_a_name_interpolation() {
+        assert_eq!(
+            kinds("\"hi $name!\""),
+            vec![
+                TokenKind::TemplateStart,
+                TokenKind::StrChunk("hi ".to_string()),
+                TokenKind::TemplateExprStart,
+                TokenKind::Ident("name".to_string()),
+                TokenKind::TemplateExprEnd,
+                TokenKind::StrChunk("!".to_string()),
+                TokenKind::TemplateEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_an_expression_interpolation() {
+        assert_eq!(
+            kinds("\"${c.area()}\""),
+            vec![
+                TokenKind::TemplateStart,
+                TokenKind::StrChunk(String::new()),
+                TokenKind::TemplateExprStart,
+                TokenKind::Ident("c".to_string()),
+                TokenKind::Dot,
+                TokenKind::Ident("area".to_string()),
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::TemplateExprEnd,
+                TokenKind::StrChunk(String::new()),
+                TokenKind::TemplateEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dollar_that_starts_nothing_stays_literal() {
+        assert_eq!(
+            kinds("\"$5 and $ \""),
+            vec![TokenKind::StringLit("$5 and $ ".to_string()), TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn braces_inside_an_interpolation_do_not_end_it() {
+        assert_eq!(
+            kinds("\"${ if x { 1 } else { 2 } }\""),
+            vec![
+                TokenKind::TemplateStart,
+                TokenKind::StrChunk(String::new()),
+                TokenKind::TemplateExprStart,
+                TokenKind::If,
+                TokenKind::Ident("x".to_string()),
+                TokenKind::LBrace,
+                TokenKind::IntLit(1),
+                TokenKind::RBrace,
+                TokenKind::Else,
+                TokenKind::LBrace,
+                TokenKind::IntLit(2),
+                TokenKind::RBrace,
+                TokenKind::TemplateExprEnd,
+                TokenKind::StrChunk(String::new()),
+                TokenKind::TemplateEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_template_can_nest_inside_its_own_interpolation() {
+        assert_eq!(
+            kinds("\"[${\"in $x\"}]\""),
+            vec![
+                TokenKind::TemplateStart,
+                TokenKind::StrChunk("[".to_string()),
+                TokenKind::TemplateExprStart,
+                TokenKind::TemplateStart,
+                TokenKind::StrChunk("in ".to_string()),
+                TokenKind::TemplateExprStart,
+                TokenKind::Ident("x".to_string()),
+                TokenKind::TemplateExprEnd,
+                TokenKind::StrChunk(String::new()),
+                TokenKind::TemplateEnd,
+                TokenKind::TemplateExprEnd,
+                TokenKind::StrChunk("]".to_string()),
+                TokenKind::TemplateEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn template_sub_expression_spans_are_absolute() {
+        // `"ab $xy"`: the `xy` ident must carry its own offsets in the
+        // original source (5..7), not offsets inside the literal text.
+        let tokens = Lexer::new("\"ab $xy\"").tokenize().unwrap();
+        assert_eq!(tokens[3].kind, TokenKind::Ident("xy".to_string()));
+        assert_eq!(tokens[3].span, Span::new(5, 7));
+    }
+
+    #[test]
+    fn rejects_an_unterminated_interpolation() {
+        assert!(Lexer::new("\"${x\"").tokenize().is_err());
     }
 }

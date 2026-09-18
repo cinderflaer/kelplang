@@ -5,8 +5,31 @@ pub struct Program {
     /// `impl "path"` lines, in source order. One file's list only; the
     /// multi-file loader in `resolve.rs` owns the whole module graph.
     pub impls: Vec<ImplDecl>,
+    /// `pd val`/`pd var` lines, in source order (canonical position: after
+    /// `impl`, before `datac`/`fun`).
+    pub pds: Vec<PdDecl>,
     pub datacs: Vec<DatacDecl>,
     pub functions: Vec<FunctionDecl>,
+}
+
+/// One `pd val name = expr` / `pd var name: T = expr` — a passdown
+/// (`syntax&shii.md` §9): a top-level binding a function can name without
+/// being passed it.
+#[derive(Debug, Clone)]
+pub struct PdDecl {
+    pub name: String,
+    /// `true` for `pd var`. Per plan.md's resolution of §9's open question,
+    /// writability is confined to the top level either way — inside a
+    /// function body a passdown is read-only — so this only records which
+    /// keyword was written (and is what a future top-level statement form
+    /// would consult).
+    pub mutable: bool,
+    /// The `: T`, if written; otherwise inferred from `init`.
+    pub ty: Option<TypeExpr>,
+    pub init: Expr,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    pub span: Span,
 }
 
 /// One `impl "shapes/circle"` / `impl "time" as t` line.
@@ -229,6 +252,22 @@ pub enum Expr {
         args: Vec<CallArg>,
         span: Span,
     },
+    /// A string literal with `$name` / `${expr}` interpolation, already split
+    /// into parts by the lexer. Can only be consumed by `print`/`print!` in
+    /// v1 — building a `str` value out of pieces needs the owned `String`
+    /// type, which lands in M6 — so `infer.rs` rejects it anywhere else.
+    Template {
+        parts: Vec<TemplatePart>,
+        span: Span,
+    },
+}
+
+/// One piece of a string template: literal text, or an interpolated
+/// expression.
+#[derive(Debug, Clone)]
+pub enum TemplatePart {
+    Text(String),
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone)]
@@ -253,7 +292,8 @@ impl Expr {
             | Expr::If { span: s, .. }
             | Expr::Ref { span: s, .. }
             | Expr::Deref { span: s, .. }
-            | Expr::MethodCall { span: s, .. } => *s,
+            | Expr::MethodCall { span: s, .. }
+            | Expr::Template { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }
     }

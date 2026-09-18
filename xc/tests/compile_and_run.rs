@@ -361,3 +361,76 @@ fn caps_clause_is_rejected_until_m7() {
         "'with caps(...)' grants are not implemented yet",
     );
 }
+
+// ---------------------------------------------------------------------------
+// M5.2: passdowns (`pd`) and string templates.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn passdowns_are_read_by_referencing_functions_only() {
+    // `banner`/`label` reference passdowns (and become wired); `unrelated`
+    // references none; `main` reads the generated globals directly.
+    assert_compiles_and_runs(
+        "tests/fixtures/passdowns.x",
+        "shapes\nshapes\n[shapes] hits = 0\n42\n",
+    );
+}
+
+#[test]
+fn a_datac_passdown_is_read_through_a_shared_borrow() {
+    assert_compiles_and_runs("tests/fixtures/passdown_datac.x", "(3, 4) sum=7\n7\n");
+}
+
+#[test]
+fn a_local_can_shadow_a_passdown() {
+    assert_compiles_and_runs("tests/fixtures/pd_shadowed.x", "local=inner\npd=outer\n");
+}
+
+#[test]
+fn writing_a_passdown_inside_a_function_is_rejected() {
+    assert_rejected("tests/fixtures/pd_var_write.x");
+}
+
+#[test]
+fn reading_a_passdown_before_it_is_declared_is_rejected() {
+    assert_rejected("tests/fixtures/pd_forward_read.x");
+}
+
+#[test]
+fn templates_print_literals_and_values() {
+    assert_compiles_and_runs(
+        "tests/fixtures/templates.x",
+        "100% of {nothing} is 50%\narea = 12.566360\nr=2.000000 doubled=4.000000\nno newline here!\n",
+    );
+}
+
+#[test]
+fn a_template_outside_print_is_rejected() {
+    assert_rejected("tests/fixtures/template_not_printed.x");
+}
+
+#[test]
+fn a_passdown_is_not_visible_from_another_module() {
+    assert_project_rejected(
+        "pd_module_scope",
+        &project("pd_module_scope").join("main.x"),
+        "is a passdown of module 'util'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Struct emission order. `structs` used to be collected from a `HashMap`, so
+// a `datac` embedding another one compiled or failed at random. Declaration
+// order is a valid topological order because a `datac` may only name datacs
+// declared before it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_datac_can_embed_an_earlier_datac() {
+    assert_compiles_and_runs("tests/fixtures/datac_embeds_datac.x", "8\n");
+}
+
+#[test]
+fn a_forward_reference_between_datacs_is_rejected() {
+    assert_rejected("tests/fixtures/datac_forward_reference.x");
+}

@@ -92,17 +92,26 @@ impl Parser {
     pub fn parse_program(&mut self) -> PResult<Program> {
         self.skip_newlines();
         let mut impls = Vec::new();
+        let mut pds = Vec::new();
         let mut datacs = Vec::new();
         let mut functions = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::Eof) {
             if self.check(&TokenKind::Impl) {
-                if !datacs.is_empty() || !functions.is_empty() {
+                if !pds.is_empty() || !datacs.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'impl' lines must come before any 'datac' or 'fun' (canonical order: impl, pd, datac/fun)".to_string(),
+                        message: "'impl' lines must come first (canonical order: impl, pd, datac/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
                 impls.push(self.parse_impl_decl()?);
+            } else if self.check(&TokenKind::Pd) {
+                if !datacs.is_empty() || !functions.is_empty() {
+                    return Err(ParseError {
+                        message: "'pd' lines must come before any 'datac' or 'fun' (canonical order: impl, pd, datac/fun)".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                pds.push(self.parse_pd_decl()?);
             } else if self.check(&TokenKind::Datac) {
                 datacs.push(self.parse_datac_decl()?);
             } else {
@@ -112,8 +121,39 @@ impl Parser {
         }
         Ok(Program {
             impls,
+            pds,
             datacs,
             functions,
+        })
+    }
+
+    /// `pd val name = expr` / `pd var name = expr` / `pd val name: T = expr`.
+    fn parse_pd_decl(&mut self) -> PResult<PdDecl> {
+        let start = self.expect(TokenKind::Pd, "'pd'")?.span;
+        let mutable = if self.check(&TokenKind::Var) {
+            self.advance();
+            true
+        } else {
+            self.expect(TokenKind::Val, "'val' or 'var'")?;
+            false
+        };
+        let (name, _) = self.expect_ident()?;
+        let ty = if self.check(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(TokenKind::Eq, "'='")?;
+        let init = self.parse_expr()?;
+        let span = start.to(init.span());
+        Ok(PdDecl {
+            name,
+            mutable,
+            ty,
+            init,
+            module: String::new(),
+            span,
         })
     }
 
@@ -643,6 +683,7 @@ impl Parser {
                 self.advance();
                 Ok(Expr::StringLit(s, tok.span))
             }
+            TokenKind::TemplateStart => self.parse_template(),
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::BoolLit(true, tok.span))
@@ -681,6 +722,46 @@ impl Parser {
                 message: format!("unexpected token {other:?}"),
                 span: tok.span,
             }),
+        }
+    }
+
+    /// Parses a full string template, starting at its `TemplateStart` (the
+    /// lexer has already split the literal into chunk/interpolation tokens).
+    fn parse_template(&mut self) -> PResult<Expr> {
+        let start = self
+            .expect(TokenKind::TemplateStart, "start of a string template")?
+            .span;
+        let mut parts = Vec::new();
+        loop {
+            match self.peek_kind().clone() {
+                TokenKind::StrChunk(text) => {
+                    self.advance();
+                    if !text.is_empty() {
+                        parts.push(TemplatePart::Text(text));
+                    }
+                }
+                TokenKind::TemplateExprStart => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    self.expect(TokenKind::TemplateExprEnd, "'} ' ending the '${...}' interpolation")?;
+                    parts.push(TemplatePart::Expr(value));
+                }
+                TokenKind::TemplateEnd => {
+                    let end = self.advance().span;
+                    return Ok(Expr::Template {
+                        parts,
+                        span: start.to(end),
+                    });
+                }
+                other => {
+                    return Err(ParseError {
+                        message: format!(
+                            "malformed string template: expected literal text or '${{expr}}', found {other:?}"
+                        ),
+                        span: self.peek().span,
+                    })
+                }
+            }
         }
     }
 
@@ -1137,7 +1218,7 @@ mod tests {
     fn impl_after_a_declaration_is_rejected() {
         // Canonical order is impl, pd, then datac/fun.
         let e = parse_err("fun main() {}\nimpl \"util\"");
-        assert!(e.message.contains("must come before"), "got: {}", e.message);
+        assert!(e.message.contains("must come first"), "got: {}", e.message);
     }
 
     #[test]
@@ -1149,5 +1230,50 @@ mod tests {
     #[test]
     fn impl_requires_a_string_path() {
         parse_err("impl util");
+    }
+
+    #[test]
+    fn parses_passdown_declarations() {
+        let p = parse("pd val app_name = \"shapes\"\npd var count = 0\npd val label: &str = app_name\n\nfun main() {}");
+        assert_eq!(p.pds.len(), 3);
+        assert_eq!(p.pds[0].name, "app_name");
+        assert!(!p.pds[0].mutable);
+        assert!(p.pds[0].ty.is_none());
+        assert!(p.pds[1].mutable);
+        assert_eq!(p.pds[2].ty.as_ref().unwrap().name, "str");
+        assert!(matches!(p.pds[2].init, Expr::Ident(..)));
+    }
+
+    #[test]
+    fn pd_after_a_declaration_is_rejected() {
+        let e = parse_err("fun main() {}\npd val x = 1");
+        assert!(e.message.contains("must come before"), "got: {}", e.message);
+    }
+
+    #[test]
+    fn pd_requires_val_or_var() {
+        parse_err("pd x = 1");
+    }
+
+    #[test]
+    fn parses_a_template_into_text_and_expression_parts() {
+        let p = parse("fun main() {\n    print(\"a $b ${c.d()}\")\n}");
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        let call = match &stmts[0] {
+            Stmt::Expr { expr: Expr::Call { args, .. }, .. } => &args[0].value,
+            other => panic!("expected a call, got {other:?}"),
+        };
+        let parts = match call {
+            Expr::Template { parts, .. } => parts,
+            other => panic!("expected a template, got {other:?}"),
+        };
+        assert_eq!(parts.len(), 4);
+        assert!(matches!(&parts[0], TemplatePart::Text(t) if t == "a "));
+        assert!(matches!(&parts[1], TemplatePart::Expr(Expr::Ident(n, _)) if n == "b"));
+        assert!(matches!(&parts[2], TemplatePart::Text(t) if t == " "));
+        assert!(matches!(&parts[3], TemplatePart::Expr(Expr::MethodCall { method, .. }) if method == "d"));
     }
 }

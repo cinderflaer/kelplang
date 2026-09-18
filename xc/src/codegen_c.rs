@@ -25,6 +25,8 @@ pub fn generate(program: &Program) -> String {
         out.push('\n');
     }
 
+    write_pd_globals(&mut out, &program.pds);
+
     for f in &program.functions {
         if f.name == "main" {
             continue; // defined (not just declared) below, with its special `int main(void)` signature
@@ -35,11 +37,46 @@ pub fn generate(program: &Program) -> String {
     out.push('\n');
 
     for f in &program.functions {
-        write_function(&mut out, f);
+        write_function(&mut out, f, !program.pds.is_empty());
         out.push('\n');
     }
 
     out
+}
+
+/// Emits one file-scope global per passdown plus the generated function that
+/// initializes them, in declaration order (M5.2). The global's name is the
+/// same `pd#...` name a referencing function takes as a hidden parameter, so
+/// inside such a function the parameter shadows its own global and both
+/// spell the same symbol in C — including inside `main`, which can take no
+/// parameters and therefore reads the globals directly.
+fn write_pd_globals(out: &mut String, pds: &[Pd]) {
+    if pds.is_empty() {
+        return;
+    }
+    out.push_str("// passdowns: assigned once by x_init_pds(), read-only afterwards\n");
+    for pd in pds {
+        writeln!(
+            out,
+            "static {} {};",
+            pd.value_ty.c_type(),
+            c_name(&pd.name)
+        )
+        .unwrap();
+    }
+    out.push('\n');
+    out.push_str("static void x_init_pds(void) {\n");
+    for pd in pds {
+        writeln!(
+            out,
+            "    {} = {}; // pd {}",
+            c_name(&pd.name),
+            expr_value(&pd.init),
+            pd.qualified
+        )
+        .unwrap();
+    }
+    out.push_str("}\n\n");
 }
 
 fn write_struct(out: &mut String, s: &StructDef) {
@@ -65,7 +102,7 @@ fn write_signature(out: &mut String, f: &Function) {
     out.push(')');
 }
 
-fn write_function(out: &mut String, f: &Function) {
+fn write_function(out: &mut String, f: &Function, init_pds: bool) {
     if f.name == "main" {
         // The C runtime requires `main` to return `int`; falling off the end
         // is defined by the C standard as `return 0`, so an `.x` `main`
@@ -76,6 +113,9 @@ fn write_function(out: &mut String, f: &Function) {
         // every statement-writing function below.
         out.push_str("int main(void) {\n");
         let mut body = String::new();
+        if init_pds {
+            body.push_str("    x_init_pds();\n");
+        }
         write_function_body(&mut body, &f.body, 1, &f.ret);
         out.push_str(&body.replace("return;\n", "return 0;\n"));
         out.push_str("}\n");
@@ -249,6 +289,32 @@ fn expr_value(expr: &Expr) -> String {
             format!("({} {sym} {})", expr_value(lhs), expr_value(rhs))
         }
         ExprKind::Call { callee, args } => call_value(callee, args),
+        ExprKind::Template { newline, pieces } => {
+            // One `printf` with a generated format string: literal chunks
+            // are escaped into it, each interpolated value contributes its
+            // own specifier plus an argument (reusing `printf_piece`, the
+            // same mapping `print` uses).
+            let mut fmt = String::new();
+            let mut args: Vec<String> = Vec::new();
+            for piece in pieces {
+                match piece {
+                    TemplatePiece::Text(text) => fmt.push_str(&printf_text(text)),
+                    TemplatePiece::Value(value) => {
+                        let (spec, rendered) = printf_piece(value);
+                        fmt.push_str(spec);
+                        args.push(rendered);
+                    }
+                }
+            }
+            if *newline {
+                fmt.push_str("\\n");
+            }
+            if args.is_empty() {
+                format!("printf(\"{fmt}\")")
+            } else {
+                format!("printf(\"{fmt}\", {})", args.join(", "))
+            }
+        }
         ExprKind::FieldAccess { base, field } => field_access(base, field),
         ExprKind::Ref { expr: sub, .. } => format!("(&{})", expr_value(sub)),
         ExprKind::Deref { expr: sub } => format!("(*{})", expr_value(sub)),
@@ -427,6 +493,24 @@ fn printf_piece(expr: &Expr) -> (&'static str, String) {
             unreachable!("type checker rejects printing unit/struct/reference values")
         }
     }
+}
+
+/// Escapes literal template text for embedding in a generated `printf`
+/// format string: `%` must be doubled, and quotes/backslashes/newlines/tabs
+/// escaped the same way `c_string_literal` does for ordinary strings.
+fn printf_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '%' => out.push_str("%%"),
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn c_string_literal(s: &str) -> String {

@@ -43,12 +43,85 @@ struct Ctx {
     /// recognized: `circle.make(...)` is a module item reference, not a
     /// method call, when `circle` is one of these aliases.
     aliases: HashMap<String, String>,
+    /// This module's passdowns, keyed by the bare name a function writes.
+    /// `syntax&shii.md` §9 leaves the cross-module question open; M5.2
+    /// answers it the same way M5.1 answered imports — module-scoped, so
+    /// only functions in the declaring module can name it.
+    pds: HashMap<String, PdInfo>,
+    /// Passdowns of *other* modules, bare name -> declaring module. Used for
+    /// diagnostics: naming one is an error, and the message says why.
+    foreign_pds: HashMap<String, String>,
+    /// sig key -> passdowns that callee references, in declaration order:
+    /// what every call site has to pass as hidden arguments.
+    wired: HashMap<String, Vec<PdInfo>>,
+    /// While a `pd` initializer is being checked: the hidden names already
+    /// initialized. `None` inside a function body, where every passdown is
+    /// available. This is what stops an initializer from reading a
+    /// passdown that is still zero-initialized at that point.
+    init_state: Option<std::collections::HashSet<String>>,
+    /// True only while checking `main`'s body. `main` is emitted as
+    /// `int main(void)` — it cannot receive hidden parameters — so its
+    /// passdown references take the address of the generated global instead
+    /// of naming a parameter. Every other function that references a
+    /// passdown is wired and uses its parameter.
+    pd_global_borrow: bool,
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
     /// r` — no `self.` qualifier written, per `syntax&shii.md` §5's "no
     /// `self` keyword").
     receiver_struct: Option<String>,
+}
+
+/// One checked passdown (M5.2).
+#[derive(Debug, Clone)]
+struct PdInfo {
+    /// Module-prefixed name, for diagnostics.
+    qualified: String,
+    /// The bare name a function in the declaring module writes.
+    name: String,
+    /// Internal name shared by the generated C global and the hidden
+    /// parameter a referencing function receives. `#` can't appear in a
+    /// user identifier, so `pd#x` can never collide with a local of the
+    /// same *written* name (which C would otherwise reject as a duplicate
+    /// declaration in the function's own scope).
+    hidden: String,
+    /// The passdown's own type.
+    value_ty: Ty,
+    /// Whether it was declared `pd var` — used only for the wording of the
+    /// "read-only inside a function" diagnostic.
+    mutable: bool,
+    /// The type it is handed over as: a shared borrow for non-`Copy` values
+    /// (reading a `datac` passdown out of the global by value would "move"
+    /// it on first use), the plain type otherwise. Always shared, never
+    /// exclusive — a passdown is read-only inside a function.
+    param_ty: Ty,
+    module: String,
+    /// Global initialization order (position in the merged program), used to
+    /// keep hidden-parameter order and the generated init function stable.
+    index: usize,
+}
+
+impl PdInfo {
+    /// The argument a call site passes for this passdown's hidden parameter.
+    fn arg(&self, span: Span) -> tir::Expr {
+        let base = tir::Expr {
+            kind: tir::ExprKind::Ident(self.hidden.clone()),
+            ty: self.value_ty.clone(),
+            span,
+        };
+        match &self.param_ty {
+            Ty::Ref { .. } => tir::Expr {
+                kind: tir::ExprKind::Ref {
+                    mutable: false,
+                    expr: Box::new(base),
+                },
+                ty: self.param_ty.clone(),
+                span,
+            },
+            _ => base,
+        }
+    }
 }
 
 impl Ctx {
@@ -88,6 +161,18 @@ impl Ctx {
             structs: &self.structs,
             prefix: &self.prefix,
             aliases: &self.aliases,
+            // Every datac is known by the time bodies are checked.
+            later_datacs: None,
+        }
+    }
+
+    /// Whether a passdown referenced from here is already initialized. True
+    /// inside any function body (`init_state` is `None` there) and for
+    /// anything declared before the initializer currently being checked.
+    fn pd_initialized(&self, hidden: &str) -> bool {
+        match &self.init_state {
+            None => true,
+            Some(done) => done.contains(hidden),
         }
     }
 }
@@ -103,6 +188,14 @@ struct TypeScope<'a> {
     structs: &'a HashMap<String, StructDef>,
     prefix: &'a str,
     aliases: &'a HashMap<String, String>,
+    /// Qualified names of `datac`s in this module that are declared *after*
+    /// the declaration currently being checked. Used only to turn "unknown
+    /// type 'Inner'" into an explanation: a `datac` may only name `datac`s
+    /// declared before it (the checker builds its struct table in
+    /// declaration order, so forward references were never resolvable).
+    /// `None` at the sites where every `datac` in the program is already
+    /// known (signatures, bodies, passdown types).
+    later_datacs: Option<&'a std::collections::HashSet<String>>,
 }
 
 impl TypeScope<'_> {
@@ -136,6 +229,17 @@ impl TypeScope<'_> {
         };
         if self.structs.contains_key(&qualified) {
             Ok(Ty::Struct(qualified))
+        } else if self
+            .later_datacs
+            .is_some_and(|later| later.contains(&qualified))
+        {
+            Err(TypeError {
+                message: format!(
+                    "'{}' is declared after this datac — a datac may only name datacs declared before it (v1 has no forward references between datacs)",
+                    ty.name
+                ),
+                span: ty.span,
+            })
         } else {
             Err(TypeError {
                 message: match qualified_hint(&ty.name, self.structs.keys(), self.aliases) {
@@ -175,12 +279,31 @@ fn sig_key(f: &ast::FunctionDecl) -> String {
 
 const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 
+/// Stand-in for "no later datacs" at the sites where every `datac` in the
+/// program is already known (signatures, bodies, passdown types).
+static EMPTY_DATACS: std::sync::LazyLock<std::collections::HashSet<String>> =
+    std::sync::LazyLock::new(std::collections::HashSet::new);
+
 pub fn check_program(
     program: &ast::Program,
     project: &Project,
 ) -> std::result::Result<tir::Program, Diagnostic> {
     let mut structs = HashMap::new();
-    for d in &program.datacs {
+    // Structs are resolved in declaration order, which is also the order
+    // `codegen_c.rs` must emit their C typedefs in: a `datac` may only name
+    // `datac`s declared before it (see `TypeScope::later_datacs`), so
+    // declaration order is a valid topological order. Emitting them from a
+    // `HashMap`'s iteration order instead — which is what this did before —
+    // made a struct-embedding-struct program compile or fail *at random*
+    // from one run to the next.
+    let mut struct_order: Vec<String> = Vec::new();
+    for (i, d) in program.datacs.iter().enumerate() {
+        let later_datacs: std::collections::HashSet<String> = program
+            .datacs
+            .iter()
+            .skip(i + 1)
+            .map(|later| later.name.clone())
+            .collect();
         if structs.contains_key(&d.name) {
             return Err(Diagnostic::new(
                 format!("datac '{}' is defined more than once", d.name),
@@ -203,6 +326,7 @@ pub fn check_program(
                 structs: &structs,
                 prefix,
                 aliases: &aliases,
+                later_datacs: Some(&later_datacs),
             }
             .resolve(&f.ty)
             .map_err(|e| e.in_module(&d.module))?;
@@ -212,6 +336,7 @@ pub fn check_program(
                 mutable: f.mutable,
             });
         }
+        struct_order.push(d.name.clone());
         structs.insert(
             d.name.clone(),
             StructDef {
@@ -247,6 +372,7 @@ pub fn check_program(
             structs: &structs,
             prefix,
             aliases: &aliases,
+            later_datacs: None,
         };
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
@@ -270,6 +396,21 @@ pub fn check_program(
         sigs.insert(key, FnSig { params, ret });
     }
 
+    // ---- M5.2: passdowns -------------------------------------------------
+    //
+    // Order matters and is forced by what depends on what:
+    //   1. sigs above are final *without* passdown entries, because a
+    //      passdown is handed over as a hidden argument at call sites
+    //      (see `PdInfo`) rather than as part of the signature's declared
+    //      parameter list.
+    //   2. pd types are then resolved (declared ones directly, inferred ones
+    //      from a type-only probe of the initializer, with only the
+    //      passdowns declared before that point visible).
+    //   3. the wiring scan says which functions reference which passdowns.
+    //   4. initializers and function bodies are checked for real.
+    let all_pds = collect_pds(program, project, &sigs, &structs)?;
+    let wired = scan_all(program, &all_pds, &structs);
+
     if !sigs.contains_key("main") {
         return Err(Diagnostic::new(
             "no 'main' function found".to_string(),
@@ -278,16 +419,376 @@ pub fn check_program(
         ));
     }
 
+    let mut checked_pds = Vec::new();
+    let mut initialized: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (decl, pd) in program.pds.iter().zip(all_pds.iter()) {
+        let init = check_pd_initializer(
+            &decl.init,
+            pd,
+            &sigs,
+            &structs,
+            project,
+            &all_pds,
+            &wired,
+            &initialized,
+        )
+        .map_err(|e| e.in_module(&pd.module))?;
+        initialized.insert(pd.hidden.clone());
+        checked_pds.push(tir::Pd {
+            name: pd.hidden.clone(),
+            qualified: pd.qualified.clone(),
+            value_ty: pd.value_ty.clone(),
+            init,
+        });
+    }
+
     let mut functions = Vec::new();
     for f in &program.functions {
-        let checked = check_function(f, &sigs, &structs, project)
+        let checked = check_function(f, &sigs, &structs, project, &all_pds, &wired)
             .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
     }
     Ok(tir::Program {
-        structs: structs.into_values().collect(),
+        structs: struct_order
+            .iter()
+            .map(|name| structs[name].clone())
+            .collect(),
+        pds: checked_pds,
         functions,
     })
+}
+
+/// The passdowns of one module, keyed by the bare name a function writes.
+/// `before` limits it to passdowns declared earlier — used while checking a
+/// `pd` initializer, so "use before declaration" is a real error rather than
+/// a silent read of a zero-initialized global.
+fn pd_map(all: &[PdInfo], module: &str, before: Option<usize>) -> HashMap<String, PdInfo> {
+    all.iter()
+        .filter(|p| p.module == module && before.map_or(true, |i| p.index < i))
+        .map(|p| (p.name.clone(), p.clone()))
+        .collect()
+}
+
+/// Resolves every passdown's type, in merged-program order (module load
+/// order, then declaration order within a module), checking for duplicate
+/// declarations and name clashes on the way.
+fn collect_pds(
+    program: &ast::Program,
+    project: &Project,
+    sigs: &HashMap<String, FnSig>,
+    structs: &HashMap<String, StructDef>,
+) -> std::result::Result<Vec<PdInfo>, Diagnostic> {
+    let mut out: Vec<PdInfo> = Vec::new();
+    for (index, decl) in program.pds.iter().enumerate() {
+        // `resolve.rs` already prefixed `decl.name`; the bare name is what
+        // functions in this module write.
+        let prefix = project.prefix_of(&decl.module);
+        let bare = decl
+            .name
+            .strip_prefix(prefix)
+            .unwrap_or(&decl.name)
+            .to_string();
+        if out
+            .iter()
+            .any(|p| p.module == decl.module && p.name == bare)
+        {
+            return Err(Diagnostic::new(
+                format!("passdown '{bare}' is declared more than once"),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
+        if structs.contains_key(&decl.name)
+            || sigs.keys().any(|k| k == &decl.name)
+        {
+            return Err(Diagnostic::new(
+                format!("'{}' is used for both a passdown and another top-level item", bare),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
+
+        let aliases = project.alias_prefixes_of(&decl.module);
+        let value_ty = match &decl.ty {
+            Some(t) => TypeScope {
+                structs,
+                prefix,
+                aliases: &aliases,
+                later_datacs: None,
+            }
+            .resolve(t)
+            .map_err(|e| e.in_module(&decl.module))?,
+            None => {
+                // Type-only probe: the initializer is checked again for real
+                // once every passdown type (and the wiring table) is known.
+                // `init_state` is set so diagnostics can say "a `pd`
+                // initializer only sees passdowns declared before it".
+                let mut ctx = base_ctx(
+                    &decl.module,
+                    sigs,
+                    structs,
+                    project,
+                    &out,
+                    None,
+                    &HashMap::new(),
+                );
+                ctx.init_state = Some(out.iter().map(|p| p.hidden.clone()).collect());
+                check_expr(&decl.init, &mut ctx, None)
+                    .map_err(|e| e.in_module(&decl.module))?
+                    .ty
+            }
+        };
+        out.push(PdInfo {
+            qualified: decl.name.clone(),
+            name: bare,
+            hidden: format!("pd#{}", decl.name),
+            param_ty: implicit_borrow_wrap(value_ty.clone(), false),
+            value_ty,
+            mutable: decl.mutable,
+            module: decl.module.clone(),
+            index,
+        });
+    }
+    Ok(out)
+}
+
+/// Checks one `pd` initializer for real, with every passdown that is already
+/// initialized visible and nothing else.
+fn check_pd_initializer(
+    init: &ast::Expr,
+    pd: &PdInfo,
+    sigs: &HashMap<String, FnSig>,
+    structs: &HashMap<String, StructDef>,
+    project: &Project,
+    all: &[PdInfo],
+    wired: &HashMap<String, Vec<PdInfo>>,
+    initialized: &std::collections::HashSet<String>,
+) -> Result<tir::Expr> {
+    let mut ctx = base_ctx(&pd.module, sigs, structs, project, all, Some(pd.index), wired);
+    ctx.init_state = Some(initialized.clone());
+    check_expr(init, &mut ctx, Some(&pd.value_ty))
+}
+
+fn base_ctx(
+    module: &str,
+    sigs: &HashMap<String, FnSig>,
+    structs: &HashMap<String, StructDef>,
+    project: &Project,
+    all_pds: &[PdInfo],
+    before: Option<usize>,
+    wired: &HashMap<String, Vec<PdInfo>>,
+) -> Ctx {
+    let module_pds: Vec<&PdInfo> = all_pds.iter().filter(|p| p.module == module).collect();
+    let pds = module_pds
+        .iter()
+        .filter(|p| before.map_or(true, |i| p.index < i))
+        .map(|p| (p.name.clone(), (*p).clone()))
+        .collect();
+    let foreign_pds = all_pds
+        .iter()
+        .filter(|p| p.module != module)
+        .map(|p| (p.name.clone(), p.module.clone()))
+        .collect();
+    Ctx {
+        sigs: sigs.clone(),
+        structs: structs.clone(),
+        ret_ty: Ty::Unit,
+        scopes: vec![HashMap::new()],
+        prefix: project.prefix_of(module).to_string(),
+        aliases: project.alias_prefixes_of(module),
+        pds,
+        foreign_pds,
+        wired: wired.clone(),
+        init_state: None,
+        pd_global_borrow: false,
+        receiver_struct: None,
+    }
+}
+
+/// sig key -> the passdowns a function references. Computed from the AST
+/// before bodies are checked, because a call site has to know what its
+/// callee needs in order to pass it.
+fn scan_all(
+    program: &ast::Program,
+    all: &[PdInfo],
+    structs: &HashMap<String, StructDef>,
+) -> HashMap<String, Vec<PdInfo>> {
+    let mut wired = HashMap::new();
+    for f in &program.functions {
+        // `main` gets no hidden parameters (see `Ctx::pd_global_borrow`), and
+        // it is not callable, so it never needs an entry here either.
+        if f.receiver.is_none() && f.name == "main" {
+            continue;
+        }
+        let visible = pd_map(all, &f.module, None);
+        let used = scan_pd_uses(f, &visible, structs);
+        if !used.is_empty() {
+            wired.insert(sig_key(f), used);
+        }
+    }
+    wired
+}
+
+/// Scope-aware walk for the passdowns a function body actually names.
+/// Shadowing is honored exactly as `check_expr` honors it: a parameter,
+/// receiver field, or `val`/`var` in scope hides a passdown of the same name,
+/// so a hidden name is not a passdown reference. A method call's name, a
+/// field access's field name, and a call's callee are never passdown
+/// references either — only bare identifiers are.
+struct PdScan {
+    scopes: Vec<std::collections::HashSet<String>>,
+    /// Field names of the current receiver's `datac`, which shadow passdowns
+    /// the same way locals do.
+    receiver_fields: std::collections::HashSet<String>,
+    /// Fields only count as shadowing inside a receiver-form function.
+    has_receiver: bool,
+    visible: std::collections::HashSet<String>,
+    used: Vec<String>,
+}
+
+impl PdScan {
+    fn bound(&self, name: &str) -> bool {
+        (self.has_receiver && self.receiver_fields.contains(name))
+            || self.scopes.iter().rev().any(|s| s.contains(name))
+    }
+
+    fn define(&mut self, name: &str) {
+        self.scopes.last_mut().unwrap().insert(name.to_string());
+    }
+
+    fn note(&mut self, name: &str) {
+        if !self.bound(name) && self.visible.contains(name) && !self.used.iter().any(|u| u == name)
+        {
+            self.used.push(name.to_string());
+        }
+    }
+
+    fn scan_block(&mut self, block: &ast::Block) {
+        self.scopes.push(std::collections::HashSet::new());
+        for stmt in &block.stmts {
+            self.scan_stmt(stmt);
+        }
+        self.scopes.pop();
+    }
+
+    fn scan_stmt(&mut self, stmt: &ast::Stmt) {
+        match stmt {
+            ast::Stmt::Let { name, init, .. } => {
+                // Initializer first: `val name = name` reads the outer one.
+                self.scan_expr(init);
+                self.define(name);
+            }
+            ast::Stmt::While { cond, body, .. } => {
+                self.scan_expr(cond);
+                self.scan_block(body);
+            }
+            ast::Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    self.scan_expr(v);
+                }
+            }
+            ast::Stmt::Expr { expr, .. } => self.scan_expr(expr),
+        }
+    }
+
+    fn scan_expr(&mut self, expr: &ast::Expr) {
+        match expr {
+            ast::Expr::Ident(name, _) => self.note(name),
+            ast::Expr::Unary { expr, .. }
+            | ast::Expr::Ref { expr, .. }
+            | ast::Expr::Deref { expr, .. } => self.scan_expr(expr),
+            ast::Expr::Binary { lhs, rhs, .. } => {
+                self.scan_expr(lhs);
+                self.scan_expr(rhs);
+            }
+            ast::Expr::Call { args, .. } => {
+                for a in args {
+                    self.scan_expr(&a.value);
+                }
+            }
+            // Only the base — a field named like a passdown isn't a read of
+            // it.
+            ast::Expr::FieldAccess { base, .. } => self.scan_expr(base),
+            ast::Expr::Assign { target, value, .. } => {
+                self.scan_expr(target);
+                self.scan_expr(value);
+            }
+            ast::Expr::If {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.scan_expr(cond);
+                self.scan_block(then_block);
+                match else_block.as_deref() {
+                    Some(ast::ElseBranch::Block(b)) => self.scan_block(b),
+                    Some(ast::ElseBranch::If(e)) => self.scan_expr(e),
+                    None => {}
+                }
+            }
+            ast::Expr::Block(b) => self.scan_block(b),
+            ast::Expr::MethodCall { receiver, args, .. } => {
+                self.scan_expr(receiver);
+                for a in args {
+                    self.scan_expr(&a.value);
+                }
+            }
+            ast::Expr::Template { parts, .. } => {
+                for p in parts {
+                    if let ast::TemplatePart::Expr(e) = p {
+                        self.scan_expr(e);
+                    }
+                }
+            }
+            ast::Expr::IntLit(..)
+            | ast::Expr::FloatLit(..)
+            | ast::Expr::StringLit(..)
+            | ast::Expr::BoolLit(..) => {}
+        }
+    }
+}
+
+fn scan_pd_uses(
+    f: &ast::FunctionDecl,
+    visible: &HashMap<String, PdInfo>,
+    structs: &HashMap<String, StructDef>,
+) -> Vec<PdInfo> {
+    if visible.is_empty() {
+        return Vec::new();
+    }
+    let mut scan = PdScan {
+        scopes: Vec::new(),
+        receiver_fields: std::collections::HashSet::new(),
+        has_receiver: f.receiver.is_some(),
+        visible: visible.keys().cloned().collect(),
+        used: Vec::new(),
+    };
+    scan.scopes.push(std::collections::HashSet::new());
+    if let Some(r) = &f.receiver {
+        // `resolve.rs` already prefixed the receiver type name.
+        if let Some(sdef) = structs.get(&r.type_name) {
+            scan.receiver_fields = sdef.fields.iter().map(|f| f.name.clone()).collect();
+        }
+        scan.define("self");
+    }
+    for p in &f.params {
+        scan.define(&p.name);
+    }
+    match &f.body {
+        ast::FunctionBody::Block(b) => scan.scan_block(b),
+        ast::FunctionBody::Expr(e) => scan.scan_expr(e),
+    }
+
+    let mut used: Vec<PdInfo> = scan
+        .used
+        .iter()
+        .map(|name| visible[name].clone())
+        .collect();
+    // Declaration order, not reference order — so the hidden parameters (and
+    // therefore the generated C signatures) are stable.
+    used.sort_by_key(|p| p.index);
+    used
 }
 
 /// Resolves a parameter's type per `syntax&shii.md` §5: a `datac` param is
@@ -342,7 +843,27 @@ fn is_ast_place(expr: &ast::Expr) -> bool {
 fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
     match &target.kind {
         tir::ExprKind::Ident(name) => {
-            let info = ctx.lookup(name).expect("root identifier was already type-checked");
+            let Some(info) = ctx.lookup(name) else {
+                // Only passdown references get here: their hidden parameter
+                // (`pd#...`) is deliberately not a scope binding, so the
+                // generic path below would panic on them. A passdown is
+                // read-only inside a function by design (M5.2).
+                if let Some(pd) = ctx.pds.values().find(|p| &p.hidden == name) {
+                    let why = if pd.mutable {
+                        "a passdown is read-only inside a function (a 'pd var' can only be assigned at its declaration)"
+                    } else {
+                        "it is declared 'pd val'"
+                    };
+                    return Err(TypeError {
+                        message: format!("cannot assign to passdown '{}': {why}", pd.qualified),
+                        span: target.span,
+                    });
+                }
+                return Err(TypeError {
+                    message: format!("cannot assign to '{name}'"),
+                    span: target.span,
+                });
+            };
             match &info.ty {
                 Ty::Ref { mutable, .. } => {
                     if *mutable {
@@ -394,6 +915,8 @@ fn check_function(
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
     project: &Project,
+    all_pds: &[PdInfo],
+    wired: &HashMap<String, Vec<PdInfo>>,
 ) -> Result<tir::Function> {
     let key = sig_key(f);
     let sig = sigs.get(&key).unwrap().clone();
@@ -401,15 +924,29 @@ fn check_function(
         .receiver
         .as_ref()
         .and_then(|_| struct_name_of(&sig.params[0].1).map(|s| s.to_string()));
-    let mut ctx = Ctx {
-        sigs: sigs.clone(),
-        structs: structs.clone(),
-        ret_ty: sig.ret.clone(),
-        scopes: vec![HashMap::new()],
-        prefix: project.prefix_of(&f.module).to_string(),
-        aliases: project.alias_prefixes_of(&f.module),
-        receiver_struct,
+    // Passdowns this function references become trailing hidden parameters
+    // (see `PdInfo::arg` for the call-site side). `main` is the exception
+    // downstream, not here: `codegen_c.rs` emits `int main(void)` regardless
+    // of parameters, and the body's `pd#...` identifiers then resolve to the
+    // file-scope globals — which is why the hidden name and the global name
+    // are the same string.
+    let hidden = if key == "main" {
+        Vec::new()
+    } else {
+        wired.get(&key).cloned().unwrap_or_default()
     };
+    let mut ctx = base_ctx(
+        &f.module,
+        sigs,
+        structs,
+        project,
+        all_pds,
+        None,
+        wired,
+    );
+    ctx.ret_ty = sig.ret.clone();
+    ctx.receiver_struct = receiver_struct;
+    ctx.pd_global_borrow = key == "main";
     let mut params = Vec::new();
     // Parameters (and the receiver, if any) are immutable bindings, like
     // `val`; v1 has no syntax to declare a mutable *binding* for one (the
@@ -457,7 +994,10 @@ fn check_function(
 
     Ok(tir::Function {
         name: key,
-        params,
+        params: {
+            params.extend(hidden.iter().map(|pd| (pd.hidden.clone(), pd.param_ty.clone())));
+            params
+        },
         ret: sig.ret,
         body,
         module: f.module.clone(),
@@ -617,8 +1157,53 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     span: *span,
                 });
             }
+            // Not a local or receiver field — a passdown (M5.2), which the
+            // wiring scan has already made this function take as a hidden
+            // parameter named `pd#...`, so the reference is that parameter.
+            if let Some(pd) = ctx.pds.get(name).cloned() {
+                if !ctx.pd_initialized(&pd.hidden) {
+                    return Err(TypeError {
+                        message: format!(
+                            "passdown '{}' is read before it is initialized — a 'pd' initializer can only use passdowns declared before it",
+                            pd.qualified
+                        ),
+                        span: *span,
+                    });
+                }
+                // In a `pd` initializer only Copy values can be read out of
+                // a passdown: a non-Copy one is handed around as a shared
+                // borrow, and a passdown has to hold a value.
+                if ctx.init_state.is_some() && matches!(pd.value_ty, Ty::Struct(_)) {
+                    return Err(TypeError {
+                        message: format!(
+                            "passdown '{}' cannot be read in another passdown's initializer: its value is not Copy",
+                            pd.qualified
+                        ),
+                        span: *span,
+                    });
+                }
+                if ctx.pd_global_borrow {
+                    return Ok(pd.arg(*span));
+                }
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::Ident(pd.hidden.clone()),
+                    ty: pd.param_ty.clone(),
+                    span: *span,
+                });
+            }
             Err(TypeError {
-                message: format!("undefined variable '{name}'"),
+                message: match ctx.foreign_pds.get(name) {
+                    Some(module) => format!(
+                        "'{name}' is a passdown of module '{module}' — a passdown is only visible inside the module that declares it"
+                    ),
+                    // Inside a `pd` initializer only passdowns declared
+                    // *before* it are in scope at all, so the generic name is
+                    // usually a forward reference.
+                    None if ctx.init_state.is_some() => format!(
+                        "undefined variable '{name}' — a 'pd' initializer can only use passdowns declared before it"
+                    ),
+                    None => format!("undefined variable '{name}'"),
+                },
                 span: *span,
             })
         }
@@ -657,7 +1242,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
         ast::Expr::Call { callee, args, span } => check_call(callee, args, *span, ctx),
         ast::Expr::FieldAccess { base, field, span } => {
             if let ast::Expr::Ident(name, _) = base.as_ref() {
-                if ctx.lookup(name).is_none() && ctx.aliases.contains_key(name) {
+                if is_module_alias(name, ctx) {
                     return Err(TypeError {
                         message: format!(
                             "'{name}' is a module, not a value — call its items as '{name}.{field}(...)'"
@@ -736,6 +1321,15 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: *span,
             })
         }
+        ast::Expr::Template { parts, span } => {
+            // Only reachable when a template is *not* the argument of
+            // `print`/`print!` (that path is handled in `check_call`).
+            let _ = (parts, span);
+            Err(TypeError {
+                message: "a string template can only be printed — pass it to 'print(...)' or 'print!(...)'; v1 has no owned string type to build one with (that's M6)".to_string(),
+                span: *span,
+            })
+        }
         ast::Expr::MethodCall { receiver, method, args, span } => {
             // `circle.make(...)`: a module-qualified reference to an
             // imported item, not a method call. Recognized only when the
@@ -743,7 +1337,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             // is *not* shadowed by a local (locals win, exactly like any
             // other name lookup); anything else is a real method call.
             if let ast::Expr::Ident(name, _) = receiver.as_ref() {
-                if ctx.lookup(name).is_none() {
+                if is_module_alias(name, ctx) {
                     if let Some(prefix) = ctx.aliases.get(name).cloned() {
                         return check_module_item(name, &prefix, method, args, *span, ctx);
                     }
@@ -752,6 +1346,15 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             check_method_call(receiver, method, args, *span, ctx)
         }
     }
+}
+
+/// Whether a bare identifier names an `impl` alias rather than a value. A
+/// local, parameter, receiver field, or passdown shadows it, exactly as it
+/// would shadow any other name.
+fn is_module_alias(name: &str, ctx: &Ctx) -> bool {
+    ctx.lookup(name).is_none()
+        && !ctx.pds.contains_key(name)
+        && ctx.aliases.contains_key(name)
 }
 
 /// Assignment targets: `Ident`, a `.field` chain rooted in one, or a
@@ -1000,6 +1603,14 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
 }
 
 fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
+    if callee == "main" {
+        // `main` is emitted as `int main(void)` — it takes no arguments, so
+        // there is no way to hand it the passdowns it may reference.
+        return Err(TypeError {
+            message: "cannot call 'main': it is the program entry point".to_string(),
+            span,
+        });
+    }
     if PRINTABLE_BUILTINS.contains(&callee) {
         if args.len() != 1 {
             return Err(TypeError {
@@ -1012,6 +1623,11 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
                 message: format!("'{callee}' does not take named arguments"),
                 span,
             });
+        }
+        // A template becomes one `printf` (see `tir::ExprKind::Template`)
+        // rather than being checked as a `str` value, which v1 can't build.
+        if let ast::Expr::Template { parts, span: tspan } = &args[0].value {
+            return check_template(parts, callee == "print", *tspan, ctx);
         }
         let arg = check_expr(&args[0].value, ctx, None)?;
         let printable = arg.ty.is_numeric() || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str);
@@ -1057,7 +1673,8 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         },
         span,
     })?;
-    let checked = match_args(&format!("function '{callee}'"), &sig.params, args, span, ctx)?;
+    let mut checked = match_args(&format!("function '{callee}'"), &sig.params, args, span, ctx)?;
+    checked.extend(hidden_args(callee, span, ctx)?);
 
     Ok(tir::Expr {
         kind: tir::ExprKind::Call {
@@ -1065,6 +1682,72 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
             args: checked,
         },
         ty: sig.ret,
+        span,
+    })
+}
+
+/// The hidden passdown arguments a call to `callee` has to pass, in the
+/// order the callee's signature declares them (M5.2). Each one is the
+/// generated global for that passdown — a call site never receives its
+/// callees' passdowns itself, so the value always comes from the global
+/// here; the callee's parameter is what makes the dependency visible in its
+/// own signature.
+fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
+    let Some(pds) = ctx.wired.get(callee) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(pds.len());
+    for pd in pds {
+        if !ctx.pd_initialized(&pd.hidden) {
+            return Err(TypeError {
+                message: format!(
+                    "'{callee}' reads passdown '{}', which is not initialized yet here — a 'pd' initializer can only call functions whose passdowns are already set up",
+                    pd.qualified
+                ),
+                span,
+            });
+        }
+        out.push(pd.arg(span));
+    }
+    Ok(out)
+}
+
+/// Checks a string template's interpolated pieces and lowers it to one
+/// `tir::ExprKind::Template`. Interpolated values must be printable under
+/// exactly the rule `print` already applies (numeric, `bool`, `char`,
+/// `str`) — a template is a formatted print, not a string builder.
+fn check_template(
+    parts: &[ast::TemplatePart],
+    newline: bool,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let mut pieces = Vec::with_capacity(parts.len());
+    for part in parts {
+        match part {
+            ast::TemplatePart::Text(text) => {
+                pieces.push(tir::TemplatePiece::Text(text.clone()))
+            }
+            ast::TemplatePart::Expr(e) => {
+                let value = check_expr(e, ctx, None)?;
+                let printable =
+                    value.ty.is_numeric() || matches!(value.ty, Ty::Bool | Ty::Char | Ty::Str);
+                if !printable {
+                    return Err(TypeError {
+                        message: format!(
+                            "cannot interpolate a value of type '{}' into a string template",
+                            value.ty.display()
+                        ),
+                        span: e.span(),
+                    });
+                }
+                pieces.push(tir::TemplatePiece::Value(value));
+            }
+        }
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Template { newline, pieces },
+        ty: Ty::Unit,
         span,
     })
 }
@@ -1096,6 +1779,9 @@ fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], 
     let mut checked_args = Vec::with_capacity(sig.params.len());
     checked_args.push(check_call_arg("self", &sig.params[0].1, receiver, ctx)?);
     checked_args.extend(match_args(&format!("method '{sname}.{method}'"), &sig.params[1..], args, span, ctx)?);
+    // Receiver methods can reference passdowns too; the call site passes the
+    // same hidden arguments a free-function call would.
+    checked_args.extend(hidden_args(&key, span, ctx)?);
 
     Ok(tir::Expr {
         kind: tir::ExprKind::Call { callee: key, args: checked_args },
