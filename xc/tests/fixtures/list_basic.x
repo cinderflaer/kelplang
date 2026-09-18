@@ -1,0 +1,26 @@
+// Collections: the builtin `List<T>`. Elements here are `Copy` scalars, so
+// `get` hands back a value and the list is a plain growable array.
+fun main() {
+    var xs: List<i32> = List.empty()
+    print(xs.len())
+    print(xs.is_empty())
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    print(xs.len())
+    print(xs.is_empty())
+    print(xs.get(0))
+    print(xs.get(2))
+    xs.set(1, 20)
+    var i: usize = 0
+    while i < xs.len() {
+        print!(xs.get(i))
+        print!(" ")
+        i += 1
+    }
+    print("")
+    print(xs.pop())
+    print(xs.len())
+    xs.clear()
+    print(xs.len())
+}

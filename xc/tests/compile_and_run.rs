@@ -942,6 +942,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "path_parts",
         "view_released_at_scope_end",
         "heap_temporary_print",
+        "list_basic",
+        "list_owned",
+        "list_field",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1001,4 +1004,78 @@ fn a_datac_can_embed_an_earlier_datac() {
 #[test]
 fn a_forward_reference_between_datacs_is_rejected() {
     assert_rejected("tests/fixtures/datac_forward_reference.x");
+}
+
+// ---------------------------------------------------------------------------
+// Collections: the builtin `List<T>`.
+// ---------------------------------------------------------------------------
+
+/// Builds a fixture, runs it, and asserts the run fails with `needle` on
+/// stderr — the runtime-panic path (`List.pop` on an empty list).
+fn assert_fixture_panics(name: &str, needle: &str) {
+    let source = format!("tests/fixtures/{name}.x");
+    let bin = out_path(name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture(&source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(
+        !run.status.success(),
+        "expected '{name}' to panic at runtime, but it exited successfully"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains(needle),
+        "expected the panic for '{name}' to mention '{needle}', got:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_list_grows_indexes_and_shrinks() {
+    assert_compiles_and_runs(
+        "tests/fixtures/list_basic.x",
+        "0\ntrue\n3\nfalse\n1\n3\n1 20 3 \n3\n2\n0\n",
+    );
+}
+
+#[test]
+fn a_list_of_owned_and_datac_elements_moves_them() {
+    assert_compiles_and_runs(
+        "tests/fixtures/list_owned.x",
+        "2\nalpha beta \nbeta\n1\ntrue\n2\n3\n9\n3\n0\n7\n",
+    );
+}
+
+#[test]
+fn a_list_works_as_a_datac_field_and_as_an_owned_passdown() {
+    assert_compiles_and_runs("tests/fixtures/list_field.x", "bag\n7\n2\n2\n2\n");
+}
+
+#[test]
+fn pushing_an_owned_element_moves_it() {
+    assert_rejected("tests/fixtures/list_moved_element.x");
+}
+
+#[test]
+fn a_borrow_cannot_be_a_list_element() {
+    assert_rejected("tests/fixtures/list_borrow_element.x");
+}
+
+#[test]
+fn an_empty_list_needs_its_element_type() {
+    assert_rejected("tests/fixtures/list_no_element_type.x");
+}
+
+#[test]
+fn popping_an_empty_list_panics() {
+    assert_fixture_panics("list_pop_empty", "List.pop: the list is empty");
 }

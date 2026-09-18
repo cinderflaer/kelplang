@@ -530,8 +530,33 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
     }
 
+    // `List<T>` instantiations: one C struct plus one function set per
+    // element type actually used. A non-`datac` element is independent of
+    // every user declaration, so its typedef goes first; a `datac` element
+    // needs that struct's typedef (and its drop function) first, which is
+    // why those are emitted together with the struct, in declaration order.
+    let mut list_elems: HashSet<Ty> = HashSet::new();
+    collect_list_elems(program, &mut list_elems);
+    let mut early: Vec<Ty> = list_elems
+        .iter()
+        .filter(|e| !matches!(e, Ty::Struct(_)))
+        .cloned()
+        .collect();
+    early.sort_by_key(|e| e.display());
+    for elem in &early {
+        write_list(&mut out, elem, &owned);
+    }
+    if !early.is_empty() {
+        out.push('\n');
+    }
+
     for s in &program.structs {
         write_struct(&mut out, s, &owned);
+        let self_ty = Ty::Struct(s.name.clone());
+        if list_elems.contains(&self_ty) {
+            out.push('\n');
+            write_list(&mut out, &self_ty, &owned);
+        }
     }
     if !program.structs.is_empty() {
         out.push('\n');
@@ -667,8 +692,7 @@ fn write_pd_globals(
 /// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
 /// `datac`s, so a struct's drop function is always defined before the struct
 /// that calls it — no forward declarations needed.
-fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
-    write!(out, "typedef struct {{\n").unwrap();
+fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {    write!(out, "typedef struct {{\n").unwrap();
     for f in &s.fields {
         write!(out, "    {} {};\n", f.ty.c_type(), field_name(&f.name)).unwrap();
     }
@@ -694,6 +718,187 @@ fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
             }
         }
         out.push_str("}\n");
+    }
+}
+
+/// One `List<T>` instantiation's C: a struct holding the buffer plus one
+/// function set. Monomorphized per element type, in the same spirit as the
+/// hand-written `Bytes`/`String` runtime above — v1 has no user-definable
+/// generics, so the compiler knows exactly which instantiations exist and
+/// writes each one out (see `collect_list_elems` for how they are found).
+///
+/// Growth doubles the capacity with `realloc`; the element is stored by plain
+/// assignment, which *is* the move — the checker has already marked the
+/// source binding moved, so nothing else frees it, and the element's own drop
+/// function is what frees it later. `get` returns a copy for a `Copy` element
+/// and a pointer for an owned one, matching `infer::list_sig`.
+fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
+    let list = crate::types::list_c_type(elem);
+    let elem_c = elem.c_type();
+    let elem_drops = needs_drop(elem, owned);
+    // An element with no drop rule (a scalar) has nothing to free, so the
+    // name is only ever computed for one that does.
+    let drop_elem = elem_drops.then(|| drop_fn_name(elem));
+    writeln!(out, "// ---- {} (collections) {}", list, "-".repeat(30)).unwrap();
+    writeln!(out, "typedef struct {{\n    {elem_c}* data;\n    size_t len;\n    size_t cap;\n}} {list};\n").unwrap();
+
+    writeln!(out, "static {list} {list}__empty(void) {{").unwrap();
+    writeln!(out, "    {list} l;\n    l.data = NULL;\n    l.len = 0;\n    l.cap = 0;\n    return l;\n}}\n").unwrap();
+
+    writeln!(out, "static void {list}__reserve({list}* self, size_t want) {{").unwrap();
+    out.push_str("    if (want <= self->cap) {\n        return;\n    }\n");
+    out.push_str("    size_t cap = self->cap == 0 ? 4 : self->cap;\n");
+    out.push_str("    while (cap < want) {\n        cap *= 2;\n    }\n");
+    writeln!(out, "    {elem_c}* p = ({elem_c}*)realloc(self->data, cap * sizeof({elem_c}));").unwrap();
+    out.push_str("    if (p == NULL) {\n        x_panic(\"out of memory\");\n    }\n");
+    out.push_str("    self->data = p;\n    self->cap = cap;\n}\n\n");
+
+    writeln!(out, "static {list} {list}__of({elem_c} v) {{").unwrap();
+    writeln!(out, "    {list} l = {list}__empty();").unwrap();
+    writeln!(out, "    {list}__reserve(&l, 1);\n    l.data[0] = v;\n    l.len = 1;\n    return l;\n}}\n").unwrap();
+
+    writeln!(out, "static size_t {list}__len(const {list}* self) {{\n    return self->len;\n}}\n").unwrap();
+    writeln!(out, "static bool {list}__is_empty(const {list}* self) {{\n    return self->len == 0;\n}}\n").unwrap();
+
+    writeln!(out, "static void {list}__push({list}* self, {elem_c} v) {{").unwrap();
+    writeln!(out, "    {list}__reserve(self, self->len + 1);\n    self->data[self->len++] = v;\n}}\n").unwrap();
+
+    // A `get` for a Copy element hands the value back; an owned element is
+    // reached by pointer, because copying it out would be a second owner.
+    writeln!(out, "static void {list}__bounds(const {list}* self, size_t i) {{").unwrap();
+    writeln!(out, "    if (i >= self->len) {{\n        x_panic(\"List.get: index out of bounds\");\n    }}\n}}\n").unwrap();
+    if elem.is_copy() {
+        writeln!(out, "static {elem_c} {list}__get(const {list}* self, size_t i) {{").unwrap();
+        writeln!(out, "    {list}__bounds(self, i);\n    return self->data[i];\n}}\n").unwrap();
+    } else {
+        writeln!(out, "static const {elem_c}* {list}__get_const(const {list}* self, size_t i) {{").unwrap();
+        writeln!(out, "    {list}__bounds(self, i);\n    return &self->data[i];\n}}\n").unwrap();
+    }
+
+    writeln!(out, "static void {list}__set({list}* self, size_t i, {elem_c} v) {{").unwrap();
+    writeln!(out, "    {list}__bounds(self, i);").unwrap();
+    if elem_drops {
+        writeln!(out, "    {}(&self->data[i]);", drop_elem.as_deref().unwrap()).unwrap();
+    }
+    out.push_str("    self->data[i] = v;\n}\n\n");
+
+    writeln!(out, "static {elem_c} {list}__pop({list}* self) {{").unwrap();
+    out.push_str("    if (self->len == 0) {\n        x_panic(\"List.pop: the list is empty\");\n    }\n");
+    out.push_str("    return self->data[--self->len];\n}\n\n");
+
+    writeln!(out, "static void {list}__clear({list}* self) {{").unwrap();
+    if elem_drops {
+        writeln!(
+            out,
+            "    for (size_t i = 0; i < self->len; i++) {{\n        {}(&self->data[i]);\n    }}",
+            drop_elem.as_deref().unwrap()
+        )
+        .unwrap();
+    }
+    out.push_str("    self->len = 0;\n}\n\n");
+
+    writeln!(out, "static void {}({list}* self) {{", crate::types::drop_fn_name(&Ty::List(Box::new(elem.clone())))).unwrap();
+    writeln!(out, "    {list}__clear(self);\n    free(self->data);\n    self->data = NULL;\n    self->cap = 0;\n}}\n").unwrap();
+}
+
+/// Every `List<T>` element type the program mentions, so `generate` knows
+/// which instantiations to write. Elements cannot themselves be lists
+/// (`infer.rs` rejects that), so one level of unwrapping is all there is;
+/// `&List<T>` (a borrowed list — every `List` parameter and method receiver)
+/// is looked through.
+fn collect_list_elems(program: &Program, found: &mut HashSet<Ty>) {
+    fn note_ty(ty: &Ty, found: &mut HashSet<Ty>) {
+        match ty {
+            Ty::List(elem) => {
+                found.insert((**elem).clone());
+                note_ty(elem, found);
+            }
+            Ty::Ref { inner, .. } => note_ty(inner, found),
+            _ => {}
+        }
+    }
+    fn note_expr(expr: &Expr, found: &mut HashSet<Ty>) {
+        note_ty(&expr.ty, found);
+        match &expr.kind {
+            ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } | ExprKind::Deref { expr } => {
+                note_expr(expr, found)
+            }
+            ExprKind::Binary { lhs, rhs, .. } | ExprKind::Assign { target: lhs, value: rhs } => {
+                note_expr(lhs, found);
+                note_expr(rhs, found);
+            }
+            ExprKind::Call { args, .. } => {
+                for a in args {
+                    note_expr(a, found);
+                }
+            }
+            ExprKind::FieldAccess { base, .. } => note_expr(base, found),
+            ExprKind::StructLit { fields, .. } => {
+                for (_, v) in fields {
+                    note_expr(v, found);
+                }
+            }
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                note_expr(cond, found);
+                note_block(then_block, found);
+                if let Some(b) = else_block {
+                    note_block(b, found);
+                }
+            }
+            ExprKind::Block(b) => note_block(b, found),
+            ExprKind::Template { pieces, .. } => {
+                for p in pieces {
+                    if let TemplatePiece::Value(v) = p {
+                        note_expr(v, found);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    fn note_block(block: &Block, found: &mut HashSet<Ty>) {
+        for s in &block.stmts {
+            match s {
+                Stmt::Let { ty, init, .. } => {
+                    note_ty(ty, found);
+                    note_expr(init, found);
+                }
+                Stmt::While { cond, body } => {
+                    note_expr(cond, found);
+                    note_block(body, found);
+                }
+                Stmt::Return { value, .. } => {
+                    if let Some(v) = value {
+                        note_expr(v, found);
+                    }
+                }
+                Stmt::Expr(e) => note_expr(e, found),
+            }
+        }
+        if let Some(t) = &block.tail {
+            note_expr(t, found);
+        }
+    }
+
+    for s in &program.structs {
+        for f in &s.fields {
+            note_ty(&f.ty, found);
+        }
+    }
+    for pd in &program.pds {
+        note_ty(&pd.value_ty, found);
+        note_expr(&pd.init, found);
+    }
+    for f in &program.functions {
+        note_ty(&f.ret, found);
+        for (_, t) in &f.params {
+            note_ty(t, found);
+        }
+        note_block(&f.body, found);
     }
 }
 
@@ -1008,7 +1213,7 @@ impl<'a> Gen<'a> {
                 let r = self.expr_value(rhs);
                 format!("({l} {sym} {r})")
             }
-            ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span),
+            ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span, &expr.ty),
             ExprKind::Template { newline, pieces } => {
                 // One `printf` with a generated format string: literal chunks
                 // are escaped into it, each interpolated value contributes
@@ -1264,7 +1469,7 @@ impl<'a> Gen<'a> {
         format!("({{ {checks}{call}; }})")
     }
 
-    fn call_value(&self, callee: &str, args: &[Expr], span: Span) -> String {
+    fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
         if callee == "print" || callee == "print!" {
             let arg = &args[0];
             // `print` appends a newline, `print!` doesn't — opposite of the
@@ -1296,6 +1501,32 @@ impl<'a> Gen<'a> {
             s.push_str(&self.expr_value(a));
         }
         s.push(')');
+        // `List<T>` methods are monomorphized: the C name carries the
+        // element type, which comes from the receiver argument (or, for the
+        // associated `List.of(v)`, from `v` itself).
+        if let Some(op) = callee.strip_prefix("List#") {
+            let elem = if op == "of" {
+                args.first().map(|a| a.ty.clone())
+            } else if op == "empty" {
+                crate::types::list_elem_of(ret).cloned()
+            } else {
+                args.first().and_then(|a| crate::types::list_elem_of(&a.ty)).cloned()
+            };
+            if let Some(elem) = elem {
+                let base = crate::types::list_c_type(&elem);
+                // `get` has two C spellings: by value for a `Copy` element,
+                // by pointer for an owned one — which one is decided by the
+                // call's own result type, never by guessing.
+                let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
+                    "get_const"
+                } else {
+                    op
+                };
+                let call = format!("{base}__{suffix}({})", args.iter().map(|a| self.expr_value(a)).collect::<Vec<_>>().join(", "));
+                return self.cap_checked_call(callee, call, args, span);
+            }
+        }
+        let s = s;
         self.cap_checked_call(callee, s, args, span)
     }
 
@@ -1373,8 +1604,8 @@ impl<'a> Gen<'a> {
                 "%.*s",
                 format!("(int)({value}).len, (const char*)({value}).data"),
             ),
-            Ty::Unit | Ty::Struct(_) | Ty::Ref { .. } => {
-                unreachable!("type checker rejects printing unit/struct/reference values")
+            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Ref { .. } => {
+                unreachable!("type checker rejects printing unit/struct/list/reference values")
             }
         }
     }

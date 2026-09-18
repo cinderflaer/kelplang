@@ -153,12 +153,30 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
     pub name: String,
+    /// Type arguments, for the one generic the compiler knows: `List<T>`.
+    /// Empty for every ordinary type name, and the parser only accepts them
+    /// after a bare or dotted name — `List<i32>`, never `math.List<i32>`.
+    /// `infer.rs` rejects arguments on a name that is not `List`, and more
+    /// than one on `List` itself; v1 has no user-definable generics.
+    pub args: Vec<TypeExpr>,
     /// `&T` was written with a leading `&`. Only meaningful in a *return*
     /// position (M6.3): `&str`/`&T` there is a borrow of the caller's value
     /// under the elision rule, whereas a parameter's `&str` is what `str`
     /// already is (a borrowed view passed by value).
     pub amp: bool,
     pub span: Span,
+}
+
+impl TypeExpr {
+    /// The type as it was written, for diagnostics and the pretty-printer.
+    pub fn display(&self) -> String {
+        if self.args.is_empty() {
+            self.name.clone()
+        } else {
+            let args: Vec<String> = self.args.iter().map(|a| a.display()).collect();
+            format!("{}<{}>", self.name, args.join(", "))
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

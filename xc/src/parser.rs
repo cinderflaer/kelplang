@@ -486,8 +486,28 @@ impl Parser {
             name.push_str(&part);
             span = span.to(part_span);
         }
+        // Type arguments (collections milestone): `List<T>`. Unambiguous in
+        // a type position, and v1 knows exactly one generic name, so a
+        // comma-separated list is parsed here and rejected in `infer.rs`
+        // with a message naming which type does not take arguments.
+        let mut args = Vec::new();
+        if self.check(&TokenKind::Lt) {
+            self.advance();
+            loop {
+                let arg = self.parse_type()?;
+                args.push(arg);
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+            let close = self.expect(TokenKind::Gt, "'>' to close the type argument list")?;
+            span = span.to(close.span);
+        }
         Ok(TypeExpr {
             name,
+            args,
             amp: amp_start.is_some(),
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })

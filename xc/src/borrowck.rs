@@ -741,7 +741,32 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
-        tir::Stmt::Expr(e) => check_value(e, ctx),
+        tir::Stmt::Expr(e) => {
+            // A borrow produced by a statement's *temporary* — `print(l.get(0))`,
+            // where the view is consumed inside the statement — is released at
+            // the end of that statement, not at the end of the block. Scope
+            // lifetimes are otherwise lexical (plan's known limitation: no
+            // NLL), and holding every temporary to the end of the block makes
+            // ordinary list code fail (`print(l.get(0)); l.push(x)` would
+            // conflict with a view that is already dead). A *bound* borrow
+            // (`val p = l.get(0)`) still lives as long as its binding, because
+            // a `Let` is not this arm.
+            let mark = ctx.scopes.len();
+            let at = ctx.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
+            let checked = check_value(e, ctx);
+            if ctx.scopes.len() == mark {
+                let released: Vec<String> = ctx
+                    .scopes
+                    .last_mut()
+                    .expect("the scope stack is never empty inside a function")
+                    .scope_borrows
+                    .split_off(at);
+                for root in released {
+                    ctx.end_borrow(&root);
+                }
+            }
+            checked
+        }
     }
 }
 

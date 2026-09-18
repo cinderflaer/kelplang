@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ty {
     I32,
     I64,
@@ -29,6 +29,14 @@ pub enum Ty {
     String,
     /// A `datac` value type, named by its declaration.
     Struct(String),
+    /// The builtin owned growable sequence (collections milestone):
+    /// `List<T>`, where `T` is a scalar, `String`, `Bytes`, or a `datac`.
+    /// Non-`Copy`: assigning or passing one moves it, and it is freed at the
+    /// end of the owning scope — its elements first, then its buffer. The
+    /// element type is part of the type, and codegen monomorphizes: one C
+    /// struct plus one set of functions per element type actually used (see
+    /// `codegen_c.rs::write_list`).
+    List(Box<Ty>),
     /// A borrow of a value of type `inner` — shared (`mutable: false`) or
     /// exclusive (`mutable: true`). Never appears as a function's declared
     /// return type in M4 (no surface syntax produces one there — see
@@ -67,7 +75,7 @@ impl Ty {
     /// kinds of thing that own heap memory: a `datac` and the builtin
     /// `Bytes`/`String`. Reading a non-`Copy` value as a whole moves it (M3).
     pub fn is_copy(&self) -> bool {
-        !matches!(self, Ty::Struct(_) | Ty::Bytes | Ty::String)
+        !matches!(self, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_))
     }
 
     /// Whether this type *itself* owns heap memory, ignoring whether a
@@ -75,7 +83,7 @@ impl Ty {
     /// available — a `datac` with an owned field owns memory too, and out of
     /// context `Ty::Struct(_)` cannot know that.
     pub fn owns_heap(&self) -> bool {
-        matches!(self, Ty::Bytes | Ty::String)
+        matches!(self, Ty::Bytes | Ty::String | Ty::List(_))
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -123,6 +131,7 @@ impl Ty {
             Ty::Isize => "ptrdiff_t".to_string(),
             Ty::Bytes => "x_Bytes".to_string(),
             Ty::String => "x_String".to_string(),
+            Ty::List(elem) => list_c_type(elem),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -158,6 +167,7 @@ impl Ty {
             Ty::Bytes => "Bytes".to_string(),
             Ty::String => "String".to_string(),
             Ty::Struct(name) => name.clone(),
+            Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
         }
@@ -194,7 +204,50 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Bytes => "x_bytes_drop".to_string(),
         Ty::String => "x_string_drop".to_string(),
         Ty::Struct(name) => format!("x_drop_{}", c_ident(name)),
+        Ty::List(elem) => format!("x_list_drop__{}", list_elem_ident(elem)),
         other => unreachable!("no drop rule for type '{}'", other.display()),
+    }
+}
+
+/// Whether `ty` may be a `List<T>` element. A borrow cannot be one (an
+/// element outlives the borrow that produced it, and v1 has no lifetime
+/// syntax to say otherwise), and neither can `str` (the same borrowed view)
+/// or `unit`. Everything else — the scalars, `String`, `Bytes`, and a
+/// `datac` — has a plain C representation that a growable array can hold.
+pub fn is_list_element(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bytes | Ty::String | Ty::Struct(_) => true,
+        Ty::Ref { .. } | Ty::Str | Ty::Unit => false,
+        other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
+    }
+}
+
+/// The C name fragment for a `List<T>`'s element type: `List<i32>` becomes
+/// `x_List__i32`, `List<shapes.circle.Circle>` becomes
+/// `x_List__shapes__circle__Circle` (through the same `c_ident` mangling
+/// every other generated symbol uses).
+pub fn list_elem_ident(elem: &Ty) -> String {
+    match elem {
+        Ty::Struct(name) => c_ident(name),
+        Ty::Bytes => "Bytes".to_string(),
+        Ty::String => "String".to_string(),
+        other => other.display().replace('&', "ref"),
+    }
+}
+
+/// The generated C struct tag for `List<T>`.
+pub fn list_c_type(elem: &Ty) -> String {
+    format!("x_List__{}", list_elem_ident(elem))
+}
+
+/// The `List<T>` behind an expression's type, looking through a borrow —
+/// `l.push(x)` and `l.len()` both arrive with the receiver typed `&List<T>`
+/// (a `List` parameter is a borrow, and a method receiver is auto-borrowed).
+pub fn list_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::List(elem) => Some(elem),
+        Ty::Ref { inner, .. } => list_elem_of(inner),
+        _ => None,
     }
 }
 

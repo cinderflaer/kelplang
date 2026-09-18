@@ -277,6 +277,38 @@ struct TypeScope<'a> {
 
 impl TypeScope<'_> {
     fn resolve(&self, ty: &ast::TypeExpr) -> Result<Ty> {
+        // The one generic name v1 knows (collections milestone). It is a
+        // compiler builtin, not a user-definable type: `List<T>` is the only
+        // spelling, and its element type is checked to be a type a growable
+        // array can actually hold.
+        if ty.name == "List" {
+            if ty.args.len() != 1 {
+                return Err(TypeError {
+                    message: format!(
+                        "'List' takes exactly 1 type argument, found {}",
+                        ty.args.len()
+                    ),
+                    span: ty.span,
+                });
+            }
+            let elem = self.resolve(&ty.args[0])?;
+            if !crate::types::is_list_element(&elem) {
+                return Err(TypeError {
+                    message: list_element_error(&elem),
+                    span: ty.args[0].span,
+                });
+            }
+            return Ok(Ty::List(Box::new(elem)));
+        }
+        if !ty.args.is_empty() {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' does not take type arguments — v1's only generic type is 'List<T>'",
+                    ty.name
+                ),
+                span: ty.span,
+            });
+        }
         if let Some(builtin) = Ty::from_name(&ty.name) {
             return Ok(builtin);
         }
@@ -335,6 +367,7 @@ impl TypeScope<'_> {
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
         let te = ast::TypeExpr {
             name: r.type_name.clone(),
+            args: Vec::new(),
             amp: false,
             span: r.span,
         };
@@ -427,6 +460,10 @@ struct Builtin {
 /// The `Bytes` surface (M6). Kept deliberately small: construct, measure,
 /// index, mutate, copy. Everything else about `Bytes` needs either `String`
 /// or growable buffers, which are later milestones.
+///
+/// `List<T>` (collections milestone) is deliberately *not* in this static
+/// table: its signatures depend on the element type, so they are built on
+/// demand by `list_sig` below, keyed by the same `List#name` spelling.
 static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
     std::sync::LazyLock::new(|| {
         let bytes = Ty::Bytes;
@@ -518,11 +555,71 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
     match ty {
         Ty::Bytes => Some("Bytes"),
         Ty::String => Some("String"),
+        Ty::List(_) => Some("List"),
         // An owned parameter is a borrow (M4's rule: every owned parameter is
         // borrowed), so `b.len()` on one arrives here as `&Bytes`/`&String`.
         Ty::Ref { inner, .. } => builtin_type_name(inner),
         _ => None,
     }
+}
+
+/// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
+/// type position and `List.of(x)` give the same explanation.
+fn list_element_error(ty: &Ty) -> String {
+    let what = match ty {
+        Ty::Str => "'str' is a borrowed view".to_string(),
+        Ty::Ref { mutable, inner } => {
+            format!(
+                "'{}' is a borrow",
+                Ty::Ref { mutable: *mutable, inner: inner.clone() }.display()
+            )
+        }
+        Ty::Unit => "'unit' is not a value".to_string(),
+        other => format!("'{}' is not", other.display()),
+    };
+    format!(
+        "{what} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+    )
+}
+
+/// The `List<T>` builtins, instantiated for one element type. The element
+/// decides two signatures:
+///
+/// - `get` returns a *copy* for a `Copy` element (`List<i32>` → `i32`) and a
+///   shared borrow for an owned one (`List<String>` → `&String`, rooted at
+///   the receiver by the same elision rule `.x` functions use), because
+///   copying a `String` out of a list would be an unowned second owner;
+/// - `push`/`set`/`pop` take and give the element by value, which is where a
+///   move in or out of the list happens (M3's move tracking runs on the
+///   ordinary call-argument path, so no new borrow rules were needed).
+fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
+    let list = Ty::List(Box::new(elem.clone()));
+    let shared = Ty::Ref { mutable: false, inner: Box::new(list.clone()) };
+    let exclusive = Ty::Ref { mutable: true, inner: Box::new(list.clone()) };
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
+    Some(match key {
+        "List#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Usize },
+        "List#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
+        "List#push" => FnSig {
+            params: vec![p("self", exclusive), p("v", elem.clone())],
+            ret: Ty::Unit,
+        },
+        "List#get" => FnSig {
+            params: vec![p("self", shared), p("i", Ty::Usize)],
+            ret: if elem.is_copy() { elem.clone() } else { elem_ref },
+        },
+        "List#set" => FnSig {
+            params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
+            ret: Ty::Unit,
+        },
+        "List#pop" => FnSig {
+            params: vec![p("self", exclusive)],
+            ret: elem.clone(),
+        },
+        "List#clear" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
+        _ => return None,
+    })
 }
 
 /// The signature a builtin key resolves to, if it is one.
@@ -551,6 +648,13 @@ pub fn is_ref_param(ty: &Ty) -> bool {
 
 /// The elided borrow root for a builtin method, if it returns a borrow.
 pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
+    // `List#get` on an owned element type returns a borrow of the list
+    // itself — the first parameter, like every builtin method's `self`.
+    // (For a `Copy` element the type checker never asks, since the call's
+    // result is not a borrow; see `borrowck::check_call`.)
+    if key == "List#get" {
+        return Some(Some(0));
+    }
     let b = BUILTINS.get(key)?;
     if matches!(b.ret, Ty::Ref { .. }) {
         Some(borrow_root_param(&b.params))
@@ -1481,7 +1585,7 @@ fn scan_pd_uses(
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
-    } else if matches!(base, Ty::Struct(_) | Ty::Bytes | Ty::String) {
+    } else if matches!(base, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_)) {
         Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
         base
@@ -2123,7 +2227,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     }
                 }
             }
-            check_method_call(receiver, method, args, *span, ctx)
+            check_method_call(receiver, method, args, *span, ctx, expected)
         }
     }
 }
@@ -2715,15 +2819,32 @@ fn check_template(
 /// `check_call_arg` exactly like any other `Ty::Ref` parameter (so a
 /// `fun mut T.m()` method reuses M4's aliasing checks with no special
 /// casing). No new `tir`/codegen shape is needed for method calls at all.
-fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
-    // `Bytes.empty()` / `Bytes.from_str(s)`: an *associated* builtin, written
-    // on the type name, so it takes no receiver argument and is resolved
-    // before the receiver is checked as a value (it isn't one). A local or an
-    // `impl` alias of the same name shadows the type name, exactly as it
-    // would anywhere else — which is why those cases fall through to the
-    // ordinary method path below.
+///
+/// A `List<T>` method is the same thing with the element type read off the
+/// receiver (`list_sig`), and `expected` is consulted only for the two
+/// associated constructors that cannot name their own element type:
+/// `List.empty()` gets it from the binding's written type
+/// (`val xs: List<String> = List.empty()`), and `List.of(x)` from `x` or
+/// from `expected` when both are available.
+fn check_method_call(
+    receiver: &ast::Expr,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    // `Bytes.empty()` / `Bytes.from_str(s)` / `List.of(x)`: an *associated*
+    // builtin, written on the type name, so it takes no receiver argument and
+    // is resolved before the receiver is checked as a value (it isn't one). A
+    // local or an `impl` alias of the same name shadows the type name,
+    // exactly as it would anywhere else — which is why those cases fall
+    // through to the ordinary method path below.
     if let ast::Expr::Ident(name, _) = receiver {
         if ctx.lookup(name).is_none() && !is_module_alias(name, ctx) {
+            if name == "List" {
+                return check_list_associated(method, args, span, ctx, expected);
+            }
             let key = format!("{name}#{method}");
             if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
                 let params = assoc.params.clone();
@@ -2753,13 +2874,21 @@ fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], 
         });
     };
     let key = format!("{owner}#{method}");
+    let list_elem = crate::types::list_elem_of(&probe.ty).cloned();
     let sig = ctx
         .sigs
         .get(&key)
         .cloned()
+        .or_else(|| list_elem.as_ref().and_then(|e| list_sig(&key, e)))
         .or_else(|| builtin_sig(&key))
         .ok_or_else(|| TypeError {
-            message: format!("datac '{owner}' has no method '{method}'"),
+            message: match &list_elem {
+                Some(e) => format!(
+                    "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear",
+                    e.display()
+                ),
+                None => format!("datac '{owner}' has no method '{method}'"),
+            },
             span,
         })?;
 
@@ -2775,6 +2904,68 @@ fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], 
         ty: sig.ret,
         span,
     })
+}
+
+/// `List.of(x)` and `List.empty()`, plus the diagnostic for anything else
+/// written on the type name (`List<nothing>` is how an element type would be
+/// spelled in a type position, not in an expression, and the two
+/// constructors cover every way a list can start).
+fn check_list_associated(
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let expected_elem = expected.and_then(crate::types::list_elem_of).cloned();
+    match method {
+        "empty" => {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'List.empty' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            let Some(elem) = expected_elem else {
+                return Err(TypeError {
+                    message: "cannot tell what 'List.empty()' holds — write the element type on the binding ('var xs: List<String> = List.empty()') or start from 'List.of(x)'".to_string(),
+                    span,
+                });
+            };
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call { callee: "List#empty".to_string(), args: vec![] },
+                ty: Ty::List(Box::new(elem)),
+                span,
+            })
+        }
+        "of" => {
+            if args.len() != 1 {
+                return Err(TypeError {
+                    message: format!("'List.of' takes exactly 1 argument, found {}", args.len()),
+                    span,
+                });
+            }
+            let value = check_expr(&args[0].value, ctx, expected_elem.as_ref())?;
+            if !crate::types::is_list_element(&value.ty) {
+                return Err(TypeError {
+                    message: list_element_error(&value.ty),
+                    span: args[0].value.span(),
+                });
+            }
+            let elem = value.ty.clone();
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call { callee: "List#of".to_string(), args: vec![value] },
+                ty: Ty::List(Box::new(elem)),
+                span,
+            })
+        }
+        other => Err(TypeError {
+            message: format!(
+                "'List.{other}' is not a List operation — write 'List.of(x)' for a one-element list, 'List.empty()' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
+            ),
+            span,
+        }),
+    }
 }
 
 /// A bare name that only exists as an imported item's *qualified* name is a

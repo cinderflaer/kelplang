@@ -1,0 +1,50 @@
+// Collections: owned elements. `get` returns a borrow for an owned element
+// (copying a `String` out would be a second owner), `pop` moves one out, and
+// `set` frees the element it replaces. A `datac` element goes through the
+// same paths, with the struct's own drop function doing the per-element work.
+impl "std/str"
+
+datac Pair(val a: i32, val b: i32)
+
+fun show(names: List<String>) {
+    var i: usize = 0
+    while i < names.len() {
+        val name = names.get(i)
+        print!(name.as_str())
+        print!(" ")
+        i += 1
+    }
+    print("")
+}
+
+fun main() {
+    var names: List<String> = List.empty()
+    names.push(String.from_str("alpha"))
+    names.push(String.from_str("beta"))
+    print(names.len())
+    show(names)
+    val taken = names.pop()
+    print(taken)
+    print(names.len())
+    names.push(String.from_str("gamma"))
+    names.clear()
+    print(names.is_empty())
+
+    var pairs: List<Pair> = List.empty()
+    pairs.push(Pair(a = 1, b = 2))
+    pairs.push(Pair(a = 3, b = 4))
+    {
+        val first = pairs.get(0)
+        print(first.b)
+        val last = pairs.get(1)
+        print(last.a)
+    }
+    pairs.set(0, Pair(a = 9, b = 9))
+    print(pairs.get(0).a)
+    print(pairs.pop().a)
+    pairs.clear()
+    print(pairs.len())
+
+    val one = List.of(7)
+    print(one.get(0))
+}

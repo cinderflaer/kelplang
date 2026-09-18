@@ -1,0 +1,29 @@
+// Collections: a `List<T>` as an owned `datac` field and as an owned
+// passdown. Both are drop points the milestone has to get right — the field
+// through the struct's generated drop function, the passdown through the
+// `atexit` handler (M6.2).
+pd val primes = List.of(2)
+
+datac Bag(val label: String, val xs: List<i32>)
+
+fun checksum(xs: List<i32>).R: i32 {
+    var total = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += xs.get(i)
+        i += 1
+    }
+    return total
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(3)
+    xs.push(4)
+    val bag = Bag(label = String.from_str("bag"), xs = xs)
+    print(bag.label)
+    print(checksum(bag.xs))
+    print(checksum(primes))
+    print(primes.get(0))
+    print(bag.xs.len())
+}

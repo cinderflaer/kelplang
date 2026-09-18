@@ -37,7 +37,7 @@ fn print_datac(out: &mut String, d: &DatacDecl) {
             out.push_str(", ");
         }
         let kw = if f.mutable { "var" } else { "val" };
-        write!(out, "{kw} {}: {}", f.name, f.ty.name).unwrap();
+        write!(out, "{kw} {}: {}", f.name, f.ty.display()).unwrap();
     }
     out.push_str(")\n");
 }
@@ -59,11 +59,11 @@ fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
         if i > 0 {
             out.push_str(", ");
         }
-        write!(out, "{}: {}", p.name, p.ty.name).unwrap();
+        write!(out, "{}: {}", p.name, p.ty.display()).unwrap();
     }
     out.push(')');
     if let Some(rt) = &f.return_type {
-        write!(out, ".R: {}", rt.name).unwrap();
+        write!(out, ".R: {}", rt.display()).unwrap();
     }
     match &f.body {
         FunctionBody::Expr(e) => {
@@ -100,7 +100,7 @@ fn print_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
             out.push_str(if *mutable { "var " } else { "val " });
             out.push_str(name);
             if let Some(ty) = ty {
-                write!(out, ": {}", ty.name).unwrap();
+                write!(out, ": {}", ty.display()).unwrap();
             }
             out.push_str(" = ");
             print_expr(out, init);
