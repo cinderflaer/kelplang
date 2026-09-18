@@ -341,12 +341,12 @@ Blocks that stayed blocked on these two types, and no longer are: returning *N* 
 | 6 (MK5-S2-M1) | `io` (`File`, `Line`, `BufReader`, streams, `read_line`/`read_all`/`read_lines`); `process` (`run`/`spawn`/`args`/`exit`/`getpid`) | **MK5-S2-M1 done** — plus the `main(argc, argv)` codegen change argv needed, open item 50 |
 | 7 (MK5-S3) | `net` for real (sockets, listener, DNS, `poll` readiness, timeouts) + the capability vocabulary fix | **MK5-S3 done** — `127.0.0.1:*` is now a grant a program can write |
 | 8 (MK5-S4) | `http`: keep-alive, response framing (Content-Length, chunked, read-to-EOF), the connection `Pool`/`Lease`, redirects, timeouts, header lookup; `https` is MK5-S4b-M1 | **MK5-S4 done** — plus three compiler changes: `x.toml`'s numeric `http_pool` key spliced into the shipped source, `\r` as a string escape, and CR escaping in the C string-literal emitter |
-| 9 (MK5-S5) | `Map<V>`; `fs` breadth (`mkdir_all`/`remove_all`/`walk`/`copy`/`open`/`metadata`/`temp_path`/`read_lines`); `path` polish; real `env` bodies | **MK5-S5** |
+| 9 (MK5-S5) | `Map<V>`; `fs` breadth (`mkdir_all`/`remove_all`/`walk`/`copy`/`open`/`metadata`/`temp_path`/`read_lines`); `path` polish; real `env` bodies | **MK5-S5 done** (parts 1, 2, 3) — plus two capability-matcher gaps: `open`'s mode string was matched as a path, and a trailing `/**` did not admit the granted directory itself |
 | 10 (MK5-S6-M1+) | `Option`/`Result` (language-gated), generic containers, TLS, a length-carrying view, `for`, threads | blocked on language work |
 | 11 (MK6-S1-M1) | **Process threads** — a language milestone: function references, a move-taking parameter, a per-thread panic and cleanup story, atomics/`Mutex`, a `Send`-shaped rule | after MK5-S6-M1; MK5-S7-M1 records every prerequisite |
 | 12 (MK6-S2-M1) | **Multithreaded downloading** over MK6-S1-M1 | after MK6-S1-M1 |
 
-Tier 1 strictly precedes tier 2. A compiler that can `fs.read` must already have working move-and-drop for `Bytes` — which it now does. In the S tiers, MK5-S1 → MK5-S2-M1 → MK5-S3 → MK5-S4 was a strict chain (text you can build, then streams and programs, then sockets, then HTTP) and it is complete; MK5-S5's `Map` is independent of all of them, and the fs half of MK5-S5 only wants MK5-S1 and MK5-S2-M1 for convenience. MK6-S1-M1 and MK6-S2-M1 are a second chain off the end: neither is reachable from stdlib work, because threads need language surface that does not exist (MK5-S7-M1).
+Tier 1 strictly precedes tier 2. A compiler that can `fs.read` must already have working move-and-drop for `Bytes` — which it now does. In the S tiers, MK5-S1 → MK5-S2-M1 → MK5-S3 → MK5-S4 was a strict chain (text you can build, then streams and programs, then sockets, then HTTP) and it is complete; MK5-S5's `Map` was independent of all of them, and the fs half of MK5-S5 only wanted MK5-S1 and MK5-S2-M1 for convenience; both shipped. MK6-S1-M1 and MK6-S2-M1 are a second chain off the end: neither is reachable from stdlib work, because threads need language surface that does not exist (MK5-S7-M1).
 
 ### Failure model
 
@@ -548,7 +548,7 @@ fun Map.keys().R: List<String>       // insertion order, not hash order
 fun Map.values().R: List<V>
 ```
 
-MK5-S5's container, and deliberately the cheap one: `String` keys only, monomorphized value type, FNV-1a over the key's bytes, open addressing with tombstones. Keys are `String` because hashing needs the key's *bytes*, and a generic key needs real generics (open item 34). `Map<Map<i32>>` is as impossible as `List<List<i32>>`. There is no `Set`: `Map<bool>` covers it, and a third monomorphized generic is not worth it (open item 41).
+**Shipped in MK5-S5**, and deliberately the cheap one: `String` keys only, monomorphized value type, FNV-1a over the key's bytes. Entries live in insertion order in a dense array with a separate open-addressed index, because `keys()` must return insertion order; `get_or` and `values` are offered only for a clonable value type, since a `datac` value cannot be copied back out. Keys are `String` because hashing needs the key's *bytes*, and a generic key needs real generics (open item 34). `Map<Map<i32>>` is as impossible as `List<List<i32>>`, and `Map.of` does not exist because a map starts empty. There is no `Set`: `Map<bool>` covers it, and a third monomorphized generic is not worth it (open item 41).
 
 #### http (MK5-S4 — the payoff)
 
@@ -665,7 +665,7 @@ fun env.set(name: &str, value: &str)
 fun env.unset(name: &str)
 ```
 
-MK5-S5 gives these real bodies; today they are the worked example of a structurally gated stub (the domain, the grant and the name check are real, the bodies panic). `env.names()` is deliberately not in the sketch: listing the environment reads *all* of it, which a grant of `["PATH"]` should not permit.
+**Shipped in MK5-S5**: the bodies are real (`getenv`/`setenv`/`unsetenv` behind four externs), and the check is on the *name*, before the call, so a grant of `["PATH"]` does not let the holder ask whether `HOME` exists. `env.names()` remains deliberately absent: listing the environment reads *all* of it, which a grant of one name should not permit.
 
 ### What would make X genuinely useful for real programs
 
