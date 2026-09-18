@@ -915,3 +915,101 @@ move-taking parameter — have been met since phase A, and open item 60's (a) an
 (b) are now the closure half of that story as well: a thread entry point may be
 a closure, and (c)–(e) (the panic policy, the per-thread frame story, and
 atomics plus a `Send`-shaped rule) are what MK6-S1-M1 still needs.
+
+---
+
+## The primitives a tool port asks for: MK5-S2-M2, and the MK5-S5 continuation
+
+### MK5-S2-M2 `spawn_in`/`run_in`, the fallible `try_run`, and `fs.symlink` (DONE)
+
+The three stdlib-sized gaps `backlog.md` recorded under "What the port hit" —
+found by writing the parts of Coral that shell out, and each one extern plus one
+wrapper by the plan's own estimate — plus the two things implementing them
+turned out to need. The process half is MK5-S2-M2 (the `io` + `process` stage);
+the filesystem half continues MK5-S5's breadth.
+
+- **A per-call working directory, in the child.** `spawn_raw` gained a `dir`
+  first parameter and one branch in its child path, between `fork` and `exec`:
+  `chdir(dir)` when `dir` is not empty, `_exit(126)` with a message on stderr
+  when it fails. 126 is reserved for exactly that case, the way 127 already
+  means "cannot exec". `spawn_in`/`run_in` are the public forms; `spawn`/`run`
+  are now one-line delegates passing `""`, so there is one body and one poll
+  loop rather than two of each. The objection that kept `chdir` out of v1 is
+  untouched by this: the *parent's* directory never changes, and every grant
+  pattern is absolute, so no pattern's meaning moves. `dir` is not a resource
+  and is not checked against the grant.
+- **`fs.symlink(target, link)`, with both ends checked.** The check is the
+  ordinary `fs` one (`fs_checked_args` already checks every `str` argument), so
+  the design question was whether to keep that or check the link alone. Both
+  ends is the choice, and it is the one that keeps an `fs` grant **closed under
+  link creation**: a module can only create a link whose target it could also
+  name. Checking the link alone would still be sound — every later access
+  resolves the link first and is denied if it escapes — but it would let a tree
+  inside the grant contain a link out of it, which is the case `fs.remove_all`
+  refuses to walk, and its doc comment now says so, because `fs.symlink` is the
+  first thing in the language that can create that state. One consequence worth
+  knowing: the target must be **absolute**, since the check normalizes every
+  path it matches and only an absolute path normalizes at all. A dangling
+  target is fine; a relative one is a denial. There is deliberately no
+  `read_link` — nothing has needed to resolve a link back to its target text.
+- **A fallible run, with the failures a pre-check can see.**
+  `try_run`/`try_run_in` return `Result<RunResult, ProcErr>`, where `ProcErr` is
+  `NotFound` (nothing at that path), `NotExecutable` (something is there that
+  `exec` would refuse — a directory, a non-executable file, a dangling link) or
+  `DirNotFound`. All three are decided **before** the fork by `stat`/`access`,
+  which is what keeps them honest: none can be confused with a child that ran
+  and exited with a matching code, and an `Err` always means the child never
+  started. A program that starts and exits nonzero is still an `Ok` carrying its
+  code. `process.executable` is the same pre-check as public surface, so a tool
+  can ask before it calls, and `exists`/`is_dir` stay private externs because
+  nothing else needed them.
+- **The one thing the plan's sketch promised that cannot exist yet: `Denied`.**
+  The backlog's row asked for a variant per refusable program, `Denied`
+  included. That variant is unreachable without a compiler change, and the
+  reason is structural rather than an oversight: the capability check is
+  compiled in per *calling* module and emitted at the call site, where it
+  panics — so a program outside the grant, and a relative one (which normalizes
+  to nothing), is refused before any Kelp function runs. Returning it as a value
+  needs a non-panicking check mode in codegen, with the verdict reaching the
+  callee as a value while the guard still refuses to *call* on deny (a flag the
+  callee must consume, or a hidden argument). Recorded as open item 73. The
+  honest reading of the row is that its evidence was about a *missing* tool,
+  which is what shipped: a manifest that grants the wrong program is a
+  configuration error, and the panic already names the call site, the path and
+  the patterns.
+- **The capability argument table gained a position rule.** `checked_args` for
+  `process` was "the first `str` argument", which is the program for
+  `spawn`/`run` and the *directory* for `spawn_in`/`run_in`/`try_run_in`.
+  Checking argument 0 there would have matched a working directory against a
+  program allowlist and denied every call whose directory is outside the
+  granted programs, so the table is now keyed on the call — the shape
+  `fs.open`'s mode argument and `net`'s resources already needed.
+  `process_in`'s `dir_outside_grant` is the regression pin: it runs `/bin/sh`
+  with `/tmp` as the working directory, which no pattern in that project grants.
+- **Four externs, and one duplication accepted.** `std/fs` gained
+  `symlink_raw`; `std/process` gained `exists_raw`, `executable_raw` and
+  `is_dir_raw`, duplicating two `std/fs` bodies because an `extern` is keyed by
+  module and `std/process` cannot hold `fs`. The three are called **directly**
+  from the fallible pre-checks rather than through Kelp wrappers, which matters:
+  a wrapper in a gated module is itself gated, so calling one would re-check the
+  *path* against `std/process`'s patterns — harmless for the program, since it
+  is the same path that just passed, but wrong for the working directory.
+
+**Tests**: three projects. `caps_link` (`fs.symlink` inside a grant, read
+through the link, then the target removed so the link dangles — which is the
+proof it is a link and not a copy — then the dangling link removed through
+`fs.remove`, with `fs.list` proving the directory is empty afterwards);
+`caps_link_denied` (the target outside the grant, denied before `symlink(2)`
+runs, with the denial naming the *target* rather than the link); and
+`process_in`, which runs `/bin/sh` with a working directory, asserts that the
+marker files landed there and not in the parent's directory (two of them, one
+through `run_in` and one through `spawn_in`), pins 126 plus its stderr message
+for a directory the child cannot enter, pins the four fallible outcomes and the
+`process.executable` answers, and pins that a working directory outside the
+grant is not a grant question. The suite is **78 unit tests and 211 end-to-end
+tests**, all green.
+
+*What this does not close*: open item 67's "what a Coral port hits" is now empty
+of stdlib gaps — the language half was already shipped — but the port still
+needs the compiler's CLI contract that open item 72 names, and `fs.read_link`
+stays absent until something has to resolve a link back.
