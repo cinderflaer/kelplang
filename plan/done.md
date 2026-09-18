@@ -1,6 +1,6 @@
 # The "Kelp" language milestone record (shipped)
 
-The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type), and **MK8-S1-M2 phases A-F, which close A-4**: `move T`, function values, `fun` literals, **captures and the closure type**, and the stdlib callbacks taking closures.
+The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type), and **MK8-S1-M2 phases A-F, which close A-4**: `move T`, function values, `fun` literals, **captures and the closure type**, and the stdlib callbacks taking closures, and **MK8-S1-M3**, the `for` loop, which closes A-5's cheap half.
 
 Entries are append-only history, so an older entry can describe a state a later one changed; each such entry names the one that superseded it.
 
@@ -1013,3 +1013,84 @@ tests**, all green.
 of stdlib gaps — the language half was already shipped — but the port still
 needs the compiler's CLI contract that open item 72 names, and `fs.read_link`
 stays absent until something has to resolve a link back.
+
+### MK8-S1-M3 the `for` loop (DONE)
+
+A-5's cheap half, and the last thing MK8-S1 wanted besides A-11's checker
+expressiveness. A-5 asked for exactly two forms: `for x in list { }` as a
+parser desugar, and a reusable traversal protocol (`iter`/`next`) as the
+expensive version for later. This is the first, so A-5 is now "the cheap half
+shipped"; the protocol stays unscheduled, and open items 27/36a/46 are
+resolved.
+
+- **`syntax.md` changed first, because it is the syntax authority.** §6.2 is
+  now "`for` and `while`", the keyword list in §2.3 gains `for`, and the
+  §18 error table gains both new diagnostics. `in` deliberately did *not*
+  become a keyword: `for x in xs` reads it as a separator the way `if let`
+  reads `let` (6.1), so a program that named a binding `in` keeps compiling,
+  and there is no contextual-keyword surprise beyond the one position.
+- **The desugar, in the parser and nowhere else.** `for x in xs { BODY }`
+  becomes:
+
+  ```text
+  {
+      var #for0_i: usize = 0
+      while #for0_i < SEQ.len() {
+          { val x = SEQ.get(#for0_i)  BODY }
+          #for0_i = #for0_i + 1
+      }
+  }
+  ```
+
+  `#for0`/`#for0_i` use the `#`-prefix trick `if let` established, so a
+  synthesized name can never collide with a lexed identifier. Every synthesized
+  node carries a span from the source, so a diagnostic about the desugared
+  `.len()`/`.get()` points at the loop. No pass after the parser changed:
+  `infer`/`borrowck`/`codegen` see the `val`/`while`/`MethodCall`/`Assign`
+  shapes they already handled, and `pretty.rs` prints the desugared form the
+  same way it already prints `if let` and the boolean `when`.
+- **The iterable is borrowed when it is a place, and owned when it is not.**
+  This is the one decision the desugar had to make, and the reason is that a
+  parameter is a borrow: binding the iterable by value (`val #for0 = xs`) would
+  move out of that borrow, so `for x in xs` inside a function — the common case,
+  and the shape every iteration fixture wants — would fail to compile. A place
+  (`Ident`, `FieldAccess`, `Deref`) is therefore used as written; anything else
+  (a call, a literal, a `when`) is bound to `val #for0`, so it is evaluated
+  **once** and freed with the block, which is what makes `for x in make()`
+  correct rather than a call per element. The fixture pins both.
+- **The element binding is exactly `List.get`'s.** A `Copy` element binds by
+  value; an owned one binds as a shared borrow. That keeps `for` a thin desugar
+  with no new rule (and no way to be inconsistent with indexing `while` code),
+  at the cost of the open-item-21 wart on owned elements: `for name in names`
+  gives `&String`, so a `str.*` call wants `name.as_str()`. The binding sits in
+  a block of its own for two reasons: the element borrow ends before the
+  increment, and `BODY`'s tail expression stays the tail of a block.
+- **`for` walks a `List` and nothing else, and says so generically.** The
+  desugar asks for `.len()`, so `for x in 5` is refused with the ordinary
+  method diagnostic — `type 'i32' has no method 'len'` — with the span on the
+  *iterable* (`5`), not on the `for`. That is honest rather than tailored, and
+  `for_not_a_list.kp` pins the wording so a future message change is
+  deliberate.
+- **What is not here:** no `break`, no `continue`, no `for` over a `Map` or a
+  `Bytes` (take `Map.keys()`/`values()`, which return `List`s), no iterating by
+  reference-or-value choice, and no `iter`/`next` protocol. A `for` is a
+  front-to-back walk or it is a `while`.
+
+**Tests**: two parser unit tests (`for_loop_desugars_to_a_synthesized_index_and_a_while`
+pins the shape and that a place is not hoisted;
+`a_non_place_iterable_is_bound_to_a_temporary_first` pins the `#for0` binding
+and that `.len()` reads it) and three end-to-end tests.
+`for_loop.kp` covers a `Copy` element walk, a place iterable proven borrowed
+(`xs.len()` still readable afterwards), a call iterable evaluated once under
+AddressSanitizer, an owned `List<String>` from `str.split` (the `&String`
+binding, hence `.as_str()`), nested loops (two fresh index names), and a
+`for` inside a function whose `List` parameter is only borrowed.
+`for_missing_in.kp` and `for_not_a_list.kp` pin the two rejections.
+`for_loop` is in the AddressSanitizer list, because the non-place iterable is
+an owned `List` the desugared block must free exactly once. The suite is **80
+unit tests and 214 end-to-end tests**, all green.
+
+*What is next from here*: MK8-S1's remaining item is A-11 (checker
+expressiveness: provenance, partial moves, field-granular drop), which is what
+the `Copy`-only stdlib helpers wait on; the language's unstarted work is MK6-S1
+(threads) and MK9-MK11. `for` closes the last of A-1 to A-5.

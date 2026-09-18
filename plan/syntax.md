@@ -110,11 +110,11 @@ Inside `(` `)` newlines are insignificant, which is what lets a field list or an
 An identifier starts with a letter or `_`. These words are keywords:
 
 ```
-as  closure  const  datac  else  enum  extern  false  fun  if  impl  move
+as  closure  const  datac  else  enum  extern  false  for  fun  if  impl  move
 mut  pd  return  true  val  var  when  while
 ```
 
-`fn`, `let`, `struct`, `use`, `for`, `loop`, `break`, `continue`, `match`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8).
+`fn`, `let`, `struct`, `use`, `loop`, `break`, `continue`, `match`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8). `in` is not a keyword either: `for x in xs` reads it as a separator, the way `if let` reads `let` (6.1), so a binding may still be named `in`.
 
 ### 2.4 Literals
 
@@ -309,9 +309,24 @@ if let Rect(w, h) = shape {
 - `else if let` chains, and a plain `else if`, are both allowed; without any `else` the whole expression is `Unit`, the same as an `if` without one.
 - `let` is an ordinary identifier everywhere else in the language. It is read as the pattern form only directly after `if`, so a binding named `let` cannot be the condition of an `if` without parentheses.
 
-### 6.2 `while`
+### 6.2 `for` and `while`
 
-`while` is the only loop. There is no `for`, `break` or `continue`.
+`for` walks a `List` front to back:
+
+```kelp
+for x in xs {
+    print!(x)
+    print!(" ")
+}
+```
+
+- The iterable must be a `List<T>`. `for` is **desugared by the parser** into the index-and-`while` walk below; no later pass knows it exists, and there is no protocol to implement (`iter`/`next` is a post-v1 question).
+- The element binding gives exactly what `List.get` gives (12.1): a copy of a `Copy` element, and a shared borrow of an owned one. So `for n in numbers` reads `n: i32` directly, while `for name in names` reads `name: &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
+- The iterable is *borrowed*, not moved, when it is a place (`xs`, `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is the ordinary case. Anything else — a call, a literal — is bound to a temporary that the loop owns and frees, so it is evaluated **once**.
+- The loop variable is a `val`. Copy it into a `var` to mutate it, and note that the list is still borrowed for the duration of the body, so the body cannot `push` to what it walks.
+- There is no `break` and no `continue`; the body runs from the first element to the last.
+
+Walking a `List` by index is still available, and is what `for` becomes:
 
 ```kelp
 var i: usize = 0
@@ -321,7 +336,7 @@ while i < xs.len() {
 }
 ```
 
-Walking a `List` is therefore an index and a `while`, and `str.split`, `Map.keys()` and `Map.values()` hand back `List`s so that the same pattern works over text and over maps.
+`while` is the only loop besides `for`, and it is the general one — a condition, re-evaluated before each pass. `str.split`, `Map.keys()` and `Map.values()` hand back `List`s so iteration over text and over maps reads the same way as over a list.
 
 ### 6.3 `when`
 
@@ -1461,7 +1476,7 @@ print(names.len())                       // still owned here
 
 These are deliberate, and each one has a workaround in this document:
 
-- No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
+- No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
@@ -1488,6 +1503,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `expression-bodied function requires a '.R: T' return type` | add `.R: T`, or use a block body with `return` |
 | `if without an else branch must evaluate to 'unit'` | an `if`, `if let` or `when` used as a value needs an `else` arm |
 | `pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s)` | `if let` and a `when` arm bind one name per payload field, in order |
+| `expected 'in' between the 'for' binding and what it iterates, found 'xs'` | a `for` is `for name in list { ... }`; the `in` is required (6.2) |
+| `type 'i32' has no method 'len'` (the span on the iterable) | `for` walks a `List<T>` only, and the desugar asks it for `.len()` (6.2) |
 | `cannot assign to 'x': not declared 'var'` | declare the binding `var` |
 | `'id' is not a 'var' field` | the `datac` field must be declared `var` too |
 | `use of moved value 'a'` | an owned value was moved earlier; reorder, or borrow instead |
@@ -1589,10 +1606,11 @@ type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
                        | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" ":" type ] )
 fparam       := [ "mut" | "move" ] type
 
-stmt         := "val" | "var" | "while" | "return" | expr
+stmt         := "val" | "var" | "while" | "for" | "return" | expr
 val          := "val" ident [ ":" type ] "=" expr
 var          := "var" ident [ ":" type ] "=" expr
 while        := "while" expr block
+for          := "for" ident "in" expr block   // the `in` is contextual, not a keyword
 return       := "return" [ expr ]
 block        := "{" (line-separated stmt)* "}"
 
@@ -1646,30 +1664,25 @@ fun main() {
     val words = str.split(text.as_str(), " ")
 
     var counts: Map<i64> = Map.new()
-    var i: usize = 0
-    while i < words.len() {
-        val word = str.trim(words.get(i).as_str())
+    for raw in words {
+        val word = str.trim(raw.as_str())
         if !str.is_empty(word.as_str()) {
             bump(counts, word.as_str())
         }
-        i += 1
     }
 
     var keys = counts.keys()
     keys.sort()
 
     var total: i64 = 0
-    var j: usize = 0
-    while j < keys.len() {
-        val key = keys.get(j)
+    for key in keys {
         val n = counts.get(key.as_str())
         total += n
         print("${key}: ${n}")
-        j += 1
     }
     val total_text = fmt.int(total)
     print(str.concat("words: ", total_text.as_str()))
 }
 ```
 
-What the program shows, in order: `impl` lines for four modules, a free function that takes an exclusive borrow of a `Map`, a capability-checked `fs` call whose argument has to be absolute, `Map` and `List` builtins in a loop, `String` ownership passed to a `mut` parameter, and a template that prints two values.
+What the program shows, in order: `impl` lines for four modules, a free function that takes an exclusive borrow of a `Map`, a capability-checked `fs` call whose argument has to be absolute, `Map` and `List` builtins walked with `for` (the element binding is `List.get`'s, hence the `.as_str()` calls), `String` ownership passed to a `mut` parameter, and a template that prints two values.
