@@ -166,6 +166,22 @@ pub enum ExprKind {
         variant: usize,
         field: usize,
     },
+    /// `expr?` — propagate the failure of an enum shaped `Ok`/`Err` or
+    /// `Some`/`None` out of the enclosing function (MK5-S6-M1). `expr` is the
+    /// operand, whose own type names the *source* enum; `target` is the
+    /// enclosing function's return type, which the failure value is rebuilt
+    /// in. Both variant indices are carried so codegen needs no lookup order it
+    /// does not already have, and `err_has_payload` is false for `None`, which
+    /// carries nothing to move.
+    Try {
+        expr: Box<Expr>,
+        source: String,
+        target: String,
+        ok_variant: usize,
+        err_variant: usize,
+        target_err_variant: usize,
+        err_has_payload: bool,
+    },
     Assign {
         target: Box<Expr>,
         value: Box<Expr>,

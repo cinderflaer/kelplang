@@ -2317,6 +2317,68 @@ impl<'a> Gen<'a> {
                 let fname = field_name(&edef.variants[*variant].fields[*field].name);
                 self.enum_member_access(base, &format!("{member}.{fname}"))
             }
+            // `expr?` (MK5-S6-M1): evaluate the operand once; if it carries
+            // the failure tag, rebuild the failure in the enclosing function's
+            // return type and return it; otherwise the statement-expression is
+            // the live success payload. The temporary is deliberately never
+            // dropped — exactly one variant's payload is moved out of it on
+            // either path, and dropping the rest would free what was moved.
+            ExprKind::Try {
+                expr: sub,
+                source,
+                target,
+                ok_variant,
+                err_variant,
+                target_err_variant,
+                err_has_payload,
+            } => {
+                let src_def = self
+                    .enum_def(source)
+                    .expect("`?`'s operand names a declared enum");
+                let dst_def = self
+                    .enum_def(target)
+                    .expect("`?`'s target names a declared enum");
+                let src_def = src_def.clone();
+                let dst_def = dst_def.clone();
+                let src_ty = Ty::Struct(source.clone());
+                let dst_ty = Ty::Struct(target.clone());
+                let ok_member = variant_member(&src_def.variants[*ok_variant].name);
+                let ok_field = field_name(&src_def.variants[*ok_variant].fields[0].name);
+                let err_member = variant_member(&src_def.variants[*err_variant].name);
+                let dst_member = variant_member(&dst_def.variants[*target_err_variant].name);
+                let tmp = fresh_temp();
+                let ret = fresh_temp();
+                let mut out = String::new();
+                writeln!(out, "({{").unwrap();
+                writeln!(
+                    out,
+                    "{} {} = {};",
+                    src_ty.c_type(),
+                    tmp,
+                    self.expr_value(sub)
+                )
+                .unwrap();
+                writeln!(out, "if ({} == {}) {{", format!("{tmp}.kelp_tag"), err_variant).unwrap();
+                writeln!(out, "    {} {} = ({}){{0}};", dst_ty.c_type(), ret, dst_ty.c_type()).unwrap();
+                writeln!(out, "    {}.kelp_tag = {};", ret, target_err_variant).unwrap();
+                if *err_has_payload {
+                    let src_field =
+                        field_name(&src_def.variants[*err_variant].fields[0].name);
+                    let dst_field =
+                        field_name(&dst_def.variants[*target_err_variant].fields[0].name);
+                    writeln!(
+                        out,
+                        "    {}.kelp_v.{}.{} = {}.kelp_v.{}.{};",
+                        ret, dst_member, dst_field, tmp, err_member, src_field
+                    )
+                    .unwrap();
+                }
+                writeln!(out, "    return {};", ret).unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out, "{}.kelp_v.{}.{};", tmp, ok_member, ok_field).unwrap();
+                out.push_str("})");
+                out
+            }
             ExprKind::Ref { expr: sub, .. } => {
                 // A `&str` borrow is the same C value as the `str` it points
                 // at (both `const char*`), so no `&` is emitted for it. Every

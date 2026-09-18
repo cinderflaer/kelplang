@@ -1,0 +1,20 @@
+// MK5-S6-M1: a carrying failure (`Err`) and a payload-less one (`None`) are
+// different shapes.
+enum Result<T, E> {
+    Ok(val value: T)
+    Err(val error: E)
+}
+
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+fun a().R: Result<i32, i32> = Result.Ok(value = 1)
+
+fun b().R: Option<i32> {
+    val v = a()?
+    return Option.Some(value = v)
+}
+
+fun main() {}

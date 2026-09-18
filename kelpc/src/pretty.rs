@@ -168,6 +168,10 @@ fn print_expr(out: &mut String, expr: &Expr) {
             out.push_str(sym);
             print_expr(out, expr);
         }
+        Expr::Try { expr, .. } => {
+            print_expr(out, expr);
+            out.push('?');
+        }
         Expr::Binary { op, lhs, rhs, .. } => {
             out.push('(');
             print_expr(out, lhs);

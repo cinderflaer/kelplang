@@ -1,0 +1,15 @@
+// MK5-S6-M1: v1 has no error conversion, so the failure payload type has to be
+// the same in the operand and in the enclosing function's return type.
+enum Result<T, E> {
+    Ok(val value: T)
+    Err(val error: E)
+}
+
+fun a().R: Result<i32, i32> = Result.Ok(value = 1)
+
+fun b().R: Result<i32, String> {
+    val v = a()?
+    return Result.Ok(value = v)
+}
+
+fun main() {}

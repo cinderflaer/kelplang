@@ -352,6 +352,14 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
+    /// `expr?` — propagate a failure out of the enclosing function
+    /// (MK5-S6-M1). Postfix, and the operand must be an `enum` shaped
+    /// `Ok`/`Err` or `Some`/`None`; `infer.rs` decides that and lowers it to a
+    /// `tir::ExprKind::Try`.
+    Try {
+        expr: Box<Expr>,
+        span: Span,
+    },
     /// `*expr` — dereferencing a borrow.
     Deref {
         expr: Box<Expr>,
@@ -440,6 +448,7 @@ impl Expr {
             | Expr::Assign { span: s, .. }
             | Expr::If { span: s, .. }
             | Expr::Ref { span: s, .. }
+            | Expr::Try { span: s, .. }
             | Expr::Deref { span: s, .. }
             | Expr::MethodCall { span: s, .. }
             | Expr::Template { span: s, .. }

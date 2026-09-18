@@ -928,6 +928,18 @@ impl Parser {
     fn parse_postfix(&mut self) -> PResult<Expr> {
         let mut expr = self.parse_primary()?;
         loop {
+            // `expr?` — the propagation operator (MK5-S6-M1). It is postfix,
+            // so it binds tighter than any binary operator and chains with the
+            // accesses below (`f()?.x`).
+            if self.check(&TokenKind::Question) {
+                let q = self.advance().span;
+                let start = expr.span();
+                expr = Expr::Try {
+                    expr: Box::new(expr),
+                    span: start.to(q),
+                };
+                continue;
+            }
             if self.check(&TokenKind::Dot) {
                 self.advance();
                 let (name, nspan) = self.expect_ident()?;
