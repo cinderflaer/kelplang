@@ -2944,6 +2944,7 @@ impl PdScan {
             ast::Expr::Ident(name, _) => self.note(name),
             ast::Expr::Unary { expr, .. }
             | ast::Expr::Ref { expr, .. }
+            | ast::Expr::Try { expr, .. }
             | ast::Expr::Deref { expr, .. } => self.scan_expr(expr),
             ast::Expr::Binary { lhs, rhs, .. } => {
                 self.scan_expr(lhs);
@@ -3761,6 +3762,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: block.span,
             })
         }
+        ast::Expr::Try { expr: sub, span } => check_try(sub, *span, ctx),
         ast::Expr::Ref { mutable, expr: sub, span } => {
             if !is_ast_place(sub) {
                 return Err(TypeError {
@@ -4375,6 +4377,152 @@ fn check_generic_bare_variant(
             fields: Vec::new(),
         },
         ty: Ty::Struct(key),
+        span,
+    })
+}
+
+/// The two-variant shapes `?` understands (MK5-S6-M1): `Ok`/`Err`, where the
+/// failure carries a payload, and `Some`/`None`, where it does not. Recognized
+/// by *variant name and arity*, never by the enum's own name, so a program's
+/// own `Result`/`Option` works with no import and no blessed name — the shape
+/// is the contract.
+struct TryShape {
+    ok: usize,
+    err: usize,
+    err_has_payload: bool,
+}
+
+fn try_shape(edef: &EnumDef) -> Option<TryShape> {
+    if edef.variants.len() != 2 {
+        return None;
+    }
+    let find = |n: &str| edef.variants.iter().position(|v| v.name == n);
+    if let (Some(ok), Some(err)) = (find("Ok"), find("Err")) {
+        if edef.variants[ok].fields.len() == 1 && edef.variants[err].fields.len() == 1 {
+            return Some(TryShape {
+                ok,
+                err,
+                err_has_payload: true,
+            });
+        }
+        return None;
+    }
+    if let (Some(some), Some(none)) = (find("Some"), find("None")) {
+        if edef.variants[some].fields.len() == 1 && edef.variants[none].fields.is_empty() {
+            return Some(TryShape {
+                ok: some,
+                err: none,
+                err_has_payload: false,
+            });
+        }
+    }
+    None
+}
+
+/// `expr?` (MK5-S6-M1). The operand has to be an `enum` shaped `Ok`/`Err` or
+/// `Some`/`None`, held by value (a borrow cannot give its payload away), and
+/// the enclosing function has to return an enum of the same shape — with the
+/// *same* failure payload type for `Ok`/`Err`, because v1 has no error
+/// conversion. What the operator evaluates to is the success payload.
+fn check_try(sub: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
+    let inner = check_expr(sub, ctx, None)?;
+    // The operand is read as a whole value and its payload is moved out, so a
+    // borrow is not usable here — `when`/`if let` is the form for that.
+    let source = match &inner.ty {
+        Ty::Struct(name) => name.clone(),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "'?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value, not '{}' — match it with 'when' or 'if let' instead",
+                    other.display()
+                ),
+                span,
+            })
+        }
+    };
+    let Some(edef) = ctx.enum_def(&source) else {
+        return Err(TypeError {
+            message: format!("'?' needs an enum, but '{}' is a datac", inner.ty.display()),
+            span,
+        });
+    };
+    let Some(shape) = try_shape(&edef) else {
+        let names: Vec<String> = edef.variants.iter().map(|v| format!("'{}'", v.name)).collect();
+        return Err(TypeError {
+            message: format!(
+                "'?' needs an enum with an 'Ok' and an 'Err' variant (or a 'Some' and a 'None'), but '{}' has {}",
+                inner.ty.display(),
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    // The enclosing function's return type is where a failure goes.
+    let ret = ctx.ret_ty.clone();
+    let ret_name = match &ret {
+        Ty::Struct(name) if ctx.enum_def(name).is_some() => name.clone(),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' — it returns '{}'",
+                    other.display()
+                ),
+                span,
+            })
+        }
+    };
+    let rdef = ctx
+        .enum_def(&ret_name)
+        .expect("checked just above that the return type is an enum");
+    let Some(rshape) = try_shape(&rdef) else {
+        let names: Vec<String> = rdef.variants.iter().map(|v| format!("'{}'", v.name)).collect();
+        return Err(TypeError {
+            message: format!(
+                "'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None' — it returns '{}', with {}",
+                ret.display(),
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    if shape.err_has_payload != rshape.err_has_payload {
+        return Err(TypeError {
+            message: format!(
+                "'?' here propagates {} failure, but the enclosing function returns '{}' — the two have to be the same shape",
+                if shape.err_has_payload { "a carrying" } else { "a payload-less" },
+                ret.display()
+            ),
+            span,
+        });
+    }
+    if shape.err_has_payload {
+        let from = &edef.variants[shape.err].fields[0].ty;
+        let to = &rdef.variants[rshape.err].fields[0].ty;
+        if from != to {
+            return Err(TypeError {
+                message: format!(
+                    "'?' cannot convert a failure: '{}' carries '{}' and the enclosing function returns '{}', whose failure carries '{}' — v1 has no error conversion, so the two have to be the same type",
+                    inner.ty.display(),
+                    from.display(),
+                    ret.display(),
+                    to.display()
+                ),
+                span,
+            });
+        }
+    }
+    let ok_ty = edef.variants[shape.ok].fields[0].ty.clone();
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Try {
+            expr: Box::new(inner),
+            source,
+            target: ret_name,
+            ok_variant: shape.ok,
+            err_variant: shape.err,
+            target_err_variant: rshape.err,
+            err_has_payload: shape.err_has_payload,
+        },
+        ty: ok_ty,
         span,
     })
 }

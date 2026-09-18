@@ -1,0 +1,12 @@
+// MK5-S6-M1: an enum that is not shaped `Ok`/`Err` or `Some`/`None` has no
+// failure to propagate.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun get().R: Shape = Shape.Empty
+
+fun main() {
+    val s = get()?
+}

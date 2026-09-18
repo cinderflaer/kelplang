@@ -883,6 +883,11 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_value(rhs, ctx)
         }
         tir::ExprKind::Call { .. } => check_call(expr, ctx),
+        // `expr?` reads its operand as a whole value: the failure payload is
+        // moved out onto the return path and the success payload is the
+        // expression's value, so a named operand is moved exactly as a bare
+        // read of it would be (MK5-S6-M1).
+        tir::ExprKind::Try { expr: sub, .. } => check_value(sub, ctx),
         tir::ExprKind::Template { pieces, .. } => {
             for piece in pieces {
                 if let tir::TemplatePiece::Value(v) = piece {

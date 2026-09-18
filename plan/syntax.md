@@ -151,6 +151,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 &&  ||  !              logic
 =  +=  -=  *=  /=  %=  assignment and compound assignment
 &  &mut  *             reference, exclusive reference, dereference
+?                      propagate a failure (5.2)
 .  ,  :  (  )  {  }    member access, separators
 ->                     `when` arms only
 ```
@@ -211,7 +212,7 @@ Precedence, loosest first:
 | 5 | `+` `-` | left |
 | 6 | `*` `/` `%` | left |
 | 7 | unary `-` `!` `&` `&mut` `*` | prefix |
-| 8 | `.field`, `.method(...)`, `f(...)` | postfix |
+| 8 | `.field`, `.method(...)`, `f(...)`, `expr?` | postfix |
 | 9 | `=` `+=` `-=` `*=` `/=` `%=` | right |
 
 ```kelp
@@ -233,6 +234,27 @@ Facts worth knowing:
 - A block `{ ... }` is an expression whose value is its last expression when used where a value is expected.
 - Every integer type has `to_<type>()` for every other integer type. Widening is exact; narrowing panics when the value does not fit, naming the call: `panic: i32.to_u64: value out of range`.
 - `print` is the one builtin call that accepts a template; see 12.
+
+#### The `?` operator
+
+`expr?` evaluates `expr` and, if it carries a failure, returns that failure out of the enclosing function. Otherwise the expression's value is the success payload.
+
+```kelp
+fun quarter(n: i64).R: Result<i64, String> {
+    val h = half(n = n)?          // `half` returns Result<i64, String>
+    return Result.Ok(value = h / 2)
+}
+
+fun loud(n: i64).R: Option<String> {
+    val w = maybe_word(n = n)?    // `maybe_word` returns Option<String>
+    return Option.Some(value = String.from_str(s = w.as_str()))
+}
+```
+
+- The operand must be an `enum` **held by value** and shaped either `Ok`/`Err` (the failure carries a payload) or `Some`/`None` (it does not). The shape is the contract: the enum's *name* does not matter, so `std/result`'s `Result`, `std/option`'s `Option` and a program's own declaration of either all work.
+- The enclosing function must return an enum of the **same shape**, and for `Ok`/`Err` with the **same failure payload type** — v1 has no error conversion, so `Result<i64, String>` cannot be propagated out of a function returning `Result<i64, IoErr>`. A function returning `Unit` (including `main`) has nowhere to propagate to.
+- The value of `expr?` is the success payload, so it composes: `1 + half(n = n)?`. A failure returns immediately, which means the enclosing function's locals are dropped on the way out, exactly as any `return` drops them.
+- `?` is postfix and binds tighter than every binary operator. Because it moves a payload out of the operand, a borrow cannot be an operand: match that with `when` (6.3) or `if let` (6.1).
 
 ## 6. Control flow
 
@@ -1215,7 +1237,7 @@ Responses frame their body by `Content-Length`, chunked encoding, a bodyless rul
 These are deliberate, and each one has a workaround in this document:
 
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
-- No `?` yet. Fallible stdlib calls return a `datac` with an `ok` flag, or panic; `if let` (6.1) and `when` (6.3) are how a caller branches on one. `Option<T>` and `Result<T, E>` are expressible as user `enum`s (9.3), and the stdlib has not migrated to them.
+- `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
@@ -1263,6 +1285,9 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'Option' is an enum — an enum carries no methods in v1` | write a free function over the instantiation instead (9.3) |
 | `'Point' does not take type arguments` | only a generic type, a generic function, or a generic `enum`'s variant takes one (9.3) |
 | `'f64' cannot be a Map key` | a key must be `String`, an integer or `bool` — the compiler generates its hash and equality (12.2) |
+| `'?' cannot convert a failure` | the operand's failure payload type and the enclosing function's have to be the same (5.2) |
+| `'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None'` | `?` in a function returning `Unit` (including `main`), or in one returning something that is not that shape |
+| `'?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value` | the operand is not an enum of that shape, or it is a borrow — match it with `when`/`if let` |
 | `'first_of' does not take type arguments — a method's type parameters come from its receiver` | write the parameters on the receiver: `fun Pair<A, B>.first_of()` |
 | `in 'Holder<str>': field 'x' is a borrowed type` | a type argument may not be `str` or a reference; use `String` |
 | `datac 'Bad' is defined more than once` / `field 'x' is defined more than once` | duplicate declaration |
@@ -1324,7 +1349,7 @@ binary       := unary ( binop binary )?
 binop        := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
               | "+" | "-" | "*" | "/" | "%"
 unary        := ( "-" | "!" | "&" [ "mut" ] | "*" ) unary | postfix
-postfix      := primary ( "." ident [ typeargs ] [ "(" args ")" ] )*
+postfix      := primary ( "?" | "." ident [ typeargs ] [ "(" args ")" ] )*
 primary      := int | float | string | template | "true" | "false"
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block [ "else" ( block | if ) ]

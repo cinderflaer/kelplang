@@ -1186,8 +1186,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "generic_method_basic",
         "generic_nested_inference",
         "map_key_types",
-        // MK5-S6-M1: an owned payload bound by `if let`.
+        // MK5-S6-M1: an owned payload bound by `if let`, and owned payloads
+        // moved through `?`.
         "if_let_basic",
+        "try_operator",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2235,6 +2237,35 @@ fn if_let_binds_one_variant_and_else_covers_the_rest() {
 #[test]
 fn if_let_misuse_is_rejected() {
     for name in ["if_let_unknown_variant", "if_let_bind_count"] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MK5-S6-M1: `?` — propagate the failure of an `Ok`/`Err` or `Some`/`None` enum.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn try_propagates_a_failure_out_of_the_enclosing_function() {
+    assert_compiles_and_runs(
+        "tests/fixtures/try_operator.kp",
+        "2\n1\n-3\n4\n-1\n3\n-3\n",
+    );
+}
+
+#[test]
+fn try_misuse_is_rejected() {
+    for name in [
+        // `main` returns `Unit`, so there is nowhere to propagate to.
+        "try_in_main",
+        // The operand has to be an enum, of the right shape, held by value.
+        "try_non_enum",
+        "try_wrong_shape",
+        "try_borrowed",
+        // The failure payload types have to agree, and so do the shapes.
+        "try_error_type",
+        "try_shape_mismatch",
+    ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }
 }

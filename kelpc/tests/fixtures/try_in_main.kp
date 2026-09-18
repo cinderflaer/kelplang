@@ -1,0 +1,13 @@
+// MK5-S6-M1: `?` propagates out of the *enclosing function*, so that function
+// has to return an enum the failure can be rebuilt in. `main` returns `Unit`.
+enum Result<T, E> {
+    Ok(val value: T)
+    Err(val error: E)
+}
+
+fun get().R: Result<i32, i32> = Result.Ok(value = 1)
+
+fun main() {
+    val v = get()?
+    print(v)
+}

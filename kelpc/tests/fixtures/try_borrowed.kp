@@ -1,0 +1,13 @@
+// MK5-S6-M1: `?` moves the payload out, so the operand has to be held by
+// value; a borrow is matched with `when`/`if let` instead.
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+fun peek(o: &Option<i32>).R: Option<i32> {
+    val v = o?
+    return Option.Some(value = v)
+}
+
+fun main() {}

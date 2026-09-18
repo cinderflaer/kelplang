@@ -113,6 +113,9 @@ pub enum TokenKind {
     OrOr,
     Bang,
     Amp,
+    /// `expr?` — propagate a failure out of the enclosing function
+    /// (MK5-S6-M1). Postfix, so it is only ever read after an expression.
+    Question,
 
     Eof,
 }
@@ -377,6 +380,10 @@ impl<'a> Lexer<'a> {
                     } else {
                         TokenKind::Amp
                     }
+                }
+                b'?' => {
+                    self.advance();
+                    TokenKind::Question
                 }
                 b'|' => {
                     self.advance();
