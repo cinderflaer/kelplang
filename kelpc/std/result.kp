@@ -1,0 +1,56 @@
+// std/result — `Result<T, E>`, and the helpers the language can express
+// (MK5-S6-M1).
+//
+// `Ok`/`Err` is the other shape `?` understands (`syntax.md` §5), and the one
+// that carries a reason: a function returns `Result<T, E>` when the caller may
+// want to know *why* it failed, and `expr?` propagates the `E` unchanged into
+// the enclosing function's `Result<_, E>`.
+//
+// What is deliberately absent, and why:
+//
+// - `map`, `map_err`, `and_then` need function values (A-4).
+// - `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out by value, which needs
+//   a move-taking parameter or a clone, so they are offered for a `Copy`
+//   payload and are a compile error at any other instantiation.
+// - There is no error *conversion*: `?` requires the operand's failure payload
+//   type and the enclosing function's to be identical, so `From`-style lifting
+//   of one error into another is where a trait would go (A-12).
+
+enum Result<T, E> {
+    Ok(val value: T)
+    Err(val error: E)
+}
+
+// Whether the result is a success.
+fun is_ok<T, E>(r: &Result<T, E>).R: bool = when r {
+    Ok(_) -> true
+    Err(_) -> false
+}
+
+// Whether the result is a failure.
+fun is_err<T, E>(r: &Result<T, E>).R: bool = when r {
+    Ok(_) -> false
+    Err(_) -> true
+}
+
+// The success payload, or `fallback`. `T` must be `Copy`.
+fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).R: T = when r {
+    Ok(v) -> v
+    Err(_) -> fallback
+}
+
+// The success payload, or a panic naming the call. `T` must be `Copy`.
+fun unwrap<T, E>(r: &Result<T, E>).R: T {
+    if let Ok(v) = r {
+        return v
+    }
+    panic("Result.unwrap: value is Err")
+}
+
+// The failure payload, or a panic naming the call. `E` must be `Copy`.
+fun unwrap_err<T, E>(r: &Result<T, E>).R: E {
+    if let Err(e) = r {
+        return e
+    }
+    panic("Result.unwrap_err: value is Ok")
+}

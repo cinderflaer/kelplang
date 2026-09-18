@@ -3353,7 +3353,20 @@ fn check_function(
     // scope for M1/M2), so a mismatch is only reported when a tail
     // expression is actually present and disagrees with the declared return
     // type.
-    if sig.ret != Ty::Unit && body.tail.is_some() && !str_view_compatible(&body.ty(), &sig.ret) {
+    // A body whose tail is a `panic` diverges, so it satisfies any declared
+    // return type: `fun unwrap<T>(o: &Option<T>).R: T { ... panic("...") }` is
+    // the "this cannot happen" accessor. Nothing else in the language is
+    // divergence-aware — an `if` arm cannot be a `panic` — so this is
+    // deliberately the narrow rule the accessors need.
+    let tail_diverges = body
+        .tail
+        .as_ref()
+        .is_some_and(|e| matches!(&e.kind, tir::ExprKind::Call { callee, .. } if callee == "panic"));
+    if sig.ret != Ty::Unit
+        && body.tail.is_some()
+        && !tail_diverges
+        && !str_view_compatible(&body.ty(), &sig.ret)
+    {
         return Err(TypeError {
             message: format!(
                 "function '{}' declared to return '{}' but body evaluates to '{}'",
@@ -4027,8 +4040,24 @@ fn check_arity(name: &str, params: &[String], explicit: &[Ty], span: Span) -> Re
 /// under a `List`/`Box`/`Map`. A field type that mentions no parameter is
 /// ignored here — its argument is checked against it later, by `match_args`,
 /// which is also where a mismatch is reported.
+/// A written type name as its canonical key, resolved against the module the
+/// *declaration* was written in rather than the module the call site is in —
+/// `Result<T, E>` inside `std/result.kp` is `std.result.Result<T, E>` no matter
+/// who calls it.
+fn qualify_written(name: &str, prefix: &str, aliases: &HashMap<String, String>) -> String {
+    match name.split_once('.') {
+        Some((alias, item)) => match aliases.get(alias) {
+            Some(p) => format!("{p}{item}"),
+            None => name.to_string(),
+        },
+        None => format!("{prefix}{name}"),
+    }
+}
+
 fn bind_type_params(
-    ctx: &Ctx,
+    env: &TypeEnv,
+    prefix: &str,
+    aliases: &HashMap<String, String>,
     written: &ast::TypeExpr,
     actual: &Ty,
     params: &[String],
@@ -4050,29 +4079,35 @@ fn bind_type_params(
     }
     match (written.name.as_str(), actual) {
         ("List", Ty::List(e)) | ("Box", Ty::Box(e)) => {
-            bind_type_params(ctx, &written.args[0], e, params, out)
+            bind_type_params(env, prefix, aliases, &written.args[0], e, params, out)
         }
         // `Map<V>` writes the value alone (the key is `String`), so only a
         // two-argument `Map<K, V>` has a key to bind.
         ("Map", Ty::Map(k, v)) => {
             if written.args.len() == 2 {
-                bind_type_params(ctx, &written.args[0], k, params, out);
+                bind_type_params(env, prefix, aliases, &written.args[0], k, params, out);
             }
-            bind_type_params(ctx, &written.args[written.args.len() - 1], v, params, out);
+            bind_type_params(
+                env,
+                prefix,
+                aliases,
+                &written.args[written.args.len() - 1],
+                v,
+                params,
+                out,
+            );
         }
         // A user generic type (`Pair<T, T>` against `Pair<i32, i32>`): the
         // instantiation records the template it came from and the arguments it
         // was built with, which is exactly the pairing wanted here.
         _ => {
-            let Some(mine) = generic_template_name(&written.name, ctx) else {
-                return;
-            };
+            let mine = qualify_written(&written.name, prefix, aliases);
             if let Ty::Struct(key) = actual {
-                let origin = ctx.env.instances.borrow().origin.get(key).cloned();
+                let origin = env.instances.borrow().origin.get(key).cloned();
                 if let Some((tname, targs)) = origin {
                     if tname == mine {
                         for (w, a) in written.args.iter().zip(targs.iter()) {
-                            bind_type_params(ctx, w, a, params, out);
+                            bind_type_params(env, prefix, aliases, w, a, params, out);
                         }
                     }
                 }
@@ -4195,7 +4230,7 @@ fn check_generic_datac_construction(
         for (i, f) in fields.iter().enumerate() {
             let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
             let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-            bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
+            bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
         }
         finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?
     } else {
@@ -4274,7 +4309,7 @@ fn check_generic_enum_construction(
         for (i, f) in vdef.fields.iter().enumerate() {
             let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
             let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-            bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
+            bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
         }
         finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?
     } else {
@@ -5308,11 +5343,17 @@ fn check_call(
         });
     }
 
+    // The *calling* module's own spelling first: a bare name inside a module is
+    // that module's item (the plan's strict module-qualified namespace), so a
+    // name that happens to exist in the entry module must not win here. For
+    // the entry module the two keys are the same, and a qualified callee
+    // (`check_module_item` passes `std.math.abs`) misses the first and hits the
+    // second, so neither case changes.
     let owned_key = ctx.qualify_own(callee);
     let direct = ctx
-        .sig_of(callee)
-        .map(|s| (callee.to_string(), s))
-        .or_else(|| ctx.sig_of(&owned_key).map(|s| (owned_key.clone(), s)));
+        .sig_of(&owned_key)
+        .map(|s| (owned_key.clone(), s))
+        .or_else(|| ctx.sig_of(callee).map(|s| (callee.to_string(), s)));
     let (key, sig) = match direct {
         Some(found) => found,
         None => match resolve_overload(callee, &owned_key, args, span, ctx)? {
@@ -5374,13 +5415,13 @@ fn check_call(
 /// The key of the generic *function* template `name` or `owned` names, if
 /// either does (A-2).
 fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
-    if ctx.fns.templates.contains_key(name) {
-        return Some(name.to_string());
+    if ctx.fns.templates.contains_key(owned) {
+        return Some(owned.to_string());
     }
     ctx.fns
         .templates
-        .contains_key(owned)
-        .then(|| owned.to_string())
+        .contains_key(name)
+        .then(|| name.to_string())
 }
 
 /// The template key of a method declared on a generic type (A-2): `owner` is
@@ -5433,7 +5474,7 @@ fn instantiate_function(
     // supply the parameters.
     if explicit.is_empty() {
         if let (Some(written), Some(exp)) = (&tmpl.ret, expected) {
-            bind_type_params(ctx, written, exp, &tmpl.params, &mut bindings);
+            bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, written, exp, &tmpl.params, &mut bindings);
         }
         if tmpl.declared.is_empty() {
             if !args.is_empty() {
@@ -5448,7 +5489,7 @@ fn instantiate_function(
             for (i, p) in tmpl.declared.iter().enumerate() {
                 let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &p.ty, &bindings);
                 let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-                bind_type_params(ctx, &p.ty, &probed.ty, &tmpl.params, &mut bindings);
+                bind_type_params(&ctx.env, &tmpl.prefix, &tmpl.aliases, &p.ty, &probed.ty, &tmpl.params, &mut bindings);
             }
         }
     }
@@ -5537,7 +5578,9 @@ fn resolve_overload(
     if args.is_empty() {
         return Ok(None);
     }
-    let bases = [callee, owned_key];
+    // The calling module's own spelling first, for the same reason
+    // `check_call` tries it first.
+    let bases = [owned_key, callee];
     if !bases.iter().any(|b| ctx.overloads.contains_key(*b)) {
         return Ok(None);
     }

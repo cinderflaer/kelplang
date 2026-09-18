@@ -43,7 +43,10 @@ typedef struct {
     size_t cap;
 } kelp_Bytes;
 
-static void kelp_panic(const char* msg) {
+/* `_Noreturn` is what tells the C compiler a `panic` cannot come back, so a
+   generated function whose tail is a `panic` needs no trailing `return` and
+   draws no "control reaches end of non-void function" warning. */
+_Noreturn static void kelp_panic(const char* msg) {
     fprintf(stderr, "panic: %s\n", msg);
     exit(1);
 }
@@ -54,19 +57,19 @@ static void kelp_panic(const char* msg) {
    an argument because the callers that clean up (a `close`, an `fclose`)
    between the failing call and the panic would otherwise let that cleanup
    overwrite the `errno` being reported. */
-static void kelp_panic_at(const char* msg, int p) {
+_Noreturn static void kelp_panic_at(const char* msg, int p) {
     fprintf(stderr, "panic: %s\n", msg);
     fprintf(stderr, "  errno %d: %s\n", p, strerror(p));
     exit(1);
 }
 
-static void kelp_panic_errno(const char* msg) {
+_Noreturn static void kelp_panic_errno(const char* msg) {
     kelp_panic_at(msg, errno);
 }
 
 /* `getaddrinfo` reports through its own return code, not `errno`, so a DNS
    failure gets `gai_strerror` instead of a misleading `errno 0: Success`. */
-static void kelp_panic_gai(const char* msg, int rc) {
+_Noreturn static void kelp_panic_gai(const char* msg, int rc) {
     fprintf(stderr, "panic: %s\n", msg);
     fprintf(stderr, "  getaddrinfo: %s\n", gai_strerror(rc));
     exit(1);
@@ -2020,7 +2023,13 @@ impl<'a> Gen<'a> {
         }
         let drops = self.drops_at_block_end(block.span);
         if let Some(tail) = &block.tail {
-            if *ret_ty == Ty::Unit {
+            // A body whose tail is a `panic` diverges: `infer.rs` accepts it
+            // against any declared return type, and here it is a plain
+            // statement — `return kelp_panic(...)` would be a void expression
+            // in a non-void function.
+            if matches!(&tail.kind, ExprKind::Call { callee, .. } if callee == "panic") {
+                self.write_stmt_like_expr(tail, depth);
+            } else if *ret_ty == Ty::Unit {
                 self.write_stmt_like_expr(tail, depth);
             } else if drops.is_empty() {
                 let value = self.expr_value(tail);

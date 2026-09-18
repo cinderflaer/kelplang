@@ -366,6 +366,19 @@ fun sum_to(n: i32).R: i32 {
 
 `return` with no value is allowed in a function with no `.R: T`. An expression-bodied function (see 7.1) does not use `return`.
 
+A block whose **last statement is `panic(...)`** diverges, so it satisfies any declared return type:
+
+```kelp
+fun unwrap<T>(o: &Option<T>).R: T {
+    if let Some(v) = o {
+        return v
+    }
+    panic("Option.unwrap: value is None")
+}
+```
+
+That is the whole of the divergence rule: it applies to a function body's tail and nowhere else, so a `panic` cannot be the arm of an `if`/`when` used as a value. It exists because it is what makes a "this cannot happen" accessor expressible at all (`std/option`'s `unwrap` is the first one).
+
 ## 7. Functions
 
 ### 7.1 Declaration
@@ -967,7 +980,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Thirteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+Fifteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -984,6 +997,8 @@ Thirteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/process` | `process` | argv, spawn, wait, kill, exit |
 | `std/net` | `net` | TCP sockets, listener, readiness, DNS |
 | `std/http` | none (holds `net`) | HTTP client, request and response types, connection pool |
+| `std/option` | none | `Option<T>` and its helpers |
+| `std/result` | none | `Result<T, E>` and its helpers |
 
 ### 16.1 `std/str`
 
@@ -1231,6 +1246,41 @@ fun Response.text().R: String
 ```
 
 Responses frame their body by `Content-Length`, chunked encoding, a bodyless rule or end-of-file, and a reusable connection returns to the per-`host:port` pool sized by `http_pool` in `coral.toml`. `http.get` panics on a URL it cannot parse, a connection failure, or a capability denial; a response with a non-2xx status is not a panic, it is a `Response`.
+
+### 16.13 `std/option`
+
+```kelp
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+fun is_some<T>(o: &Option<T>).R: bool
+fun is_none<T>(o: &Option<T>).R: bool
+fun unwrap_or<T>(o: &Option<T>, fallback: T).R: T   // `T` must be Copy
+fun unwrap<T>(o: &Option<T>).R: T                   // `T` must be Copy; panics on None
+```
+
+The enum is the point: `Some`/`None` is one of the two shapes `?` (5) and `if let` (6.1) understand, so a function that can fail one way returns `Option<T>` and its caller writes `val x = f(...)?`. Nothing in the compiler knows this module exists — the *shape* is the contract, so a program's own `Option` works identically.
+
+`unwrap_or` and `unwrap` are offered for a `Copy` payload, because the payload comes out of a borrow and v1 has neither a move-taking parameter nor a clone: `Option<String>.unwrap()` is a compile error saying so, and `if let`/`when` is what reads an owned payload through the borrow. `map`/`and_then`/`or_else` need function values and do not exist yet.
+
+### 16.14 `std/result`
+
+```kelp
+enum Result<T, E> {
+    Ok(val value: T)
+    Err(val error: E)
+}
+
+fun is_ok<T, E>(r: &Result<T, E>).R: bool
+fun is_err<T, E>(r: &Result<T, E>).R: bool
+fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).R: T   // `T` must be Copy
+fun unwrap<T, E>(r: &Result<T, E>).R: T                   // `T` must be Copy; panics on Err
+fun unwrap_err<T, E>(r: &Result<T, E>).R: E               // `E` must be Copy; panics on Ok
+```
+
+`Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
 
 ## 17. Limits in v1
 

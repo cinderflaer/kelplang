@@ -1,0 +1,82 @@
+// MK5-S6-M1: `Option<T>` and `Result<T, E>` ship as `std/option` and
+// `std/result`, and the `?` operator and `if let` understand their shapes
+// without the compiler knowing either module exists.
+// `index_of` below deliberately has the same *bare* name as `std/str`'s, which
+// is the regression test for a resolution bug this fixture flushed out: a bare
+// name inside a module must be that module's own item, so `std/str`'s own
+// `index_of` call cannot pick up the entry module's function of the same name.
+impl "std/str"
+impl "std/option"
+impl "std/result"
+
+fun half(n: i64).R: result.Result<i64, String> {
+    if n % 2 != 0 {
+        return result.Result.Err(error = String.from_str(s = "odd"))
+    }
+    return result.Result.Ok(value = n / 2)
+}
+
+// `?` propagates the `String` failure unchanged out of a second frame.
+fun quarter(n: i64).R: result.Result<i64, String> {
+    val h = half(n = n)?
+    return result.Result.Ok(value = h / 2)
+}
+
+fun find(xs: &List<String>, needle: &str).R: option.Option<i64> {
+    var i: usize = 0
+    while i < xs.len() {
+        if str.eq(xs.get(i = i).as_str(), needle) {
+            return option.Option.Some(value = i.to_i64())
+        }
+        i += 1
+    }
+    return option.Option.None
+}
+
+// `?` on an `Option` out of the enclosing `Option`.
+fun index_of(xs: &List<String>, needle: &str).R: option.Option<String> {
+    val at = find(xs = xs, needle = needle)?
+    return option.Option.Some(value = String.from_str(s = "found"))
+}
+
+fun main() {
+    val good = quarter(n = 8)
+    print(result.is_ok(r = good))
+    print(result.is_err(r = good))
+    print(result.unwrap_or(r = good, fallback = -1))
+
+    val bad = quarter(n = 3)
+    print(result.is_ok(r = bad))
+    print(result.unwrap_or(r = bad, fallback = -1))
+
+    var xs: List<String> = List.empty()
+    xs.push(String.from_str(s = "a"))
+    xs.push(String.from_str(s = "b"))
+
+    val hit = find(xs = xs, needle = "b")
+    print(option.is_some(o = hit))
+    print(option.unwrap_or(o = hit, fallback = -1))
+    print(option.unwrap(o = hit))
+
+    val miss = find(xs = xs, needle = "z")
+    print(option.is_none(o = miss))
+    print(option.unwrap_or(o = miss, fallback = -1))
+
+    // `if let` over both, with an owned payload read through the borrow.
+    val word = find(xs = xs, needle = "a")
+    if let Some(i) = word {
+        print(i)
+    } else {
+        print(-1.to_i64())
+    }
+    if let Ok(v) = good {
+        print(v)
+    }
+    if let Err(e) = bad {
+        print(e.as_str())
+    }
+
+    // `?` on an `Option` in an `Option`-returning function.
+    print(option.is_some(o = index_of(xs = xs, needle = "b")))
+    print(option.is_none(o = index_of(xs = xs, needle = "z")))
+}

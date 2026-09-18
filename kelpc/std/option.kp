@@ -1,0 +1,52 @@
+// std/option — `Option<T>`, and the helpers the language can express (MK5-S6-M1).
+//
+// The enum is the point. `Some`/`None` is one of the two shapes the `?`
+// operator understands (`syntax.md` §5) and the shape `if let` branches on, so
+// a function that can fail exactly one way returns `Option<T>` and its caller
+// writes `val x = f(...)?`.
+//
+// What is deliberately absent, and why:
+//
+// - `map`, `and_then`, `or_else` need function values (A-4). They are the
+//   helpers everyone reaches for first, and they are the ones v1 cannot write.
+// - Anything that hands the payload *out* by value needs either a move-taking
+//   parameter or a clone, and v1 has neither: a parameter of a non-`Copy` type
+//   is a borrow. So `unwrap_or`/`unwrap` are offered for a `Copy` payload and
+//   are a compile error at any other instantiation — the same rule
+//   `List.get` follows, and the reason there is no `Option<String>.unwrap()`.
+// - `ok_or` (turning an `Option` into a `Result`) would have to consume the
+//   option to move its payload into `Ok`, which is the same missing piece.
+
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+// Whether the option holds a value.
+fun is_some<T>(o: &Option<T>).R: bool = when o {
+    Some(_) -> true
+    None -> false
+}
+
+// Whether the option is empty.
+fun is_none<T>(o: &Option<T>).R: bool = when o {
+    Some(_) -> false
+    None -> true
+}
+
+// The payload, or `fallback`. `T` must be `Copy`: the payload is borrowed, so
+// an owned one cannot be handed out (use `if let`/`when` and read it through
+// the borrow instead).
+fun unwrap_or<T>(o: &Option<T>, fallback: T).R: T = when o {
+    Some(v) -> v
+    None -> fallback
+}
+
+// The payload, or a panic naming the call. `T` must be `Copy`, for the same
+// reason `unwrap_or`'s must be.
+fun unwrap<T>(o: &Option<T>).R: T {
+    if let Some(v) = o {
+        return v
+    }
+    panic("Option.unwrap: value is None")
+}

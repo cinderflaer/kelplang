@@ -1,0 +1,14 @@
+// MK5-S6-M1: a function body whose tail is a `panic` diverges, so it satisfies
+// the declared return type — which is what makes an accessor like
+// `std/option`'s `unwrap` expressible.
+fun always_fails(n: i64).R: i64 {
+    if n > 0 {
+        return n
+    }
+    panic("always_fails: non-positive")
+}
+
+fun main() {
+    print(always_fails(n = 5))
+    print(always_fails(n = 0))
+}
