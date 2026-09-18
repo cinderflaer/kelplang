@@ -868,10 +868,10 @@ impl TypeScope<'_> {
                         });
                     }
                     let ty = self.resolve(&f.ty, false)?;
-                    if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                    if crate::types::is_borrowed_field_ty(&ty) {
                         return Err(TypeError {
                             message: format!(
-                                "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str' or reference field is not expressible",
+                                "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one",
                                 f.name,
                                 ty.display()
                             ),
@@ -916,10 +916,10 @@ impl TypeScope<'_> {
                             });
                         }
                         let ty = self.resolve(&f.ty, false)?;
-                        if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                        if crate::types::is_borrowed_field_ty(&ty) {
                             return Err(TypeError {
                                 message: format!(
-                                    "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str' or reference payload is not expressible",
+                                    "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible — an owned 'String' is the way to keep text in one",
                                     f.name,
                                     ty.display()
                                 ),
@@ -1554,6 +1554,59 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             false,
         );
 
+        // A length-carrying view of text (A-8). The two constructors are the
+        // only places a length is *derived* (`str.view` runs one `strlen`,
+        // `String.view` reads the length it already has); every operation on a
+        // `View` is length-aware, and none of them is a C string function — a
+        // slice has no NUL after it, so `strlen`/`strcmp` on one would read
+        // past the slice and report a different string than the program has.
+        // That is also why none of these takes or returns a `str`.
+        //
+        // `self` is by value for every one of them: a `View` is two words of
+        // `Copy` data (a pointer and a length), so a borrow would add an
+        // indirection and buy nothing — the same choice the integer
+        // conversions make.
+        add("str#view", vec![("self".to_string(), Ty::Str)], Ty::View, false);
+        add(
+            "String#view",
+            vec![("self".to_string(), string_shared.clone())],
+            Ty::View,
+            false,
+        );
+        add("View#len", vec![("self".to_string(), Ty::View)], Ty::Usize, false);
+        add("View#is_empty", vec![("self".to_string(), Ty::View)], Ty::Bool, false);
+        add(
+            "View#get",
+            vec![("self".to_string(), Ty::View), ("i".to_string(), Ty::Usize)],
+            Ty::U8,
+            false,
+        );
+        add(
+            "View#slice",
+            vec![
+                ("self".to_string(), Ty::View),
+                ("from".to_string(), Ty::Usize),
+                ("to".to_string(), Ty::Usize),
+            ],
+            Ty::View,
+            false,
+        );
+        add(
+            "View#eq",
+            vec![("self".to_string(), Ty::View), ("other".to_string(), Ty::View)],
+            Ty::Bool,
+            false,
+        );
+        // The one way to make a `str`-shaped value out of a slice, and the
+        // reason it exists rather than an implicit conversion: a copy is the
+        // only safe answer when the source may not be terminated.
+        add(
+            "View#to_string",
+            vec![("self".to_string(), Ty::View)],
+            Ty::String,
+            false,
+        );
+
         // Growing a `String` in place (S1). The same exclusive-borrow rule
         // as `Bytes`, and the same NUL-termination invariant: `push_str`
         // appends a borrowed view, so a view of `self` would alias the
@@ -1638,6 +1691,12 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
     match ty {
         Ty::Bytes => Some("Bytes"),
         Ty::String => Some("String"),
+        // A `str` **value** can now have methods, which it could not before
+        // A-8: `s.view()` needs a receiver, and a `str` has no other name to
+        // be one (the `std/str` helpers are free functions called
+        // `str.len(s)`). Only `str#view` exists, so nothing else changes.
+        Ty::Str => Some("str"),
+        Ty::View => Some("View"),
         Ty::List(_) => Some("List"),
         Ty::Box(_) => Some("Box"),
         Ty::Map(..) => Some("Map"),
@@ -1664,6 +1723,10 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
 fn borrowed_element_reason(ty: &Ty) -> Option<String> {
     Some(match ty {
         Ty::Str => "'str' is a borrowed view".to_string(),
+        // A `View` is the same kind of thing with a length, and it has the
+        // same problem: an element outlives the text it points at, and v1 has
+        // no lifetime syntax to say otherwise (A-8, A-11).
+        Ty::View => "'View' is a borrowed view".to_string(),
         Ty::Ref { mutable, inner } => format!(
             "'{}' is a borrow",
             Ty::Ref { mutable: *mutable, inner: inner.clone() }.display()
@@ -1963,10 +2026,28 @@ pub fn borrow_root_param(params: &[(String, Ty)]) -> Option<usize> {
 }
 
 /// Whether a parameter is a reference the elision rule can borrow from.
-/// `str` counts: a `str` parameter *is* `&str`, modelled as a flat borrowed
-/// view (`Ty::Str`) rather than a `Ty::Ref`.
+/// `str` and `View` count: a `str` parameter *is* `&str`, and a `View` is a
+/// `&str` with a length, both modelled as flat borrowed values (`Ty::Str`,
+/// `Ty::View`) rather than a `Ty::Ref`. That is the same set as
+/// `types::is_borrowed_field_ty` — a type that points at somebody else's data
+/// cannot be a parameter's elision root unless it is also a type you cannot
+/// store, which is the same fact stated twice.
 pub fn is_ref_param(ty: &Ty) -> bool {
-    matches!(ty, Ty::Str | Ty::Ref { .. })
+    crate::types::is_borrowed_field_ty(ty)
+}
+
+/// Whether a value of this type **borrows**: the result of a function that
+/// returns one has to be rooted in a parameter (the elision rule), and the
+/// caller has to keep that owner borrowed while the value lives.
+///
+/// `Ty::Ref` is the general case. `Ty::View` is the flat one: it is a pointer
+/// and a length passed *by value*, so it is not a `Ty::Ref` in the type
+/// system, but it points at text somebody else owns exactly as `&str` does —
+/// which is why every rule that applies to a returned `&str` has to apply to a
+/// returned `View` (A-8). `borrowck.rs` keys those rules on this predicate
+/// rather than on `Ty::Ref` alone.
+pub fn is_borrowed_value(ty: &Ty) -> bool {
+    matches!(ty, Ty::Ref { .. } | Ty::View)
 }
 
 /// The elided borrow root for a builtin method, if it returns a borrow.
@@ -1980,7 +2061,11 @@ pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
         return Some(Some(0));
     }
     let b = BUILTINS.get(key)?;
-    if matches!(b.ret, Ty::Ref { .. }) {
+    // A method that returns a *view* borrows its receiver just as one that
+    // returns a `Ty::Ref` does: `s.view()`, `v.slice(a, b)`. `View` is passed
+    // by value (two words of `Copy` data), so it is not a `Ty::Ref` in the
+    // type system, but the value still points into the receiver.
+    if crate::infer::is_borrowed_value(&b.ret) {
         Some(borrow_root_param(&b.params))
     } else {
         None
@@ -2701,10 +2786,10 @@ pub fn check_program(
                     }
                     .resolve(&f.ty, false)
                     .map_err(|err| err.in_module(&e.module))?;
-                    if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                    if crate::types::is_borrowed_field_ty(&ty) {
                         return Err(Diagnostic::new(
                             format!(
-                                "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str' or reference payload is not expressible",
+                                "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str', 'View' or reference payload is not expressible — an owned 'String' is the way to keep text in one",
                                 f.name,
                                 ty.display()
                             ),
@@ -2804,10 +2889,10 @@ pub fn check_program(
             // An owned field (`Bytes`, `String`, or a `datac` holding one) is
             // allowed from M6.2 on: `codegen_c.rs` generates a drop function
             // per datac, so dropping a struct recurses into its fields.
-            if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+            if crate::types::is_borrowed_field_ty(&ty) {
                 return Err(Diagnostic::new(
                     format!(
-                        "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str' or reference field is not expressible",
+                        "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str', 'View' or reference field is not expressible — an owned 'String' is the way to keep text in one",
                         f.name,
                         ty.display()
                     ),
@@ -3668,7 +3753,9 @@ fn struct_name_of(ty: &Ty) -> Option<&str> {
 /// the types `print` renders straight out of their buffer.
 fn is_printable_buffer(ty: &Ty) -> bool {
     match ty {
-        Ty::Bytes | Ty::String => true,
+        // A `View` is printable because its length travels with it: `print`
+        // emits `%.*s` from the pair, so a slice prints as the slice.
+        Ty::Bytes | Ty::String | Ty::View => true,
         Ty::Ref { inner, .. } => matches!(**inner, Ty::Bytes | Ty::String),
         _ => false,
     }
@@ -4229,7 +4316,7 @@ fn check_fn_literal(
     let mut captures = Vec::with_capacity(capture_list.len());
     let mut env_fields: Vec<(String, Ty)> = Vec::with_capacity(capture_list.len());
     for (i, (name, ty)) in capture_list.iter().enumerate() {
-        if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+        if crate::types::is_borrowed_field_ty(&ty) {
             return Err(TypeError {
                 message: format!(
                     "a 'fun' literal cannot capture '{name}': it is a borrow ('{}'), and the environment it would be stored in outlives the frame the borrow points into — capture an owned value, or pass it as a parameter of the literal",
@@ -4351,13 +4438,22 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
 /// did), and a `str` parameter is left alone entirely, so `str.eq(a, b)` and
 /// `str.len(s)` keep taking views with no allocation.
 fn coerce_str_to_string(value: tir::Expr, expected: Option<&Ty>) -> tir::Expr {
-    if !matches!(expected, Some(Ty::String)) || !is_str_like(&value.ty) {
+    if !matches!(expected, Some(Ty::String)) {
         return value;
     }
+    // A `View` needs a different conversion, not the same one: it may be a
+    // *slice*, with no NUL after it, so `String.from_str` (which is `strlen`
+    // and a copy) would copy past the slice into the rest of the source. The
+    // length-aware copy is the only correct one, and it is `View.to_string`.
+    let callee = match &value.ty {
+        t if is_str_like(t) => "String#from_str",
+        Ty::View => "View#to_string",
+        _ => return value,
+    };
     let span = value.span;
     tir::Expr {
         kind: tir::ExprKind::Call {
-            callee: "String#from_str".to_string(),
+            callee: callee.to_string(),
             args: vec![value],
         },
         ty: Ty::String,
@@ -5971,7 +6067,6 @@ fn comparable(ty: &Ty) -> bool {
         || matches!(ty, Ty::Bool | Ty::Char)
         || (matches!(ty, Ty::Ref { .. }) && !is_str_like(ty))
 }
-
 fn comparison_error(ty: &Ty, op: BinOp) -> String {
     let sym = match op {
         BinOp::Eq => "==",
@@ -5990,6 +6085,12 @@ fn comparison_error(ty: &Ty, op: BinOp) -> String {
     match ty {
         Ty::Str => format!(
             "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
+        ),
+        // A `View` *could* compare byte-wise (it has a length), but `==` on a
+        // non-scalar is not how any other type reads and `view.eq` says what
+        // it does.
+        Ty::View => format!(
+            "cannot compare 'View' values with '{sym}': use 'view.eq(other)' — it compares the bytes and the lengths, where '{sym}' would compare the pointers"
         ),
         Ty::Bytes | Ty::String => format!(
             "cannot compare '{}' values with '{}': v1 has no equality for owned values",
@@ -6204,7 +6305,7 @@ fn require_place_for_borrowed_arg(
     args: &[tir::Expr],
     span: Span,
 ) -> Result<()> {
-    if !matches!(ret, Ty::Ref { .. }) {
+    if !is_borrowed_value(ret) {
         return Ok(());
     }
     let Some(idx) = borrow_root_param(params) else {

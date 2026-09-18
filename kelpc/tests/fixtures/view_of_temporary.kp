@@ -1,0 +1,6 @@
+// A-8: a view of a temporary outlives the temporary, so it is refused the
+// same way `String.from_str("x").as_str()` is.
+fun main() {
+    val v = String.from_str("x").view()
+    print(v)
+}

@@ -624,7 +624,7 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
     // `check_call` has one rule for both.
     let mut fn_borrow_root: HashMap<String, Option<usize>> = HashMap::new();
     for f in &program.functions {
-        if matches!(f.ret, Ty::Ref { .. }) {
+        if crate::infer::is_borrowed_value(&f.ret) {
             fn_borrow_root.insert(f.name.clone(), crate::infer::borrow_root_param(&f.params));
         }
     }
@@ -660,12 +660,12 @@ fn check_function(
         // A borrowed return type borrows from the first reference
         // parameter — `infer.rs` has already rejected a function that
         // returns one without taking any.
-        ret_borrow_param: if matches!(f.ret, Ty::Ref { .. }) {
+        ret_borrow_param: if crate::infer::is_borrowed_value(&f.ret) {
             crate::infer::borrow_root_param(&f.params).map(|i| f.params[i].0.clone())
         } else {
             None
         },
-        ret_is_borrow: matches!(f.ret, Ty::Ref { .. }),
+        ret_is_borrow: crate::infer::is_borrowed_value(&f.ret),
         ret_ty: f.ret.clone(),
     };
     for (name, ty) in &f.params {
@@ -1095,7 +1095,7 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         unreachable!("check_call is only called on a Call node")
     };
     let mut taken = take_call_arguments(args, ctx)?;
-    if matches!(expr.ty, Ty::Ref { .. }) {
+    if crate::infer::is_borrowed_value(&expr.ty) {
         let idx = ctx.borrow_root_param_of(callee);
         if let Some(root) = idx
             .and_then(|i| args.get(i))

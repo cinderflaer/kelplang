@@ -27,6 +27,27 @@ pub enum Ty {
     /// `String.from_bytes`/`String.into_bytes` convert with an ownership
     /// transfer, not a cast.
     String,
+    /// A **length-carrying borrowed text view** (A-8, open items 22/29/44):
+    /// a pointer *and* a length, `{ const char* ptr; size_t len; }`.
+    ///
+    /// It exists because `str` is a bare `const char*`: it has no length, so
+    /// every scan re-derives one with `str.len` (a `strlen`), every slice
+    /// allocates a `String` (`str.copy_range`), and a `datac` cannot hold one
+    /// at all — which is why the JSON reader in this repository copied its
+    /// whole input before parsing. A `View` carries its length, so a slice is
+    /// a pointer and a subtraction.
+    ///
+    /// **It follows `str`'s rules exactly, and the reason is soundness.** A
+    /// view borrows the text it points at, and v1 has no lifetime syntax
+    /// (A-11) to tie a field to its source, so a `View` is refused as a
+    /// `datac` field, an enum payload, a `List` element and a `Map` key, and
+    /// it never converts to `str` implicitly: a *slice* has no NUL after it,
+    /// so `str.len`/`str.eq`/`strcmp` on one would read past the slice. Every
+    /// operation on a `View` is length-aware. `View.to_string` copies with the
+    /// length, which is the one safe way to make a `str` of a slice.
+    ///
+    /// `Copy`, like a borrow: copying a pointer and a length moves nothing.
+    View,
     /// A `datac` value type, named by its declaration.
     Struct(String),
     /// The builtin owned growable sequence (collections milestone):
@@ -119,6 +140,7 @@ impl Ty {
             "isize" => Ty::Isize,
             "Bytes" => Ty::Bytes,
             "String" => Ty::String,
+            "View" => Ty::View,
             _ => return None,
         })
     }
@@ -199,6 +221,7 @@ impl Ty {
             Ty::Isize => "ptrdiff_t".to_string(),
             Ty::Bytes => "kelp_Bytes".to_string(),
             Ty::String => "kelp_String".to_string(),
+            Ty::View => "kelp_View".to_string(),
             Ty::List(elem) => list_c_type(elem),
             Ty::Box(elem) => box_c_type(elem),
             Ty::Map(key, value) => map_c_type(key, value),
@@ -249,6 +272,7 @@ impl Ty {
             Ty::Isize => "isize".to_string(),
             Ty::Bytes => "Bytes".to_string(),
             Ty::String => "String".to_string(),
+            Ty::View => "View".to_string(),
             Ty::Struct(name) => name.clone(),
             Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
@@ -463,7 +487,9 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
-        Ty::Ref { .. } | Ty::Str | Ty::Unit | Ty::List(_) | Ty::Box(_) | Ty::Map(..) => false,
+        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::List(_) | Ty::Box(_) | Ty::Map(..) => {
+            false
+        }
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
 }
@@ -502,7 +528,9 @@ pub fn is_box_element(ty: &Ty) -> bool {
         Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Closure { .. } => {
             true
         }
-        Ty::Ref { .. } | Ty::Str | Ty::Unit => false,
+        // A `View` is a borrow of text that outlives the box, with nowhere to
+        // put the lifetime — the same reason `str` is refused (A-8).
+        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
 }
@@ -640,6 +668,20 @@ pub fn c_ident(name: &str) -> String {
         .replace(')', "__rp__")
         .replace(':', "__c__")
         .replace(' ', "")
+}
+
+/// Whether `ty` is a *borrowed* type in the sense that matters for a `datac`
+/// field or an `enum` payload: it points at data somebody else owns, so it
+/// cannot be stored. (`Box`, `List` and `Map` are not reached here — they
+/// *own* what they point at.)
+///
+/// One predicate rather than a `matches!` at each of the four sites that
+/// enforce this, because there are four and a new borrowed type has to be
+/// remembered at every one of them: the struct-table pass and the generic
+/// instantiation path each check datac fields and enum payloads separately.
+/// `View` (A-8) was missed at two of the four on the first attempt.
+pub fn is_borrowed_field_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Str | Ty::View | Ty::Ref { .. })
 }
 
 /// A function's checked signature. Parameter names are kept (not just

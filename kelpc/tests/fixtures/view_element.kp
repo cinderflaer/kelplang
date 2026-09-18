@@ -1,0 +1,6 @@
+// A-8: a list element is owned by the list and outlives the text a view
+// points at, so `List<View>` is refused for the same reason `List<str>` is.
+fun main() {
+    var parts: List<View> = List.empty()
+    print(parts.len())
+}

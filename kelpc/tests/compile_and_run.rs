@@ -1132,6 +1132,34 @@ fn a_str_becomes_a_string_where_one_is_expected() {
 }
 
 #[test]
+fn a_view_carries_its_length_and_slices_without_allocating() {
+    assert_compiles_and_runs(
+        "tests/fixtures/view.kp",
+        "the quick brown fox\n19\nfalse\ntrue\ntrue\nquick\nthe\nhe quick brown fox\ntrue\ntrue\nfalse\ntrue\nthe\nhe quick brown fox\n3\ntrue\n0\ntrue\nquick\nthe\nowned text\ntext\nquick brown\n11\n",
+    );
+}
+
+#[test]
+fn a_view_cannot_be_stored_in_a_datac() {
+    assert_rejected("tests/fixtures/view_field.kp");
+}
+
+#[test]
+fn a_view_cannot_be_a_list_element() {
+    assert_rejected("tests/fixtures/view_element.kp");
+}
+
+#[test]
+fn a_returned_view_must_come_from_a_reference_parameter() {
+    assert_rejected("tests/fixtures/view_returned_from_local.kp");
+}
+
+#[test]
+fn a_view_of_a_temporary_is_rejected() {
+    assert_rejected("tests/fixtures/view_of_temporary.kp");
+}
+
+#[test]
 fn bitwise_operators_shift_mask_and_complement() {
     assert_compiles_and_runs(
         "tests/fixtures/bitwise.kp",

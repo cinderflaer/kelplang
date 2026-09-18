@@ -100,6 +100,68 @@ static void kelp_assert(bool cond) {
     }
 }
 
+/* ---- kelp_View (A-8) --------------------------------------------------------
+   A length-carrying borrowed text view: a pointer and a length. `str` is a
+   bare `const char*`, so a scan re-derives its length with `strlen` and a
+   slice has to allocate; a view carries both, which is what lets the JSON
+   reader in this repository stop copying its whole input to hold on to it.
+
+   It borrows, so it follows `str`'s rules exactly: never a `datac` field, an
+   enum payload, a `List` element or a `Map` key, and never an implicit
+   conversion to `str` — a slice has no NUL after it, so anything that reads
+   text as a C string would run past the end. Every operation below is
+   length-aware, and `kelp_View__to_string` is the one way to make a `str` out
+   of a slice. */
+typedef struct {
+    const char* ptr;
+    size_t len;
+} kelp_View;
+
+static size_t kelp_View__len(kelp_View self) {
+    return self.len;
+}
+
+static bool kelp_View__is_empty(kelp_View self) {
+    return self.len == 0;
+}
+
+static uint8_t kelp_View__get(kelp_View self, size_t i) {
+    if (i >= self.len) {
+        kelp_panic("View.get: index out of bounds");
+    }
+    return (uint8_t)self.ptr[i];
+}
+
+static kelp_View kelp_View__slice(kelp_View self, size_t from, size_t to) {
+    if (from > to || to > self.len) {
+        kelp_panic("View.slice: index out of bounds");
+    }
+    kelp_View v;
+    v.ptr = self.ptr + from;
+    v.len = to - from;
+    return v;
+}
+
+/* Byte-wise, length-aware: `memcmp` over the shorter prefix would call
+   "ab" and "abc" equal, so the lengths are compared first. */
+static bool kelp_View__eq(kelp_View self, kelp_View other) {
+    if (self.len != other.len) {
+        return false;
+    }
+    return self.len == 0 || memcmp(self.ptr, other.ptr, self.len) == 0;
+}
+
+/* `s.view()` — a view of a whole `str`. This is the one place a length has
+   to be derived from a `str`, because a `str` does not carry one; that cost
+   is what the type exists to stop paying everywhere else. The name is
+   `kelp_str__view` because `infer.rs` keys the method `str#view`. */
+static kelp_View kelp_str__view(const char* s) {
+    kelp_View v;
+    v.ptr = s;
+    v.len = s == NULL ? 0 : strlen(s);
+    return v;
+}
+
 /* The one growth routine both owned buffers share: make room for `extra`
    more bytes past `len`, doubling (or jumping to 8) so appending is
    amortized O(1), and re-terminate. `data`/`cap` are passed by pointer
@@ -384,6 +446,37 @@ static void kelp_String__clear(kelp_String* self) {
    buffer NUL-terminated, which is what a `str` (a `const char*`) requires. */
 static const char* kelp_String__as_str(const kelp_String* self) {
     return (const char*)self->data;
+}
+
+/* A length-carrying view of the same buffer (A-8). No `strlen`: the length is
+   already here, which is the whole point — an owned `String` is the cheapest
+   possible source of a `View`. */
+static kelp_View kelp_String__view(const kelp_String* self) {
+    kelp_View v;
+    v.ptr = (const char*)self->data;
+    v.len = self->len;
+    return v;
+}
+
+/* The one safe conversion from a `View` to a `String`: copy `len` bytes and
+   terminate the copy. The source is not required to be terminated, which is
+   exactly why this allocates rather than handing the pointer out — and why
+   the conversion is not the `String.from_str` an implicit one would use. It
+   lives here, after `kelp_String`, because it builds one. */
+static kelp_String kelp_View__to_string(kelp_View self) {
+    unsigned char* p = (unsigned char*)malloc(self.len + 1);
+    if (p == NULL) {
+        kelp_panic("out of memory");
+    }
+    if (self.len > 0) {
+        memcpy(p, self.ptr, self.len);
+    }
+    p[self.len] = 0;
+    kelp_String s;
+    s.data = p;
+    s.len = self.len;
+    s.cap = self.len;
+    return s;
 }
 
 static const char* kelp_Bytes__as_str(const kelp_Bytes* self) {
@@ -3418,6 +3511,15 @@ impl<'a> Gen<'a> {
             Ty::Bool => ("%s", format!("({value} ? \"true\" : \"false\")")),
             Ty::Char => ("%c", value.to_string()),
             Ty::Str => ("%s", value.to_string()),
+            // A `View` prints by pointer *and length*, never as a C string:
+            // a slice of the source has no NUL after it, so `%s` would run
+            // into whatever follows and print a different string than the
+            // program holds. The length is cast because `%.*s` takes an
+            // `int`.
+            Ty::View => (
+                "%.*s",
+                format!("(int)({value}).len, (const char*)({value}).ptr"),
+            ),
             // A `&str` view carries the pointer itself; `%.*s`-style length
             // handling stays for the owned buffers below.
             Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => ("%s", value.to_string()),

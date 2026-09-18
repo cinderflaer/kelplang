@@ -1,0 +1,83 @@
+// A-8: `View` — a length-carrying borrowed text view.
+//
+// `str` is a bare `const char*`: no length, so every scan re-derives one with
+// `str.len` (a `strlen`), and every slice has to allocate. A `View` carries
+// the length with the pointer, so a slice is a pointer and a subtraction and a
+// scan bounds itself.
+//
+// A `View` **borrows**, so it follows `str`'s rules exactly: it cannot be a
+// `datac` field, an enum payload, a `List` element or a `Map` key, it never
+// converts to `str` (a slice has no NUL after it), and a function that returns
+// one has to derive it from a reference parameter. The rejection fixtures
+// next to this one pin each of those.
+impl "std/str"
+
+// A `View` parameter is an elision root, so a function may return a view of
+// one — the same rule `&str` returns already follow.
+fun head(text: View, n: usize).R: View = text.slice(0, n)
+
+fun tail(text: View).R: View = text.slice(1, text.len())
+
+fun count_byte(text: View, want: u8).R: usize {
+    var i: usize = 0
+    var n: usize = 0
+    while i < text.len() {
+        if text.get(i) == want {
+            n += 1
+        }
+        i += 1
+    }
+    return n
+}
+
+fun main() {
+    val src = "the quick brown fox"
+    val v = src.view()
+    print(v)
+    print(v.len())
+    print(v.is_empty())
+    print(v.get(0) == 't')
+    print(v.get(4) == 'q')
+
+    // A slice is a view of the same text — no `String` is made.
+    print(v.slice(4, 9))
+    print(v.slice(0, 3))
+    print(v.slice(1, v.len()))
+
+    // Equality is byte-wise and length-aware, so a prefix is not equal to the
+    // whole.
+    print(v.eq(v))
+    print(v.eq("the quick brown fox".view()))
+    print(v.eq("other".view()))
+    print(v.slice(0, 3).eq("the".view()))
+
+    print(head(v, 3))
+    print(tail(v))
+    print(count_byte(v, ' '))
+
+    val empty = v.slice(3, 3)
+    print(empty.is_empty())
+    print(empty.len())
+    print(empty.eq("".view()))
+
+    // A `View` becomes a `String` where one is expected, through the
+    // length-aware copy — not `String.from_str`, which is `strlen` and would
+    // copy past the end of a slice.
+    val owned: String = v.slice(4, 9)
+    print(owned.as_str())
+
+    var xs: List<String> = List.empty()
+    xs.push(v.slice(0, 3))
+    print(xs.get(0).as_str())
+
+    // A `String`'s view costs no `strlen`: the length is already there.
+    val s = String.from_str("owned text")
+    print(s.view())
+    print(s.view().slice(6, 10))
+
+    // `print` uses the length, so a view with a NUL-shaped byte in it still
+    // prints exactly its own bytes.
+    val cut = v.slice(4, v.len() - 4)
+    print(cut)
+    print(cut.len())
+}
