@@ -126,6 +126,28 @@ Rules and errors:
 
 Blank lines and `#` comments are free, keys may appear in any order, and a manifest with only `entry` is a complete manifest. `kelpc build` and `kelpc run` both take a project directory or a `.kp` file; `kelpc run <dir>` compiles and runs it in one step.
 
+#### Coral's own sections
+
+Everything from the first `[section]` on is the project-layer tool's surface (Coral), and `kelpc` reads none of it. The one that changes how *this* compiler is chosen is the per-project toolchain pin:
+
+```toml
+name = "jsonlibary"          # the flat keys kelpc reads
+version = "0.1.0"
+entry = "src/main.kp"
+
+[toolchain]                  # Coral's; kelpc stops at the '[' above
+kelp = "v0.2.0"             # the kelpc version this project builds with
+```
+
+Written by `coral toolchain kelp pin v0.2.0`, printed by `coral toolchain kelp pin`, removed by `--clear`. It is a line edit, so comments and section order survive, and a pinned version that is not installed yet is installed on the spot (`coral toolchain kelp install <ver>`, which prefers a release binary and falls back to clone-and-build).
+
+Coral resolves the compiler in this order: `$KELPC`, then the project's pin, then `~/.coral/bin/kelpc`, then `PATH`. Two things follow, and both bite:
+
+- **A pin does nothing for a direct `kelpc` call.** Running `kelpc run src/main.kp` yourself uses whatever `~/.coral/bin/kelpc` points at (the machine default, set by `coral toolchain kelp use <ver>`), not the pin. Build through Coral — `coral build` / `coral run` — for the pin to apply.
+- **`kelpc build`/`run` writes its output into the current directory** by default (1.3), while `coral build` writes `build/`. An IDE run configuration should point at `coral run`, or at the `build/` artifact.
+
+`coral toolchain kelp list` prints the versions available on Gitea; `coral toolchain kelp installed` prints the ones already under `~/.coral/toolchains/`.
+
 ## 2. Lexical structure
 
 ### 2.1 Comments
