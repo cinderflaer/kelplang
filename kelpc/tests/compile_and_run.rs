@@ -1172,6 +1172,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "enum_owned",
         "enum_recursive",
         "enum_container",
+        // A-2: an owned payload in a generic instantiation, and a generic
+        // type that recurses through a `Box` — the instantiation's generated
+        // drop and the recursive drop path.
+        "generic_owned",
+        "generic_recursive",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2177,6 +2182,47 @@ fn enum_misuse_is_rejected() {
         "enum_self_by_value",
         // No partial moves: a payload binds by borrow, never by move.
         "enum_payload_move",
+    ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A-2: user-declarable generic types — `datac`/`enum` templates, monomorphized
+// at each use site, with the type arguments inferred from the construction.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_generic_datac_and_enum_are_monomorphized_per_use_site() {
+    assert_compiles_and_runs(
+        "tests/fixtures/generic_type_basic.kp",
+        "3\n3\nthree\n5\n9\n6\n7\n0\n19\n",
+    );
+}
+
+#[test]
+fn a_generic_instantiation_owns_and_drops_like_any_other_type() {
+    assert_compiles_and_runs("tests/fixtures/generic_owned.kp", "5\n0\n4\n3\n2\n1\n");
+}
+
+#[test]
+fn a_generic_type_can_be_recursive_through_a_box() {
+    assert_compiles_and_runs("tests/fixtures/generic_recursive.kp", "6\none\ntwo\n0\n9\n");
+}
+
+#[test]
+fn generic_type_misuse_is_rejected() {
+    for name in [
+        "generic_needs_args",
+        "generic_arity",
+        "generic_cannot_infer",
+        "generic_method",
+        "generic_fn_params",
+        "generic_param_shadow",
+        "generic_param_duplicate",
+        "generic_clash",
+        "generic_borrowed_field",
+        "generic_self_value",
     ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }

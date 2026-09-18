@@ -1,0 +1,7 @@
+// A-2: a type parameter that names a builtin type would shadow it, so the
+// name is rejected instead.
+datac Holder<i32>(val x: i32)
+
+fun main() {
+    val h: Holder<i32> = Holder(x = 1)
+}

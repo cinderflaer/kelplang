@@ -29,6 +29,69 @@ struct VarInfo {
     mutable: bool,
 }
 
+/// One user-declared generic type (A-2): a `datac` or `enum` written with
+/// type parameters. Its fields are kept *as written* rather than resolved,
+/// because a type parameter has no type until an instantiation binds one —
+/// resolution happens in `TypeScope::instantiate`, with the parameters bound
+/// to the concrete arguments.
+#[derive(Clone)]
+struct GenericTemplate {
+    /// Qualified name, exactly the key a non-generic `datac` of the same name
+    /// would have had.
+    name: String,
+    params: Vec<String>,
+    kind: GenericKind,
+    /// The declaring module's symbol prefix and alias table: a field type
+    /// written inside the template resolves exactly where it was written.
+    prefix: String,
+    aliases: HashMap<String, String>,
+}
+
+#[derive(Clone)]
+enum GenericKind {
+    Record(Vec<ast::FieldDecl>),
+    Sum(Vec<ast::VariantDecl>),
+}
+
+/// One built instantiation, on its way into the instance table.
+enum Instance {
+    Record(StructDef),
+    Sum(EnumDef),
+}
+
+/// Concrete instantiations created on demand while checking (A-2), plus the
+/// in-progress marks that turn a recursive instance (`Node<i32>` holding
+/// `Box<Node<i32>>`) into a terminating lookup instead of infinite recursion.
+#[derive(Default)]
+struct InstanceState {
+    records: HashMap<String, StructDef>,
+    sums: HashMap<String, EnumDef>,
+    /// Instance key -> the template it came from and the arguments it was
+    /// built with, so an expected type can supply type parameters a
+    /// construction cannot infer from its own arguments (`Option.None`).
+    origin: HashMap<String, (String, Vec<Ty>)>,
+    in_progress: std::collections::HashSet<String>,
+}
+
+/// The program's generic templates and the instances built so far. Shared by
+/// reference between the `Ctx` clones each function gets, so an instantiation
+/// discovered while checking one body is visible to every other — and to the
+/// final `tir::Program`.
+#[derive(Clone, Default)]
+struct TypeEnv {
+    generics: std::rc::Rc<HashMap<String, GenericTemplate>>,
+    instances: std::rc::Rc<std::cell::RefCell<InstanceState>>,
+}
+
+/// The canonical name of one instantiation: `Pair<i32, String>`. It is a
+/// `Ty::Struct` key like any other declaration's name, and `types::c_ident`
+/// mangles it into a C identifier, so a type argument list can never be
+/// written by hand in a position that would collide.
+fn instance_key(name: &str, args: &[Ty]) -> String {
+    let parts: Vec<String> = args.iter().map(|a| a.display()).collect();
+    format!("{}<{}>", name, parts.join(", "))
+}
+
 struct Ctx {
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, StructDef>,
@@ -71,6 +134,11 @@ struct Ctx {
     /// answers it the same way M5.1 answered imports — module-scoped, so
     /// only functions in the declaring module can name it.
     pds: HashMap<String, PdInfo>,
+    /// The program's generic type templates and the instances built so far
+    /// (A-2). `structs`/`enums` hold the hand-written declarations; an
+    /// instantiation lives in `env.instances` and is reached through
+    /// `struct_def`/`enum_def`.
+    env: TypeEnv,
     /// Passdowns of *other* modules, bare name -> declaring module. Used for
     /// diagnostics: naming one is an error, and the message says why.
     foreign_pds: HashMap<String, String>,
@@ -252,12 +320,45 @@ impl Ctx {
     fn type_scope(&self) -> TypeScope<'_> {
         TypeScope {
             structs: &self.structs,
+            env: self.env.clone(),
+            params: &EMPTY_PARAMS,
             prefix: &self.prefix,
             aliases: &self.aliases,
             // Every datac is known by the time bodies are checked.
             later_datacs: None,
             in_progress: None,
         }
+    }
+
+    /// The definition of a user type, whether it was declared by hand or is
+    /// an instantiation of a generic template (A-2). Every lookup that used
+    /// to read `self.structs` goes through here, so an instance key
+    /// (`Pair<i32, String>`) behaves exactly like a declared name.
+    fn struct_def(&self, name: &str) -> Option<StructDef> {
+        if let Some(s) = self.structs.get(name) {
+            return Some(s.clone());
+        }
+        self.env.instances.borrow().records.get(name).cloned()
+    }
+
+    /// As `struct_def`, for the `enum` table.
+    fn enum_def(&self, name: &str) -> Option<EnumDef> {
+        if let Some(e) = self.enums.get(name) {
+            return Some(e.clone());
+        }
+        self.env.instances.borrow().sums.get(name).cloned()
+    }
+
+    /// Whether `name` is an `enum` (declared or instantiated).
+    fn is_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name) || self.env.instances.borrow().sums.contains_key(name)
+    }
+
+    /// Instantiates a generic template for one use site (A-2). Idempotent: a
+    /// key that already exists is returned as-is, which is also what makes a
+    /// recursive instantiation terminate.
+    fn instantiate_type(&self, name: &str, args: &[Ty], span: Span) -> Result<Ty> {
+        self.type_scope().instantiate(name, args, span)
     }
 
     /// Whether a passdown referenced from here is already initialized. True
@@ -280,6 +381,16 @@ impl Ctx {
 ///   module-qualified namespace, per the plan).
 struct TypeScope<'a> {
     structs: &'a HashMap<String, StructDef>,
+    /// Generic templates and the instances built so far (A-2). Shared, and
+    /// mutable through a `RefCell`, because resolving `Pair<i32, String>`
+    /// *creates* the instantiation it names — including from inside another
+    /// instantiation's fields.
+    env: TypeEnv,
+    /// The type parameters in scope, bound to concrete arguments: non-empty
+    /// only while a generic template's own fields are being resolved. A bare
+    /// name found here wins over every other name, so `datac Pair<A, B>`'s
+    /// `A` is the argument, never a type that happens to share the name.
+    params: &'a HashMap<String, Ty>,
     prefix: &'a str,
     aliases: &'a HashMap<String, String>,
     /// Qualified names of `datac`s in this module that are declared *after*
@@ -324,6 +435,14 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // A type parameter in scope (`datac Pair<A, B>`'s `A`) is whatever
+        // the instantiation bound it to (A-2). Checked before every other
+        // name, so a parameter shadows a type of the same name.
+        if ty.args.is_empty() && !ty.name.contains('.') {
+            if let Some(bound) = self.params.get(&ty.name) {
+                return Ok(bound.clone());
+            }
+        }
         // The three generic names v1 knows (`List<T>` from C1, `Box<T>` from
         // M8, `Map<V>` from MK5-S5). All are compiler builtins, not
         // user-definable types; each checks its element against what its C
@@ -362,10 +481,33 @@ impl TypeScope<'_> {
             });
         }
         if !ty.args.is_empty() {
+            // A user-declared generic type (A-2): `Pair<i32, String>`. The
+            // arguments are resolved first (they are types in their own
+            // right), then the declaration is instantiated for them.
+            let qualified = self.qualify(&ty.name, ty.span)?;
+            if let Some(tmpl) = self.env.generics.get(&qualified) {
+                if ty.args.len() != tmpl.params.len() {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' takes {} type argument(s), found {}",
+                            tmpl.name,
+                            tmpl.params.len(),
+                            ty.args.len()
+                        ),
+                        span: ty.span,
+                    });
+                }
+                let mut args = Vec::with_capacity(ty.args.len());
+                for a in &ty.args {
+                    args.push(self.resolve(a, true)?);
+                }
+                return self.instantiate(&qualified, &args, ty.span);
+            }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments — the compiler's generic types are 'List<T>', 'Box<T>' and 'Map<V>'",
-                    ty.name
+                    "'{}' does not take type arguments — the compiler's generic types are 'List<T>', 'Box<T>' and 'Map<V>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    ty.name,
+                    name = ty.name
                 ),
                 span: ty.span,
             });
@@ -382,23 +524,27 @@ impl TypeScope<'_> {
         if self.structs.contains_key(&ty.name) {
             return Ok(Ty::Struct(ty.name.clone()));
         }
-        let qualified = match ty.name.split_once('.') {
-            Some((alias, item)) => match self.aliases.get(alias) {
-                Some(prefix) => format!("{prefix}{item}"),
-                None => {
-                    return Err(TypeError {
-                        message: format!(
-                            "unknown module alias '{alias}' in type '{}' — was it imported?",
-                            ty.name
-                        ),
-                        span: ty.span,
-                    })
-                }
-            },
-            None => format!("{}{}", self.prefix, ty.name),
-        };
+        let qualified = self.qualify(&ty.name, ty.span)?;
         if self.structs.contains_key(&qualified) {
             Ok(Ty::Struct(qualified))
+        } else if let Some(tmpl) = self
+            .env
+            .generics
+            .get(&qualified)
+            .or_else(|| self.env.generics.get(&ty.name))
+        {
+            // A generic type written without its arguments. The generic half
+            // of the name is enough to say what is missing.
+            Err(TypeError {
+                message: format!(
+                    "'{}' is a generic type — it needs {} type argument(s): '{}<{}>'",
+                    tmpl.name,
+                    tmpl.params.len(),
+                    tmpl.name,
+                    tmpl.params.join(", ")
+                ),
+                span: ty.span,
+            })
         } else if self
             .later_datacs
             .is_some_and(|later| later.contains(&qualified))
@@ -430,11 +576,212 @@ impl TypeScope<'_> {
         }
     }
 
+    /// A written name as its canonical, module-qualified key: a bare name
+    /// belongs to the current module, and `alias.Item` resolves through the
+    /// module's `impl` table. Factored out of `resolve_base` so the generic
+    /// path and the ordinary one qualify a name exactly the same way.
+    fn qualify(&self, name: &str, span: Span) -> Result<String> {
+        match name.split_once('.') {
+            Some((alias, item)) => match self.aliases.get(alias) {
+                Some(prefix) => Ok(format!("{prefix}{item}")),
+                None => Err(TypeError {
+                    message: format!(
+                        "unknown module alias '{alias}' in type '{name}' — was it imported?"
+                    ),
+                    span,
+                }),
+            },
+            None => Ok(format!("{}{}", self.prefix, name)),
+        }
+    }
+
+    /// Builds (or looks up) the concrete type for one instantiation of a
+    /// generic template (A-2). The instance is registered *before* its fields
+    /// are resolved only as an in-progress mark, so a recursive field
+    /// (`Box<Node<i32>>` inside `Node<i32>`) terminates on the key rather
+    /// than recursing forever; the finished definition is stored afterwards.
+    fn instantiate(&self, name: &str, args: &[Ty], span: Span) -> Result<Ty> {
+        let key = instance_key(name, args);
+        {
+            let st = self.env.instances.borrow();
+            if st.records.contains_key(&key) || st.sums.contains_key(&key) {
+                return Ok(Ty::Struct(key));
+            }
+        }
+        {
+            let mut st = self.env.instances.borrow_mut();
+            if !st.in_progress.insert(key.clone()) {
+                return Ok(Ty::Struct(key));
+            }
+        }
+        let tmpl = self.env.generics[name].clone();
+        let params: HashMap<String, Ty> = tmpl
+            .params
+            .iter()
+            .cloned()
+            .zip(args.iter().cloned())
+            .collect();
+        let scope = TypeScope {
+            structs: self.structs,
+            env: self.env.clone(),
+            params: &params,
+            prefix: &tmpl.prefix,
+            aliases: &tmpl.aliases,
+            later_datacs: None,
+            in_progress: Some(&key),
+        };
+        let built = scope.build_instance(&tmpl, &key);
+        self.env.instances.borrow_mut().in_progress.remove(&key);
+        let inst = built.map_err(|e| TypeError {
+            // A template's fields live in the template's own file, so an
+            // error found while resolving them cannot keep its own span: the
+            // caller attributes the error to *its* module, which is where
+            // the instantiation was written. Re-point the span at the use
+            // site and name the instance in the message instead of printing
+            // a location in the wrong file.
+            message: format!("in '{}': {}", key, e.message),
+            span,
+        })?;
+        let mut st = self.env.instances.borrow_mut();
+        match inst {
+            Instance::Record(s) => {
+                st.records.insert(key.clone(), s);
+            }
+            Instance::Sum(e) => {
+                st.sums.insert(key.clone(), e);
+            }
+        }
+        st.origin
+            .insert(key.clone(), (name.to_string(), args.to_vec()));
+        Ok(Ty::Struct(key))
+    }
+
+    /// Resolves a template's fields with its parameters bound, producing one
+    /// concrete definition. Validation the non-generic path does at
+    /// declaration time (duplicate field names, borrowed fields, duplicate
+    /// variants) happens here instead, because a field type only means
+    /// something once the parameters are bound.
+    fn build_instance(&self, tmpl: &GenericTemplate, key: &str) -> Result<Instance> {
+        match &tmpl.kind {
+            GenericKind::Record(fields) => {
+                let mut out: Vec<FieldDef> = Vec::new();
+                for f in fields {
+                    if out.iter().any(|fd| fd.name == f.name) {
+                        return Err(TypeError {
+                            message: format!(
+                                "field '{}' is defined more than once in datac '{}'",
+                                f.name, tmpl.name
+                            ),
+                            span: f.span,
+                        });
+                    }
+                    let ty = self.resolve(&f.ty, false)?;
+                    if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                        return Err(TypeError {
+                            message: format!(
+                                "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str' or reference field is not expressible",
+                                f.name,
+                                ty.display()
+                            ),
+                            span: f.span,
+                        });
+                    }
+                    out.push(FieldDef {
+                        name: f.name.clone(),
+                        ty,
+                        mutable: f.mutable,
+                    });
+                }
+                Ok(Instance::Record(StructDef {
+                    name: key.to_string(),
+                    fields: out,
+                    // Reassigned by `order_declarations` once every
+                    // instantiation is known; the value here is a sentinel.
+                    order: usize::MAX,
+                }))
+            }
+            GenericKind::Sum(variants) => {
+                let mut out: Vec<crate::types::VariantDef> = Vec::new();
+                for v in variants {
+                    if out.iter().any(|vd| vd.name == v.name) {
+                        return Err(TypeError {
+                            message: format!(
+                                "variant '{}' is defined more than once in enum '{}'",
+                                v.name, tmpl.name
+                            ),
+                            span: v.span,
+                        });
+                    }
+                    let mut fields: Vec<FieldDef> = Vec::new();
+                    for f in &v.fields {
+                        if fields.iter().any(|fd| fd.name == f.name) {
+                            return Err(TypeError {
+                                message: format!(
+                                    "payload field '{}' is defined more than once in variant '{}'",
+                                    f.name, v.name
+                                ),
+                                span: f.span,
+                            });
+                        }
+                        let ty = self.resolve(&f.ty, false)?;
+                        if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                            return Err(TypeError {
+                                message: format!(
+                                    "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str' or reference payload is not expressible",
+                                    f.name,
+                                    ty.display()
+                                ),
+                                span: f.span,
+                            });
+                        }
+                        fields.push(FieldDef {
+                            name: f.name.clone(),
+                            ty,
+                            mutable: f.mutable,
+                        });
+                    }
+                    out.push(crate::types::VariantDef {
+                        name: v.name.clone(),
+                        fields,
+                    });
+                }
+                Ok(Instance::Sum(EnumDef {
+                    name: key.to_string(),
+                    variants: out,
+                    order: usize::MAX,
+                }))
+            }
+        }
+    }
+
     fn resolve_param(&self, p: &ast::Param) -> Result<Ty> {
         Ok(implicit_borrow_wrap(self.resolve(&p.ty, false)?, p.mutable))
     }
 
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
+        // A receiver names a *type*, so a generic type needs its arguments
+        // — and there is no spelling for them on a receiver yet. Say that
+        // rather than let the ordinary "needs N type arguments" message
+        // arrive with no explanation of where they would go (A-2).
+        //
+        // The name may already be canonical (`std.io.File`, rewritten by
+        // `resolve.rs`) or still be written with an alias, so both spellings
+        // are tried; a name that resolves through neither is left to
+        // `resolve` below, which reports it properly.
+        if self.env.generics.contains_key(&r.type_name)
+            || self
+                .qualify(&r.type_name, r.span)
+                .map(|q| self.env.generics.contains_key(&q))
+                .unwrap_or(false)
+        {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' is a generic type — a receiver method on a generic type is not implemented yet (the receiver has no way to say which instantiation it belongs to)",
+                    r.type_name
+                ),
+                span: r.span,
+            });
+        }
         let te = ast::TypeExpr {
             name: r.type_name.clone(),
             args: Vec::new(),
@@ -1037,6 +1384,11 @@ enum ConstValue {
 static EMPTY_DATACS: std::sync::LazyLock<std::collections::HashSet<String>> =
     std::sync::LazyLock::new(std::collections::HashSet::new);
 
+/// Stand-in for "no type parameters in scope" at every site that is not
+/// inside a generic template's own fields (A-2).
+static EMPTY_PARAMS: std::sync::LazyLock<HashMap<String, Ty>> =
+    std::sync::LazyLock::new(HashMap::new);
+
 /// Resolves every top-level `const`, folding its initializer to a literal on
 /// the way. Order matters: a `const` may only reference constants declared
 /// before it, which is what keeps folding a single pass.
@@ -1044,6 +1396,7 @@ fn collect_consts(
     program: &ast::Program,
     project: &Project,
     structs: &HashMap<String, StructDef>,
+    env: &TypeEnv,
 ) -> std::result::Result<HashMap<String, ConstInfo>, Diagnostic> {
     let mut out: HashMap<String, ConstInfo> = HashMap::new();
     for decl in &program.consts {
@@ -1052,6 +1405,8 @@ fn collect_consts(
         let bare = bare_name(&decl.name, prefix).to_string();
         let declared = TypeScope {
             structs,
+            env: env.clone(),
+            params: &EMPTY_PARAMS,
             prefix,
             aliases: &aliases,
             later_datacs: None,
@@ -1273,10 +1628,124 @@ fn fold_binary(op: ast::BinOp, l: ConstValue, r: ConstValue, span: Span) -> Resu
     }
 }
 
+/// Collects every `datac`/`enum` declared with type parameters (A-2) into the
+/// template table. Done before anything is resolved, so a concrete type's
+/// field can name an instantiation.
+///
+/// The checks that need the whole declaration set live here, because the main
+/// declaration loop skips templates entirely: a template name must not
+/// collide with another template, with a builtin type, or with a concrete
+/// declaration of either kind, and a type parameter must not name a builtin
+/// type (which would make `T` resolve to nothing at all).
+fn collect_templates(
+    program: &ast::Program,
+    project: &Project,
+) -> std::result::Result<HashMap<String, GenericTemplate>, Diagnostic> {
+    let mut out: HashMap<String, GenericTemplate> = HashMap::new();
+    // Every declaration, generic or not, so a collision between the two kinds
+    // is caught here (the main loop never sees a template).
+    let all: Vec<(String, Span, String, bool)> = program
+        .datacs
+        .iter()
+        .map(|d| {
+            (
+                d.name.clone(),
+                d.span,
+                d.module.clone(),
+                !d.type_params.is_empty(),
+            )
+        })
+        .chain(program.enums.iter().map(|e| {
+            (
+                e.name.clone(),
+                e.span,
+                e.module.clone(),
+                !e.type_params.is_empty(),
+            )
+        }))
+        .collect();
+    for (name, span, module, generic) in all.iter() {
+        if !generic {
+            continue;
+        }
+        if Ty::from_name(name).is_some() {
+            return Err(Diagnostic::new(
+                format!("'{name}' is a builtin type and cannot be redeclared as a generic type"),
+                *span,
+                module.clone(),
+            ));
+        }
+        if out.contains_key(name) {
+            return Err(Diagnostic::new(
+                format!("generic type '{name}' is defined more than once"),
+                *span,
+                module.clone(),
+            ));
+        }
+        if all
+            .iter()
+            .any(|(other, _, _, other_generic)| !other_generic && other == name)
+        {
+            return Err(Diagnostic::new(
+                format!("'{name}' is used for both a generic and a non-generic type"),
+                *span,
+                module.clone(),
+            ));
+        }
+        let (params, kind) = if let Some(d) = program.datacs.iter().find(|d| &d.name == name) {
+            (d.type_params.clone(), GenericKind::Record(d.fields.clone()))
+        } else {
+            let e = program
+                .enums
+                .iter()
+                .find(|e| &e.name == name)
+                .expect("the declaration lists name only declared types");
+            (e.type_params.clone(), GenericKind::Sum(e.variants.clone()))
+        };
+        for p in &params {
+            if Ty::from_name(p).is_some() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "type parameter '{p}' shadows the builtin type '{p}' — pick another name"
+                    ),
+                    *span,
+                    module.clone(),
+                ));
+            }
+        }
+        // The declaring module's own prefix/alias table, so a field type
+        // written inside the template resolves exactly where it was written.
+        let (prefix, aliases) = (
+            project.prefix_of(module).to_string(),
+            project.alias_prefixes_of(module),
+        );
+        out.insert(
+            name.clone(),
+            GenericTemplate {
+                name: name.clone(),
+                params,
+                kind,
+                prefix,
+                aliases,
+            },
+        );
+    }
+    Ok(out)
+}
+
 pub fn check_program(
     program: &ast::Program,
     project: &Project,
 ) -> std::result::Result<tir::Program, Diagnostic> {
+    // A-2: the generic templates are collected before anything is resolved,
+    // because a concrete declaration's field may name an instantiation
+    // (`val p: Pair<i32, String>`) and the resolution of that field is what
+    // creates it.
+    let generics = collect_templates(program, project)?;
+    let env = TypeEnv {
+        generics: std::rc::Rc::new(generics),
+        instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
+    };
     let mut structs = HashMap::new();
     // Structs are resolved in declaration order, which is also the order
     // `codegen_c.rs` must emit their C typedefs in: a `datac` may only name
@@ -1311,6 +1780,23 @@ pub fn check_program(
     let mut enums: HashMap<String, EnumDef> = HashMap::new();
     let mut enum_order: Vec<String> = Vec::new();
     for (order, name, is_enum) in &merged {
+        // A-2: a generic `datac`/`enum` is a *template*, not a concrete type.
+        // It gets no entry in either table and no declaration order; it is
+        // instantiated on demand by `TypeScope::instantiate`.
+        let template_only = if *is_enum {
+            program
+                .enums
+                .iter()
+                .any(|e| &e.name == name && !e.type_params.is_empty())
+        } else {
+            program
+                .datacs
+                .iter()
+                .any(|d| &d.name == name && !d.type_params.is_empty())
+        };
+        if template_only {
+            continue;
+        }
         if *is_enum {
             let e = program
                 .enums
@@ -1387,6 +1873,8 @@ pub fn check_program(
                     }
                     let ty = TypeScope {
                         structs: &structs,
+                        env: env.clone(),
+                        params: &EMPTY_PARAMS,
                         prefix,
                         aliases: &aliases,
                         later_datacs: Some(&later_datacs),
@@ -1485,6 +1973,8 @@ pub fn check_program(
             }
             let ty = TypeScope {
                 structs: &structs,
+                env: env.clone(),
+                params: &EMPTY_PARAMS,
                 prefix,
                 aliases: &aliases,
                 later_datacs: Some(&later_datacs),
@@ -1529,7 +2019,7 @@ pub fn check_program(
     // Compile-time constants (M6.3) are folded before signatures are built:
     // a `const` may not call anything, so it needs no function table, and
     // folding early means every later site can treat a const as a literal.
-    let consts = collect_consts(program, project, &structs)?;
+    let consts = collect_consts(program, project, &structs, &env)?;
 
     let mut sigs = HashMap::new();
     let mut overloads: HashMap<String, Vec<(Vec<Ty>, String)>> = HashMap::new();
@@ -1553,6 +2043,8 @@ pub fn check_program(
         let aliases = project.alias_prefixes_of(&f.module);
         let scope = TypeScope {
             structs: &structs,
+            env: env.clone(),
+            params: &EMPTY_PARAMS,
             prefix,
             aliases: &aliases,
             later_datacs: None,
@@ -1629,7 +2121,16 @@ pub fn check_program(
     //      passdowns declared before that point visible).
     //   3. the wiring scan says which functions reference which passdowns.
     //   4. initializers and function bodies are checked for real.
-    let all_pds = collect_pds(program, project, &sigs, &structs, &enums, &consts, &overloads)?;
+    let all_pds = collect_pds(
+        program,
+        project,
+        &sigs,
+        &structs,
+        &enums,
+        &consts,
+        &overloads,
+        &env,
+    )?;
     let wired = scan_all(program, &all_pds, &structs, &decl_keys);
 
     if !sigs.contains_key("main") {
@@ -1655,6 +2156,7 @@ pub fn check_program(
             &all_pds,
             &wired,
             &initialized,
+            &env,
         )
         .map_err(|e| e.in_module(&pd.module))?;
         initialized.insert(pd.hidden.clone());
@@ -1679,6 +2181,7 @@ pub fn check_program(
             project,
             &all_pds,
             &wired,
+            &env,
         )
         .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
@@ -1696,17 +2199,116 @@ pub fn check_program(
             })
         })
         .collect();
+    // A-2: the instantiations discovered on demand are part of the program's
+    // declarations, and a hand-written type may contain one by value, so the
+    // two sets are merged and given one topological order before codegen sees
+    // them.
+    let mut records: Vec<StructDef> = struct_order
+        .iter()
+        .map(|name| structs[name].clone())
+        .collect();
+    let mut sums: Vec<EnumDef> = enum_order.iter().map(|name| enums[name].clone()).collect();
+    {
+        let st = env.instances.borrow();
+        records.extend(st.records.values().cloned());
+        sums.extend(st.sums.values().cloned());
+    }
+    order_declarations(&mut records, &mut sums);
     Ok(tir::Program {
-        structs: struct_order
-            .iter()
-            .map(|name| structs[name].clone())
-            .collect(),
-        enums: enum_order.iter().map(|name| enums[name].clone()).collect(),
+        structs: records,
+        enums: sums,
         pds: checked_pds,
         functions,
         caps,
         gated: project.gated().clone(),
     })
+}
+
+/// The `Ty::Struct` names a value of `ty` contains *by value*, looking through
+/// a borrow and stopping at a container: a `List`/`Box`/`Map` holds a pointer
+/// and its typedef is emitted (with a forward-declared struct tag) before every
+/// declaration anyway.
+fn by_value_structs(ty: &Ty, out: &mut Vec<String>) {
+    match ty {
+        Ty::Struct(name) => out.push(name.clone()),
+        Ty::Ref { inner, .. } => by_value_structs(inner, out),
+        Ty::List(_) | Ty::Box(_) | Ty::Map(_) => {}
+        _ => {}
+    }
+}
+
+/// Gives every declaration — hand-written and instantiated alike — a position
+/// in one topological order (A-2). A type that contains another *by value* has
+/// to be emitted after it, because C needs the complete type; hand-written
+/// declarations already arrive in declaration order, which is topological
+/// among themselves, but an instantiation can be named by a hand-written field
+/// (`val p: Pair<i32, String>`), so the two sets have to be merged rather than
+/// concatenated. Ties are broken by the incoming order, so the emitted C is
+/// deterministic.
+fn order_declarations(records: &mut [StructDef], sums: &mut [EnumDef]) {
+    let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+    for r in records.iter() {
+        let mut out = Vec::new();
+        for f in &r.fields {
+            by_value_structs(&f.ty, &mut out);
+        }
+        deps.insert(r.name.clone(), out);
+    }
+    for e in sums.iter() {
+        let mut out = Vec::new();
+        for v in &e.variants {
+            for f in &v.fields {
+                by_value_structs(&f.ty, &mut out);
+            }
+        }
+        deps.insert(e.name.clone(), out);
+    }
+
+    let mut seed: Vec<(usize, String)> = records
+        .iter()
+        .map(|r| (r.order, r.name.clone()))
+        .chain(sums.iter().map(|e| (e.order, e.name.clone())))
+        .collect();
+    seed.sort();
+
+    fn visit(
+        name: &str,
+        deps: &HashMap<String, Vec<String>>,
+        done: &mut HashMap<String, usize>,
+        visiting: &mut std::collections::HashSet<String>,
+        next: &mut usize,
+    ) {
+        if done.contains_key(name) || !visiting.insert(name.to_string()) {
+            return;
+        }
+        if let Some(d) = deps.get(name) {
+            for dep in d {
+                if deps.contains_key(dep) {
+                    visit(dep, deps, done, visiting, next);
+                }
+            }
+        }
+        visiting.remove(name);
+        done.insert(name.to_string(), *next);
+        *next += 1;
+    }
+
+    let mut done: HashMap<String, usize> = HashMap::new();
+    let mut visiting: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut next = 0usize;
+    for (_, name) in &seed {
+        visit(name, &deps, &mut done, &mut visiting, &mut next);
+    }
+    for r in records.iter_mut() {
+        if let Some(o) = done.get(&r.name) {
+            r.order = *o;
+        }
+    }
+    for e in sums.iter_mut() {
+        if let Some(o) = done.get(&e.name) {
+            e.order = *o;
+        }
+    }
 }
 
 /// The passdowns of one module, keyed by the bare name a function writes.
@@ -1731,6 +2333,7 @@ fn collect_pds(
     enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
+    env: &TypeEnv,
 ) -> std::result::Result<Vec<PdInfo>, Diagnostic> {
     let mut out: Vec<PdInfo> = Vec::new();
     for (index, decl) in program.pds.iter().enumerate() {
@@ -1766,6 +2369,8 @@ fn collect_pds(
         let value_ty = match &decl.ty {
             Some(t) => TypeScope {
                 structs,
+                env: env.clone(),
+                params: &EMPTY_PARAMS,
                 prefix,
                 aliases: &aliases,
                 later_datacs: None,
@@ -1789,6 +2394,7 @@ fn collect_pds(
                     &out,
                     None,
                     &HashMap::new(),
+                    env,
                 );
                 ctx.init_state = Some(out.iter().map(|p| p.hidden.clone()).collect());
                 check_expr(&decl.init, &mut ctx, None)
@@ -1834,6 +2440,7 @@ fn check_pd_initializer(
     all: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
     initialized: &std::collections::HashSet<String>,
+    env: &TypeEnv,
 ) -> Result<tir::Expr> {
     let mut ctx = base_ctx(
         &pd.module,
@@ -1846,6 +2453,7 @@ fn check_pd_initializer(
         all,
         Some(pd.index),
         wired,
+        env,
     );
     // An initializer has no hidden parameters of its own: it reads the
     // globals that earlier initializers already assigned.
@@ -1865,6 +2473,7 @@ fn base_ctx(
     all_pds: &[PdInfo],
     before: Option<usize>,
     wired: &HashMap<String, Vec<PdInfo>>,
+    env: &TypeEnv,
 ) -> Ctx {
     let module_pds: Vec<&PdInfo> = all_pds.iter().filter(|p| p.module == module).collect();
     let pds = module_pds
@@ -1890,6 +2499,7 @@ fn base_ctx(
         scopes: vec![HashMap::new()],
         prefix: project.prefix_of(module).to_string(),
         aliases: project.alias_prefixes_of(module),
+        env: env.clone(),
         pds,
         foreign_pds,
         wired: wired.clone(),
@@ -2293,6 +2903,7 @@ fn check_function(
     project: &Project,
     all_pds: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
+    env: &TypeEnv,
 ) -> Result<tir::Function> {
     let sig = sigs.get(key).unwrap().clone();
     let receiver_struct = f
@@ -2321,6 +2932,7 @@ fn check_function(
         all_pds,
         None,
         wired,
+        env,
     );
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
@@ -2662,7 +3274,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             })
         }
         ast::Expr::Binary { op, lhs, rhs, span } => check_binary(*op, lhs, rhs, *span, ctx, expected),
-        ast::Expr::Call { callee, args, span } => check_call(callee, args, *span, ctx),
+        ast::Expr::Call { callee, args, span } => check_call(callee, args, *span, ctx, expected),
         ast::Expr::FieldAccess { base, field, span } => {
             if let ast::Expr::Ident(name, _) = base.as_ref() {
                 if is_module_alias(name, ctx) {
@@ -2685,14 +3297,17 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     });
                 }
             }
+            // `Option.None` — a payload-less variant of a generic `enum`
+            // (A-2), the generic counterpart of the `Shape.Empty` case below.
+            if let Some(tmpl_name) = generic_type_path(base, ctx) {
+                return check_generic_bare_variant(&tmpl_name, field, *span, ctx, expected);
+            }
             // `Shape.Empty` — a payload-less variant, written without a call
             // (A-1). `Shape.Circle` is the error case: a variant that carries
             // payload has to be constructed with its arguments.
             if let Some(ename) = enum_path(base, ctx) {
                 let edef = ctx
-                    .enums
-                    .get(&ename)
-                    .cloned()
+                    .enum_def(&ename)
                     .expect("enum_path only returns known enums");
                 let Some((vidx, vdef)) = edef.variant(field) else {
                     let names: Vec<String> = edef
@@ -2743,7 +3358,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             };
             // An enum has no fields to read: its payload is reached through a
             // pattern, and its tag through `when` (A-1).
-            if ctx.enums.contains_key(&sname) {
+            if ctx.is_enum(&sname) {
                 return Err(TypeError {
                     message: format!(
                         "enum '{sname}' has no field '{field}' — match it with 'when {sname} {{ ... }}' to read a payload"
@@ -2751,7 +3366,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     span: *span,
                 });
             }
-            let sdef = ctx.structs.get(&sname).expect("struct types are only produced for known structs");
+            let sdef = ctx.struct_def(&sname).expect("struct types are only produced for known structs");
             let field_ty = sdef.field(field).map(|f| f.ty.clone()).ok_or_else(|| TypeError {
                 message: format!("datac '{sname}' has no field '{field}'"),
                 span: *span,
@@ -2832,9 +3447,22 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             if let ast::Expr::Ident(name, _) = receiver.as_ref() {
                 if is_module_alias(name, ctx) {
                     if let Some(prefix) = ctx.aliases.get(name).cloned() {
-                        return check_module_item(name, &prefix, method, args, *span, ctx);
+                        return check_module_item(name, &prefix, method, args, *span, ctx, expected);
                     }
                 }
+            }
+            // `Option.Some(v = 1)` — construction of a generic `enum`
+            // variant (A-2), before the concrete-enum check because a generic
+            // enum has no entry in the enum table.
+            if let Some(tmpl_name) = generic_type_path(receiver, ctx) {
+                return check_generic_enum_construction(
+                    &tmpl_name,
+                    method,
+                    args,
+                    *span,
+                    ctx,
+                    expected,
+                );
             }
             // `Shape.Circle(r = 1.0)` — construction of an `enum` variant
             // (A-1). Checked before method resolution because it is the same
@@ -2879,14 +3507,410 @@ fn enum_path(expr: &ast::Expr, ctx: &Ctx) -> Option<String> {
         }
     }
     let path = expr_path(expr)?;
-    if ctx.enums.contains_key(&path) {
+    if ctx.is_enum(&path) {
         return Some(path);
     }
     let qualified = match path.split_once('.') {
         Some((alias, item)) => format!("{}{}", ctx.aliases.get(alias)?, item),
         None => ctx.qualify_own(&path),
     };
-    ctx.enums.contains_key(&qualified).then_some(qualified)
+    ctx.is_enum(&qualified).then_some(qualified)
+}
+
+/// The generic-template counterpart of `enum_path` (A-2): the qualified name of
+/// the template `expr` names, when it names one. `Option.Some(v = 1)` and
+/// `Option.None` both arrive here, because a generic enum has no concrete
+/// entry in the enum table for `enum_path` to find.
+fn generic_type_path(expr: &ast::Expr, ctx: &Ctx) -> Option<String> {
+    if let ast::Expr::Ident(name, _) = expr {
+        if ctx.lookup(name).is_some() || ctx.pds.contains_key(name) {
+            return None;
+        }
+    }
+    let path = expr_path(expr)?;
+    if ctx.env.generics.contains_key(&path) {
+        return Some(path);
+    }
+    let qualified = match path.split_once('.') {
+        Some((alias, item)) => format!("{}{}", ctx.aliases.get(alias)?, item),
+        None => ctx.qualify_own(&path),
+    };
+    ctx.env.generics.contains_key(&qualified).then_some(qualified)
+}
+
+/// The qualified name of the generic template `name` names, if it names one
+/// (A-2).
+fn generic_template_name(name: &str, ctx: &Ctx) -> Option<String> {
+    if ctx.env.generics.contains_key(name) {
+        return Some(name.to_string());
+    }
+    let qualified = ctx.qualify_own(name);
+    ctx.env
+        .generics
+        .contains_key(&qualified)
+        .then_some(qualified)
+}
+
+/// Pairs every parameter with the index of the argument that fills it,
+/// honouring named arguments exactly as `match_args` does. Factored out so
+/// type-argument inference (A-2) can see the pairing before the parameter
+/// types are known — `match_args` needs the types, and the types need the
+/// pairing.
+fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) -> Result<Vec<usize>> {
+    if args.len() != names.len() {
+        return Err(TypeError {
+            message: format!("{what} expects {} argument(s), found {}", names.len(), args.len()),
+            span,
+        });
+    }
+    let mut named: HashMap<&str, usize> = HashMap::new();
+    for (i, a) in args.iter().enumerate() {
+        if let Some(n) = &a.name {
+            if named.insert(n.as_str(), i).is_some() {
+                return Err(TypeError {
+                    message: format!("argument '{n}' specified more than once"),
+                    span,
+                });
+            }
+        }
+    }
+    let mut positional = args.iter().enumerate().filter(|(_, a)| a.name.is_none());
+    let mut slots = Vec::with_capacity(names.len());
+    for name in names {
+        let idx = match named.remove(name.as_str()) {
+            Some(i) => i,
+            None => positional
+                .next()
+                .map(|(i, _)| i)
+                .ok_or_else(|| TypeError {
+                    message: format!("{what} is missing argument '{name}'"),
+                    span,
+                })?,
+        };
+        slots.push(idx);
+    }
+    if let Some((&leftover, _)) = named.iter().next() {
+        return Err(TypeError {
+            message: format!("{what} has no parameter named '{leftover}'"),
+            span,
+        });
+    }
+    Ok(slots)
+}
+
+/// Binds a template's type parameters from one written field type and the
+/// type the corresponding argument actually has (A-2). Only the shapes that
+/// can carry a parameter are inspected: a bare parameter name, or a parameter
+/// under a `List`/`Box`/`Map`. A field type that mentions no parameter is
+/// ignored here — its argument is checked against it later, by `match_args`,
+/// which is also where a mismatch is reported.
+fn bind_type_params(
+    written: &ast::TypeExpr,
+    actual: &Ty,
+    params: &[String],
+    out: &mut HashMap<String, Ty>,
+) {
+    if written.args.is_empty() {
+        if params.iter().any(|p| p == &written.name) {
+            out.entry(written.name.clone()).or_insert_with(|| actual.clone());
+        }
+        return;
+    }
+    match (written.name.as_str(), actual) {
+        ("List", Ty::List(e)) | ("Box", Ty::Box(e)) | ("Map", Ty::Map(e)) => {
+            bind_type_params(&written.args[0], e, params, out)
+        }
+        _ => {}
+    }
+}
+
+/// Completes a partial set of type-argument bindings from the expected type:
+/// `val x: Option<i32> = Option.None` has nothing else to go on (A-2).
+fn bind_from_expected(
+    tmpl: &GenericTemplate,
+    expected: Option<&Ty>,
+    ctx: &Ctx,
+    out: &mut HashMap<String, Ty>,
+) {
+    let Some(Ty::Struct(key)) = expected else {
+        return;
+    };
+    let st = ctx.env.instances.borrow();
+    let Some((name, args)) = st.origin.get(key) else {
+        return;
+    };
+    if name != &tmpl.name {
+        return;
+    }
+    for (p, a) in tmpl.params.iter().zip(args.iter()) {
+        out.entry(p.clone()).or_insert_with(|| a.clone());
+    }
+}
+
+/// The complete argument list for one instantiation, or an error naming the
+/// parameter that could not be inferred.
+fn finish_type_args(
+    tmpl: &GenericTemplate,
+    bindings: &HashMap<String, Ty>,
+    span: Span,
+) -> Result<Vec<Ty>> {
+    let mut args = Vec::with_capacity(tmpl.params.len());
+    for p in &tmpl.params {
+        match bindings.get(p) {
+            Some(t) => args.push(t.clone()),
+            None => {
+                return Err(TypeError {
+                    message: format!(
+                        "cannot infer type parameter '{p}' of '{}' here — annotate the binding (e.g. 'val x: {}<{}> = ...') or pass an argument that determines it",
+                        tmpl.name,
+                        tmpl.name,
+                        tmpl.params.join(", ")
+                    ),
+                    span,
+                })
+            }
+        }
+    }
+    Ok(args)
+}
+
+/// The type a constructor argument is checked *against*, as far as the
+/// bindings so far allow it (A-2). `Node(value = 1, next = Box.empty())`
+/// needs the second argument to know it is a `Box<Node<i32>>`, and the only
+/// place that says so is the field's written type — which can be resolved
+/// once an earlier argument has pinned the parameters. `None` means "not
+/// enough is known yet", and the argument is probed unconstrained.
+fn field_hint(
+    ctx: &Ctx,
+    tmpl: &GenericTemplate,
+    written: &ast::TypeExpr,
+    bindings: &HashMap<String, Ty>,
+) -> Option<Ty> {
+    let scope = TypeScope {
+        structs: &ctx.structs,
+        env: ctx.env.clone(),
+        params: bindings,
+        prefix: &tmpl.prefix,
+        aliases: &tmpl.aliases,
+        later_datacs: None,
+        in_progress: None,
+    };
+    scope.resolve(written, false).ok()
+}
+
+/// `Pair(first = 1, second = "x")` — construction of a generic `datac` (A-2).
+/// The type arguments are inferred from the argument types, falling back to
+/// the expected type, so a generic value is built with the same syntax as an
+/// ordinary one.
+fn check_generic_datac_construction(
+    tmpl_name: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let tmpl = ctx.env.generics[tmpl_name].clone();
+    let GenericKind::Record(fields) = &tmpl.kind else {
+        let variants: Vec<String> = match &tmpl.kind {
+            GenericKind::Sum(vs) => vs.iter().map(|v| format!("'{}.{}'", tmpl.name, v.name)).collect(),
+            GenericKind::Record(_) => unreachable!(),
+        };
+        return Err(TypeError {
+            message: format!(
+                "'{}' is an enum — construct one of its variants: {}",
+                tmpl.name,
+                variants.join(", ")
+            ),
+            span,
+        });
+    };
+    let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+    let slots = arg_slots(&format!("datac '{}'", tmpl.name), &names, args, span)?;
+    // The expected type is consulted first: it is the only thing that can pin
+    // a parameter *before* the argument is probed, which is what makes
+    // `xs.push(Option.Some(value = 7))` infer `Option<i64>` from the list's
+    // element type rather than defaulting the literal to `i32`.
+    let mut bindings = HashMap::new();
+    bind_from_expected(&tmpl, expected, ctx, &mut bindings);
+    for (i, f) in fields.iter().enumerate() {
+        let hint = field_hint(ctx, &tmpl, &f.ty, &bindings);
+        let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
+        bind_type_params(&f.ty, &probed.ty, &tmpl.params, &mut bindings);
+    }
+    let type_args = finish_type_args(&tmpl, &bindings, span)?;
+    let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
+    let key = struct_name_of(&ty)
+        .expect("an instantiation is a struct type")
+        .to_string();
+    let sdef = ctx.struct_def(&key).expect("just instantiated");
+    let params: Vec<(String, Ty)> = sdef
+        .fields
+        .iter()
+        .map(|f| (f.name.clone(), f.ty.clone()))
+        .collect();
+    let checked = match_args(&format!("datac '{}'", key), &params, args, span, ctx)?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::StructLit {
+            name: key,
+            fields: sdef
+                .fields
+                .iter()
+                .map(|f| f.name.clone())
+                .zip(checked)
+                .collect(),
+        },
+        ty: Ty::Struct(sdef.name.clone()),
+        span,
+    })
+}
+
+/// `Option.Some(v = 1)` — construction of one variant of a generic `enum`
+/// (A-2), the enum counterpart of `check_generic_datac_construction`.
+fn check_generic_enum_construction(
+    tmpl_name: &str,
+    variant: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let tmpl = ctx.env.generics[tmpl_name].clone();
+    let GenericKind::Sum(variants) = &tmpl.kind else {
+        return Err(TypeError {
+            message: format!(
+                "'{}' is a generic datac — construct it as '{}(...)'",
+                tmpl.name, tmpl.name
+            ),
+            span,
+        });
+    };
+    let Some(vdef) = variants.iter().find(|v| v.name == variant) else {
+        let names: Vec<String> = variants.iter().map(|v| format!("'{}'", v.name)).collect();
+        return Err(TypeError {
+            message: format!(
+                "'{}.{}' is not a variant — the variants of '{}' are {}",
+                tmpl.name,
+                variant,
+                tmpl.name,
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    let names: Vec<String> = vdef.fields.iter().map(|f| f.name.clone()).collect();
+    let slots = arg_slots(
+        &format!("variant '{}.{}'", tmpl.name, variant),
+        &names,
+        args,
+        span,
+    )?;
+    let mut bindings = HashMap::new();
+    bind_from_expected(&tmpl, expected, ctx, &mut bindings);
+    for (i, f) in vdef.fields.iter().enumerate() {
+        let hint = field_hint(ctx, &tmpl, &f.ty, &bindings);
+        let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
+        bind_type_params(&f.ty, &probed.ty, &tmpl.params, &mut bindings);
+    }
+    let type_args = finish_type_args(&tmpl, &bindings, span)?;
+    let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
+    let key = struct_name_of(&ty)
+        .expect("an instantiation is a struct type")
+        .to_string();
+    let edef = ctx.enum_def(&key).expect("just instantiated");
+    let Some((vidx, vdef)) = edef.variant(variant) else {
+        unreachable!("the instance keeps the template's variants")
+    };
+    let params: Vec<(String, Ty)> = vdef
+        .fields
+        .iter()
+        .map(|f| (f.name.clone(), f.ty.clone()))
+        .collect();
+    let checked = match_args(
+        &format!("variant '{}.{}'", key, variant),
+        &params,
+        args,
+        span,
+        ctx,
+    )?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::EnumLit {
+            enum_name: key.clone(),
+            variant: vidx,
+            fields: checked,
+        },
+        ty: Ty::Struct(key),
+        span,
+    })
+}
+
+/// `Option.None` — a payload-less variant of a generic `enum`, written without
+/// a call (A-2). Nothing in the expression determines the type arguments, so
+/// this form only checks when the expected type does.
+fn check_generic_bare_variant(
+    tmpl_name: &str,
+    variant: &str,
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let tmpl = ctx.env.generics[tmpl_name].clone();
+    let GenericKind::Sum(variants) = &tmpl.kind else {
+        return Err(TypeError {
+            message: format!(
+                "'{}' is a generic datac — read its fields with '.' after constructing it",
+                tmpl.name
+            ),
+            span,
+        });
+    };
+    let Some(vdef) = variants.iter().find(|v| v.name == variant) else {
+        let names: Vec<String> = variants.iter().map(|v| format!("'{}'", v.name)).collect();
+        return Err(TypeError {
+            message: format!(
+                "'{}.{}' is not a variant — the variants of '{}' are {}",
+                tmpl.name,
+                variant,
+                tmpl.name,
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    if !vdef.fields.is_empty() {
+        let fields: Vec<String> = vdef.fields.iter().map(|f| f.name.clone()).collect();
+        return Err(TypeError {
+            message: format!(
+                "variant '{}.{}' carries payload ({}) — construct it as '{}.{}({})'",
+                tmpl.name,
+                variant,
+                fields.join(", "),
+                tmpl.name,
+                variant,
+                fields.join(" = ..., ")
+            ),
+            span,
+        });
+    }
+    let mut bindings = HashMap::new();
+    bind_from_expected(&tmpl, expected, ctx, &mut bindings);
+    let type_args = finish_type_args(&tmpl, &bindings, span)?;
+    let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
+    let key = struct_name_of(&ty)
+        .expect("an instantiation is a struct type")
+        .to_string();
+    let edef = ctx.enum_def(&key).expect("just instantiated");
+    let Some((vidx, _)) = edef.variant(variant) else {
+        unreachable!("the instance keeps the template's variants")
+    };
+    Ok(tir::Expr {
+        kind: tir::ExprKind::EnumLit {
+            enum_name: key.clone(),
+            variant: vidx,
+            fields: Vec::new(),
+        },
+        ty: Ty::Struct(key),
+        span,
+    })
 }
 
 /// `Shape.Circle(r = 1.0)` — one variant's worth of payload, checked against
@@ -2974,7 +3998,7 @@ fn check_when(
             span: scrut.span,
         });
     };
-    let Some(edef) = ctx.enums.get(&ename).cloned() else {
+    let Some(edef) = ctx.enum_def(&ename) else {
         return Err(TypeError {
             message: format!(
                 "'when' with a scrutinee matches an 'enum', but '{ename}' is a datac — read its fields with '.' instead"
@@ -3213,7 +4237,7 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
     // be `var`; fields merely read through on the way there do not.
     if let tir::ExprKind::FieldAccess { base, field } = &target_t.kind {
         let sname = struct_name_of(&base.ty).expect("field access base is always a struct type, guaranteed by check_expr");
-        let sdef = ctx.structs.get(sname).expect("struct types are only produced for known structs");
+        let sdef = ctx.struct_def(sname).expect("struct types are only produced for known structs");
         let fdef = sdef.field(field).expect("field already resolved by check_expr");
         if !fdef.mutable {
             return Err(TypeError {
@@ -3544,7 +4568,14 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
     }
 }
 
-fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {    if callee == "main" {
+fn check_call(
+    callee: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if callee == "main" {
         // `main` is the program entry point; it takes no arguments, so there
         // is no way to hand it the passdowns it may reference, and its own
         // `argv` is reached through `process.args()` instead.
@@ -3593,15 +4624,25 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         });
     }
 
+    // A-2: construction of a generic `datac`: `Pair(first = 1, second = "x")`.
+    // The type arguments are inferred from the argument types (and, failing
+    // that, from the expected type), so a generic value is constructed with
+    // exactly the same syntax as an ordinary one.
+    if let Some(tmpl_name) = generic_template_name(callee, ctx) {
+        return check_generic_datac_construction(&tmpl_name, args, span, ctx, expected);
+    }
+
     // `Shape(r = 1.0)` — an enum is constructed by naming a variant, never by
     // calling the type itself.
-    if ctx.enums.contains_key(callee) || ctx.enums.contains_key(&ctx.qualify_own(callee)) {
-        let ename = if ctx.enums.contains_key(callee) {
+    if ctx.is_enum(callee) || ctx.is_enum(&ctx.qualify_own(callee)) {
+        let ename = if ctx.is_enum(callee) {
             callee.to_string()
         } else {
             ctx.qualify_own(callee)
         };
-        let variants: Vec<String> = ctx.enums[&ename]
+        let variants: Vec<String> = ctx
+            .enum_def(&ename)
+            .expect("is_enum only returns known enums")
             .variants
             .iter()
             .map(|v| format!("'{ename}.{}'", v.name))
@@ -3615,10 +4656,8 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         });
     }
     if let Some(sdef) = ctx
-        .structs
-        .get(callee)
-        .or_else(|| ctx.structs.get(&ctx.qualify_own(callee)))
-        .cloned()
+        .struct_def(callee)
+        .or_else(|| ctx.struct_def(&ctx.qualify_own(callee)))
     {
         let params: Vec<(String, Ty)> = sdef.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
         let checked = match_args(&format!("datac '{}'", sdef.name), &params, args, span, ctx)?;
@@ -3873,7 +4912,7 @@ fn check_method_call_enum_guard(receiver: &ast::Expr, method: &str, span: Span, 
     if let ast::Expr::Ident(name, _) = receiver {
         if let Some(info) = ctx.lookup(name) {
             if let Some(tname) = struct_name_of(&info.ty) {
-                if ctx.enums.contains_key(tname) {
+                if ctx.is_enum(tname) {
                     return Err(TypeError {
                         message: format!(
                             "enum '{tname}' has no method '{method}' — an enum carries no methods in v1; match it with 'when'"
@@ -4179,13 +5218,15 @@ fn check_module_item(
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
+    expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
     let qualified = format!("{prefix}{item}");
     if ctx.structs.contains_key(&qualified)
+        || ctx.env.generics.contains_key(&qualified)
         || ctx.sigs.contains_key(&qualified)
         || ctx.overloads.contains_key(&qualified)
     {
-        return check_call(&qualified, args, span, ctx);
+        return check_call(&qualified, args, span, ctx, expected);
     }
     // A module's `const` is reached the same way as its functions: as
     // `math.PI` (M6.3). It takes no arguments, so a call-shaped reference to

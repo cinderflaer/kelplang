@@ -82,6 +82,12 @@ pub struct CapGrant {
 #[derive(Debug, Clone)]
 pub struct DatacDecl {
     pub name: String,
+    /// `datac Pair<A, B>` — the declared type parameters, in order (A-2).
+    /// Empty for an ordinary `datac`. A parameter is in scope inside every
+    /// field type of this declaration and nowhere else; the declaration is a
+    /// *template*, so `infer.rs` does not resolve its fields until an
+    /// instantiation supplies concrete arguments for them.
+    pub type_params: Vec<String>,
     pub fields: Vec<FieldDecl>,
     /// Declaration index within this file, across `datac`s *and* `enum`s, so
     /// `resolve.rs` can rebuild one merged declaration order out of two
@@ -103,6 +109,9 @@ pub struct DatacDecl {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
+    /// `enum Option<T>` — the declared type parameters, in order (A-2). See
+    /// `DatacDecl::type_params`.
+    pub type_params: Vec<String>,
     pub variants: Vec<VariantDecl>,
     /// Declaration index within this file, across `datac`s *and* `enum`s, so
     /// `resolve.rs` can rebuild one merged declaration order out of two

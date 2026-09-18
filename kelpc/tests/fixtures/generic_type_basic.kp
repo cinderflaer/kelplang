@@ -1,0 +1,49 @@
+// A-2: a user-declared generic type. `Pair<A, B>` and `Option<T>` are
+// templates; each use site monomorphizes into a concrete type, and the type
+// arguments are inferred from the constructor's arguments (or from the
+// expected type, which is the only thing `Option.None` has to go on).
+datac Pair<A, B>(val first: A, val second: B)
+
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+// A parameter type in a signature: the instance is created by writing it, and
+// the same name used twice in one program is the same type.
+fun add_pair(p: &Pair<i32, i32>).R: i32 = p.first + p.second
+
+fun unwrap_or(o: &Option<i32>, fallback: i32).R: i32 = when o {
+    Some(v) -> v
+    None -> fallback
+}
+
+fun main() {
+    // Inferred from the arguments: A = i32, B = i32.
+    val n = Pair(first = 1, second = 2)
+    print(add_pair(p = n))
+
+    // Inferred from the arguments, with a different second type — a separate
+    // instantiation of the same template.
+    val p = Pair(first = 3, second = String.from_str(s = "three"))
+    print(p.first)
+    print(p.second)
+
+    // A generic instantiation nested inside another one: `A` is itself a
+    // `Pair<i32, i32>`, so the field read is a chain.
+    val nested = Pair(first = Pair(first = 4, second = 5), second = 6)
+    print(nested.first.second)
+    print(add_pair(p = nested.first))
+    print(nested.second)
+
+    // The expected type is what determines `T` for a payload-less variant.
+    val some: Option<i32> = Option.Some(value = 7)
+    val none: Option<i32> = Option.None
+    print(unwrap_or(o = some, fallback = 0))
+    print(unwrap_or(o = none, fallback = 0))
+
+    // `option_payloadless` is a `Pair<i32, i32>` too — the same instance the
+    // first construction produced.
+    val again = Pair(first = 9, second = 10)
+    print(add_pair(p = again))
+}

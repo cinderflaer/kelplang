@@ -297,16 +297,51 @@ impl Parser {
     fn parse_datac_decl(&mut self) -> PResult<DatacDecl> {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
         let (name, _) = self.expect_ident()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LParen, "'('")?;
         let fields = self.parse_field_list()?;
         let end = self.expect(TokenKind::RParen, "')'")?.span;
         Ok(DatacDecl {
             name,
+            type_params,
             fields,
             order: 0,
             module: String::new(),
             span: start.to(end),
         })
+    }
+
+    /// `<T, U>` after a declared type name (A-2). Returns an empty vector when
+    /// no `<` was written, so this is a no-op for every ordinary declaration.
+    fn parse_type_params(&mut self) -> PResult<Vec<String>> {
+        if !self.check(&TokenKind::Lt) {
+            return Ok(Vec::new());
+        }
+        let open = self.advance().span;
+        if self.check(&TokenKind::Gt) {
+            return Err(ParseError {
+                message: "a type parameter list needs at least one parameter ('<T>')".to_string(),
+                span: open.to(self.peek().span),
+            });
+        }
+        let mut params = Vec::new();
+        loop {
+            let (param, pspan) = self.expect_ident()?;
+            if params.contains(&param) {
+                return Err(ParseError {
+                    message: format!("type parameter '{param}' is declared more than once"),
+                    span: pspan,
+                });
+            }
+            params.push(param);
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::Gt, "'>' to close the type parameter list")?;
+        Ok(params)
     }
 
     /// The payload of a variant, or a `datac`'s field list, with the opening
@@ -347,6 +382,7 @@ impl Parser {
     fn parse_enum_decl(&mut self) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
         let (name, _) = self.expect_ident()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace, "'{'")?;
         self.skip_newlines();
         let mut variants = Vec::new();
@@ -385,6 +421,7 @@ impl Parser {
         }
         Ok(EnumDecl {
             name,
+            type_params,
             variants,
             order: 0,
             module: String::new(),
@@ -435,6 +472,17 @@ impl Parser {
             }
             (None, first)
         };
+
+        // `<T>` on a function is the generic-function half of A-2, and it is
+        // not implemented yet: only `datac` and `enum` declarations take type
+        // parameters so far. Say so rather than fall through to the confusing
+        // "expected '('" the parameter list would otherwise produce.
+        if self.check(&TokenKind::Lt) {
+            return Err(ParseError {
+                message: "type parameters on a function are not implemented yet — generics currently apply to 'datac' and 'enum' declarations only".to_string(),
+                span: self.peek().span,
+            });
+        }
 
         self.expect(TokenKind::LParen, "'('")?;
         let mut params = Vec::new();
@@ -1373,9 +1421,39 @@ mod tests {
         assert_eq!(p.datacs.len(), 1);
         let d = &p.datacs[0];
         assert_eq!(d.name, "Point");
+        assert!(d.type_params.is_empty());
         assert_eq!(d.fields.len(), 2);
         assert!(!d.fields[0].mutable);
         assert!(d.fields[1].mutable);
+    }
+
+    #[test]
+    fn parses_type_parameters_on_a_datac_and_an_enum() {
+        // A-2: the parameter list sits between the declared name and the
+        // declaration's own `(` or `{`, and a use site writes the arguments.
+        let p = parse("datac Pair<A, B>(val first: A, val second: B)\nfun main() {}");
+        assert_eq!(p.datacs[0].type_params, vec!["A".to_string(), "B".to_string()]);
+
+        let p = parse("enum Option<T> {\n    Some(val value: T)\n    None\n}\nfun main() {}");
+        assert_eq!(p.enums[0].type_params, vec!["T".to_string()]);
+
+        let p = parse("fun f(p: Pair<i32, String>).R: Option<i32> = 1\nfun main() {}");
+        let ty = &p.functions[0].params[0].ty;
+        assert_eq!(ty.name, "Pair");
+        assert_eq!(ty.args.len(), 2);
+        assert_eq!(ty.args[0].name, "i32");
+        assert_eq!(ty.args[1].name, "String");
+        assert_eq!(p.functions[0].return_type.as_ref().unwrap().args.len(), 1);
+    }
+
+    #[test]
+    fn generic_declaration_errors_are_parse_errors() {
+        parse_err("datac Pair<T, T>(val a: T, val b: T)\nfun main() {}");
+        parse_err("datac Pair<>(val a: i32)\nfun main() {}");
+        // A generic *function* is the half that is not implemented, and the
+        // parser says so instead of failing on the parameter list.
+        let e = parse_err("fun f<T>(x: T).R: T = x\nfun main() {}");
+        assert!(e.message.contains("not implemented yet"), "{e:?}");
     }
 
     #[test]

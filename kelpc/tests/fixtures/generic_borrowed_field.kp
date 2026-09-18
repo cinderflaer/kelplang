@@ -1,0 +1,7 @@
+// A-2: the borrow rule is checked against the *instantiation*, so binding a
+// parameter to `str` is refused exactly as writing `val x: str` would be.
+datac Holder<T>(val x: T)
+
+fun main() {
+    val h: Holder<str> = Holder(x = "s")
+}

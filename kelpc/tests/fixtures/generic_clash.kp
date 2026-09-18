@@ -1,0 +1,6 @@
+// A-2: a generic and a non-generic type cannot share a name.
+datac Holder<T>(val x: T)
+datac Holder(val y: i32)
+
+fun main() {
+}
