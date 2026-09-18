@@ -2,6 +2,7 @@
 //! `codegen_c.rs` (and, from M3 onward, `borrowck.rs`).
 
 use crate::ast::{BinOp, UnOp};
+use crate::lexer::Span;
 use crate::types::{StructDef, Ty};
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,9 @@ pub enum Stmt {
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: Ty,
+    /// Source span of the surface-syntax expression this was checked from —
+    /// needed for borrowck's "value moved here" / "used here" diagnostics.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

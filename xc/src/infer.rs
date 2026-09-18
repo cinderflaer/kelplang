@@ -279,7 +279,7 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
 
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
     match expr {
-        ast::Expr::IntLit(v, _) => {
+        ast::Expr::IntLit(v, span) => {
             let ty = match expected {
                 Some(t) if t.is_integer() => t.clone(),
                 _ => Ty::I32,
@@ -287,9 +287,10 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             Ok(tir::Expr {
                 kind: tir::ExprKind::IntLit(*v),
                 ty,
+                span: *span,
             })
         }
-        ast::Expr::FloatLit(v, _) => {
+        ast::Expr::FloatLit(v, span) => {
             let ty = match expected {
                 Some(t) if t.is_float() => t.clone(),
                 _ => Ty::F64,
@@ -297,15 +298,18 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             Ok(tir::Expr {
                 kind: tir::ExprKind::FloatLit(*v),
                 ty,
+                span: *span,
             })
         }
-        ast::Expr::StringLit(s, _) => Ok(tir::Expr {
+        ast::Expr::StringLit(s, span) => Ok(tir::Expr {
             kind: tir::ExprKind::StringLit(s.clone()),
             ty: Ty::Str,
+            span: *span,
         }),
-        ast::Expr::BoolLit(b, _) => Ok(tir::Expr {
+        ast::Expr::BoolLit(b, span) => Ok(tir::Expr {
             kind: tir::ExprKind::BoolLit(*b),
             ty: Ty::Bool,
+            span: *span,
         }),
         ast::Expr::Ident(name, span) => {
             let info = ctx.lookup(name).ok_or_else(|| TypeError {
@@ -315,6 +319,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             Ok(tir::Expr {
                 kind: tir::ExprKind::Ident(name.clone()),
                 ty: info.ty.clone(),
+                span: *span,
             })
         }
         ast::Expr::Unary { op, expr: sub, span } => {
@@ -345,6 +350,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     expr: Box::new(sub_t),
                 },
                 ty,
+                span: *span,
             })
         }
         ast::Expr::Binary { op, lhs, rhs, span } => check_binary(*op, lhs, rhs, *span, ctx, expected),
@@ -368,6 +374,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     field: field.clone(),
                 },
                 ty: field_ty,
+                span: *span,
             })
         }
         ast::Expr::StructLit { name, fields, span } => {
@@ -418,6 +425,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     fields: checked_fields,
                 },
                 ty: Ty::Struct(name.clone()),
+                span: *span,
             })
         }
         ast::Expr::Assign { target, value, span } => check_assign(target, value, *span, ctx),
@@ -433,6 +441,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             Ok(tir::Expr {
                 kind: tir::ExprKind::Block(b),
                 ty,
+                span: block.span,
             })
         }
     }
@@ -494,6 +503,7 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
             value: Box::new(value_t),
         },
         ty: Ty::Unit,
+        span,
     })
 }
 
@@ -529,6 +539,7 @@ fn check_binary(
                     rhs: Box::new(r),
                 },
                 ty,
+                span,
             })
         }
         Lt | LtEq | Gt | GtEq | Eq | NotEq => {
@@ -551,6 +562,7 @@ fn check_binary(
                     rhs: Box::new(r),
                 },
                 ty: Ty::Bool,
+                span,
             })
         }
         And | Or => {
@@ -569,6 +581,7 @@ fn check_binary(
                     rhs: Box::new(r),
                 },
                 ty: Ty::Bool,
+                span,
             })
         }
     }
@@ -597,6 +610,7 @@ fn check_call(callee: &str, args: &[ast::Expr], span: Span, ctx: &mut Ctx) -> Re
                 args: vec![arg],
             },
             ty: Ty::Unit,
+            span,
         });
     }
 
@@ -638,6 +652,7 @@ fn check_call(callee: &str, args: &[ast::Expr], span: Span, ctx: &mut Ctx) -> Re
             args: checked_args,
         },
         ty: sig.ret,
+        span,
     })
 }
 
@@ -706,5 +721,6 @@ fn check_if(
             else_block: else_t,
         },
         ty,
+        span,
     })
 }
