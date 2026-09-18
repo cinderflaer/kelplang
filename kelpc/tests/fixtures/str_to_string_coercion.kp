@@ -1,0 +1,78 @@
+// `str` -> `String`, implicitly (open item 21). A string literal is a `str`
+// (a borrowed view) and an owned field or element is a `String`, so before
+// this every one of those sites had to spell `String.from_str(...)` — about
+// twenty times in the JSON library this came from, once per parser error
+// message and once per `kind()` arm.
+//
+// Only an exact `String` expectation converts. A `str` parameter still takes a
+// view with no allocation, and `&String` is still written the way it was.
+impl "std/str"
+impl "std/option"
+
+datac Doc(val title: String, val body: String)
+
+fun title_of().R: String {
+    // A `return` position.
+    return "a title"
+}
+
+fun shout(s: String).R: String {
+    return str.concat(s.as_str(), "!")
+}
+
+fun main() {
+    // A `val` with a written type.
+    val a: String = "a literal"
+    print(a.as_str())
+
+    // An assignment to an owned variable.
+    var b = String.empty()
+    b = "assigned"
+    print(b.as_str())
+
+    // A `datac` field.
+    val d = Doc(title = "t", body = "b")
+    print(d.title.as_str())
+    print(d.body.as_str())
+
+    // A container element, and a `Map` key and value.
+    var xs: List<String> = List.empty()
+    xs.push("pushed")
+    print(xs.get(0).as_str())
+
+    var m: Map<String, String> = Map.new()
+    m.insert(key = "k", v = "v")
+    print(m.get("k").as_str())
+
+    // An `if` expression: the written type reaches both branches, so a
+    // literal branch needs no conversion written out.
+    val flag = str.eq("a", "a")
+    val picked: String = if flag { "then" } else { "else" }
+    print(picked.as_str())
+
+    // A `when` with a written type: the expectation reaches every arm, so an
+    // arm that produces a borrowed view still yields an owned value.
+    val o: option.Option<String> = option.Option.Some(value = "some")
+    val w: String = when o {
+        Some(s) -> s.as_str()
+        None -> "none"
+    }
+    print(w.as_str())
+
+    // A `return` position, and a value passed to an owned parameter.
+    // `.as_str()` on a *temporary* is still refused (open item 30), so the
+    // returned value is bound before its view is taken.
+    val title = title_of()
+    print(title.as_str())
+    val loud = shout("hey")
+    print(loud.as_str())
+
+    // A `str` parameter is not affected: `str.len` takes the view, and the
+    // conversion never fires for it, so no allocation happens here.
+    val view = "seven!!"
+    print(str.len(view))
+    print(str.eq(view, "seven!!"))
+
+    // The owned `String`'s own surface still works on a converted value.
+    print(d.title.len())
+}

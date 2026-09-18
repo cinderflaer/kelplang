@@ -1124,6 +1124,14 @@ fn path_components_split_a_path() {
 }
 
 #[test]
+fn a_str_becomes_a_string_where_one_is_expected() {
+    assert_compiles_and_runs(
+        "tests/fixtures/str_to_string_coercion.kp",
+        "a literal\nassigned\nt\nb\npushed\nv\nthen\nsome\na title\nhey!\n7\ntrue\n1\n",
+    );
+}
+
+#[test]
 fn bitwise_operators_shift_mask_and_complement() {
     assert_compiles_and_runs(
         "tests/fixtures/bitwise.kp",

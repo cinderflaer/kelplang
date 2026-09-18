@@ -4321,7 +4321,51 @@ fn check_fn_literal(
     })
 }
 
+/// Checks `expr` against an expected type, then applies the one implicit
+/// conversion the language has between borrowed and owned text (open item 21).
+///
+/// This is the wrapper, not the body: putting the conversion *here* means
+/// every site that knows an expected type gets it — a call argument, a `val`
+/// with a written type, a `return`, a `datac` field, a container element, a
+/// `when` arm, a block tail — with no list of sites to keep in sync. The
+/// alternative shape (coerce at each site) is the same behaviour with N
+/// chances to forget one.
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
+    let value = check_expr_inner(expr, ctx, expected)?;
+    Ok(coerce_str_to_string(value, expected))
+}
+
+/// A `str` used where a `String` is expected becomes one, by `String.from_str`.
+///
+/// `String.from_str("...")` was the single most repeated construct in the JSON
+/// library this came from — once per parser error message, once per `kind()`
+/// arm, once per `String.from_str("null")` — because a literal is a `str` and
+/// an owned field is a `String`, and nothing bridged the two. The conversion is
+/// a copy, which is what an owned value has to be; nothing implicit the other
+/// way (`String` to `str`) is added here, because that direction is a
+/// *borrow* with a lifetime, and borrowing a value you are about to free is
+/// the borrow checker's business, not a conversion's.
+///
+/// Only an *exact* `String` expectation fires it. A `&String` parameter is
+/// left alone (the caller writes `&`-shaped arguments the same way it always
+/// did), and a `str` parameter is left alone entirely, so `str.eq(a, b)` and
+/// `str.len(s)` keep taking views with no allocation.
+fn coerce_str_to_string(value: tir::Expr, expected: Option<&Ty>) -> tir::Expr {
+    if !matches!(expected, Some(Ty::String)) || !is_str_like(&value.ty) {
+        return value;
+    }
+    let span = value.span;
+    tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: "String#from_str".to_string(),
+            args: vec![value],
+        },
+        ty: Ty::String,
+        span,
+    }
+}
+
+fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
     // A plain function value where a closure is expected (A-4 phase E): the
     // one widening in this phase, handled here so that every site which knows
     // the expected type gets it — a call argument, a `val` with a written
