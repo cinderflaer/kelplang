@@ -256,6 +256,33 @@ if temp > 30 {
 
 Braces are always required. Parentheses around the condition are neither needed nor the house style. An `if` used as a value must have an `else`; an `if` without an `else` must produce `Unit`, and the compiler says so: `if without an else branch must evaluate to 'unit'`.
 
+#### `if let`
+
+`if let` is the same conditional with a *pattern* instead of a boolean condition: it runs the branch when the variant matches, and binds the payload for that branch.
+
+```kelp
+if let Circle(r) = shape {
+    print(r)
+}
+
+if let Word(text) = token {
+    return text.len()
+}
+
+if let Rect(w, h) = shape {
+    print(w * h)
+} else if let Circle(r) = shape {
+    print(3.14159 * r * r)
+} else {
+    print(0.0)
+}
+```
+
+- It is exactly the pattern form of `when` (6.3) with a single arm and an `else`, which is why the arm rules are the same: the variant must exist, the number of bindings must match the payload, `_` ignores one, and a payload binds as a copy when it is `Copy` and as a shared borrow otherwise.
+- The scrutinee may be **any expression**, temporary or place, because it is bound to a local before it is matched. (A bare `when` needs a *place*, since a payload borrow has to outlive the arm.)
+- `else if let` chains, and a plain `else if`, are both allowed; without any `else` the whole expression is `Unit`, the same as an `if` without one.
+- `let` is an ordinary identifier everywhere else in the language. It is read as the pattern form only directly after `if`, so a binding named `let` cannot be the condition of an `if` without parentheses.
+
 ### 6.2 `while`
 
 `while` is the only loop. There is no `for`, `break` or `continue`.
@@ -1188,7 +1215,7 @@ Responses frame their body by `Content-Length`, chunked encoding, a bodyless rul
 These are deliberate, and each one has a workaround in this document:
 
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
-- No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` is now expressible as a user `enum` (9.3); the stdlib has not migrated to it.
+- No `?` yet. Fallible stdlib calls return a `datac` with an `ok` flag, or panic; `if let` (6.1) and `when` (6.3) are how a caller branches on one. `Option<T>` and `Result<T, E>` are expressible as user `enum`s (9.3), and the stdlib has not migrated to them.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
@@ -1208,7 +1235,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | --- | --- |
 | `expected 'fun', found Ident("fn")` | the keyword is `fun` |
 | `expression-bodied function requires a '.R: T' return type` | add `.R: T`, or use a block body with `return` |
-| `if without an else branch must evaluate to 'unit'` | an `if` or `when` used as a value needs an `else` arm |
+| `if without an else branch must evaluate to 'unit'` | an `if`, `if let` or `when` used as a value needs an `else` arm |
+| `pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s)` | `if let` and a `when` arm bind one name per payload field, in order |
 | `cannot assign to 'x': not declared 'var'` | declare the binding `var` |
 | `'id' is not a 'var' field` | the `datac` field must be declared `var` too |
 | `use of moved value 'a'` | an owned value was moved earlier; reorder, or borrow instead |
@@ -1300,6 +1328,8 @@ postfix      := primary ( "." ident [ typeargs ] [ "(" args ")" ] )*
 primary      := int | float | string | template | "true" | "false"
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block [ "else" ( block | if ) ]
+              | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
+                block [ "else" ( block | if ) ]
               | "when" "{" ( expr "->" expr )* "else" "->" expr "}"
 args         := [ arg ("," arg)* ]
 arg          := [ ident "=" ] expr

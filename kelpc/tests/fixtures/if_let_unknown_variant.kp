@@ -1,0 +1,10 @@
+// MK5-S6-M1: the branch's variant has to exist.
+enum Shape {
+    Empty
+}
+
+fun main() {
+    if let Circle(r) = Shape.Empty {
+        print(r)
+    }
+}

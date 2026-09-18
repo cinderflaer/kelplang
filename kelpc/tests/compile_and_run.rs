@@ -1186,6 +1186,8 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "generic_method_basic",
         "generic_nested_inference",
         "map_key_types",
+        // MK5-S6-M1: an owned payload bound by `if let`.
+        "if_let_basic",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2214,6 +2216,25 @@ fn enum_misuse_is_rejected() {
         // No partial moves: a payload binds by borrow, never by move.
         "enum_payload_move",
     ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MK5-S6-M1: `if let` — a pattern condition, desugared to a single-arm `when`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn if_let_binds_one_variant_and_else_covers_the_rest() {
+    assert_compiles_and_runs(
+        "tests/fixtures/if_let_basic.kp",
+        "2.000000\n0.000000\n0.000000\n4\n0\n3.000000\n-1.000000\n6.000000\n5.000000\n7.000000\n",
+    );
+}
+
+#[test]
+fn if_let_misuse_is_rejected() {
+    for name in ["if_let_unknown_variant", "if_let_bind_count"] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }
 }
