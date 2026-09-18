@@ -1,0 +1,56 @@
+// Character literals (open item 53). Before this, `char` was a type with no
+// values and every byte-level algorithm was written in decimal codes —
+// `if c == 34`, `out.push(32)`, `return n + 48` — so a reader had to decode
+// the ASCII table in their head.
+//
+// A character literal holds one Unicode scalar value and takes the integer
+// type its context asks for, exactly as a numeric literal does. With nothing
+// to ask for one, its type is `char`.
+impl "std/str"
+
+fun main() {
+    // In a `u8` position — the byte-level case.
+    val quote: u8 = '"'
+    print(quote)
+    val zero: u8 = '0'
+    print(zero)
+    print(zero + 5)
+    val nl: u8 = '\n'
+    print(nl)
+    val tab: u8 = '\t'
+    print(tab)
+    val backslash: u8 = '\\'
+    print(backslash)
+    val squote: u8 = '\''
+    print(squote)
+
+    // The decimal codes it replaces, side by side with the literal. The
+    // literal needs the `u8` to be written: with nothing asking for a type,
+    // `' '` is a `char`, and a `char` is not an integer.
+    val space: u8 = ' '
+    print(space == 32)
+    val tilde: u8 = '~'
+    print(tilde == 126)
+    val a: u8 = 'A'
+    print(a == 65)
+
+    // A `char` is a code point, not a byte, so a non-ASCII character fits.
+    val letter: char = 'A'
+    print(letter == 'A')
+    print(letter == 'B')
+    val cjk: char = '\u{4e2d}'
+    print(cjk == '\u{4e2d}')
+    print(cjk == 'A')
+
+    // A `u8` byte read out of a string compares against a character literal
+    // directly — no cast, no decimal code.
+    val s = "hi"
+    print(str.byte(s, 0) == 'h')
+    print(str.byte(s, 1) == 'i')
+    print(str.byte(s, 0) == 'H')
+
+    // A character in an `i64` position takes that type; the same literal
+    // serves every integer width.
+    val big: i64 = 'z'
+    print(big)
+}

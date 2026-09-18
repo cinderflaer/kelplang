@@ -1130,6 +1130,13 @@ impl Parser {
     fn binding_power(op: &TokenKind) -> Option<(u8, BinOp)> {
         use TokenKind::*;
         Some(match op {
+            // C's precedence *except* for the bitwise operators, which sit
+            // above the comparisons rather than below them. This is Rust's
+            // reading, and it is deliberate: in C, `flags & MASK == 0` means
+            // `flags & (MASK == 0)`, which is a bug that has been written a
+            // million times. Here it means `(flags & MASK) == 0`. `|` and `^`
+            // keep their relative order (`|` loosest, then `^`, then `&`), so
+            // `a | b & c` is still `a | (b & c)`.
             OrOr => (1, BinOp::Or),
             AndAnd => (2, BinOp::And),
             EqEq => (3, BinOp::Eq),
@@ -1138,25 +1145,64 @@ impl Parser {
             LtEq => (4, BinOp::LtEq),
             Gt => (4, BinOp::Gt),
             GtEq => (4, BinOp::GtEq),
-            Plus => (5, BinOp::Add),
-            Minus => (5, BinOp::Sub),
-            Star => (6, BinOp::Mul),
-            Slash => (6, BinOp::Div),
-            Percent => (6, BinOp::Mod),
+            Pipe => (5, BinOp::BitOr),
+            Caret => (6, BinOp::BitXor),
+            // `&` in *infix* position is bitwise-and. A prefix `&` never
+            // reaches here: `parse_unary` consumes it first.
+            Amp => (7, BinOp::BitAnd),
+            // `a << b` and `a >> b` arrive as two adjacent `<`/`>` tokens
+            // (`parse_binary` folds them before consulting this table), so
+            // the shift operators are not listed here.
+            Plus => (9, BinOp::Add),
+            Minus => (9, BinOp::Sub),
+            Star => (10, BinOp::Mul),
+            Slash => (10, BinOp::Div),
+            Percent => (10, BinOp::Mod),
             _ => return None,
         })
+    }
+
+    /// `<<` and `>>`, recognized as two *adjacent* `<`/`>` tokens (A-9).
+    ///
+    /// The lexer deliberately does not produce a single `Shl`/`Shr` token:
+    /// `List<List<i32>>` closes a nested type-argument list with two `>`
+    /// characters, and a token that swallowed both would leave the type
+    /// parser with nothing to close the inner list with. Adjacency is what
+    /// separates `a << b` from a comparison followed by another one, and the
+    /// two spellings being visually distinct is why the shift reads as one
+    /// operator anyway.
+    fn shift_op(&self) -> Option<BinOp> {
+        let first = &self.tokens[self.pos];
+        let second = self.tokens.get(self.pos + 1)?;
+        if first.span.end != second.span.start {
+            return None;
+        }
+        match (&first.kind, &second.kind) {
+            (TokenKind::Lt, TokenKind::Lt) => Some(BinOp::Shl),
+            (TokenKind::Gt, TokenKind::Gt) => Some(BinOp::Shr),
+            _ => None,
+        }
     }
 
     fn parse_binary(&mut self, min_bp: u8) -> PResult<Expr> {
         let mut lhs = self.parse_unary()?;
         loop {
-            let Some((bp, op)) = Self::binding_power(self.peek_kind()) else {
-                break;
+            // Shifts first: they are two tokens wide, so the table above
+            // cannot describe them.
+            let (bp, op, width) = if let Some(op) = self.shift_op() {
+                (8u8, op, 2usize)
+            } else {
+                match Self::binding_power(self.peek_kind()) {
+                    Some((bp, op)) => (bp, op, 1),
+                    None => break,
+                }
             };
             if bp < min_bp {
                 break;
             }
-            self.advance();
+            for _ in 0..width {
+                self.advance();
+            }
             let rhs = self.parse_binary(bp + 1)?;
             let span = lhs.span().to(rhs.span());
             lhs = Expr::Binary {
@@ -1187,6 +1233,16 @@ impl Parser {
                 let span = start.to(expr.span());
                 Ok(Expr::Unary {
                     op: UnOp::Not,
+                    expr: Box::new(expr),
+                    span,
+                })
+            }
+            TokenKind::Tilde => {
+                let start = self.advance().span;
+                let expr = self.parse_unary()?;
+                let span = start.to(expr.span());
+                Ok(Expr::Unary {
+                    op: UnOp::BitNot,
                     expr: Box::new(expr),
                     span,
                 })
@@ -1306,6 +1362,10 @@ impl Parser {
             TokenKind::IntLit(v) => {
                 self.advance();
                 Ok(Expr::IntLit(v, tok.span))
+            }
+            TokenKind::CharLit(v) => {
+                self.advance();
+                Ok(Expr::CharLit(v, tok.span))
             }
             TokenKind::FloatLit(v) => {
                 self.advance();

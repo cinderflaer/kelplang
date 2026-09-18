@@ -186,7 +186,11 @@ impl Ty {
             Ty::F32 => "float".to_string(),
             Ty::F64 => "double".to_string(),
             Ty::Bool => "bool".to_string(),
-            Ty::Char => "char".to_string(),
+            // A `char` is a Unicode scalar value, not a C byte: one code
+            // point, which is what makes `'中'` representable. `%c` in
+            // `print` still prints its low byte, which is the ASCII case it
+            // is there for.
+            Ty::Char => "uint32_t".to_string(),
             Ty::Unit => "void".to_string(),
             Ty::Str => "const char*".to_string(),
             Ty::U8 => "uint8_t".to_string(),

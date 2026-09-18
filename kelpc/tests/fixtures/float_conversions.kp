@@ -1,0 +1,29 @@
+// Integer -> float conversion. Operands must match exactly, so an `i64` and
+// an `f64` never meet by themselves: `n * 1.0` is a type error, and before
+// `to_f64` the only widening was to format the integer and parse it back.
+// `to_f64` is exact for every `i64`; `to_f32` rounds to the nearest `f32`,
+// which is the one conversion in the language allowed to lose value without
+// a check — C defines it for every input.
+fun main() {
+    // 2^24 + 1 is the first integer an `f32` cannot hold, so the two
+    // conversions visibly differ on it.
+    val n: i64 = 16777217
+    print(n.to_f64())
+    print(n.to_f32())
+
+    val neg: i32 = 0 - 7
+    print(neg.to_f64())
+    print(neg.to_f64() / 2.0)
+
+    val small: u8 = 200
+    print(small.to_f64())
+    print(small.to_f32())
+
+    val big: u64 = 3000000000
+    print(big.to_f64())
+
+    // The conversion's whole point: reaching an `f64` expression. `n * 1.0`
+    // would not type-check.
+    val total: f64 = 0.5 + n.to_f64() * 0.0
+    print(total)
+}

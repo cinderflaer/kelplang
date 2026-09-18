@@ -1124,6 +1124,40 @@ fn path_components_split_a_path() {
 }
 
 #[test]
+fn bitwise_operators_shift_mask_and_complement() {
+    assert_compiles_and_runs(
+        "tests/fixtures/bitwise.kp",
+        "8\n14\n6\n243\n16\n64\n32\nfalse\ntrue\n228\n184\n173\ntrue\n1\n-1\n-4\n",
+    );
+}
+
+#[test]
+fn bitwise_operators_on_bool_are_rejected() {
+    assert_rejected("tests/fixtures/bitwise_bool.kp");
+}
+
+#[test]
+fn character_literals_take_the_type_their_context_asks_for() {
+    assert_compiles_and_runs(
+        "tests/fixtures/char_literals.kp",
+        "34\n48\n53\n10\n9\n92\n39\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\nfalse\n122\n",
+    );
+}
+
+#[test]
+fn a_character_literal_too_large_for_its_type_is_rejected() {
+    assert_rejected("tests/fixtures/char_literal_does_not_fit.kp");
+}
+
+#[test]
+fn integer_to_float_conversions_widen_and_round() {
+    assert_compiles_and_runs(
+        "tests/fixtures/float_conversions.kp",
+        "16777217.000000\n16777216.000000\n-7.000000\n-3.500000\n200.000000\n200.000000\n3000000000.000000\n0.500000\n",
+    );
+}
+
+#[test]
 fn returning_a_borrow_of_the_wrong_parameter_is_rejected() {
     assert_rejected("tests/fixtures/elision_wrong_param.kp");
 }

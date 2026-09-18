@@ -1,0 +1,8 @@
+// Bitwise operators are integral-only. `bool` is deliberately not a bitwise
+// domain: `a & b` on two booleans reads as a logical `and` that does not
+// short-circuit, which is a trap when `&&` is right there.
+fun main() {
+    val a = true
+    val b = false
+    print(a & b)
+}

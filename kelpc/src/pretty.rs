@@ -185,6 +185,7 @@ fn print_expr(out: &mut String, expr: &Expr) {
             }
         }
         Expr::IntLit(v, _) => write!(out, "{v}").unwrap(),
+        Expr::CharLit(v, _) => write!(out, "{}", char_literal(*v)).unwrap(),
         Expr::FloatLit(v, _) => write!(out, "{v}").unwrap(),
         Expr::StringLit(s, _) => write!(out, "{s:?}").unwrap(),
         Expr::BoolLit(b, _) => write!(out, "{b}").unwrap(),
@@ -193,6 +194,7 @@ fn print_expr(out: &mut String, expr: &Expr) {
             let sym = match op {
                 UnOp::Neg => "-",
                 UnOp::Not => "!",
+                UnOp::BitNot => "~",
             };
             out.push_str(sym);
             print_expr(out, expr);
@@ -218,6 +220,11 @@ fn print_expr(out: &mut String, expr: &Expr) {
                 BinOp::GtEq => ">=",
                 BinOp::And => "&&",
                 BinOp::Or => "||",
+                BinOp::BitAnd => "&",
+                BinOp::BitOr => "|",
+                BinOp::BitXor => "^",
+                BinOp::Shl => "<<",
+                BinOp::Shr => ">>",
             };
             write!(out, " {sym} ").unwrap();
             print_expr(out, rhs);
@@ -342,5 +349,27 @@ fn print_expr(out: &mut String, expr: &Expr) {
             }
             out.push('}');
         }
+    }
+}
+
+/// A code point rendered back as the character literal it was written as:
+/// `'a'`, `'\n'`, `'\''`, `'\u{4e2d}'`. The printable ASCII range is the only
+/// range written literally, so a literal always round-trips through the
+/// lexer — `'é'` prints as `'é'` (the lexer accepts a non-ASCII character
+/// verbatim), and anything in the control range becomes an escape.
+fn char_literal(cp: u32) -> String {
+    let escaped = match cp {
+        0x0A => Some("\\n".to_string()),
+        0x09 => Some("\\t".to_string()),
+        0x0D => Some("\\r".to_string()),
+        0x00 => Some("\\0".to_string()),
+        0x5C => Some("\\\\".to_string()),
+        0x27 => Some("\\'".to_string()),
+        0x20..=0x7E => Some(char::from_u32(cp).expect("ASCII").to_string()),
+        _ => None,
+    };
+    match escaped {
+        Some(s) => format!("'{s}'"),
+        None => format!("'\\u{{{cp:x}}}'"),
     }
 }

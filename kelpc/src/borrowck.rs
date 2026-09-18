@@ -878,7 +878,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
-        tir::ExprKind::IntLit(_) | tir::ExprKind::FloatLit(_) | tir::ExprKind::StringLit(_) | tir::ExprKind::BoolLit(_) => Ok(()),
+        tir::ExprKind::IntLit(_) | tir::ExprKind::CharLit(_) | tir::ExprKind::FloatLit(_) | tir::ExprKind::StringLit(_) | tir::ExprKind::BoolLit(_) => Ok(()),
         tir::ExprKind::Unary { expr: sub, .. } => check_value(sub, ctx),
         tir::ExprKind::Binary { lhs, rhs, .. } => {
             check_value(lhs, ctx)?;

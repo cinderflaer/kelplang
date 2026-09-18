@@ -1,0 +1,6 @@
+// A code point that does not fit the type the context asks for is refused,
+// not truncated: `'中'` is a real character, and a `u8` cannot hold it.
+fun main() {
+    val c: u8 = '中'
+    print(c)
+}

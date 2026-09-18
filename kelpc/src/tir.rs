@@ -136,6 +136,10 @@ pub struct Expr {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     IntLit(i64),
+    /// `'a'` — the code point, already checked against the type
+    /// `infer.rs` resolved for it. Codegen casts it to that type's C
+    /// spelling, so a `'0'` in a `u8` position emits a `uint8_t`.
+    CharLit(u32),
     FloatLit(f64),
     StringLit(String),
     BoolLit(bool),

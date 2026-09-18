@@ -2605,6 +2605,12 @@ impl<'a> Gen<'a> {
     fn expr_value(&self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::IntLit(v) => v.to_string(),
+            // A character literal is an integer constant with the code point
+            // as its value and the type its context asked for, so it emits a
+            // cast and nothing else. `u8` is the common case (`c == '"'`),
+            // and `char` is a code point rather than a C `char`, so the cast
+            // is what makes both fit.
+            ExprKind::CharLit(v) => format!("(({})({}))", expr.ty.c_type(), v),
             ExprKind::FloatLit(v) => format!("{v}"),
             ExprKind::StringLit(s) => c_string_literal(s),
             ExprKind::BoolLit(b) => b.to_string(),
@@ -2613,6 +2619,7 @@ impl<'a> Gen<'a> {
                 let sym = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    UnOp::BitNot => "~",
                 };
                 let inner = self.expr_value(sub);
                 format!("({sym}{inner})")
@@ -2632,6 +2639,16 @@ impl<'a> Gen<'a> {
                     BinOp::GtEq => ">=",
                     BinOp::And => "&&",
                     BinOp::Or => "||",
+                    // The bitwise spellings are C's, including `<<`/`>>`,
+                    // which the parser folded from two adjacent `<`/`>`
+                    // tokens. `&` is the same character as the borrow prefix
+                    // in the surface language and needs no parenthesizing
+                    // here: C's `&` is unambiguous by position too.
+                    BinOp::BitAnd => "&",
+                    BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl => "<<",
+                    BinOp::Shr => ">>",
                 };
                 let l = self.expr_value(lhs);
                 let r = self.expr_value(rhs);
@@ -3158,13 +3175,14 @@ impl<'a> Gen<'a> {
     }
 
     fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
-        // `n.to_u8()` and friends (S1): an integer conversion, emitted inline
-        // as a cast with a range check rather than a C function per pair.
+        // `n.to_u8()` and friends (S1): a numeric conversion, emitted inline
+        // as a cast — with a range check when the target is an integer that
+        // can lose the value — rather than a C function per pair.
         if let Some((src, dst)) = callee.split_once("#to_") {
             if let (Some(from), Some(to)) = (Ty::from_name(src), Ty::from_name(dst)) {
-                if from.is_integer() && to.is_integer() {
+                if from.is_integer() && (to.is_integer() || to.is_float()) {
                     let value = self.expr_value(&args[0]);
-                    return integer_conversion(callee, &from, &to, &value);
+                    return numeric_conversion(callee, &from, &to, &value);
                 }
             }
         }
@@ -3584,12 +3602,15 @@ fn unsigned_lit(v: u128) -> String {
     }
 }
 
-/// One integer conversion, as a C expression. A widening is a plain cast; a
+/// One numeric conversion, as a C expression. A widening is a plain cast; a
 /// conversion that can lose a value is a statement expression that checks the
 /// range first and panics with the `.kp` spelling of the call, so a narrowing
-/// is never a silent truncation. The argument is evaluated once, into a
+/// is never a silent truncation. An integer-to-float conversion is a plain
+/// cast in both directions (`to_f64` exact, `to_f32` the language's one
+/// defined rounding), because `int_bounds` has no bounds for a float target
+/// and the check below is skipped. The argument is evaluated once, into a
 /// temporary, because the check and the cast both read it.
-fn integer_conversion(callee: &str, from: &Ty, to: &Ty, value: &str) -> String {
+fn numeric_conversion(callee: &str, from: &Ty, to: &Ty, value: &str) -> String {
     let target = to.c_type();
     let (Some((s_min, s_max)), Some((t_min, t_max))) = (int_bounds(from), int_bounds(to)) else {
         return format!("(({target})({value}))");

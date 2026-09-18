@@ -26,6 +26,13 @@ pub enum TokenKind {
     /// `TemplateStart` ... `TemplateEnd` sequence below instead, so every
     /// existing string in every existing test keeps this exact token.
     StringLit(String),
+    /// `'a'`, `'\n'`, `'\u{4e2d}'` — one Unicode scalar value, stored as its
+    /// code point (open item 53). Distinct from `IntLit` at the token and
+    /// AST levels so the parser and the type checker can tell a character
+    /// from a number; `infer.rs` is what decides the type, and a character
+    /// literal takes the integer type its context asks for, which is what
+    /// makes `c == '"'` work when `c` is a `u8` byte.
+    CharLit(u32),
     Ident(String),
 
     // string-template pieces (`"a$b${c}"`), all emitted in one flat run:
@@ -128,6 +135,13 @@ pub enum TokenKind {
     OrOr,
     Bang,
     Amp,
+    /// `a | b` — bitwise or (A-9). `||` is still one token; a single `|` used
+    /// to be a lex error.
+    Pipe,
+    /// `a ^ b` — bitwise exclusive or.
+    Caret,
+    /// `~a` — bitwise complement, prefix only.
+    Tilde,
     /// `expr?` — propagate a failure out of the enclosing function
     /// (MK5-S6-M1). Postfix, so it is only ever read after an expression.
     Question,
@@ -414,6 +428,14 @@ impl<'a> Lexer<'a> {
                         TokenKind::Amp
                     }
                 }
+                b'^' => {
+                    self.advance();
+                    TokenKind::Caret
+                }
+                b'~' => {
+                    self.advance();
+                    TokenKind::Tilde
+                }
                 b'?' => {
                     self.advance();
                     TokenKind::Question
@@ -424,16 +446,23 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         TokenKind::OrOr
                     } else {
-                        return Err(LexError {
-                            message: "unexpected character '|'".to_string(),
-                            span: Span::new(start, self.pos),
-                        });
+                        TokenKind::Pipe
                     }
                 }
                 b'"' => {
                     self.advance();
                     self.lex_string(start)?;
                     continue;
+                }
+                // A `'` starts a character literal. It used to be an error
+                // ("unexpected character '\''"), which is why every
+                // byte-level algorithm in the shipped stdlib is written with
+                // decimal codes (`str.char_at(c, i) == 34`) and why the JSON
+                // reader spells its punctuation as hex.
+                b'\'' => {
+                    self.advance();
+                    let cp = self.lex_char(start)?;
+                    TokenKind::CharLit(cp)
                 }
                 b'0'..=b'9' => {
                     while matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -511,6 +540,107 @@ impl<'a> Lexer<'a> {
                 kind,
                 span: Span::new(start, self.pos),
             }));
+        }
+    }
+
+    /// Lexes a character literal, having consumed the opening `'`; `start`
+    /// is that quote's offset (open item 53).
+    ///
+    /// A literal holds exactly one Unicode scalar value, so a non-ASCII
+    /// character is decoded here rather than left as its first byte: `'é'`
+    /// and `'中'` are one character each. The code point is returned, not a
+    /// byte, which is what lets `infer.rs` decide whether it fits the type
+    /// its context asks for (and refuse it when it does not).
+    ///
+    /// Escapes are the string escapes minus what only makes sense in a
+    /// longer literal, plus `\0` and `\'`: a character literal is not
+    /// NUL-terminated and `'` has to be escapable somewhere.
+    fn lex_char(&mut self, start: usize) -> Result<u32, LexError> {
+        // A macro rather than a closure: every diagnostic needs the *current*
+        // `self.pos`, and a closure that read it would hold a borrow across
+        // the `self.advance()` calls below.
+        macro_rules! err {
+            ($($arg:tt)*) => {
+                LexError {
+                    message: format!($($arg)*),
+                    span: Span::new(start, self.pos),
+                }
+            };
+        }
+        // `''` is not an empty character; say so rather than treating the
+        // second quote as the character.
+        if self.peek() == Some(b'\'') {
+            self.advance();
+            return Err(err!("a character literal cannot be empty"));
+        }
+        let cp = match self.advance() {
+            None => return Err(err!("unterminated character literal")),
+            Some(b'\n') => {
+                return Err(err!(
+                    "a character literal cannot span lines — write '\\n' for a newline"
+                ))
+            }
+            Some(b'\\') => match self.advance() {
+                Some(b'n') => '\n' as u32,
+                Some(b't') => '\t' as u32,
+                Some(b'r') => '\r' as u32,
+                Some(b'0') => 0,
+                Some(b'\\') => '\\' as u32,
+                Some(b'\'') => '\'' as u32,
+                Some(b'"') => '"' as u32,
+                // `\u{4e2d}` — the code point in hex, braced so the escape has
+                // an unambiguous end and an arbitrary number of digits.
+                Some(b'u') => {
+                    if self.advance() != Some(b'{') {
+                        return Err(err!(
+                            "a unicode escape is written '\\u{{...}}' — for example '\\u{{4e2d}}'"
+                        ));
+                    }
+                    let hex_start = self.pos;
+                    while matches!(self.peek(), Some(c) if c.is_ascii_hexdigit()) {
+                        self.pos += 1;
+                    }
+                    if self.pos == hex_start {
+                        return Err(err!("a unicode escape needs at least one hex digit"));
+                    }
+                    let digits = self.src[hex_start..self.pos].to_string();
+                    if self.advance() != Some(b'}') {
+                        return Err(err!(
+                            "a unicode escape is closed with '}}' — for example '\\u{{4e2d}}'"
+                        ));
+                    }
+                    let v = u32::from_str_radix(&digits, 16)
+                        .map_err(|_| err!("invalid unicode escape '\\u{{{}}}'", digits))?;
+                    if v > 0x10FFFF || (0xD800..=0xDFFF).contains(&v) {
+                        return Err(err!("'\\u{{{}}}' is not a Unicode scalar value", digits));
+                    }
+                    v
+                }
+                Some(c) => {
+                    return Err(err!(
+                        "unknown escape '\\{}' in a character literal — the escapes are \\n, \\t, \\r, \\0, \\', \\\", \\\\ and \\u{{...}}",
+                        c as char
+                    ))
+                }
+                None => return Err(err!("unterminated character literal")),
+            },
+            Some(_) => {
+                // The byte just consumed is only the first byte of a
+                // non-ASCII character, so re-decode the whole thing from the
+                // source, which is already valid UTF-8.
+                self.pos -= 1;
+                let c = self.src[self.pos..]
+                    .chars()
+                    .next()
+                    .expect("not at the end of the source");
+                self.pos += c.len_utf8();
+                c as u32
+            }
+        };
+        match self.advance() {
+            Some(b'\'') => Ok(cp),
+            Some(_) => Err(err!("a character literal holds exactly one character")),
+            None => Err(err!("unterminated character literal")),
         }
     }
 

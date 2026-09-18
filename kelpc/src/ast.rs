@@ -374,12 +374,23 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
+    /// Bitwise operators (A-9). `BitAnd` and the borrow `&` share one
+    /// spelling and are told apart by position: `a & b` is a binary operator,
+    /// `&a` is a borrow, exactly as C++ reads `&`.
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOp {
     Neg,
     Not,
+    /// `~a` — bitwise complement. Prefix only: the language has no `~`
+    /// postfix form and no `~=`.
+    BitNot,
 }
 
 /// One argument at a call site: `f(1, 2)` (positional) or `f(x = 1)`
@@ -393,6 +404,11 @@ pub struct CallArg {
 #[derive(Debug, Clone)]
 pub enum Expr {
     IntLit(i64, Span),
+    /// `'a'` — one Unicode scalar value (open item 53), from the lexer
+    /// already decoded. Its *type* is not decided here: `infer.rs` gives it
+    /// the integer type its context asks for (so a `u8` byte comparison can
+    /// write `c == '"'`) and `char` when nothing asks for one.
+    CharLit(u32, Span),
     FloatLit(f64, Span),
     StringLit(String, Span),
     BoolLit(bool, Span),
@@ -547,6 +563,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::IntLit(_, s)
+            | Expr::CharLit(_, s)
             | Expr::FloatLit(_, s)
             | Expr::StringLit(_, s)
             | Expr::BoolLit(_, s)

@@ -1,0 +1,51 @@
+// Bitwise operators (A-9). Before this the language had none: `str.char_at`
+// decoded UTF-8 by subtraction, the JSON reader's UTF-8 encoder wrote
+// `192 + cp / 64` and `128 + cp % 64` for `0xC0 | (cp >> 6)` and
+// `0x80 | (cp & 63)`, and `hex_digit` returned `n + 87` for the letter case.
+//
+// `& | ^` are infix, `~` is prefix, and `<<`/`>>` are written as two
+// adjacent `<`/`>` characters (the lexer does not fold them, so
+// `List<List<i32>>` still closes). Precedence is C's except that the bitwise
+// operators bind *tighter* than the comparisons — Rust's reading, kept
+// because C's makes `flags & MASK == 0` mean `flags & (MASK == 0)`:
+// `|| < && < == < < < | < ^ < & < << < + < *`.
+fun main() {
+    val a: u32 = 12 // 1100
+    val b: u32 = 10 // 1010
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(~a & 255)
+
+    // Shifts, and C's precedence around them: `+` binds tighter than `<<`.
+    print(1 << 4)
+    print(256 >> 2)
+    print(1 << 2 + 3)
+
+    // `&` binds tighter than `==`, which is what stops `flags & MASK == 0`
+    // from meaning `flags & (MASK == 0)` — the C bug this precedence exists
+    // to prevent.
+    val flags: u8 = 6
+    val mask: u8 = 2
+    print(flags & mask == 0)
+    print((flags & mask | 1) == 3)
+
+    // The UTF-8 encoder `push_codepoint` had to write with division and
+    // modulo, in the form the standard states it. U+4E2D is 20013.
+    val cp: u32 = 20013
+    print((cp >> 12) | 224)
+    print(((cp >> 6) & 63) | 128)
+    print((cp & 63) | 128)
+
+    // A character literal in a byte-mask expression.
+    val lower: u8 = 'A' | 32
+    print(lower == 'a')
+    print(lower & 31)
+
+    // Signed complement and a negative right-shift are arithmetic, as `cc`
+    // reads them.
+    val i: i32 = 0
+    print(~i)
+    val neg: i32 = 0 - 8
+    print(neg >> 1)
+}

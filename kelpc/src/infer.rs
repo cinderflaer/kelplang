@@ -1605,6 +1605,29 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
                     false,
                 );
             }
+            // Integer -> float (the jsonlibary port's fourth gap). An integer
+            // never mixes with a float by itself — `n * 1.0` is a type error,
+            // because operands must match exactly — and before this the only
+            // way to widen one was to format it and parse it back
+            // (`str.parse_f64(fmt.int(n).as_str())`), which allocates a
+            // `String` to add zero to a number. `to_f64` is the exact
+            // widening the hardware already has; `to_f32` is the lossy one,
+            // and it is *unchecked* on purpose, because C's float conversion
+            // is defined for every input (a value too large becomes an
+            // infinity), so there is no lost-value case to refuse.
+            //
+            // The reverse (a float `to_<int>`) is deliberately absent: it can
+            // lose a value, and v1 has no `Option` for it to report the loss
+            // with. Write `math.trunc`/`math.floor` first and then a checked
+            // integer conversion.
+            for dst in ["f64", "f32"] {
+                add(
+                    &format!("{src}#to_{dst}"),
+                    vec![("self".to_string(), Ty::from_name(src).expect("integer type"))],
+                    Ty::from_name(dst).expect("float type"),
+                    false,
+                );
+            }
         }
         m
     });
@@ -1981,6 +2004,43 @@ fn is_str_like(ty: &Ty) -> bool {
     }
 }
 
+/// A `char` value and an integer do not mix, and the reason is easy to miss:
+/// a character literal takes whatever type its context asks for, so with
+/// nothing to ask, it is `char`. Every such mismatch gets the same sentence
+/// saying what to write instead.
+fn char_integer_hint(found: &Ty, expected: &Ty) -> String {
+    if matches!(found, Ty::Char) && expected.is_integer() {
+        " — a character literal takes the type its context asks for, so with nothing to ask it is 'char'; give it the type you mean (`val c: u8 = '\"'`) or write the value as an integer".to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Whether the character literal `cp` can be a value of the integer type
+/// `ty`. A character literal takes whatever integer type its context asks
+/// for, and this is the one thing that can go wrong with that: `'中'` is a
+/// value a `u8` cannot hold.
+fn char_fits(cp: u32, ty: &Ty) -> bool {
+    match ty {
+        Ty::U8 => cp <= u8::MAX as u32,
+        Ty::U16 => cp <= u16::MAX as u32,
+        Ty::I32 => cp <= i32::MAX as u32,
+        // `u32`/`i64`/`u64`/`usize`/`isize` hold every Unicode scalar value,
+        // and `f32`/`f64`/`bool`/`char` are not integer targets at all (the
+        // caller only asks this for an integer type).
+        _ => true,
+    }
+}
+
+/// A code point as a diagnostic can show it: the character itself when it is
+/// printable, `U+XXXX` otherwise (a control character has nothing to show).
+fn printable_codepoint(cp: u32) -> String {
+    match char::from_u32(cp) {
+        Some(c) if !c.is_control() => c.to_string(),
+        _ => format!("U+{cp:04X}"),
+    }
+}
+
 /// One checked compile-time constant (M6.3). Folded at its declaration and
 /// substituted at every use, so it has no storage, no initializer function,
 /// and no runtime cost — `math.PI` is the literal `3.141592653589793` in the
@@ -2103,6 +2163,10 @@ fn literal_for(
     use ConstValue::*;
     let kind = match (value, declared) {
         (Int(v), t) if t.is_integer() => tir::ExprKind::IntLit(*v),
+        // A `const C: char = 'a'` folds to an integer like any other scalar
+        // constant and comes back out as a character literal, so the
+        // substituted value prints and compares exactly as the literal did.
+        (Int(v), Ty::Char) => tir::ExprKind::CharLit(*v as u32),
         (Int(v), t) if t.is_float() => tir::ExprKind::FloatLit(*v as f64),
         (Float(v), t) if t.is_float() => tir::ExprKind::FloatLit(*v),
         (Bool(b), Ty::Bool) => tir::ExprKind::BoolLit(*b),
@@ -2137,6 +2201,11 @@ fn fold_const(
         } else {
             ConstValue::Int(*v)
         }),
+        // A character literal folds by its code point, so `const A: u8 = 'a'`
+        // and `const C: char = 'a'` are both constants in the ordinary
+        // numeric sense; `check_expr` is what refuses a code point that does
+        // not fit the declared type.
+        ast::Expr::CharLit(v, _) => Ok(ConstValue::Int(*v as i64)),
         ast::Expr::FloatLit(v, _) => Ok(ConstValue::Float(*v)),
         ast::Expr::BoolLit(b, _) => Ok(ConstValue::Bool(*b)),
         ast::Expr::StringLit(s, _) => Ok(ConstValue::Str(s.clone())),
@@ -2224,6 +2293,15 @@ fn fold_binary(op: ast::BinOp, l: ConstValue, r: ConstValue, span: Span) -> Resu
             Gt => Bool(a > b),
             GtEq => Bool(a >= b),
             And | Or => return Err(mismatch()),
+            BitAnd => Int(a & b),
+            BitOr => Int(a | b),
+            BitXor => Int(a ^ b),
+            // `wrapping_shl`/`wrapping_shr` mask the shift count to the
+            // width, which is also what the generated C does on x86-64; a
+            // `shr` on a signed value is arithmetic, matching `cc`'s own
+            // reading of `>>` on an `int64_t`.
+            Shl => Int(a.wrapping_shl(b as u32)),
+            Shr => Int(a.wrapping_shr(b as u32)),
         }),
         (Float(a), Float(b)) => Ok(match op {
             Add => Float(a + b),
@@ -2237,7 +2315,7 @@ fn fold_binary(op: ast::BinOp, l: ConstValue, r: ConstValue, span: Span) -> Resu
             LtEq => Bool(a <= b),
             Gt => Bool(a > b),
             GtEq => Bool(a >= b),
-            And | Or => return Err(mismatch()),
+            And | Or | BitAnd | BitOr | BitXor | Shl | Shr => return Err(mismatch()),
         }),
         (Bool(a), Bool(b)) => match op {
             And => Ok(Bool(a && b)),
@@ -3495,6 +3573,7 @@ impl PdScan {
                 }
             }
             ast::Expr::IntLit(..)
+            | ast::Expr::CharLit(..)
             | ast::Expr::FloatLit(..)
             | ast::Expr::StringLit(..)
             | ast::Expr::BoolLit(..) => {}
@@ -4274,6 +4353,39 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: *span,
             })
         }
+        // A character literal (open item 53) takes the type its context asks
+        // for, exactly as an integer literal does, and `char` when nothing
+        // constrains it. That single rule is what lets byte-level code read
+        // the way it thinks: `c == '"'` with `c: u8`, `out.push(' ')` into a
+        // `String`, `n + '0'` to make a digit.
+        //
+        // A code point that does not fit the requested integer type is
+        // refused rather than truncated — `'中'` in a `u8` position is a
+        // mistake, not a byte to keep.
+        ast::Expr::CharLit(v, span) => {
+            let ty = match expected {
+                Some(t) if t.is_integer() => {
+                    if !char_fits(*v, t) {
+                        return Err(TypeError {
+                            message: format!(
+                                "the character '{}' (U+{:04X}) does not fit in '{}'",
+                                printable_codepoint(*v),
+                                v,
+                                t.display()
+                            ),
+                            span: *span,
+                        });
+                    }
+                    t.clone()
+                }
+                _ => Ty::Char,
+            };
+            Ok(tir::Expr {
+                kind: tir::ExprKind::CharLit(*v),
+                ty,
+                span: *span,
+            })
+        }
         ast::Expr::FloatLit(v, span) => {
             let ty = match expected {
                 Some(t) if t.is_float() => t.clone(),
@@ -4425,7 +4537,16 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             })
         }
         ast::Expr::Unary { op, expr: sub, span } => {
-            let sub_expected = if *op == UnOp::Not { Some(&Ty::Bool) } else { expected };
+            let sub_expected = if *op == UnOp::Not {
+                Some(&Ty::Bool)
+            } else if *op == UnOp::BitNot {
+                // `~x` is integral-only, and the expectation only helps when
+                // it is an integer (an integer literal has no other way to
+                // take a width from `~`).
+                expected.filter(|t| t.is_integer())
+            } else {
+                expected
+            };
             let sub_t = check_expr(sub, ctx, sub_expected)?;
             match op {
                 UnOp::Neg => {
@@ -4440,6 +4561,17 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     if sub_t.ty != Ty::Bool {
                         return Err(TypeError {
                             message: format!("cannot apply '!' to a value of type '{}'", sub_t.ty.display()),
+                            span: *span,
+                        });
+                    }
+                }
+                UnOp::BitNot => {
+                    if !sub_t.ty.is_integer() {
+                        return Err(TypeError {
+                            message: format!(
+                                "cannot apply '~' to a value of type '{}' — '~' complements the bits of an integer",
+                                sub_t.ty.display()
+                            ),
                             span: *span,
                         });
                     }
@@ -5864,6 +5996,38 @@ fn check_binary(
                 span,
             })
         }
+        // Bitwise operators (A-9). Integral operands of the same type,
+        // result the same type — the same rule arithmetic uses, one domain
+        // over. `~` is the prefix form and is checked on the unary path.
+        //
+        // `bool` is deliberately not a bitwise domain: `a & b` on two
+        // booleans reads as a logical `and` that is not short-circuiting,
+        // which is a trap, and `&&` is right there.
+        BitAnd | BitOr | BitXor | Shl | Shr => {
+            let int_expected = expected.filter(|t| t.is_integer());
+            let l = check_expr(lhs, ctx, int_expected)?;
+            let r = check_expr(rhs, ctx, Some(&l.ty))?;
+            if !l.ty.is_integer() || l.ty != r.ty {
+                return Err(TypeError {
+                    message: format!(
+                        "operator requires matching integer operands, found '{}' and '{}'",
+                        l.ty.display(),
+                        r.ty.display()
+                    ),
+                    span,
+                });
+            }
+            let ty = l.ty.clone();
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
+                },
+                ty,
+                span,
+            })
+        }
         Lt | LtEq | Gt | GtEq | Eq | NotEq => {
             let l = check_expr(lhs, ctx, None)?;
             let r = check_expr(rhs, ctx, Some(&l.ty))?;
@@ -6054,9 +6218,10 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             }
             return Err(TypeError {
                 message: format!(
-                    "argument {pname} has type '{}', expected '{}'",
+                    "argument {pname} has type '{}', expected '{}'{}",
                     checked.ty.display(),
-                    pty.display()
+                    pty.display(),
+                    char_integer_hint(&checked.ty, pty)
                 ),
                 span: arg_expr.span(),
             });
@@ -6101,7 +6266,12 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         }
         other => Err(TypeError {
             message: closure_kind_mismatch(pty, other).unwrap_or_else(|| {
-                format!("argument {pname} has type '{}', expected '{}'", other.display(), pty.display())
+                format!(
+                    "argument {pname} has type '{}', expected '{}'{}",
+                    other.display(),
+                    pty.display(),
+                    char_integer_hint(other, pty)
+                )
             }),
             span: arg_expr.span(),
         }),
@@ -6855,7 +7025,7 @@ fn check_method_call(
                     e.display()
                 ),
                 (None, _) if probe.ty.is_integer() => format!(
-                    "type '{}' has no method '{method}' — the conversion surface is to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize",
+                    "type '{}' has no method '{method}' — an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64 and to_f32, and no other type converts",
                     probe.ty.display()
                 ),
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
