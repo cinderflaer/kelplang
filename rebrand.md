@@ -24,7 +24,7 @@ naming a thing that has not been written.
 |---|---|
 | **Kelp** | **Exists.** The language is real and implemented: 15,831 LOC of Rust across 19 files (16 in `xc/src/`, plus the 2,089-line e2e suite), 13 shipped stdlib modules, 120 fixtures, 39 test projects. This is a pure rename. |
 | **`.kp`** | **Exists as `.x`.** 209 source files use the extension today. Pure rename. |
-| **Coral** | **Does not exist.** Coral is `roadmap.md` **MK13**, marked *"Proposed; planned"* — not started. The plan already names it Coral (MK13-S1-M1 lists `coral init`, `coral build`/`run`/`check`/`clean`), so this rebrand agrees with the plan rather than inventing a name. Nothing named Coral is written yet. |
+| **Coral** | **Does not exist.** Coral is `roadmap.md` **open item 72**, and its design sketch is `backlog.md`'s Coral section (the identifiers there are the `MK13-Sn-Mn` names it carried when it was a Mark). Nothing named Coral is written yet. |
 | **Lighthouse** | **Does not exist, and is not in the plan.** There is no LSP, language server, editor, formatter, or tree-sitter grammar anywhere in `plan/`. Lighthouse is a new name for an unwritten component. This rebrand *introduces* it. |
 
 Two consequences follow from that table, and neither is a rename:
@@ -32,7 +32,7 @@ Two consequences follow from that table, and neither is a rename:
 1. **There is no Coral binary to rename.** Today `xc` is the compiler *and* the
    build tool — `basicstructure.md` states it outright: *"No separate build-tool
    layer; `xc` itself is the build tool."* So `coral build` / `coral run` cannot
-   be shipped by this rebrand. Until MK13 lands, the working commands are the
+   be shipped by this rebrand. Until Coral is scheduled, the working commands are the
    current ones under a new name.
 2. **There is no Lighthouse code, and no plan document that describes it.** A
    rename cannot create it. This document fixes the name only.
@@ -44,8 +44,8 @@ execution.
 
 | # | Question | Options | Note |
 |---|---|---|---|
-| 1 | What is the **compiler binary** called? | `kelpc`, or fold it into `coral` | The roadmap keeps them distinct: *"Coral owns the manifest, the task graph, dependencies, caching and artifacts, and leaves compilation to `xc`"* (MK13). So the compiler needs its own name. `kelpc` is proposed throughout this document. |
-| 2 | Does the **`coral` CLI replace `xc` now**? | (a) rename `xc` → `kelpc` now, add `coral` at MK13; (b) rename `xc` → `coral` now and grow Coral's real features later | (b) ships `coral build` immediately but makes `coral` a compiler today and a build tool later — a compatibility story the plan has not decided (MK13-S1-M3 exists precisely because today's CLI is not a stable contract). (a) is proposed. |
+| 1 | What is the **compiler binary** called? | `kelpc`, or fold it into `coral` | The roadmap keeps them distinct: *"Coral owns the manifest, the task graph, dependencies, caching and artifacts, and leaves compilation to `xc`"* (the Coral design, `backlog.md`). So the compiler needs its own name. `kelpc` is proposed throughout this document. |
+| 2 | Does the **`coral` CLI replace `xc` now**? | (a) rename `xc` → `kelpc` now, add `coral` when Coral lands; (b) rename `xc` → `coral` now and grow Coral's real features later | (b) ships `coral build` immediately but makes `coral` a compiler today and a build tool later — a compatibility story the plan has not decided (the compiler-CLI contract in `backlog.md`'s Coral design exists precisely because today's CLI is not stable). (a) is proposed. |
 | 3 | Manifest filename | `coral.toml`, `kelp.toml`, `Kelp.toml` | Roadmap says Coral owns the manifest, which argues for `coral.toml`. The manifest is currently `x.toml`, i.e. named after the *language*, which argues for `kelp.toml`. |
 | 4 | Alias table filename | `alias.kpconf`, `alias.kelp`, `aliases.kp` | Currently `alias.xconf` — that is `x` + `conf`. The direct translation is `alias.kpconf`. |
 | 5 | Repository name | rename the remote, or leave it | Remote is currently `…/Juniper/x.git`. Not a code change. |
@@ -120,7 +120,7 @@ every future rebrand is a one-line change.
 ### Post-rebrand state
 
 - `kelpc build <file.kp>` and `kelpc run <file.kp>` work (decision 2a), then
-  become `coral build` / `coral run` when MK13 lands.
+  become `coral build` / `coral run` when Coral lands.
 - `coral.toml` is the manifest, `alias.kpconf` the alias table, `.kp` the
   extension.
 - Coral and Lighthouse remain named-and-unbuilt.
@@ -168,7 +168,7 @@ above:
 | # | Question | Taken |
 |---|---|---|
 | 1 | Compiler binary | `kelpc` |
-| 2 | Does `coral` replace `xc` now? | (a) rename `xc` to `kelpc` now; `coral` arrives with MK13 |
+| 2 | Does `coral` replace `xc` now? | (a) rename `xc` to `kelpc` now; `coral` arrives with Coral |
 | 3 | Manifest filename | `coral.toml` |
 | 4 | Alias table filename | `alias.kpconf` |
 | 5 | Repository name | not renamed (not a code change) |
@@ -194,7 +194,7 @@ Verification: `cargo test` green after the rename — 65 unit tests plus 160
 end-to-end tests, which include the ASAN and leak checks.
 
 Unchanged from the analysis above: Coral and Lighthouse exist as names only.
-`kelpc build` and `kelpc run` are the working commands until MK13 lands;
+`kelpc build` and `kelpc run` are the working commands until Coral lands;
 `coral build` and `coral run` do not exist yet.
 
 The file paths in this document (`xc/src/`, `bench/*/run.sh`, `xc/tests/…`)

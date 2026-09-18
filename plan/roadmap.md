@@ -1,9 +1,10 @@
 # The "Kelp" language roadmap
 
-Current state, the MK/S/M naming scheme, the marks at a glance, what is next, the open items, the features Kelp needs, and the far-future backlog.
+The critical path, the MK/S/M naming scheme, the marks at a glance, the open items, and the features Kelp needs. This file is the record and the plan; `backlog.md` is everything else.
 
-- Current state and the naming scheme: this file.
+- The critical path and the naming scheme: this file.
 - What has shipped: `done.md`.
+- Everything named and not scheduled (the `A`-`F` item lists, Coral, regulated domains): `backlog.md`.
 - Non-syntax decisions, capabilities and the standard library: `basicstructure.md`.
 - Syntax and style authority: `syntax.md`.
 
@@ -12,14 +13,14 @@ Current state, the MK/S/M naming scheme, the marks at a glance, what is next, th
 The compiler exists and runs. `kelpc/` implements the new syntax end-to-end (lexer → preprocess → parser → type check → move/borrow check → C codegen), `cargo test` is green (65 unit tests + 161 end-to-end fixture/project tests, of which the heap ones are also re-run under AddressSanitizer), and the milestone record in `done.md` reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once the plan absorbed it do not recreate it).
 
 - **Done**: MK1-S1-M1 (scaffold + parser for the full new syntax), MK1-S2-M1 (types + C codegen + first running binary), MK1-S2-M2 (`datac`, per-field `val`/`var`, while loops), MK1-S3-M1 (move checking), MK1-S4-M1 (borrowing free-function parameters and local `&`/`&mut`/`*`), MK1-S4-M2 (receiver-form methods, the piece MK1-S4-M1 cut out see the MK1-S4-M2 entry in `done.md`), MK2-S1-M1 (multi-file `impl` imports, `coral.toml`, strict module-qualified names), MK2-S1-M2 (`pd` passdowns and string templates), MK2-S1-M3 (`%*alias*%` substitution `alias.kpconf` + inline `alias` declarations), MK3-S1-M1 (the builtin owned `Bytes`), MK3-S1-M2 (owned `String`, `extern fun`, the first stdlib modules in `kelpc/std/`, owned `datac` fields, owned passdowns), MK2-S2-M1 (`const`, stdlib-only argument-type overloading, `&str` return elision, the rest of the `str`/`path` surface), MK2-S2-M2 (a `pd var` is writable from any function), MK4-S1-M1 (**capability-based security** `with caps(...)`, a real `fs`, real `time`/`rand`, and `env` as the gated stub), MK3-S2-M1 (**collections** the builtin `List<T>`, `str.split`/`str.join`, `fs.list`), MK3-S2-M2 (**`Box<T>` and recursive `datac`s** the owning pointer, self- and mutually-recursive types, one container emission order that makes them work, and two latent memory bugs it flushed out), **MK5-S1-M1 through MK5-S1-M4** (a growable `String`/`Bytes` and `panic`/`assert` the buffer everything else in MK5-S1–MK5-S5 was waiting for; integer conversions, without which no byte-level text algorithm was writable; `std/str`'s text building plus the `std/fmt` module; and the `List` ordering surface). **MK5-S2-M1** (`io` + `process` one `File` over a descriptor with buffered line reading, and running programs with argv, captured output and exit codes), and **MK5-S3** (`net` the capability vocabulary fix that made a `net` grant writable at all, sockets, a listener, `poll` readiness, DNS and timeouts). **MK5-S4** is done too: keep-alive, all four body-framing cases (including a chunked decoder), the connection `Pool` with ownership-checked leases, redirects, and the first `coral.toml`-driven stdlib value plus **two compiler fixes it flushed out, both of which had to land before a single request could be framed** (see the MK1-S4-M2 entry in `done.md`). **MK5-S5** is done too: the builtin `Map<V>`, the fs breadth (`mkdir_all`/`remove_all`/`walk`/`copy`/`touch`/`open`/`read_lines`/`temp_path`/`metadata`), the `path` polish, and `env`'s real bodies plus **two capability-matcher gaps it flushed out** (`open`'s mode string was being matched as a path, and a trailing `/**` did not admit the granted directory itself), both recorded in its `done.md` entry. **MK5-S6-M1's cheap half** is done too: the error-`datac` convention is documented (and every shipped error `datac` already obeyed it), and a failed syscall now reports `errno` + `strerror` on a second line below the unchanged `panic: <msg>` prefix. And **MK8-S1-M1 part 1** is done: `enum` tagged unions with payload-carrying variants, construction by variant, and `when <scrutinee>` pattern matching with exhaustiveness checking — the language work `Option`/`Result` was blocked on, minus generics.
-- **Next: the stdlib program, MK5-S1–MK6-S2-M1 plus MK6-S1-M1** (recorded in `done.md`). **MK5-S1, MK5-S2-M1, MK5-S3 and MK5-S4 are done** (MK5-S1 (M1–M4) a growable `String`/`Bytes`, `panic`/`assert`, integer conversions, `str.concat`/`from_*`/`parse_*`/`replace`/`char_at`/`byte_index`, the `std/fmt` module, and the `List` ordering surface, with `index_of` deferred to MK5-S6-M1 per open item 42. MK5-S2-M1: `io` and `process`, with the `main(argc, argv)` codegen change argv needed. MK5-S3: `net`, whose first task was a compiler fix because the plan's own `net` grant vocabulary could not be written open item 32, now resolved). **MK5-S4 shipped as the HTTP client**: keep-alive, response framing (Content-Length, chunked, bodyless, read-to-end-of-file), a configuration-sized connection pool whose leases are tickets rather than owners, redirects, and the `http_pool` key in `coral.toml` spliced into the shipped stdlib source. It was expected to cost no compiler work at all and cost **three** pieces: the config plumbing the pool ceiling required, and two defects that had to be fixed before any request could be framed at all the lexer decoded `"\r"` as the letter `r`, and `codegen_c` did not escape a carriage return when emitting a C string literal. **Next is MK8-S1-M1 part 2 (generics, A-2), and then the `Option`/`Result` decision (MK5-S6-M1), whose cheap half and whose tagged-union prerequisite are both shipped** (the error-`datac` convention documented, and `errno` + `strerror` on every syscall panic see its `done.md` entry). The shortest path to a program a shell script cannot write was **MK5-S1 → MK5-S2-M1 → MK5-S3 → MK5-S4**: text you can build and numbers you can format; `io` + `process` (stdin, argv, spawn, capture the first end-to-end payoff, "run a command and read its output"); `net` for real; and then the HTTP client ("fetch a URL and print the body", the headline payoff). MK5-S5 is done (maps + filesystem breadth + real `env` bodies), MK5-S6-M1 is the `Option`/`Result` decision point, MK5-S7-M1 is the concurrency analysis (processes + `poll`; threads wait on language features and are recorded as MK6-S1-M1), and **MK6-S1-M1 → MK6-S2-M1** is the owner's chosen order for threads and then concurrent downloads with MK5-S4c (poll multiplexing, no language work) recorded as the cheaper route if MK6-S1-M1 slips.
+- **Next: the critical path** (see **The critical path** above; the program that reached here was MK5-S1–MK6-S2-M1 plus MK6-S1-M1, recorded in `done.md`). **MK5-S1, MK5-S2-M1, MK5-S3 and MK5-S4 are done** (MK5-S1 (M1–M4) a growable `String`/`Bytes`, `panic`/`assert`, integer conversions, `str.concat`/`from_*`/`parse_*`/`replace`/`char_at`/`byte_index`, the `std/fmt` module, and the `List` ordering surface, with `index_of` deferred to MK5-S6-M1 per open item 42. MK5-S2-M1: `io` and `process`, with the `main(argc, argv)` codegen change argv needed. MK5-S3: `net`, whose first task was a compiler fix because the plan's own `net` grant vocabulary could not be written open item 32, now resolved). **MK5-S4 shipped as the HTTP client**: keep-alive, response framing (Content-Length, chunked, bodyless, read-to-end-of-file), a configuration-sized connection pool whose leases are tickets rather than owners, redirects, and the `http_pool` key in `coral.toml` spliced into the shipped stdlib source. It was expected to cost no compiler work at all and cost **three** pieces: the config plumbing the pool ceiling required, and two defects that had to be fixed before any request could be framed at all the lexer decoded `"\r"` as the letter `r`, and `codegen_c` did not escape a carriage return when emitting a C string literal. **Next is MK8-S1-M1 part 2 (generics, A-2), and then the `Option`/`Result` decision (MK5-S6-M1), whose cheap half and whose tagged-union prerequisite are both shipped** (the error-`datac` convention documented, and `errno` + `strerror` on every syscall panic see its `done.md` entry). The shortest path to a program a shell script cannot write was **MK5-S1 → MK5-S2-M1 → MK5-S3 → MK5-S4**: text you can build and numbers you can format; `io` + `process` (stdin, argv, spawn, capture the first end-to-end payoff, "run a command and read its output"); `net` for real; and then the HTTP client ("fetch a URL and print the body", the headline payoff). MK5-S5 is done (maps + filesystem breadth + real `env` bodies), MK5-S6-M1 is the `Option`/`Result` decision point, MK5-S7-M1 is the concurrency analysis (processes + `poll`; threads wait on language features and are recorded as MK6-S1-M1), and **MK6-S1-M1 → MK6-S2-M1** is the owner's chosen order for threads and then concurrent downloads with MK5-S4c (poll multiplexing, no language work) recorded as the cheaper route if MK6-S1-M1 slips.
 - **Shipped by MK5-S2-M1, and the shape it took**: `io` is **ungated** (open item 38 answered: writing your own stdout and reading your own stdin is authority over nothing shared, so no `io` domain exists yet) and is one `File` over a file descriptor a file, a pipe, a socket and a terminal are the same thing at the POSIX level, so there is no reader/writer hierarchy and no traits to build one from. The surface is `read`/`read_into`/`read_all`/`write`/`write_text`/`write_str`/`close`/`flush`/`set_nonblocking`/`wait_readable`/`wait_writable`, the three standard descriptors, `Line` with `io.read_line`/`read_lines`/`io.read_all`, the builtin `print`/`print!` under explicit names plus `eprint`/`eprint_bare`, and an owned `BufReader` datac with `read_line_into`/`read_line`/`read_all` (open item 49 answered: yes, a `datac`, with the one process-wide reader over stdin held in a module-scoped `pd var`). `process` is gated on `process` and ships `run`/`spawn`/`Child.wait`/`kill`/`is_running`, `args`/`arg_count`, `exit`/`getpid`. The grant names the **program** as its own argument never `argv[0]`-by-convention so `process = ["/bin/sh"]` is one absolute path checked before the fork; like `fs` (and unlike `net`'s planned vocabulary) the check resolves symlinks first, which on a NixOS machine means the grant names the resolved `/nix/store` tree rather than the `/bin/sh` link the caller wrote. argv needed the one compiler change MK5-S2-M1 predicted (open item 50): the emitted `main` is now `int main(int argc, char** argv)`, saving both into two runtime globals that only `std/process` reads.
 - **Shipped by MK5-S3, and the shape it took**: the `net` vocabulary is `host`, `host:port`, `*.host`, `*:port`, `*` validated in one place (`resolve.rs::validate_net_pattern`), matched by a matcher of its own (`codegen_c`'s `kelp_host_glob`/`kelp_host_match`), with `*` matching within one label and a lone `*` the whole-resource wildcard the entry module holds. The split is at the *last* `:`, which is also why an IPv6 literal is unexpressible as a pattern rather than ambiguous. `checked_args` became a `Vec<CapCheck>` instead of a `Vec<usize>`, because for `net` *which* arguments are resources is a property of the call rather than of the argument types: `net.send_text(s, text)` has a `str` argument that is not a resource, and `net.recv(s, max)` a `usize` that is not a port. `connect` checks host and port together; `listen` checks the port alone, because a listener binds the machine and v1 has no `net.listen(host, port)` so for a listener the port *is* the resource, and a pattern with no port constrains none; `resolve` checks the host alone, ignoring the pattern's port, because resolution is not port-specific. The module is `connect`/`listen`/`accept`/`send`/`send_all`/`send_text`/`recv`/`recv_into`/`close`/`Listener.close`/`shutdown_write` plus `Listener.port`/`Socket.peer_addr`/`Socket.wait_readable`/`Socket.wait_writable`/`Socket.set_timeout`/`net.resolve`, on top of thirteen `extern` bodies with `MSG_NOSIGNAL` on every `send`, so a peer that closed cannot kill the process with `SIGPIPE`, and `EAGAIN` reported as "timed out" rather than "receive failed". `net.resolve` returns `List<String>` (addresses formatted with `inet_ntop`, deduplicated in resolver order), not a `getaddrinfo` blob.
 
 - **Three latent bugs MK5-S2-M1 flushed out, all earlier than MK5-S2-M1, all now pinned by the suite**: an empty `Bytes`/`String` used to hold a NULL `data`, so `Bytes.empty().as_str()` and any `print` of an empty owned buffer handed NULL to `strlen`/`printf`. AddressSanitizer caught it on the first `io.read_all()` of an empty stream, because the ASAN pass gives the child no stdin; the two empty constructors now allocate the single NUL byte the invariant always claimed (`data[len] == 0`, including `len == 0`). A `File` write goes straight to the descriptor with `write(2)` while the builtin `print` and templates go through stdio's buffer, so the write primitives now flush the matching stdio stream first (`kelp_io_flush_stdio`) without that, `print("a")` followed by `File.write_str("direct")` came out `directa` whenever stdout was a pipe, which is exactly what the io fixture showed before the fix. And a module holding a domain with an **empty** pattern list (`with caps(process = [])`) emitted no allowlist at all, so any call that names a resource referred to a symbol that was never defined and `cc` rejected the program; the empty list is now emitted as `{ NULL }` and denies, which is what makes an empty grant a usable thing to hand out. One borrow-checker consequence worth knowing: a `Line`'s text cannot be moved out of it (v1 has no partial moves), so the owning form is `BufReader.read_line_into(out)`, and a `RunResult` moves as a whole rather than field by field.
 - **Partly unblocked, still missing**: appending to a *file* shipped in MK4-S1-M1, owned buffers grow in memory (`String.push`/`push_str`/`reserve`/`clear`/`with_capacity`, `Bytes.push`/`append`/`reserve`/`clear`), and the `List` ordering surface shipped in MK5-S1-M4 `index_of` is the only piece of it still unwritten, deliberately deferred to MK5-S6-M1 (open item 42) rather than shipping a `-1` sentinel. `env`'s real bodies, `Map`, and the filesystem breadth (`fs.mkdir_all`, `fs.remove_all`, `fs.walk`, `fs.copy`, `fs.open`, `fs.metadata`, `fs.temp_path`) shipped in **MK5-S5**; the HTTP client shipped in **MK5-S4** (keep-alive, framing, the pool, redirects) with `https` still out, because TLS is MK5-S4b-M1 and a dependency decision; `Option`/`Result` is MK5-S6-M1. Two limits MK5-S2-M1 records as deliberate rather than accidental: `process.run` **buffers both output streams whole** (there is no streaming capture form, so a child with unbounded output wants `spawn` instead), and there is **no `chdir`** a process-wide working directory would make every grant pattern's meaning depend on mutable global state.
-- **Planned, not started: MK13 (Coral)**, the build tool and package manager. `kelpc build` compiles one file or one directory; this repo already carries shell scripts and test-harness code that a build tool should own (`bench/speed/run.sh`, the flag logic in `kelpc/tests/compile_and_run.rs`, the build command in `examples/download.kp`'s header comment). Coral owns the manifest, the task graph, dependencies, caching and artifacts, and leaves compilation to `kelpc`. Full scope in the MK13 section below.
-- **Far future, and wanted**: MK7 the language's **own backend**, so `kelpc` emits machine code instead of C. The measured case for it is compile time (~95% of `kelpc build` is the C toolchain's fixed overhead, not Kelp's compiler) and the measured cost is runtime (`-O0` vs `-O2`, 1.2–5.4x on the `bench/speed` workloads). It is on the list because "my own language, not C with a mask" is a project goal in its own right, not because it would make Kelp faster. MK7 is not the end of the far-future list, though: the language surface needed to write `kelpc` itself in Kelp, and the substrate needed for deep systems work (kernels, drivers, firmware, allocators), are each recorded as their own backlog in **Far future additions** at the end of the plan. Nothing there is scheduled, and none of it is v1 or v1.1 work.
+- **Backlog, not scheduled: Coral (open item 72)**, the project-layer build tool and package manager. `kelpc build` compiles one file or one directory; this repo already carries shell scripts and test-harness code that a build tool should own (`bench/speed/run.sh`, the flag logic in `kelpc/tests/compile_and_run.rs`, the build command in `examples/download.kp`'s header comment). Coral owns the manifest, the task graph, dependencies, caching and artifacts, and leaves compilation to `kelpc`. An earlier revision made this MK13 with six stages; it is an open item now, and the design sketch is in `backlog.md`. Coral is not next: nothing in MK5-MK11 depends on it, and `cargo test` plus `bench/speed/run.sh` own the build today.
+- **Far future, and wanted**: MK7 the language's **own backend**, so `kelpc` emits machine code instead of C. The measured case for it is compile time (~95% of `kelpc build` is the C toolchain's fixed overhead, not Kelp's compiler) and the measured cost is runtime (`-O0` vs `-O2`, 1.2–5.4x on the `bench/speed` workloads). It is on the list because "my own language, not C with a mask" is a project goal in its own right, not because it would make Kelp faster. MK7 is not the end of the far-future list, though: the language surface needed to write `kelpc` itself in Kelp, and the substrate needed for deep systems work (kernels, drivers, firmware, allocators), are each recorded in `backlog.md`. Nothing there is scheduled, and none of it is v1 or v1.1 work. What stays in this file is the three structural blockers and the three reversals those lists contain (see **Far future additions** below).
 - **Deferred despite being in `syntax.md`'s deltas**: `caps(...)` is the last one. Those deltas were aspirational scheduling and lost to implementation order; the milestone list below records where each one is now targeted (`impl` imports shipped as MK2-S1-M1, `pd` and templates as MK2-S1-M2, `alias` substitution as MK2-S1-M3, `caps(...)` at MK4-S1-M1).
 - **The heap exists, and ownership is checkable at runtime.** `Bytes` and `String` are non-`Copy`, so assigning or returning one moves it; it is freed at the end of the block that owns it, and a `datac` with an owned field drops its fields recursively. A passdown of an owned type is freed by an `atexit` handler, which is v1's only drop point at process exit. The suite proves all of that rather than asserting it: every heap fixture is rebuilt with `-fsanitize=address` and run, so a double free, a use-after-free, or a leak fails `cargo test`. That caught two real bugs during MK3-S1-M1 (a branch merge that dropped the drop candidates, and a reassignment that leaked) which is the point of the milestone.
 - **A growable sequence type exists, and it is a compiler builtin, not a user generic.** `List<T>` holds scalars, `String`, `Bytes` or a `datac`; a borrow or a `str` view cannot be an element (an element outlives the list, and v1 has no lifetime syntax to say otherwise), and neither can another `List`. It is non-`Copy`, so MK1-S3-M1's move checking and MK3's drop plan apply unchanged: `push` moves an element in, `pop` moves one out, and the list frees its elements and then its buffer at the end of the owning scope in a `datac` field and an owned `pd` too, through the same `needs_drop` hook `Bytes`/`String` use. `get` returns a copy for a `Copy` element and a borrow for an owned one. Codegen is monomorphized: one C struct and one function set per element type the program mentions, emitted (for a `datac` element) together with that struct. Element types are part of the type, so `List<i32>` and `List<String>` are different C types with different functions the price is that a `List` cannot be passed to a function that does not name its element type, which is what a real generic would fix.
@@ -63,25 +64,27 @@ A fully-qualified identifier is written `MK1-S2-M3`. In context the short form (
 - **(c)** A Mark is not renumbered once any of its Stages has shipped.
 - **(d)** A Stage is not renumbered once any of its Milestones has shipped.
 - **(e)** New Milestones append within their Stage; they are not inserted between shipped Milestones.
-- **(f)** Backlog items keep their `A-n`/`B-n`/`C-n`/`D-n`/`E-n` labels until an item is promoted to a Stage.
+- **(f)** Backlog items keep their `A-n`/`B-n`/`C-n`/`D-n`/`E-n` labels until an item is promoted to a Stage. The items themselves live in `backlog.md`.
 
 ### The marks at a glance
 
-| MK | Title | Stages | Status |
-| --- | --- | --- | --- |
-| **MK1** | Core language | S1 syntax, S2 types/codegen, S3 ownership, S4 borrowing | Done |
-| **MK2** | Modules and compile-time | S1 multi-file/substitution, S2 compile-time features | Done |
-| **MK3** | Heap and containers | S1 owned buffers, S2 containers | Done |
-| **MK4** | Capability security | S1 capabilities | Done |
-| **MK5** | Standard library program | S1–S7, S4b, S4c | In progress MK5-S1 through MK5-S5 done, MK5-S6-M1's cheap half shipped, the `Option`/`Result` decision still open |
-| **MK6** | Concurrency | S1 threads, S2 multithreaded downloads | Not started |
-| **MK7** | Own backend | S1–S5 | Not started |
-| **MK8** | Self-hosting | S1–S3 language readiness, S4–S6 bootstrap | In progress MK8-S1-M1 part 1 (tagged unions + pattern `when`) done |
-| **MK9** | Systems substrate | S1–S9 | Proposed; planned |
-| **MK10** | Capability model extensions | S1–S3 | Proposed; planned |
-| **MK11** | Verification and semantics | S1–S4 | Proposed; planned |
-| **MK12** | Regulated and financial domains | S1–S6 | Proposed; **not a plan item** its existence is a decision to make |
-| **MK13** | **Coral**: build tool and packages | S1 project model and tasks, S2 incremental builds, S3 dependencies, S4 workspaces and artifacts, S5 test/fmt/lint/bench, S6 toolchains/plugins/publishing | Proposed; planned |
+| MK | Title | Stages | Size | Status |
+| --- | --- | --- | --- | --- |
+| **MK1** | Core language | S1 syntax, S2 types/codegen, S3 ownership, S4 borrowing | very large | Done |
+| **MK2** | Modules and compile-time | S1 multi-file/substitution, S2 compile-time features | small | Done |
+| **MK3** | Heap and containers | S1 owned buffers, S2 containers | large | Done |
+| **MK4** | Capability security | S1 capabilities | medium | Done |
+| **MK5** | Standard library program | S1-S7, S4b, S4c | large | In progress MK5-S1 through MK5-S5 done, MK5-S6-M1's cheap half shipped, the `Option`/`Result` decision still open |
+| **MK6** | Concurrency | S1 threads, S2 multithreaded downloads | very large | Not started |
+| **MK7** | Own backend | S1-S5 | very large | Not started |
+| **MK8** | Self-hosting | S1-S3 language readiness, S4-S6 bootstrap | very large | In progress MK8-S1-M1 part 1 (tagged unions + pattern `when`) done |
+| **MK9** | Systems substrate | S1-S9 | very large | Proposed; planned |
+| **MK10** | Capability model extensions | S1-S3 | large | Proposed; planned |
+| **MK11** | Verification and semantics | S1-S4 | very large | Proposed; planned |
+
+Sizes are relative, not dates, and they use the plan's one existing calibration: A-1, A-2, A-4, B-3, B-6 and B-9 are each larger than the entire MK5-S1-MK5-S7 stdlib program (block E, now in `backlog.md`). So a Mark containing those is **very large**, the stdlib program itself is **large**, a stage or two of it is **medium**, and a single commit-shaped change is **small**.
+
+**MK12 (regulated and financial domains) and MK13 (Coral) are not in this table.** An earlier revision listed both as Marks. Each was a question wearing a Mark's clothes: MK12's own text said it "is a **decision to make**, not a task to schedule", and nothing in MK5-MK11 depends on Coral. Both are open items now (71 and 72), with their detail in `backlog.md`. A Mark implies commitment; these two have not earned one.
 
 ### Superseded identifiers
 
@@ -120,6 +123,33 @@ The `M0`–`M9`, `C1`, `S1`–`S8` and `T1` families are superseded. New work us
 
 Two group spellings needed care when the plan was rewritten: a bare `M5` meant the group M5.1–M5.3 (**MK2**), a bare `M6` meant the heap group M6.1/M6.2 (**MK3**), and a bare `M4` meant the borrowing milestone (**MK1-S4-M1**).
 
+## The critical path
+
+Five milestones, in order. Each is here because the one before it is a prerequisite, or because the payoff is what the rest of the list exists for. Sizes use the same scale as the Marks table. Everything else in the plan is under **Also possible, not scheduled** below, in the open items, or in `backlog.md`.
+
+| # | Milestone | Size | Why it is next |
+| --- | --- | --- | --- |
+| 1 | **MK8-S1-M1 part 2**: user-declarable generics (A-2) | very large | Open item 34, and the top of the language backlog. It unblocks row 2: `Option<T>`/`Result<T, E>` payloads, a `Map` with a real key type, `datac Pair<A, B>`. Part 1 (tagged unions and pattern `when`) shipped, so the container machinery MK3-S2-M1 built is already the hand-rolled single-parameter case of it. |
+| 2 | **MK5-S6-M1**: `Option`/`Result` with `?` and `if let` | large | Blocked only on row 1. Every fallible stdlib API wants it (`List.index_of`, `Map.get`, `str.parse_*`, `Box.take`, `net.recv`), and the cheap half shipped (the error-`datac` convention, `errno` in panic text), so the migration is mechanical. |
+| 3 | **A-4 function values and move-taking parameters** (no milestone identity yet) | large | Open item 60a and 60b: the plan records both as prerequisites for threads and never numbered them. Numbering this is the first task of row 4. Nothing else in the plan blocks on it. |
+| 4 | **MK6-S1-M1**: process threads | very large | The owner's chosen order: threads before concurrent downloads. Needs row 3, a per-thread panic and cleanup story, and **atomics plus a published memory model**, which the plan places in MK9-S3-M1 (see **Dependency notes**). |
+| 5 | **MK6-S2-M1**: multithreaded downloads | medium | The payoff of row 4: N URLs in flight, one process, one pool per worker. |
+
+**The off-ramp, recorded and not scheduled.** If row 4 slips, **MK5-S4c** (multi-fd `poll`) reaches concurrent downloads with no language work at all, and at this scale it is the cheaper route to the same payoff. It is not on the path because the owner chose threads first, and because `poll` gives no isolation.
+
+### Also possible, not scheduled
+
+Named, real, and not next. Nothing here is a question (those are the open items) and nothing here is a commitment (those are the Marks).
+
+| Item | Blocked on | Note |
+| --- | --- | --- |
+| MK5-S4b-M1, TLS for `https` | open item 37 (link the system TLS library, or ship `http`-only) | The missing piece is the decision, not the work. |
+| MK5-S4c, multi-fd `poll` | nothing | The off-ramp for row 4 above, and the honest concurrency answer v1 already ships for one thread. |
+| MK7, the language's own backend | nothing | A stated goal in its own right, with a measured argument (compile time) and a measured cost (runtime). |
+| MK8-S2, MK8-S3 | MK8-S1 | Ergonomics and scale for self-hosting. |
+| MK8-S4 to MK8-S6 | MK8-S3 | The bootstrap test itself. |
+| MK9, MK10, MK11 | each other; see **Dependency notes** | Plan-level commitments. No program demands them yet. |
+
 ## MK5 the standard library program (MK5-S1–MK5-S7)
 
 *The detailed record of MK5-S1 through MK5-S4 lives in `done.md`; what follows is the program as planned, plus what is still open. This file says **when**; `basicstructure.md`'s standard library section says **what** the namespace API sketches live there, and this file only points at them.*
@@ -134,9 +164,9 @@ A second, parallel line, added after MK3-S2-M2. Everything below is `.kp` source
 | MK5-S4 | HTTP client: keep-alive, response framing (incl. chunked), and the connection pool | MK5-S1, MK5-S3 | **Fetch a URL and print the body** the headline payoff, with N requests to one host costing one handshake **done**, plus the three compiler changes its own first request forced |
 | MK5-S4b-M1 | TLS for `https` | MK5-S4 + the dependency decision (open item 37) | Real URLs |
 | MK5-S5 | Maps, fs/OS breadth, real `env` bodies | MK5-S1 (join/sort), MK5-S2-M1 (`File`) | Config, headers, directories, metadata, temp files **done**, in three parts (Map; fs breadth + path polish; `env` bodies) |
-| MK5-S6-M1 | `Option`/`Result` (language-gated) | MK3-S2-M2's neighbourhood | Branchable failures instead of panicking natives **cheap half shipped** (the error-`datac` convention, documented; `errno` + `strerror` on every syscall panic) |
+| MK5-S6-M1 | `Option`/`Result` (language-gated) | MK8-S1-M1 part 2 (generics); the tagged-union half is done | Branchable failures instead of panicking natives **cheap half shipped** (the error-`datac` convention, documented; `errno` + `strerror` on every syscall panic) |
 | MK5-S7-M1 | Concurrency analysis | language features that do not exist | Nothing yet an analysis plus `poll` |
-| MK6-S1-M1 | **Process threads** (language milestone) | MK5-S6-M1, function references, a move-taking parameter, a per-thread panic/cleanup story, atomics | Real parallelism and isolation in one process, instead of one process per worker |
+| MK6-S1-M1 | **Process threads** (language milestone) | MK5-S6-M1, function references, a move-taking parameter, a per-thread panic/cleanup story, atomics (MK9-S3-M1) | Real parallelism and isolation in one process, instead of one process per worker |
 | MK6-S2-M1 | **Multithreaded downloading** | MK6-S1-M1 | N URLs in flight, one process, one pool per worker |
 
 Ordering note: the owner's decision is that threads (MK6-S1-M1) come **before** concurrent downloading (MK6-S2-M1), and that MK5-S4 must be built so neither is closed off. MK6-S1-M1 is a language milestone it is not stdlib work, and MK5-S7-M1 explains why.
@@ -266,7 +296,7 @@ Rejected numbering: an earlier revision of this file put moves and borrow checki
 
 ## MK9 Systems substrate
 
-*Scope: everything in block B of the far-future backlog, plus the systems items that backlog did not name. Promoted from the backlog because kernels are a stated domain.*
+*Scope: everything in block B of `backlog.md`, plus the systems items that backlog did not name. Promoted from the backlog because kernels are a stated domain.*
 
 | Stage | Milestone | Content | Was |
 | --- | --- | --- | --- |
@@ -307,119 +337,16 @@ Rejected numbering: an earlier revision of this file put moves and borrow checki
 | **MK11-S3 Testing** | MK11-S3-M1 | Conformance corpus, differential backend testing, lexer/parser/checker fuzzing | D-4 |
 | **MK11-S4 Debug and sanitizers** | MK11-S4-M1 | DWARF emission, source mapping (closes the `#line` gap), a sanitizer story independent of clang | D-5 |
 
-## MK12 Regulated and financial domains
+## Dependency notes
 
-*Scope: decimal arithmetic, transactions, audit/traceability, auditor-usable verification tooling, legacy interop, and certification. Proposed because the domain was named; not endorsed by the plan, which has no section for it.*
+Mark-level edges, and the reason for each. Item-level edges are in the open items and in `backlog.md`.
 
-| Stage | Milestone | Content | Was |
-| --- | --- | --- | --- |
-| **MK12-S1 Numeric correctness** | MK12-S1-M1 | `Decimal` / fixed-point numeric type, arithmetic, rounding modes, overflow behavior | Not in the plan before this entry |
-| **MK12-S2 Transactional primitives** | MK12-S2-M1 | Transactional memory or a transactional primitive at the type level | Not in the plan before this entry |
-| **MK12-S3 Audit and traceability** | MK12-S3-M1 | Source-to-binary provenance, reproducible builds, signed builds | Not in the plan before this entry |
-| | MK12-S3-M2 | Structured audit-log primitive | Not in the plan before this entry |
-| **MK12-S4 Formal tooling** | MK12-S4-M1 | Auditor-usable verification tooling built on MK11 | Not in the plan before this entry |
-| **MK12-S5 Interop** | MK12-S5-M1 | Legacy-system integration: COBOL, DB2, MQ, mainframe protocols | B-1 is the primitive; nothing else in the plan |
-| **MK12-S6 Certification** | MK12-S6-M1 | Certification path, conformance-test publication, standards-body engagement | Not in the plan before this entry |
-
-**Caveat on MK12.** The plan deliberately rejects an ecosystem as a goal (no registry, no third-party dependencies in v1) and has no certification section. Banking is largely an integration domain, so several MK12 stages run against the grain of v1's deliberate non-goals. MK12 is recorded because the domain was named; whether MK12 exists is a **decision to make**, in the sense of block E, not a task to schedule.
-
-## MK13 Coral: the build tool and package manager
-
-*Scope: the project layer above the compiler. `kelpc` stays the compiler. Coral owns the manifest, the project layout, the task graph, dependency resolution, the build cache, artifacts, the test runner, formatting and publishing. Modeled on Gradle: a project model, tasks with declared inputs and dependencies, a build cache, and a development/release split. Named Coral.*
-
-Why this exists, in this repository's own evidence: `kelpc build <path>` compiles one `.kp` file or one directory containing `coral.toml`, and stops there. Everything beyond that is currently someone's shell script or Rust test code. `bench/speed/run.sh` is a 120-line shell program that assembles flags, runs each workload five times, and formats a table. `kelpc/tests/compile_and_run.rs` reimplements discovery, per-fixture flags, expected output, and an AddressSanitizer pass. `examples/download.kp` documents its own build command in a comment. Each of those is a build-tool task that has been hand-written once and will be hand-written again by the next project.
-
-**Division of labor.**
-
-- **`kelpc` keeps the compiler jobs**: load the module graph, type check, move/borrow check, emit C, invoke `cc`, and from MK7 emit machine code. `kelpc build` and `kelpc run` stay documented low-level commands.
-- **Coral owns the project**: manifest, layout, tasks, profiles, dependencies, cache, test runner, artifact naming, publishing, toolchain pinning.
-- **Coral calls `kelpc`, never the reverse.** Everything Coral needs from the compiler is a command-line contract, not a link against compiler internals.
-
-**Tasks are Kelp programs, and that is the design.** Gradle needed a scripting language, then a DSL, then a plugin API, because a task is arbitrary code. Kelp already has arbitrary code: a task is an `.kp` file with `fun main()`, run by Coral, and its authority is whatever its own `impl` lines grant. No scripting DSL, no dynamic plugin API, no build logic inside a string. A task that reads data and writes a report declares exactly that, and the capability checker enforces it:
-
-```kelp
-// tasks/report.kp
-impl "std/fs" with caps(fs = ["/project/out/**", "/project/data/**"])
-impl "std/str"
-impl "std/fmt"
-
-fun main() {
-    val size = fmt.uint(fs.size("/project/data/input.csv"))
-    fs.write_text("/project/out/report.txt", str.concat("input bytes: ", size.as_str()))
-}
-```
-
-The manifest names it, and Coral runs it:
-
-```toml
-# The shape Coral grows coral.toml into. Today's manifest is flat, has four keys
-# (name, version, entry, http_pool), rejects every section, and rejects an
-# unknown key, so this is a format change with a compatibility story to decide
-# (open item 66).
-[package]
-name = "myproject"
-version = "0.1.0"
-entry = "src/main.kp"
-
-[tasks]
-report = { file = "tasks/report.kp" }
-docs   = { file = "tasks/docs.kp" }
-```
-
-```sh
-coral init myproject       # coral.toml, src/main.kp, tests/, .gitignore
-coral build                # dev profile, artifacts in build/
-coral build --release
-coral run -- data.csv      # argv and exit code pass through
-coral task report
-coral test
-coral fmt --check
-coral clean
-```
-
-| Stage | Milestone | Content | Payoff |
-| --- | --- | --- | --- |
-| **MK13-S1 Project model and tasks** | MK13-S1-M1 | `coral init` scaffolding and layout conventions (`src/`, `tests/`, `tasks/`, `build/`), manifest sections, `coral build`/`run`/`check`/`clean`, the task graph, `coral task <name>` | One command per project instead of one shell script per project |
-| | MK13-S1-M2 | Profiles (`dev`, `release`), per-profile flags, artifact naming and placement, argv and exit-code passing for `coral run` | The same project builds two ways without editing files |
-| | MK13-S1-M3 | The compiler interface Coral depends on: `kelpc check --json` diagnostics, a per-module dependency list, a documented CLI contract | A build tool that reports and caches instead of scraping stderr |
-| **MK13-S2 Incremental builds and caching** | MK13-S2-M1 | Fingerprints (source bytes, flags, profile, compiler version), module-granular recompilation, `build/cache` layout, the invalidation rule written down | A one-file change rebuilds in seconds |
-| | MK13-S2-M2 | Cache reuse across branches and worktrees, `coral build --explain` naming the fingerprint that invalidated, cache export/import for CI | CI reuses what a laptop already built |
-| | MK13-S2-M3 | Separate compile and link steps (`kelpc --emit-obj`, `kelpc link`), which is also the base for libraries and cross-compilation | Link-only rebuilds; one pipeline serving three later needs |
-| **MK13-S3 Dependencies and resolution** | MK13-S3-M1 | Path and git dependencies, a lockfile, checksums, `coral add`/`update`/`vendor` | Kelp code shared between repositories without copy-paste |
-| | MK13-S3-M2 | Offline and hermetic builds: vendored trees only, no network, reproducible dependency identity | Builds that work with no network and produce identical bytes |
-| | MK13-S3-M3 | The registry decision: what a version constraint means for Kelp, what publishing publishes, who runs the index | Third-party dependencies, if the plan takes that decision |
-| **MK13-S4 Workspaces and artifacts** | MK13-S4-M1 | Multiple packages in one workspace, intra-workspace dependencies by path, per-package targets | A compiler, a stdlib and a tool in one repository |
-| | MK13-S4-M2 | Library targets: static and shared output, symbol and prefix rules, link flags (shared with MK9-S4-M2) | Kelp code usable from another Kelp project without shipping source |
-| | MK13-S4-M3 | Target selection and cross-compilation: target triples, per-target caches and artifacts, toolchain and linker selection | Building for another machine from one host |
-| **MK13-S5 Test, format, lint, bench** | MK13-S5-M1 | `coral test`: discovery, per-fixture flags, expected-failure fixtures, sanitizer profiles, plain and machine-readable output (absorbs what `compile_and_run.rs` and `bench/speed/run.sh` do today) | One command runs the suite this repository already has |
-| | MK13-S5-M2 | `coral fmt` and `coral lint` over the formatter and lint surface (open items 13 and 23), `--check` mode for CI, settings in the manifest | Style stops being a review argument |
-| | MK13-S5-M3 | `coral bench`: fixture workloads, repeat counts, result tables, comparison against a stored baseline | Regressions found by a command instead of by memory |
-| **MK13-S6 Toolchains, plugins, publishing** | MK13-S6-M1 | Compiler version pinning (`coral toolchain`), per-project toolchain selection | A project builds with the compiler it was written against |
-| | MK13-S6-M2 | Extension surface: tasks contributed by a dependency, generated sources, task outputs as task inputs, with no scripting DSL | Build logic that travels with a package |
-| | MK13-S6-M3 | Publishing and CI recipes: artifact packaging, checksums, signing (shared with MK12-S3-M1), cache keys that survive a container restart | Releases that are one command |
-
-**Deliberately not in Coral**: a scripting language (tasks are Kelp), a dynamic plugin runtime (extensions are manifests and Kelp programs), and a general version-range solver at first (exact versions plus a lockfile; ranges are MK13-S3-M3's problem).
-
-**What Coral needs from elsewhere.**
-
-- **From the compiler**: machine-readable diagnostics, a module dependency list, separate compile and link steps, and a stable CLI contract (MK13-S1-M3). Today `kelpc build`/`kelpc run` and prose diagnostics are all a build tool has to work with.
-- **From MK5-S2-M1 (done)**: `process.spawn`, argv, captured output and exit codes, which Coral and every non-trivial task need.
-- **From MK8-S1/S2, only if Coral is written in Kelp**: generics, `Option`/`Result`, function values and containers. Until then Coral is a Rust program that drives `kelpc` (open item 67).
-- **From MK9-S4-M2**: cross-compilation and library output, which MK13-S4-M2/M3 extend rather than invent.
-- **From the capability model (MK4-S1-M1, done)**: task grants are checked the same way module grants are, which is what lets a build task hold less authority than the user running it.
-
-### Beyond MK12
-
-Blocks `B`, `C-3`/`C-4` and `D` of the far-future backlog are promoted to MK9, MK10 and MK11 above. The remaining backlog items keep their `A-n`/`B-n`/`C-n`/`D-n`/`E-n` labels, per Section (f) of the rules.
-
-### Dependency notes
-
-- **MK9 depends on MK8.** `unsafe`, freestanding mode and FFI all want the language ergonomics (unions, generics, `Result`, function values) that MK8-S1 and MK8-S2 deliver.
-- **MK10 depends on MK4-S1-M1 (done) and MK8-S3.** Runtime authority wants the `[caps]` manifest support (C-2).
-- **MK11 runs alongside MK9 from the first `unsafe`.** D-1 and D-2 are preconditions for honest claims about B-3, B-4 and B-9.
-- **MK12 depends on MK9 and MK11.** Decimal and transactions want the numeric and memory-model substrate; certification wants the verification results.
-- **MK13 depends on the compiler's CLI contract, not on its internals.** MK13-S1-M3 is the prerequisite for S2 and S4; MK5-S2-M1 (done) supplies process control; MK9-S4-M2 supplies cross-compilation and library output; MK8-S1/S2 matter only if Coral is ported to Kelp. Nothing in MK13 blocks MK5 to MK12.
+- **MK9 does not depend on MK8.** An earlier revision said it did, three times, without a reason. `unsafe`, freestanding mode and user FFI do not need generics, tagged unions or `Result` to exist; the substrate is independent of the ergonomics. The ordering is a preference with one reason: the code MK9 targets (an FFI boundary with many handle kinds, a fallible call on every edge, callbacks) is where the missing ergonomics hurt most. If MK9 is ever wanted before MK8 finishes, nothing here stops it.
+- **MK6-S1-M1 depends on MK9-S3-M1 (atomics, ordering, a published memory model).** This edge was implied by MK5-S7-M1 and open item 60e but never written down, and it is a real one: a thread milestone with no memory model and no atomics is not a milestone. Either MK9-S3-M1 moves in front of MK6-S1-M1, or MK6-S1-M1 ships a documented minimal atomics subset and MK9-S3-M1 completes it.
+- **MK10 depends on MK4-S1-M1 (done) and MK8-S3.** Runtime-derived authority (C-1) has nowhere to live until a manifest section can restrict `main` itself (C-2, open item 18), and that section is MK8-S3's.
+- **MK11 runs alongside MK9 from the first `unsafe`.** D-1 (operational semantics, an aliasing model for `&mut`) and D-2 (a UB catalogue) are preconditions for any honest claim about B-3, B-4 and B-9. They cannot wait until MK9 is finished.
 - **Block E restated.** Block E calls A-7/B-7 (allocators), B-6 (freestanding) and B-4 (concurrency model) "decisions to make, not tasks to schedule". **MK9-S3, MK9-S4 and MK9-S5 are those items.** Promoting them to numbered Marks does not remove the decision; it records that the decision is to be made inside a tracked Mark rather than left in the backlog.
+- **Coral and the regulated-domain question have no edges into MK5-MK11.** They are open items 71 and 72. See `backlog.md`.
 
 ## Open items
 
@@ -536,14 +463,18 @@ Blocks `B`, `C-3`/`C-4` and `D` of the far-future backlog are promoted to MK9, M
 65. **A capability pattern is source text, so the harness and the program must agree on a literal path.** `caps_scratch` in `kelpc/tests/compile_and_run.rs` now builds `/tmp/kelp_caps_<name>` literally instead of asking `std::env::temp_dir()`: the fixtures grant `/tmp/kelp_caps_<name>/**`, and a `TMPDIR` pointing at a sandbox left the harness creating one directory while the program read another. The general rule (also worth applying to any future scratch fixture): when a test's grant is written in the fixture, the harness's scratch root is not configurable.
 
 66. **The manifest format change Coral needs.** Today `coral.toml` is flat, holds four keys (`name`, `version`, `entry`, `http_pool`), rejects any line starting with `[`, and rejects an unknown key by name. Coral needs sections (`[package]`, `[tasks]`, later `[deps]`). Options: (a) one manifest, with `kelpc` reading the keys it knows and ignoring other sections; (b) two files, `coral.toml` for the build tool and `kelp.toml` for the project. (The rename folded the old contrast — the compiler's `x.toml` versus Coral's proposed `coral.toml` — onto a single name, so option (b) now needs a second name, and `kelp.toml` is the free one.) **Recommendation**: (a), because a project has one identity and splitting it lets the two files disagree; it also fixes the current behavior where a new compiler key breaks an old manifest. Whatever is chosen needs a stated rule for unknown keys and a way to say "this manifest needs a newer tool".
-67. **What Coral is written in, and when it is ported.** Coral is a Rust program while the compiler is, which means the build tool cannot build itself and its own tasks need a compiler that exists. Writing Coral in Kelp needs MK8-S1/S2 (generics, `Option`/`Result`, function values, containers) and the stdlib breadth MK5 delivers. **Recommendation**: Rust through MK13-S4, then port as the first non-compiler self-hosting exercise, since Coral is a large real program with no unsafe requirements.
+67. **What Coral is written in, and when it is ported.** Coral is a Rust program while the compiler is, which means the build tool cannot build itself and its own tasks need a compiler that exists. Writing Coral in Kelp needs MK8-S1/S2 (generics, `Option`/`Result`, function values, containers) and the stdlib breadth MK5 delivers. **Recommendation**: Rust through MK13-S4, then port as the first non-compiler self-hosting exercise, since Coral is a large real program with no unsafe requirements. (The `MK13-...` names in items 67-70 are the identifiers the Coral design carries in `backlog.md` now that it is not a Mark; open item 72 is the scheduling question.)
 68. **Is a package registry acceptable?** The plan lists a package registry and third-party dependencies as deliberate non-goals, and Coral is a package manager. MK13-S3-M3 is the decision point, and MK13-S3-M1 (path and git dependencies) is worth building either way, because it pays off with no index and no trust model. **Recommendation**: path and git dependencies plus a lockfile, and no index until a second project outside this repository needs to consume Kelp code.
 69. **What a version constraint means for Kelp.** A semver range needs a compatibility theory (what counts as a breaking change in a language with no traits and no visibility rules yet), and a lockfile needs a format with a checksum story. Nothing here is decided in v1. **Recommendation**: exact versions plus a content-addressed lockfile first, ranges after MK13-S4-M1 makes a multi-package workspace concrete.
-70. **How much authority Coral itself holds.** The design above gives each task its own grants and Coral none, but Coral still writes `build/`, reads sources and runs the linker, so it holds a grant set whether or not the manifest says so. The open question is whether that set is fixed and documented (build inputs, build output, toolchain binaries) or declared per project. Related: a task's output becoming another task's input without the second task holding a write grant on the first's tree. **Recommendation**: a fixed, documented grant set for the tool itself, orthogonal to per-task grants, with the C-1 runtime-authority work (MK10-S2-M1) as the thing that makes it checkable rather than documented.
+70. **How much authority Coral itself holds.** The Coral design in `backlog.md` gives each task its own grants and Coral none, but Coral still writes `build/`, reads sources and runs the linker, so it holds a grant set whether or not the manifest says so. The open question is whether that set is fixed and documented (build inputs, build output, toolchain binaries) or declared per project. Related: a task's output becoming another task's input without the second task holding a write grant on the first's tree. **Recommendation**: a fixed, documented grant set for the tool itself, orthogonal to per-task grants, with the C-1 runtime-authority work (MK10-S2-M1) as the thing that makes it checkable rather than documented.
+
+71. **Should Kelp target regulated and financial domains?** An earlier revision made this MK12, with six stages (decimal arithmetic, transactional primitives, audit and traceability, formal tooling built on MK11, legacy interop, certification), and then said in the same breath that it "is a **decision to make**, not a task to schedule". A decision does not need six stages. The plan rejects an ecosystem as a goal (no registry, no third-party dependencies in v1) and has no certification section, and banking is largely an integration domain, so several of those stages run against v1's deliberate non-goals. **Recommendation**: keep it a question. If the answer is yes, the stages are in `backlog.md` and the domain gets a Mark when a real program needs it; until then nothing in MK5-MK11 changes.
+
+72. **Coral: the project-layer build tool and package manager - a Mark, or a question?** An earlier revision made this MK13, with six stages. The design survived the review: tasks are Kelp programs with their own `impl` grants, `coral.toml` grows sections, the task graph is Gradle-shaped, and the build cache is the point. The *scheduling* did not. Nothing in MK5-MK11 depends on Coral; `kelpc build`, `cargo test` and `bench/speed/run.sh` work today; the first thing Coral needs from the compiler is a stable CLI contract that does not exist yet; and Coral cannot itself be a Kelp program until MK8-S1/S2 ship. **Recommendation**: open item. The design sketch is in `backlog.md`. Promote it to a Mark when a second project outside this repository needs it, or when the compiler's CLI contract is frozen. `rebrand.md` already treats "what does `coral` replace" as an open decision.
 
 ## Features Kelp needs
 
-*A filter over what is already recorded: the MK5/MK6 work, the open items, the MK9 to MK13 marks, and the far-future backlog below. It asks one question per proposed feature: does it strengthen Kelp's identity, or bend it? The identity is three things: ownership plus borrowing with no GC, capabilities as compile-time grants, and a small explicit surface (Kotlin form, Rust core). This section lists only the items that pass that filter and are needed; what was rejected is recorded as a non-goal instead (block F, `syntax.md` §13). It adds no schedule of its own, the Mark tables above and the backlog below keep theirs.*
+*A filter over what is already recorded: the MK5/MK6 work, the open items, the MK9 to MK11 marks, and the backlog in `backlog.md`. It asks one question per proposed feature: does it strengthen Kelp's identity, or bend it? The identity is three things: ownership plus borrowing with no GC, capabilities as compile-time grants, and a small explicit surface (Kotlin form, Rust core). This section lists only the items that pass that filter and are needed; what was rejected is recorded as a non-goal instead (`backlog.md` §F, `syntax.md` §13). It adds no schedule of its own; the Mark tables above and `backlog.md` keep theirs.*
 
 ### 1. Needed for ordinary use
 
@@ -592,95 +523,18 @@ Kelp will never do "everything", and that is the point. The languages that tried
 
 ## Far future additions
 
-A backlog, not a milestone list. No numbers, no order, and no commitment: the milestone records in `done.md` stay the authority for what has shipped, and the Mark tables above are the authority for what is next, and everything here waits until something needs it. It exists for two reasons, both of them goals the plan states and neither of them reachable with v1 plus the MK5 stages:
+*The itemized lists (`A-1`-`A-17`, `B-1`-`B-10`, `C-1`-`C-4`, `D-1`-`D-5`, and the suggested order) are in `backlog.md`. They are a backlog, not a schedule: no numbers, no order, no commitment. What stays here is the part that is a decision rather than an item.*
 
-- **Write `kelpc` itself in Kelp.** The compiler is 16 files whose central types are enums walked by pattern matching, over hash maps, with `Result` at every fallible edge, closures for traversal, and `Vec`/`HashMap`/`Box` throughout. Almost none of that is expressible today see block A.
-- **Deep systems work** (promoted to MK9; block B below is kept as the item detail). Kernels, drivers, firmware, allocators, hypervisors, embedded. Measured against the plan's own framing in "Context" ("a new statically-typed, systems-level programming language ... aiming for Rust/C/C++-class runtime performance"), v1 earns the *performance* half and the *memory model* half; it does not earn the target-list half. Rust reaches kernels only through the five things excluded here `unsafe`, `no_std`, `repr(C)`, atomics, and user FFI see block B.
+**Three structural blockers.** Each one is a whole class of program the language cannot express today, and each one is why a block of backlog exists at all.
 
-Two structural blockers, stated once so every block below can be read against them. **No `unsafe`** means no kernel, driver, allocator or runtime, and no escape valve for a deliberately conservative borrow checker. **Capabilities are compile-time constants with an unrestricted entry module** (open item 18), so a *sandboxed* `kelpc` is not even expressible a compiler's authority is runtime data (paths from `argv`, `PATH`/`CC`, temp files), not a compiled-in allowlist. Block C exists for that second one.
+- **No `unsafe`** (B-3). No kernel, driver, allocator or runtime, and no escape valve for a deliberately conservative borrow checker.
+- **No user-declarable generics** (A-2, open item 34). `Option`/`Result`, `datac Pair<A, B>`, a `Map` with a non-`String` key and any user container all wait on it. The builtin `Box<T>`/`List<T>`/`Map<V>` are the hand-rolled single-parameter special case of it, so there is no third one to add.
+- **No runtime authority** (C-1, open item 18). Capabilities are compile-time constants and the entry module is unrestricted, so a *sandboxed* `kelpc` is not even expressible: a compiler's authority is runtime data (paths from `argv`, `PATH`/`CC`, temp files), not an allowlist.
 
-Items are labelled `A-n`/`B-n`/`C-n`/`D-n` to keep them out of the open-item numbering. Nothing here is a task list yet; several items are reversals of deliberate decisions, and block E says which ones.
+**Three reversals of deliberate decisions.** These are not extensions. Each one undoes something v1 chose on purpose, and each needs an explicit decision before it becomes a task.
 
-### A. Language surface required to write `kelpc` in Kelp
+- **Allocators** (A-7, B-7): v1 has no custom allocator and no arena, and allocation failure panics. Reversed when a real program needs an arena or a fallible allocation.
+- **Freestanding** (B-6): v1 assumes an ambient libc runtime (`stdio`, `malloc`, `atexit`, `main`). Reversed for a kernel, a firmware image, a bootloader or an embedded target.
+- **Concurrency model** (B-4): v1 avoids a memory model by not having threads. Reversed *before* threads (MK6-S1-M1; see **Dependency notes**), not after.
 
-*A-1 to A-13 are promoted to MK8-S1 and MK8-S2; A-14 to A-16 and C-1/C-2 to MK8-S3; A-17 to MK8-S4 through MK8-S6. The items are kept here as the detail.*
-
-- **A-1. Tagged unions and exhaustive pattern matching.** **Part 1 shipped as MK8-S1-M1 (part 1)**, recorded in `done.md`: the spelling is `enum` with payload-carrying variants, chosen over a `sum` keyword and over variants on `datac` because Rust's meaning of `enum` is exactly the meaning wanted here, while `datac` stays a record with one layout and one set of rules. What landed: `enum Name { Variant(val f: T) ... }` (variants newline-separated, the payload list shared with `datac`), construction as `Shape.Circle(r = 1.0)` / `Shape.Empty`, the `when <place> { Variant(bind) -> value else -> value }` pattern form (the boolean `when` has no scrutinee, so the two forms never collide), exhaustiveness checking that names a missing variant, payload binding by copy for `Copy` and by shared borrow otherwise, a C `tag` + `union` layout with a per-variant drop switch, enums as container elements, and one merged `datac`/`enum` declaration order. `syntax.md` §2.3/§3/§6.3/§9.2/§17 carry the syntax. What is left of A-1: nested/literal patterns and guards, which nothing needs yet. `Option<T>`/`Result<T, E>` still wait on A-2 (generics for the payload).
-- **A-2. User-declarable generics** (open item 34). `Box<T>`/`List<T>`/`Map<V>` are compiler builtins and cannot be user-defined, which leaves `datac Pair<A, B>`, `fun f<T>(xs: List<T>)`, `Map<K, V>` with a real key type, and `Option<T>` unwritable. Needs type parameters on types and functions, monomorphization (MK3-S2-M1's machinery is the hand-rolled single-parameter special case of this), call-site inference, and the `Map<Sym, Ty>`-shaped table `kelpc`'s own source needs.
-- **A-3. `Option<T>`/`Result<T, E>` with propagation.** No `?`, no `if let`, no combinators, no null. The error-`datac` convention (stdlib decision 2) carries the stdlib and does not scale to a compiler: nested fallible calls become nested `if`s and every failure shape wants its own datac. This is MK5-S6-M1's decision point, and it is compiler ergonomics as much as stdlib surface. `?`/`if let` are syntax, so `syntax.md` gains them first.
-- **A-4. Function values, closures, and move-taking parameters.** There are no first-class functions anywhere in the parser, and no spelling for "this parameter is moved" (open item 1). A compiler is pass-structured `walk(node, |n| ...)`, comparators, diagnostic sinks, per-node callbacks so without them every traversal is hand-rolled and sorting is limited to `List`'s builtin per-element-kind comparators. MK5-S7-M1 already gives the same two missing pieces as the reason threads do not exist.
-- **A-5. Iteration: a `for` loop, then possibly a protocol.** Open items 27, 36a and 46. `for x in list { }` as a parser desugar to `while` is the cheap version and covers most of it; a reusable traversal (`iter`/`next`) is the expensive version, and is what an abstraction over heterogeneous traversal would need. `syntax.md`'s §10 does not list `for`, so it is a syntax decision first.
-- **A-6. A keyed container with non-`String` keys, and `Set`** (open item 41). A compiler's tables are keyed by interned symbol id, type id, node id, and `(module, name)` stringifying keys to reuse `Map<V>` is the wrong shape at the wrong cost, and `Map<bool>`-as-`Set` is a recorded stopgap rather than a substitute at compiler scale.
-- **A-7. Shared ownership of immutable data, and allocator control.** No `Rc`-shape, no arena/region, and no custom allocator (all explicit non-goals today), while a `datac` field must be owned so interned strings, type tables and symbol tables can only be shared as *indices* into a `List`. Indexing is the standard compiler design and will work; the language gives no help, and with no allocator hook the allocation-heavy phase of compilation stays slow. An arena for AST nodes and a shared-immutable table type are the two things a compiler actually reaches for.
-- **A-8. A length-carrying borrowed view, and borrows in fields** (open items 22, 29, 44). A node cannot hold a `&str` slice of the source (`syntax.md` §1/§13), so every token and identifier copies its text; a `View` (or `&[u8]`) collapses those copies in the lexer, the parser and every `split`-shaped routine at once, and it also lets `path.parent`/`str.trim` return views instead of allocations and `List<String>.get(i)` drop its `.as_str()` chain.
-- **A-9. The bit surface.** v1 has *no bitwise operators at all* (the plan's own note: `str.char_at` does UTF-8 masks by subtraction), no char literal (open item 53), and no sized/hex/binary literal story. A lexer, a codegen and any byte-format work need shifts, masks and testable bits and `&` is already taken by borrows, so the spelling is itself a decision.
-- **A-10. Loosened container element rules** (open item 28). No `List<Box<T>>`, no `List<List<T>>`, no borrow or view elements, and a `datac` may only name earlier `datac`s (open item 12) a compiler's children lists are exactly the forbidden shapes, so today each one needs a wrapper `datac`.
-- **A-11. Borrow-checker expressiveness.** Deliberately conservative, which is over-strict rather than unsound and a compiler is where the strictness lands hardest: no provenance, so a pointer local cannot be reused as a cursor (item 33); lexical lifetimes, so a bound borrow lives to the end of its block (item 30, workaround is an extra `{ }`); no NLL (a stretch goal only); no partial moves (the `Line` text case); no field-granular drop tracking and no flow-sensitive branch merge, which are also what the three deliberate leaks wait on (item 15). Eventually explicit lifetime syntax (`'a`), so a borrow can be a field and a type can say what it is tied to.
-- **A-12. Traits/interfaces and dynamic dispatch.** Substitutable by enums for dispatch *if* A-1 exists, but not for destructors (a user `Drop`) and not for a pass abstraction ("a stage is a thing with a `run`").
-- **A-13. Visibility/privacy.** Every top-level item of a module is reachable as `alias.Item` (MK2-S1-M1) and nothing in the plan adds `pub`. A ~100k-line self-hosted compiler with a fully public surface is a structural problem, not a style one.
-- **A-14. Compilation at scale.** Separate compilation, incremental/query-based compilation, a cross-build cache, and a reserved internal-library location (today `impl` is local-files-only and `std/...` is the *compiler's* namespace). The measured baseline makes this a requirement rather than a nicety: ~95% of `kelpc build` is `cc`'s fixed overhead and Kelp's own pipeline is 3–4 ms (MK7's table), while a self-hosted `kelpc` is roughly an order of magnitude more Kelp source so MK7's own backend is a precondition for a tolerable self-hosted toolchain, not just a performance project.
-- **A-15. Tooling.** A test framework (an explicit non-goal today), `kelpc fmt` (unscheduled, item 13), a lint pass with the configurable naming option (item 23), and a documentation generator with doc-comment extraction.
-- **A-16. Diagnostics and debuggability.** `#line` was never emitted (item 20), so generated code carries no source mapping; a real backend needs DWARF and a location story. Also an own tracing/profiling hook set, so a self-hosted compiler can be profiled without the C toolchain's help.
-- **A-17. A bootstrap milestone, which this plan does not have at all.** Build `kelpc` in Kelp, compare stage0 (Rust `kelpc`) against stage1 (Kelp `kelpc`) on the whole fixture suite, then check the fixpoint (stage1 builds stage2, behaviourally or byte-identical). Without that test, "the compiler is written in Kelp" is a claim rather than a result the same standard the verification section already holds memory safety to.
-
-### B. Substrate required for deep systems
-
-*Promoted to MK9 see the MK9 tables above. The items are kept here as the detail.*
-
-What separates a systems-*dialect* application language from a language that can host a kernel, a driver, a firmware image, an allocator or a runtime.
-
-- **B-1. User FFI.** `extern fun` exists but is compiler-only: user code gets "only compiler-shipped stdlib modules may declare 'extern fun'" (MK3-S1-M2). Needs user-declarable externs, `extern "C"` blocks, variadic calls (MK7 stage 4 already flags the x86-64 SysV `AL`-register detail for `printf`), function-pointer/callback types, symbol import/export and linkage attributes, link flags and library paths, and system-library declarations (TLS, open item 37, is the first instance). Without this Kelp cannot call libc or any OS API no device library, no database client, no GUI toolkit.
-- **B-2. ABI and layout control.** No `repr(C)`, no alignment, no packing, no unions, no bitfields, no explicit size/offset, no enum discriminants, no layout intrinsics (`size_of`/`align_of`/`offset_of`). So no MMIO register block, no wire or on-disk format, no packet header, no kernel struct, no C-interop struct the artefacts deep systems work is made of. MK7 stage 3 lists `datac` layout, calling convention, and `extern "C"` calls as *backend* work for the compiler's own ~20 externs; this item is the user-facing version of the same thing.
-- **B-3. `unsafe`, raw pointers, and the memory surface.** No raw pointers, no pointer arithmetic, no casts/`transmute`, no `volatile`, no address-space or provenance control, no uninitialised allocation. Needed for MMIO, DMA, intrusive lists, allocators, page tables, kernel objects and lock-free structures. The plan's own evidence that Kelp cannot express this today is that `Bytes`/`String`'s runtime is a fixed C preamble in `codegen_c.rs` and the stdlib's primitives are 251 lines of C in `externs.rs`. With A-11's checker still conservative and no `unsafe`, there is also no escape valve the single structural reason a kernel is out of reach.
-- **B-4. Atomics, ordering, and a published memory model.** No atomics, no fences, no ordering annotations, no `Send`/`Sync`-shaped discipline, and no definition of a data race because there are no threads. A systems language needs the model *before* the threads: what a `&mut` guarantees, what concurrent access to one location does, what a capability-protected region may be shared across, and what the compiler may assume. This is also the missing half of block D.
-- **B-5. Threads, and then a concurrency story.** MK5-S7-M1's conclusion stands: no threads until function values *and* move-taking parameters exist (A-4), plus a rule for `&mut` crossing a thread boundary, owned data handed to a thread, per-thread stacks and TLS, a per-thread frame/cleanup story (drops are keyed to lexical blocks in one function), and what a panic in one thread does to the others. `async`/`await` is a further step and needs a state-machine transform in codegen. The intermediate that MK5-S7-M1 already ships is multi-process plus `poll`.
-- **B-6. Freestanding / no-runtime mode.** Kelp assumes an ambient runtime: libc stdio, `malloc`/`realloc`/`free` from the preamble, `atexit` for owned `pd` drops, `main(argc, argv)`, and `kelp_panic` → `exit(1)`. Needs a `no_std`-shaped mode with no libc, no stdio and no implicit heap, a user-supplied panic handler and entry point, raw syscall access, target selection, linker-script/section control, static and shared library output, cross-compilation, and C-free static-ELF output. This is the requirement for kernel, bootloader, firmware, hypervisor, RTOS and embedded targets and MK7 stage 5's "static ELF with raw syscalls and our own runtime" is the same item approached from the toolchain side.
-- **B-7. Allocator control.** A custom global allocator, per-arena/per-subsystem allocators, alignment and huge-page requests, DMA-safe allocation, and *fallible* allocation (`try_alloc`) today allocation failure panics and `mem.alloc(n)` is a fixed zero-filled `Bytes`. Arena/bump allocation and custom allocators are explicit non-goals in the current plan, so this item reverses that non-goal for the same reason A-7 wants an arena for the compiler.
-- **B-8. Destructors and deterministic cleanup.** No user `Drop` (needs A-12), no `defer`, drops only at lexical scope exit and `atexit`, and a panic path that calls `exit(1)`. Systems code needs release points it can point at, a `Drop`-equivalent for resource handles, and a cleanup story for the panic/abort path which also means rethinking "a panic takes the process".
-- **B-9. Hardware and ISA surface.** SIMD vectors, intrinsics, CPU-feature detection and dispatch, inline assembly, naked/interrupt-handler functions, calling-convention control (syscall, interrupt, fastcall), stack alignment and prologue control, atomics-as-instructions (with B-4), and cache/prefetch hints. Without these there is no lock-free primitive, no context switch, no device ISR and no vectorised kernel.
-- **B-10. Data-format primitives.** Endianness conversion intrinsics, unaligned load/store, and byte-order-aware reads and writes, so a wire or on-disk format is expressible without hand-rolled shifting (which A-9 is also needed for).
-
-### C. Capability-model gaps (this language's headline, extended)
-
-*C-1 is promoted to MK10-S2, C-2 to MK8-S3, and C-3/C-4 to MK10-S1 and MK10-S3. The items are kept here as the detail.*
-
-The capability system is the differentiator, and it is currently a compile-time constant allowlist plus an unrestricted entry module. Two consequences matter for anything beyond one sandboxed program.
-
-- **C-1. Runtime-derived authority.** A real `kelpc` takes its authority from runtime data: source paths on `argv`, the project root, `PATH`/`CC`, a temp directory, an arbitrary `cc` binary. Kelp cannot express "this authority came from my input": grants are compiled-in patterns, no module ever holds a capability *value* it could pass or attenuate, and there is no runtime delegation. Needs capability values/handles as a first-class (or explicitly restricted) thing plus a rule for deriving a pattern from runtime input safely otherwise `main` stays unrestricted and the headline feature is off for the compiler, which is the state today.
-- **C-2. Restricting the entry module** (open item 18): `coral.toml [caps]`, so `main` can hold less than everything. The capability fixtures already work around this by putting their interesting module behind one level of delegation.
-- **C-3. Device and kernel vocabulary.** Grants for device nodes, MMIO regions, IRQ lines, kernel object handles, memory regions/pages, and file descriptors *as capabilities* rather than as names the object-capability reading the model is already shaped for (seL4/Fuchsia-like), and the direction that would make capabilities a systems feature rather than a sandbox one.
-- **C-4. Attenuation and per-request grants.** Handing a narrower grant to a plugin or worker at runtime (the multi-process story MK5-S7-M1 ships), revoking one, and bounding a grant's lifetime and holder count.
-
-### D. Verification and semantics duty
-
-*Promoted to MK11. The items are kept here as the detail.*
-
-Cross-cutting, and the reason the current claims cannot simply be extended to unsafe or concurrent code: every memory-safety and capability claim in the verification section is verified *through clang* (ASAN, `-fwrapv`). Once there is `unsafe`, raw pointers, atomics, or an own backend, the obligation transfers to Kelp, and the argument has to be about Kelp's semantics rather than C's.
-
-- **D-1. A formal operational semantics, and an aliasing model for `&mut`** a Stacked-Borrows/Tree-Borrows equivalent, or a documented decision not to have one. The borrow checker's rules are implemented across `infer.rs`/`borrowck.rs`; the model they implement is not written down anywhere.
-- **D-2. A UB catalogue.** Defined behaviour for overflow (currently `-fwrapv` from the C toolchain), uninitialised memory, out-of-bounds, provenance, the FFI boundary, and data races (once B-4 exists). "No UB" cannot be claimed against an undefined model.
-- **D-3. A Miri-equivalent dynamic checker** (or a proving argument) for the move/borrow/aliasing rules, so soundness is a test result rather than a reading of the checker's source.
-- **D-4. Conformance, differential testing and fuzzing.** A grammar/conformance corpus, differential runs of two backends over the same fixtures (MK7 stage 1's `--backend=` flag is the seed of it), and fuzzing of the lexer, parser and checker against the semantics.
-- **D-5. Own sanitizers and debug info.** DWARF emission, source mapping (A-16), and a sanitizer story that does not depend on clang.
-
-### E. Suggested order, and cost
-
-*Block E calls A-7/B-7 (allocators), B-6 (freestanding) and B-4 (concurrency model) decisions to make rather than tasks to schedule. Those three are MK9-S5, MK9-S4 and MK9-S3 the decision is now made inside a tracked Mark.*
-
-Nothing here is scheduled. If it ever is, the cheapest useful sequencing is:
-
-1. A-1 to A-5 and A-11 unions/patterns, generics, `Option`/`Result`, function values, iteration, and checker expressiveness. Without them a self-hosted front end is not writable at all, and A-1 is the largest single language change since borrow checking.
-2. A-6 to A-13 containers, shared data/arenas, views, bits, element rules, traits, privacy. The ergonomics that make a large body of Kelp code tractable.
-3. A-14 to A-17 with C-1 and C-2 scale, tooling, bootstrap, capability derivation. The difference between "self-hosted in principle" and "self-hosted and usable".
-4. B-1 and B-2 FFI and layout. The first *systems* unlocks, and partly free from the C backend if only they were exposed.
-5. B-3 to B-10 unsafe, atomics/model, threads, freestanding, allocators, destructors, ISA. Each one a subsystem; together, the difference between a systems-dialect language and a systems language.
-6. Block D runs alongside from the first `unsafe`, and B-4 (the memory model) is a precondition for honest claims about B-3, B-5 and B-9.
-
-For calibration: A-1, A-2, A-4, B-3, B-6 and B-9 are each larger than the entire MK5-S1–MK5-S7 stdlib program, and A-14 compounded with MK7 is a project of its own. Three items are reversals of deliberate decisions rather than extensions A-7 and B-7 reverse "no custom allocators, no arena", B-6 reverses "assume an ambient libc runtime", and B-4 creates the concurrency model v1 avoids on purpose. Those should be treated as decisions to make, not tasks to schedule.
-
-### F. Dependency and precedence notes
-
-- **The precedence rule at the top of the plan still applies.** Any syntax these blocks need a sum type, `for`, `unsafe`, `repr`, `'a`, `View`, `defer`, `?`, `if let`, `trait` must be added to `syntax.md` first, because that file is the authority on syntax and this one is not.
-- **Open items these blocks close or supersede**: 4 (`when` value patterns), 11 (line continuation, if syntax work starts), 12 (a datac naming only earlier datacs), 13 and 23 (`kelpc fmt`/lint), 15 (the three deliberate leaks, via field-granular drop plus a flow-sensitive merge), 18 (`main` unrestricted), 20 (`#line`/debug), 27, 36a and 46 (`for`), 28 (element rules), 29, 30 and 33 (borrow lifetimes, provenance, bound-borrow scoping), 34 (generics), 36c (`Option`/`Result`), 37 (TLS, as the first FFI/link case), 41 (`Map` keys, `Set`), 44 (a length-carrying view), 53 (`char`).
-- **The two structural blockers, restated**: no `unsafe` means no kernel, driver, allocator or runtime, and no escape valve for a deliberately conservative borrow checker; capabilities as compile-time constants with an unrestricted `main` mean a sandboxed `kelpc` is not expressible until C-1 and C-2 exist.
-- **What is not in this backlog, on purpose**: GC or exceptions (both permanent divergences, `syntax.md` §13), and a REPL/LSP/IDE story (unscoped in this plan entirely, and downstream of A-1 to A-17). A package registry and third-party dependencies were on that list; they are now MK13-S3-M3's decision rather than a settled non-goal, with path and git dependencies (MK13-S3-M1) scheduled and paying off whether or not an index ever exists.
+Everything else in the backlog is an extension rather than a reversal, and lives in `backlog.md`.

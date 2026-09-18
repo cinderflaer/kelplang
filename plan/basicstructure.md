@@ -1,10 +1,11 @@
 # The "Kelp" language basic structure
 
-Part 1 of 4 of the Kelp language plan. The other files:
+Part 1 of 5 of the Kelp language plan. The other files:
 
 - `syntax.md` the syntax and style authority.
 - `done.md` the milestone record of what has shipped, milestone by milestone.
-- `roadmap.md` current state, the MK/S/M naming scheme, what is next, the open items, and the far-future backlog.
+- `roadmap.md` the critical path, current state, the MK/S/M naming scheme, and the open items.
+- `backlog.md` everything named and not scheduled: the `A`-`F` item lists, Coral, regulated domains.
 
 **Precedence rule: `syntax.md` wins on syntax and style.** Where any file here and `syntax.md` disagree about syntax or style including where another file restates that syntax `syntax.md` is correct and the other file is wrong. Syntax restated outside `syntax.md` is a copy kept for reading convenience, not a second authority. The rest of the plan is the authority for everything else: the language's non-syntax decisions, the milestone record, capabilities, and the standard library.
 
@@ -174,7 +175,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 
 Everything listed above as v1 scope now exists except what is named under "Not shipped, and known" in "Current state": the `env` bodies, `fs.mkdir_all`, and the length-carrying view that a few `str`/`path` functions are waiting for. See "Current state".
 
-Deferred beyond v1 (explicitly out of scope for now, revisit later): **user-declarable** generics (`Box<T>`/`List<T>` are compiler builtins, so `datac Pair<A, B>` and `enum Option<T>` are not expressible), traits/interfaces, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Pattern matching over a tagged union moved *into* v1: `enum` (roadmap's A-1 / MK8-S1-M1 part 1) shipped, so that item is off this list — what is still deferred is generics for the payload, which is why `enum Option<T>` is not expressible yet. Heap collections are the other item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and a `for` loop to iterate a sequence is still open see open items 27 and 46. This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is `roadmap.md`'s **Far future additions** section.
+Deferred beyond v1 (explicitly out of scope for now, revisit later): **user-declarable** generics (`Box<T>`/`List<T>` are compiler builtins, so `datac Pair<A, B>` and `enum Option<T>` are not expressible), traits/interfaces, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Pattern matching over a tagged union moved *into* v1: `enum` (roadmap's A-1 / MK8-S1-M1 part 1) shipped, so that item is off this list — what is still deferred is generics for the payload, which is why `enum Option<T>` is not expressible yet. Heap collections are the other item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and a `for` loop to iterate a sequence is still open see open items 27 and 46. This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is `backlog.md`.
 
 ## Standard library
 
