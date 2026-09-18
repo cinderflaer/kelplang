@@ -171,8 +171,8 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `List<T>` | owned | growable sequence, one instantiation per element type |
 | `Map<V>` | owned | keys are always `String`, values are `V`, insertion order |
 | `Box<T>` | owned | one heap cell that holds a `T` or nothing |
-| `datac` name | owned | record with per-field `val`/`var` |
-| `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2) |
+| `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
+| `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
 | `Unit` | Copy | absent value, the implicit return type |
 
 Rules that follow from the table:
@@ -181,6 +181,7 @@ Rules that follow from the table:
 - Owned types are not `Copy`: assigning one moves it, and every owned value is dropped at the end of the scope that owns it, including inside `datac` fields, `List` elements and `Map` values.
 - `str` is a borrow, so it cannot live in a `datac` field, a `List` element, a `Map` value or a `Box`; only owned types can.
 - No `List` or `Map` may hold another `List` or `Map` directly, because elements are stored inline. Put it in a `Box`.
+- A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
 - `Unit` is not a value and cannot be stored.
 
 ## 4. Bindings and assignment
@@ -355,7 +356,7 @@ A name that the function does not declare is an error; so is naming an argument 
 - A user program cannot overload a name. Two `fun pick(a: i32)` and `fun pick(a: f64)` collide: `function 'pick' is defined more than once for the same parameter types`. Overloading exists only inside the shipped standard library, and only for `abs`, `min`, `max` and `clamp`, which is how `math.min` accepts `i32`, `i64` and `f64`.
 - Recursion is unrestricted, including mutual recursion.
 - There are no closures and no function values: a function name is not a value, and a function cannot be passed to another function.
-- There are no generics. `List`, `Map` and `Box` are builtins with one instantiation per element type, and a function that takes a `List<i32>` cannot take a `List<String>`.
+- A function cannot take type parameters. Generic *types* exist (9.3) but generic *functions* do not yet, so `fun sum(xs: List<T>)` is refused; every function names its parameter types concretely.
 
 ### 7.3 `main`
 
@@ -465,6 +466,45 @@ fun label(s: &Shape).R: &str = when s {
 - The scrutinee must be a place (a binding, a field path, or a dereference) — not a call's result — because a payload that is not `Copy` binds as a borrow of it and that borrow has to outlive the arm's body. Bind the value to a `val` first when you have an expression.
 - The number of bindings must equal the number of payload fields, and `_` ignores one.
 - Matching is exhaustive over the variants, or covered by an `else` arm (6.3).
+
+### 9.3 Generic types
+
+A `datac` or an `enum` may declare type parameters, and each use site instantiates them into a concrete type:
+
+```kelp
+datac Pair<A, B>(val first: A, val second: B)
+
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+val p: Pair<i32, String> = Pair(first = 1, second = String.from_str(s = "one"))
+val n: Option<i32> = Option.Some(value = 7)
+```
+
+- The parameter list is `<` name (`,` name)* `>` between the declared name and the declaration's own `(` or `{`. A parameter is in scope in every field or payload type of that declaration, and nowhere else.
+- A parameter name must not be a builtin type, and a generic type must not share its name with a non-generic one.
+- A generic type is written with its arguments wherever a type is written: `Pair<i32, String>`, `Option<i32>`, `List<Option<i32>>`, `Box<Pair<i32, i32>>`. The argument count is checked, and each argument must be a concrete type — there is no way to write a parameter at a use site, because generic functions do not exist yet.
+- Two instantiations of one template are two different types: `Pair<i32, i32>` cannot be passed where `Pair<String, String>` is expected, and each gets its own generated code.
+- A type argument may not be `str` or a reference, because that would make a field (or a payload) borrowed, which 9.1 already forbids.
+- A generic type is a template, not a type: writing `Pair` without arguments is an error naming the arguments it needs.
+- A generic type may refer to itself through a `Box` or a `List`, exactly as a non-generic one may.
+
+**Type arguments are inferred, not written, at a construction.** The arguments of the construction determine the parameters, and so does the expected type:
+
+```kelp
+val p = Pair(first = 1, second = "one")     // A = i32, B = str is illegal —
+                                            // use String for stored text
+val q = Pair(first = 1, second = String.from_str(s = "one"))   // A = i32, B = String
+
+val a: Option<i32> = Option.Some(value = 7) // T from the payload
+val b: Option<i32> = Option.None            // T from the expected type — the only
+                                            // thing that determines it here
+```
+
+- The expected type is consulted first, then each argument. A parameter that neither determines is an error that names it, with the fix (`val x: Option<i32> = ...`). It also means an integer literal takes its type from the expected type or from the other argument, not from the default (`Option<i32>`).
+- A generic type has no methods yet, and a receiver cannot name one: `fun Pair.first()` is refused. Read a `datac`'s fields with `.`; read an `enum`'s payload with `when`.
 
 ## 10. Ownership, moves and borrowing
 
@@ -1091,8 +1131,8 @@ Responses frame their body by `Content-Length`, chunked encoding, a bodyless rul
 These are deliberate, and each one has a workaround in this document:
 
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
-- No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` waits on generics.
-- No generics, so an `enum` cannot carry a type parameter: `enum Option<T>` is not expressible yet. `List`, `Map` and `Box` are builtins.
+- No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` is now expressible as a user `enum` (9.3); the stdlib has not migrated to it.
+- No generic functions, and no receiver methods on a generic type: `fun sum(xs: List<T>)` is refused. Generic *type* declarations exist (9.3). `List`, `Map` and `Box` are builtins in addition to being what a user generic compiles to.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - No partial moves: an owned field cannot be read out of a borrowed structure (9), so move it with `Box.take` or pass a borrow.
 - No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.
@@ -1130,6 +1170,11 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `no 'main' function found` | the entry module needs `fun main()` |
 | `'fs.read' needs the 'fs' capability, which module 'm' was not granted` | grant it at the `impl` line: `impl "m" with caps(fs = ["/path/**"])` |
 | `datac 'Bad' cannot hold itself by value` | a recursive field needs indirection: `Box<Bad>` or `List<Bad>` |
+| `'Pair' is a generic type — it needs 2 type argument(s)` | write the arguments where the type is used: `Pair<i32, String>` (9.3) |
+| `cannot infer type parameter 'T' of 'Option' here` | `Option.None` determines nothing on its own; annotate the binding: `val x: Option<i32> = Option.None` |
+| `type parameters on a function are not implemented yet` | generic functions do not exist yet (9.3); name the types concretely |
+| `a receiver method on a generic type is not implemented yet` | read fields with `.`, or write a free function over the instantiation |
+| `in 'Holder<str>': field 'x' is a borrowed type` | a type argument may not be `str` or a reference; use `String` |
 | `datac 'Bad' is defined more than once` / `field 'x' is defined more than once` | duplicate declaration |
 
 Panics happen at the point the program asked for something impossible, and exit non-zero:
@@ -1158,20 +1203,22 @@ No formatter ships yet. `kelpc` currently has no `fmt` or `lint` command, so the
 
 ```
 program      := line* EOF
-line         := impl | const | pd | datac | fun
+line         := impl | const | pd | datac | enum | fun
 
 impl         := "impl" string [ "as" ident ] [ "with" "caps" "(" grant ("," grant)* ")" ]
 grant        := ident "=" "[" string ("," string)* "]"
 const        := "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
-datac        := "datac" ident "(" [ field ("," field)* ] ")"
+datac        := "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
 field        := ("val" | "var") ident ":" type
+enum         := "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
+typeparams   := "<" ident ("," ident)* ">"
 fun          := [ "extern" ] "fun" [ "mut" ] ( ident "." )? ident
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
 param        := ident ":" [ "mut" ] type
 body         := "=" expr | block | <nothing for extern>
 
-type         := [ "&" ] ident [ "<" type ">" ] [ "." ident ]
+type         := [ "&" ] ident [ "<" type ("," type)* ">" ] [ "." ident ]
 
 stmt         := "val" | "var" | "while" | "return" | expr
 val          := "val" ident [ ":" type ] "=" expr

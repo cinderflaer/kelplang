@@ -1,0 +1,7 @@
+// A-2: a self-reference by value has no finite size, and the check fires on
+// the instantiation (`Bad<i32>`), which is when the parameter is known.
+datac Bad<T>(val x: Bad<T>)
+
+fun main() {
+    val b: Bad<i32> = Bad(x = Bad(x = 1))
+}

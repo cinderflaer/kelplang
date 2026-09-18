@@ -1,0 +1,7 @@
+// A-2: a generic type written without its arguments. The declaration is a
+// template, so there is no type to name.
+datac Pair<A, B>(val first: A, val second: B)
+
+fun main() {
+    val p: Pair = Pair(first = 1, second = 2)
+}

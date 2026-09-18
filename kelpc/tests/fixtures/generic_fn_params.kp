@@ -1,0 +1,7 @@
+// A-2: type parameters on a function are the generic-function half, and are
+// not implemented yet.
+fun first<T>(xs: List<T>).R: T = xs.get(i = 0)
+
+fun main() {
+    val n = first(xs = List.of(1))
+}

@@ -1,0 +1,6 @@
+// A-2: the type argument count must match the declaration.
+datac Pair<A, B>(val first: A, val second: B)
+
+fun main() {
+    val p: Pair<i32> = Pair(first = 1, second = 2)
+}

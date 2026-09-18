@@ -1,0 +1,49 @@
+// A-2: a generic type that refers to itself. The parameter is what makes the
+// recursion useful — `Node<i32>` is a list of integers, and the same
+// declaration instantiates again for any other element type. The `Box` is
+// what gives it a finite size, and the drop walks it the same way the
+// non-generic `Box` chain does.
+datac Node<T>(val value: T, val next: Box<Node<T>>)
+
+// A generic enum that recurses through two boxes.
+enum Tree<T> {
+    Leaf
+    Branch(val label: T, val left: Box<Tree<T>>, val right: Box<Tree<T>>)
+}
+
+fun sum(n: &Node<i64>).R: i64 = if n.next.is_empty() {
+    n.value
+} else {
+    n.value + sum(n = n.next.get())
+}
+
+fun label(t: &Tree<i32>).R: i32 = when t {
+    Leaf -> 0
+    Branch(tag, _left, _right) -> tag
+}
+
+fun main() {
+    // A three-element `Node<i64>` chain, ending in an empty box.
+    val xs: Node<i64> = Node(
+        value = 1,
+        next = Box.of(Node(value = 2, next = Box.of(Node(value = 3, next = Box.empty())))),
+    )
+    print(sum(n = xs))
+
+    // The same template at a different element type is a different type.
+    val words = Node(
+        value = String.from_str(s = "one"),
+        next = Box.of(Node(value = String.from_str(s = "two"), next = Box.empty())),
+    )
+    print(words.value)
+    print(words.next.get().value)
+
+    val leaf: Tree<i32> = Tree.Leaf
+    val branch: Tree<i32> = Tree.Branch(
+        label = 9,
+        left = Box.of(Tree.Leaf),
+        right = Box.of(Tree.Branch(label = 8, left = Box.of(Tree.Leaf), right = Box.of(Tree.Leaf))),
+    )
+    print(label(t = leaf))
+    print(label(t = branch))
+}

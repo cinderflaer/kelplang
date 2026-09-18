@@ -420,15 +420,20 @@ pub fn struct_tag(name: &str) -> String {
 /// (`shapes.circle.Circle`), and a receiver method is keyed `Type#name` —
 /// neither `.` nor `#` is legal in a C identifier, so both become `__`.
 /// M6.3's stdlib overloads add `name@i32` keys, so `@` becomes `__ov_` and
-/// the `,` between parameter types becomes `_`. Not fully collision-proof
-/// against a hand-written `shapes__circle__Circle` (nothing can be, short of
-/// a real mangling scheme), but low-risk and simple, same tradeoff as the
-/// pre-M5 `#`-only version.
+/// the `,` between parameter types becomes `_`. A-2's instantiation keys add
+/// `<`/`>` and the `, ` between type arguments (`Pair<i32, String>`), so `<>`
+/// become `__l__`/`__g__` and the space is dropped. Not fully
+/// collision-proof against a hand-written `shapes__circle__Circle` (nothing
+/// can be, short of a real mangling scheme), but low-risk and simple, same
+/// tradeoff as the pre-M5 `#`-only version.
 pub fn c_ident(name: &str) -> String {
     name.replace('.', "__")
         .replace('#', "__")
         .replace('@', "__ov_")
         .replace(',', "_")
+        .replace('<', "__l__")
+        .replace('>', "__g__")
+        .replace(' ', "")
 }
 
 /// A function's checked signature. Parameter names are kept (not just

@@ -1,0 +1,10 @@
+// A-2: a payload-less variant determines no type parameter on its own, and
+// nothing here supplies the expected type.
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+fun main() {
+    val none = Option.None
+}

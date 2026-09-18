@@ -1,0 +1,6 @@
+// A-2: a parameter may be listed only once.
+datac Holder<T, T>(val a: T, val b: T)
+
+fun main() {
+    val h: Holder<i32, i32> = Holder(a = 1, b = 2)
+}
