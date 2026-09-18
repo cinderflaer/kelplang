@@ -594,6 +594,26 @@ fn a_compiler_shipped_stdlib_module_can_be_imported() {
 }
 
 #[test]
+fn the_str_stdlib_module_runs_from_x_source() {
+    // `std/str` is written in X; its only compiler-supplied pieces are the
+    // two byte reads it wraps.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_str.x",
+        "HI THERE\n8\n8\ntrue\nfalse\nhello\n98\nababab\n6\n",
+    );
+}
+
+#[test]
+fn the_path_stdlib_module_runs_from_x_source() {
+    // `std/path` imports `std/str`, so this also exercises a stdlib module
+    // importing another one.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_path.x",
+        "/tmp/x.txt\n/tmp/x.txt\n/abs\ntrue\nfalse\n",
+    );
+}
+
+#[test]
 fn an_extern_without_a_compiler_supplied_body_is_rejected() {
     assert_rejected("tests/fixtures/extern_no_body.x");
 }
@@ -601,6 +621,19 @@ fn an_extern_without_a_compiler_supplied_body_is_rejected() {
 #[test]
 fn an_extern_receiver_declaration_is_rejected() {
     assert_rejected("tests/fixtures/extern_receiver.x");
+}
+
+#[test]
+fn comparing_owned_values_is_rejected() {
+    // Without this rule the comparison reached `cc` as `x_a == x_b` on two
+    // `x_String` structs, which is where the author would have learned what
+    // happened instead of at the type checker.
+    assert_rejected("tests/fixtures/compare_owned.x");
+}
+
+#[test]
+fn an_owned_value_in_statement_position_is_rejected() {
+    assert_rejected("tests/fixtures/owned_statement.x");
 }
 
 #[test]
@@ -633,6 +666,8 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "string_field",
         "pd_owned",
         "stdlib_mem",
+        "stdlib_str",
+        "stdlib_path",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");

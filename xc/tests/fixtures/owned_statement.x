@@ -1,0 +1,8 @@
+// M6.2: a non-tail statement that produces an owned value would never be
+// freed — v1 has no drop point for a temporary — so it is rejected rather
+// than silently leaking it.
+fun main() {
+    print("before")
+    String.from_str("dropped on the floor")
+    print("after")
+}

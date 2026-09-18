@@ -22,6 +22,16 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "alloc_raw",
         "    return x_bytes_alloc_raw(x_n);\n",
     ),
+    (
+        "std/str",
+        "byte_len_raw",
+        "    return strlen(x_s);\n",
+    ),
+    (
+        "std/str",
+        "byte_at_raw",
+        "    if (x_i >= strlen(x_s)) {\n        x_panic(\"str.byte: index out of bounds\");\n    }\n    return (uint8_t)x_s[x_i];\n",
+    ),
 ];
 
 /// The C body for an `extern fun` in `module`, or `None` when the compiler

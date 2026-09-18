@@ -1645,6 +1645,45 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
     })
 }
 
+/// Whether a comparison operator (`==`/`!=`/`<`/…) can be applied to this
+/// type at all. Comparisons are only generated for scalars C can compare
+/// directly: an owned value, a `datac`, or a `str` has no comparison of its
+/// own, and emitting one produces invalid C at `cc` (or, for `str`, a
+/// comparison of *addresses* rather than text — silently wrong, which is
+/// worse). References are allowed: comparing two borrows compares addresses,
+/// which is exactly what the author asked for.
+fn comparable(ty: &Ty) -> bool {
+    ty.is_numeric() || matches!(ty, Ty::Bool | Ty::Char | Ty::Ref { .. })
+}
+
+fn comparison_error(ty: &Ty, op: BinOp) -> String {
+    let sym = match op {
+        BinOp::Eq => "==",
+        BinOp::NotEq => "!=",
+        BinOp::Lt => "<",
+        BinOp::LtEq => "<=",
+        BinOp::Gt => ">",
+        BinOp::GtEq => ">=",
+        _ => unreachable!("not a comparison operator"),
+    };
+    match ty {
+        Ty::Str => format!(
+            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — compare bytes with 'str.len'/'str.byte'"
+        ),
+        Ty::Bytes | Ty::String => format!(
+            "cannot compare '{}' values with '{}': v1 has no equality for owned values",
+            ty.display(),
+            sym
+        ),
+        Ty::Struct(_) => format!(
+            "cannot compare '{}' values with '{}': a datac has no generated equality",
+            ty.display(),
+            sym
+        ),
+        other => format!("cannot compare values of type '{}'", other.display()),
+    }
+}
+
 fn check_binary(
     op: BinOp,
     lhs: &ast::Expr,
@@ -1690,6 +1729,12 @@ fn check_binary(
                         l.ty.display(),
                         r.ty.display()
                     ),
+                    span,
+                });
+            }
+            if !comparable(&l.ty) {
+                return Err(TypeError {
+                    message: comparison_error(&l.ty, op),
                     span,
                 });
             }
