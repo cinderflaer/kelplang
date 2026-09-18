@@ -40,12 +40,17 @@ pub struct Function {
     pub module: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     /// The block's value: the last statement's expression, if it was written
     /// without a trailing semicolon. `None` means the block's value is unit.
     pub tail: Option<Box<Expr>>,
+    /// Source span of the block. Carried so `codegen_c.rs` can look up which
+    /// owned locals this block has to drop at its end (see
+    /// `borrowck::DropPlan`) — the drop points are keyed by span rather than
+    /// by position, so the two passes don't have to walk in lockstep.
+    pub span: Span,
 }
 
 impl Block {
@@ -67,6 +72,10 @@ pub enum Stmt {
     },
     Return {
         value: Option<Expr>,
+        /// Source span of the `return` statement itself, for the same reason
+        /// `Block::span` exists: dropping the frame's live owned locals
+        /// before returning is keyed by it.
+        span: Span,
     },
     Expr(Expr),
 }

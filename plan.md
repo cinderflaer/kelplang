@@ -6,11 +6,12 @@ Merged document: language plan + compiler milestones + standard library. The std
 
 ## Current state
 
-The compiler exists and runs. `xc/` implements the new syntax end-to-end (lexer → preprocess → parser → type check → move/borrow check → C codegen), `cargo test` is green (62 unit tests + 50 end-to-end fixture/project tests), and the milestone record below reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once this file absorbed it — do not recreate it).
+The compiler exists and runs. `xc/` implements the new syntax end-to-end (lexer → preprocess → parser → type check → move/borrow check → C codegen), `cargo test` is green (62 unit tests + 62 end-to-end fixture/project tests, of which the heap ones are also re-run under AddressSanitizer), and the milestone record below reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once this file absorbed it — do not recreate it).
 
-- **Done**: M0 (scaffold + parser for the full new syntax), M1 (types + C codegen + first running binary), M2 (`datac`, per-field `val`/`var`, while loops), M3 (move checking), M4 (borrowing — free-function parameters and local `&`/`&mut`/`*`), M4.5 (receiver-form methods, the piece M4 cut out — see below), M5.1 (multi-file `impl` imports, `x.toml`, strict module-qualified names), M5.2 (`pd` passdowns and string templates), M5.3 (`%*alias*%` substitution — `alias.xconf` + inline `alias` declarations).
-- **Next**: the stdlib, starting with M6 (`Bytes`/`String`, drop, `extern`). Every language feature still on the v1 list except `with caps(...)` is now in, so from here the work is stdlib-blocking (see "Deferred" below).
+- **Done**: M0 (scaffold + parser for the full new syntax), M1 (types + C codegen + first running binary), M2 (`datac`, per-field `val`/`var`, while loops), M3 (move checking), M4 (borrowing — free-function parameters and local `&`/`&mut`/`*`), M4.5 (receiver-form methods, the piece M4 cut out — see below), M5.1 (multi-file `impl` imports, `x.toml`, strict module-qualified names), M5.2 (`pd` passdowns and string templates), M5.3 (`%*alias*%` substitution — `alias.xconf` + inline `alias` declarations), M6.1 (the builtin owned `Bytes`: allocation, drop, moves with runtime consequence, and the builtins that make one usable).
+- **Next**: M6.2 — owned `String`, `extern` declarations, and `impl "std/mem"` so the stdlib can start being written in X. Then M6.3 (the allocation-returning `str`/`path` functions, `const`, stdlib-only overloading) and M7 (`with caps(...)`). M6 was split the way M4/M5 were: a heap type is only *real* once drop and move checking are correct, which is a testable increment on its own.
 - **Deferred despite being in `syntax&shii.md`'s deltas**: `caps(...)` is the last one. Those deltas were aspirational scheduling and lost to implementation order; the milestone list below records where each one is now targeted (`impl` imports shipped as M5.1, `pd` and templates as M5.2, `alias` substitution as M5.3, `caps(...)` at M7).
+- **The heap exists, and ownership is now checkable at runtime.** `Bytes` is non-`Copy`, so assigning or returning one moves it; it is freed at the end of the block that owns it. The suite proves that rather than asserting it: every `Bytes` fixture is rebuilt with `-fsanitize=address` and run, so a double free, a use-after-free, or a leak fails `cargo test`. That caught two real bugs during M6.1 (a branch merge that dropped the drop candidates, and a reassignment that leaked) — which is the point of the milestone.
 - **Alias substitution is textual, and that shows.** `%*name*%` is spliced in as raw text before parsing, so `%*doubled*% = %*answer*% * 2` with `%*answer*% = 40 + 2` prints 44, not 84 — precedence is whatever the expansion produces. That is the accepted cost of the plan's "pretty simple" choice over a hygienic macro system; `xc/tests/fixtures/aliases.x` pins it so the behavior is documented rather than discovered.
 - **`pd var` semantics, resolved and shipped** (was `syntax&shii.md` §9's open question): a `pd var` is **read-only inside functions**. It may only be assigned at its own top-level declaration, since v1 has no top-level statement form beyond `pd` itself. Functions that reference a passdown receive it as a **shared borrow** (for non-`Copy` values) or by value (for `Copy` ones), so no function can write through it and no cross-function exclusivity rule is needed. `syntax&shii.md` §9's list of options is answered by that sentence; the syntax authority is unchanged (semantics are this file's call, not the syntax file's). Implemented in M5.2.
 - **Passdown visibility is module-scoped.** This was not specified anywhere; M5.2 answers it the way M5.1 answered imports — only functions in the module that declares a passdown can name it, and there is no `alias.name` spelling for another module's passdown. Recorded as an open item below, since it is a v1 restriction rather than a considered design.
@@ -262,7 +263,7 @@ fun main() {
 
 ## Compiler crate layout
 
-What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `preprocess.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, and `tests/` exist now; `std/` does not yet.
+What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `preprocess.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, and `tests/` exist now; `std/` does not yet. The `Bytes` runtime (allocation, bounds checks, `free`) lives in `codegen_c.rs` as a fixed C preamble until M6.2 moves that surface into `std/` as `extern` bodies.
 
 Cargo workspace at repo root:
 
@@ -290,14 +291,14 @@ x/
     tests/
       compile_and_run.rs       # end-to-end: compile .x fixtures, run binary, assert stdout
       stdlib/                  # per-module stdlib fixtures (M6+)
-      fixtures/*.x             # 31 today — one loose file per single-file test
+      fixtures/*.x             # 42 today — one loose file per single-file test
       projects/*/              # 17 multi-file projects today (M5.1–M5.3: x.toml or manifest-less)
   examples/
     hello.x
     fib.x
 ```
 
-Fixtures live in `xc/tests/fixtures/*.x` (31 today: `datac_basic`, `datac_embeds_datac`, `datac_forward_reference`, `while_accumulator`, `named_args`, `when_expr`, `if_expr`, `assign_to_immutable`, `val_field_immutable`, `type_mismatch`, `use_after_move`, `double_move_in_loop`, `move_then_reinit`, `field_read_does_not_move`, `borrow_basic`, `borrow_conflict`, `same_call_aliasing`, `write_through_shared_borrow`, `move_while_borrowed`, `receiver_methods`, `receiver_mut_on_val`, `passdowns`, `passdown_datac`, `pd_shadowed`, `templates`, `aliases`, plus the rejected `pd_var_write`, `pd_forward_read`, `template_not_printed`, `alias_cycle`, `alias_unknown`). `xc/tests/compile_and_run.rs` compiles each one with the real `xc` binary and checks stdout or the expected rejection.
+Fixtures live in `xc/tests/fixtures/*.x` (42 today: `datac_basic`, `datac_embeds_datac`, `datac_forward_reference`, `while_accumulator`, `named_args`, `when_expr`, `if_expr`, `assign_to_immutable`, `val_field_immutable`, `type_mismatch`, `use_after_move`, `double_move_in_loop`, `move_then_reinit`, `field_read_does_not_move`, `borrow_basic`, `borrow_conflict`, `same_call_aliasing`, `write_through_shared_borrow`, `move_while_borrowed`, `receiver_methods`, `receiver_mut_on_val`, `passdowns`, `passdown_datac`, `pd_shadowed`, `templates`, `aliases`, `heap_bytes`, `heap_param_borrow`, `heap_move_then_rebind`, `heap_returned`, `heap_scope_drop`, `heap_drops_in_control_flow`, `heap_reassign`, `heap_branches`, plus the rejected `pd_var_write`, `pd_forward_read`, `template_not_printed`, `alias_cycle`, `alias_unknown`, `heap_use_after_move`, `heap_temporary_print`, `datac_str_field`). `xc/tests/compile_and_run.rs` compiles each one with the real `xc` binary and checks stdout or the expected rejection.
 
 Multi-file work lives in `xc/tests/projects/<name>/` instead, because a module graph needs a directory: `shapes` (manifest + nested imports + methods), `alias` (`impl "." as u`, qualified type in a signature), `same_name` (two modules both declaring `Item` + `describe`), `loose` (manifest-less sibling import), `alias_xconf` (an `alias.xconf` substitution used as an `impl` path), `alias_cross_file` (an inline `alias` from an imported module used in the importer), plus one rejected project per import rule — `cycle`, `unknown_module`, `duplicate_alias`, `dotdot`, `bad_path`, `unknown_member`, `unqualified_import`, `stdlib_import`, `caps_clause`, (M5.2) `pd_module_scope`, and (M5.3) `alias_xconf_cycle` (a cycle spanning `alias.xconf` and `main.x`, which is the two-file diagnostic case).
 
@@ -371,8 +372,8 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 
 ## Language v1 feature set
 
-- Primitive types: `i32`, `i64`, `u32`, `u64`, `f32`, `f64`, `bool`, `char`, `u8`, `u16`, `usize`, `isize`, `Unit` (void-equivalent, implicit)
-- Builtin owned heap type `Bytes` (non-`Copy`, moves, drops at end of scope) — the byte-level owned type, and the substrate for `String`
+- Primitive types: `i32`, `i64`, `u32`, `u64`, `f32`, `f64`, `bool`, `char`, `u8`, `u16`, `usize`, `isize`, `Unit` (void-equivalent, implicit) — all present; `u8`/`u16`/`usize`/`isize` landed with `Bytes` (M6.1), since a byte buffer cannot be described without them
+- Builtin owned heap type `Bytes` (non-`Copy`, moves, drops at end of scope) — the byte-level owned type, and the substrate for `String` — **done** (M6.1), including the builtin methods `empty`/`from_str`/`len`/`is_empty`/`get`/`set`/`clone`
 - Owned `String` (non-`Copy`, moves, drops, utf-8 validated) — required in v1 because `syntax&shii.md` uses it as a `datac` field and as a parameter type, and a `datac` may only hold owned fields
 - `&str` string literal / borrowed-view type (points at static data or a substring of another `&str`)
 - `val` (immutable) / `var` (mutable)
@@ -392,7 +393,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 - `alias` substitution — **done** (M5.3)
 - `with caps(...)` grants — **not yet** (M7)
 
-Not yet implemented despite being listed above as v1 scope: `with caps(...)`, plus `mem`/`Bytes`/`String` and the entire stdlib. See "Current state".
+Not yet implemented despite being listed above as v1 scope: `with caps(...)`, owned `String`, and the entire stdlib (`mem`, `fs`, `str`, `path`, ...). `Bytes` itself landed in M6.1. See "Current state".
 
 Deferred beyond v1 (explicitly out of scope for now, revisit later): generics, traits/interfaces, enums/pattern matching, closures, heap collections (`Vec`), explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope — see Imports & Capabilities sections).
 
@@ -492,11 +493,31 @@ Shipped as one token-level pass, run once per file before the parser. This was t
 - Tests: 12 new unit tests in `preprocess.rs` (reference detection, chains, adjacency, string expansion, stripping, unknown/duplicate/cycle rejection, `alias.xconf` parsing) plus 6 end-to-end tests. `aliases.x` (inline declarations, a chain, a reference inside a string), `alias_cycle.x` and `alias_unknown.x` (rejected), the `alias_xconf` project (an `alias.xconf` entry used as an `impl` path), `alias_cross_file` (cross-module inline alias), and `alias_xconf_cycle` (the two-file cycle diagnostic). 62 unit tests, 50 fixture/project tests.
 
 **M6 — Heap: builtin `Bytes` and owned `String`**
-- `Bytes` and `String` as compiler builtins: allocation on construction, `free` at end of scope, non-`Copy`, moves, no user-defined destructors, no growable buffers (stdlib decision 5).
-- Drop insertion in `codegen_c.rs`; drop ordering relative to borrows checked in `borrowck.rs`.
-- `extern` declarations with compiler-supplied bodies, so the stdlib can be written in `.x` (stdlib decision 3).
-- `mem`, plus the allocation-returning parts of `path`/`str`.
-- Gate before M7: a fixture that moves a `Bytes` into a function and uses it after the move is rejected, and no double-free is expressible. This is where ownership stops being a paper exercise, so it is also where M3's move logic and M4's borrow logic surface their bugs.
+
+Split three ways, on the same reasoning that split M4 and M5: the byte buffer plus its drop rules is an independently testable increment, and everything else about the heap (the second builtin type, `extern`, the stdlib modules) builds on it. M6.1 shipped; M6.2 and M6.3 are what remains of the original entry.
+
+**M6.1 — builtin owned `Bytes`, drop, and moves with runtime consequence (DONE)**
+
+- **The type.** `Ty::Bytes` is a compiler builtin (not a `datac`): `x_Bytes { unsigned char* data; size_t len; }` in the generated C, so it is the one type that may hold a pointer. It is non-`Copy` (`Ty::is_copy`), which is what makes M3's move machinery apply to it with no new move logic at all: `val b = a` moves, using `a` afterwards is an error, and a `Bytes` parameter is a *borrow* (M4's rule, now spelled out in `implicit_borrow_wrap`, which had to learn about owned heap types as well as `datac`s).
+- **The builtins.** `Bytes.empty()`, `Bytes.from_str(s)` (associated, written on the type name), and `Bytes.len()`, `is_empty()`, `get(i)`, `set(i, v)`, `clone()`. `infer.rs` keeps them in a single table keyed exactly like a receiver method (`Bytes#len`), so call resolution, argument matching, and passdown wiring are unchanged; `codegen_c.rs` emits the bodies from a fixed runtime preamble, and a builtin the preamble does not define fails at `cc` rather than silently. `fun Bytes.helper()` is rejected with a message saying builtin methods are compiler-provided, and `datac Bytes` is rejected as a redeclaration of a builtin type.
+- **Drops.** `borrowck.rs` already tracked moves and scopes; it now also returns a `DropPlan` — a side table keyed by *span*, saying which owned locals die at the end of each block and which die before each `return`. Keying on spans rather than position is what lets `codegen_c.rs` walk the tree independently: the two passes genuinely differ in one place (`while` bodies are checked twice for M3's double-move check but emitted once). A moved-out local is never dropped by the scope that declared it; a `return` drops the frame's live locals *after* evaluating the returned value (which may read through one of them); reassigning an owned `var` frees the old value after reading the new one and before storing it.
+- **New `u8`, `u16`, `usize`, `isize`**, because a byte buffer cannot be described without them: `len` is `usize`, `get` is `u8`, indexing is `usize`. All four are ordinary numeric types for arithmetic and `print`.
+- **Printing a `Bytes`** goes through `%.*s` with the buffer's length and pointer as two arguments, which is why it requires a *place*: a temporary has no address to take, and evaluating it twice would allocate twice. The diagnostic says so and suggests binding it to a `val` first. This is the one restriction M6.1 adds to `print`.
+- **The gate, met and mechanized.** The original gate said "a fixture that moves a `Bytes` into a function and uses it after the move is rejected" — that spelling no longer exists, because M4 removed move-taking parameters. The implemented equivalent is a *local* rebinding (`heap_use_after_move.x` rejected, `heap_move_then_rebind.x` accepted). And "no double free is expressible" is no longer just an argument: every heap fixture is rebuilt with `-fsanitize=address` and run as part of `cargo test`, so a double free, a use-after-free, or a **leak** fails the suite. That is what caught two real bugs during this milestone — a branch merge that silently dropped the drop candidates, and a reassignment that leaked the overwritten buffer — which is exactly what the gate was for.
+- **Deliberately not in M6.1** (all of them with an explicit diagnostic rather than silent behavior): owned values as `datac` fields, owned passdowns, owned values in growable buffers, and `String`/`str`/`path`/`fs`. A `datac` field of type `Bytes` is refused because dropping a struct means generating a recursive drop for its fields; a `pd` of type `Bytes` is refused because there is no drop point at process exit yet; and an owned `Bytes` returned from a function is fine, but a borrow *of* one that outlives it is not expressible either — which is the `&str` return-elision question again, deferred with it.
+- **Known remaining leaks, both safe.** `if c { b = a }` marks `a` moved for the code after the `if` (M3's conservative branch merge), so the branch that did not move it leaks rather than risking a double free; and an assignment *through* a dereferenced borrow (`*p = value`) leaks the value it overwrote, since the drop plan only records plain bindings. Both are leaks, never a double free, and both are in the plan's ledger rather than hidden.
+- **Two `datac` field rules tightened while the checker was open**: a field of an owned type (`Bytes`) is refused (dropping a struct is not implemented), and so is a *borrowed* field (`str`/reference) — the latter is `syntax&shii.md`'s own "a datac holds owned data only" rule, which nothing had been enforcing because v1 had no owned alternative (`datac_str_field.x`).
+- Fixtures: `heap_bytes`, `heap_param_borrow` (a `Bytes` parameter is a borrow: read through shared, write through `mut`), `heap_move_then_rebind`, `heap_returned`, `heap_scope_drop`, `heap_drops_in_control_flow` (loop body, `return` from inside a branch with another owned local live, block-as-value), `heap_reassign`, `heap_branches`, plus rejected `heap_use_after_move`, `heap_temporary_print`, and `datac_str_field`. 11 fixtures, 12 tests, all heap ones additionally run under AddressSanitizer.
+
+**M6.2 — owned `String`, `extern`, and the first stdlib module**
+- `String` as a second builtin owned type, with its own move/drop identity (`into_bytes`/`from_bytes` are ownership transfers, not casts).
+- `extern fun` declarations with compiler-supplied bodies (stdlib decision 3), which is how the stdlib stops being compiler-known builtins and becomes reviewable X source.
+- `impl "std/mem"` — lifting M5.1's reserved-`std/` rejection so the compiler ships `xc/std/*.x`, and `mem` plus the allocation-returning parts of `path`/`str`.
+- Owned `datac` fields and an owned `pd`, both of which need the recursive drop and the process-exit drop point M6.1 deferred.
+
+**M6.3 — the rest of the original M6**
+- `const NAME: T = expr` at top level (stdlib prereq: `math.PI`) and stdlib-only argument-type overloading (`math.abs`/`min`/`max`/`clamp`).
+- The `&str` return-elision rule and the `str`/`path` surface, which is where the "borrow of an owned value that outlives it" question gets its real answer.
 
 **M7 — Capability-based security**
 - Parse `with caps(domain = [patterns...])` on `impl` lines.
@@ -831,13 +852,13 @@ Details:
 
 | Feature | Needed by | Cost | Milestone |
 | --- | --- | --- | --- |
-| Builtin owned `Bytes` + drop | `fs`, allocation-returning `str`/`path` | Real: heap, drop insertion, move checking with runtime consequence | M6 |
-| Builtin owned `String` | `datac` fields, `str`/`env` text results | Small once `Bytes` exists | M6 |
+| Builtin owned `Bytes` + drop | `fs`, allocation-returning `str`/`path` | Real: heap, drop insertion, move checking with runtime consequence | M6.1 (done) |
+| Builtin owned `String` | `datac` fields, `str`/`env` text results | Small once `Bytes` exists | M6.2 |
 | `&str` return elision (borrow from first ref param) | all of `str`, `path` | Small, but unblocks a whole namespace | post-v1 — moot until `&str` routes through `Ty::Ref` |
 | `const NAME: T = expr` at top level, compile-time folded | `math.PI`, `math.E` | Small parser + const-fold in `infer.rs` | post-M5.3 (stdlib prereq) |
-| `extern` declarations with compiler-supplied bodies | stdlib written in X | Small parser surface, new codegen path | M6 |
+| `extern` declarations with compiler-supplied bodies | stdlib written in X | Small parser surface, new codegen path | M6.2 |
 | Argument-type overloading, stdlib-only | `math.abs/min/max/clamp` across numeric types | Medium: overload resolution in `infer.rs`; kept stdlib-only to avoid user-facing complexity | post-M5.3 (stdlib prereq) |
-| `u8`, `u16`, `usize`, `isize` | byte buffers, indices, `Bytes.len` | Small; `usize`/`isize` needed regardless for indexing | M6 (stdlib prereq) |
+| `u8`, `u16`, `usize`, `isize` | byte buffers, indices, `Bytes.len` | Small; `usize`/`isize` needed regardless for indexing | M6.1 (done) |
 | Slice/array type | `fs.list`, `process.run(argv)`, `env.args`, `str.split` | Large — collections milestone | post-v1 |
 | `Option`/`Result` + generics | replaces error `datac`s | Large | post-v1 |
 
@@ -862,6 +883,7 @@ Details:
 - `cargo test` in `xc/` runs the end-to-end fixture suite (`tests/compile_and_run.rs`): for each `examples/*.x` / `tests/fixtures/*.x`, either (a) compile, run the resulting binary, and diff stdout against an expected value, or (b) compile and assert a specific compiler error is produced (for move/borrow violation fixtures).
 - Manual smoke test after each milestone: `cargo run -p xc -- build examples/hello.x && ./hello` (and similarly for `fib.x`, etc.) to confirm the CLI path works, not just the test harness.
 - After M4, deliberately write a handful of "should fail" `.x` snippets (double move, two simultaneous exclusive borrows, use of a borrow after its owner's scope ends) and confirm the compiler rejects each with a sensible error — this is the actual proof that the borrow checker works, not just that "well-behaved" programs compile. M3's fixtures (`use_after_move.x`, `double_move_in_loop.x`) are the first two entries in that set.
+- **Heap fixtures are run under AddressSanitizer** (M6.1): `heap_fixtures_are_double_free_and_leak_clean` builds each `Bytes` fixture, rebuilds the generated C with `-fsanitize=address -O1`, and runs it. A double free, a use-after-free, or a leak fails the suite. This is the only test that depends on a toolchain feature, so it skips itself if `cc` has no AddressSanitizer — which means the memory-safety claim is verified on every machine that can verify it, and the rest still pass.
 - Capability tests are compile-time-first: an ungranted `fs.*` reference must fail at resolution, never reach a runtime check. Runtime-denial tests cover the dynamic cases (out-of-grant path, `..` escape, symlink escape, `fs.rename` with only one path granted).
 
 ## Divergence from Kotlin (kept intentionally)
@@ -877,7 +899,7 @@ Details:
 
 1. ~~**Move-taking parameters have no spelling.**~~ Resolved in M4: there is no move-taking parameter spelling in v1, by design — a `datac`-typed parameter is always a borrow (shared, or exclusive via `mut T`), and a value is only ever moved by local rebinding.
 2. ~~**`pd var` semantics and the `pd` wiring pass.**~~ Resolved and shipped in M5.2 (see "Current state" and the M5.2 entry): `pd var` is read-only inside functions and assignable only at its own top-level declaration, so a referencing function takes a shared borrow (or a copy) and an assignment inside a `fun` is a compile error.
-3. ~~**`pd` and `Bytes`/`String`.**~~ Narrowed by the item 2 decision: since nothing inside a function can *write* a passdown, the drop-point problem for an owned passdown is reduced to "the entry module's scope", which is where `main`'s frame already drops things. M5.2 shipped `pd` for the types v1 has today, with two explicit restrictions when owned types arrive (`Bytes`/`String` at M6): a `pd` initializer cannot read a non-`Copy` passdown, and a `pd` of an owned type will need a drop point at process exit rather than at any function boundary. Re-open when M6 lands.
+3. ~~**`pd` and `Bytes`/`String`.**~~ Narrowed by the item 2 decision, and now closed for v1 by M6.1: `Bytes` exists, and an owned passdown is simply **rejected** — "a 'pd' cannot hold an owned value yet (there is no drop point at process exit)". Re-open at M6.2, where owned `datac` fields and owned passdowns get the recursive drop rule they need; the drop point at process exit is the part that has to be designed, since v1 has no place to hang it.
 4. **`when` is boolean-only in v1.** Exhaustiveness checking and value patterns wait for enums; say so in diagnostics rather than letting users expect Kotlin's `when`.
 5. **`process.run_shell`** — ship it gated in v1, or wait for argv slices and ship nothing that shells out?
 6. **Is `io` (stdin/stdout/stderr) really ungated?** WASI gates stdin as an input capability. Interactive CLI usability says ungated; purity says gated. Recommend ungated in v1, revisit when `x.toml` gains a way to restrict `main`.
@@ -889,4 +911,6 @@ Details:
 12. **A `datac` may only name `datac`s declared before it.** Not a documented rule anywhere, but it is what the declaration-order struct table means in practice, and it is now enforced with a message that says so (M5.2's fix for struct emission order). Mutual/recursive `datac`s would need `Box`-style indirection, so this is expected to stay a v1 restriction.
 13. **`xc fmt`** is the enforcement story for the style rules, but is not scheduled; until it exists the rules are conventions only.
 14. **`syntax&shii.md`'s milestone deltas are stale, and it still contains them.** The implemented order is M0–M5.3 done (borrowing M4, receivers M4.5, `impl` imports M5.1, `pd` + templates M5.2, aliases M5.3), with M6 (heap) next. Either annotate that file's §12 deltas or leave it as the syntax authority only and ignore its scheduling. The precedence rule covers syntax and style, not scheduling — but the file does not say that yet.
-15. **User-code naming case is a configurable lint** (see "Retained Kotlin-look rules" above): a numbered option, `0` = `camelCase` (default), `1` = `snake_case`, room to append more — far-future, lint-only (a beauty warning, never a compile error; any case keeps compiling regardless of the configured preference). Not scheduled to a milestone. Open sub-questions for whenever `xc fmt`/a lint pass is actually built: where the setting lives (`x.toml`? an `xc fmt` flag?), and whether the stdlib's locked `snake_case` convention (naming decision, "Naming and style rules for the stdlib" below) stays an intentional exception or should track the configured case too.
+15. **Two known leaks, both deliberate, both safe** (M6.1). `if c { b = a }` marks `a` moved for everything after the `if` — M3's conservative branch merge — so the branch that did not move it leaks instead of risking a double free; and an assignment through a dereferenced borrow (`*p = value`) leaks the value it overwrote, because the drop plan only records plain bindings. Both are leaks, never a double free, and both would disappear with a flow-sensitive merge (a bigger change than v1 wants).
+16. **A `Bytes` can only be printed from a place** (M6.1). `print(Bytes.from_str("x"))` is rejected: `%.*s` needs the buffer's length and pointer as two arguments, so the receiver has to be something with an address, and evaluating the temporary twice would allocate twice. `val b = ...` then `print(b)` works, and the diagnostic says so. Lifting this means hoisting the temporary into a statement-level variable in codegen — small, but not free, and nothing needs it yet.
+17. **User-code naming case is a configurable lint** (see "Retained Kotlin-look rules" above): a numbered option, `0` = `camelCase` (default), `1` = `snake_case`, room to append more — far-future, lint-only (a beauty warning, never a compile error; any case keeps compiling regardless of the configured preference). Not scheduled to a milestone. Open sub-questions for whenever `xc fmt`/a lint pass is actually built: where the setting lives (`x.toml`? an `xc fmt` flag?), and whether the stdlib's locked `snake_case` convention (naming decision, "Naming and style rules for the stdlib" below) stays an intentional exception or should track the configured case too.

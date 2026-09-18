@@ -41,12 +41,15 @@ fn build(path: &str, out_path: &Path) -> bool {
         }
     };
 
-    if let Err(d) = borrowck::check_program(&typed) {
-        sources.report(&d);
-        return false;
-    }
+    let drops = match borrowck::check_program(&typed) {
+        Ok(plan) => plan,
+        Err(d) => {
+            sources.report(&d);
+            return false;
+        }
+    };
 
-    let c_source = codegen_c::generate(&typed);
+    let c_source = codegen_c::generate(&typed, &drops);
 
     if let Err(e) = driver::compile_c(&c_source, out_path) {
         eprintln!("error: {}", e.message);

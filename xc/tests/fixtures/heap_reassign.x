@@ -1,0 +1,14 @@
+// M6: overwriting an owned `var` frees the value being replaced (after the
+// new one has been read), so a loop that keeps replacing a buffer does not
+// accumulate allocations.
+fun main() {
+    var b = Bytes.from_str("one")
+    b = Bytes.from_str("three")
+    print(b)
+    var i = 0
+    while i < 3 {
+        b = Bytes.from_str("again")
+        i += 1
+    }
+    print(b)
+}

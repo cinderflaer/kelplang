@@ -481,6 +481,138 @@ fn an_alias_cycle_across_two_files_names_both_sites() {
 }
 
 // ---------------------------------------------------------------------------
+// M6.1: the builtin owned heap byte buffer (`Bytes`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bytes_construct_measure_index_mutate_clone_and_print() {
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_bytes.x",
+        "5\n104\nHello\nHello\nfalse\n0\n",
+    );
+}
+
+#[test]
+fn a_bytes_value_moves() {
+    // `Bytes` is non-Copy, so binding it to a second name moves it and the
+    // first name is dead (M3's rule, now with a type that makes it matter).
+    assert_rejected("tests/fixtures/heap_use_after_move.x");
+}
+
+#[test]
+fn a_moved_from_binding_can_be_reassigned() {
+    assert_compiles_and_runs("tests/fixtures/heap_move_then_rebind.x", "2\n1\n");
+}
+
+#[test]
+fn an_owned_value_can_be_returned_by_a_function() {
+    // The callee must not free it; the caller must.
+    assert_compiles_and_runs("tests/fixtures/heap_returned.x", "5\nhello\n");
+}
+
+#[test]
+fn an_owned_local_dies_at_the_end_of_its_block() {
+    assert_compiles_and_runs("tests/fixtures/heap_scope_drop.x", "first\nafter\n");
+}
+
+#[test]
+fn drops_follow_control_flow() {
+    // A loop body, a `return` from inside a branch with another owned local
+    // still live, and a block used as a value.
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_drops_in_control_flow.x",
+        "loop\nloop\nextra\nkeep\n5\n",
+    );
+}
+
+#[test]
+fn reassigning_an_owned_binding_frees_the_old_value() {
+    assert_compiles_and_runs("tests/fixtures/heap_reassign.x", "three\nagain\n");
+}
+
+#[test]
+fn ownership_through_branches_frees_exactly_once() {
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_branches.x",
+        "second\nelse\nfirst\n",
+    );
+}
+
+#[test]
+fn a_bytes_parameter_is_a_borrow_not_a_move() {
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_param_borrow.x",
+        "2\nhi\nXi\nfalse\n",
+    );
+}
+
+#[test]
+fn a_borrowed_datac_field_is_rejected() {
+    assert_rejected("tests/fixtures/datac_str_field.x");
+}
+
+#[test]
+fn printing_a_temporary_bytes_is_rejected() {
+    assert_rejected("tests/fixtures/heap_temporary_print.x");
+}
+
+/// The M6 gate, run rather than argued: every `Bytes` fixture is rebuilt with
+/// AddressSanitizer and executed, so a double free, a use-after-free, or a
+/// leak fails the suite. If `cc` has no AddressSanitizer the check is skipped
+/// — the one place in this suite that depends on a toolchain feature.
+#[test]
+fn heap_fixtures_are_double_free_and_leak_clean() {
+    let fixtures = [
+        "heap_bytes",
+        "heap_move_then_rebind",
+        "heap_returned",
+        "heap_scope_drop",
+        "heap_drops_in_control_flow",
+        "heap_reassign",
+        "heap_branches",
+        "heap_param_borrow",
+    ];
+    for name in fixtures {
+        let source = format!("tests/fixtures/{name}.x");
+        let bin = out_path(name);
+        let build = Command::new(xc_bin())
+            .arg("build")
+            .arg(fixture(&source))
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("failed to spawn xc");
+        assert!(
+            build.status.success(),
+            "expected '{source}' to compile, but it failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let asan_bin = out_path(&format!("{name}_asan"));
+        let cc = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-O1")
+            .arg("-o")
+            .arg(&asan_bin)
+            .arg(bin.with_extension("c"))
+            .output()
+            .expect("failed to spawn cc");
+        if !cc.status.success() {
+            continue; // no AddressSanitizer here
+        }
+
+        let run = Command::new(&asan_bin)
+            .output()
+            .expect("failed to run the instrumented binary");
+        assert!(
+            run.status.success(),
+            "AddressSanitizer flagged '{name}':\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Struct emission order. `structs` used to be collected from a `HashMap`, so
 // a `datac` embedding another one compiled or failed at random. Declaration
 // order is a valid topological order because a `datac` may only name datacs

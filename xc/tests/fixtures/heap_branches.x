@@ -1,0 +1,20 @@
+// M6: ownership through branches. `b` is reassigned on one path only, and the
+// other path declares its own owned local — both have to be freed exactly
+// once, on the right path.
+fun choose(flag: bool).R: Bytes {
+    var b = Bytes.from_str("first")
+    if flag {
+        b = Bytes.from_str("second")
+    } else {
+        val extra = Bytes.from_str("else")
+        print(extra)
+    }
+    return b
+}
+
+fun main() {
+    val yes = choose(flag = true)
+    print(yes)
+    val no = choose(flag = false)
+    print(no)
+}

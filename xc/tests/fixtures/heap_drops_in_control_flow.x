@@ -1,0 +1,29 @@
+// M6: where drops land once control flow is involved — a loop body, a return
+// from inside a branch (with another owned local still live), a block used as
+// a value, and a function whose tail expression moves its local out.
+fun pick(n: i32).R: Bytes {
+    val keep = Bytes.from_str("keep")
+    if n > 0 {
+        val extra = Bytes.from_str("extra")
+        print(extra)
+        return keep
+    }
+    print("negative")
+    keep
+}
+
+fun main() {
+    var i = 0
+    while i < 2 {
+        val loop_b = Bytes.from_str("loop")
+        print(loop_b)
+        i += 1
+    }
+    val picked = pick(n = 1)
+    print(picked)
+    val size = {
+        val inner = Bytes.from_str("block")
+        inner.len()
+    }
+    print(size)
+}

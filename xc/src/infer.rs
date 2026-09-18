@@ -279,6 +279,76 @@ fn sig_key(f: &ast::FunctionDecl) -> String {
 
 const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 
+/// A compiler-provided function (M6). These live in `sigs`' namespace (keyed
+/// `Type#name`, exactly like a receiver method) but their bodies are emitted
+/// by `codegen_c.rs` from the fixed runtime preamble, so nothing about call
+/// resolution, argument matching, or passdown wiring needs to know they are
+/// special — only codegen, and only in that the C function it names already
+/// exists.
+struct Builtin {
+    params: Vec<(String, Ty)>,
+    ret: Ty,
+    /// `Bytes.empty()` — an *associated* function written on the type name,
+    /// with no receiver argument — versus `b.len()`, which takes one.
+    associated: bool,
+}
+
+/// The `Bytes` surface (M6). Kept deliberately small: construct, measure,
+/// index, mutate, copy. Everything else about `Bytes` needs either `String`
+/// or growable buffers, which are later milestones.
+static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
+    std::sync::LazyLock::new(|| {
+        let bytes = Ty::Bytes;
+        let shared = Ty::Ref { mutable: false, inner: Box::new(bytes.clone()) };
+        let exclusive = Ty::Ref { mutable: true, inner: Box::new(bytes.clone()) };
+        let mut m = HashMap::new();
+        let mut add = |key: &str, params: Vec<(String, Ty)>, ret: Ty, associated: bool| {
+            m.insert(key.to_string(), Builtin { params, ret, associated });
+        };
+        add("Bytes#empty", vec![], bytes.clone(), true);
+        add("Bytes#from_str", vec![("s".to_string(), Ty::Str)], bytes.clone(), true);
+        add("Bytes#len", vec![("self".to_string(), shared.clone())], Ty::Usize, false);
+        add("Bytes#is_empty", vec![("self".to_string(), shared.clone())], Ty::Bool, false);
+        add(
+            "Bytes#get",
+            vec![("self".to_string(), shared.clone()), ("i".to_string(), Ty::Usize)],
+            Ty::U8,
+            false,
+        );
+        add(
+            "Bytes#set",
+            vec![
+                ("self".to_string(), exclusive),
+                ("i".to_string(), Ty::Usize),
+                ("b".to_string(), Ty::U8),
+            ],
+            Ty::Unit,
+            false,
+        );
+        add("Bytes#clone", vec![("self".to_string(), shared)], bytes, false);
+        m
+    });
+
+/// The name a builtin type answers to in a method key — the non-`datac`
+/// counterpart of `struct_name_of`.
+fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
+    match ty {
+        Ty::Bytes => Some("Bytes"),
+        // A `Bytes` parameter is a borrow (M4's rule: every owned parameter is
+        // borrowed), so `b.len()` on one arrives here as `&Bytes`.
+        Ty::Ref { inner, .. } => builtin_type_name(inner),
+        _ => None,
+    }
+}
+
+/// The signature a builtin key resolves to, if it is one.
+fn builtin_sig(key: &str) -> Option<FnSig> {
+    BUILTINS.get(key).map(|b| FnSig {
+        params: b.params.clone(),
+        ret: b.ret.clone(),
+    })
+}
+
 /// Stand-in for "no later datacs" at the sites where every `datac` in the
 /// program is already known (signatures, bodies, passdown types).
 static EMPTY_DATACS: std::sync::LazyLock<std::collections::HashSet<String>> =
@@ -311,6 +381,13 @@ pub fn check_program(
                 d.module.clone(),
             ));
         }
+        if Ty::from_name(&d.name).is_some() {
+            return Err(Diagnostic::new(
+                format!("'{}' is a builtin type and cannot be redeclared as a datac", d.name),
+                d.span,
+                d.module.clone(),
+            ));
+        }
         let prefix = project.prefix_of(&d.module);
         let aliases = project.alias_prefixes_of(&d.module);
         let mut fields = Vec::new();
@@ -330,6 +407,28 @@ pub fn check_program(
             }
             .resolve(&f.ty)
             .map_err(|e| e.in_module(&d.module))?;
+            if ty.needs_drop() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "field '{}' has owned heap type '{}' — a datac cannot hold an owned value yet (dropping a struct is not implemented)",
+                        f.name,
+                        ty.display()
+                    ),
+                    f.span,
+                    d.module.clone(),
+                ));
+            }
+            if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "field '{}' is a borrowed type ('{}') — a datac holds owned data only in v1, so a '&str' or reference field is not expressible",
+                        f.name,
+                        ty.display()
+                    ),
+                    f.span,
+                    d.module.clone(),
+                ));
+            }
             fields.push(FieldDef {
                 name: f.name.clone(),
                 ty,
@@ -377,6 +476,16 @@ pub fn check_program(
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
             let ty = scope.resolve_receiver(r).map_err(|e| e.in_module(&f.module))?;
+            if struct_name_of(&ty).is_none() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is a builtin type — its methods are provided by the compiler and cannot be declared",
+                        r.type_name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
             params.push(("self".to_string(), ty));
         }
         for p in &f.params {
@@ -538,6 +647,16 @@ fn collect_pds(
                     .ty
             }
         };
+        if value_ty.needs_drop() {
+            return Err(Diagnostic::new(
+                format!(
+                    "passdown '{bare}' has owned heap type '{}' — a 'pd' cannot hold an owned value yet (there is no drop point at process exit)",
+                    value_ty.display()
+                ),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
         out.push(PdInfo {
             qualified: decl.name.clone(),
             name: bare,
@@ -802,7 +921,7 @@ fn scan_pd_uses(
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
-    } else if matches!(base, Ty::Struct(_)) {
+    } else if matches!(base, Ty::Struct(_) | Ty::Bytes) {
         Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
         base
@@ -818,6 +937,47 @@ fn struct_name_of(ty: &Ty) -> Option<&str> {
         Ty::Ref { inner, .. } => struct_name_of(inner),
         _ => None,
     }
+}
+
+/// Whether a type can be printed as text straight out of its buffer — the
+/// builtin `Bytes` and a borrow of one.
+fn is_bytes_like(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bytes => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::Bytes),
+        _ => false,
+    }
+}
+
+/// `print`/templates read a `Bytes` without consuming it, so an owned one is
+/// borrowed here rather than passed by value (which would be a move). The
+/// borrow has to come from a place: C cannot take the address of a temporary
+/// for the two arguments (`len` and `data`) a `%.*s` needs, and doing it
+/// twice would evaluate the temporary twice.
+fn borrow_for_print(value: tir::Expr, what: &str, _ctx: &Ctx) -> Result<tir::Expr> {
+    if !matches!(value.ty, Ty::Bytes) {
+        return Ok(value);
+    }
+    if !is_tir_place(&value) {
+        return Err(TypeError {
+            message: format!(
+                "cannot print a temporary 'Bytes' with {what} — bind it to a 'val' or 'var' first (v1 has no way to hold a temporary's address across a call)"
+            ),
+            span: value.span,
+        });
+    }
+    let span = value.span;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Ref {
+            mutable: false,
+            expr: Box::new(value),
+        },
+        ty: Ty::Ref {
+            mutable: false,
+            inner: Box::new(Ty::Bytes),
+        },
+        span,
+    })
 }
 
 /// A "place": something with stable storage that can be borrowed or
@@ -970,6 +1130,7 @@ fn check_function(
             tir::Block {
                 stmts: vec![],
                 tail: Some(Box::new(checked)),
+                span: e.span(),
             }
         }
     };
@@ -1025,7 +1186,11 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
     }
 
     ctx.pop_scope();
-    Ok(tir::Block { stmts, tail })
+    Ok(tir::Block {
+        stmts,
+        tail,
+        span: block.span,
+    })
 }
 
 fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
@@ -1088,7 +1253,10 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                     span: stmt_span(stmt),
                 });
             }
-            Ok(tir::Stmt::Return { value })
+            Ok(tir::Stmt::Return {
+                value,
+                span: stmt_span(stmt),
+            })
         }
         ast::Stmt::Expr { expr, .. } => Ok(tir::Stmt::Expr(check_expr(expr, ctx, None)?)),
     }
@@ -1630,7 +1798,10 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
             return check_template(parts, callee == "print", *tspan, ctx);
         }
         let arg = check_expr(&args[0].value, ctx, None)?;
-        let printable = arg.ty.is_numeric() || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str);
+        let arg = borrow_for_print(arg, callee, ctx)?;
+        let printable = arg.ty.is_numeric()
+            || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str)
+            || is_bytes_like(&arg.ty);
         if !printable {
             return Err(TypeError {
                 message: format!("cannot pass a value of type '{}' to '{callee}'", arg.ty.display()),
@@ -1730,8 +1901,10 @@ fn check_template(
             }
             ast::TemplatePart::Expr(e) => {
                 let value = check_expr(e, ctx, None)?;
-                let printable =
-                    value.ty.is_numeric() || matches!(value.ty, Ty::Bool | Ty::Char | Ty::Str);
+                let value = borrow_for_print(value, "a string template", ctx)?;
+                let printable = value.ty.is_numeric()
+                    || matches!(value.ty, Ty::Bool | Ty::Char | Ty::Str)
+                    || is_bytes_like(&value.ty);
                 if !printable {
                     return Err(TypeError {
                         message: format!(
@@ -1759,26 +1932,56 @@ fn check_template(
 /// `fun mut T.m()` method reuses M4's aliasing checks with no special
 /// casing). No new `tir`/codegen shape is needed for method calls at all.
 fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
-    // Type-only probe to learn the receiver's struct name; re-checked for
+    // `Bytes.empty()` / `Bytes.from_str(s)`: an *associated* builtin, written
+    // on the type name, so it takes no receiver argument and is resolved
+    // before the receiver is checked as a value (it isn't one). A local or an
+    // `impl` alias of the same name shadows the type name, exactly as it
+    // would anywhere else — which is why those cases fall through to the
+    // ordinary method path below.
+    if let ast::Expr::Ident(name, _) = receiver {
+        if ctx.lookup(name).is_none() && !is_module_alias(name, ctx) {
+            let key = format!("{name}#{method}");
+            if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
+                let params = assoc.params.clone();
+                let ret = assoc.ret.clone();
+                let checked = match_args(&format!("'{name}.{method}'"), &params, args, span, ctx)?;
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::Call { callee: key, args: checked },
+                    ty: ret,
+                    span,
+                });
+            }
+        }
+    }
+
+    // Type-only probe to learn the receiver's owner name; re-checked for
     // real (with its actual borrow/move effects) via `check_call_arg`
     // below. `check_expr` has no persistent side effects beyond reading
     // `ctx`, so checking the same expression twice here is safe.
     let probe = check_expr(receiver, ctx, None)?;
-    let Some(sname) = struct_name_of(&probe.ty).map(|s| s.to_string()) else {
+    let owner = struct_name_of(&probe.ty)
+        .map(|s| s.to_string())
+        .or_else(|| builtin_type_name(&probe.ty).map(|s| s.to_string()));
+    let Some(owner) = owner else {
         return Err(TypeError {
             message: format!("cannot call method '{method}' on non-struct type '{}'", probe.ty.display()),
             span,
         });
     };
-    let key = format!("{sname}#{method}");
-    let sig = ctx.sigs.get(&key).cloned().ok_or_else(|| TypeError {
-        message: format!("datac '{sname}' has no method '{method}'"),
-        span,
-    })?;
+    let key = format!("{owner}#{method}");
+    let sig = ctx
+        .sigs
+        .get(&key)
+        .cloned()
+        .or_else(|| builtin_sig(&key))
+        .ok_or_else(|| TypeError {
+            message: format!("datac '{owner}' has no method '{method}'"),
+            span,
+        })?;
 
     let mut checked_args = Vec::with_capacity(sig.params.len());
     checked_args.push(check_call_arg("self", &sig.params[0].1, receiver, ctx)?);
-    checked_args.extend(match_args(&format!("method '{sname}.{method}'"), &sig.params[1..], args, span, ctx)?);
+    checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
     // Receiver methods can reference passdowns too; the call site passes the
     // same hidden arguments a free-function call would.
     checked_args.extend(hidden_args(&key, span, ctx)?);
@@ -1881,6 +2084,7 @@ fn check_if(
                 tir::ExprKind::If { .. } => Some(tir::Block {
                     stmts: vec![],
                     tail: Some(Box::new(checked)),
+                    span: e.span(),
                 }),
                 _ => unreachable!("parser guarantees else-if parses to Expr::If"),
             }

@@ -1,0 +1,9 @@
+// M6: an owned local is freed at the end of the block that declared it, not
+// at the end of the function — `inner` dies before "after" is printed.
+fun main() {
+    {
+        val inner = Bytes.from_str("first")
+        print(inner)
+    }
+    print("after")
+}

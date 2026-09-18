@@ -1,0 +1,20 @@
+// M6: an owned parameter is a *borrow*, per M4's rule that v1 has no
+// move-taking parameters. The caller keeps its value, the callee can read
+// through it (shared) or write through it (`mut`), and neither side frees it
+// twice.
+fun show(b: Bytes) {
+    print(b.len())
+    print(b)
+}
+
+fun fill(b: mut Bytes) {
+    b.set(i = 0, b = 88)
+}
+
+fun main() {
+    var data = Bytes.from_str("hi")
+    show(data)
+    fill(data)
+    print(data)
+    print(data.is_empty())
+}

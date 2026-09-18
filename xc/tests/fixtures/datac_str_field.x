@@ -1,0 +1,9 @@
+// M6.1: a datac holds owned data only, so a borrowed field is not legal.
+// (syntax&shii.md says exactly this; the checker only enforced it once an
+// owned alternative — Bytes — made the difference meaningful.)
+datac User(val name: str)
+
+fun main() {
+    val u = User(name = "x")
+    print(u.name)
+}

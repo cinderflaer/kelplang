@@ -39,6 +39,25 @@
 //! rejected when the pointee is non-Copy, mirroring "cannot move out of a
 //! shared reference."
 //!
+//! ## Drops (M6)
+//!
+//! The same walk decides where owned heap values (`Bytes`) are freed, and
+//! returns that as a `DropPlan` — a side table keyed by *span*, so
+//! `codegen_c.rs` can look up "which locals die here" as it writes each
+//! block and each `return` without the two passes having to walk in
+//! lockstep. Keying on spans also sidesteps the one place the two walks
+//! genuinely differ: `while` bodies are checked twice (M3's double-move
+//! trick) but emitted once.
+//!
+//! A local is dropped at the end of the block that declared it, if it is
+//! still live there — moved out, and its new owner is responsible for it.
+//! Every `return` first drops the frame's live owned locals (the value being
+//! returned was itself checked before that, so a returned local is already
+//! marked moved and is not in the set). Assignment to an owned `var`
+//! re-arms the drop rather than freeing the old value, which leaks it: v1
+//! has no user-defined destructors, so nothing can observe the difference
+//! except memory use.
+//!
 //! Known, deliberately out-of-scope gap: `p = &c` *reassigning* an
 //! existing binding to a fresh borrow is checked at the moment of
 //! assignment (conflicts with anything currently active are still caught)
@@ -54,6 +73,66 @@ use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::tir;
 use crate::types::Ty;
+
+/// One owned local that has to be freed at a particular point.
+#[derive(Debug, Clone)]
+pub struct DropTarget {
+    pub name: String,
+    pub ty: Ty,
+}
+
+/// Where every owned local is freed, per function.
+///
+/// Keyed by span rather than by position because `codegen_c.rs` walks the
+/// same tree independently: a block's span identifies its end-of-scope
+/// drops, and a `return` statement's span identifies the drops that run
+/// before it returns.
+#[derive(Debug, Default, Clone)]
+pub struct DropPlan {
+    functions: HashMap<String, FnDrops>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct FnDrops {
+    at_block_end: HashMap<Span, Vec<DropTarget>>,
+    at_return: HashMap<Span, Vec<DropTarget>>,
+    at_assign: HashMap<Span, Vec<DropTarget>>,
+}
+
+impl DropPlan {
+    /// Owned locals freed when `span`'s block ends, in drop order (reverse
+    /// declaration order, so a later binding is freed before an earlier one
+    /// it may have taken its value from).
+    pub fn at_block_end(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_block_end.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Owned locals freed by the `return` statement at `span`, before it
+    /// returns.
+    pub fn at_return(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_return.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The old value of an owned binding, freed by the assignment at `span`
+    /// *after* the new value has been read but *before* it is stored. `b = b`
+    /// is deliberately not one of these: the value being stored *is* the old
+    /// value, so freeing it first would leave the binding dangling.
+    pub fn at_assign(&self, function: &str, span: Span) -> &[DropTarget] {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_assign.get(&span))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
 
 #[derive(Debug)]
 pub struct BorrowError {
@@ -72,9 +151,21 @@ enum BorrowKind {
 
 #[derive(Clone)]
 struct VarState {
-    is_copy: bool,
+    /// The binding's type: `Copy`-ness comes from here, and so does whether
+    /// the old value needs freeing when an assignment overwrites it.
+    ty: Ty,
     moved_at: Option<Span>,
     borrow: BorrowKind,
+}
+
+/// An owned local declared in some scope, tracked for the drop plan.
+#[derive(Clone)]
+struct OwnedVar {
+    name: String,
+    ty: Ty,
+    /// Set when this binding's value is moved elsewhere; a moved-out local is
+    /// never dropped by the scope that declared it.
+    moved: bool,
 }
 
 #[derive(Clone, Default)]
@@ -83,6 +174,9 @@ struct Scope {
     /// Roots borrowed by a `val`/`var` declared in this scope, released
     /// when the scope pops (see the module doc's "scope-durable" lifetime).
     scope_borrows: Vec<String>,
+    /// Owned (heap-owning) locals declared in this scope, in declaration
+    /// order — the candidates for this block's end-of-scope drops.
+    owned: Vec<OwnedVar>,
 }
 
 impl Scope {
@@ -95,14 +189,27 @@ impl Scope {
             // its own scope-durable borrows before this runs), so what's
             // left on either side is whatever state existed going in,
             // which is identical on both sides by construction.
-            vars.insert(name, VarState { is_copy: va.is_copy, moved_at, borrow: va.borrow });
+            vars.insert(name, VarState { ty: va.ty.clone(), moved_at, borrow: va.borrow });
         }
-        Scope { vars, scope_borrows: Vec::new() }
+        // Owned locals declared in *this* scope survive the merge (an `if`
+        // arm or loop body is always its own block, so nothing here was
+        // declared inside one). A local is treated as moved if *either* side
+        // moved it: that can leak in the branch that did not — safe — where
+        // the other choice would free a value the other branch had already
+        // handed to a new owner.
+        let mut owned = a.owned;
+        for entry in owned.iter_mut() {
+            if let Some(other) = b.owned.iter().find(|o| o.name == entry.name) {
+                entry.moved = entry.moved || other.moved;
+            }
+        }
+        Scope { vars, scope_borrows: Vec::new(), owned }
     }
 }
 
 struct Ctx {
     scopes: Vec<Scope>,
+    plan: FnDrops,
 }
 
 impl Ctx {
@@ -110,19 +217,75 @@ impl Ctx {
         self.scopes.push(Scope::default());
     }
 
-    fn pop_scope(&mut self) {
+    /// Ends a block: releases its scope-durable borrows and records the drops
+    /// for the owned locals it declared that are still live here.
+    fn pop_scope(&mut self, block_span: Span, unreachable_end: bool) {
         let popped = self.scopes.pop().expect("pop_scope without a matching push_scope");
         for root in popped.scope_borrows {
             self.end_borrow(&root);
         }
+        // A block that ends by returning never reaches its end, and the
+        // return's own drops already cover everything live at that point.
+        if unreachable_end {
+            return;
+        }
+        let drops = live_drops(popped.owned.iter());
+        if !drops.is_empty() {
+            self.plan.at_block_end.insert(block_span, drops);
+        }
     }
 
-    fn define(&mut self, name: &str, is_copy: bool) {
-        self.scopes
-            .last_mut()
-            .unwrap()
-            .vars
-            .insert(name.to_string(), VarState { is_copy, moved_at: None, borrow: BorrowKind::None });
+    /// Every live owned local in *every* enclosing scope, innermost first —
+    /// what a `return` from here would have to free before leaving.
+    fn live_drops_in_frame(&self) -> Vec<DropTarget> {
+        let mut out = Vec::new();
+        for scope in self.scopes.iter().rev() {
+            out.extend(live_drops(scope.owned.iter()));
+        }
+        out
+    }
+
+    /// Marks the innermost owned binding named `name` as moved out.
+    fn mark_moved(&mut self, name: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
+                owned.moved = true;
+                return;
+            }
+        }
+    }
+
+    /// Marks the innermost owned binding named `name` as owning again (an
+    /// assignment of a fresh value into it).
+    fn mark_owned_again(&mut self, name: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
+                owned.moved = false;
+                return;
+            }
+        }
+    }
+
+    fn define(&mut self, name: &str, ty: &Ty) {
+        self.scopes.last_mut().unwrap().vars.insert(
+            name.to_string(),
+            VarState {
+                ty: ty.clone(),
+                moved_at: None,
+                borrow: BorrowKind::None,
+            },
+        );
+    }
+
+    /// Registers an owned local so its drop point can be planned.
+    fn define_owned(&mut self, name: &str, ty: &Ty) {
+        let scope = self.scopes.last_mut().unwrap();
+        scope.owned.retain(|o| o.name != name);
+        scope.owned.push(OwnedVar {
+            name: name.to_string(),
+            ty: ty.clone(),
+            moved: false,
+        });
     }
 
     fn lookup_mut(&mut self, name: &str) -> Option<&mut VarState> {
@@ -146,8 +309,22 @@ impl Ctx {
         if v.borrow != BorrowKind::None {
             return Err(BorrowError { message: format!("cannot move '{name}' while it is borrowed"), span });
         }
-        if !v.is_copy {
+        if !v.ty.is_copy() {
             v.moved_at = Some(span);
+        }
+        Ok(())
+    }
+
+    /// Like `use_value`, but also tells the drop planner that the binding's
+    /// value now lives somewhere else.
+    fn use_value_moving(&mut self, name: &str, span: Span) -> Result<()> {
+        let was_copy = self
+            .lookup_mut(name)
+            .map(|v| v.ty.is_copy())
+            .unwrap_or(true);
+        self.use_value(name, span)?;
+        if !was_copy {
+            self.mark_moved(name);
         }
         Ok(())
     }
@@ -175,6 +352,14 @@ impl Ctx {
             return Err(BorrowError { message: format!("cannot assign to '{name}' while it is borrowed"), span });
         }
         v.moved_at = None;
+        Ok(())
+    }
+
+    /// Like `reinit`, but also re-arms the drop (the fresh value needs
+    /// freeing; the old one is leaked — see the module doc).
+    fn reinit_moving(&mut self, name: &str, span: Span) -> Result<()> {
+        self.reinit(name, span)?;
+        self.mark_owned_again(name);
         Ok(())
     }
 
@@ -233,7 +418,22 @@ impl Ctx {
 }
 
 fn is_copy(ty: &Ty) -> bool {
-    !matches!(ty, Ty::Struct(_))
+    ty.is_copy()
+}
+
+/// The drops for a set of owned locals: reverse declaration order, live ones
+/// only. Reverse order matches the lexical nesting of the bindings — a value
+/// moved out of an earlier binding into a later one is freed exactly once,
+/// by the later one, and before the earlier one would have been.
+fn live_drops<'a>(owned: impl DoubleEndedIterator<Item = &'a OwnedVar>) -> Vec<DropTarget> {
+    owned
+        .rev()
+        .filter(|o| !o.moved)
+        .map(|o| DropTarget {
+            name: o.name.clone(),
+            ty: o.ty.clone(),
+        })
+        .collect()
 }
 
 /// The root identifier a place-expression is ultimately reached through.
@@ -246,19 +446,40 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
     }
 }
 
-pub fn check_program(program: &tir::Program) -> std::result::Result<(), Diagnostic> {
+pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
+    let mut plan = DropPlan::default();
     for f in &program.functions {
-        check_function(f).map_err(|e| Diagnostic::new(e.message, e.span, f.module.clone()))?;
+        let function = check_function(f).map_err(|e| {
+            Diagnostic::new(e.message, e.span, f.module.clone())
+        })?;
+        plan.functions.insert(f.name.clone(), function);
     }
-    Ok(())
+    Ok(plan)
 }
 
-fn check_function(f: &tir::Function) -> Result<()> {
-    let mut ctx = Ctx { scopes: vec![Scope::default()] };
+fn check_function(f: &tir::Function) -> Result<FnDrops> {
+    let mut ctx = Ctx {
+        scopes: vec![Scope::default()],
+        plan: FnDrops::default(),
+    };
     for (name, ty) in &f.params {
-        ctx.define(name, is_copy(ty));
+        ctx.define(name, ty);
+        // A parameter is never owned in v1 (`Bytes` parameters are borrows),
+        // but registering one costs nothing and keeps the plan honest if
+        // move-taking parameters ever exist.
+        if ty.needs_drop() {
+            ctx.define_owned(name, ty);
+        }
     }
-    check_block(&f.body, &mut ctx)
+    check_block(&f.body, &mut ctx)?;
+
+    // Anything still owned in the frame at the end belongs to the function
+    // body's own block (parameters live as long as the body does).
+    let leftover = ctx.live_drops_in_frame();
+    if !leftover.is_empty() {
+        ctx.plan.at_block_end.insert(f.body.span, leftover);
+    }
+    Ok(ctx.plan)
 }
 
 fn check_block(block: &tir::Block, ctx: &mut Ctx) -> Result<()> {
@@ -272,7 +493,7 @@ fn check_block(block: &tir::Block, ctx: &mut Ctx) -> Result<()> {
         }
         Ok(())
     })();
-    ctx.pop_scope();
+    ctx.pop_scope(block.span, diverges(block));
     result
 }
 
@@ -280,14 +501,26 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
     match stmt {
         tir::Stmt::Let { name, ty, init } => {
             check_let_init(init, ctx)?;
-            ctx.define(name, is_copy(ty));
+            ctx.define(name, ty);
+            if ty.needs_drop() {
+                ctx.define_owned(name, ty);
+            }
             Ok(())
         }
         tir::Stmt::While { cond, body } => check_while(cond, body, ctx),
-        tir::Stmt::Return { value } => match value {
-            Some(v) => check_value(v, ctx),
-            None => Ok(()),
-        },
+        tir::Stmt::Return { value, span } => {
+            match value {
+                Some(v) => check_value(v, ctx)?,
+                None => {}
+            }
+            // Planned after the value is checked: a local being returned is
+            // moved by that check and so is not dropped here.
+            let drops = ctx.live_drops_in_frame();
+            if !drops.is_empty() {
+                ctx.plan.at_return.insert(*span, drops);
+            }
+            Ok(())
+        }
         tir::Stmt::Expr(e) => check_value(e, ctx),
     }
 }
@@ -308,6 +541,14 @@ fn check_let_init(init: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     }
 }
 
+/// Whether a block ends by returning. A branch (or loop body) that cannot
+/// fall through must not contribute its post-state to a merge: values it had
+/// to move before returning are still available to the code that runs after
+/// it, and marking them moved would reject ordinary `return early` code.
+fn diverges(block: &tir::Block) -> bool {
+    matches!(block.stmts.last(), Some(tir::Stmt::Return { .. }))
+}
+
 fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()> {
     let before = ctx.snapshot();
 
@@ -322,7 +563,13 @@ fn check_while(cond: &tir::Expr, body: &tir::Block, ctx: &mut Ctx) -> Result<()>
     check_block(body, ctx)?;
 
     // The loop may also run zero times, so nothing here becomes
-    // *definitely* moved unless it already was before the loop.
+    // *definitely* moved unless it already was before the loop. A body that
+    // always returns never falls through at all, so the loop leaves the
+    // pre-loop state untouched.
+    if diverges(body) {
+        ctx.restore(before);
+        return Ok(());
+    }
     let after = ctx.snapshot();
     ctx.merge_into(before, after);
     Ok(())
@@ -334,13 +581,20 @@ fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut 
     check_block(then_block, ctx)?;
     let after_then = ctx.snapshot();
 
-    ctx.restore(before);
+    ctx.restore(before.clone());
     if let Some(eb) = else_block {
         check_block(eb, ctx)?;
     }
     let after_else = ctx.snapshot();
 
-    ctx.merge_into(after_then, after_else);
+    // A branch that returns cannot fall through, so only the other branch's
+    // state carries on (`before` when there is no other branch).
+    match (diverges(then_block), else_block.as_ref().map(diverges)) {
+        (true, Some(false)) => ctx.restore(after_else),
+        (true, _) => ctx.restore(before),
+        (false, Some(true)) => ctx.restore(after_then),
+        _ => ctx.merge_into(after_then, after_else),
+    }
     Ok(())
 }
 
@@ -350,7 +604,7 @@ fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut 
 /// shared reference."
 fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &expr.kind {
-        tir::ExprKind::Ident(name) => ctx.use_value(name, expr.span),
+        tir::ExprKind::Ident(name) => ctx.use_value_moving(name, expr.span),
         tir::ExprKind::FieldAccess { base, .. } => check_place(base, ctx),
         tir::ExprKind::IntLit(_) | tir::ExprKind::FloatLit(_) | tir::ExprKind::StringLit(_) | tir::ExprKind::BoolLit(_) => Ok(()),
         tir::ExprKind::Unary { expr: sub, .. } => check_value(sub, ctx),
@@ -375,7 +629,29 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         }
         tir::ExprKind::Assign { target, value } => {
             check_value(value, ctx)?;
-            check_assign_target(target, ctx)
+            check_assign_target(target, ctx)?;
+            // Assigning a fresh value into an owned binding frees the old one
+            // (it has no other owner and v1 has no user destructors, so
+            // nothing could observe it either way — freeing it is simply the
+            // honest thing). Skipped for `b = b`, where the value being
+            // stored *is* the old value.
+            if let tir::ExprKind::Ident(name) = &target.kind {
+                let self_assign = matches!(&value.kind, tir::ExprKind::Ident(src) if src == name);
+                let owned = ctx
+                    .lookup_mut(name)
+                    .map(|state| state.ty.needs_drop())
+                    .unwrap_or(false);
+                if owned && !self_assign {
+                    ctx.plan.at_assign.insert(
+                        expr.span,
+                        vec![DropTarget {
+                            name: name.clone(),
+                            ty: target.ty.clone(),
+                        }],
+                    );
+                }
+            }
+            Ok(())
         }
         tir::ExprKind::If { cond, then_block, else_block } => {
             check_value(cond, ctx)?;
@@ -424,7 +700,7 @@ fn check_place(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 
 fn check_assign_target(target: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &target.kind {
-        tir::ExprKind::Ident(name) => ctx.reinit(name, target.span),
+        tir::ExprKind::Ident(name) => ctx.reinit_moving(name, target.span),
         tir::ExprKind::FieldAccess { base, .. } => check_place(base, ctx),
         tir::ExprKind::Deref { expr: inner } => check_place(inner, ctx),
         _ => Ok(()), // infer.rs already restricts assignment targets to places

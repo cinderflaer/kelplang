@@ -1,0 +1,9 @@
+// M6: a move followed by reassigning the moved-from binding is legal (M3's
+// rule), and each value is still freed exactly once.
+fun main() {
+    var a = Bytes.from_str("x")
+    val b = a
+    a = Bytes.from_str("yz")
+    print(a.len())
+    print(b.len())
+}
