@@ -1,0 +1,10 @@
+// A-2: the receiver must write the type's own parameters, in order — the body
+// names them, so a rename or a reorder would not mean what it says.
+datac Pair<A, B>(val first: A, val second: B)
+
+fun Pair<X, Y>.first_of().R: X = first
+
+fun main() {
+    val p = Pair(first = 1, second = 2)
+    print(p.first_of())
+}

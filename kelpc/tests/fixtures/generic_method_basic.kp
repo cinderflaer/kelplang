@@ -1,0 +1,39 @@
+// A-2: a receiver method on a generic type. The receiver writes the type's own
+// parameters, and each call site instantiates the method for the receiver's
+// concrete type.
+datac Pair<A, B>(val first: A, var second: B)
+
+fun Pair<A, B>.first_of().R: A = first
+fun Pair<A, B>.sum_of().R: A = first + second
+fun Pair<A, B>.second_of().R: B = second
+fun Pair<A, B>.with_second(v: B).R: Pair<A, B> = Pair(first = first, second = v)
+fun mut Pair<A, B>.replace_second(v: B) { second = v }
+
+// Only ever instantiated for `String` — a body is checked per instantiation,
+// so a body that makes sense for one element type is fine as long as that is
+// the one it is used at.
+fun Pair<A, B>.first_len().R: usize = first.len()
+
+// A method calling a generic free function: `T` is bound at the call.
+fun describe<T>(x: T).R: i32 = 1
+fun Pair<A, B>.tag(x: A).R: i32 = describe(x = x) + 1
+
+fun total(p: &Pair<i32, i32>).R: i32 = p.sum_of()
+
+fun main() {
+    val p = Pair(first = 1, second = 2)
+    print(p.first_of())
+    print(p.sum_of())
+    print(p.tag(x = 5))
+    print(total(p = p))
+
+    val q = p.with_second(v = 9)
+    print(q.second_of())
+
+    var r = Pair(first = 1, second = 2)
+    r.replace_second(v = 7)
+    print(r.second_of())
+
+    val name = Pair(first = String.from_str(s = "abcd"), second = String.from_str(s = "b"))
+    print(name.first_len())
+}

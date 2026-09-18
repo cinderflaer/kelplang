@@ -1180,6 +1180,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // A-2: a generic *function* instantiated over an owned type, so the
         // per-instantiation body owns and drops like any other function.
         "generic_function_owned",
+        // A-2: a generic *method* over an instantiation holding an owned
+        // payload.
+        "generic_method_basic",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2230,6 +2233,30 @@ fn a_generic_function_works_over_an_owned_type() {
 }
 
 #[test]
+fn a_method_on_a_generic_type_is_instantiated_per_receiver() {
+    assert_compiles_and_runs(
+        "tests/fixtures/generic_method_basic.kp",
+        "1\n3\n2\n3\n9\n7\n4\n",
+    );
+}
+
+#[test]
+fn generic_method_misuse_is_rejected() {
+    for name in [
+        // The receiver omits its type arguments entirely.
+        "generic_method",
+        // ... or writes parameters the type does not have, in the wrong order.
+        "generic_method_wrong_params",
+        // A non-generic type has nothing to parameterize.
+        "generic_method_on_plain",
+        // An enum carries no methods in v1, generic or not.
+        "generic_enum_method",
+    ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
+}
+
+#[test]
 fn generic_function_misuse_is_rejected() {
     for name in [
         "generic_function_cannot_infer",
@@ -2248,7 +2275,6 @@ fn generic_type_misuse_is_rejected() {
         "generic_needs_args",
         "generic_arity",
         "generic_cannot_infer",
-        "generic_method",
         "generic_param_shadow",
         "generic_param_duplicate",
         "generic_clash",
