@@ -1,0 +1,35 @@
+// A-2: a generic *function*. `T` is bound at each call site from the argument
+// types (or from the expected type), and one body is checked and emitted per
+// distinct instantiation.
+fun identity<T>(x: T).R: T = x
+
+fun repeat<T>(x: T, n: i32).R: T = if n <= 0 { x } else { repeat(x = x, n = n - 1) }
+
+// The return type is the only place `T` appears, so the expected type is what
+// determines it.
+fun empty_of<T>().R: List<T> = List.empty()
+
+fun length_of<T>(xs: &List<T>).R: usize = xs.len()
+
+// A generic function over a user generic type: `Pair`'s parameters are
+// independent of the function's.
+datac Pair<A, B>(val first: A, val second: B)
+
+fun sum_of<T>(p: &Pair<T, T>).R: T = p.first + p.second
+
+fun main() {
+    print(identity(x = 5))
+    print(identity(x = true))
+    print(identity(x = 2.5))
+    print(identity(x = "text"))
+
+    print(repeat(x = 3, n = 2))
+    print(repeat(x = "once", n = 0))
+
+    var xs: List<String> = empty_of()
+    xs.push(String.from_str(s = "a"))
+    print(length_of(xs = xs))
+
+    val p = Pair(first = 4, second = 5)
+    print(sum_of(p = p))
+}

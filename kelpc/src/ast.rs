@@ -144,6 +144,10 @@ pub struct FieldDecl {
 #[derive(Debug, Clone)]
 pub struct FunctionDecl {
     pub name: String,
+    /// `fun f<T>(...)` — the function's own type parameters (A-2). Empty for
+    /// an ordinary function, and empty for a *receiver method*, whose type
+    /// parameters come from the receiver instead (`Receiver::type_args`).
+    pub type_params: Vec<String>,
     /// `extern fun ...` — the body is supplied by the compiler (M6.2), so
     /// `body` is always `FunctionBody::Extern` here.
     pub extern_: bool,
@@ -167,6 +171,10 @@ pub struct FunctionDecl {
 #[derive(Debug, Clone)]
 pub struct Receiver {
     pub type_name: String,
+    /// `fun Pair<A, B>.first()` — the receiver's type arguments, which are the
+    /// method's type parameters (A-2). They must be exactly the generic type's
+    /// own parameter list, in order, so the body can name them.
+    pub type_args: Vec<String>,
     pub mutable: bool,
     pub span: Span,
 }

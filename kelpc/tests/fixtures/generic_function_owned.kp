@@ -1,0 +1,33 @@
+// A-2: a generic function whose type parameter is an owned type. A parameter
+// of a non-`Copy` type is a borrow (v1 has no move-taking parameters), so the
+// function reads through it — the same rule a non-generic function obeys.
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+fun is_some<T>(o: &Option<T>).R: bool = when o {
+    Some(_) -> true
+    None -> false
+}
+
+fun wrap<T>(x: T).R: Option<T> = Option.Some(value = x)
+
+fun describe(o: &Option<String>).R: usize = when o {
+    Some(v) -> v.len()
+    None -> 0
+}
+
+fun main() {
+    val a: Option<i32> = Option.Some(value = 12)
+    val b: Option<i32> = Option.None
+    print(is_some(o = a))
+    print(is_some(o = b))
+
+    val c = wrap(x = 3)
+    print(is_some(o = c))
+
+    val d: Option<String> = Option.Some(value = String.from_str(s = "owned"))
+    print(is_some(o = d))
+    print(describe(o = d))
+}

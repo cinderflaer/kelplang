@@ -1,0 +1,8 @@
+// A-2: a generic and a non-generic function may not share a name.
+fun pick<T>(x: T).R: i32 = 1
+
+fun pick(x: i32).R: i32 = 2
+
+fun main() {
+    print(pick(x = 1))
+}

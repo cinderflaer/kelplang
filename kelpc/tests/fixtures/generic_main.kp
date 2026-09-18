@@ -1,0 +1,3 @@
+// A-2: the entry point takes no type parameters, and is not called.
+fun main<T>() {
+}

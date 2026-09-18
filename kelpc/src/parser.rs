@@ -452,16 +452,22 @@ impl Parser {
             false
         };
         let (first, first_span) = self.expect_ident()?;
-        let (receiver, name) = if self.check(&TokenKind::Dot) {
+        // `<T>` may follow either the function's own name (`fun f<T>(...)`) or
+        // the receiver's type name (`fun Pair<A, B>.first()`); which one it is
+        // is settled by whether a `.` comes next (A-2).
+        let name_params = self.parse_type_params()?;
+        let (receiver, name, type_params) = if self.check(&TokenKind::Dot) {
             self.advance();
             let (method, _) = self.expect_ident()?;
             (
                 Some(Receiver {
                     type_name: first,
+                    type_args: name_params,
                     mutable: receiver_mutable,
                     span: first_span,
                 }),
                 method,
+                Vec::new(),
             )
         } else {
             if receiver_mutable {
@@ -470,19 +476,8 @@ impl Parser {
                     span: first_span,
                 });
             }
-            (None, first)
+            (None, first, name_params)
         };
-
-        // `<T>` on a function is the generic-function half of A-2, and it is
-        // not implemented yet: only `datac` and `enum` declarations take type
-        // parameters so far. Say so rather than fall through to the confusing
-        // "expected '('" the parameter list would otherwise produce.
-        if self.check(&TokenKind::Lt) {
-            return Err(ParseError {
-                message: "type parameters on a function are not implemented yet — generics currently apply to 'datac' and 'enum' declarations only".to_string(),
-                span: self.peek().span,
-            });
-        }
 
         self.expect(TokenKind::LParen, "'('")?;
         let mut params = Vec::new();
@@ -575,6 +570,7 @@ impl Parser {
         };
         Ok(FunctionDecl {
             name,
+            type_params,
             extern_,
             receiver,
             params,
@@ -1450,10 +1446,22 @@ mod tests {
     fn generic_declaration_errors_are_parse_errors() {
         parse_err("datac Pair<T, T>(val a: T, val b: T)\nfun main() {}");
         parse_err("datac Pair<>(val a: i32)\nfun main() {}");
-        // A generic *function* is the half that is not implemented, and the
-        // parser says so instead of failing on the parameter list.
-        let e = parse_err("fun f<T>(x: T).R: T = x\nfun main() {}");
-        assert!(e.message.contains("not implemented yet"), "{e:?}");
+    }
+
+    #[test]
+    fn parses_type_parameters_on_a_function() {
+        // A-2: a free function declares its own parameters after its name, and
+        // a receiver method's come from the receiver's argument list.
+        let p = parse("fun first<T>(xs: List<T>).R: T = xs.get(i = 0)\nfun main() {}");
+        assert_eq!(p.functions[0].type_params, vec!["T".to_string()]);
+        assert!(p.functions[0].receiver.is_none());
+
+        let p = parse("fun Pair<A, B>.first().R: A = a\nfun main() {}");
+        let f = &p.functions[0];
+        assert!(f.type_params.is_empty());
+        let r = f.receiver.as_ref().expect("a receiver");
+        assert_eq!(r.type_name, "Pair");
+        assert_eq!(r.type_args, vec!["A".to_string(), "B".to_string()]);
     }
 
     #[test]
