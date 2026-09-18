@@ -1,6 +1,6 @@
 # The "Kelp" language roadmap
 
-Current state, the MK/S/M naming scheme, the marks at a glance, what is next, the open items, and the far-future backlog.
+Current state, the MK/S/M naming scheme, the marks at a glance, what is next, the open items, the features Kelp needs, and the far-future backlog.
 
 - Current state and the naming scheme: this file.
 - What has shipped: `done.md`.
@@ -538,6 +538,55 @@ Blocks `B`, `C-3`/`C-4` and `D` of the far-future backlog are promoted to MK9, M
 68. **Is a package registry acceptable?** The plan lists a package registry and third-party dependencies as deliberate non-goals, and Coral is a package manager. MK13-S3-M3 is the decision point, and MK13-S3-M1 (path and git dependencies) is worth building either way, because it pays off with no index and no trust model. **Recommendation**: path and git dependencies plus a lockfile, and no index until a second project outside this repository needs to consume Kelp code.
 69. **What a version constraint means for Kelp.** A semver range needs a compatibility theory (what counts as a breaking change in a language with no traits and no visibility rules yet), and a lockfile needs a format with a checksum story. Nothing here is decided in v1. **Recommendation**: exact versions plus a content-addressed lockfile first, ranges after MK13-S4-M1 makes a multi-package workspace concrete.
 70. **How much authority Coral itself holds.** The design above gives each task its own grants and Coral none, but Coral still writes `build/`, reads sources and runs the linker, so it holds a grant set whether or not the manifest says so. The open question is whether that set is fixed and documented (build inputs, build output, toolchain binaries) or declared per project. Related: a task's output becoming another task's input without the second task holding a write grant on the first's tree. **Recommendation**: a fixed, documented grant set for the tool itself, orthogonal to per-task grants, with the C-1 runtime-authority work (MK10-S2-M1) as the thing that makes it checkable rather than documented.
+
+## Features Kelp needs
+
+*A filter over what is already recorded: the MK5/MK6 work, the open items, the MK9 to MK13 marks, and the far-future backlog below. It asks one question per proposed feature: does it strengthen Kelp's identity, or bend it? The identity is three things: ownership plus borrowing with no GC, capabilities as compile-time grants, and a small explicit surface (Kotlin form, Rust core). This section lists only the items that pass that filter and are needed; what was rejected is recorded as a non-goal instead (block F, `syntax.md` §13). It adds no schedule of its own, the Mark tables above and the backlog below keep theirs.*
+
+### 1. Needed for ordinary use
+
+| Feature | Why needed | Cost |
+| --- | --- | --- |
+| **`for` loop** (parser desugar to `while`) | Every list walk is four lines of `while` plus a `usize` index today (open items 27, 36a, 46). | small, but `syntax.md` §10 must gain it |
+| **Length-carrying view** (a `&[u8]` shape) | The single biggest lever: zero-copy parsing, `String.slice`, `path.stem` without an allocation, `List<String>.get(i)` without the `.as_str()` chain. Closes open items 22, 29 and 44. | large: a new type with a pointer and a length; item 44's `syntax.md` §1/§13 wording has to be agreed first |
+| **`Option<T>`/`Result<T, E>` plus `?`/`if let`** | Error datacs work but do not scale: `index_of`, `Map.get`, `str.parse_*`, `Box.take`, `recv` all want them. Needs tagged unions plus generics (open items 4 and 36c, A-1 to A-3, now MK8-S1-M1). | very large |
+| **User-declarable generics** | `Box<T>`/`List<T>`/`Map<V>` are builtins, so `datac Pair<A, B>`, `fun sum(xs: List<T>)` and a real `Map` key type are all blocked (open item 34, A-2). | very large |
+| **Function values and move-taking parameters** | No `map`/`filter`, no callback, no threads, no sort comparator (open item 1, A-4, MK5-S7-M1, MK6-S1-M1). | large |
+| **`panic`/`assert`** | Shipped in MK5-S1-M1. | done |
+
+### 2. Needed for deep-level programming (systems)
+
+*The same list as MK9 and block B: each of these is what separates a systems dialect from a language that can host a kernel, a driver, a firmware image, an allocator or a runtime.*
+
+| Feature | Why needed | Cost |
+| --- | --- | --- |
+| **`unsafe`, raw pointers, pointer arithmetic, casts** | Without it there is no kernel, no driver, no allocator, no FFI: the one structural reason systems work is out of reach today (B-3, MK9-S2-M1). | large |
+| **User FFI: `extern "C"`, function pointers, variadics, link flags** | The door to libc, C libraries, and everything that is not Kelp (B-1, MK9-S1-M1). | large |
+| **`repr(C)`, alignment, packing, unions, bitfields, `size_of`/`offset_of`** | MMIO registers, network headers, kernel structs, wire formats (B-2, MK9-S1-M2). | medium |
+| **Atomics, fences, ordering, a published memory model** | Must come *before* threads. What does `&mut` guarantee? What is a data race? (B-4, MK9-S3-M1/S3-M2). | large |
+| **`no_std` / freestanding: own panic handler, raw syscalls, linker scripts, static ELF** | The difference between a systems language and an application language with systems ambitions (B-6, MK9-S4). | very large |
+| **Custom allocators, arenas, fallible allocation** | A panicking `malloc` is not an option in a kernel: `try_alloc` instead of `alloc` (B-7, MK9-S5-M1). | medium |
+| **`Drop`/`defer`** | Deterministic cleanup points you can see in the code (B-8, MK9-S6-M1). | medium |
+| **SIMD, intrinsics, CPU-feature detection, inline asm, naked/interrupt functions** | Without them there is no lock-free primitive, no context switch, no ISR (B-9, MK9-S7-M1). | large |
+| **Threads, `Mutex`, a `Send`-shaped rule** | Without them there is no real parallelism (MK6-S1-M1, B-5). | large, because it needs function values and a move-taking parameter |
+| **Endianness conversion, unaligned load/store, byte-order reads** | Wire and disk formats without hand-shifted bits (B-10, MK9-S8-M1). | small |
+| **Device tree / ACPI, bootloader support** | Kernel and bootloader work (MK9-S9-M1/M2). | large, and very specialised |
+
+### 3. The minimal useful Kelp
+
+If only five things could be added to make Kelp useful and functional without bending it:
+
+1. **A length-carrying view.** The biggest single lever for text, parsers, network and paths; it closes three open items at once.
+2. **`Option`/`Result` plus tagged unions.** Makes error handling first-class instead of a datac convention, and needs generics.
+3. **`unsafe` plus FFI plus `repr(C)`.** Makes systems work, libc and C interop possible: the one reason Kelp today is "C with a mask".
+4. **Threads plus `Mutex` plus atomics.** Servers, workers, real parallelism; the precondition for anything network-serious.
+5. **`for`.** Makes ordinary code tolerable without touching the semantics.
+
+Everything else, JSON, regex, LSP, GUI, ML, Decimal, certification, WASM, a registry, is either a library (writable once views and generics exist), a target (it comes with the backend), or a deliberate non-decision.
+
+### 4. The honest consequence
+
+Kelp will never do "everything", and that is the point. The languages that tried, C++, Scala and Swift among them, pay with compile time, specification size and a steep learning curve. Kelp's strength is not that it can do everything, but that it does **one thing right**: ownership plus capabilities in a small, explicit language. The useful version of Kelp is therefore not the largest one but the **most focused** one: a systems and application language for programs that take files, network, processes and security seriously, and that stays small enough to read in one evening.
 
 ## Far future additions
 
