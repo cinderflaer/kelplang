@@ -268,30 +268,217 @@ fun copy_into(dst: mut Bytes, at: usize, src: &str).R: usize {
     return at + n
 }
 
-// `parts` joined with `sep` between them. The result is sized first and
-// filled once: v1 has fixed-size buffers, so a builder that grows would have
-// to reallocate per piece.
+// `parts` joined with `sep` between them. A growable `String` (S1) means the
+// pieces can simply be appended: C1 sized the result first and copied once,
+// because buffers were fixed-size then.
 fun join(parts: List<String>, sep: &str).R: String {
     val count = parts.len()
     val lsep = len(sep)
-    var total: usize = 0
+    var out = String.with_capacity(count * lsep)
     var i: usize = 0
     while i < count {
         if i > 0 {
-            total = total + lsep
+            out.push_str(sep)
         }
-        total = total + len(parts.get(i).as_str())
+        out.push_str(parts.get(i).as_str())
         i = i + 1
     }
-    var out = mem.alloc(total)
+    return out
+}
+
+// --- S1: building text, converting numbers ---------------------------------
+//
+// Everything below is ordinary X on top of the growable buffer
+// (`String.push`/`push_str`/`with_capacity`) and the integer conversions
+// (`n.to_u8()`), except the three numeric primitives that genuinely need C:
+// `snprintf` for the float format, and `strtoll`/`strtoull`/`strtod` for
+// parsing. There is no `+` operator for `str` (open item 40): concatenation
+// is the function below.
+
+// `a` followed by `b`. The allocation is visible in the signature, which is
+// the reason this is not an operator.
+fun concat(a: &str, b: &str).R: String {
+    var out = String.with_capacity(len(a) + len(b))
+    out.push_str(a)
+    out.push_str(b)
+    return out
+}
+
+// Decimal text for an unsigned value. Digits are produced least-significant
+// first into a scratch buffer and copied back out in reverse: `%`/`/` on
+// `u64` and one checked `to_u8` per digit is the whole algorithm.
+fun from_u64(n: u64).R: String {
+    if n == 0 {
+        return String.from_str("0")
+    }
+    var rev = String.with_capacity(20)
+    var v = n
+    while v > 0 {
+        rev.push((v % 10 + 48).to_u8())
+        v = v / 10
+    }
+    val digits = rev.as_str()
+    var out = String.with_capacity(rev.len())
+    var i = rev.len()
+    while i > 0 {
+        i = i - 1
+        out.push(byte(digits, i))
+    }
+    return out
+}
+
+// Decimal text for a signed value. The digits are taken in `i64`, with each
+// remainder made positive before it is narrowed, so `i64`'s minimum needs no
+// special case — converting it to `u64` first would panic (it is negative),
+// and negating it in `i64` would overflow.
+fun from_i64(n: i64).R: String {
+    if n == 0 {
+        return String.from_str("0")
+    }
+    var neg = false
+    var v = n
+    if v < 0 {
+        neg = true
+    }
+    var rev = String.with_capacity(20)
+    while v != 0 {
+        var d = v % 10
+        if d < 0 {
+            d = 0 - d
+        }
+        rev.push((d + 48).to_u8())
+        v = v / 10
+    }
+    val digits = rev.as_str()
+    var out = String.with_capacity(21)
+    if neg {
+        out.push(45)
+    }
+    var i = rev.len()
+    while i > 0 {
+        i = i - 1
+        out.push(byte(digits, i))
+    }
+    return out
+}
+
+// `x` with `decimals` digits after the point, via one `snprintf("%.*f")`.
+// `decimals` is not clamped: it is what the caller asked for.
+extern fun from_f64_raw(x: f64, decimals: i32).R: String
+
+fun from_f64(x: f64, decimals: i32).R: String = from_f64_raw(x, decimals)
+
+datac ParseInt(val ok: bool, val value: i64)
+datac ParseUint(val ok: bool, val value: u64)
+datac ParseFloat(val ok: bool, val value: f64)
+
+// `ok` is false unless the *whole* string is one number: no trailing
+// characters, no whitespace, no empty string. The numeric conversion itself
+// is one C primitive per type.
+extern fun parse_i64_raw(s: &str, out: mut i64).R: bool
+extern fun parse_u64_raw(s: &str, out: mut u64).R: bool
+extern fun parse_f64_raw(s: &str, out: mut f64).R: bool
+
+fun parse_i64(s: &str).R: ParseInt {
+    var v: i64 = 0
+    val ok = parse_i64_raw(s, out = v)
+    return ParseInt(ok = ok, value = v)
+}
+
+fun parse_u64(s: &str).R: ParseUint {
+    var v: u64 = 0
+    val ok = parse_u64_raw(s, out = v)
+    return ParseUint(ok = ok, value = v)
+}
+
+// Accepts what `strtod` accepts, minus leading whitespace: decimal and
+// exponent forms, and `inf`/`nan`.
+fun parse_f64(s: &str).R: ParseFloat {
+    var v: f64 = 0.0
+    val ok = parse_f64_raw(s, out = v)
+    return ParseFloat(ok = ok, value = v)
+}
+
+// Every non-overlapping occurrence of `from` replaced by `to`. An empty
+// `from` matches nothing (rather than every position), so the result is a
+// copy of `s`.
+fun replace(s: &str, from: &str, to: &str).R: String {
+    val lf = len(from)
+    if lf == 0 {
+        return String.from_str(s)
+    }
+    val ls = len(s)
+    var out = String.with_capacity(ls)
+    var i: usize = 0
+    while i < ls {
+        if i + lf <= ls && starts_with_at(s, from, i) {
+            out.push_str(to)
+            i = i + lf
+        } else {
+            out.push(byte(s, i))
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// The byte offset of character `i`, or `len(s)` when there is no such
+// character. A byte that does not continue a UTF-8 sequence starts a
+// character (the same rule `char_count` uses).
+fun byte_index(s: &str, i: usize).R: usize {
+    val n = len(s)
+    var chars: usize = 0
     var at: usize = 0
-    i = 0
-    while i < count {
-        if i > 0 {
-            at = copy_into(out, at, sep)
+    while at < n {
+        val c = byte(s, at)
+        if c < 128 || c >= 192 {
+            if chars == i {
+                return at
+            }
+            chars = chars + 1
         }
-        at = copy_into(out, at, parts.get(i).as_str())
-        i = i + 1
+        at = at + 1
     }
-    return String.from_bytes(out)
+    return n
+}
+
+// The codepoint starting at byte `at`, decoded with arithmetic only — v1 has
+// no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
+// A truncated sequence returns 0, the same value past-the-end returns.
+fun decode_at(s: &str, at: usize).R: u32 {
+    val n = len(s)
+    val b0 = byte(s, at).to_u32()
+    if b0 < 128 {
+        return b0
+    }
+    var cp: u32 = 0
+    var extra: usize = 0
+    if b0 < 224 {
+        cp = b0 - 192
+        extra = 1
+    } else if b0 < 240 {
+        cp = b0 - 224
+        extra = 2
+    } else {
+        cp = b0 - 240
+        extra = 3
+    }
+    var k: usize = 0
+    while k < extra {
+        if at + 1 + k >= n {
+            return 0
+        }
+        cp = cp * 64 + (byte(s, at + 1 + k).to_u32() - 128)
+        k = k + 1
+    }
+    return cp
+}
+
+// The codepoint at character index `i`, or 0 when `i` is past the end.
+fun char_at(s: &str, i: usize).R: u32 {
+    val at = byte_index(s, i)
+    if at >= len(s) {
+        return 0
+    }
+    return decode_at(s, at)
 }

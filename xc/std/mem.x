@@ -10,6 +10,7 @@
 
 extern fun alloc_raw(n: usize).R: Bytes
 
-// An owned, zero-filled buffer of `n` bytes. Fixed size for its whole life
-// (stdlib decision 5) — growable buffers are the collections milestone.
+// An owned, zero-filled buffer of `n` bytes. This allocator's result is
+// fixed-size; the buffers that *grow* are `String`/`Bytes`, which own their
+// own storage and reserve as they append (S1).
 fun alloc(n: usize).R: Bytes = alloc_raw(n)

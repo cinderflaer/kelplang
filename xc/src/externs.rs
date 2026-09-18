@@ -38,6 +38,36 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "    if (x_from > strlen(x_s)) {\n        x_panic(\"str.substring: index out of bounds\");\n    }\n    return x_s + x_from;\n",
     ),
     (
+        "std/str",
+        "from_f64_raw",
+        "    int need = snprintf(NULL, 0, \"%.*f\", (int)x_decimals, x_x);\n    if (need < 0) {\n        x_panic(\"str.from_f64: formatting failed\");\n    }\n    x_Bytes b = x_bytes_alloc_raw((size_t)need);\n    snprintf((char*)b.data, b.len + 1, \"%.*f\", (int)x_decimals, x_x);\n    return x_String__from_bytes(b);\n",
+    ),
+    (
+        "std/str",
+        "parse_i64_raw",
+        "    if (x_s[0] == 0) {\n        return false;\n    }\n    for (const char* p = x_s; *p != 0; p++) {\n        if (*p == ' ' || *p == '\\t' || *p == '\\n' || *p == '\\r') {\n            return false;\n        }\n    }\n    char* end = NULL;\n    errno = 0;\n    long long v = strtoll(x_s, &end, 10);\n    if (end == x_s || *end != 0 || errno != 0) {\n        return false;\n    }\n    *x_out = (int64_t)v;\n    return true;\n",
+    ),
+    (
+        "std/str",
+        "parse_u64_raw",
+        "    if (x_s[0] == 0 || x_s[0] == '-') {\n        return false;\n    }\n    for (const char* p = x_s; *p != 0; p++) {\n        if (*p == ' ' || *p == '\\t' || *p == '\\n' || *p == '\\r') {\n            return false;\n        }\n    }\n    char* end = NULL;\n    errno = 0;\n    unsigned long long v = strtoull(x_s, &end, 10);\n    if (end == x_s || *end != 0 || errno != 0) {\n        return false;\n    }\n    *x_out = (uint64_t)v;\n    return true;\n",
+    ),
+    (
+        "std/str",
+        "parse_f64_raw",
+        "    if (x_s[0] == 0) {\n        return false;\n    }\n    for (const char* p = x_s; *p != 0; p++) {\n        if (*p == ' ' || *p == '\\t' || *p == '\\n' || *p == '\\r') {\n            return false;\n        }\n    }\n    char* end = NULL;\n    double v = strtod(x_s, &end);\n    if (end == x_s || *end != 0) {\n        return false;\n    }\n    *x_out = v;\n    return true;\n",
+    ),
+    (
+        "std/fmt",
+        "hex_raw",
+        "    char buf[32];\n    snprintf(buf, sizeof buf, \"%llx\", (unsigned long long)x_n);\n    return x_String__from_str(buf);\n",
+    ),
+    (
+        "std/fmt",
+        "bytes_raw",
+        "    static const char* hex = \"0123456789abcdef\";\n    if (x_b->len == 0) {\n        return x_String__empty();\n    }\n    x_Bytes out = x_bytes_alloc_raw(x_b->len * 3 - 1);\n    size_t at = 0;\n    for (size_t i = 0; i < x_b->len; i++) {\n        if (i > 0) {\n            out.data[at++] = ' ';\n        }\n        out.data[at++] = (unsigned char)hex[(x_b->data[i] >> 4) & 0xF];\n        out.data[at++] = (unsigned char)hex[x_b->data[i] & 0xF];\n    }\n    return x_String__from_bytes(out);\n",
+    ),
+    (
         "std/math",
         "sqrt_raw",
         "    return sqrt(x_x);\n",

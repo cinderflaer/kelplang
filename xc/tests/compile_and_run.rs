@@ -658,6 +658,33 @@ fn panic_reports_its_message_and_assert_reports_failure() {
 }
 
 #[test]
+fn stdlib_text_builds_numbers_replaces_and_parses() {
+    // Concatenation, replacement, and both live edges of the decimal
+    // conversion: `u64`'s maximum and `i64`'s minimum, round-tripped through
+    // the parsers because no literal can spell either one.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_build.x",
+        "foobar\na:b:c\naaa\n0\n145\n-145\n18446744073709551615\n-9223372036854775808\n9\n",
+    );
+}
+
+#[test]
+fn stdlib_parsing_rejects_anything_but_a_whole_number() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_parse.x",
+        "true\n123\ntrue\n-9223372036854775808\nfalse\nfalse\nfalse\nfalse\ntrue\n18446744073709551615\nfalse\nfalse\ntrue\n250.000000\nfalse\n104\n233\n3\n0\n5\n",
+    );
+}
+
+#[test]
+fn stdlib_fmt_formats_numbers_hex_padding_and_bytes() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_fmt.x",
+        "0\n-1234\n4294967295\n3.142\n1.5\n0\nff\nbeef\n007\nlong\n7..\n61 62\n\n007!\n",
+    );
+}
+
+#[test]
 fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
     assert_compiles_and_runs(
         "tests/fixtures/int_conversions.x",
@@ -982,6 +1009,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "string_basic",
         "string_build",
         "bytes_build",
+        "stdlib_build",
+        "stdlib_parse",
+        "stdlib_fmt",
         "string_field",
         "pd_owned",
         "stdlib_mem",

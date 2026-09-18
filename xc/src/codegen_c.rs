@@ -597,6 +597,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let mut out = String::new();
     // Included unconditionally: `std/math`'s externs call the C library
     // directly, and an unused declaration costs nothing.
+    out.push_str("#include <errno.h>\n");
     out.push_str("#include <limits.h>\n");
     out.push_str("#include <dirent.h>\n");
     out.push_str("#include <fcntl.h>\n");
