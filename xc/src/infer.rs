@@ -657,6 +657,26 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // the same namespace `print` occupies.
         add("panic", vec![("msg".to_string(), Ty::Str)], Ty::Unit, false);
         add("assert", vec![("cond".to_string(), Ty::Bool)], Ty::Unit, false);
+
+        // Integer conversions (S1). Every integer type has a `to_<T>` for
+        // every integer type, because nothing else in the language converts
+        // one width to another: operands must match exactly, so a `u64 % 10`
+        // digit cannot reach `String.push(u8)` and a `u8` byte cannot index
+        // with `usize` without one. Widening is exact; a conversion that can
+        // lose a value is a checked narrowing that panics with the call's own
+        // name (v1 has no `Option`), which `codegen_c.rs` emits inline.
+        const INT_TYPES: &[&str] =
+            &["i32", "i64", "u32", "u64", "u8", "u16", "usize", "isize"];
+        for src in INT_TYPES {
+            for dst in INT_TYPES {
+                add(
+                    &format!("{src}#to_{dst}"),
+                    vec![("self".to_string(), Ty::from_name(src).expect("integer type"))],
+                    Ty::from_name(dst).expect("integer type"),
+                    false,
+                );
+            }
+        }
         m
     });
 
@@ -668,6 +688,16 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         Ty::String => Some("String"),
         Ty::List(_) => Some("List"),
         Ty::Box(_) => Some("Box"),
+        // The integer types answer to their written names so that the
+        // conversion methods below (`n.to_u8()`) have a receiver to sit on.
+        Ty::I32 => Some("i32"),
+        Ty::I64 => Some("i64"),
+        Ty::U32 => Some("u32"),
+        Ty::U64 => Some("u64"),
+        Ty::U8 => Some("u8"),
+        Ty::U16 => Some("u16"),
+        Ty::Usize => Some("usize"),
+        Ty::Isize => Some("isize"),
         // An owned parameter is a borrow (M4's rule: every owned parameter is
         // borrowed), so `b.len()` on one arrives here as `&Bytes`/`&String`.
         Ty::Ref { inner, .. } => builtin_type_name(inner),
@@ -3149,6 +3179,10 @@ fn check_method_call(
                 (Some(e), _) => format!(
                     "Box<{}> has no method '{method}' — the Box surface is is_empty, get, set, take",
                     e.display()
+                ),
+                (None, _) if probe.ty.is_integer() => format!(
+                    "type '{}' has no method '{method}' — the conversion surface is to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize",
+                    probe.ty.display()
                 ),
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
             },

@@ -1,0 +1,37 @@
+// S1: integer conversions. Widening is exact, so `u8` values reach `u64`,
+// `i64`, `u32` and `usize` without ceremony; a narrowing that would change
+// the value panics instead of truncating (see `int_conversion_overflow`).
+fun main() {
+    val small: u8 = 65
+    print(small.to_u32())
+    print(small.to_i64())
+    print(small.to_usize())
+    print(small.to_u64())
+    print(small.to_i32())
+
+    // A narrower target is fine while the value fits.
+    val n: u64 = 300
+    print(n.to_u32())
+    print(n.to_u16())
+    val fits: u64 = 250
+    print(fits.to_u8() + 1)
+
+    val neg: i64 = 0 - 7
+    print(neg.to_i32())
+    print(neg.to_i64())
+
+    val index: usize = 9
+    print(index.to_u8())
+    print(index.to_i32())
+    print(index.to_u32())
+
+    val big: u32 = 4294967295
+    print(big.to_u64())
+    // `0 % 10` style work needs both: a digit leaves `u64` as a `u8`, and a
+    // `u8` byte becomes a `usize` index.
+    val digits: u64 = 12345
+    val digit = (digits % 10).to_u8()
+    print(digit)
+    val at = digit.to_usize()
+    print(at + 1)
+}

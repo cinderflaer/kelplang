@@ -1733,6 +1733,16 @@ impl<'a> Gen<'a> {
     }
 
     fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
+        // `n.to_u8()` and friends (S1): an integer conversion, emitted inline
+        // as a cast with a range check rather than a C function per pair.
+        if let Some((src, dst)) = callee.split_once("#to_") {
+            if let (Some(from), Some(to)) = (Ty::from_name(src), Ty::from_name(dst)) {
+                if from.is_integer() && to.is_integer() {
+                    let value = self.expr_value(&args[0]);
+                    return integer_conversion(callee, &from, &to, &value);
+                }
+            }
+        }
         if callee == "print" || callee == "print!" {
             let arg = &args[0];
             // `print` appends a newline, `print!` doesn't — opposite of the
@@ -2015,6 +2025,63 @@ fn c_name(name: &str) -> String {
     } else {
         format!("x_{}", crate::types::c_ident(name))
     }
+}
+
+/// The full range of an integer type, as `(min, max)` — `min` signed so a
+/// signed type can express its own floor, `max` unsigned so `u64`/`usize` can
+/// express theirs. `None` for anything that is not an integer.
+fn int_bounds(ty: &Ty) -> Option<(i128, u128)> {
+    Some(match ty {
+        Ty::I32 => (i32::MIN as i128, i32::MAX as u128),
+        Ty::I64 | Ty::Isize => (i64::MIN as i128, i64::MAX as u128),
+        Ty::U8 => (0, u8::MAX as u128),
+        Ty::U16 => (0, u16::MAX as u128),
+        Ty::U32 => (0, u32::MAX as u128),
+        Ty::U64 | Ty::Usize => (0, u64::MAX as u128),
+        _ => return None,
+    })
+}
+
+fn signed_lit(v: i128) -> String {
+    format!("{v}LL")
+}
+
+fn unsigned_lit(v: u128) -> String {
+    if v <= i64::MAX as u128 {
+        format!("{v}LL")
+    } else {
+        format!("{v}ULL")
+    }
+}
+
+/// One integer conversion, as a C expression. A widening is a plain cast; a
+/// conversion that can lose a value is a statement expression that checks the
+/// range first and panics with the `.x` spelling of the call, so a narrowing
+/// is never a silent truncation. The argument is evaluated once, into a
+/// temporary, because the check and the cast both read it.
+fn integer_conversion(callee: &str, from: &Ty, to: &Ty, value: &str) -> String {
+    let target = to.c_type();
+    let (Some((s_min, s_max)), Some((t_min, t_max))) = (int_bounds(from), int_bounds(to)) else {
+        return format!("(({target})({value}))");
+    };
+    if s_min >= t_min && s_max <= t_max {
+        return format!("(({target})({value}))");
+    }
+    let tmp = fresh_temp();
+    let max = unsigned_lit(t_max);
+    let cond = if s_min < 0 {
+        // The source can be negative, so the target's own floor matters:
+        // `0` for an unsigned target, the signed type's real minimum
+        // otherwise (a signed target accepts negatives).
+        format!("{tmp} < {} || {tmp} > {max}", signed_lit(t_min))
+    } else {
+        format!("{tmp} > {max}")
+    };
+    let message = callee.replace('#', ".");
+    format!(
+        "({{ {} {tmp} = {value}; if ({cond}) {{ x_panic(\"{message}: value out of range\"); }} ({target}){tmp}; }})",
+        from.c_type()
+    )
 }
 
 /// Struct field names live in C's per-struct member namespace, not the

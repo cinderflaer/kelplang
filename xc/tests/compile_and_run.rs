@@ -658,6 +658,17 @@ fn panic_reports_its_message_and_assert_reports_failure() {
 }
 
 #[test]
+fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_conversions.x",
+        "65\n65\n65\n65\n65\n300\n300\n251\n-7\n-7\n9\n9\n9\n4294967295\n5\n6\n",
+    );
+    // A narrowing that cannot represent the value panics instead of
+    // truncating, which is why `-1 as u8` is a runtime failure and not 255.
+    assert_fixture_panics("int_conversion_overflow", "i64.to_u8: value out of range");
+}
+
+#[test]
 fn owned_datac_fields_are_dropped_with_the_struct() {
     assert_compiles_and_runs(
         "tests/fixtures/string_field.x",
