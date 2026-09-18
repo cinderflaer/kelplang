@@ -380,12 +380,17 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/net",
         "recv_raw",
-        "    x_Bytes b = x_bytes_alloc_raw(x_max);\n    ssize_t n;\n    do {\n        n = recv(x_fd, b.data, x_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        x_panic(\"net.recv: receive failed\");\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+        "    x_Bytes b = x_bytes_alloc_raw(x_max);\n    ssize_t n;\n    do {\n        n = recv(x_fd, b.data, x_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            x_panic(\"net.recv: timed out\");\n        }\n        x_panic(\"net.recv: receive failed\");\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
     ),
     (
         "std/net",
         "recv_into_raw",
-        "    /* `buf`'s length is the capacity here, exactly as in `io.read_into`\n       (open item 51): the caller sized it, and filling it does not change\n       that length, so the NUL terminator slot is always inside the\n       allocation. */\n    size_t room = x_at < x_buf->len ? x_buf->len - x_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n;\n    do {\n        n = recv(x_fd, x_buf->data + x_at, room, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        x_panic(\"net.recv_into: receive failed\");\n    }\n    x_buf->data[x_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+        "    /* `buf`'s length is the capacity here, exactly as in `io.read_into`\n       (open item 51): the caller sized it, and filling it does not change\n       that length, so the NUL terminator slot is always inside the\n       allocation. */\n    size_t room = x_at < x_buf->len ? x_buf->len - x_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n;\n    do {\n        n = recv(x_fd, x_buf->data + x_at, room, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            x_panic(\"net.recv_into: timed out\");\n        }\n        x_panic(\"net.recv_into: receive failed\");\n    }\n    x_buf->data[x_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/net",
+        "set_timeout_raw",
+        "    struct timeval tv;\n    tv.tv_sec = (time_t)(x_ms / 1000);\n    tv.tv_usec = (suseconds_t)((x_ms % 1000) * 1000);\n    if (setsockopt(x_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0) {\n        x_panic(\"net.set_timeout: cannot set the receive timeout\");\n    }\n    if (setsockopt(x_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) != 0) {\n        x_panic(\"net.set_timeout: cannot set the send timeout\");\n    }\n",
     ),
     (
         "std/net",
@@ -396,6 +401,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "std/net",
         "peer_addr_raw",
         "    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    if (getpeername(x_fd, (struct sockaddr*)&ss, &len) != 0) {\n        x_panic(\"net.peer_addr: getpeername failed\");\n    }\n    char host[INET6_ADDRSTRLEN];\n    char text[INET6_ADDRSTRLEN + 16];\n    if (ss.ss_family == AF_INET) {\n        inet_ntop(AF_INET, &((struct sockaddr_in*)&ss)->sin_addr, host, sizeof host);\n        snprintf(text, sizeof text, \"%s:%u\", host,\n                 (unsigned)ntohs(((struct sockaddr_in*)&ss)->sin_port));\n    } else if (ss.ss_family == AF_INET6) {\n        inet_ntop(AF_INET6, &((struct sockaddr_in6*)&ss)->sin6_addr, host, sizeof host);\n        snprintf(text, sizeof text, \"[%s]:%u\", host,\n                 (unsigned)ntohs(((struct sockaddr_in6*)&ss)->sin6_port));\n    } else {\n        x_panic(\"net.peer_addr: unknown address family\");\n    }\n    return x_String__from_str(text);\n",
+    ),
+    (
+        "std/net",
+        "resolve_raw",
+        "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo* list = NULL;\n    if (getaddrinfo(x_host, NULL, &hints, &list) != 0) {\n        x_panic(\"net.resolve: cannot resolve host\");\n    }\n    /* One address per line, in the order `getaddrinfo` reported them, with\n       duplicates dropped — an address literal resolves to itself, so this\n       is also the honest way to see what `connect` would try first. */\n    char out[4096];\n    size_t at = 0;\n    out[0] = 0;\n    char seen[16][INET6_ADDRSTRLEN];\n    size_t seen_n = 0;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        void* src = NULL;\n        if (a->ai_family == AF_INET) {\n            src = &((struct sockaddr_in*)a->ai_addr)->sin_addr;\n        } else if (a->ai_family == AF_INET6) {\n            src = &((struct sockaddr_in6*)a->ai_addr)->sin6_addr;\n        } else {\n            continue;\n        }\n        char host[INET6_ADDRSTRLEN];\n        if (inet_ntop(a->ai_family, src, host, sizeof host) == NULL) {\n            continue;\n        }\n        bool dup = false;\n        for (size_t i = 0; i < seen_n; i++) {\n            if (strcmp(seen[i], host) == 0) {\n                dup = true;\n                break;\n            }\n        }\n        if (dup) {\n            continue;\n        }\n        if (seen_n < 16) {\n            snprintf(seen[seen_n], sizeof seen[seen_n], \"%s\", host);\n            seen_n++;\n        }\n        size_t hl = strlen(host);\n        if (at + hl + 1 >= sizeof out) {\n            break;\n        }\n        if (at > 0) {\n            out[at++] = '\\n';\n        }\n        memcpy(out + at, host, hl);\n        at += hl;\n        out[at] = 0;\n    }\n    freeaddrinfo(list);\n    return x_String__from_str(out);\n",
     ),
 ];
 

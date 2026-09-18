@@ -1,0 +1,15 @@
+impl "std/net"
+
+// `net.resolve` returns the addresses a name maps to, as strings. An address
+// literal resolves to itself, so that half is deterministic; a *name* depends
+// on the machine's resolver, so the fixture only asserts that it resolved to
+// something (localhost is in every /etc/hosts, and this never leaves the
+// machine).
+fun main() {
+    val literal = net.resolve("127.0.0.1")
+    print(literal.len())
+    print(literal.get(0).as_str())
+
+    val named = net.resolve("localhost")
+    print(named.len() > 0)
+}

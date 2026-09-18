@@ -1124,6 +1124,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "process_spawn",
         "net_loopback",
         "net_poll",
+        "net_resolve",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1533,6 +1534,35 @@ fn a_socket_reports_readiness_without_blocking() {
     // true once the peer writes, and true again at end of file after
     // `shutdown_write` — the three answers a single-threaded event loop needs.
     assert_compiles_and_runs("tests/fixtures/net_poll.x", "false\ntrue\ntrue\nnow\ntrue\ntrue\n");
+}
+
+#[test]
+fn resolving_a_name_returns_its_addresses() {
+    // An address literal resolves to itself (deterministic); `localhost` is
+    // asserted only as "resolved to something", since which addresses it maps
+    // to is the machine's business. Never the internet.
+    assert_compiles_and_runs(
+        "tests/fixtures/net_resolve.x",
+        "1\n127.0.0.1\ntrue\n",
+    );
+}
+
+#[test]
+fn a_silent_peer_times_out_instead_of_hanging() {
+    // `set_timeout` makes a blocking `recv` bounded: the panic names the
+    // timeout rather than the program hanging until the harness gives up.
+    assert_fixture_panics("net_timeout", "net.recv: timed out");
+}
+
+#[test]
+fn resolving_a_host_outside_the_grant_is_denied() {
+    // The `Host` check (no port) is enforced too, and the denial happens before
+    // `getaddrinfo`, so this test never touches the network.
+    assert_project_denied_at_runtime(
+        "caps_net_resolve_denied",
+        &project("caps_net_resolve_denied").join("main.x"),
+        "is outside the net capability granted to module 'util'",
+    );
 }
 
 #[test]

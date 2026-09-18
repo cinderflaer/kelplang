@@ -91,6 +91,9 @@ pub enum CapCheck {
     Path(usize),
     /// A plain name (`env`'s variable names): matched as written.
     Name(usize),
+    /// A host on its own (`net.resolve`): the pattern's port, if it has one,
+    /// is ignored, because resolution is not port-specific.
+    Host(usize),
     /// A host and a port, matched together as `host:port`.
     HostPort(usize, usize),
     /// A port on its own (`net.listen`). The listener's host is the machine,
@@ -132,13 +135,15 @@ fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
 }
 
 /// `net`'s resource arguments, by function. The host is argument 0 and the
-/// port argument 1 in `connect`; `listen` has only a port. Everything else in
-/// the namespace — the `Socket`/`Listener` methods, `send`, `recv` — names no
-/// resource the grant governs, and is admitted by the domain gate alone.
+/// port argument 1 in `connect`; `listen` has only a port; `resolve` only a
+/// host. Everything else in the namespace — the `Socket`/`Listener` methods,
+/// `send`, `recv` — names no resource the grant governs, and is admitted by
+/// the domain gate alone.
 fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
     match callee {
         "connect" => vec![CapCheck::HostPort(0, 1)],
         "listen" => vec![CapCheck::Port(0)],
+        "resolve" => vec![CapCheck::Host(0)],
         _ => Vec::new(),
     }
 }

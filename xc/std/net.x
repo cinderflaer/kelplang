@@ -37,8 +37,10 @@ extern fun send_raw(fd: i32, data: Bytes).R: usize
 extern fun send_all_raw(fd: i32, data: Bytes).R: usize
 extern fun recv_raw(fd: i32, max: usize).R: Bytes
 extern fun recv_into_raw(fd: i32, buf: mut Bytes, at: usize).R: usize
+extern fun set_timeout_raw(fd: i32, ms: u64)
 extern fun local_port_raw(fd: i32).R: u16
 extern fun peer_addr_raw(fd: i32).R: String
+extern fun resolve_raw(host: &str).R: String
 
 // A connected socket. Not `Copy` (no `datac` is), so passing one to a
 // function is a borrow and there is never a silent second close.
@@ -162,6 +164,14 @@ fun Socket.wait_writable(timeout_ms: u64).R: bool {
     return f.wait_writable(timeout_ms)
 }
 
+// Sets the receive and send timeouts, so a blocking `recv` on a silent peer
+// gives up instead of hanging forever.
+//
+// Panics: if the socket options cannot be set.
+fun mut Socket.set_timeout(ms: u64) {
+    set_timeout_raw(fd, ms)
+}
+
 // The port this listener is bound to, from `getsockname`. With
 // `net.listen(0)` this is how the kernel-assigned port is learned.
 //
@@ -173,3 +183,13 @@ fun Listener.port().R: u16 = local_port_raw(fd)
 // Panics: if the socket has no peer.
 fun Socket.peer_addr().R: String = peer_addr_raw(fd)
 
+// The addresses `host` resolves to, as strings (`getaddrinfo`, formatted with
+// `inet_ntop`) — not a `getaddrinfo` blob, and deduplicated. An address
+// literal resolves to itself, which makes this the honest way to see what
+// `connect` would try.
+//
+// Panics: if the host is outside the granted capability, or does not resolve.
+fun resolve(host: &str).R: List<String> {
+    val raw = resolve_raw(host)
+    return str.split(raw.as_str(), "\n")
+}

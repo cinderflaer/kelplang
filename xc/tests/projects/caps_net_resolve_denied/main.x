@@ -1,0 +1,8 @@
+// The `Host` check (`net.resolve`) is enforced like the `HostPort` one: the
+// grant names one host, and asking for another name is denied before any DNS
+// lookup happens.
+impl "util" with caps(net = ["127.0.0.1:*"])
+
+fun main() {
+    print(util.look_up_the_wrong_name())
+}

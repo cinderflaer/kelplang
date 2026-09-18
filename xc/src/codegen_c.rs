@@ -624,6 +624,35 @@ static bool x_host_match(const char* pat, const char* hostport) {
     return x_host_glob(pat, hostport);
 }
 
+/* A host on its own (`net.resolve`): resolution is not port-specific, so a
+   pattern's port, if it has one, is ignored. */
+static void x_cap_check_host(const char* domain, const char* host, const char* const* patterns,
+                             size_t count, const char* module, const char* at) {
+    for (size_t i = 0; i < count; i++) {
+        const char* pat = patterns[i];
+        if (strcmp(pat, "*") == 0) {
+            return;
+        }
+        if (x_host_glob(pat, host)) {
+            return;
+        }
+        const char* colon = strrchr(pat, ':');
+        if (colon != NULL) {
+            char head[PATH_MAX];
+            size_t n = (size_t)(colon - pat);
+            if (n >= sizeof head) {
+                n = sizeof head - 1;
+            }
+            memcpy(head, pat, n);
+            head[n] = 0;
+            if (x_host_glob(head, host)) {
+                return;
+            }
+        }
+    }
+    return x_cap_deny(domain, host, patterns, count, module, at);
+}
+
 /* A host and a port together. The port is the *call's* argument, so the
    checked string is the one the code named, not a peer address. */
 static void x_cap_check_hostport(const char* domain, const char* host, uint16_t port,
@@ -1977,6 +2006,16 @@ impl<'a> Gen<'a> {
                     write!(
                         checks,
                         "x_cap_check_name(\"{domain}\", {name}, {symbol}, {}, \"{}\", \"{at}\"); ",
+                        patterns.len(),
+                        self.module
+                    )
+                    .unwrap();
+                }
+                CapCheck::Host(i) => {
+                    let host = self.expr_value(&args[i]);
+                    write!(
+                        checks,
+                        "x_cap_check_host(\"{domain}\", {host}, {symbol}, {}, \"{}\", \"{at}\"); ",
                         patterns.len(),
                         self.module
                     )
