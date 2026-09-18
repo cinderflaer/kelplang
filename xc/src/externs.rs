@@ -168,6 +168,16 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "    if (mkdir(x_path, 0777) != 0) {\n        x_panic(\"fs.mkdir: cannot create directory\");\n    }\n",
     ),
     (
+        "std/fs",
+        "append_raw",
+        "    FILE* f = fopen(x_path, \"ab\");\n    if (f == NULL) {\n        x_panic(\"fs.append: cannot open file\");\n    }\n    if (x_data->len > 0 && fwrite(x_data->data, 1, x_data->len, f) != x_data->len) {\n        fclose(f);\n        x_panic(\"fs.append: short write\");\n    }\n    fclose(f);\n",
+    ),
+    (
+        "std/fs",
+        "sync_raw",
+        "    int fd = open(x_path, O_RDONLY);\n    if (fd < 0) {\n        x_panic(\"fs.sync: cannot open file\");\n    }\n    if (fsync(fd) != 0) {\n        close(fd);\n        x_panic(\"fs.sync: fsync failed\");\n    }\n    close(fd);\n",
+    ),
+    (
         "std/time",
         "now_unix_raw",
         "    struct timespec ts;\n    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {\n        x_panic(\"time.now_unix: clock_gettime failed\");\n    }\n    return (int64_t)ts.tv_sec;\n",

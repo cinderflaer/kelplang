@@ -485,6 +485,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // Included unconditionally: `std/math`'s externs call the C library
     // directly, and an unused declaration costs nothing.
     out.push_str("#include <limits.h>\n");
+    out.push_str("#include <fcntl.h>\n");
     out.push_str("#include <math.h>\n");
     out.push_str("#include <sys/stat.h>\n");
     out.push_str("#include <sys/types.h>\n");

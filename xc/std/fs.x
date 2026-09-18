@@ -19,6 +19,8 @@ extern fun size_raw(path: &str).R: u64
 extern fun remove_raw(path: &str)
 extern fun rename_raw(from: &str, to: &str)
 extern fun mkdir_raw(path: &str)
+extern fun append_raw(path: &str, data: Bytes)
+extern fun sync_raw(path: &str)
 
 // The whole file, as owned bytes.
 // Panics: if the file cannot be read.
@@ -65,4 +67,20 @@ fun rename(from: &str, to: &str) {
 // Panics: if the directory cannot be created.
 fun mkdir(path: &str) {
     mkdir_raw(path)
+}
+
+// Appends `data` to the file, creating it if it does not exist. This is the
+// streaming primitive: it needs no growable buffer, only a buffer's worth of
+// data at a time, which is why it lands before the collections milestone that
+// `fs.append` was pencilled in with.
+// Panics: if the file cannot be opened or written.
+fun append(path: &str, data: Bytes) {
+    append_raw(path, data)
+}
+
+// Forces everything written to the file so far out to storage. Without this a
+// timing is a timing of the page cache; with it, of the device.
+// Panics: if the file cannot be opened or synced.
+fun sync(path: &str) {
+    sync_raw(path)
 }
