@@ -2,10 +2,11 @@
 //! `codegen_c.rs` (and, from M3 onward, `borrowck.rs`).
 
 use crate::ast::{BinOp, UnOp};
-use crate::types::Ty;
+use crate::types::{StructDef, Ty};
 
 #[derive(Debug, Clone)]
 pub struct Program {
+    pub structs: Vec<StructDef>,
     pub functions: Vec<Function>,
 }
 
@@ -38,6 +39,10 @@ pub enum Stmt {
         ty: Ty,
         init: Expr,
     },
+    While {
+        cond: Expr,
+        body: Block,
+    },
     Return {
         value: Option<Expr>,
     },
@@ -69,6 +74,18 @@ pub enum ExprKind {
     Call {
         callee: String,
         args: Vec<Expr>,
+    },
+    FieldAccess {
+        base: Box<Expr>,
+        field: String,
+    },
+    StructLit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
+    Assign {
+        target: Box<Expr>,
+        value: Box<Expr>,
     },
     If {
         cond: Box<Expr>,

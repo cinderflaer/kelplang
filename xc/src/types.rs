@@ -10,6 +10,7 @@ pub enum Ty {
     Char,
     Unit,
     Str,
+    Struct(String),
 }
 
 impl Ty {
@@ -44,33 +45,35 @@ impl Ty {
         matches!(self, Ty::F32 | Ty::F64)
     }
 
-    pub fn c_type(&self) -> &'static str {
+    pub fn c_type(&self) -> String {
         match self {
-            Ty::I32 => "int32_t",
-            Ty::I64 => "int64_t",
-            Ty::U32 => "uint32_t",
-            Ty::U64 => "uint64_t",
-            Ty::F32 => "float",
-            Ty::F64 => "double",
-            Ty::Bool => "bool",
-            Ty::Char => "char",
-            Ty::Unit => "void",
-            Ty::Str => "const char*",
+            Ty::I32 => "int32_t".to_string(),
+            Ty::I64 => "int64_t".to_string(),
+            Ty::U32 => "uint32_t".to_string(),
+            Ty::U64 => "uint64_t".to_string(),
+            Ty::F32 => "float".to_string(),
+            Ty::F64 => "double".to_string(),
+            Ty::Bool => "bool".to_string(),
+            Ty::Char => "char".to_string(),
+            Ty::Unit => "void".to_string(),
+            Ty::Str => "const char*".to_string(),
+            Ty::Struct(name) => format!("struct_{name}"),
         }
     }
 
-    pub fn display(&self) -> &'static str {
+    pub fn display(&self) -> String {
         match self {
-            Ty::I32 => "i32",
-            Ty::I64 => "i64",
-            Ty::U32 => "u32",
-            Ty::U64 => "u64",
-            Ty::F32 => "f32",
-            Ty::F64 => "f64",
-            Ty::Bool => "bool",
-            Ty::Char => "char",
-            Ty::Unit => "unit",
-            Ty::Str => "str",
+            Ty::I32 => "i32".to_string(),
+            Ty::I64 => "i64".to_string(),
+            Ty::U32 => "u32".to_string(),
+            Ty::U64 => "u64".to_string(),
+            Ty::F32 => "f32".to_string(),
+            Ty::F64 => "f64".to_string(),
+            Ty::Bool => "bool".to_string(),
+            Ty::Char => "char".to_string(),
+            Ty::Unit => "unit".to_string(),
+            Ty::Str => "str".to_string(),
+            Ty::Struct(name) => name.clone(),
         }
     }
 }
@@ -79,4 +82,16 @@ impl Ty {
 pub struct FnSig {
     pub params: Vec<Ty>,
     pub ret: Ty,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, Ty)>,
+}
+
+impl StructDef {
+    pub fn field_ty(&self, name: &str) -> Option<&Ty> {
+        self.fields.iter().find(|(n, _)| n == name).map(|(_, t)| t)
+    }
 }

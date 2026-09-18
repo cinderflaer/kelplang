@@ -85,3 +85,18 @@ fn if_expression_classifies_correctly() {
 fn type_mismatch_is_rejected() {
     assert_rejected("tests/fixtures/type_mismatch.x");
 }
+
+#[test]
+fn struct_fields_and_mutation_work() {
+    assert_compiles_and_runs("tests/fixtures/struct_basic.x", "3\n4\n25\n11\n");
+}
+
+#[test]
+fn while_loop_accumulates_correctly() {
+    assert_compiles_and_runs("tests/fixtures/while_accumulator.x", "55\n");
+}
+
+#[test]
+fn assignment_to_immutable_binding_is_rejected() {
+    assert_rejected("tests/fixtures/assign_to_immutable.x");
+}

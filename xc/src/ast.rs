@@ -2,7 +2,22 @@ use crate::lexer::Span;
 
 #[derive(Debug, Clone)]
 pub struct Program {
+    pub structs: Vec<StructDecl>,
     pub functions: Vec<FunctionDecl>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDecl {
+    pub name: String,
+    pub fields: Vec<FieldDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldDecl {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +55,11 @@ pub enum Stmt {
         mutable: bool,
         ty: Option<TypeExpr>,
         init: Expr,
+        span: Span,
+    },
+    While {
+        cond: Expr,
+        body: Block,
         span: Span,
     },
     Return {
@@ -101,6 +121,21 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    FieldAccess {
+        base: Box<Expr>,
+        field: String,
+        span: Span,
+    },
+    StructLit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    Assign {
+        target: Box<Expr>,
+        value: Box<Expr>,
+        span: Span,
+    },
     If {
         cond: Box<Expr>,
         then_block: Block,
@@ -127,6 +162,9 @@ impl Expr {
             | Expr::Unary { span: s, .. }
             | Expr::Binary { span: s, .. }
             | Expr::Call { span: s, .. }
+            | Expr::FieldAccess { span: s, .. }
+            | Expr::StructLit { span: s, .. }
+            | Expr::Assign { span: s, .. }
             | Expr::If { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }

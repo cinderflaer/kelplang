@@ -3,11 +3,26 @@ use std::fmt::Write;
 
 pub fn pretty_print(program: &Program) -> String {
     let mut out = String::new();
+    for s in &program.structs {
+        print_struct(&mut out, s, 0);
+        out.push('\n');
+    }
     for f in &program.functions {
         print_function(&mut out, f, 0);
         out.push('\n');
     }
     out
+}
+
+fn print_struct(out: &mut String, s: &StructDecl, depth: usize) {
+    indent(out, depth);
+    write!(out, "struct {} {{\n", s.name).unwrap();
+    for field in &s.fields {
+        indent(out, depth + 1);
+        write!(out, "{}: {},\n", field.name, field.ty.name).unwrap();
+    }
+    indent(out, depth);
+    out.push_str("}\n");
 }
 
 fn indent(out: &mut String, depth: usize) {
@@ -74,6 +89,14 @@ fn print_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
         Stmt::Expr { expr, .. } => {
             print_expr(out, expr);
             out.push_str(";\n");
+        }
+        Stmt::While { cond, body, .. } => {
+            out.push_str("while ");
+            print_expr(out, cond);
+            out.push_str(" {\n");
+            print_block_stmts(out, body, depth + 1);
+            indent(out, depth);
+            out.push_str("}\n");
         }
     }
 }
@@ -152,6 +175,26 @@ fn print_expr(out: &mut String, expr: &Expr) {
             out.push_str("{\n");
             print_block_stmts(out, block, 1);
             out.push('}');
+        }
+        Expr::FieldAccess { base, field, .. } => {
+            print_expr(out, base);
+            write!(out, ".{field}").unwrap();
+        }
+        Expr::StructLit { name, fields, .. } => {
+            write!(out, "{name} {{ ").unwrap();
+            for (i, (fname, fval)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write!(out, "{fname}: ").unwrap();
+                print_expr(out, fval);
+            }
+            out.push_str(" }");
+        }
+        Expr::Assign { target, value, .. } => {
+            print_expr(out, target);
+            out.push_str(" = ");
+            print_expr(out, value);
         }
     }
 }

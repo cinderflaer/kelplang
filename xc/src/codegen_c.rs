@@ -9,7 +9,7 @@
 
 use crate::ast::{BinOp, UnOp};
 use crate::tir::*;
-use crate::types::Ty;
+use crate::types::{StructDef, Ty};
 use std::fmt::Write;
 
 pub fn generate(program: &Program) -> String {
@@ -17,6 +17,13 @@ pub fn generate(program: &Program) -> String {
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
     out.push_str("#include <stdio.h>\n\n");
+
+    for s in &program.structs {
+        write_struct(&mut out, s);
+    }
+    if !program.structs.is_empty() {
+        out.push('\n');
+    }
 
     for f in &program.functions {
         if f.name == "main" {
@@ -33,6 +40,14 @@ pub fn generate(program: &Program) -> String {
     }
 
     out
+}
+
+fn write_struct(out: &mut String, s: &StructDef) {
+    write!(out, "typedef struct {{\n").unwrap();
+    for (name, ty) in &s.fields {
+        write!(out, "    {} {};\n", ty.c_type(), field_name(name)).unwrap();
+    }
+    write!(out, "}} {};\n", Ty::Struct(s.name.clone()).c_type()).unwrap();
 }
 
 fn write_signature(out: &mut String, f: &Function) {
@@ -102,6 +117,13 @@ fn write_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
                 Some(v) => write!(out, "return {};\n", expr_value(v)).unwrap(),
                 None => out.push_str("return;\n"),
             }
+        }
+        Stmt::While { cond, body } => {
+            indent(out, depth);
+            write!(out, "while ({}) {{\n", expr_value(cond)).unwrap();
+            write_block_body(out, body, depth + 1);
+            indent(out, depth);
+            out.push_str("}\n");
         }
         Stmt::Expr(e) => write_stmt_like_expr(out, e, depth),
     }
@@ -204,6 +226,21 @@ fn expr_value(expr: &Expr) -> String {
             format!("({} {sym} {})", expr_value(lhs), expr_value(rhs))
         }
         ExprKind::Call { callee, args } => call_value(callee, args),
+        ExprKind::FieldAccess { base, field } => format!("({}).{}", expr_value(base), field_name(field)),
+        ExprKind::StructLit { name, fields } => {
+            let mut s = format!("(({}){{ ", Ty::Struct(name.clone()).c_type());
+            for (i, (fname, fval)) in fields.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                write!(s, ".{} = {}", field_name(fname), expr_value(fval)).unwrap();
+            }
+            s.push_str(" })");
+            s
+        }
+        ExprKind::Assign { target, value } => {
+            format!("({} = {})", lvalue(target), expr_value(value))
+        }
         ExprKind::Block(block) => {
             let mut inner = String::new();
             write_block_value(&mut inner, block, 1);
@@ -238,6 +275,17 @@ fn expr_value(expr: &Expr) -> String {
             }
             format!("({{\n{inner}}})")
         }
+    }
+}
+
+/// Renders an assignment target as a C lvalue. The type checker guarantees
+/// an assignment's target is always an `Ident` or a `.field` chain rooted in
+/// one (see `infer::root_ident`).
+fn lvalue(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::Ident(name) => c_name(name),
+        ExprKind::FieldAccess { base, field } => format!("({}).{}", lvalue(base), field_name(field)),
+        other => unreachable!("type checker only allows places as assignment targets, got {other:?}"),
     }
 }
 
@@ -331,7 +379,7 @@ fn printf_piece(expr: &Expr) -> (&'static str, String) {
         Ty::Bool => ("%s", format!("({value} ? \"true\" : \"false\")")),
         Ty::Char => ("%c", value),
         Ty::Str => ("%s", value),
-        Ty::Unit => unreachable!("type checker rejects printing unit"),
+        Ty::Unit | Ty::Struct(_) => unreachable!("type checker rejects printing unit/struct values"),
     }
 }
 
@@ -361,4 +409,11 @@ fn c_name(name: &str) -> String {
     } else {
         format!("x_{name}")
     }
+}
+
+/// Struct field names live in C's per-struct member namespace, not the
+/// ordinary identifier namespace, but prefixed anyway for consistency and to
+/// dodge a C keyword used as a field name.
+fn field_name(name: &str) -> String {
+    format!("x_{name}")
 }

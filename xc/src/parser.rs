@@ -4,6 +4,13 @@ use crate::lexer::{Span, Token, TokenKind};
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// True while parsing an `if`/`while` condition directly (not inside a
+    /// bracketed sub-expression within it): disambiguates `if x { ... }`
+    /// from `if X { field: 1 } { ... }` the way Rust does, by forbidding a
+    /// bare struct literal there. Reset to `false` around parens, call
+    /// argument lists, and struct-literal field values, where the brackets
+    /// already make `{` unambiguous.
+    no_struct_lit: bool,
 }
 
 #[derive(Debug)]
@@ -16,7 +23,22 @@ type PResult<T> = Result<T, ParseError>;
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser {
+            tokens,
+            pos: 0,
+            no_struct_lit: false,
+        }
+    }
+
+    /// Parses `f` with the struct-literal restriction lifted, then restores
+    /// whatever it was before (used inside parens, call args, and
+    /// struct-literal field values).
+    fn unrestricted<T>(&mut self, f: impl FnOnce(&mut Self) -> PResult<T>) -> PResult<T> {
+        let saved = self.no_struct_lit;
+        self.no_struct_lit = false;
+        let result = f(self);
+        self.no_struct_lit = saved;
+        result
     }
 
     fn peek(&self) -> &Token {
@@ -65,11 +87,44 @@ impl Parser {
     }
 
     pub fn parse_program(&mut self) -> PResult<Program> {
+        let mut structs = Vec::new();
         let mut functions = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::Eof) {
-            functions.push(self.parse_function()?);
+            if self.check(&TokenKind::Struct) {
+                structs.push(self.parse_struct_decl()?);
+            } else {
+                functions.push(self.parse_function()?);
+            }
         }
-        Ok(Program { functions })
+        Ok(Program { structs, functions })
+    }
+
+    fn parse_struct_decl(&mut self) -> PResult<StructDecl> {
+        let start = self.expect(TokenKind::Struct, "'struct'")?.span;
+        let (name, _) = self.expect_ident()?;
+        self.expect(TokenKind::LBrace, "'{'")?;
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let (fname, fspan) = self.expect_ident()?;
+            self.expect(TokenKind::Colon, "':'")?;
+            let ty = self.parse_type()?;
+            fields.push(FieldDecl {
+                name: fname,
+                ty,
+                span: fspan,
+            });
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+        Ok(StructDecl {
+            name,
+            fields,
+            span: start.to(end),
+        })
     }
 
     fn parse_function(&mut self) -> PResult<FunctionDecl> {
@@ -133,6 +188,7 @@ impl Parser {
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         match self.peek_kind() {
             TokenKind::Let => self.parse_let_stmt(),
+            TokenKind::While => self.parse_while_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
             _ => {
                 let expr = self.parse_expr()?;
@@ -204,10 +260,37 @@ impl Parser {
         })
     }
 
+    fn parse_while_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.expect(TokenKind::While, "'while'")?.span;
+        let saved = self.no_struct_lit;
+        self.no_struct_lit = true;
+        let cond = self.parse_expr();
+        self.no_struct_lit = saved;
+        let cond = cond?;
+        let body = self.parse_block()?;
+        let span = start.to(body.span);
+        Ok(Stmt::While { cond, body, span })
+    }
+
     // ---- expressions (Pratt parsing) ----
 
     fn parse_expr(&mut self) -> PResult<Expr> {
-        self.parse_binary(0)
+        self.parse_assignment()
+    }
+
+    fn parse_assignment(&mut self) -> PResult<Expr> {
+        let target = self.parse_binary(0)?;
+        if self.check(&TokenKind::Eq) {
+            self.advance();
+            let value = self.parse_assignment()?;
+            let span = target.span().to(value.span());
+            return Ok(Expr::Assign {
+                target: Box::new(target),
+                value: Box::new(value),
+                span,
+            });
+        }
+        Ok(target)
     }
 
     fn binding_power(op: &TokenKind) -> Option<(u8, BinOp)> {
@@ -279,7 +362,22 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> PResult<Expr> {
-        self.parse_primary()
+        let mut expr = self.parse_primary()?;
+        loop {
+            if self.check(&TokenKind::Dot) {
+                self.advance();
+                let (field, fspan) = self.expect_ident()?;
+                let span = expr.span().to(fspan);
+                expr = Expr::FieldAccess {
+                    base: Box::new(expr),
+                    field,
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
     }
 
     fn parse_primary(&mut self) -> PResult<Expr> {
@@ -313,7 +411,7 @@ impl Parser {
                     self.advance();
                     let mut args = Vec::new();
                     while !self.check(&TokenKind::RParen) {
-                        args.push(self.parse_expr()?);
+                        args.push(self.unrestricted(|p| p.parse_expr())?);
                         if self.check(&TokenKind::Comma) {
                             self.advance();
                         } else {
@@ -326,13 +424,33 @@ impl Parser {
                         args,
                         span: tok.span.to(end),
                     })
+                } else if self.check(&TokenKind::LBrace) && !self.no_struct_lit {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    while !self.check(&TokenKind::RBrace) {
+                        let (fname, _) = self.expect_ident()?;
+                        self.expect(TokenKind::Colon, "':'")?;
+                        let fval = self.unrestricted(|p| p.parse_expr())?;
+                        fields.push((fname, fval));
+                        if self.check(&TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+                    Ok(Expr::StructLit {
+                        name,
+                        fields,
+                        span: tok.span.to(end),
+                    })
                 } else {
                     Ok(Expr::Ident(name, tok.span))
                 }
             }
             TokenKind::LParen => {
                 self.advance();
-                let expr = self.parse_expr()?;
+                let expr = self.unrestricted(|p| p.parse_expr())?;
                 self.expect(TokenKind::RParen, "')'")?;
                 Ok(expr)
             }
@@ -350,7 +468,11 @@ impl Parser {
 
     fn parse_if(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::If, "'if'")?.span;
-        let cond = self.parse_expr()?;
+        let saved = self.no_struct_lit;
+        self.no_struct_lit = true;
+        let cond = self.parse_expr();
+        self.no_struct_lit = saved;
+        let cond = cond?;
         let then_block = self.parse_block()?;
         let mut span = start.to(then_block.span);
         let else_block = if self.check(&TokenKind::Else) {
@@ -526,6 +648,83 @@ mod tests {
                 assert!(matches!(init, Expr::Unary { op: UnOp::Not, .. }));
             }
             other => panic!("expected let stmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_struct_decl_and_literal() {
+        let p = parse(
+            "struct Point { x: i32, y: i32 } fn main() { let p = Point { x: 1, y: 2 }; }",
+        );
+        assert_eq!(p.structs.len(), 1);
+        assert_eq!(p.structs[0].name, "Point");
+        assert_eq!(p.structs[0].fields.len(), 2);
+        match &p.functions[0].body.stmts[0] {
+            Stmt::Let { init: Expr::StructLit { name, fields, .. }, .. } => {
+                assert_eq!(name, "Point");
+                assert_eq!(fields.len(), 2);
+            }
+            other => panic!("expected struct literal let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_field_access_chain() {
+        let p = parse("fn main() { let x = a.b.c; }");
+        match &p.functions[0].body.stmts[0] {
+            Stmt::Let { init: Expr::FieldAccess { field, base, .. }, .. } => {
+                assert_eq!(field, "c");
+                assert!(matches!(**base, Expr::FieldAccess { .. }));
+            }
+            other => panic!("expected field access, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_while_loop() {
+        let p = parse("fn main() { while x < 10 { x = x + 1; } }");
+        match &p.functions[0].body.stmts[0] {
+            Stmt::While { body, .. } => assert_eq!(body.stmts.len(), 1),
+            other => panic!("expected while stmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_assignment() {
+        let p = parse("fn main() { x = 5; p.field = 6; }");
+        let stmts = &p.functions[0].body.stmts;
+        assert!(matches!(
+            stmts[0],
+            Stmt::Expr { expr: Expr::Assign { .. }, .. }
+        ));
+        assert!(matches!(
+            stmts[1],
+            Stmt::Expr { expr: Expr::Assign { .. }, .. }
+        ));
+    }
+
+    #[test]
+    fn struct_literal_disallowed_bare_in_if_condition() {
+        // `if X { ... }` must parse `{` as the if's body, not a struct
+        // literal — matching Rust's own disambiguation rule.
+        let p = parse("fn main() { if x { println(1); } }");
+        match &p.functions[0].body.stmts[0] {
+            Stmt::Expr { expr: Expr::If { cond, then_block, .. }, .. } => {
+                assert!(matches!(**cond, Expr::Ident(..)));
+                assert_eq!(then_block.stmts.len(), 1);
+            }
+            other => panic!("expected if stmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn struct_literal_allowed_when_parenthesized_in_condition() {
+        let p = parse("fn main() { if (Point { x: 1, y: 2 }).x > 0 { println(1); } }");
+        match &p.functions[0].body.stmts[0] {
+            Stmt::Expr { expr: Expr::If { cond, .. }, .. } => {
+                assert!(matches!(**cond, Expr::Binary { op: BinOp::Gt, .. }));
+            }
+            other => panic!("expected if stmt, got {other:?}"),
         }
     }
 }
