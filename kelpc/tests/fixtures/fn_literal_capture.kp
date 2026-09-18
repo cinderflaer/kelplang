@@ -1,0 +1,8 @@
+// A-4: a literal cannot see the enclosing scope. A name from one frame up is a
+// capture, and a function value is a plain pointer to code with no environment
+// to carry it — so it is refused with the two ways round it named.
+fun main() {
+    val k = 10
+    val f = fun(x: i32).R: i32 = x * k
+    print(f(1))
+}

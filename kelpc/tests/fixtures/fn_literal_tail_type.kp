@@ -1,0 +1,8 @@
+// A-4: a literal's declared return type is checked against its body exactly as
+// a declaration's is.
+fun main() {
+    val f = fun(x: i32).R: i32 {
+        print(x)
+    }
+    print(f(1))
+}

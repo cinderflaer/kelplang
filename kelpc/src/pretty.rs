@@ -155,6 +155,35 @@ fn print_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
 
 fn print_expr(out: &mut String, expr: &Expr) {
     match expr {
+        Expr::FnLit {
+            params,
+            return_type,
+            body,
+            ..
+        } => {
+            out.push_str("fun(");
+            for (i, p) in params.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write!(out, "{}: {}{}", p.name, p.mode.keyword(), p.ty.display()).unwrap();
+            }
+            out.push(')');
+            if let Some(rt) = return_type {
+                write!(out, ".R: {}", rt.display()).unwrap();
+            }
+            match body.as_ref() {
+                FunctionBody::Expr(e) => {
+                    out.push_str(" = ");
+                    print_expr(out, e);
+                }
+                FunctionBody::Block(b) => {
+                    out.push(' ');
+                    print_block_stmts(out, b, 0);
+                }
+                FunctionBody::Extern => {}
+            }
+        }
         Expr::IntLit(v, _) => write!(out, "{v}").unwrap(),
         Expr::FloatLit(v, _) => write!(out, "{v}").unwrap(),
         Expr::StringLit(s, _) => write!(out, "{s:?}").unwrap(),

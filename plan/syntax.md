@@ -472,6 +472,22 @@ val p = pick(true)
 print(p(9))
 ```
 
+An **anonymous function** is written where an expression is expected, with the same header a declaration has and no name. It is a function value like any other:
+
+```kelp
+val f = fun(x: i32).R: i32 = x * 2
+print(f(21))
+print(apply(fun(x: i32).R: i32 = x + 1, 5))
+
+val g = fun(x: i32) {              // no `.R` means Unit
+    print(x)
+}
+```
+
+A body is required (`= expr` or `{ ... }`), and everything else is a declaration's: the same parameter list with the same `mut`/`move` qualifiers, the same optional `.R: T`, the same tail-versus-return check, and `?` propagates against the literal's own `.R`. Each literal becomes one function, so a literal inside a literal's body is just another one.
+
+**A literal cannot see the enclosing scope.** It is a function value, not a closure: there is no environment to carry a captured binding, so a name from one frame up is refused with the fix named — pass it as a parameter, or as a `move` parameter to hand over ownership. A literal also cannot read a passdown (a passdown is a hidden argument of the function that names it, which a function value has no room for) and cannot return a borrow (the elision rule that says which argument a borrow comes from has nowhere to be written for a value called through a pointer).
+
 Rules and limits of this first phase:
 
 - **A call through a function value is positional.** A function *type* has no parameter names, so `f(x = 1)` is refused and the argument count is checked against the callee's own list.
@@ -1360,7 +1376,7 @@ These are deliberate, and each one has a workaround in this document:
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`.
 - No character literal, and no `char` values.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
-- Function values (7.4) are declared functions only: no anonymous `fun` literals, no closures, no captures, and a function value cannot be called as the result of another call (`f()(x)`).
+- Function values (7.4) are declared functions and `fun` literals: no closures, no captures, and a function value cannot be called as the result of another call (`f()(x)`) — bind it first.
 - A function value cannot be a container element or the return type of a function *type*, and a function that reads a passdown is not a value.
 - `kelpc` has no formatter or linter command yet, and `kelpc run` cannot pass arguments to the program.
 - Capability patterns are static text: they cannot be computed, narrowed or revoked at runtime.
@@ -1394,6 +1410,10 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'mut'/'&' cannot be written on the function type` | a function value is Copy, so a borrow of one is a pointer to a pointer |
 | `a function type cannot return another function type` | C cannot write that declarator; return a `datac` holding the function value |
 | `'fun(i32).R: i32' cannot be a 'List' element yet` | a container's generated C type names its element type as a prefix; hold it in a one-field `datac` |
+| `a 'fun' literal cannot capture 'k' from the enclosing scope yet` | literals have no environment yet: pass the value as a parameter, or as a `move` parameter to hand over ownership |
+| `a 'fun' literal cannot read passdown 'base'` | a passdown is a hidden argument; pass the value as a parameter |
+| `a 'fun' literal cannot return a borrow ('&str')` | an indirect call has no parameter an elided lifetime could bind to; return an owned value |
+| `a 'fun' literal needs a body` | write `= expr` or `{ ... }` |
 | `a string template can only be printed` | a template is not a value; build the text with `str.concat` or a `String` |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
@@ -1480,6 +1500,8 @@ binop        := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
 unary        := ( "-" | "!" | "&" [ "mut" ] | "*" ) unary | postfix
 postfix      := primary ( "?" | "." ident [ typeargs ] [ "(" args ")" ] )*
 primary      := int | float | string | template | "true" | "false"
+              | "fun" "(" [ param ("," param)* ] ")" [ ".R" ":" type ]
+                ( "=" expr | block )
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block [ "else" ( block | if ) ]
               | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
