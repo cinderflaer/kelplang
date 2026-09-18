@@ -1,207 +1,153 @@
 # X compiler — passdown
 
-Status snapshot for picking this back up. Written mid-pivot: the surface
-syntax is being rewritten (see "Syntax pivot" below) and that work is not
-yet started in code.
+Status snapshot for picking this back up.
 
-## What's implemented and committed (old syntax: `fn`/`let`/`struct`/`println`)
+## Current state: syntax rewrite is DONE and committed
 
-Commits on `main`, in order:
-- `0269405` — `plan.md` (original milestone plan, old syntax).
-- `08f192e` — **M0**: `xc` crate scaffold. Hand-written lexer with spans
-  (`lexer.rs`), recursive-descent + Pratt parser (`parser.rs`) for
-  functions/`let`/arithmetic/comparison/logical exprs/`if`-`else` (statement
-  and expression)/`return`/calls, pretty-printer (`pretty.rs`). `xc build`
-  parses and pretty-prints only, no codegen yet.
-- `ca4af6a` — **M1**: `types.rs` (primitive `Ty`), `infer.rs` (typed-IR
-  checker with scopes, span-carrying errors), `codegen_c.rs` (typed IR → C,
-  using GNU statement-expressions `({ ... })` for `if`/block-as-value, with
-  a temp-variable pattern for `if` specifically since C statement-exprs
-  can't yield a value straight out of `if`/`else` control flow), `driver.rs`
-  (shells to `cc -O2`). `xc build`/`xc run` go source → native binary.
-  `-o <path>` build flag. End-to-end harness `tests/compile_and_run.rs`
-  (compiles fixtures with the real `xc` binary, runs them, checks stdout).
-- `4c9f914` — **M2**: `struct` decls, field access (incl. chains), `let mut`
-  + assignment expressions (to bindings and struct fields), `while` loops.
-  Mutability tracked as a property of the *root binding* only (no per-field
-  mutability — that changes under the new syntax, see below). Struct-literal
-  vs. block-in-condition ambiguity resolved the way Rust resolves it
-  (`parser::no_struct_lit`, reset inside brackets).
-- `7932cab` — Threaded `Span` through every `tir::Expr` (was previously only
-  on the AST), because M3's move-checker needs "value moved here" / "used
-  here" span pairs and spans didn't reach the typed IR yet.
+The pivot described in earlier versions of this doc is complete: `xc`
+now implements `syntax&shii.md`'s grammar end-to-end (lexer → parser →
+type-checker → C codegen), not the old `fn`/`let`/`struct`/`println`
+grammar. `cargo test` is green: 31 unit tests (lexer + parser) + 10
+end-to-end fixture tests (`xc/tests/compile_and_run.rs`, which compiles
+`.x` fixtures with the real `xc` binary and checks stdout / rejection),
+zero warnings.
 
-Test count at last commit: 22 unit tests (`lexer.rs`, `parser.rs`) + 7
-end-to-end fixture tests (`tests/compile_and_run.rs`), all passing, zero
-warnings.
+Commits, in order:
+- `0269405` `plan.md` (original milestone plan, old syntax — now stale
+  on syntax, milestone *structure* still roughly the reference).
+- `08f192e`/`ca4af6a`/`4c9f914` — old-syntax M0/M1/M2 (superseded by the
+  rewrite below, kept in history).
+- `7932cab` — threaded `Span` through `tir::Expr` (still valid, needed by
+  the still-unimplemented move checker, see below).
+- `aa8221e` — earlier version of this passdown doc, written mid-rewrite.
+- `1b616c5` — **the syntax rewrite**, current HEAD. Full lexer/parser/
+  types/infer/codegen_c rewrite onto `syntax&shii.md`'s grammar.
 
-**M3 (ownership/moves) is NOT implemented** — no `borrowck.rs` exists yet.
-I was mid-way through planning it (Copy-vs-non-Copy rule: primitives are
-Copy, `struct`/`datac` are not; move-state tracked per-scope like `infer.rs`'s
-variable scopes; a bare `Ident` read of a non-Copy value moves it, a
-`.field` read of a Copy-typed field does not) when the syntax pivot
-happened. None of that is written down anywhere else — this paragraph is
-the only record of that plan.
+### What the rewrite actually implements
 
-## Syntax pivot (in progress, no code changes made yet)
+- **Newline-terminated statements, no semicolons.** Lexer tracks
+  paren-depth; emits one `Newline` token per run of blank lines only
+  when depth is 0 (so a `datac`'s field-list parens, or any parenthesized
+  sub-expression, can span multiple lines — but nothing else can: an
+  expression that needs to span lines *must* be wrapped in parens, no
+  Kotlin-grade trailing-operator continuation was attempted). Parser
+  requires a `Newline` or `}` after each statement (`parse_block`), and
+  the same rule for `when` arms.
+- **`val` / `var`** replacing `let` / `let mut` (`ast::Stmt::Let` kept its
+  shape, just relabeled semantically).
+- **`fun` + `.R: T` return clause** (parsed as `.` then a literal `R`
+  token then `:` then the type — parser rejects anything else there) +
+  **expression-bodied functions** (`fun f(...).R: T = expr`); using `=`
+  without a `.R: T` clause is a parse error (no cross-function return-type
+  inference). An expr-body is lowered to `tir::Block { stmts: [], tail:
+  Some(expr) }`, same shape a block-bodied function's implicit-return tail
+  produces.
+- **`datac Name(val/var field: T, ...)`** replacing `struct Name { field:
+  T }` — fields declared in the constructor-style parens (so no separate
+  brace body), each individually `val` or `var`. **Real per-field
+  mutability**, not just root-binding mutability like the old M2: a `val`
+  field is never reassignable no matter how the containing value is
+  bound; a `var` field is reassignable exactly when both (a) the root
+  binding is `var` and (b) that specific field is `var`. See
+  `infer.rs::check_assign`.
+- **Construction via call syntax**: `Point(x = 1, y = 2)` — no separate
+  struct-literal grammar. `ast::Expr::StructLit` doesn't exist anymore;
+  `infer.rs::check_call` disambiguates a `Call`'s callee by checking the
+  struct table before the function table (and `check_program` rejects a
+  name used for both). This also *removed* the old
+  struct-literal-vs-block-in-condition ambiguity problem from M2 (no
+  `no_struct_lit` parser flag anymore — nothing to be ambiguous with).
+- **Named + positional call arguments together**: `ast::CallArg { name:
+  Option<String>, value: Expr }`; parser treats `ident =` (exactly, not
+  `==`) as a named-arg prefix, only when unambiguous by adjacency.
+  `infer.rs::match_args` is the one shared resolver (by name first,
+  remaining params filled positionally in declared order) used by both
+  plain function calls and `datac` construction. `types::FnSig` now
+  carries parameter *names*, not just types, because of this.
+- **`print(x)` / `print!(x)`** replacing `println`/`print`. **The
+  polarity flipped**: `print` now appends the newline, `print!` doesn't
+  — opposite of the old naming, easy to trip over if muscle memory says
+  otherwise. Lexer folds the specific adjacent shape `ident!(` (identifier
+  immediately followed by `!` immediately followed by `(`) into one
+  identifier token, rather than merging `!` into identifiers generally
+  (which would wrongly eat `!=` written as `x!=y` with no spaces).
+- **Compound assignment** (`+=`, `-=`, `*=`, `/=`, `%=`) — new lexer
+  tokens, desugared at parse time to `target = target OP value`
+  (`parser.rs::parse_assignment`).
+- **`when { cond -> expr, ... else -> expr }`** — pure parser sugar,
+  desugars immediately to a nested `if`/`else if`/`else` `Expr::If` chain
+  (right-to-left fold in `parser.rs::parse_when`). `infer.rs` and
+  `codegen_c.rs` never see a `when` node at all — zero changes needed
+  there for this feature.
+- **`&str` type annotations parse** (`parse_type` accepts and discards a
+  leading `&`) — there's no real reference/borrow type yet (that's
+  borrow-checker territory, still deferred, see M3/M4 below), but the
+  spec's examples write the string type as `&str` everywhere, so the
+  annotation needed to at least parse into plain `Ty::Str`.
 
-`syntax&shii.md` (repo root) is a from-scratch rewrite of the surface
-syntax, explicitly superseding `plan.md`'s syntax while `plan.md`'s
-*milestone structure* stays the reference for now ("Reconciling plan.md is
-a separate later edit" — per that file). Headline changes from what's
-built:
+### A real bug the rewrite surfaced (now fixed)
 
-| Old (built) | New (`syntax&shii.md`) |
-|---|---|
-| `fn`, `->` return type | `fun`, `.R: T` return type, after the param list |
-| `let` / `let mut` | `val` / `var` |
-| `struct Name { field: T }` | `datac Name(val/var field: T)` — fields individually `val` or `var`, declared in the constructor param list, not a brace body |
-| `Name { field: value }` literal | `Name(field = value)` — construction reuses call syntax with named args |
-| `println(x)` | `print(x)` (newline) / `print!(x)` (no newline) |
-| Semicolons | Newline-terminated statements, no semicolons at all |
-| `use "path"` | `impl "path" [with caps(...)] [as alias]` |
-| (none) | `when { cond -> val, ... else -> val }` — replaces if/else-if chains |
-| (none) | `pd val`/`pd var` — passdowns (implicit globals wired only into functions that reference them) |
-| (none) | Receiver-form methods: `fun Circle.area().R: f64 = ...`, `fun mut Circle.grow(...)` — replaces `impl` blocks and `self` |
-| (none) | Named arguments at call sites (required when 2+ params) |
-| (none) | String templates: `"$var"`, `"${expr}"` |
+Expression-bodied functions (`fun f(...).R: T = expr`) exposed a
+pre-existing gap in `codegen_c.rs`: a function body block's *tail*
+expression (the implicit-return value) was being silently discarded as a
+bare statement instead of becoming a C `return`, because the only
+codegen path for a block's tail (`write_block_body`) is the
+"used-as-a-statement, discard the value" one — correct for `if`/`while`
+bodies and nested `{ }` blocks, wrong for a function's own top-level
+body. This never surfaced under the old grammar because every old
+fixture used explicit `return` statements. Fixed by adding
+`write_function_body` (turns a non-`Unit`-typed tail into `return
+<value>;`; a `Unit`-typed tail, including `main`'s, is still discarded
+as before) and using it only for a function's own body, not nested
+blocks. Symptom before the fix: garbage return values (e.g. a `.R: &str`
+expression-bodied function returning an uninitialized pointer → segfault
+on `print`). Worth remembering if a similar "value silently
+discarded instead of returned" bug shows up elsewhere in codegen.
 
-The user chose (via AskUserQuestion) **"stop and rewrite lexer/parser now"**
-over continuing M3/M4 on the old grammar, or resolving the doc's own open
-questions first.
+### Explicitly deferred (not implemented), with reasons — unchanged from before the rewrite
 
-### Scope I had settled on for this rewrite pass, before being interrupted
-
-Because `syntax&shii.md` itself flags unresolved conflicts with
-`plan.md`'s milestones (its §12/§14) and leaves some semantics genuinely
-undecided (`pd` mutability/lifetime story, §9's "open question"), I was
-not planning to implement the whole doc in one shot. Decisions made so far
-(not yet coded):
-
-**In scope for this rewrite:**
-- Newline-sensitive statement termination, no semicolons. Planned
-  mechanism: lexer suppresses `\n` tokens while paren-depth > 0 (so a
-  `datac`'s field-list parens, or any parenthesized sub-expression, can
-  span lines); at depth 0 it emits one `Newline` token per run of blank
-  lines. Parser treats `Newline` as the block/top-level statement
-  separator (replacing `;`), and — since a statement's "is this a tail
-  expression" status no longer needs a `has_semi` flag — that field on
-  `ast::Stmt::Expr` goes away entirely; "textually last in the block" is
-  now the *only* rule (this actually simplifies `infer.rs`, which already
-  used that rule as the deciding factor). Explicitly **not** attempting
-  real Kotlin-grade ASI (trailing-operator line continuation outside
-  parens is not supported — an expression that needs to span lines must
-  be wrapped in parens).
-- `val` / `var` replacing `let` / `let mut`.
-- `fun` keyword, `.R: T` return-type clause, `return expr`, and
-  expression-bodied functions (`fun f(...).R: T = expr`) as sugar over a
-  single-statement block. A `=`-bodied function without `.R: T` is a parse
-  error (no cross-function return-type inference).
-- `datac` replacing `struct`, with **real per-field mutability**: a field
-  declared `val` is never reassignable regardless of the binding's own
-  mutability; `var` fields are reassignable when the root binding is
-  `var`. This is a genuine improvement over the old "mutability is only a
-  property of the root binding" model from M2 — replace it, don't layer it.
-- `datac` construction via call syntax (`Circle(r = 2.0)`) — no separate
-  struct-literal grammar. This also *removes* the old
-  struct-literal-vs-block ambiguity problem in `if`/`while` conditions
-  (`parser::no_struct_lit`) since there's no more `Name { ... }` literal
-  form to be ambiguous with a block.
-- Named and positional call arguments together (`ast::Expr::Call` gets
-  `Vec<CallArg { name: Option<String>, value: Expr }>`); resolution matches
-  named args by name against the callee's declared param names (so
-  `types::FnSig` needs to start carrying param *names*, not just types),
-  fills remaining params positionally in declared order. Same matcher used
-  for `datac` construction against its field list.
-- `print(x)` / `print!(x)` replacing `println`/`print`. Lexer detects the
-  specific adjacent shape `ident!(` (identifier immediately followed by
-  `!` immediately followed by `(`) and folds it into one identifier token
-  `"print!"`, rather than generally merging `!` into identifiers (which
-  would wrongly eat the `!=` operator when written without spaces,
-  e.g. `x!=y`).
-- Compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) — new lexer tokens,
-  desugared in the parser to `target = target OP value`.
-- `when { cond -> expr, ..., else -> expr }` — planned as **pure parser
-  sugar**, desugaring straight to the existing nested `if`/`else if`/`else`
-  AST. Zero changes needed in `infer.rs`/`codegen_c.rs` if done this way.
-  Arms are newline-separated (same "skip newlines" loop as a block's
-  statement list, since `when`'s body is inside `{}` where newlines are
-  significant separators).
-- No-parens `if`/`while` conditions — already true of the old grammar
-  (parens were never required), so this is a no-op check, not new work.
-
-**Explicitly deferred (not part of this rewrite pass), with reasons:**
 - **Receiver-form methods** (`fun Circle.area()`, `fun mut Circle.grow()`)
-  — `syntax&shii.md` itself places this at its own "M1" delta, not M0, and
-  it drags in method-resolution-by-receiver-type plus the real
-  implicit-shared-vs-`mut`-exclusive-borrow rule, which is borrow-checker
-  territory (old M4). Functions stay free functions for now.
-- **`pd` passdowns** — the doc's own §9 leaves the mutable-global/lifetime
-  story as an open question with three unresolved options. Don't build
-  against a decision the user hasn't made.
-- **`impl` multi-file imports** — real loading was always M5 in
-  `plan.md`; only parsing the `impl "path" [with caps(...)] [as alias]`
-  syntax (so example source doesn't fail to parse) was being considered,
-  with no semantic loading behind it yet.
+  — `syntax&shii.md`'s own "M1" delta, not M0; drags in
+  method-resolution-by-receiver-type plus the real
+  implicit-shared-vs-`mut`-exclusive-borrow rule (old M4 territory).
+  Functions are free functions only for now.
+- **`pd` passdowns** — the doc's own §9 leaves the mutable-global/
+  lifetime story as an open question with three unresolved options.
+- **`impl` multi-file imports** — not even parsed yet. Real loading was
+  always M5 in `plan.md`.
 - **String templates** (`"$var"`, `"${expr}"`) — doc's own §12 lists this
-  under its "M2" delta, not M0.
-- **`caps(...)` capability syntax** — depends on `impl` multi-file, above.
+  under "M2" delta, not M0. Only plain (non-interpolated) string literals
+  exist.
+- **`caps(...)` capability syntax** — depends on `impl` multi-file.
+- **`stdlib.md`** (repo root) — separate, much larger companion doc about
+  stdlib namespaces/`Bytes`/capability wiring. Out of scope until asked.
 
-**Also noted, not yet handled:** `stdlib.md` (repo root) is a separate,
-much larger companion doc about stdlib namespaces/`Bytes`/capability
-wiring. Per explicit instruction, it is **out of scope right now** — do
-not fold its decisions into the current rewrite. Revisit only when asked.
+### M3 (ownership/moves) — still not implemented, plan below is unchanged and still valid
 
-### Concrete file-level rewrite plan (drafted, not yet executed)
+No `borrowck.rs` exists. Plan (syntax-independent, still applies):
+Copy-vs-non-Copy rule (primitives are Copy, `datac` values are not);
+move-state tracked per-scope the same way `infer.rs` tracks variable
+scopes; a bare `Ident` read of a non-Copy value moves it; a `.field`
+read of a Copy-typed field does not move the containing value (only a
+bare whole-value `Ident` read does, under the current grammar, since
+there's still no way to take a reference in expression position). Spans
+are already threaded through `tir::Expr` (see `7932cab`) specifically so
+move-checker diagnostics can be Rust-style "value moved here" / "used
+here" pairs.
 
-Everything downstream of the lexer needs touching, since the grammar
-changed almost everywhere:
-1. `lexer.rs` — remove `Fn`/`Let`/`Struct`/`Semi` handling; add
-   `Fun`/`Val`/`Var`/`Datac`/`When`; add `Newline` token + paren-depth
-   tracking; add compound-assign tokens; add the `ident!(` → `print!`
-   fold. Keep `Mut` token defined (unused by the parser for now — still
-   needed later for receiver/param mutability once that lands).
-2. `ast.rs` — `Stmt::Let` → split conceptually into `val`/`var` (can stay
-   one variant with a `mutable: bool` like today); drop `has_semi`;
-   `StructDecl`/`FieldDecl` → `DatacDecl` with per-field `mutable: bool`;
-   `FunctionDecl` gains a `.R: T` return-type span-carrying field (already
-   has `return_type: Option<TypeExpr>`, so this may just be a parse-side
-   change) and an expression-body variant; `Expr::Call` args become
-   `Vec<CallArg>`; `Expr::StructLit` goes away (construction is just
-   `Call` against a `datac` name, disambiguated at type-check time, same
-   as calling a function); add compound-assign as a parse-time desugar
-   (no new AST node needed).
-3. `parser.rs` — large rewrite: statement separators, `datac`, `fun`
-   signatures with `.R:`, call-arg list with optional `name =`, `when`
-   desugaring, compound-assign desugaring. Drop `no_struct_lit` machinery
-   (no longer needed).
-4. `pretty.rs` — follow the AST changes (mechanical).
-5. `types.rs` — `FnSig.params` becomes `Vec<(String, Ty)>` (needed for
-   named-arg resolution); rename/generalize `StructDef` to whatever the
-   `datac` type ends up called (can keep the name `StructDef` internally
-   — it's an implementation type, not user-facing).
-6. `infer.rs` — construction-via-call resolution (is this callee a
-   function or a `datac` name?); named/positional arg matching (shared
-   between plain calls and `datac` construction); per-field mutability
-   check for field assignment (replaces the old root-binding-only rule);
-   drop the `has_semi`-based tail-detection special case (already almost
-   just "textually last", per above).
-7. `codegen_c.rs` — mostly unaffected in spirit (still lowering the same
-   kind of typed IR), but struct-literal codegen now needs to reorder
-   named/positional args to the `datac`'s declared field order before
-   emitting the designated-initializer C literal.
-8. Examples/fixtures (`examples/*.x`, `xc/tests/fixtures/*.x`) and
-   `tests/compile_and_run.rs` expected-output strings — rewritten to the
-   new syntax; M3's planned `ownership_move.x`/`borrow_basic.x` fixtures
-   (never created) still pending, now in new syntax.
+**Bonus for when M3 resumes**: `datac`'s per-field `val`/`var` model
+(built properly in this rewrite, not deferred) is exactly the kind of
+per-field bookkeeping partial-move reasoning will eventually want, so
+this rewrite wasn't a detour from M3 — it's groundwork for it.
 
-### Recommended order when resuming
+## Recommended next steps
 
-Lexer → AST → parser → pretty-printer (cheap, keep it compiling) →
-`types.rs`/`infer.rs` → `codegen_c.rs` → rewrite examples/fixtures → get
-`cargo test` green again → re-attempt M3 (moves) on top of the new syntax,
-using the Copy-vs-non-Copy / per-scope move-state plan recorded above
-(still valid, syntax-independent) — now with the bonus that `datac`'s
-per-field mutability model was already forced to be built properly in
-step 6 above, which move-checking will want anyway for partial-move
-reasoning later.
+1. M3 (moves) on the new syntax, using the plan above.
+2. M4 (borrowing) — needs real `&`/`&mut`/deref support in expression
+   position, which the parser doesn't have yet (only in type-annotation
+   position, and only as a no-op `&` prefix accepted for `&str`).
+3. Only then reconsider the deferred syntax features above, prioritized
+   by what's actually needed to keep writing example programs (probably
+   `impl` multi-file next, since a real program wants more than one
+   file — then receivers, since methods are used pervasively in
+   `syntax&shii.md`'s own examples).
