@@ -305,6 +305,14 @@ impl Ctx {
         });
     }
 
+    /// Whether any scope in the frame already binds `name`.
+    fn knows(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .rev()
+            .any(|s| s.vars.contains_key(name))
+    }
+
     fn lookup_mut(&mut self, name: &str) -> Option<&mut VarState> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(v) = scope.vars.get_mut(name) {
@@ -321,10 +329,16 @@ impl Ctx {
             return Ok(()); // infer.rs already validated every identifier
         };
         if v.moved_at.is_some() {
-            return Err(BorrowError { message: format!("use of moved value '{name}'"), span });
+            return Err(BorrowError {
+                message: format!("use of moved value {}", display_root(name)),
+                span,
+            });
         }
         if v.borrow != BorrowKind::None {
-            return Err(BorrowError { message: format!("cannot move '{name}' while it is borrowed"), span });
+            return Err(BorrowError {
+                message: format!("cannot move {} while it is borrowed", display_root(name)),
+                span,
+            });
         }
         if !v.ty.is_copy() {
             v.moved_at = Some(span);
@@ -354,7 +368,10 @@ impl Ctx {
             return Ok(());
         };
         if v.moved_at.is_some() {
-            return Err(BorrowError { message: format!("use of moved value '{name}'"), span });
+            return Err(BorrowError {
+                message: format!("use of moved value {}", display_root(name)),
+                span,
+            });
         }
         Ok(())
     }
@@ -366,7 +383,10 @@ impl Ctx {
             return Ok(());
         };
         if v.borrow != BorrowKind::None {
-            return Err(BorrowError { message: format!("cannot assign to '{name}' while it is borrowed"), span });
+            return Err(BorrowError {
+                message: format!("cannot assign to {} while it is borrowed", display_root(name)),
+                span,
+            });
         }
         v.moved_at = None;
         Ok(())
@@ -385,18 +405,27 @@ impl Ctx {
             return Ok(());
         };
         if v.moved_at.is_some() {
-            return Err(BorrowError { message: format!("cannot borrow '{root}': value was moved"), span });
+            return Err(BorrowError {
+                message: format!("cannot borrow {}: value was moved", display_root(root)),
+                span,
+            });
         }
         v.borrow = match (&v.borrow, mutable) {
             (BorrowKind::Exclusive, _) => {
                 return Err(BorrowError {
-                    message: format!("cannot borrow '{root}': already borrowed exclusively"),
+                    message: format!(
+                        "cannot borrow {}: already borrowed exclusively",
+                        display_root(root)
+                    ),
                     span,
                 });
             }
             (BorrowKind::Shared(_), true) => {
                 return Err(BorrowError {
-                    message: format!("cannot borrow '{root}' as exclusive: already borrowed as shared"),
+                    message: format!(
+                        "cannot borrow {} as exclusive: already borrowed as shared",
+                        display_root(root)
+                    ),
                     span,
                 });
             }
@@ -489,6 +518,16 @@ fn is_copy(ty: &Ty) -> bool {
     ty.is_copy()
 }
 
+/// A root name as a person wrote it. A passdown's hidden parameter is
+/// `pd#<qualified name>`, which no user ever typed, so diagnostics translate
+/// it back (M6.4).
+fn display_root(name: &str) -> String {
+    match name.strip_prefix("pd#") {
+        Some(qualified) => format!("passdown '{qualified}'"),
+        None => format!("'{name}'"),
+    }
+}
+
 /// The drops for a set of owned locals: reverse declaration order, live ones
 /// only. Reverse order matches the lexical nesting of the bindings — a value
 /// moved out of an earlier binding into a later one is freed exactly once,
@@ -510,6 +549,11 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
         tir::ExprKind::Ident(name) => Some(name),
         tir::ExprKind::FieldAccess { base, .. } => tir_root_ident(base),
         tir::ExprKind::Deref { expr: inner } => tir_root_ident(inner),
+        // A `pd` read in `main`/an initializer is `Deref(Ref(global))` — the
+        // explicit borrow of the generated global — so the chain has to
+        // descend through that `Ref` for the borrow to be tracked at all
+        // (M6.4).
+        tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
         _ => None,
     }
 }
@@ -582,8 +626,17 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
             fn_borrow_root.insert(f.name.clone(), crate::infer::borrow_root_param(&f.params));
         }
     }
+    // The passdown globals, as `(hidden name, value type)`: a function that
+    // does *not* take one as a hidden parameter (`main`) still reaches the
+    // storage, so its reads and borrows have to be tracked against the same
+    // root as everyone else's (M6.4).
+    let globals: Vec<(String, Ty)> = program
+        .pds
+        .iter()
+        .map(|p| (p.name.clone(), p.value_ty.clone()))
+        .collect();
     for f in &program.functions {
-        let function = check_function(f, &owned, &fn_borrow_root).map_err(|e| {
+        let function = check_function(f, &owned, &fn_borrow_root, &globals).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -595,6 +648,7 @@ fn check_function(
     f: &tir::Function,
     owned_structs: &std::collections::HashSet<String>,
     fn_borrow_root: &HashMap<String, Option<usize>>,
+    globals: &[(String, Ty)],
 ) -> Result<FnDrops> {
     let mut ctx = Ctx {
         scopes: vec![Scope::default()],
@@ -619,6 +673,16 @@ fn check_function(
         // honest if move-taking parameters ever exist.
         if crate::types::needs_drop(ty, &ctx.owned_structs) {
             ctx.define_owned(name, ty);
+        }
+    }
+    // A passdown the function does not receive as a hidden parameter is
+    // still reachable storage (`main` writes the globals directly), so it
+    // gets a binding of its own value type — unless a parameter of the same
+    // hidden name already claimed the slot, which is the normal case for
+    // every function other than `main`.
+    for (hidden, value_ty) in globals {
+        if !ctx.knows(hidden) {
+            ctx.define(hidden, value_ty);
         }
     }
     check_block(&f.body, &mut ctx)?;

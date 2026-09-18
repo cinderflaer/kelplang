@@ -1,0 +1,15 @@
+// M6.4: the cost of making a `pd var` writable — a reference to it is an
+// *exclusive* borrow, so one call cannot take it both exclusively and
+// shared, exactly like `f(&mut c, &c)`.
+//
+// Reading a Copy passdown by value is unaffected: `add(counter, counter)` is
+// two reads of the global, not two borrows of it.
+pd var tally = Tally(n = 0)
+
+datac Tally(var n: i32)
+
+fun combine(a: mut Tally, b: Tally).R: i32 = a.n + b.n
+
+fun main() {
+    print(combine(tally, tally))
+}

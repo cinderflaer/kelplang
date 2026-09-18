@@ -389,8 +389,48 @@ fn a_local_can_shadow_a_passdown() {
 }
 
 #[test]
-fn writing_a_passdown_inside_a_function_is_rejected() {
-    assert_rejected("tests/fixtures/pd_var_write.x");
+fn a_pd_var_is_writable_from_a_function_and_from_main() {
+    // M6.4 replaced M5.2's "read-only inside a function": a `pd var` is
+    // reached through an exclusive borrow, so writes work and stay checked.
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_var_write.x",
+        "count = 5\ncount = 100\n",
+    );
+}
+
+#[test]
+fn writing_a_pd_val_inside_a_function_is_rejected() {
+    assert_rejected("tests/fixtures/pd_val_write.x");
+}
+
+#[test]
+fn a_pd_var_cannot_be_borrowed_twice_in_one_call() {
+    // The documented cost of M6.4's design, pinned so it reads as a rule.
+    let bin = out_path("pd_var_double_borrow");
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture("tests/fixtures/pd_var_double_borrow.x"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        !build.status.success(),
+        "expected a `pd var` borrowed exclusively and shared in one call to be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("already borrowed exclusively"),
+        "expected a borrow-conflict message, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn reading_a_copy_passdown_twice_in_one_call_is_allowed() {
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_var_copy_read_twice.x",
+        "2\n20\n",
+    );
 }
 
 #[test]

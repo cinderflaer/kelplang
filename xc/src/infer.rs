@@ -111,23 +111,47 @@ struct PdInfo {
 }
 
 impl PdInfo {
-    /// The argument a call site passes for this passdown's hidden parameter.
-    fn arg(&self, span: Span) -> tir::Expr {
-        let base = tir::Expr {
-            kind: tir::ExprKind::Ident(self.hidden.clone()),
-            ty: self.value_ty.clone(),
-            span,
-        };
-        match &self.param_ty {
-            Ty::Ref { .. } => tir::Expr {
+    /// The *borrow* of the passdown's storage: what a call site passes for
+    /// this passdown's hidden parameter, and what a read dereferences.
+    ///
+    /// Two shapes, because the two contexts reach the storage differently:
+    /// inside a function the hidden name is already the borrow (`&*hidden`
+    /// would be a pointer to a pointer), while `main` and a `pd` initializer
+    /// have no hidden parameter and name the generated global directly, so
+    /// the borrow is explicit.
+    fn arg(&self, span: Span, global: bool) -> tir::Expr {
+        if global {
+            let global = tir::Expr {
+                kind: tir::ExprKind::Ident(self.hidden.clone()),
+                ty: self.value_ty.clone(),
+                span,
+            };
+            return tir::Expr {
                 kind: tir::ExprKind::Ref {
-                    mutable: false,
-                    expr: Box::new(base),
+                    mutable: self.mutable,
+                    expr: Box::new(global),
                 },
                 ty: self.param_ty.clone(),
                 span,
+            };
+        }
+        tir::Expr {
+            kind: tir::ExprKind::Ident(self.hidden.clone()),
+            ty: self.param_ty.clone(),
+            span,
+        }
+    }
+
+    /// A read of the passdown (M6.4): `*` of the borrow, so reads and writes
+    /// go through the same pointer and a `pd var` is assignable from any
+    /// function that references it.
+    fn value(&self, span: Span, global: bool) -> tir::Expr {
+        tir::Expr {
+            kind: tir::ExprKind::Deref {
+                expr: Box::new(self.arg(span, global)),
             },
-            _ => base,
+            ty: self.value_ty.clone(),
+            span,
         }
     }
 }
@@ -1118,7 +1142,14 @@ fn collect_pds(
             qualified: decl.name.clone(),
             name: bare,
             hidden: format!("pd#{}", decl.name),
-            param_ty: implicit_borrow_wrap(value_ty.clone(), false),
+            // Always a borrow, never a by-value copy: a `pd` has one storage
+            // location, so a function that reads or writes it must reach that
+            // storage. `pd var` is therefore an *exclusive* borrow (writes go
+            // through it), `pd val` a shared one (many readers, no writer).
+            param_ty: Ty::Ref {
+                mutable: decl.mutable,
+                inner: Box::new(value_ty.clone()),
+            },
             value_ty,
             mutable: decl.mutable,
             module: decl.module.clone(),
@@ -1153,6 +1184,9 @@ fn check_pd_initializer(
         Some(pd.index),
         wired,
     );
+    // An initializer has no hidden parameters of its own: it reads the
+    // globals that earlier initializers already assigned.
+    ctx.pd_global_borrow = true;
     ctx.init_state = Some(initialized.clone());
     check_expr(init, &mut ctx, Some(&pd.value_ty))
 }
@@ -1479,21 +1513,6 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
     match &target.kind {
         tir::ExprKind::Ident(name) => {
             let Some(info) = ctx.lookup(name) else {
-                // Only passdown references get here: their hidden parameter
-                // (`pd#...`) is deliberately not a scope binding, so the
-                // generic path below would panic on them. A passdown is
-                // read-only inside a function by design (M5.2).
-                if let Some(pd) = ctx.pds.values().find(|p| &p.hidden == name) {
-                    let why = if pd.mutable {
-                        "a passdown is read-only inside a function (a 'pd var' can only be assigned at its declaration)"
-                    } else {
-                        "it is declared 'pd val'"
-                    };
-                    return Err(TypeError {
-                        message: format!("cannot assign to passdown '{}': {why}", pd.qualified),
-                        span: target.span,
-                    });
-                }
                 return Err(TypeError {
                     message: format!("cannot assign to '{name}'"),
                     span: target.span,
@@ -1525,10 +1544,26 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
         tir::ExprKind::FieldAccess { base, .. } => check_target_writable(base, ctx),
         tir::ExprKind::Deref { expr: inner } => match &inner.ty {
             Ty::Ref { mutable: true, .. } => Ok(()),
-            Ty::Ref { mutable: false, .. } => Err(TypeError {
-                message: "cannot write through a shared borrow".to_string(),
-                span: target.span,
-            }),
+            Ty::Ref { mutable: false, .. } => {
+                // A `pd val` read is a Deref of a shared borrow, so it lands
+                // here — worth the passdown's own wording, since "shared
+                // borrow" is not what the author wrote (M6.4).
+                if let tir::ExprKind::Ident(name) = &inner.kind {
+                    if let Some(pd) = ctx.pds.values().find(|p| &p.hidden == name) {
+                        return Err(TypeError {
+                            message: format!(
+                                "cannot assign to passdown '{}': it is declared 'pd val' (only a 'pd var' can be assigned inside a function)",
+                                pd.qualified
+                            ),
+                            span: target.span,
+                        });
+                    }
+                }
+                Err(TypeError {
+                    message: "cannot write through a shared borrow".to_string(),
+                    span: target.span,
+                })
+            }
             _ => unreachable!("a Deref's operand is always Ref-typed, guaranteed by check_expr"),
         },
         other => unreachable!("not a place expression: {other:?}"),
@@ -1866,14 +1901,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                         span: *span,
                     });
                 }
-                if ctx.pd_global_borrow {
-                    return Ok(pd.arg(*span));
-                }
-                return Ok(tir::Expr {
-                    kind: tir::ExprKind::Ident(pd.hidden.clone()),
-                    ty: pd.param_ty.clone(),
-                    span: *span,
-                });
+                return Ok(pd.value(*span, ctx.pd_global_borrow));
             }
             // Not a local, receiver field, or passdown — a compile-time
             // constant (M6.3), substituted as the literal it folded to.
@@ -2582,7 +2610,7 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
                 span,
             });
         }
-        out.push(pd.arg(span));
+        out.push(pd.arg(span, ctx.pd_global_borrow));
     }
     Ok(out)
 }

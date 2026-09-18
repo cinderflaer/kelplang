@@ -1,10 +1,26 @@
+// M6.4: a `pd var` is writable from any function that references it. Inside
+// a function the passdown is an *exclusive* hidden borrow of the global, so
+// writes reach the one storage location and the borrow checker still sees
+// every access. `main` writes the global directly.
 pd var count = 0
+pd val label = "count"
 
 fun bump() {
-    count += 1
+    count = count + 1
+}
+
+fun bump_by(n: i32) {
+    count += n
+}
+
+fun show() {
+    print("${label} = ${count}")
 }
 
 fun main() {
     bump()
-    print(count)
+    bump_by(n = 4)
+    show()
+    count = 100
+    show()
 }
