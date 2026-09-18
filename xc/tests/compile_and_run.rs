@@ -948,6 +948,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_list",
         "borrow_temp_arg",
         "list_datac_element",
+        "box_basic",
+        "box_recursive",
+        "recursive_datac",
+        "box_field_take",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1089,6 +1093,66 @@ fn split_returns_a_list_of_owned_pieces_and_join_consumes_one() {
         "tests/fixtures/stdlib_list.x",
         "4\na|b||c\n[a][b][][c]\n1\n1\n4\na-b--c\n1\nsolo\n",
     );
+}
+
+// ---------------------------------------------------------------------------
+// M8: the builtin owning pointer `Box<T>`, recursive `datac`s, and the
+// container emission order that makes them work.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_box_holds_a_value_or_nothing() {
+    assert_compiles_and_runs(
+        "tests/fixtures/box_basic.x",
+        "true\n7\nfalse\n9\ntrue\nhi\n5\n2\n1\n3\n",
+    );
+}
+
+#[test]
+fn a_datac_can_be_recursive_through_a_box() {
+    // The linked list: `next` is an owned pointer, `Box.empty()` terminates
+    // it, and the whole chain is freed recursively (also under ASAN).
+    assert_compiles_and_runs(
+        "tests/fixtures/box_recursive.x",
+        "6\n3\n3\n2\n1\n203\n19906\n198\ntrue\n198\n",
+    );
+}
+
+#[test]
+fn a_datac_can_be_recursive_through_a_list_and_mutually_recursive_through_boxes() {
+    assert_compiles_and_runs("tests/fixtures/recursive_datac.x", "113\n2\n100\nl1\nl1\nb1\n");
+}
+
+#[test]
+fn an_owned_field_cannot_be_read_by_value() {
+    // The copy would be a second owner of the same buffer; the field has to
+    // be borrowed, or held in a `Box` and taken.
+    assert_rejected("tests/fixtures/owned_field_read.x");
+}
+
+#[test]
+fn an_owned_field_in_a_box_can_be_taken_and_set() {
+    assert_compiles_and_runs("tests/fixtures/box_field_take.x", "1\ntrue\n1\n2\n");
+}
+
+#[test]
+fn a_box_cannot_hold_a_borrow() {
+    assert_rejected("tests/fixtures/box_borrow_element.x");
+}
+
+#[test]
+fn a_datac_cannot_hold_itself_by_value() {
+    assert_rejected("tests/fixtures/datac_self_value.x");
+}
+
+#[test]
+fn a_container_cannot_be_a_list_element() {
+    assert_rejected("tests/fixtures/list_container_element.x");
+}
+
+#[test]
+fn reaching_into_an_empty_box_panics() {
+    assert_fixture_panics("box_empty_panic", "Box.get: the box is empty");
 }
 
 #[test]

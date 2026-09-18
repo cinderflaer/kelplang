@@ -531,36 +531,63 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
     }
 
-    // `List<T>` instantiations: one C struct plus one function set per
-    // element type actually used. A non-`datac` element is independent of
-    // every user declaration, so its typedef goes first; a `datac` element
-    // needs that struct's typedef (and its drop function) first, which is
-    // why those are emitted together with the struct, in declaration order.
+    // Container instantiations (`List<T>`, `Box<T>`): one C typedef plus one
+    // function set per element type actually used, and the order is what
+    // makes a recursive `datac` work (M8).
+    //
+    // 1. every `datac`'s struct tag, forward-declared;
+    // 2. every container typedef, outermost last — a container holds its
+    //    contents through a pointer, so it is complete before any `datac`
+    //    that uses it, including a `datac` whose own body comes later
+    //    (`List<Tree>` inside `Tree`, or a mutually recursive pair);
+    // 3. the `datac`s themselves, each with its drop function;
+    // 4. the container function sets, innermost first — their signatures need
+    //    the element's complete type, and a container drop calls the element's
+    //    drop function, which step 3 has already defined.
+    //
+    // One prototype per container drop comes before step 3: a `datac` that
+    // owns a container drops it, and that function is defined in step 4.
     let mut list_elems: HashSet<Ty> = HashSet::new();
-    collect_list_elems(program, &mut list_elems);
-    let mut early: Vec<Ty> = list_elems
+    let mut box_elems: HashSet<Ty> = HashSet::new();
+    collect_containers(program, &mut list_elems, &mut box_elems);
+    let mut containers: Vec<Ty> = list_elems
         .iter()
-        .filter(|e| !matches!(e, Ty::Struct(_)))
-        .cloned()
+        .map(|e| Ty::List(Box::new(e.clone())))
+        .chain(box_elems.iter().map(|e| Ty::Box(Box::new(e.clone()))))
         .collect();
-    early.sort_by_key(|e| e.display());
-    for elem in &early {
-        write_list(&mut out, elem, &owned);
-    }
-    if !early.is_empty() {
+    containers.sort_by_key(|t| (container_depth(t), container_name(t)));
+    if !containers.is_empty() {
+        write_tags(&mut out, &program.structs);
+        out.push('\n');
+        for ty in &containers {
+            write_container_typedef(&mut out, ty);
+        }
+        out.push('\n');
+        for ty in &containers {
+            writeln!(
+                out,
+                "static void {}({}* v);",
+                drop_fn_name(ty),
+                container_name(ty)
+            )
+            .unwrap();
+        }
         out.push('\n');
     }
 
     for s in &program.structs {
         write_struct(&mut out, s, &owned);
-        let self_ty = Ty::Struct(s.name.clone());
-        if list_elems.contains(&self_ty) {
-            out.push('\n');
-            write_list(&mut out, &self_ty, &owned);
-        }
     }
     if !program.structs.is_empty() {
         out.push('\n');
+    }
+
+    for ty in &containers {
+        match ty {
+            Ty::List(elem) => write_list(&mut out, elem, &owned),
+            Ty::Box(elem) => write_box(&mut out, elem, &owned),
+            other => unreachable!("not a container: {}", other.display()),
+        }
     }
 
     write_pd_globals(&mut out, &program.pds, drops, &owned, sources);
@@ -693,7 +720,11 @@ fn write_pd_globals(
 /// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
 /// `datac`s, so a struct's drop function is always defined before the struct
 /// that calls it — no forward declarations needed.
-fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {    write!(out, "typedef struct {{\n").unwrap();
+fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
+    // Tagged (M8), because a container typedef emitted *earlier* may hold a
+    // pointer to this struct (`Box<Node>` inside `Node` itself), and a
+    // forward declaration of the tag is what makes that legal C.
+    write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&s.name)).unwrap();
     for f in &s.fields {
         write!(out, "    {} {};\n", f.ty.c_type(), field_name(&f.name)).unwrap();
     }
@@ -722,17 +753,116 @@ fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {    w
     }
 }
 
-/// One `List<T>` instantiation's C: a struct holding the buffer plus one
-/// function set. Monomorphized per element type, in the same spirit as the
-/// hand-written `Bytes`/`String` runtime above — v1 has no user-definable
-/// generics, so the compiler knows exactly which instantiations exist and
-/// writes each one out (see `collect_list_elems` for how they are found).
-///
-/// Growth doubles the capacity with `realloc`; the element is stored by plain
-/// assignment, which *is* the move — the checker has already marked the
-/// source binding moved, so nothing else frees it, and the element's own drop
-/// function is what frees it later. `get` returns a copy for a `Copy` element
-/// and a pointer for an owned one, matching `infer::list_sig`.
+/// A container's C typedef, emitted before every `datac`: both containers
+/// hold their contents through a pointer, so a container can be named by the
+/// `datac`s that use it — including the `datac` whose *own* body has not been
+/// emitted yet (`List<Tree>` inside `Tree`) and a mutually recursive pair
+/// (M8). A `datac` element is therefore spelled by its struct tag here
+/// (`container_elem_c_type`), which is forward-declared by `write_tags`.
+fn write_container_typedef(out: &mut String, ty: &Ty) {
+    match ty {
+        Ty::List(elem) => {
+            let name = crate::types::list_c_type(elem);
+            writeln!(
+                out,
+                "typedef struct {{\n    {}* data;\n    size_t len;\n    size_t cap;\n}} {name};",
+                crate::types::container_elem_c_type(elem)
+            )
+            .unwrap();
+        }
+        Ty::Box(elem) => {
+            let name = crate::types::box_c_type(elem);
+            writeln!(
+                out,
+                "typedef struct {{\n    {}* value;\n}} {name};",
+                crate::types::container_elem_c_type(elem)
+            )
+            .unwrap();
+        }
+        other => unreachable!("not a container: {}", other.display()),
+    }
+}
+
+/// `struct tag_x_Foo;` for every `datac`, so a container typedef can hold a
+/// pointer to a struct whose body comes later.
+fn write_tags(out: &mut String, structs: &[StructDef]) {
+    for s in structs {
+        writeln!(out, "struct {};", crate::types::struct_tag(&s.name)).unwrap();
+    }
+}
+
+/// The C name of a container instantiation, without the `x_` prefix the
+/// functions append: `x_List__i32` / `x_Box__Node`.
+fn container_name(ty: &Ty) -> String {
+    match ty {
+        Ty::List(elem) => crate::types::list_c_type(elem),
+        Ty::Box(elem) => crate::types::box_c_type(elem),
+        other => unreachable!("not a container: {}", other.display()),
+    }
+}
+
+/// How deeply containers nest: `List<i32>` is 1, `Box<List<i32>>` is 2. Used
+/// to emit a container after the containers it contains, so every typedef and
+/// every function it calls already exists.
+fn container_depth(ty: &Ty) -> usize {
+    match ty {
+        Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
+        _ => 0,
+    }
+}
+
+/// One `Box<T>` instantiation's function set (M8). The box holds a pointer
+/// to one value or `NULL`; `take` moves the value out and is the reason a box
+/// can be empty at all (`Box.empty()`), which is what makes a recursive
+/// `datac` — and a loop that walks one — expressible without `Option`.
+fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
+    let boxed = crate::types::box_c_type(elem);
+    let boxed_ty = Ty::Box(Box::new(elem.clone()));
+    let elem_c = elem.c_type();
+    let elem_drops = needs_drop(elem, owned);
+    let drop_elem = elem_drops.then(|| drop_fn_name(elem));
+    writeln!(out, "// ---- {} (M8) {}", boxed, "-".repeat(34)).unwrap();
+
+    writeln!(out, "static {boxed} {boxed}__empty(void) {{\n    {boxed} b;\n    b.value = NULL;\n    return b;\n}}\n").unwrap();
+
+    writeln!(out, "static {boxed} {boxed}__of({elem_c} v) {{").unwrap();
+    writeln!(out, "    {elem_c}* p = ({elem_c}*)malloc(sizeof({elem_c}));").unwrap();
+    out.push_str("    if (p == NULL) {\n        x_panic(\"out of memory\");\n    }\n    *p = v;\n");
+    writeln!(out, "    {boxed} b;\n    b.value = p;\n    return b;\n}}\n").unwrap();
+
+    writeln!(out, "static bool {boxed}__is_empty(const {boxed}* self) {{\n    return self->value == NULL;\n}}\n").unwrap();
+
+    if elem.is_copy() {
+        writeln!(out, "static {elem_c} {boxed}__get(const {boxed}* self) {{").unwrap();
+        writeln!(out, "    if (self->value == NULL) {{\n        x_panic(\"Box.get: the box is empty\");\n    }}\n    return *self->value;\n}}\n").unwrap();
+    } else {
+        writeln!(out, "static const {elem_c}* {boxed}__get_const(const {boxed}* self) {{").unwrap();
+        writeln!(out, "    if (self->value == NULL) {{\n        x_panic(\"Box.get: the box is empty\");\n    }}\n    return self->value;\n}}\n").unwrap();
+    }
+
+    writeln!(out, "static void {boxed}__set({boxed}* self, {elem_c} v) {{").unwrap();
+    out.push_str("    if (self->value == NULL) {\n");
+    writeln!(out, "        self->value = ({elem_c}*)malloc(sizeof({elem_c}));").unwrap();
+    out.push_str("        if (self->value == NULL) {\n            x_panic(\"out of memory\");\n        }\n    } else {\n");
+    if let Some(d) = &drop_elem {
+        // The slot is reused: the value it held is freed, the box is not.
+        writeln!(out, "        {d}(self->value);").unwrap();
+    }
+    out.push_str("    }\n    *self->value = v;\n}\n\n");
+
+    writeln!(out, "static {elem_c} {boxed}__take({boxed}* self) {{").unwrap();
+    writeln!(out, "    if (self->value == NULL) {{\n        x_panic(\"Box.take: the box is empty\");\n    }}\n    {elem_c} v = *self->value;\n    free(self->value);\n    self->value = NULL;\n    return v;\n}}\n").unwrap();
+
+    writeln!(out, "static void {}({boxed}* self) {{", drop_fn_name(&boxed_ty)).unwrap();
+    out.push_str("    if (self->value != NULL) {\n");
+    if let Some(d) = &drop_elem {
+        writeln!(out, "        {d}(self->value);").unwrap();
+    }
+    out.push_str("        free(self->value);\n        self->value = NULL;\n    }\n}\n\n");
+}
+
+/// One `List<T>` instantiation's function set: a growable buffer plus the
+/// operations on it.
 fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     let list = crate::types::list_c_type(elem);
     let elem_c = elem.c_type();
@@ -741,7 +871,6 @@ fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     // name is only ever computed for one that does.
     let drop_elem = elem_drops.then(|| drop_fn_name(elem));
     writeln!(out, "// ---- {} (collections) {}", list, "-".repeat(30)).unwrap();
-    writeln!(out, "typedef struct {{\n    {elem_c}* data;\n    size_t len;\n    size_t cap;\n}} {list};\n").unwrap();
 
     writeln!(out, "static {list} {list}__empty(void) {{").unwrap();
     writeln!(out, "    {list} l;\n    l.data = NULL;\n    l.len = 0;\n    l.cap = 0;\n    return l;\n}}\n").unwrap();
@@ -802,41 +931,45 @@ fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     writeln!(out, "    {list}__clear(self);\n    free(self->data);\n    self->data = NULL;\n    self->cap = 0;\n}}\n").unwrap();
 }
 
-/// Every `List<T>` element type the program mentions, so `generate` knows
-/// which instantiations to write. Elements cannot themselves be lists
-/// (`infer.rs` rejects that), so one level of unwrapping is all there is;
-/// `&List<T>` (a borrowed list — every `List` parameter and method receiver)
+/// Every container instantiation the program mentions, so `generate` knows
+/// which C typedefs and function sets to write. A `Box<T>` may contain
+/// another container (`Box<List<String>>`), so the walk recurses; a borrow
+/// of a container (`&List<T>` — every `List` parameter and method receiver)
 /// is looked through.
-fn collect_list_elems(program: &Program, found: &mut HashSet<Ty>) {
-    fn note_ty(ty: &Ty, found: &mut HashSet<Ty>) {
+fn collect_containers(program: &Program, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
+    fn note_ty(ty: &Ty, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
         match ty {
             Ty::List(elem) => {
-                found.insert((**elem).clone());
-                note_ty(elem, found);
+                lists.insert((**elem).clone());
+                note_ty(elem, lists, boxes);
             }
-            Ty::Ref { inner, .. } => note_ty(inner, found),
+            Ty::Box(elem) => {
+                boxes.insert((**elem).clone());
+                note_ty(elem, lists, boxes);
+            }
+            Ty::Ref { inner, .. } => note_ty(inner, lists, boxes),
             _ => {}
         }
     }
-    fn note_expr(expr: &Expr, found: &mut HashSet<Ty>) {
-        note_ty(&expr.ty, found);
+    fn note_expr(expr: &Expr, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
+        note_ty(&expr.ty, lists, boxes);
         match &expr.kind {
             ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } | ExprKind::Deref { expr } => {
-                note_expr(expr, found)
+                note_expr(expr, lists, boxes)
             }
             ExprKind::Binary { lhs, rhs, .. } | ExprKind::Assign { target: lhs, value: rhs } => {
-                note_expr(lhs, found);
-                note_expr(rhs, found);
+                note_expr(lhs, lists, boxes);
+                note_expr(rhs, lists, boxes);
             }
             ExprKind::Call { args, .. } => {
                 for a in args {
-                    note_expr(a, found);
+                    note_expr(a, lists, boxes);
                 }
             }
-            ExprKind::FieldAccess { base, .. } => note_expr(base, found),
+            ExprKind::FieldAccess { base, .. } => note_expr(base, lists, boxes),
             ExprKind::StructLit { fields, .. } => {
                 for (_, v) in fields {
-                    note_expr(v, found);
+                    note_expr(v, lists, boxes);
                 }
             }
             ExprKind::If {
@@ -844,62 +977,62 @@ fn collect_list_elems(program: &Program, found: &mut HashSet<Ty>) {
                 then_block,
                 else_block,
             } => {
-                note_expr(cond, found);
-                note_block(then_block, found);
+                note_expr(cond, lists, boxes);
+                note_block(then_block, lists, boxes);
                 if let Some(b) = else_block {
-                    note_block(b, found);
+                    note_block(b, lists, boxes);
                 }
             }
-            ExprKind::Block(b) => note_block(b, found),
+            ExprKind::Block(b) => note_block(b, lists, boxes),
             ExprKind::Template { pieces, .. } => {
                 for p in pieces {
                     if let TemplatePiece::Value(v) = p {
-                        note_expr(v, found);
+                        note_expr(v, lists, boxes);
                     }
                 }
             }
             _ => {}
         }
     }
-    fn note_block(block: &Block, found: &mut HashSet<Ty>) {
+    fn note_block(block: &Block, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
         for s in &block.stmts {
             match s {
                 Stmt::Let { ty, init, .. } => {
-                    note_ty(ty, found);
-                    note_expr(init, found);
+                    note_ty(ty, lists, boxes);
+                    note_expr(init, lists, boxes);
                 }
                 Stmt::While { cond, body } => {
-                    note_expr(cond, found);
-                    note_block(body, found);
+                    note_expr(cond, lists, boxes);
+                    note_block(body, lists, boxes);
                 }
                 Stmt::Return { value, .. } => {
                     if let Some(v) = value {
-                        note_expr(v, found);
+                        note_expr(v, lists, boxes);
                     }
                 }
-                Stmt::Expr(e) => note_expr(e, found),
+                Stmt::Expr(e) => note_expr(e, lists, boxes),
             }
         }
         if let Some(t) = &block.tail {
-            note_expr(t, found);
+            note_expr(t, lists, boxes);
         }
     }
 
     for s in &program.structs {
         for f in &s.fields {
-            note_ty(&f.ty, found);
+            note_ty(&f.ty, lists, boxes);
         }
     }
     for pd in &program.pds {
-        note_ty(&pd.value_ty, found);
-        note_expr(&pd.init, found);
+        note_ty(&pd.value_ty, lists, boxes);
+        note_expr(&pd.init, lists, boxes);
     }
     for f in &program.functions {
-        note_ty(&f.ret, found);
+        note_ty(&f.ret, lists, boxes);
         for (_, t) in &f.params {
-            note_ty(t, found);
+            note_ty(t, lists, boxes);
         }
-        note_block(&f.body, found);
+        note_block(&f.body, lists, boxes);
     }
 }
 
@@ -1538,19 +1671,34 @@ impl<'a> Gen<'a> {
         }
 
         let mut s = format!("{}({})", c_name(callee), args_text.join(", "));
-        // `List<T>` methods are monomorphized: the C name carries the
-        // element type, which comes from the receiver argument (or, for the
-        // associated `List.of(v)`, from `v` itself).
-        if let Some(op) = callee.strip_prefix("List#") {
+        // Container methods are monomorphized: the C name carries the element
+        // type, which comes from the receiver argument (or, for the
+        // associated `List.of(v)`/`Box.of(v)`, from `v` itself, and for
+        // `empty` from the call's own result type).
+        for (prefix, name_of, elem_of) in [
+            (
+                "List#",
+                crate::types::list_c_type as fn(&Ty) -> String,
+                crate::types::list_elem_of as fn(&Ty) -> Option<&Ty>,
+            ),
+            (
+                "Box#",
+                crate::types::box_c_type as fn(&Ty) -> String,
+                crate::types::box_elem_of as fn(&Ty) -> Option<&Ty>,
+            ),
+        ] {
+            let Some(op) = callee.strip_prefix(prefix) else {
+                continue;
+            };
             let elem = if op == "of" {
                 args.first().map(|a| a.ty.clone())
             } else if op == "empty" {
-                crate::types::list_elem_of(ret).cloned()
+                elem_of(ret).cloned()
             } else {
-                args.first().and_then(|a| crate::types::list_elem_of(&a.ty)).cloned()
+                args.first().and_then(|a| elem_of(&a.ty)).cloned()
             };
             if let Some(elem) = elem {
-                let base = crate::types::list_c_type(&elem);
+                let base = name_of(&elem);
                 // `get` has two C spellings: by value for a `Copy` element,
                 // by pointer for an owned one — which one is decided by the
                 // call's own result type, never by guessing.
@@ -1671,8 +1819,8 @@ impl<'a> Gen<'a> {
                 "%.*s",
                 format!("(int)({value}).len, (const char*)({value}).data"),
             ),
-            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Ref { .. } => {
-                unreachable!("type checker rejects printing unit/struct/list/reference values")
+            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Ref { .. } => {
+                unreachable!("type checker rejects printing unit/struct/list/box/reference values")
             }
         }
     }

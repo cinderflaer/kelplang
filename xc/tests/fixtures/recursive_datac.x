@@ -1,0 +1,38 @@
+// M8: self-recursion through a `List` as well as through a `Box`. A list's
+// buffer holds its elements through a pointer, so `datac Tree(val kids:
+// List<Tree>)` has a finite size too — and two datacs may point at each
+// other as long as every step is indirect.
+datac Tree(val value: i32, val kids: List<Tree>)
+
+datac Leaf(val label: String, val parent: Box<Branch>)
+
+datac Branch(val label: String, val leaf: Box<Leaf>)
+
+fun sum_tree(t: Tree).R: i32 {
+    var total = t.value
+    var i: usize = 0
+    while i < t.kids.len() {
+        total = total + sum_tree(t.kids.get(i))
+        i = i + 1
+    }
+    return total
+}
+
+fun main() {
+    var kids: List<Tree> = List.empty()
+    var deep: List<Tree> = List.empty()
+    deep.push(Tree(value = 100, kids = List.empty()))
+    kids.push(Tree(value = 5, kids = deep))
+    kids.push(Tree(value = 7, kids = List.empty()))
+    val root = Tree(value = 1, kids = kids)
+    print(sum_tree(root))
+    print(root.kids.len())
+    print(root.kids.get(0).kids.get(0).value)
+
+    var b = Branch(label = String.from_str("b1"), leaf = Box.empty())
+    var l = Leaf(label = String.from_str("l1"), parent = Box.of(b))
+    print(l.label)
+    b = Branch(label = String.from_str("b2"), leaf = Box.of(l))
+    print(b.leaf.get().label)
+    print(b.leaf.get().parent.get().label)
+}

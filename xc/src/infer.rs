@@ -240,6 +240,7 @@ impl Ctx {
             aliases: &self.aliases,
             // Every datac is known by the time bodies are checked.
             later_datacs: None,
+            in_progress: None,
         }
     }
 
@@ -273,37 +274,76 @@ struct TypeScope<'a> {
     /// `None` at the sites where every `datac` in the program is already
     /// known (signatures, bodies, passdown types).
     later_datacs: Option<&'a std::collections::HashSet<String>>,
+    /// Qualified name of the `datac` whose fields are being resolved right
+    /// now, if any. A field of that type *by value* is rejected (a
+    /// self-referential struct has no finite size); through a container it
+    /// is allowed, which is how `datac Node(val next: Box<Node>)` works.
+    in_progress: Option<&'a str>,
 }
 
 impl TypeScope<'_> {
-    fn resolve(&self, ty: &ast::TypeExpr) -> Result<Ty> {
-        // The one generic name v1 knows (collections milestone). It is a
-        // compiler builtin, not a user-definable type: `List<T>` is the only
-        // spelling, and its element type is checked to be a type a growable
-        // array can actually hold.
-        if ty.name == "List" {
+    /// A written type name, or a container over one. `indirect` is true
+    /// when the type is being resolved *inside* a `Box`/`List` argument,
+    /// where referring to the `datac` currently being declared (or to a
+    /// `datac` declared later) is legal: both containers hold a pointer, so
+    /// the indirection is what makes a recursive type finite.
+    fn resolve(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        let resolved = self.resolve_base(ty, indirect)?;
+        // A `datac` that contains itself *by value* has no finite size.
+        // Through a container it is fine — that is the whole point of `Box`
+        // and of a list's pointer buffer — so the check is skipped there.
+        if !indirect {
+            if let Some(ip) = self.in_progress {
+                if resolved == Ty::Struct(ip.to_string()) {
+                    return Err(TypeError {
+                        message: format!(
+                            "datac '{ip}' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<{ip}>', or a 'List<{ip}>' for many)"
+                        ),
+                        span: ty.span,
+                    });
+                }
+            }
+        }
+        Ok(resolved)
+    }
+
+    fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // The two generic names v1 knows (`List<T>` from C1, `Box<T>` from
+        // M8). Both are compiler builtins, not user-definable types; each
+        // checks its element against what its C representation can hold.
+        if ty.name == "List" || ty.name == "Box" {
             if ty.args.len() != 1 {
                 return Err(TypeError {
                     message: format!(
-                        "'List' takes exactly 1 type argument, found {}",
+                        "'{}' takes exactly 1 type argument, found {}",
+                        ty.name,
                         ty.args.len()
                     ),
                     span: ty.span,
                 });
             }
-            let elem = self.resolve(&ty.args[0])?;
-            if !crate::types::is_list_element(&elem) {
+            let elem = self.resolve(&ty.args[0], true)?;
+            let (ok, error) = if ty.name == "List" {
+                (crate::types::is_list_element(&elem), list_element_error(&elem))
+            } else {
+                (crate::types::is_box_element(&elem), box_element_error(&elem))
+            };
+            if !ok {
                 return Err(TypeError {
-                    message: list_element_error(&elem),
+                    message: error,
                     span: ty.args[0].span,
                 });
             }
-            return Ok(Ty::List(Box::new(elem)));
+            return Ok(if ty.name == "List" {
+                Ty::List(Box::new(elem))
+            } else {
+                Ty::Box(Box::new(elem))
+            });
         }
         if !ty.args.is_empty() {
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments — v1's only generic type is 'List<T>'",
+                    "'{}' does not take type arguments — the compiler's generic types are 'List<T>' and 'Box<T>'",
                     ty.name
                 ),
                 span: ty.span,
@@ -342,13 +382,22 @@ impl TypeScope<'_> {
             .later_datacs
             .is_some_and(|later| later.contains(&qualified))
         {
-            Err(TypeError {
-                message: format!(
-                    "'{}' is declared after this datac — a datac may only name datacs declared before it (v1 has no forward references between datacs)",
-                    ty.name
-                ),
-                span: ty.span,
-            })
+            // Forward reference. Legal through a container (M8: a pointer is
+            // complete before either `datac` is, so the pair can be
+            // mutually recursive), rejected by value, which is the
+            // infinite-size case and the reason the struct table is built in
+            // declaration order at all.
+            if indirect {
+                Ok(Ty::Struct(qualified))
+            } else {
+                Err(TypeError {
+                    message: format!(
+                        "'{}' is declared after this datac — a datac may only name datacs declared before it by value; behind a 'Box' or 'List' it may name any datac, including itself",
+                        ty.name
+                    ),
+                    span: ty.span,
+                })
+            }
         } else {
             Err(TypeError {
                 message: match qualified_hint(&ty.name, self.structs.keys(), self.aliases) {
@@ -361,7 +410,7 @@ impl TypeScope<'_> {
     }
 
     fn resolve_param(&self, p: &ast::Param) -> Result<Ty> {
-        Ok(implicit_borrow_wrap(self.resolve(&p.ty)?, p.mutable))
+        Ok(implicit_borrow_wrap(self.resolve(&p.ty, false)?, p.mutable))
     }
 
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
@@ -371,7 +420,7 @@ impl TypeScope<'_> {
             amp: false,
             span: r.span,
         };
-        Ok(implicit_borrow_wrap(self.resolve(&te)?, r.mutable))
+        Ok(implicit_borrow_wrap(self.resolve(&te, false)?, r.mutable))
     }
 
     /// A declared return type. This is the one place a borrow *can* be
@@ -379,7 +428,7 @@ impl TypeScope<'_> {
     /// under the elision rule, meaning "a borrow of the first reference
     /// parameter" (see `borrowck.rs`, which enforces exactly that).
     fn resolve_return(&self, ty: &ast::TypeExpr) -> Result<Ty> {
-        let base = self.resolve(ty)?;
+        let base = self.resolve(ty, false)?;
         if ty.amp {
             Ok(Ty::Ref {
                 mutable: false,
@@ -556,6 +605,7 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         Ty::Bytes => Some("Bytes"),
         Ty::String => Some("String"),
         Ty::List(_) => Some("List"),
+        Ty::Box(_) => Some("Box"),
         // An owned parameter is a borrow (M4's rule: every owned parameter is
         // borrowed), so `b.len()` on one arrives here as `&Bytes`/`&String`.
         Ty::Ref { inner, .. } => builtin_type_name(inner),
@@ -563,22 +613,46 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
     }
 }
 
+/// Why a type cannot be a container element: a borrow (or the `str` view
+/// that is the same thing) would outlive the value it points at, and v1 has
+/// no lifetime syntax to say otherwise.
+fn borrowed_element_reason(ty: &Ty) -> Option<String> {
+    Some(match ty {
+        Ty::Str => "'str' is a borrowed view".to_string(),
+        Ty::Ref { mutable, inner } => format!(
+            "'{}' is a borrow",
+            Ty::Ref { mutable: *mutable, inner: inner.clone() }.display()
+        ),
+        Ty::Unit => "'unit' is not a value".to_string(),
+        _ => return None,
+    })
+}
+
 /// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
 /// type position and `List.of(x)` give the same explanation.
 fn list_element_error(ty: &Ty) -> String {
-    let what = match ty {
-        Ty::Str => "'str' is a borrowed view".to_string(),
-        Ty::Ref { mutable, inner } => {
-            format!(
-                "'{}' is a borrow",
-                Ty::Ref { mutable: *mutable, inner: inner.clone() }.display()
-            )
-        }
-        Ty::Unit => "'unit' is not a value".to_string(),
-        other => format!("'{}' is not", other.display()),
-    };
+    if let Some(reason) = borrowed_element_reason(ty) {
+        return format!(
+            "{reason} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+        );
+    }
     format!(
-        "{what} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+        "'{}' cannot be a 'List' element in v1 — a list's buffer holds its elements inline, so a nested container is not expressible; use a scalar, 'String', 'Bytes', or a 'datac' (or put the list in a 'Box')",
+        ty.display()
+    )
+}
+
+/// The same for a `Box<T>` element, which may be a container: a box holds a
+/// pointer, so `Box<List<i32>>` and `Box<Box<i32>>` are both fine.
+fn box_element_error(ty: &Ty) -> String {
+    if let Some(reason) = borrowed_element_reason(ty) {
+        return format!(
+            "{reason} — a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another 'Box'/'List'"
+        );
+    }
+    format!(
+        "'{}' cannot be a 'Box' element — use a scalar, 'String', 'Bytes', a 'datac', a 'List', or another 'Box'",
+        ty.display()
     )
 }
 
@@ -592,6 +666,42 @@ fn list_element_error(ty: &Ty) -> String {
 /// - `push`/`set`/`pop` take and give the element by value, which is where a
 ///   move in or out of the list happens (M3's move tracking runs on the
 ///   ordinary call-argument path, so no new borrow rules were needed).
+fn container_sig(key: &str, elem: &Ty) -> Option<FnSig> {
+    if key.starts_with("List#") {
+        list_sig(key, elem)
+    } else {
+        box_sig(key, elem)
+    }
+}
+
+/// The `Box<T>` builtins (M8), instantiated for one element type. A box
+/// holds one value or nothing at all, which is what makes a recursive type
+/// expressible; `take` is how a value moves back out, and `get` borrows the
+/// value in place.
+fn box_sig(key: &str, elem: &Ty) -> Option<FnSig> {
+    let boxed = Ty::Box(Box::new(elem.clone()));
+    let shared = Ty::Ref { mutable: false, inner: Box::new(boxed.clone()) };
+    let exclusive = Ty::Ref { mutable: true, inner: Box::new(boxed.clone()) };
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
+    Some(match key {
+        "Box#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
+        "Box#get" => FnSig {
+            params: vec![p("self", shared)],
+            ret: if elem.is_copy() { elem.clone() } else { elem_ref },
+        },
+        "Box#set" => FnSig {
+            params: vec![p("self", exclusive), p("v", elem.clone())],
+            ret: Ty::Unit,
+        },
+        "Box#take" => FnSig {
+            params: vec![p("self", exclusive)],
+            ret: elem.clone(),
+        },
+        _ => return None,
+    })
+}
+
 fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
     let list = Ty::List(Box::new(elem.clone()));
     let shared = Ty::Ref { mutable: false, inner: Box::new(list.clone()) };
@@ -648,11 +758,11 @@ pub fn is_ref_param(ty: &Ty) -> bool {
 
 /// The elided borrow root for a builtin method, if it returns a borrow.
 pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
-    // `List#get` on an owned element type returns a borrow of the list
-    // itself — the first parameter, like every builtin method's `self`.
-    // (For a `Copy` element the type checker never asks, since the call's
-    // result is not a borrow; see `borrowck::check_call`.)
-    if key == "List#get" {
+    // `List#get`/`Box#get` on an owned element type return a borrow of the
+    // container itself — the first parameter, like every builtin method's
+    // `self`. (For a `Copy` element the type checker never asks, since the
+    // call's result is not a borrow; see `borrowck::check_call`.)
+    if key == "List#get" || key == "Box#get" {
         return Some(Some(0));
     }
     let b = BUILTINS.get(key)?;
@@ -723,8 +833,9 @@ fn collect_consts(
             prefix,
             aliases: &aliases,
             later_datacs: None,
+            in_progress: None,
         }
-        .resolve(&decl.ty)
+        .resolve(&decl.ty, false)
         .map_err(|e| e.in_module(&decl.module))?;
         if out.contains_key(&decl.name) {
             return Err(Diagnostic::new(
@@ -976,6 +1087,19 @@ pub fn check_program(
         }
         let prefix = project.prefix_of(&d.module);
         let aliases = project.alias_prefixes_of(&d.module);
+        // A datac is visible *inside itself* (M8): the entry is a placeholder
+        // whose fields are filled in below, which is all `resolve` needs to
+        // name the type. A field of it by value is then rejected as an
+        // infinite size (`TypeScope::in_progress`); behind a `Box` or a
+        // `List` it is the recursive type the milestone is for.
+        structs.insert(
+            d.name.clone(),
+            StructDef {
+                name: d.name.clone(),
+                fields: Vec::new(),
+            },
+        );
+        let in_progress = Some(d.name.clone());
         let mut fields = Vec::new();
         for f in &d.fields {
             if fields.iter().any(|fd: &FieldDef| fd.name == f.name) {
@@ -990,8 +1114,9 @@ pub fn check_program(
                 prefix,
                 aliases: &aliases,
                 later_datacs: Some(&later_datacs),
+                in_progress: in_progress.as_deref(),
             }
-            .resolve(&f.ty)
+            .resolve(&f.ty, false)
             .map_err(|e| e.in_module(&d.module))?;
             // An owned field (`Bytes`, `String`, or a `datac` holding one) is
             // allowed from M6.2 on: `codegen_c.rs` generates a drop function
@@ -1014,6 +1139,9 @@ pub fn check_program(
             });
         }
         struct_order.push(d.name.clone());
+        // Replaces the placeholder with the real definition. Order is kept
+        // (same key, same position in `struct_order`), so codegen's emission
+        // order is unchanged.
         structs.insert(
             d.name.clone(),
             StructDef {
@@ -1053,6 +1181,7 @@ pub fn check_program(
             prefix,
             aliases: &aliases,
             later_datacs: None,
+            in_progress: None,
         };
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
@@ -1261,8 +1390,9 @@ fn collect_pds(
                 prefix,
                 aliases: &aliases,
                 later_datacs: None,
+                in_progress: None,
             }
-            .resolve(t)
+            .resolve(t, false)
             .map_err(|e| e.in_module(&decl.module))?,
             None => {
                 // Type-only probe: the initializer is checked again for real
@@ -1585,7 +1715,7 @@ fn scan_pd_uses(
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
-    } else if matches!(base, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_)) {
+    } else if matches!(base, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_)) {
         Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
         base
@@ -1675,6 +1805,15 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
             match &info.ty {
                 Ty::Ref { mutable, .. } => {
                     if *mutable {
+                        Ok(())
+                    } else if info.mutable {
+                        // Reassigning a `var` that *holds* a shared borrow
+                        // rebinds the pointer; it does not write through it,
+                        // so it needs no exclusivity. This is what makes a
+                        // cursor over a borrowed structure expressible
+                        // (`var cur = list` ... `cur = cur.next.get()`), which
+                        // a recursive type needs before it can be walked
+                        // iteratively (M8).
                         Ok(())
                     } else {
                         Err(TypeError {
@@ -1893,7 +2032,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
             ..
         } => {
             let expected = match ty {
-                Some(t) => Some(ctx.type_scope().resolve(t)?),
+                Some(t) => Some(ctx.type_scope().resolve(t, false)?),
                 None => None,
             };
             let init = check_expr(init, ctx, expected.as_ref())?;
@@ -2891,8 +3030,8 @@ fn check_method_call(
     // through to the ordinary method path below.
     if let ast::Expr::Ident(name, _) = receiver {
         if ctx.lookup(name).is_none() && !is_module_alias(name, ctx) {
-            if name == "List" {
-                return check_list_associated(method, args, span, ctx, expected);
+            if name == "List" || name == "Box" {
+                return check_container_associated(name, method, args, span, ctx, expected);
             }
             let key = format!("{name}#{method}");
             if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
@@ -2923,20 +3062,26 @@ fn check_method_call(
         });
     };
     let key = format!("{owner}#{method}");
-    let list_elem = crate::types::list_elem_of(&probe.ty).cloned();
+    let container_elem = crate::types::list_elem_of(&probe.ty)
+        .or_else(|| crate::types::box_elem_of(&probe.ty))
+        .cloned();
     let sig = ctx
         .sigs
         .get(&key)
         .cloned()
-        .or_else(|| list_elem.as_ref().and_then(|e| list_sig(&key, e)))
+        .or_else(|| container_elem.as_ref().and_then(|e| container_sig(&key, e)))
         .or_else(|| builtin_sig(&key))
         .ok_or_else(|| TypeError {
-            message: match &list_elem {
-                Some(e) => format!(
+            message: match (&container_elem, owner.as_str()) {
+                (Some(e), "List") => format!(
                     "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear",
                     e.display()
                 ),
-                None => format!("datac '{owner}' has no method '{method}'"),
+                (Some(e), _) => format!(
+                    "Box<{}> has no method '{method}' — the Box surface is is_empty, get, set, take",
+                    e.display()
+                ),
+                (None, _) => format!("datac '{owner}' has no method '{method}'"),
             },
             span,
         })?;
@@ -2958,62 +3103,96 @@ fn check_method_call(
     })
 }
 
-/// `List.of(x)` and `List.empty()`, plus the diagnostic for anything else
-/// written on the type name (`List<nothing>` is how an element type would be
-/// spelled in a type position, not in an expression, and the two
-/// constructors cover every way a list can start).
-fn check_list_associated(
+/// The associated constructors of the two builtin containers, written on
+/// the type name: `List.of(x)`/`List.empty()` and `Box.of(x)`/
+/// `Box.empty()`. Both need the element type from somewhere — `of` takes it
+/// from its argument (or from the binding's written type, which is what
+/// `expected` is for), `empty` only from the written type.
+fn check_container_associated(
+    container: &str,
     method: &str,
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
-    let expected_elem = expected.and_then(crate::types::list_elem_of).cloned();
+    let expected_elem = expected
+        .and_then(|t| {
+            if container == "List" {
+                crate::types::list_elem_of(t)
+            } else {
+                crate::types::box_elem_of(t)
+            }
+        })
+        .cloned();
+    let wrap = |elem: Ty| {
+        if container == "List" {
+            Ty::List(Box::new(elem))
+        } else {
+            Ty::Box(Box::new(elem))
+        }
+    };
+    let key = format!("{container}#{method}");
     match method {
         "empty" => {
             if !args.is_empty() {
                 return Err(TypeError {
-                    message: format!("'List.empty' takes no arguments, found {}", args.len()),
+                    message: format!("'{container}.empty' takes no arguments, found {}", args.len()),
                     span,
                 });
             }
             let Some(elem) = expected_elem else {
                 return Err(TypeError {
-                    message: "cannot tell what 'List.empty()' holds — write the element type on the binding ('var xs: List<String> = List.empty()') or start from 'List.of(x)'".to_string(),
+                    message: format!(
+                        "cannot tell what '{container}.empty()' holds — write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
+                    ),
                     span,
                 });
             };
             Ok(tir::Expr {
-                kind: tir::ExprKind::Call { callee: "List#empty".to_string(), args: vec![] },
-                ty: Ty::List(Box::new(elem)),
+                kind: tir::ExprKind::Call { callee: key, args: vec![] },
+                ty: wrap(elem),
                 span,
             })
         }
         "of" => {
             if args.len() != 1 {
                 return Err(TypeError {
-                    message: format!("'List.of' takes exactly 1 argument, found {}", args.len()),
+                    message: format!("'{container}.of' takes exactly 1 argument, found {}", args.len()),
                     span,
                 });
             }
             let value = check_expr(&args[0].value, ctx, expected_elem.as_ref())?;
-            if !crate::types::is_list_element(&value.ty) {
+            let allowed = if container == "List" {
+                crate::types::is_list_element(&value.ty)
+            } else {
+                crate::types::is_box_element(&value.ty)
+            };
+            if !allowed {
                 return Err(TypeError {
-                    message: list_element_error(&value.ty),
+                    message: if container == "List" {
+                        list_element_error(&value.ty)
+                    } else {
+                        box_element_error(&value.ty)
+                    },
                     span: args[0].value.span(),
                 });
             }
             let elem = value.ty.clone();
             Ok(tir::Expr {
-                kind: tir::ExprKind::Call { callee: "List#of".to_string(), args: vec![value] },
-                ty: Ty::List(Box::new(elem)),
+                kind: tir::ExprKind::Call { callee: key, args: vec![value] },
+                ty: wrap(elem),
                 span,
             })
         }
         other => Err(TypeError {
             message: format!(
-                "'List.{other}' is not a List operation — write 'List.of(x)' for a one-element list, 'List.empty()' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
+                "'{container}.{other}' is not a {container} operation — write '{container}.of(x)' for a one-value {container}, '{container}.empty()' with the element type on the binding, or call a method on a value ({})",
+                if container == "List" {
+                    "'xs.push(x)', 'xs.get(i)', 'xs.len()'"
+                } else {
+                    "'b.get()', 'b.set(v)', 'b.take()', 'b.is_empty()'"
+                }
             ),
             span,
         }),

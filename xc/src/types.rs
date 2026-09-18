@@ -37,6 +37,14 @@ pub enum Ty {
     /// struct plus one set of functions per element type actually used (see
     /// `codegen_c.rs::write_list`).
     List(Box<Ty>),
+    /// The builtin owning pointer (M8): `Box<T>` holds one `T` on the heap,
+    /// or nothing at all (`Box.empty()`), which is what makes a recursive
+    /// `datac` expressible — `datac Node(val next: Box<Node>)` would be
+    /// infinitely sized by value, and a pointer is the only way out.
+    /// Non-`Copy`; dropping it drops the value it holds and frees the box.
+    /// Like `List`, monomorphized: one C struct plus one function set per
+    /// element type actually used.
+    Box(Box<Ty>),
     /// A borrow of a value of type `inner` — shared (`mutable: false`) or
     /// exclusive (`mutable: true`). Never appears as a function's declared
     /// return type in M4 (no surface syntax produces one there — see
@@ -75,7 +83,7 @@ impl Ty {
     /// kinds of thing that own heap memory: a `datac` and the builtin
     /// `Bytes`/`String`. Reading a non-`Copy` value as a whole moves it (M3).
     pub fn is_copy(&self) -> bool {
-        !matches!(self, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_))
+        !matches!(self, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_))
     }
 
     /// Whether this type *itself* owns heap memory, ignoring whether a
@@ -83,7 +91,7 @@ impl Ty {
     /// available — a `datac` with an owned field owns memory too, and out of
     /// context `Ty::Struct(_)` cannot know that.
     pub fn owns_heap(&self) -> bool {
-        matches!(self, Ty::Bytes | Ty::String | Ty::List(_))
+        matches!(self, Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_))
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -132,6 +140,7 @@ impl Ty {
             Ty::Bytes => "x_Bytes".to_string(),
             Ty::String => "x_String".to_string(),
             Ty::List(elem) => list_c_type(elem),
+            Ty::Box(elem) => box_c_type(elem),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -168,6 +177,7 @@ impl Ty {
             Ty::String => "String".to_string(),
             Ty::Struct(name) => name.clone(),
             Ty::List(elem) => format!("List<{}>", elem.display()),
+            Ty::Box(elem) => format!("Box<{}>", elem.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
         }
@@ -204,7 +214,8 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Bytes => "x_bytes_drop".to_string(),
         Ty::String => "x_string_drop".to_string(),
         Ty::Struct(name) => format!("x_drop_{}", c_ident(name)),
-        Ty::List(elem) => format!("x_list_drop__{}", list_elem_ident(elem)),
+        Ty::List(elem) => format!("x_list_drop__{}", ty_mangle(elem)),
+        Ty::Box(elem) => format!("x_box_drop__{}", ty_mangle(elem)),
         other => unreachable!("no drop rule for type '{}'", other.display()),
     }
 }
@@ -214,41 +225,96 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 /// syntax to say otherwise), and neither can `str` (the same borrowed view)
 /// or `unit`. Everything else — the scalars, `String`, `Bytes`, and a
 /// `datac` — has a plain C representation that a growable array can hold.
+/// A `Box<T>` is *not* one: keeping list elements pointer-free is what lets
+/// the list's C struct be emitted before the `datac`s (see
+/// `codegen_c.rs`), and a `List<Box<T>>` has no use a `Box<List<T>>` or a
+/// plain `List<T>` does not cover.
 pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
+        Ty::Ref { .. } | Ty::Str | Ty::Unit | Ty::List(_) | Ty::Box(_) => false,
+        other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
+    }
+}
+
+/// Whether `ty` may be a `Box<T>` element. A box holds a *pointer*, so the
+/// element may be anything with a size — including another container and,
+/// crucially, the `datac` the box is a field of (that is how a recursive
+/// type is written). A borrow or a `str` view is still refused: a box
+/// outlives the borrow it was made from, and there is nowhere to put that
+/// lifetime.
+pub fn is_box_element(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) => true,
         Ty::Ref { .. } | Ty::Str | Ty::Unit => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
 }
 
-/// The C name fragment for a `List<T>`'s element type: `List<i32>` becomes
-/// `x_List__i32`, `List<shapes.circle.Circle>` becomes
-/// `x_List__shapes__circle__Circle` (through the same `c_ident` mangling
-/// every other generated symbol uses).
-pub fn list_elem_ident(elem: &Ty) -> String {
-    match elem {
+/// The C name fragment for a container's element type: `List<i32>` becomes
+/// `i32`, `List<shapes.circle.Circle>` becomes `shapes__circle__Circle`
+/// (through the same `c_ident` mangling every other generated symbol uses),
+/// and a nested container nests the fragment (`Box<List<i32>>` becomes
+/// `Box__List__i32`). One function for both containers, so a name can never
+/// collide between them and a nested one cannot produce an invalid C
+/// identifier.
+pub fn ty_mangle(ty: &Ty) -> String {
+    match ty {
         Ty::Struct(name) => c_ident(name),
         Ty::Bytes => "Bytes".to_string(),
         Ty::String => "String".to_string(),
+        Ty::List(elem) => format!("List__{}", ty_mangle(elem)),
+        Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
         other => other.display().replace('&', "ref"),
     }
 }
 
 /// The generated C struct tag for `List<T>`.
 pub fn list_c_type(elem: &Ty) -> String {
-    format!("x_List__{}", list_elem_ident(elem))
+    format!("x_List__{}", ty_mangle(elem))
 }
 
-/// The `List<T>` behind an expression's type, looking through a borrow —
-/// `l.push(x)` and `l.len()` both arrive with the receiver typed `&List<T>`
-/// (a `List` parameter is a borrow, and a method receiver is auto-borrowed).
+/// The generated C struct tag for `Box<T>`.
+pub fn box_c_type(elem: &Ty) -> String {
+    format!("x_Box__{}", ty_mangle(elem))
+}
+
+/// The `List<T>` or `Box<T>` behind an expression's type, looking through a
+/// borrow — `l.push(x)` and `b.get()` both arrive with the receiver typed
+/// `&List<T>`/`&Box<T>` (a container parameter is a borrow, and a method
+/// receiver is auto-borrowed).
 pub fn list_elem_of(ty: &Ty) -> Option<&Ty> {
     match ty {
         Ty::List(elem) => Some(elem),
         Ty::Ref { inner, .. } => list_elem_of(inner),
         _ => None,
     }
+}
+
+/// As `list_elem_of`, for `Box<T>`.
+pub fn box_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Box(elem) => Some(elem),
+        Ty::Ref { inner, .. } => box_elem_of(inner),
+        _ => None,
+    }
+}
+
+/// The C spelling of an element type *inside a container's own typedef*.
+/// A container is emitted before the `datac`s (its buffer is a pointer), so
+/// a `datac` element is named by its forward-declared struct tag rather than
+/// by its typedef name; every other element is named as usual.
+pub fn container_elem_c_type(elem: &Ty) -> String {
+    match elem {
+        Ty::Struct(name) => format!("struct tag_{}", c_ident(name)),
+        other => other.c_type(),
+    }
+}
+
+/// The C struct tag for a `datac`, so a container can point at a struct
+/// whose body has not been emitted yet (`Box<Node>` inside `Node` itself).
+pub fn struct_tag(name: &str) -> String {
+    format!("tag_{}", c_ident(name))
 }
 
 /// Mangles an `.x` top-level name into a valid C identifier.

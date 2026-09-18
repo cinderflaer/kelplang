@@ -855,7 +855,25 @@ fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut 
 fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &expr.kind {
         tir::ExprKind::Ident(name) => ctx.use_value_moving(name, expr.span),
-        tir::ExprKind::FieldAccess { base, .. } => check_place(base, ctx),
+        tir::ExprKind::FieldAccess { base, field } => {
+            check_place(base, ctx)?;
+            // A field read is a *place*, and v1 has no partial moves: reading
+            // an owned field as a whole value would hand out a second owner of
+            // the same buffer (M6/C1 allowed it; the copy is shallow, so
+            // mutating the field afterwards left the copy dangling — a real
+            // heap-use-after-free, pinned by `owned_field_read.x`). Borrow it
+            // instead, which covers passing it to a parameter and calling a
+            // method on it, or hold it in a `Box` and `take()` it.
+            if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
+                return Err(BorrowError {
+                    message: format!(
+                        "cannot read the owned field '{field}' by value: v1 has no partial moves, so this would give two owners of the same buffer — use it through a borrow (pass it to a parameter, call a method on it) or hold it in a 'Box' and 'take()' it"
+                    ),
+                    span: expr.span,
+                });
+            }
+            Ok(())
+        }
         tir::ExprKind::IntLit(_) | tir::ExprKind::FloatLit(_) | tir::ExprKind::StringLit(_) | tir::ExprKind::BoolLit(_) => Ok(()),
         tir::ExprKind::Unary { expr: sub, .. } => check_value(sub, ctx),
         tir::ExprKind::Binary { lhs, rhs, .. } => {
@@ -879,6 +897,17 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         }
         tir::ExprKind::Assign { target, value } => {
             check_value(value, ctx)?;
+            // Read *before* `check_assign_target` reinitializes the binding:
+            // `x = f(x)`, where `f` takes its argument by value, moved x into
+            // the call, so the value is not there to be freed any more and
+            // dropping it would free memory a new owner now holds.
+            let moved_by_value = match &target.kind {
+                tir::ExprKind::Ident(name) => ctx
+                    .lookup_mut(name)
+                    .map(|state| state.moved_at.is_some())
+                    .unwrap_or(false),
+                _ => false,
+            };
             check_assign_target(target, ctx)?;
             // Assigning a fresh value into an owned binding frees the old one
             // (it has no other owner and v1 has no user destructors, so
@@ -894,7 +923,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                 let owned = target_ty
                     .map(|ty| crate::types::needs_drop(&ty, &owned))
                     .unwrap_or(false);
-                if owned && !self_assign {
+                if owned && !self_assign && !moved_by_value {
                     ctx.plan.at_assign.insert(
                         expr.span,
                         vec![DropTarget {
