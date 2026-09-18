@@ -1,0 +1,7 @@
+// A-4: `&T` is already a copy of a borrow, so `move &String` means nothing.
+fun consume(s: move &String) {
+}
+
+fun main() {
+    print(1)
+}

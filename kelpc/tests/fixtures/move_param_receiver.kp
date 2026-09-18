@@ -1,0 +1,11 @@
+// A-4: a receiver is always borrowed. A method that took its receiver by
+// value would destroy the caller's value at a call that reads like one.
+datac Counter(val n: i32)
+
+fun move Counter.bump() {
+    print(n)
+}
+
+fun main() {
+    print(1)
+}

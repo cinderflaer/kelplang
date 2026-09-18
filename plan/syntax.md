@@ -110,7 +110,7 @@ Inside `(` `)` newlines are insignificant, which is what lets a field list or an
 An identifier starts with a letter or `_`. These words are keywords:
 
 ```
-as  const  datac  else  enum  extern  false  fun  if  impl  mut
+as  const  datac  else  enum  extern  false  fun  if  impl  move  mut
 pd  return  true  val  var  when  while
 ```
 
@@ -402,7 +402,7 @@ fun abs_diff(a: i32, b: i32).R: i32 {         // block body
 - The return type is written `.R: T` after the parameter list. `.R` marks "this returns"; there is no `->` return marker, no trailing type, and no inferred return type for block bodies.
 - No `.R` means `Unit`.
 - An expression body (`= expr`) requires `.R: T`; a block body may end with `return expr`.
-- Parameters are `name: T`. A parameter is a shared borrow of its argument. `name: mut T` is an exclusive borrow, which is the only spelling for mutation in parameter position: `&mut T` there is a parse error.
+- Parameters are `name: T`. A parameter is a shared borrow of its argument. `name: mut T` is an exclusive borrow, which is the only spelling for mutation in parameter position: `&mut T` there is a parse error. `name: move T` takes ownership: the call site moves the argument in, and the callee frees it when its scope ends (10.1). `mut` and `move` are mutually exclusive, `move` is refused on a `str` or a `&T`, and a receiver is always borrowed — there is no `fun move Type.name()`.
 - Named arguments are allowed at any call site when there is more than one parameter, and are matched by name first, then positionally:
 
 ```kelp
@@ -639,6 +639,18 @@ val name = String.from_str("bob")
 greet(name)
 print(name)               // still owned here
 ```
+
+`move T` is the parameter form that *does* take the value (A-4). The call site moves the argument in, exactly as `val b = a` does, and the callee owns it from then on: it may move it again, return it, or drop it at the end of its scope.
+
+```kelp
+fun consume(s: move String).R: usize = s.len()
+
+val a = String.from_str("bob")
+print(consume(a))
+print(a)                  // error: use of moved value 'a'
+```
+
+A temporary is already an owner, so `consume(String.from_str("bob"))` needs no binding. A *borrow* cannot be moved out of — `fun forward(s: String).R: usize = consume(s)` is a compile error, because `s` belongs to the caller — and an owned field cannot be moved out of a borrowed structure either (9.1). The way out of a value that is behind a borrow is `Box.take()`.
 
 An assignment to an existing `var` moves the new value in and frees the old value, which is how a loop can rebuild a recursive structure:
 
@@ -1262,7 +1274,7 @@ fun unwrap<T>(o: &Option<T>).R: T                   // `T` must be Copy; panics 
 
 The enum is the point: `Some`/`None` is one of the two shapes `?` (5) and `if let` (6.1) understand, so a function that can fail one way returns `Option<T>` and its caller writes `val x = f(...)?`. Nothing in the compiler knows this module exists — the *shape* is the contract, so a program's own `Option` works identically.
 
-`unwrap_or` and `unwrap` are offered for a `Copy` payload, because the payload comes out of a borrow and v1 has neither a move-taking parameter nor a clone: `Option<String>.unwrap()` is a compile error saying so, and `if let`/`when` is what reads an owned payload through the borrow. `map`/`and_then`/`or_else` need function values and do not exist yet.
+`unwrap_or` and `unwrap` are offered for a `Copy` payload, because the payload comes out of a *borrow* and v1 has no partial moves: `Option<String>.unwrap()` is a compile error saying so. A `move` parameter (7.1) does not lift that by itself — the payload would still have to be moved out of the enum, and `when`/`if let` binds a payload as a borrow — so `if let`/`when` is what reads an owned payload out of the borrow. `map`/`and_then`/`or_else` need function values and do not exist yet.
 
 ### 16.14 `std/result`
 
@@ -1316,6 +1328,10 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding |
 | `argument 'b' has type 'String', expected 'str'` | add `.as_str()` |
+| `argument 's' has type '&String', but this call moves its argument in` | the callee is a `move T` parameter (or a container's `push`-shaped builtin): a borrow cannot be moved out of, so pass an owned value — `Box.take()` moves one out of a box |
+| `'move' cannot be written on the borrowed type 'str'` | a `str`/`&T` is already borrowed, so there is nothing to own: write the owned type (`move String`) |
+| `'mut' and 'move' cannot be combined on one parameter` | `mut T` is an exclusive borrow, `move T` takes ownership — pick the one the callee needs |
+| `'move' cannot be written on a receiver` | a receiver is always borrowed; a move-taking parameter is `name: move T` |
 | `a string template can only be printed` | a template is not a value; build the text with `str.concat` or a `String` |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
@@ -1380,7 +1396,7 @@ typeparams   := "<" ident ("," ident)* ">"
 typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
 fun          := [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
-param        := ident ":" [ "mut" ] type
+param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
 type         := [ "&" ] ident [ "<" type ("," type)* ">" ] [ "." ident ]

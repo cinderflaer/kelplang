@@ -457,7 +457,16 @@ impl Parser {
         // A receiver-form decl is `fun [mut] Type.name(...)`; a plain one
         // is `fun name(...)`. `mut` here can only ever start a receiver
         // (free functions never write `fun mut name(...)`), so seeing it
-        // commits to that form.
+        // commits to that form. `move` never belongs here: a method that
+        // took its receiver by value would destroy the caller's value at a
+        // call that looks like a read (`c.total()`), so the spelling is
+        // refused with the parameter form named instead (A-4).
+        if self.check(&TokenKind::Move) {
+            return Err(ParseError {
+                message: "'move' cannot be written on a receiver — a method always borrows its receiver; a move-taking parameter is written 'name: move T'".to_string(),
+                span: self.peek().span,
+            });
+        }
         let receiver_mutable = if self.check(&TokenKind::Mut) {
             self.advance();
             true
@@ -497,21 +506,41 @@ impl Parser {
         while !self.check(&TokenKind::RParen) {
             let (pname, pspan) = self.expect_ident()?;
             self.expect(TokenKind::Colon, "':'")?;
-            // `mut T` requests an exclusive borrow; this is the *only*
-            // spelling in parameter position — `&mut T` is rejected here
-            // (the leading `&` in `parse_type` expects an identifier next,
-            // not the `mut` keyword token), `&mut` stays expression-only.
-            let mutable = if self.check(&TokenKind::Mut) {
-                self.advance();
-                true
-            } else {
-                false
-            };
+            // `mut T` requests an exclusive borrow and `move T` takes
+            // ownership (A-4); this is the *only* spelling for either in
+            // parameter position — `&mut T` is rejected here (the leading
+            // `&` in `parse_type` expects an identifier next, not the `mut`
+            // keyword token), and `&`/`mut` stay expression-only. The two
+            // qualifiers are mutually exclusive: one says "I write through
+            // your value", the other "I now own it".
+            let mut mutable = false;
+            let mut move_ = false;
+            loop {
+                if !mutable && self.check(&TokenKind::Mut) {
+                    self.advance();
+                    mutable = true;
+                    continue;
+                }
+                if !move_ && self.check(&TokenKind::Move) {
+                    let mspan = self.peek().span;
+                    if mutable {
+                        return Err(ParseError {
+                            message: "'mut' and 'move' cannot be combined on one parameter — 'mut T' is an exclusive borrow, 'move T' takes ownership".to_string(),
+                            span: mspan,
+                        });
+                    }
+                    self.advance();
+                    move_ = true;
+                    continue;
+                }
+                break;
+            }
             let ty = self.parse_type()?;
             params.push(Param {
                 name: pname,
                 ty,
                 mutable,
+                move_,
                 span: pspan,
             });
             if self.check(&TokenKind::Comma) {
@@ -1814,6 +1843,23 @@ mod tests {
         let p = parse("fun f(s: &str).R: &str = s");
         assert_eq!(p.functions[0].params[0].ty.name, "str");
         assert_eq!(p.functions[0].return_type.as_ref().unwrap().name, "str");
+    }
+
+    #[test]
+    fn parses_a_move_parameter() {
+        let p = parse("fun consume(s: move String).R: usize = s.len()");
+        let param = &p.functions[0].params[0];
+        assert!(param.move_);
+        assert!(!param.mutable);
+        assert_eq!(param.ty.name, "String");
+    }
+
+    #[test]
+    fn rejects_move_combined_with_mut_or_a_receiver() {
+        // One parameter cannot both borrow exclusively and take ownership.
+        parse_err("fun f(s: mut move String) {}");
+        // `move` is a parameter qualifier, never a receiver one.
+        parse_err("fun move Counter.bump() {}");
     }
 
     #[test]

@@ -72,6 +72,29 @@ fn assert_rejected(source: &str) {
     );
 }
 
+/// Asserts that `kelpc build` rejects `source`, and that the diagnostic
+/// mentions `needle` — so a fixture cannot pass for the wrong reason.
+fn assert_rejected_with(source: &str, needle: &str) {
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let build = Command::new(kelpc_bin())
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected '{source}' to be rejected by the compiler, but it built successfully"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains(needle),
+        "expected the error for '{source}' to mention '{needle}', got:\n{stderr}"
+    );
+}
+
 #[test]
 fn hello_prints_greeting() {
     assert_compiles_and_runs("../examples/hello.kp", "hello, world\n");
@@ -1193,6 +1216,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "if_let_basic",
         "try_operator",
         "stdlib_option_result",
+        // A-4: a `move T` parameter owns what it is handed, so each buffer is
+        // freed exactly once by whichever function owns it at scope exit.
+        "move_param",
+        "move_param_return",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2405,4 +2432,72 @@ fn generic_type_misuse_is_rejected() {
     ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }
+}
+
+// ---------------------------------------------------------------------------
+// A-4 phase A: `move T` — a parameter that takes ownership of its argument.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_move_parameter_takes_ownership_of_its_argument() {
+    // Also in the AddressSanitizer list: every buffer here is freed exactly
+    // once, by whichever function owns it when the scope ends.
+    assert_compiles_and_runs("tests/fixtures/move_param.kp", "5\n4\n7\n4\n4\n2\n");
+}
+
+#[test]
+fn a_moved_parameter_is_dropped_on_every_path_out() {
+    // The tail, an early `return`, and a `return` inside a loop. Also in the
+    // AddressSanitizer list, so a missed drop is a leak.
+    assert_compiles_and_runs(
+        "tests/fixtures/move_param_return.kp",
+        "4\ntrue\n3\nlong\n5\n",
+    );
+}
+
+#[test]
+fn using_a_moved_argument_again_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/move_param_use_after.kp",
+        "use of moved value 'a'",
+    );
+    // The same rule one iteration later: the second turn of the loop has
+    // nothing left to move.
+    assert_rejected_with(
+        "tests/fixtures/move_param_loop.kp",
+        "use of moved value 'a'",
+    );
+}
+
+#[test]
+fn moving_out_of_a_borrow_is_rejected() {
+    // The callee's own `&String` parameter cannot be handed to a `move
+    // String` parameter: the borrow is not an owner.
+    assert_rejected_with(
+        "tests/fixtures/move_param_borrow_arg.kp",
+        "this call moves its argument in, and a borrow cannot be moved out of",
+    );
+}
+
+#[test]
+fn move_parameter_misuse_is_rejected() {
+    // `str` and `&T` are already borrowed, so there is nothing to own.
+    assert_rejected_with(
+        "tests/fixtures/move_param_str.kp",
+        "'move' cannot be written on the borrowed type 'str'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/move_param_ref.kp",
+        "'move' cannot be written on the borrowed type '&String'",
+    );
+    // One parameter cannot both borrow exclusively and take ownership.
+    assert_rejected_with(
+        "tests/fixtures/move_param_mut_conflict.kp",
+        "'mut' and 'move' cannot be combined on one parameter",
+    );
+    // A receiver is always borrowed.
+    assert_rejected_with(
+        "tests/fixtures/move_param_receiver.kp",
+        "'move' cannot be written on a receiver",
+    );
 }

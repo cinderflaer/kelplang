@@ -875,7 +875,35 @@ impl TypeScope<'_> {
     }
 
     fn resolve_param(&self, p: &ast::Param) -> Result<Ty> {
+        if p.move_ {
+            return self.resolve_move_param(p);
+        }
         Ok(implicit_borrow_wrap(self.resolve(&p.ty, false)?, p.mutable))
+    }
+
+    /// The type of a `move T` parameter, with the two spellings that have
+    /// nothing to hand over refused: a `str` is already a borrowed view, and
+    /// `&T` is already a copy of a borrow. Either would read as an ownership
+    /// transfer and mean nothing.
+    fn resolve_move_param(&self, p: &ast::Param) -> Result<Ty> {
+        let base = self.resolve(&p.ty, false)?;
+        if p.ty.amp || matches!(base, Ty::Str | Ty::Ref { .. }) {
+            // `TypeExpr::display` prints only the name, so an explicit `&`
+            // has to be put back for the diagnostic to quote what was
+            // written.
+            let written = if p.ty.amp {
+                format!("&{}", p.ty.display())
+            } else {
+                p.ty.display()
+            };
+            return Err(TypeError {
+                message: format!(
+                    "'move' cannot be written on the borrowed type '{written}' — a 'str' is already a borrowed view and '&T' is already a copy of a borrow, so there is nothing to take ownership of; write the owned type instead ('move String')"
+                ),
+                span: p.ty.span,
+            });
+        }
+        Ok(base)
     }
 
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
@@ -3065,10 +3093,11 @@ fn scan_pd_uses(
 /// an implicit shared borrow unless `mut`-marked (exclusive); everything
 /// else (Copy types) stays a plain by-value type unless explicitly
 /// `mut`-marked, since borrowing a Copy scalar by default would add
-/// indirection nobody asked for. There is no move-taking parameter spelling
-/// in v1 — a `datac` value is only ever moved via local rebinding
-/// (`val q = p`), which M3 already checks. See `TypeScope::resolve_param`
-/// and `resolve_receiver` for the M5 module-qualification rule.
+/// indirection nobody asked for. `move T` (A-4) is the third form, and the
+/// only one that resolves an owned type to the bare type: the callee takes
+/// ownership, so `TypeScope::resolve_param` handles it before this function
+/// is reached. See `TypeScope::resolve_param` and `resolve_receiver` for the
+/// M5 module-qualification rule.
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
@@ -5161,6 +5190,21 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         // directly — that is what makes `str.len(s.as_str())` work (M6.3).
         if is_str_like(pty) && is_str_like(&checked.ty) {
             return Ok(checked);
+        }
+        // The parameter is bare (by value), so this call *moves* its argument
+        // in — which a `move T` parameter and every container's
+        // `push`/`set`-shaped builtin both do. A borrow cannot be moved out
+        // of, so name that instead of leaving a plain type mismatch
+        // (`'&String'` against `'String'`) to imply the caller forgot an `&`
+        // (A-4).
+        if matches!(checked.ty, Ty::Ref { .. }) && !pty.is_copy() {
+            return Err(TypeError {
+                message: format!(
+                    "argument '{pname}' has type '{}', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')",
+                    checked.ty.display()
+                ),
+                span: arg_expr.span(),
+            });
         }
         if checked.ty != *pty {
             return Err(TypeError {

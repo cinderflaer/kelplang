@@ -670,9 +670,11 @@ fn check_function(
     };
     for (name, ty) in &f.params {
         ctx.define(name, ty);
-        // A parameter is never owned in v1 (`Bytes`/`String` parameters are
-        // borrows), but registering one costs nothing and keeps the plan
-        // honest if move-taking parameters ever exist.
+        // A parameter owns its value only when it was declared `move T`
+        // (A-4): the resolved type is then the bare owned type, not a
+        // borrow. Registering it here is what frees it at the end of the
+        // frame (or on the `return` path), and it is the only thing the
+        // callee's side of a move needs.
         if crate::types::needs_drop(ty, &ctx.owned_structs) {
             ctx.define_owned(name, ty);
         }

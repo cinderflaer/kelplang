@@ -1,0 +1,49 @@
+// A-4: `move T` — a parameter that takes ownership of its argument.
+//
+// Before this, a `datac`/`String`/`Bytes`/`List` parameter was always an
+// implicit shared borrow (or an exclusive one, with `mut`), so a callee could
+// never end up owning what it was handed: the only way to pass a value on was
+// to copy, clone or `Box.take()` it out. A moved argument is an ordinary
+// whole-value read at the call site, which is why the caller's binding is
+// "use of moved value" if it is read again — and why every buffer below is
+// freed exactly once, by whichever function owns it when it goes out of
+// scope. This fixture is compiled under AddressSanitizer (see
+// `compile_and_run.rs`): a double free or a leak here fails the suite.
+datac Bag(val name: String, val items: List<String>)
+
+fun consume(s: move String).R: usize = s.len()
+
+// A moved parameter is an ordinary owned local, so it can be moved again.
+fun pass_on(s: move String).R: usize = consume(s)
+
+// ...or handed straight back out, which moves it to the caller.
+fun give_back(s: move String).R: String = s
+
+// A `datac` is moved like anything else owned. Reading its field is a borrow
+// (v1 has no partial moves), so the value as a whole is freed at the end of
+// this frame — payloads included.
+fun bag_size(b: move Bag).R: usize = b.name.len() + b.items.len()
+
+// A container moves too, and its elements are freed with it.
+fun drain(xs: move List<String>).R: usize = xs.len()
+
+fun main() {
+    val a = String.from_str("hello")
+    print(consume(a))
+
+    // A temporary is already an owner: there is no binding to move out of.
+    print(consume(String.from_str("temp")))
+
+    print(pass_on(String.from_str("chained")))
+
+    // Ownership comes back to the caller, which then drops it.
+    val b = give_back(String.from_str("back"))
+    print(b.len())
+
+    print(bag_size(Bag(name = String.from_str("bag"), items = List.of(String.from_str("one")))))
+
+    var items: List<String> = List.empty()
+    items.push(String.from_str("x"))
+    items.push(String.from_str("y"))
+    print(drain(items))
+}

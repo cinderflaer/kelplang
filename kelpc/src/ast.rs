@@ -199,6 +199,12 @@ pub struct Param {
     /// exclusive borrow instead of the implicit shared borrow (for a
     /// `datac` type) or plain by-value passing (for a Copy type).
     pub mutable: bool,
+    /// `true` when the param type was written `move T` — the callee takes
+    /// ownership of the argument and the call site moves it (A-4). The
+    /// resolved type is the bare `T`, not a borrow, which is what makes a
+    /// moved argument visible to the borrow checker as an ordinary
+    /// whole-value read. Never set together with `mutable`.
+    pub move_: bool,
     pub span: Span,
 }
 
