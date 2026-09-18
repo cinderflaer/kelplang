@@ -1,0 +1,12 @@
+// MK5-S6-M1: the number of bindings has to match the payload, exactly as it
+// does in a `when` arm.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun main() {
+    if let Circle(a, b) = Shape.Circle(r = 1.0) {
+        print(a)
+    }
+}

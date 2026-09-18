@@ -1,0 +1,69 @@
+// MK5-S6-M1: `if let` branches on one variant and binds its payload. It is the
+// pattern form of `when` with a single arm and an `else`, over a scrutinee
+// bound to a local first — which is what makes a temporary legal here.
+enum Shape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+
+enum Token {
+    Word(val text: String)
+    Blank
+}
+
+fun radius(s: &Shape).R: f64 {
+    if let Circle(r) = s {
+        return r
+    }
+    return 0.0
+}
+
+fun width(t: &Token).R: usize {
+    if let Word(text) = t {
+        return text.len()
+    }
+    return 0
+}
+
+fun main() {
+    print(radius(s = Shape.Circle(r = 2.0)))
+    print(radius(s = Shape.Rect(w = 1.0, h = 1.0)))
+    print(radius(s = Shape.Empty))
+
+    // An owned payload binds as a borrow, so reading through it is fine and
+    // nothing is moved out of the matched value.
+    print(width(t = Token.Word(text = String.from_str(s = "four"))))
+    print(width(t = Token.Blank))
+
+    // A temporary scrutinee — the shape the pattern form of `when` alone
+    // cannot take.
+    if let Circle(r) = Shape.Circle(r = 3.0) {
+        print(r)
+    }
+
+    // The `else` branch, and `_` for a payload the arm does not need.
+    if let Rect(w, h) = Shape.Empty {
+        print(w + h)
+    } else {
+        print(-1.0)
+    }
+    if let Rect(_, _) = Shape.Rect(w = 2.0, h = 3.0) {
+        print(6.0)
+    } else {
+        print(0.0)
+    }
+
+    // `else if let` chains, and the no-`else` form (which is `Unit`, exactly
+    // as an `if` without an `else` is).
+    if let Circle(r) = Shape.Empty {
+        print(r)
+    } else if let Circle(r) = Shape.Circle(r = 5.0) {
+        print(r)
+    } else {
+        print(0.0)
+    }
+    if let Circle(r) = Shape.Circle(r = 7.0) {
+        print(r)
+    }
+}

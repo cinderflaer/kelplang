@@ -4,6 +4,9 @@ use crate::lexer::{Span, Token, TokenKind};
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// How many `if let`s have been desugared, so each one's synthesized
+    /// scrutinee binding has a name of its own (`parser::IF_LET_PREFIX`).
+    if_lets: usize,
 }
 
 #[derive(Debug)]
@@ -14,9 +17,19 @@ pub struct ParseError {
 
 type PResult<T> = Result<T, ParseError>;
 
+/// The name prefix of the local an `if let` binds its scrutinee to. `#` cannot
+/// appear in a lexed identifier, so a synthesized name can never collide with
+/// one the user wrote — the same trick `infer.rs` uses for a hidden passdown
+/// parameter.
+const IF_LET_PREFIX: &str = "#iflet";
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser {
+            tokens,
+            pos: 0,
+            if_lets: 0,
+        }
     }
 
     fn peek(&self) -> &Token {
@@ -1077,6 +1090,15 @@ impl Parser {
 
     fn parse_if(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::If, "'if'")?.span;
+        // `if let PATTERN = EXPR { ... }` — a pattern condition rather than a
+        // boolean one. `let` is only an identifier everywhere else in the
+        // language, so this is recognized by the token pair rather than by
+        // reserving the word; the one thing it costs is that a binding
+        // *named* `let` cannot be the condition of an `if` without
+        // parentheses.
+        if matches!(self.peek_kind(), TokenKind::Ident(word) if word == "let") {
+            return self.parse_if_let(start);
+        }
         let cond = self.parse_expr()?;
         let then_block = self.parse_block()?;
         let mut span = start.to(then_block.span);
@@ -1100,6 +1122,102 @@ impl Parser {
             else_block,
             span,
         })
+    }
+
+    /// `if let PATTERN = EXPR { THEN } [else ...]`, desugared here into a
+    /// block that binds the scrutinee to a fresh local and matches it with the
+    /// pattern form of `when`:
+    ///
+    /// ```text
+    /// { val #iflet0 = EXPR  when #iflet0 { PATTERN -> { THEN } else -> { ELSE } } }
+    /// ```
+    ///
+    /// Nothing downstream needs a new case — and binding the scrutinee first is
+    /// what makes a temporary legal here, since the pattern form of `when`
+    /// requires a *place* (an owned payload binds as a borrow of it, and a
+    /// borrow of a temporary would not outlive the arm).
+    fn parse_if_let(&mut self, start: Span) -> PResult<Expr> {
+        self.advance(); // `let`
+        let (variant, vspan) = self.expect_ident()?;
+        let mut binds = Vec::new();
+        if self.check(&TokenKind::LParen) {
+            self.advance();
+            while !self.check(&TokenKind::RParen) {
+                let (bind, _) = self.expect_ident()?;
+                binds.push(if bind == "_" { None } else { Some(bind) });
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen, "')'")?;
+        }
+        let pattern = VariantPattern {
+            variant,
+            binds,
+            span: vspan,
+        };
+        self.expect(TokenKind::Eq, "'=' after the pattern")?;
+        let scrutinee = self.parse_expr()?;
+        let scrutinee_span = scrutinee.span();
+        let then_block = self.parse_block()?;
+        let mut span = start.to(then_block.span);
+        let else_expr = if self.check(&TokenKind::Else) {
+            self.advance();
+            if self.check(&TokenKind::If) {
+                let elif = self.parse_if()?;
+                span = span.to(elif.span());
+                elif
+            } else {
+                let block = self.parse_block()?;
+                span = span.to(block.span);
+                Expr::Block(block)
+            }
+        } else {
+            // No `else`, so the whole thing produces `Unit` — exactly what an
+            // `if` without one does. An empty block is the `Unit` arm.
+            Expr::Block(Block {
+                stmts: Vec::new(),
+                span: then_block.span,
+            })
+        };
+        self.if_lets += 1;
+        let tmp = format!("{}{}", IF_LET_PREFIX, self.if_lets - 1);
+        // The `when` is the block's last statement, which is what makes it the
+        // block's value (statements are positional in this language — there is
+        // no `tail` field to set).
+        Ok(Expr::Block(Block {
+            stmts: vec![
+                Stmt::Let {
+                    name: tmp.clone(),
+                    mutable: false,
+                    ty: None,
+                    init: scrutinee,
+                    span: scrutinee_span,
+                },
+                Stmt::Expr {
+                    expr: Expr::When {
+                        scrutinee: Box::new(Expr::Ident(tmp, scrutinee_span)),
+                        arms: vec![
+                            WhenArm {
+                                pattern: Some(pattern),
+                                body: Expr::Block(then_block),
+                                span,
+                            },
+                            WhenArm {
+                                pattern: None,
+                                body: else_expr,
+                                span,
+                            },
+                        ],
+                        span,
+                    },
+                    span,
+                },
+            ],
+            span,
+        }))
     }
 
     /// Parses both forms of `when`:
@@ -1461,6 +1579,39 @@ mod tests {
                 assert!(arms[1].pattern.is_none());
             }
             other => panic!("expected a pattern `when`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn if_let_desugars_to_a_bound_scrutinee_and_a_single_arm_when() {
+        // MK5-S6-M1: `if let P = e { A } else { B }` becomes
+        // `{ val #iflet0 = e  when #iflet0 { P -> { A } else -> { B } } }`.
+        let p = parse(
+            "fun main() {\n    if let Circle(r) = Shape.Circle(r = 1.0) {\n        print(r)\n    } else {\n        print(0.0)\n    }\n}",
+        );
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        let inner = match &stmts[0] {
+            Stmt::Expr { expr: Expr::Block(b), .. } => b,
+            other => panic!("expected a desugared block, got {other:?}"),
+        };
+        match &inner.stmts[0] {
+            Stmt::Let { name, init, .. } => {
+                assert_eq!(name, "#iflet0");
+                assert!(matches!(init, Expr::MethodCall { .. }));
+            }
+            other => panic!("expected the scrutinee binding, got {other:?}"),
+        }
+        match &inner.stmts[1] {
+            Stmt::Expr { expr: Expr::When { scrutinee, arms, .. }, .. } => {
+                assert!(matches!(**scrutinee, Expr::Ident(ref n, _) if n == "#iflet0"));
+                assert_eq!(arms.len(), 2);
+                assert!(arms[0].pattern.is_some());
+                assert!(arms[1].pattern.is_none());
+            }
+            other => panic!("expected the `when`, got {other:?}"),
         }
     }
 
