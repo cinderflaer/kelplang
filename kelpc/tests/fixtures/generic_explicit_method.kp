@@ -1,0 +1,10 @@
+// A-2: a method's type parameters come from its receiver, so it does not take
+// type arguments of its own.
+datac Pair<A, B>(val first: A, val second: B)
+
+fun Pair<A, B>.first_of().R: A = first
+
+fun main() {
+    val p = Pair(first = 1, second = 2)
+    print(p.first_of<i32>())
+}

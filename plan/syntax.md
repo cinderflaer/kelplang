@@ -541,6 +541,20 @@ var xs: List<String> = empty_of()
 - `main` may not take type parameters.
 - A parameter of a non-`Copy` type is a shared borrow (10.2), exactly as it is in a non-generic function, so `fun first<T>(xs: List<T>).R: T` cannot return an owned element — `xs.get(i = 0)` borrows it. Only a `Copy` type can be returned from a borrow.
 
+#### Explicit type arguments
+
+Inference covers the ordinary cases, and when it cannot, the instantiation is written at the call site:
+
+```kelp
+val p = Pair<i32, String>(first = 1, second = String.from_str(s = "one"))
+val some = Option.Some<i64>(value = 7)
+print(identity<i32>(x = 5))
+```
+
+- The form is `Name<...>(` — the `<` written **against** the name and the `(` written **against** the `>`. Write a space before `<` when you mean a comparison: `a < b > (c)` is a comparison chain, `a<b>(c)` is read as an instantiation and then fails on `b` not being a type. This is the one place the two spellings could collide, and adjacency is what separates them.
+- An explicit instantiation with the wrong number of arguments is an error naming the count, and so is one written on something that is not generic — a non-generic type, a non-generic function, or a method (whose parameters come from its receiver).
+- A payload-less variant cannot take one, because there is no call to attach it to: write the expected type instead (`val none: Option<i32> = Option.None`).
+
 ## 10. Ownership, moves and borrowing
 
 ### 10.1 Moves
@@ -1210,6 +1224,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'main' cannot take type parameters` | the entry point is not called, so nothing can instantiate it |
 | `receiver 'Pair' must write the type's own type parameters, in order` | a method on a generic type is `fun Pair<A, B>.first()`; the receiver cannot omit or rename the parameters |
 | `'Option' is an enum — an enum carries no methods in v1` | write a free function over the instantiation instead (9.3) |
+| `'Point' does not take type arguments` | only a generic type, a generic function, or a generic `enum`'s variant takes one (9.3) |
+| `'first_of' does not take type arguments — a method's type parameters come from its receiver` | write the parameters on the receiver: `fun Pair<A, B>.first_of()` |
 | `in 'Holder<str>': field 'x' is a borrowed type` | a type argument may not be `str` or a reference; use `String` |
 | `datac 'Bad' is defined more than once` / `field 'x' is defined more than once` | duplicate declaration |
 
@@ -1249,6 +1265,7 @@ datac        := "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
 field        := ("val" | "var") ident ":" type
 enum         := "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
 typeparams   := "<" ident ("," ident)* ">"
+typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
 fun          := [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
 param        := ident ":" [ "mut" ] type
@@ -1269,9 +1286,9 @@ binary       := unary ( binop binary )?
 binop        := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
               | "+" | "-" | "*" | "/" | "%"
 unary        := ( "-" | "!" | "&" [ "mut" ] | "*" ) unary | postfix
-postfix      := primary ( "." ident [ "(" args ")" ] )*
+postfix      := primary ( "." ident [ typeargs ] [ "(" args ")" ] )*
 primary      := int | float | string | template | "true" | "false"
-              | ident [ "(" args ")" ] | "(" expr ")" | block
+              | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block [ "else" ( block | if ) ]
               | "when" "{" ( expr "->" expr )* "else" "->" expr "}"
 args         := [ arg ("," arg)* ]

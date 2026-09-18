@@ -1,0 +1,39 @@
+// A-2: an explicit instantiation, written `Name<...>` immediately before the
+// call. It is needed only where inference has nothing to go on — the argument
+// types and the expected type cover the rest.
+datac Pair<A, B>(val first: A, val second: B)
+
+enum Option<T> {
+    Some(val value: T)
+    None
+}
+
+fun identity<T>(x: T).R: T = x
+
+fun unwrap_or(o: &Option<i64>, fallback: i64).R: i64 = when o {
+    Some(v) -> v
+    None -> fallback
+}
+
+fun main() {
+    val p = Pair<i32, String>(first = 1, second = String.from_str(s = "one"))
+    print(p.first)
+    print(p.second)
+
+    // A payload the arguments could not fix on their own, and the variant
+    // that carries none (whose parameter still comes from the expected type).
+    val some = Option.Some<i64>(value = 7)
+    val none: Option<i64> = Option.None
+    print(unwrap_or(o = some, fallback = 0))
+    print(unwrap_or(o = none, fallback = 0))
+
+    // A generic function, instantiated explicitly.
+    print(identity<i32>(x = 5))
+    print(identity<&str>(x = "text"))
+
+    // The `<` in a comparison is not written against the name, so it is never
+    // read as an instantiation.
+    val a = 1
+    val b = 3
+    print(a < b)
+}

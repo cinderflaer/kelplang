@@ -3584,7 +3584,12 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             })
         }
         ast::Expr::Binary { op, lhs, rhs, span } => check_binary(*op, lhs, rhs, *span, ctx, expected),
-        ast::Expr::Call { callee, args, span } => check_call(callee, args, *span, ctx, expected),
+        ast::Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } => check_call(callee, type_args, args, *span, ctx, expected),
         ast::Expr::FieldAccess { base, field, span } => {
             if let ast::Expr::Ident(name, _) = base.as_ref() {
                 if is_module_alias(name, ctx) {
@@ -3748,7 +3753,13 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: *span,
             })
         }
-        ast::Expr::MethodCall { receiver, method, args, span } => {
+        ast::Expr::MethodCall {
+            receiver,
+            method,
+            type_args,
+            args,
+            span,
+        } => {
             // `circle.make(...)`: a module-qualified reference to an
             // imported item, not a method call. Recognized only when the
             // receiver is a bare identifier that names an `impl` alias and
@@ -3757,7 +3768,16 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             if let ast::Expr::Ident(name, _) = receiver.as_ref() {
                 if is_module_alias(name, ctx) {
                     if let Some(prefix) = ctx.aliases.get(name).cloned() {
-                        return check_module_item(name, &prefix, method, args, *span, ctx, expected);
+                        return check_module_item(
+                            name,
+                            &prefix,
+                            method,
+                            type_args,
+                            args,
+                            *span,
+                            ctx,
+                            expected,
+                        );
                     }
                 }
             }
@@ -3765,9 +3785,11 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             // variant (A-2), before the concrete-enum check because a generic
             // enum has no entry in the enum table.
             if let Some(tmpl_name) = generic_type_path(receiver, ctx) {
+                let explicit = resolve_explicit_args(type_args, ctx)?;
                 return check_generic_enum_construction(
                     &tmpl_name,
                     method,
+                    &explicit,
                     args,
                     *span,
                     ctx,
@@ -3780,6 +3802,14 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             // a *type*, not a value.
             if let Some(ename) = enum_path(receiver, ctx) {
                 return check_enum_construction(&ename, method, args, *span, ctx);
+            }
+            if !type_args.is_empty() {
+                return Err(TypeError {
+                    message: format!(
+                        "'{method}' does not take type arguments — a method's type parameters come from its receiver"
+                    ),
+                    span: *span,
+                });
             }
             check_method_call_enum_guard(receiver, method, *span, ctx)?;
             check_method_call(receiver, method, args, *span, ctx, expected)
@@ -3906,6 +3936,37 @@ fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) ->
         });
     }
     Ok(slots)
+}
+
+/// Resolves an expression's explicit type arguments (`Pair<i32, String>(...)`,
+/// `Option.Some<i32>(...)`), which are written types exactly like a
+/// signature's (A-2).
+fn resolve_explicit_args(type_args: &[ast::TypeExpr], ctx: &Ctx) -> Result<Vec<Ty>> {
+    if type_args.is_empty() {
+        return Ok(Vec::new());
+    }
+    let scope = ctx.type_scope();
+    let mut out = Vec::with_capacity(type_args.len());
+    for t in type_args {
+        out.push(scope.resolve(t, true)?);
+    }
+    Ok(out)
+}
+
+/// Confirms the argument count of an explicit instantiation (`Pair<i32, String>`,
+/// A-2) and returns it as the type arguments.
+fn check_arity(name: &str, params: &[String], explicit: &[Ty], span: Span) -> Result<Vec<Ty>> {
+    if explicit.len() != params.len() {
+        return Err(TypeError {
+            message: format!(
+                "'{name}' takes {} type argument(s), found {}",
+                params.len(),
+                explicit.len()
+            ),
+            span,
+        });
+    }
+    Ok(explicit.to_vec())
 }
 
 /// Binds a template's type parameters from one written field type and the
@@ -4040,6 +4101,7 @@ fn field_hint(
 /// ordinary one.
 fn check_generic_datac_construction(
     tmpl_name: &str,
+    explicit: &[Ty],
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
@@ -4062,18 +4124,23 @@ fn check_generic_datac_construction(
     };
     let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
     let slots = arg_slots(&format!("datac '{}'", tmpl.name), &names, args, span)?;
-    // The expected type is consulted first: it is the only thing that can pin
-    // a parameter *before* the argument is probed, which is what makes
+    // With an explicit instantiation there is nothing to infer; otherwise the
+    // expected type is consulted first, because it is the only thing that can
+    // pin a parameter *before* an argument is probed — which is what makes
     // `xs.push(Option.Some(value = 7))` infer `Option<i64>` from the list's
     // element type rather than defaulting the literal to `i32`.
-    let mut bindings = HashMap::new();
-    bind_from_expected(&tmpl, expected, ctx, &mut bindings);
-    for (i, f) in fields.iter().enumerate() {
-        let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
-        let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-        bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
-    }
-    let type_args = finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?;
+    let type_args = if explicit.is_empty() {
+        let mut bindings = HashMap::new();
+        bind_from_expected(&tmpl, expected, ctx, &mut bindings);
+        for (i, f) in fields.iter().enumerate() {
+            let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
+            let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
+            bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
+        }
+        finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?
+    } else {
+        check_arity(&tmpl.name, &tmpl.params, explicit, span)?
+    };
     let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
     let key = struct_name_of(&ty)
         .expect("an instantiation is a struct type")
@@ -4105,6 +4172,7 @@ fn check_generic_datac_construction(
 fn check_generic_enum_construction(
     tmpl_name: &str,
     variant: &str,
+    explicit: &[Ty],
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
@@ -4140,14 +4208,18 @@ fn check_generic_enum_construction(
         args,
         span,
     )?;
-    let mut bindings = HashMap::new();
-    bind_from_expected(&tmpl, expected, ctx, &mut bindings);
-    for (i, f) in vdef.fields.iter().enumerate() {
-        let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
-        let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-        bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
-    }
-    let type_args = finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?;
+    let type_args = if explicit.is_empty() {
+        let mut bindings = HashMap::new();
+        bind_from_expected(&tmpl, expected, ctx, &mut bindings);
+        for (i, f) in vdef.fields.iter().enumerate() {
+            let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
+            let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
+            bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
+        }
+        finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?
+    } else {
+        check_arity(&tmpl.name, &tmpl.params, explicit, span)?
+    };
     let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
     let key = struct_name_of(&ty)
         .expect("an instantiation is a struct type")
@@ -4906,11 +4978,17 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
 
 fn check_call(
     callee: &str,
+    type_args: &[ast::TypeExpr],
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
+    // An explicit instantiation, `Pair<i32, String>(...)` (A-2). Resolved
+    // once here and handed to whichever path consumes it; every other path
+    // refuses it, because a call that is not generic has nothing to
+    // instantiate.
+    let explicit = resolve_explicit_args(type_args, ctx)?;
     if callee == "main" {
         // `main` is the program entry point; it takes no arguments, so there
         // is no way to hand it the passdowns it may reference, and its own
@@ -4965,7 +5043,18 @@ fn check_call(
     // that, from the expected type), so a generic value is constructed with
     // exactly the same syntax as an ordinary one.
     if let Some(tmpl_name) = generic_template_name(callee, ctx) {
-        return check_generic_datac_construction(&tmpl_name, args, span, ctx, expected);
+        return check_generic_datac_construction(&tmpl_name, &explicit, args, span, ctx, expected);
+    }
+    // An explicit instantiation is only meaningful for a generic type or a
+    // generic function; every other callee here (a concrete `datac`'s
+    // construction, a plain function, a builtin) has nothing to instantiate.
+    if !explicit.is_empty()
+        && func_template_named(ctx, callee, &ctx.qualify_own(callee)).is_none()
+    {
+        return Err(TypeError {
+            message: format!("'{callee}' does not take type arguments"),
+            span,
+        });
     }
 
     // `Shape(r = 1.0)` — an enum is constructed by naming a variant, never by
@@ -5027,7 +5116,7 @@ fn check_call(
             // ordinary argument matching runs.
             None => match func_template_named(ctx, callee, &owned_key) {
                 Some(tmpl_key) => {
-                    instantiate_function(ctx, &tmpl_key, args, span, expected, None)?
+                    instantiate_function(ctx, &tmpl_key, &explicit, args, span, expected, None)?
                 }
                 // A compiler-provided free function (`panic`, `assert`) lives
                 // in the same table as the builtin methods, so it is consulted
@@ -5112,6 +5201,7 @@ fn method_template_key(ctx: &Ctx, owner: &str, method: &str) -> Option<String> {
 fn instantiate_function(
     ctx: &mut Ctx,
     tmpl_key: &str,
+    explicit: &[Ty],
     args: &[ast::CallArg],
     span: Span,
     expected: Option<&Ty>,
@@ -5131,39 +5221,56 @@ fn instantiate_function(
         }
     }
     let what = format!("function '{}'", display_callee(&tmpl.key));
-    if let (Some(written), Some(exp)) = (&tmpl.ret, expected) {
-        bind_type_params(ctx, written, exp, &tmpl.params, &mut bindings);
-    }
-    if tmpl.declared.is_empty() {
-        if !args.is_empty() {
-            return Err(TypeError {
-                message: format!("{what} expects 0 argument(s), found {}", args.len()),
-                span,
-            });
+    // With an explicit instantiation there is nothing to infer — the arguments
+    // are still matched, but by `check_call`, against the signature this
+    // produces. Otherwise the expected return type and the argument types
+    // supply the parameters.
+    if explicit.is_empty() {
+        if let (Some(written), Some(exp)) = (&tmpl.ret, expected) {
+            bind_type_params(ctx, written, exp, &tmpl.params, &mut bindings);
         }
+        if tmpl.declared.is_empty() {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("{what} expects 0 argument(s), found {}", args.len()),
+                    span,
+                });
+            }
+        } else {
+            let names: Vec<String> = tmpl.declared.iter().map(|p| p.name.clone()).collect();
+            let slots = arg_slots(&what, &names, args, span)?;
+            for (i, p) in tmpl.declared.iter().enumerate() {
+                let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &p.ty, &bindings);
+                let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
+                bind_type_params(ctx, &p.ty, &probed.ty, &tmpl.params, &mut bindings);
+            }
+        }
+    }
+    let type_args = if explicit.is_empty() {
+        finish_type_args(&tmpl.key, &tmpl.params, &bindings, span)?
     } else {
-        let names: Vec<String> = tmpl.declared.iter().map(|p| p.name.clone()).collect();
-        let slots = arg_slots(&what, &names, args, span)?;
-        for (i, p) in tmpl.declared.iter().enumerate() {
-            let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &p.ty, &bindings);
-            let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-            bind_type_params(ctx, &p.ty, &probed.ty, &tmpl.params, &mut bindings);
-        }
-    }
-    let type_args = finish_type_args(&tmpl.key, &tmpl.params, &bindings, span)?;
+        check_arity(&tmpl.key, &tmpl.params, explicit, span)?
+    };
     let key = instance_key(&tmpl.key, &type_args);
     if let Some(sig) = ctx.sig_of(&key) {
         return Ok((key, sig));
     }
-    // The parameter and return types, resolved with the parameters bound. A
-    // failure here is a problem in the template's own signature, written in
-    // the template's file, so the message names the instance and the span
-    // points at the use site — which is the module the caller will attribute
-    // the error to.
+    // The parameter and return types, resolved from the *final* arguments —
+    // whichever way they were determined, so an explicit instantiation needs
+    // no inference bindings at all. A failure here is a problem in the
+    // template's own signature, written in the template's file, so the
+    // message names the instance and the span points at the use site, which
+    // is the module the caller will attribute the error to.
+    let resolved: HashMap<String, Ty> = tmpl
+        .params
+        .iter()
+        .cloned()
+        .zip(type_args.iter().cloned())
+        .collect();
     let scope = TypeScope {
         structs: &ctx.structs,
         env: ctx.env.clone(),
-        params: &bindings,
+        params: &resolved,
         prefix: &tmpl.prefix,
         aliases: &tmpl.aliases,
         later_datacs: None,
@@ -5465,7 +5572,7 @@ fn check_method_call(
         // plus the method name — and the instance's key is what the call names.
         None => match method_template_key(ctx, &owner, method) {
             Some(tmpl_key) => {
-                instantiate_function(ctx, &tmpl_key, args, span, expected, Some(&probe.ty))?
+                instantiate_function(ctx, &tmpl_key, &[], args, span, expected, Some(&probe.ty))?
             }
             None => match container_elem.as_ref().and_then(|e| container_sig(&key, e)) {
                 Some(s) => (key, s),
@@ -5708,6 +5815,7 @@ fn check_module_item(
     alias: &str,
     prefix: &str,
     item: &str,
+    type_args: &[ast::TypeExpr],
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
@@ -5718,8 +5826,9 @@ fn check_module_item(
         || ctx.env.generics.contains_key(&qualified)
         || ctx.sigs.contains_key(&qualified)
         || ctx.overloads.contains_key(&qualified)
+        || ctx.fns.templates.contains_key(&qualified)
     {
-        return check_call(&qualified, args, span, ctx, expected);
+        return check_call(&qualified, type_args, args, span, ctx, expected);
     }
     // A module's `const` is reached the same way as its functions: as
     // `math.PI` (M6.3). It takes no arguments, so a call-shaped reference to

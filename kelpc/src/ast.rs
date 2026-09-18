@@ -319,8 +319,11 @@ pub enum Expr {
     /// Also covers `datac` construction (`Circle(r = 2.0)`) — at parse
     /// time a call and a construction look identical; `infer.rs`
     /// disambiguates by whether `callee` names a function or a `datac`.
+    /// `type_args` is the explicit instantiation (`Pair<i32, String>(...)`,
+    /// A-2), empty when the call writes none and inference supplies them.
     Call {
         callee: String,
+        type_args: Vec<TypeExpr>,
         args: Vec<CallArg>,
         span: Span,
     },
@@ -363,6 +366,9 @@ pub enum Expr {
     MethodCall {
         receiver: Box<Expr>,
         method: String,
+        /// The explicit instantiation of a generic `enum`'s variant
+        /// (`Option.Some<i32>(v = 1)`), empty otherwise (A-2).
+        type_args: Vec<TypeExpr>,
         args: Vec<CallArg>,
         span: Span,
     },

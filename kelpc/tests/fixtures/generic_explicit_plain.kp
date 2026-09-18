@@ -1,0 +1,6 @@
+// A-2: a non-generic type has nothing to instantiate.
+datac Point(val x: i32)
+
+fun main() {
+    val p = Point<i32>(x = 1)
+}
