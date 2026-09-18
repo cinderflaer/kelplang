@@ -2714,7 +2714,7 @@ fn a_closure_carries_its_environment() {
     // one in a `Box`, and an inner literal calling a closure the frame holds.
     assert_compiles_and_runs(
         "tests/fixtures/closure_basic.kp",
-        "11\n10\n3\n30\n-6\n14\n15\n42\n13\n",
+        "11\n10\n3\n30\n-6\n14\n15\n42\n13\n5\n11\ntrue\n",
     );
 }
 

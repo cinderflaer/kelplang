@@ -13,6 +13,11 @@ impl "std/str"
 
 datac Holder(val cb: closure(i32).R: i32)
 
+// An owned capture that is itself a `datac` with an owned field: the
+// environment's drop goes through the generated `datac` drop, not just the
+// builtin ones.
+datac Point(val x: i32, val label: String)
+
 fun apply(f: closure(i32).R: i32, x: i32).R: i32 = f(x)
 
 fun own(f: move closure(i32).R: i32, x: i32).R: i32 = f(x)
@@ -57,4 +62,19 @@ fun main() {
     // the inner literal captures it and calls through its own environment.
     val reuse = fun(x: i32).R: i32 = add_k(x) + 1
     print(reuse(2))
+
+    // A captured `datac` whose own field is owned.
+    {
+        val p = Point(x = 3, label = String.from_str("pt"))
+        val label_len = fun() .R: i32 = p.x + p.label.len().to_i32()
+        print(label_len())
+    }
+
+    // Ownership moving *out* of a `Box`: `take` hands the closure over, and
+    // the box it came from is empty and holds nothing to free.
+    var slot: Box<closure(i32).R: i32> = Box.empty()
+    slot.set(fun(x: i32).R: i32 = x + k)
+    val taken = slot.take()
+    print(taken(1))
+    print(slot.is_empty())
 }
