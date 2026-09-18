@@ -1177,6 +1177,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // drop and the recursive drop path.
         "generic_owned",
         "generic_recursive",
+        // A-2: a generic *function* instantiated over an owned type, so the
+        // per-instantiation body owns and drops like any other function.
+        "generic_function_owned",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2211,13 +2214,41 @@ fn a_generic_type_can_be_recursive_through_a_box() {
 }
 
 #[test]
+fn a_generic_function_is_instantiated_per_call_site() {
+    assert_compiles_and_runs(
+        "tests/fixtures/generic_function_basic.kp",
+        "5\ntrue\n2.500000\ntext\n3\nonce\n1\n9\n",
+    );
+}
+
+#[test]
+fn a_generic_function_works_over_an_owned_type() {
+    assert_compiles_and_runs(
+        "tests/fixtures/generic_function_owned.kp",
+        "true\nfalse\ntrue\ntrue\n5\n",
+    );
+}
+
+#[test]
+fn generic_function_misuse_is_rejected() {
+    for name in [
+        "generic_function_cannot_infer",
+        "generic_function_arity",
+        "generic_main",
+        "generic_function_clash",
+        "generic_function_shadow",
+    ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
+}
+
+#[test]
 fn generic_type_misuse_is_rejected() {
     for name in [
         "generic_needs_args",
         "generic_arity",
         "generic_cannot_infer",
         "generic_method",
-        "generic_fn_params",
         "generic_param_shadow",
         "generic_param_duplicate",
         "generic_clash",

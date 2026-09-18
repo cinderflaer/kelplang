@@ -356,7 +356,7 @@ A name that the function does not declare is an error; so is naming an argument 
 - A user program cannot overload a name. Two `fun pick(a: i32)` and `fun pick(a: f64)` collide: `function 'pick' is defined more than once for the same parameter types`. Overloading exists only inside the shipped standard library, and only for `abs`, `min`, `max` and `clamp`, which is how `math.min` accepts `i32`, `i64` and `f64`.
 - Recursion is unrestricted, including mutual recursion.
 - There are no closures and no function values: a function name is not a value, and a function cannot be passed to another function.
-- A function cannot take type parameters. Generic *types* exist (9.3) but generic *functions* do not yet, so `fun sum(xs: List<T>)` is refused; every function names its parameter types concretely.
+- A function may take type parameters: `fun first<T>(xs: List<T>).R: T`, or `fun Pair<A, B>.first().R: A` on a method. Each call site is instantiated for the types it uses (9.3).
 
 ### 7.3 `main`
 
@@ -504,7 +504,28 @@ val b: Option<i32> = Option.None            // T from the expected type — the 
 ```
 
 - The expected type is consulted first, then each argument. A parameter that neither determines is an error that names it, with the fix (`val x: Option<i32> = ...`). It also means an integer literal takes its type from the expected type or from the other argument, not from the default (`Option<i32>`).
-- A generic type has no methods yet, and a receiver cannot name one: `fun Pair.first()` is refused. Read a `datac`'s fields with `.`; read an `enum`'s payload with `when`.
+- A generic type has no methods. Read a `datac`'s fields with `.`; read an `enum`'s payload with `when`.
+
+#### Generic functions
+
+A `fun` may take type parameters after its name, and each call site instantiates them:
+
+```kelp
+fun identity<T>(x: T).R: T = x
+fun repeat<T>(x: T, n: i32).R: T = if n <= 0 { x } else { repeat(x = x, n = n - 1) }
+fun empty_of<T>().R: List<T> = List.empty()
+
+identity(x = 5)
+identity(x = "text")
+repeat(x = 3, n = 2)
+var xs: List<String> = empty_of()
+```
+
+- A parameter or a return type that names `T` is resolved for each instantiation, so `identity` above is checked and compiled once for `i32` and once for `str`.
+- The arguments are inferred from the argument types, and the return type from the expected type — that is the only thing `empty_of()` has to go on. A parameter neither determines is an error that names it.
+- The body is checked once per instantiation, because `T` is a concrete type inside it. A generic function that is never called is never checked.
+- `main` may not take type parameters.
+- A parameter of a non-`Copy` type is a shared borrow (10.2), exactly as it is in a non-generic function, so `fun first<T>(xs: List<T>).R: T` cannot return an owned element — `xs.get(i = 0)` borrows it. Only a `Copy` type can be returned from a borrow.
 
 ## 10. Ownership, moves and borrowing
 
@@ -1132,7 +1153,7 @@ These are deliberate, and each one has a workaround in this document:
 
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
 - No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` is now expressible as a user `enum` (9.3); the stdlib has not migrated to it.
-- No generic functions, and no receiver methods on a generic type: `fun sum(xs: List<T>)` is refused. Generic *type* declarations exist (9.3). `List`, `Map` and `Box` are builtins in addition to being what a user generic compiles to.
+- No method may be declared on a generic type yet: a receiver has no way to name the instantiation it belongs to. Read a `datac`'s fields with `.`, or write a free function over the instantiation (`fun sum_of<T>(p: &Pair<T, T>).R: T`, 9.3).
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - No partial moves: an owned field cannot be read out of a borrowed structure (9), so move it with `Box.take` or pass a borrow.
 - No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.
@@ -1171,9 +1192,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'fs.read' needs the 'fs' capability, which module 'm' was not granted` | grant it at the `impl` line: `impl "m" with caps(fs = ["/path/**"])` |
 | `datac 'Bad' cannot hold itself by value` | a recursive field needs indirection: `Box<Bad>` or `List<Bad>` |
 | `'Pair' is a generic type — it needs 2 type argument(s)` | write the arguments where the type is used: `Pair<i32, String>` (9.3) |
-| `cannot infer type parameter 'T' of 'Option' here` | `Option.None` determines nothing on its own; annotate the binding: `val x: Option<i32> = Option.None` |
-| `type parameters on a function are not implemented yet` | generic functions do not exist yet (9.3); name the types concretely |
-| `a receiver method on a generic type is not implemented yet` | read fields with `.`, or write a free function over the instantiation |
+| `cannot infer type parameter 'T' of 'Option' here` | neither the arguments nor the expected type determines `T`; annotate the binding (`val x: Option<i32> = ...`, or `val xs: List<String> = empty_of()`) |
+| `'main' cannot take type parameters` | the entry point is not called, so nothing can instantiate it |
 | `in 'Holder<str>': field 'x' is a borrowed type` | a type argument may not be `str` or a reference; use `String` |
 | `datac 'Bad' is defined more than once` / `field 'x' is defined more than once` | duplicate declaration |
 
@@ -1213,7 +1233,7 @@ datac        := "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
 field        := ("val" | "var") ident ":" type
 enum         := "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
 typeparams   := "<" ident ("," ident)* ">"
-fun          := [ "extern" ] "fun" [ "mut" ] ( ident "." )? ident
+fun          := [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
 param        := ident ":" [ "mut" ] type
 body         := "=" expr | block | <nothing for extern>

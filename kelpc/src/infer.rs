@@ -83,6 +83,69 @@ struct TypeEnv {
     instances: std::rc::Rc<std::cell::RefCell<InstanceState>>,
 }
 
+/// One user-declared generic *function* (A-2): a `fun` with its own type
+/// parameters (`fun first<T>(xs: List<T>).R: T`) or a receiver method on a
+/// generic type (`fun Pair<A, B>.first().R: A`). Its parameter and return
+/// types are kept as written, because a type parameter has no type until an
+/// instantiation binds it — exactly like `GenericTemplate`.
+#[derive(Clone)]
+struct FuncTemplate {
+    /// Declaration key: the prefixed name, or `Type#name` for a receiver.
+    key: String,
+    /// The method's type parameters, in order, which for a receiver method are
+    /// the receiver's own arguments.
+    params: Vec<String>,
+    /// `Some` for a receiver method: the canonical receiver type name (already
+    /// prefixed) and whether the receiver is `mut`.
+    receiver: Option<(String, bool)>,
+    /// Declared parameters, without the receiver.
+    declared: Vec<ast::Param>,
+    ret: Option<ast::TypeExpr>,
+    body: ast::FunctionBody,
+    module: String,
+    prefix: String,
+    aliases: HashMap<String, String>,
+    /// Index in `program.functions`, so a diagnostic can name the declaration.
+    ast_index: usize,
+}
+
+/// The concrete signatures created on demand (A-2) and the queue of bodies
+/// still to check. `sigs` is what a call site resolves against once the
+/// declaration is instantiated; `pending` is the worklist `check_program`
+/// drains, because one instantiation's body can create another.
+#[derive(Default)]
+struct FunctionState {
+    sigs: HashMap<String, FnSig>,
+    /// Instance key -> the template key it came from, for passdown wiring.
+    origin: HashMap<String, String>,
+    /// Instances whose bodies still have to be checked, in creation order
+    /// alongside the type arguments they were built with.
+    pending: std::collections::VecDeque<(String, Vec<Ty>)>,
+}
+
+/// The program's function templates and their instances (A-2), shared between
+/// every `Ctx` clone for the same reason `TypeEnv` is.
+#[derive(Clone, Default)]
+struct FuncEnv {
+    templates: std::rc::Rc<HashMap<String, FuncTemplate>>,
+    instances: std::rc::Rc<std::cell::RefCell<FunctionState>>,
+}
+
+/// How many generic instantiations one program may create before the compiler
+/// gives up. A generic function that calls itself with a different type
+/// argument (`fun g<T>(x: T).R: i32 = g(x = List.of(x))`) grows without bound;
+/// this turns that into a diagnostic instead of a hang.
+const MAX_FUNCTION_INSTANTIATIONS: usize = 2048;
+
+/// The type parameters a function declaration introduces: its own for a free
+/// function, the receiver's for a method on a generic type.
+fn decl_type_params(f: &ast::FunctionDecl) -> &[String] {
+    match &f.receiver {
+        Some(r) => &r.type_args,
+        None => &f.type_params,
+    }
+}
+
 /// The canonical name of one instantiation: `Pair<i32, String>`. It is a
 /// `Ty::Struct` key like any other declaration's name, and `types::c_ident`
 /// mangles it into a C identifier, so a type argument list can never be
@@ -139,6 +202,15 @@ struct Ctx {
     /// instantiation lives in `env.instances` and is reached through
     /// `struct_def`/`enum_def`.
     env: TypeEnv,
+    /// The program's generic function templates and their instantiated
+    /// signatures (A-2). `sigs` holds the hand-written, non-generic
+    /// declarations; an instantiated one lives in `fns.instances` and is
+    /// reached through `sig_of`.
+    fns: FuncEnv,
+    /// The type parameters in scope while a generic function's body is being
+    /// checked, bound to the instantiation's arguments. Empty everywhere
+    /// else, which is what `type_scope` reads.
+    type_args: HashMap<String, Ty>,
     /// Passdowns of *other* modules, bare name -> declaring module. Used for
     /// diagnostics: naming one is an error, and the message says why.
     foreign_pds: HashMap<String, String>,
@@ -321,13 +393,33 @@ impl Ctx {
         TypeScope {
             structs: &self.structs,
             env: self.env.clone(),
-            params: &EMPTY_PARAMS,
+            params: &self.type_args,
             prefix: &self.prefix,
             aliases: &self.aliases,
             // Every datac is known by the time bodies are checked.
             later_datacs: None,
             in_progress: None,
         }
+    }
+
+    /// A function's checked signature, whether it was declared by hand or is
+    /// an instantiation of a generic template (A-2).
+    fn sig_of(&self, key: &str) -> Option<FnSig> {
+        if let Some(s) = self.sigs.get(key) {
+            return Some(s.clone());
+        }
+        self.fns.instances.borrow().sigs.get(key).cloned()
+    }
+
+    /// The passdowns a callee needs, looking through an instantiation to the
+    /// template it came from: the wiring scan runs on declarations, so its
+    /// table is keyed by the declaration, not by each instance.
+    fn wired_for(&self, key: &str) -> Option<Vec<PdInfo>> {
+        if let Some(w) = self.wired.get(key) {
+            return Some(w.clone());
+        }
+        let tmpl = self.fns.instances.borrow().origin.get(key).cloned()?;
+        self.wired.get(&tmpl).cloned()
     }
 
     /// The definition of a user type, whether it was declared by hand or is
@@ -1733,6 +1825,85 @@ fn collect_templates(
     Ok(out)
 }
 
+/// Collects every `fun` declared with type parameters (A-2) into the function
+/// template table, and checks the rules that need the whole declaration set:
+/// `main` is never generic, a type parameter must not shadow a builtin type,
+/// and a generic and a non-generic function may not share a name.
+fn collect_func_templates(
+    program: &ast::Program,
+    project: &Project,
+    generics: &HashMap<String, GenericTemplate>,
+) -> std::result::Result<HashMap<String, FuncTemplate>, Diagnostic> {
+    let mut out: HashMap<String, FuncTemplate> = HashMap::new();
+    for (i, f) in program.functions.iter().enumerate() {
+        let params = decl_type_params(f).to_vec();
+        if params.is_empty() {
+            continue;
+        }
+        let key = sig_key(f);
+        if f.receiver.is_none() && f.name == "main" {
+            return Err(Diagnostic::new(
+                "'main' cannot take type parameters — it is the program entry point"
+                    .to_string(),
+                f.span,
+                f.module.clone(),
+            ));
+        }
+        for p in &params {
+            if Ty::from_name(p).is_some() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "type parameter '{p}' shadows the builtin type '{p}' — pick another name"
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
+        }
+        if let Some(r) = &f.receiver {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{}' is a generic type — a receiver method on a generic type is not implemented yet",
+                    r.type_name
+                ),
+                f.span,
+                f.module.clone(),
+            ));
+        }
+        if out.contains_key(&key)
+            || program.functions.iter().enumerate().any(|(j, other)| {
+                j != i && sig_key(other) == key && decl_type_params(other).is_empty()
+            })
+        {
+            return Err(Diagnostic::new(
+                format!(
+                    "function '{}' is defined more than once",
+                    display_callee(&key)
+                ),
+                f.span,
+                f.module.clone(),
+            ));
+        }
+        let _ = generics;
+        out.insert(
+            key.clone(),
+            FuncTemplate {
+                key,
+                params,
+                receiver: None,
+                declared: f.params.clone(),
+                ret: f.return_type.clone(),
+                body: f.body.clone(),
+                module: f.module.clone(),
+                prefix: project.prefix_of(&f.module).to_string(),
+                aliases: project.alias_prefixes_of(&f.module),
+                ast_index: i,
+            },
+        );
+    }
+    Ok(out)
+}
+
 pub fn check_program(
     program: &ast::Program,
     project: &Project,
@@ -1745,6 +1916,16 @@ pub fn check_program(
     let env = TypeEnv {
         generics: std::rc::Rc::new(generics),
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
+    };
+    // A-2: the generic *function* templates, collected before signatures are
+    // built so a call site can instantiate one on demand.
+    let fns = FuncEnv {
+        templates: std::rc::Rc::new(collect_func_templates(
+            program,
+            project,
+            &env.generics,
+        )?),
+        instances: std::rc::Rc::new(std::cell::RefCell::new(FunctionState::default())),
     };
     let mut structs = HashMap::new();
     // Structs are resolved in declaration order, which is also the order
@@ -2039,6 +2220,13 @@ pub fn check_program(
                 f.module.clone(),
             ));
         }
+        // A-2: a generic function has no signature until a call site
+        // instantiates it; it is a template, so it gets a declaration key
+        // (which the passdown scan needs) and no `sigs` entry.
+        if !decl_type_params(f).is_empty() {
+            decl_keys.push(sig_key(f));
+            continue;
+        }
         let prefix = project.prefix_of(&f.module);
         let aliases = project.alias_prefixes_of(&f.module);
         let scope = TypeScope {
@@ -2130,6 +2318,7 @@ pub fn check_program(
         &consts,
         &overloads,
         &env,
+        &fns,
     )?;
     let wired = scan_all(program, &all_pds, &structs, &decl_keys);
 
@@ -2157,6 +2346,7 @@ pub fn check_program(
             &wired,
             &initialized,
             &env,
+            &fns,
         )
         .map_err(|e| e.in_module(&pd.module))?;
         initialized.insert(pd.hidden.clone());
@@ -2170,9 +2360,19 @@ pub fn check_program(
 
     let mut functions = Vec::new();
     for (i, f) in program.functions.iter().enumerate() {
+        // A-2: a generic function's body is checked once per instantiation,
+        // in the worklist loop below — there is no signature to check it
+        // against yet.
+        if !decl_type_params(f).is_empty() {
+            continue;
+        }
+        let key = &decl_keys[i];
+        let sig = sigs[key].clone();
         let checked = check_function(
             f,
-            &decl_keys[i],
+            key,
+            &sig,
+            &HashMap::new(),
             &sigs,
             &structs,
             &enums,
@@ -2182,6 +2382,54 @@ pub fn check_program(
             &all_pds,
             &wired,
             &env,
+            &fns,
+        )
+        .map_err(|e| e.in_module(&f.module))?;
+        functions.push(checked);
+    }
+
+    // A-2: drain the instantiation worklist. Checking an instantiated body can
+    // create another instantiation, so this runs until the queue is empty;
+    // `MAX_FUNCTION_INSTANTIATIONS` is what turns an unbounded chain into a
+    // diagnostic.
+    loop {
+        let next = fns.instances.borrow_mut().pending.pop_front();
+        let Some((key, type_args)) = next else {
+            break;
+        };
+        let Some(tmpl_key) = fns.instances.borrow().origin.get(&key).cloned() else {
+            continue;
+        };
+        let tmpl = fns.templates[&tmpl_key].clone();
+        let f = &program.functions[tmpl.ast_index];
+        let sig = fns
+            .instances
+            .borrow()
+            .sigs
+            .get(&key)
+            .cloned()
+            .expect("an instantiation is registered before it is queued");
+        let bindings: HashMap<String, Ty> = tmpl
+            .params
+            .iter()
+            .cloned()
+            .zip(type_args.iter().cloned())
+            .collect();
+        let checked = check_function(
+            f,
+            &key,
+            &sig,
+            &bindings,
+            &sigs,
+            &structs,
+            &enums,
+            &consts,
+            &overloads,
+            project,
+            &all_pds,
+            &wired,
+            &env,
+            &fns,
         )
         .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
@@ -2334,6 +2582,7 @@ fn collect_pds(
     consts: &HashMap<String, ConstInfo>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     env: &TypeEnv,
+    fns: &FuncEnv,
 ) -> std::result::Result<Vec<PdInfo>, Diagnostic> {
     let mut out: Vec<PdInfo> = Vec::new();
     for (index, decl) in program.pds.iter().enumerate() {
@@ -2395,6 +2644,7 @@ fn collect_pds(
                     None,
                     &HashMap::new(),
                     env,
+                    fns,
                 );
                 ctx.init_state = Some(out.iter().map(|p| p.hidden.clone()).collect());
                 check_expr(&decl.init, &mut ctx, None)
@@ -2441,6 +2691,7 @@ fn check_pd_initializer(
     wired: &HashMap<String, Vec<PdInfo>>,
     initialized: &std::collections::HashSet<String>,
     env: &TypeEnv,
+    fns: &FuncEnv,
 ) -> Result<tir::Expr> {
     let mut ctx = base_ctx(
         &pd.module,
@@ -2454,6 +2705,7 @@ fn check_pd_initializer(
         Some(pd.index),
         wired,
         env,
+        fns,
     );
     // An initializer has no hidden parameters of its own: it reads the
     // globals that earlier initializers already assigned.
@@ -2474,6 +2726,7 @@ fn base_ctx(
     before: Option<usize>,
     wired: &HashMap<String, Vec<PdInfo>>,
     env: &TypeEnv,
+    fns: &FuncEnv,
 ) -> Ctx {
     let module_pds: Vec<&PdInfo> = all_pds.iter().filter(|p| p.module == module).collect();
     let pds = module_pds
@@ -2500,6 +2753,8 @@ fn base_ctx(
         prefix: project.prefix_of(module).to_string(),
         aliases: project.alias_prefixes_of(module),
         env: env.clone(),
+        fns: fns.clone(),
+        type_args: HashMap::new(),
         pds,
         foreign_pds,
         wired: wired.clone(),
@@ -2895,6 +3150,8 @@ fn display_name(f: &ast::FunctionDecl) -> String {
 fn check_function(
     f: &ast::FunctionDecl,
     key: &str,
+    sig: &FnSig,
+    type_args: &HashMap<String, Ty>,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
     enums: &HashMap<String, EnumDef>,
@@ -2904,8 +3161,8 @@ fn check_function(
     all_pds: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
     env: &TypeEnv,
+    fns: &FuncEnv,
 ) -> Result<tir::Function> {
-    let sig = sigs.get(key).unwrap().clone();
     let receiver_struct = f
         .receiver
         .as_ref()
@@ -2919,7 +3176,20 @@ fn check_function(
     let hidden = if key == "main" {
         Vec::new()
     } else {
-        wired.get(key).cloned().unwrap_or_default()
+        // An instantiation's passdown wiring is the template's: the scan runs
+        // over declarations, and which passdowns a body names does not depend
+        // on its type arguments (A-2).
+        wired
+            .get(key)
+            .cloned()
+            .or_else(|| {
+                fns.instances
+                    .borrow()
+                    .origin
+                    .get(key)
+                    .and_then(|t| wired.get(t).cloned())
+            })
+            .unwrap_or_default()
     };
     let mut ctx = base_ctx(
         &f.module,
@@ -2933,7 +3203,9 @@ fn check_function(
         None,
         wired,
         env,
+        fns,
     );
+    ctx.type_args = type_args.clone();
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main";
@@ -3010,7 +3282,7 @@ fn check_function(
             params.extend(hidden.iter().map(|pd| (pd.hidden.clone(), pd.param_ty.clone())));
             params
         },
-        ret: sig.ret,
+        ret: sig.ret.clone(),
         body,
         module: f.module.clone(),
         extern_: f.extern_,
@@ -3605,22 +3877,48 @@ fn arg_slots(what: &str, names: &[String], args: &[ast::CallArg], span: Span) ->
 /// ignored here — its argument is checked against it later, by `match_args`,
 /// which is also where a mismatch is reported.
 fn bind_type_params(
+    ctx: &Ctx,
     written: &ast::TypeExpr,
     actual: &Ty,
     params: &[String],
     out: &mut HashMap<String, Ty>,
 ) {
+    // A parameter that is borrowed at the call site (`fun is_some<T>(o: &Option<T>)`
+    // called with an `Option<i32>`) still determines the parameter, and a
+    // parameter that is *already* a borrow determines it from its pointee.
+    let actual = match actual {
+        Ty::Ref { inner, .. } => inner.as_ref(),
+        other => other,
+    };
     if written.args.is_empty() {
         if params.iter().any(|p| p == &written.name) {
-            out.entry(written.name.clone()).or_insert_with(|| actual.clone());
+            out.entry(written.name.clone())
+                .or_insert_with(|| actual.clone());
         }
         return;
     }
     match (written.name.as_str(), actual) {
         ("List", Ty::List(e)) | ("Box", Ty::Box(e)) | ("Map", Ty::Map(e)) => {
-            bind_type_params(&written.args[0], e, params, out)
+            bind_type_params(ctx, &written.args[0], e, params, out)
         }
-        _ => {}
+        // A user generic type (`Pair<T, T>` against `Pair<i32, i32>`): the
+        // instantiation records the template it came from and the arguments it
+        // was built with, which is exactly the pairing wanted here.
+        _ => {
+            let Some(mine) = generic_template_name(&written.name, ctx) else {
+                return;
+            };
+            if let Ty::Struct(key) = actual {
+                let origin = ctx.env.instances.borrow().origin.get(key).cloned();
+                if let Some((tname, targs)) = origin {
+                    if tname == mine {
+                        for (w, a) in written.args.iter().zip(targs.iter()) {
+                            bind_type_params(ctx, w, a, params, out);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3650,21 +3948,20 @@ fn bind_from_expected(
 /// The complete argument list for one instantiation, or an error naming the
 /// parameter that could not be inferred.
 fn finish_type_args(
-    tmpl: &GenericTemplate,
+    name: &str,
+    params: &[String],
     bindings: &HashMap<String, Ty>,
     span: Span,
 ) -> Result<Vec<Ty>> {
-    let mut args = Vec::with_capacity(tmpl.params.len());
-    for p in &tmpl.params {
+    let mut args = Vec::with_capacity(params.len());
+    for p in params {
         match bindings.get(p) {
             Some(t) => args.push(t.clone()),
             None => {
                 return Err(TypeError {
                     message: format!(
-                        "cannot infer type parameter '{p}' of '{}' here — annotate the binding (e.g. 'val x: {}<{}> = ...') or pass an argument that determines it",
-                        tmpl.name,
-                        tmpl.name,
-                        tmpl.params.join(", ")
+                        "cannot infer type parameter '{p}' of '{name}' here — annotate the binding (e.g. 'val x: {name}<{}> = ...') or pass an argument that determines it",
+                        params.join(", ")
                     ),
                     span,
                 })
@@ -3682,7 +3979,8 @@ fn finish_type_args(
 /// enough is known yet", and the argument is probed unconstrained.
 fn field_hint(
     ctx: &Ctx,
-    tmpl: &GenericTemplate,
+    prefix: &str,
+    aliases: &HashMap<String, String>,
     written: &ast::TypeExpr,
     bindings: &HashMap<String, Ty>,
 ) -> Option<Ty> {
@@ -3690,8 +3988,8 @@ fn field_hint(
         structs: &ctx.structs,
         env: ctx.env.clone(),
         params: bindings,
-        prefix: &tmpl.prefix,
-        aliases: &tmpl.aliases,
+        prefix,
+        aliases,
         later_datacs: None,
         in_progress: None,
     };
@@ -3733,11 +4031,11 @@ fn check_generic_datac_construction(
     let mut bindings = HashMap::new();
     bind_from_expected(&tmpl, expected, ctx, &mut bindings);
     for (i, f) in fields.iter().enumerate() {
-        let hint = field_hint(ctx, &tmpl, &f.ty, &bindings);
+        let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
         let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-        bind_type_params(&f.ty, &probed.ty, &tmpl.params, &mut bindings);
+        bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
     }
-    let type_args = finish_type_args(&tmpl, &bindings, span)?;
+    let type_args = finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?;
     let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
     let key = struct_name_of(&ty)
         .expect("an instantiation is a struct type")
@@ -3807,11 +4105,11 @@ fn check_generic_enum_construction(
     let mut bindings = HashMap::new();
     bind_from_expected(&tmpl, expected, ctx, &mut bindings);
     for (i, f) in vdef.fields.iter().enumerate() {
-        let hint = field_hint(ctx, &tmpl, &f.ty, &bindings);
+        let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &f.ty, &bindings);
         let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
-        bind_type_params(&f.ty, &probed.ty, &tmpl.params, &mut bindings);
+        bind_type_params(ctx, &f.ty, &probed.ty, &tmpl.params, &mut bindings);
     }
-    let type_args = finish_type_args(&tmpl, &bindings, span)?;
+    let type_args = finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?;
     let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
     let key = struct_name_of(&ty)
         .expect("an instantiation is a struct type")
@@ -3893,7 +4191,7 @@ fn check_generic_bare_variant(
     }
     let mut bindings = HashMap::new();
     bind_from_expected(&tmpl, expected, ctx, &mut bindings);
-    let type_args = finish_type_args(&tmpl, &bindings, span)?;
+    let type_args = finish_type_args(&tmpl.name, &tmpl.params, &bindings, span)?;
     let ty = ctx.instantiate_type(tmpl_name, &type_args, span)?;
     let key = struct_name_of(&ty)
         .expect("an instantiation is a struct type")
@@ -4679,33 +4977,43 @@ fn check_call(
 
     let owned_key = ctx.qualify_own(callee);
     let direct = ctx
-        .sigs
-        .get(callee)
-        .map(|s| (callee.to_string(), s.clone()))
-        .or_else(|| ctx.sigs.get(&owned_key).map(|s| (owned_key.clone(), s.clone())));
+        .sig_of(callee)
+        .map(|s| (callee.to_string(), s))
+        .or_else(|| ctx.sig_of(&owned_key).map(|s| (owned_key.clone(), s)));
     let (key, sig) = match direct {
         Some(found) => found,
         None => match resolve_overload(callee, &owned_key, args, span, ctx)? {
             Some(found) => found,
-            // A compiler-provided free function (`panic`, `assert`) lives in
-            // the same table as the builtin methods, so it is consulted after
-            // the program's own signatures — a user function of the same name
-            // wins, and there is no shadowing surprise.
-            None => match builtin_sig(callee) {
-                Some(sig) => (callee.to_string(), sig),
-                None => {
-                    return Err(TypeError {
-                        message: match qualified_hint(
-                            callee,
-                            ctx.structs.keys().chain(ctx.sigs.keys()),
-                            &ctx.aliases,
-                        ) {
-                            Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
-                            None => format!("call to undefined function '{callee}'"),
-                        },
-                        span,
-                    })
+            // A-2: a generic function is a template, not a signature, so it is
+            // instantiated for this call site's argument types before the
+            // ordinary argument matching runs.
+            None => match func_template_named(ctx, callee, &owned_key) {
+                Some(tmpl_key) => {
+                    instantiate_function(ctx, &tmpl_key, args, span, expected, None)?
                 }
+                // A compiler-provided free function (`panic`, `assert`) lives
+                // in the same table as the builtin methods, so it is consulted
+                // after the program's own signatures — a user function of the
+                // same name wins, and there is no shadowing surprise.
+                None => match builtin_sig(callee) {
+                    Some(sig) => (callee.to_string(), sig),
+                    None => {
+                        return Err(TypeError {
+                            message: match qualified_hint(
+                                callee,
+                                ctx.structs
+                                    .keys()
+                                    .chain(ctx.sigs.keys())
+                                    .chain(ctx.fns.templates.keys()),
+                                &ctx.aliases,
+                            ) {
+                                Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
+                                None => format!("call to undefined function '{callee}'"),
+                            },
+                            span,
+                        })
+                    }
+                },
             },
         },
     };
@@ -4728,6 +5036,124 @@ fn check_call(
         ty: sig.ret,
         span,
     })
+}
+
+/// The key of the generic *function* template `name` or `owned` names, if
+/// either does (A-2).
+fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
+    if ctx.fns.templates.contains_key(name) {
+        return Some(name.to_string());
+    }
+    ctx.fns
+        .templates
+        .contains_key(owned)
+        .then(|| owned.to_string())
+}
+
+/// Instantiates a generic function for one call site (A-2), returning the
+/// instance's key and its concrete signature. The type arguments come from
+/// three places, in this order: the receiver's own instantiation (a method),
+/// the expected type, and the argument types. The signature is registered
+/// *before* the body is queued, so a recursive call inside the body resolves
+/// to the same instance instead of instantiating again.
+fn instantiate_function(
+    ctx: &mut Ctx,
+    tmpl_key: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    expected: Option<&Ty>,
+    receiver_ty: Option<&Ty>,
+) -> Result<(String, FnSig)> {
+    let tmpl = ctx.fns.templates[tmpl_key].clone();
+    let mut bindings: HashMap<String, Ty> = HashMap::new();
+    // A method's type parameters are the receiver type's, which the receiver
+    // expression already resolved.
+    if tmpl.receiver.is_some() {
+        if let Some(rk) = receiver_ty.and_then(struct_name_of) {
+            if let Some((_, targs)) = ctx.env.instances.borrow().origin.get(rk).cloned() {
+                for (p, a) in tmpl.params.iter().zip(targs.iter()) {
+                    bindings.insert(p.clone(), a.clone());
+                }
+            }
+        }
+    }
+    let what = format!("function '{}'", display_callee(&tmpl.key));
+    if let (Some(written), Some(exp)) = (&tmpl.ret, expected) {
+        bind_type_params(ctx, written, exp, &tmpl.params, &mut bindings);
+    }
+    if tmpl.declared.is_empty() {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("{what} expects 0 argument(s), found {}", args.len()),
+                span,
+            });
+        }
+    } else {
+        let names: Vec<String> = tmpl.declared.iter().map(|p| p.name.clone()).collect();
+        let slots = arg_slots(&what, &names, args, span)?;
+        for (i, p) in tmpl.declared.iter().enumerate() {
+            let hint = field_hint(ctx, &tmpl.prefix, &tmpl.aliases, &p.ty, &bindings);
+            let probed = check_expr(&args[slots[i]].value, ctx, hint.as_ref())?;
+            bind_type_params(ctx, &p.ty, &probed.ty, &tmpl.params, &mut bindings);
+        }
+    }
+    let type_args = finish_type_args(&tmpl.key, &tmpl.params, &bindings, span)?;
+    let key = instance_key(&tmpl.key, &type_args);
+    if let Some(sig) = ctx.sig_of(&key) {
+        return Ok((key, sig));
+    }
+    // The parameter and return types, resolved with the parameters bound. A
+    // failure here is a problem in the template's own signature, written in
+    // the template's file, so the message names the instance and the span
+    // points at the use site — which is the module the caller will attribute
+    // the error to.
+    let scope = TypeScope {
+        structs: &ctx.structs,
+        env: ctx.env.clone(),
+        params: &bindings,
+        prefix: &tmpl.prefix,
+        aliases: &tmpl.aliases,
+        later_datacs: None,
+        in_progress: None,
+    };
+    let mut params = Vec::new();
+    if let Some((_, receiver_mutable)) = &tmpl.receiver {
+        let rk = receiver_ty
+            .and_then(struct_name_of)
+            .expect("a receiver method is only instantiated for a struct receiver");
+        params.push((
+            "self".to_string(),
+            implicit_borrow_wrap(Ty::Struct(rk.to_string()), *receiver_mutable),
+        ));
+    }
+    for p in &tmpl.declared {
+        let ty = scope.resolve_param(p).map_err(|e| TypeError {
+            message: format!("in '{key}': {}", e.message),
+            span,
+        })?;
+        params.push((p.name.clone(), ty));
+    }
+    let ret = match &tmpl.ret {
+        Some(t) => scope.resolve_return(t).map_err(|e| TypeError {
+            message: format!("in '{key}': {}", e.message),
+            span,
+        })?,
+        None => Ty::Unit,
+    };
+    let sig = FnSig { params, ret };
+    let mut st = ctx.fns.instances.borrow_mut();
+    if st.sigs.len() >= MAX_FUNCTION_INSTANTIATIONS {
+        return Err(TypeError {
+            message: format!(
+                "generic instantiation did not terminate — more than {MAX_FUNCTION_INSTANTIATIONS} function instances were created; a generic function that calls itself with a different type argument grows without bound"
+            ),
+            span,
+        });
+    }
+    st.sigs.insert(key.clone(), sig.clone());
+    st.origin.insert(key.clone(), tmpl.key.clone());
+    st.pending.push_back((key.clone(), type_args));
+    Ok((key, sig))
 }
 
 /// Argument-type overloading (M6.3, stdlib decision 4). Picks the single
@@ -4819,7 +5245,7 @@ fn overload_options(callee: &str, owned_key: &str, ctx: &Ctx) -> String {
 /// here; the callee's parameter is what makes the dependency visible in its
 /// own signature.
 fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
-    let Some(pds) = ctx.wired.get(callee) else {
+    let Some(pds) = ctx.wired_for(callee) else {
         return Ok(Vec::new());
     };
     let mut out = Vec::with_capacity(pds.len());
