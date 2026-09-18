@@ -587,10 +587,16 @@ impl Parser {
             None
         };
         // A function type (A-4): `fun(i32, String).R: bool`. `fun` is a
-        // keyword, so this can never be an ordinary type name.
+        // keyword, so this can never be an ordinary type name. A closure type
+        // (A-4 phase E) is the same shape under the `closure` keyword:
+        // `closure(i32).R: i32` is a function value that owns an environment.
         if self.check(&TokenKind::Fun) {
             let start = self.advance().span;
-            return self.parse_fn_type(start, amp_start);
+            return self.parse_fn_type(start, amp_start, "fun");
+        }
+        if self.check(&TokenKind::Closure) {
+            let start = self.advance().span;
+            return self.parse_fn_type(start, amp_start, "closure");
         }
         let (first, first_span) = self.expect_ident()?;
         // A dotted name is a module-qualified reference to an imported item
@@ -736,7 +742,12 @@ impl Parser {
     /// written `fun(String)` is a function whose parameter is a borrow, and
     /// `fun(move String)` is one that takes ownership, exactly as
     /// `fun f(s: String)` and `fun f(s: move String)` do.
-    fn parse_fn_type(&mut self, start: Span, amp_start: Option<Span>) -> PResult<TypeExpr> {
+    fn parse_fn_type(
+        &mut self,
+        start: Span,
+        amp_start: Option<Span>,
+        name: &str,
+    ) -> PResult<TypeExpr> {
         self.expect(TokenKind::LParen, "'('")?;
         let mut params = Vec::new();
         while !self.check(&TokenKind::RParen) {
@@ -768,7 +779,7 @@ impl Parser {
             None
         };
         Ok(TypeExpr {
-            name: "fun".to_string(),
+            name: name.to_string(),
             args: Vec::new(),
             amp: amp_start.is_some(),
             fn_params: Some(params),
@@ -1983,6 +1994,26 @@ mod tests {
         assert!(ret.fn_ret.is_none());
         assert!(ret.fn_params.as_ref().unwrap()[0].mode.moves());
         assert_eq!(ret.display(), "fun(move String)");
+    }
+
+    #[test]
+    fn parses_a_closure_type_in_parameter_and_return_position() {
+        // A closure type is a function type under the `closure` keyword — the
+        // same parameter list, the same optional `.R:` (A-4 phase E).
+        let p = parse("fun use(f: closure(i32).R: i32, g: move closure()) {}");
+        let f = &p.functions[0];
+
+        let f_param = &f.params[0];
+        assert!(f_param.ty.is_closure());
+        assert_eq!(f_param.ty.display(), "closure(i32).R: i32");
+        assert!(!f_param.mode.moves());
+
+        // A bare closure parameter borrows the environment (an owned type's
+        // parameter is a borrow); `move closure(...)` takes it over.
+        let g_param = &f.params[1];
+        assert!(g_param.ty.is_closure());
+        assert!(g_param.mode.moves());
+        assert_eq!(g_param.ty.display(), "closure()");
     }
 
     #[test]

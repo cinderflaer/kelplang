@@ -1,0 +1,41 @@
+// A-4 phase E, the memory half: a closure owns the environment its captures
+// were moved into, so the environment is freed exactly where the binding that
+// holds the closure dies — at the end of its block, on an early `return`, and
+// once per loop iteration.
+//
+// In the AddressSanitizer list: a missed drop is a leak here, and a second one
+// is a double free, so this fixture is what makes "the closure owns its
+// environment" a verified claim rather than an argument.
+fun early(stop: bool).R: i32 {
+    val payload = String.from_str("payload")
+    val size = fun() .R: usize = payload.len()
+    if stop {
+        return size().to_i32()
+    }
+    return 0
+}
+
+fun main() {
+    // End of the block: the closure and its environment are dropped at `}`.
+    {
+        val first = String.from_str("first")
+        val f = fun() .R: usize = first.len()
+        print(f())
+    }
+
+    // An early `return`: the frame's closure is freed on the way out, on both
+    // paths.
+    print(early(true))
+    print(early(false))
+
+    // One environment per iteration, each freed at the end of the iteration's
+    // block — the loop body is checked twice and emitted once, so this is also
+    // what proves the two walks agree about the environment.
+    var i = 0
+    while i < 3 {
+        val n = i + 10
+        val f = fun(x: i32).R: i32 = x + n
+        print(f(0))
+        i = i + 1
+    }
+}

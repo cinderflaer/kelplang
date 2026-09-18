@@ -1228,6 +1228,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // A-4 phase D: `option`/`result`/`list` callbacks over owned payloads.
         "stdlib_combinators",
         "stdlib_list_callbacks",
+        // A-4 phase E: a closure owns its environment, and the fixture below
+        // frees exactly one per capture; `closure_move` covers the three drop
+        // points (block end, early `return`, one per loop iteration).
+        "closure_basic",
+        "closure_move",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2616,11 +2621,10 @@ fn a_fun_literal_is_a_function_value() {
 }
 
 #[test]
-fn a_fun_literal_cannot_capture_yet() {
-    assert_rejected_with(
-        "tests/fixtures/fn_literal_capture.kp",
-        "a 'fun' literal cannot capture 'k' from the enclosing scope yet",
-    );
+fn a_fun_literal_captures_rather_than_failing() {
+    // Phase E replaced the "cannot capture yet" refusal: a name from the
+    // enclosing scope is now the thing that makes the literal a closure.
+    assert_compiles_and_runs("tests/fixtures/fn_literal_capture.kp", "10\n10\n");
 }
 
 #[test]
@@ -2690,5 +2694,93 @@ fn a_combinator_needing_a_copy_payload_says_so() {
     assert_rejected_with(
         "tests/fixtures/stdlib_list_filter_owned.kp",
         "this is inside the shipped standard library ('std/list')",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A-4 phase E: captures — a `fun` literal that names a binding from the
+// enclosing scope becomes a closure (`closure(T).R: U`), which owns the heap
+// environment its captures were moved into.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_closure_carries_its_environment() {
+    // Also in the AddressSanitizer list: every owned capture is freed exactly
+    // once. Covers a `Copy` capture, an owned capture read through a borrow, a
+    // capturing literal passed to a closure parameter and to a `move` one, a
+    // closure returned out of the frame that made it, one in a `datac` field,
+    // one in a `Box`, and an inner literal calling a closure the frame holds.
+    assert_compiles_and_runs(
+        "tests/fixtures/closure_basic.kp",
+        "11\n10\n3\n30\n-6\n14\n15\n42\n13\n",
+    );
+}
+
+#[test]
+fn a_closure_is_dropped_where_its_binding_dies() {
+    // Also in the AddressSanitizer list: a missed drop is a leak and a second
+    // one a double free. Covers the three drop points — the end of a block, an
+    // early `return`, and once per loop iteration.
+    assert_compiles_and_runs(
+        "tests/fixtures/closure_move.kp",
+        "5\n7\n0\n10\n11\n12\n",
+    );
+}
+
+#[test]
+fn a_closure_capture_is_checked() {
+    // A borrow has no owner to move into the environment, a receiver's field
+    // would have to be read out of a borrow, a nested literal cannot move an
+    // owned value out of the enclosing environment, and an owned capture can
+    // only be borrowed inside the body.
+    assert_rejected_with(
+        "tests/fixtures/closure_capture_borrow.kp",
+        "a 'fun' literal cannot capture 's': it is a borrow ('str')",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_capture_receiver.kp",
+        "it is a field of 'Counter'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_nested_owned.kp",
+        "it belongs to the enclosing closure's environment",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_capture_by_value.kp",
+        "cannot read a captured value out of the closure's environment by value",
+    );
+}
+
+#[test]
+fn the_closure_type_and_its_limits_are_checked() {
+    // `&closure(...)` is not a type, a closure is not a container element, the
+    // widening needs the same signature, a closure cannot go where a plain
+    // function value is expected, and the one widening that exists (a `fun`
+    // value where a closure is expected) does not blur the ownership rules:
+    // capturing an owned binding still moves it, and a closure handed to a
+    // `move` parameter is still gone afterwards.
+    assert_rejected_with(
+        "tests/fixtures/closure_type_amp.kp",
+        "'&' cannot be written on the closure type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_element.kp",
+        "cannot be a 'List' element yet",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_signature_mismatch.kp",
+        "declared as 'closure(i32).R: i32'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_where_fn_expected.kp",
+        "this is a closure: its body captured a binding",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_use_after_capture.kp",
+        "use of moved value 'text'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/closure_use_after_move.kp",
+        "use of moved value 'g'",
     );
 }

@@ -110,8 +110,8 @@ Inside `(` `)` newlines are insignificant, which is what lets a field list or an
 An identifier starts with a letter or `_`. These words are keywords:
 
 ```
-as  const  datac  else  enum  extern  false  fun  if  impl  move  mut
-pd  return  true  val  var  when  while
+as  closure  const  datac  else  enum  extern  false  fun  if  impl  move
+mut  pd  return  true  val  var  when  while
 ```
 
 `fn`, `let`, `struct`, `use`, `for`, `loop`, `break`, `continue`, `match`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8).
@@ -175,6 +175,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
 | `fun(T, U).R: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
+| `closure(T, U).R: V` | owned | a *closure*: a function value plus the environment its captures were moved into (7.4). What a `fun` literal becomes when it names a binding from the enclosing scope |
 | `Unit` | Copy | absent value, the implicit return type |
 
 Rules that follow from the table:
@@ -186,6 +187,7 @@ Rules that follow from the table:
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
 - `Unit` is not a value and cannot be stored.
 - A function type is Copy and owns nothing: a function value is a plain function pointer, so copying one is copying a pointer. It cannot be borrowed (`&`/`mut`), stored in a container, or used as a type argument's *element* — the placements 7.4 lists.
+- A closure type is **not** Copy: it owns the environment its captures were moved into, and dropping it frees that environment. A parameter of the closure type borrows it (as an owned type's parameter does), and `move closure(...)` takes it over. It cannot be borrowed with `&`, cannot be a `List`/`Map` element, and *may* be a `Box` element (`Box<closure(...)>`, the optional-callback shape) or a `datac`/`enum` field.
 
 ## 4. Bindings and assignment
 
@@ -419,7 +421,7 @@ A name that the function does not declare is an error; so is naming an argument 
 
 - A user program cannot overload a name. Two `fun pick(a: i32)` and `fun pick(a: f64)` collide: `function 'pick' is defined more than once for the same parameter types`. Overloading exists only inside the shipped standard library, and only for `abs`, `min`, `max` and `clamp`, which is how `math.min` accepts `i32`, `i64` and `f64`.
 - Recursion is unrestricted, including mutual recursion.
-- A function name *is* a value: see 7.4. There are no closures and no anonymous functions yet (A-4's later phases), so a function value is a pointer to a declared top-level `fun`, never to a captured environment.
+- A function name *is* a value: see 7.4. A `fun` literal is an anonymous function, and a literal that names a binding from the enclosing scope is a **closure** — a function value that carries the environment it captured. There is still no way to write a named nested function, and no `dyn`-style boxing of one.
 - A function may take type parameters: `fun first<T>(xs: List<T>).R: T`. A receiver method on a generic type takes the *type's* parameters instead: `fun Pair<A, B>.first().R: A`. Each call site is instantiated for the types it uses (9.3).
 
 ### 7.3 `main`
@@ -486,16 +488,58 @@ val g = fun(x: i32) {              // no `.R` means Unit
 
 A body is required (`= expr` or `{ ... }`), and everything else is a declaration's: the same parameter list with the same `mut`/`move` qualifiers, the same optional `.R: T`, the same tail-versus-return check, and `?` propagates against the literal's own `.R`. Each literal becomes one function, so a literal inside a literal's body is just another one.
 
-**A literal cannot see the enclosing scope.** It is a function value, not a closure: there is no environment to carry a captured binding, so a name from one frame up is refused with the fix named — pass it as a parameter, or as a `move` parameter to hand over ownership. A literal also cannot read a passdown (a passdown is a hidden argument of the function that names it, which a function value has no room for) and cannot return a borrow (the elision rule that says which argument a borrow comes from has nowhere to be written for a value called through a pointer).
+### Captures, and the closure type
 
-Rules and limits of this first phase:
+A literal that names a binding from the enclosing scope **captures** it, and that makes the literal a *closure*: a function value plus the environment those captures were moved into. Its type is written `closure(T, U).R: V` — the function type under the `closure` keyword, called exactly the same way.
+
+```kelp
+fun make(step: i32).R: closure(i32).R: i32 {
+    return fun(x: i32).R: i32 = x * step
+}
+
+val f = make(3)
+print(f(7))                        // 21 — `step` outlives `make`
+```
+
+A capture is **move-only**, and `Copy` is what decides what that means:
+
+- A `Copy` binding (a number, `bool`, a function value) is *copied* into the environment; the enclosing binding stays usable.
+- An owned binding (`String`, `Bytes`, `List`, `Box`, `Map`, a `datac`/`enum`, another closure) is *moved* into the environment; the enclosing binding is gone from that point on, exactly as after `val b = a`.
+- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead.
+
+Inside the body a capture is read *through a borrow of the environment*, so an owned capture can be used in place — a method called on it, a field read, passed to a parameter — but cannot be handed out by value. That is 9's no-partial-moves rule, and the message says so.
+
+A closure **owns** its environment and frees it where the closure dies: the end of the block that holds it, an early `return`, one per loop iteration. So a closure may outlive the frame that made it (that is the point), and nothing it captured may be a borrow.
+
+```kelp
+val k = 10
+val add_k = fun(x: i32).R: i32 = x + k     // Copy capture: `k` is still usable
+print(add_k(1))
+print(k)
+```
+
+A literal whose body captures nothing is *not* a closure: it stays a plain `fun` value — `Copy`, no environment, no drop — so nothing about the phase before this one changes. The two types are separate, and one widening connects them:
+
+- A plain **function value used where a closure is expected** (`val f: closure(i32).R: i32 = double`, `Holder(cb = fun(x: i32).R: i32 = x)`) is wrapped in a one-field environment holding the pointer, with a generated thunk calling through it. The signatures must match; there is no conversion in the other direction, because a closure carries an environment a `fun` value has no room for.
+
+What a literal still cannot do:
+
+- **Read a passdown.** A passdown is a hidden argument of the function that names it, and a closure's generated function has no room for one. Pass the value as a parameter, or capture it.
+- **Return a borrow.** The elision rule that says which argument a borrow comes from has nowhere to be written for a value called through a pointer.
+- **Capture a field of the receiver it was written in.** Reading a field out of a borrowed receiver by value is a partial move (9): bind a `Copy` field to a local first, or take the whole receiver as a `move` parameter.
+- **Be a `List` or `Map` element.** A closure owns its environment and those elements are held inline; a `Box<closure(...)>` (the optional-callback shape) or a one-field `datac` holds it instead.
+- **Be borrowed with `&`.** A closure is an owned value, so a parameter of its type already borrows it and `move closure(...)` takes it over.
+
+A literal nested in another literal can copy a `Copy` capture out of the enclosing closure's environment. An owned one cannot be *moved* out of it — that is the same partial move.
+
+Rules and limits of this phase:
 
 - **A call through a function value is positional.** A function *type* has no parameter names, so `f(x = 1)` is refused and the argument count is checked against the callee's own list.
 - **A call's result cannot be called directly.** `pick(true)(4)` is not the grammar; bind it (`val p = pick(true)`) and call `p(4)`.
 - **A module's item is named with its qualified spelling** — `val f = math.sqrt` — and a bare name means a function of the current module. An *overloaded* item (`math.abs`, which is `i32`/`i64`/`f64`) is refused: its parameter types are part of its name, so it is several functions, not one.
-- **A function value is a declared top-level function.** A generic function (no single signature), a function that reads a passdown (its C signature has a hidden argument), and `main` are each refused with a message that says which. A receiver method is not reachable as a value at all, and an overloaded standard-library name (`math.abs`) is refused because its parameter types are part of its name.
-- **Placements with no C spelling are refused**: a function type may not return a function type, may not be borrowed, and may not be a container element (`List<fun(...)>` — hold it in a one-field `datac` instead). A function type *is* fine as a parameter, a `val`/`var`, a `datac`/`enum` field, a passdown, a function's return type, and a type argument.
-- There is no `print` for a function value.
+- **A declared `fun` is always a plain function value.** A generic function (no single signature), a function that reads a passdown (its C signature has a hidden argument), and `main` are each refused with a message that says which. A receiver method is not reachable as a value at all, and an overloaded standard-library name (`math.abs`) is refused because its parameter types are part of its name.
+- **Placements with no C spelling are refused**: a function type may not return a function type and may not be borrowed. A function type *is* fine as a parameter, a `val`/`var`, a `datac`/`enum` field, a passdown, a function's return type, and a type argument. A closure type is fine in all of those as well, plus `Box<closure(...)>`.
+- There is no `print` for a function value or a closure.
 
 ## 8. Methods and receivers
 
@@ -1427,8 +1471,10 @@ These are deliberate, and each one has a workaround in this document:
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`.
 - No character literal, and no `char` values.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
-- Function values (7.4) are declared functions and `fun` literals: no closures, no captures, and a function value cannot be called as the result of another call (`f()(x)`) — bind it first.
-- A function value cannot be a container element or the return type of a function *type*, and a function that reads a passdown is not a value.
+- Function values (7.4) are declared functions, `fun` literals, and closures: a literal becomes a closure when it names a binding from the enclosing scope, captures are **move-only** (a `Copy` binding is copied, an owned one is moved), and a borrow cannot be captured at all. A function value cannot be called as the result of another call (`f()(x)`) — bind it first.
+- A function value cannot be a container element or the return type of a function *type*, a function that reads a passdown is not a value, and a closure cannot be a `List`/`Map` element (a `Box` or a one-field `datac` holds it).
+- A closure's captures are read out of its environment through a borrow, so an owned capture cannot be handed out by value (9's no-partial-moves rule). Its environment is dropped where the closure dies, so a closure cannot outlive anything it captured — which is why a borrow can never be a capture.
+- A nested literal can copy a `Copy` capture out of the enclosing closure's environment, but not move an owned one out of it.
 - `kelpc` has no formatter or linter command yet, and `kelpc run` cannot pass arguments to the program.
 - Capability patterns are static text: they cannot be computed, narrowed or revoked at runtime.
 
@@ -1461,7 +1507,14 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'mut'/'&' cannot be written on the function type` | a function value is Copy, so a borrow of one is a pointer to a pointer |
 | `a function type cannot return another function type` | C cannot write that declarator; return a `datac` holding the function value |
 | `'fun(i32).R: i32' cannot be a 'List' element yet` | a container's generated C type names its element type as a prefix; hold it in a one-field `datac` |
-| `a 'fun' literal cannot capture 'k' from the enclosing scope yet` | literals have no environment yet: pass the value as a parameter, or as a `move` parameter to hand over ownership |
+| `a 'fun' literal cannot capture 's': it is a borrow ('str')` | the environment outlives the frame the borrow points into; capture an owned value, or pass the borrow as a parameter of the literal |
+| `a 'fun' literal cannot capture 'n': it is a field of 'Counter'` | reading a field out of a borrowed receiver by value is a partial move (A-11); bind a `Copy` field to a local first, or take the receiver as a `move` parameter |
+| `cannot capture 'text' into this literal: it belongs to the enclosing closure's environment` | moving an owned value out of an environment is a partial move; capture it from the frame that owns it, or copy a `Copy` one |
+| `cannot read a captured value out of the closure's environment by value` | a capture is read through a borrow; use it in place, or capture a `Copy` value |
+| `this is a closure: its body captured a binding from the enclosing scope` | the parameter's type has to say `closure(...)`; a `fun(...)` value has no room for an environment |
+| `this is a plain function value, not a closure` | the literal captured nothing, so it has no environment; write the expected type as `fun(...)`, or name a binding to capture |
+| `'&' cannot be written on the closure type` | a closure is an owned value; a parameter of that type already borrows it, and `move closure(...)` takes it over |
+| `'closure().R: i32' cannot be a 'List' element yet` | a closure owns its environment and a list's elements are inline; use `Box<closure(...)>` or a one-field `datac` |
 | `a 'fun' literal cannot read passdown 'base'` | a passdown is a hidden argument; pass the value as a parameter |
 | `a 'fun' literal cannot return a borrow ('&str')` | an indirect call has no parameter an elided lifetime could bind to; return an owned value |
 | `a 'fun' literal needs a body` | write `= expr` or `{ ... }` |

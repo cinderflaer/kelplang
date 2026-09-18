@@ -1,0 +1,11 @@
+// A-4 phase E: a literal nested in a literal may copy a `Copy` capture out of
+// the enclosing environment, but an owned one would have to be *moved* out of
+// that environment, which is a partial move (A-11).
+fun main() {
+    val text = String.from_str("x")
+    val outer = fun() .R: usize {
+        val inner = fun() .R: usize = text.len()
+        return inner()
+    }
+    print(outer())
+}

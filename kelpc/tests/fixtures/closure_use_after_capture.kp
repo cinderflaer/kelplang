@@ -1,0 +1,9 @@
+// A-4 phase E: capturing an owned binding *moves* it into the environment, so
+// the enclosing binding is gone from that point on — the same rule `val b = a`
+// follows, and the same message.
+fun main() {
+    val text = String.from_str("x")
+    val f = fun() .R: usize = text.len()
+    print(text.len())
+    print(f())
+}

@@ -1,0 +1,14 @@
+// A-4 phase E: a literal inside a receiver-form method cannot capture the
+// receiver's field. The receiver is borrowed, and reading a field out of it by
+// value is a partial move (A-11) — the message names the two ways round it.
+datac Counter(val n: i32)
+
+fun Counter.bump().R: i32 {
+    val f = fun() .R: i32 = n + 1
+    return f()
+}
+
+fun main() {
+    val c = Counter(n = 1)
+    print(c.bump())
+}
