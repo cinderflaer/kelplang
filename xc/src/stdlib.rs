@@ -27,6 +27,7 @@ pub fn source(id: &str) -> Option<&'static str> {
         "std/fmt" => include_str!("../std/fmt.x"),
         "std/io" => include_str!("../std/io.x"),
         "std/process" => include_str!("../std/process.x"),
+        "std/net" => include_str!("../std/net.x"),
         _ => return None,
     })
 }
@@ -36,7 +37,7 @@ pub fn source(id: &str) -> Option<&'static str> {
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
-        "std/fmt", "std/io", "std/process",
+        "std/fmt", "std/io", "std/process", "std/net",
     ]
 }
 
@@ -67,27 +68,77 @@ pub fn domain_of(module: &str) -> Option<&'static str> {
 /// Whether a domain's patterns name paths (normalized lexically and resolved
 /// through symlinks before matching) or plain names (`env`'s variable names,
 /// which have no path structure at all).
+///
+/// `net` is **not** a path domain, and that was open item 32: counting it as
+/// one meant `api.example.com:443` was rejected as "not absolute" and, had it
+/// been accepted, every host would have been denied at runtime by a path
+/// normalizer that refuses anything without a leading `/`. A `net` pattern is
+/// `host` or `host:port`, matched as a name, and it goes through the host
+/// matcher instead.
 pub fn patterns_are_paths(domain: &str) -> bool {
-    matches!(domain, "fs" | "net" | "process")
+    matches!(domain, "fs" | "process")
+}
+
+/// How one gated call's resource arguments are matched against the module's
+/// compiled-in allowlist. Which variant applies is a property of the *call*,
+/// not of the argument types: `net.send_text(s, text)` has a `str` argument
+/// that is not a resource at all, while `net.recv(s, max)` has a `usize` that
+/// is not a port. So the call's own name picks the shape, and a function with
+/// no resource argument has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapCheck {
+    /// A path argument: lexically normalized, symlinks resolved, then matched.
+    Path(usize),
+    /// A plain name (`env`'s variable names): matched as written.
+    Name(usize),
+    /// A host and a port, matched together as `host:port`.
+    HostPort(usize, usize),
+    /// A port on its own (`net.listen`). The listener's host is the machine,
+    /// and v1 has no `net.listen(host, port)`, so the port is what the grant
+    /// governs: a pattern with no port constrains none.
+    Port(usize),
 }
 
 /// Which of a gated call's arguments are *resource names* to be matched
 /// against the module's allowlist. `fs`'s paths are every `str` argument
-/// (`rename` checks both ends); a namespace whose allowlist governs the first
-/// argument only — `env`'s variable name, `net`'s host — says so; `time` and
-/// `rand` have no named resource at all, so there is nothing to match.
-pub fn checked_args(domain: &str, arg_is_str: &[bool]) -> Vec<usize> {
+/// (`rename` checks both ends); `env` checks its variable name; `process`
+/// checks the program path; `net` names its resources positionally, because
+/// its signatures mix resources with ordinary strings and numbers. `time`
+/// and `rand` have no named resource at all, so there is nothing to match.
+///
+/// `callee` is the bare function name as written at the call site
+/// (`connect`, not `std.net.connect`).
+pub fn checked_args(domain: &str, callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
     match domain {
         "fs" => arg_is_str
             .iter()
             .enumerate()
             .filter(|(_, is_str)| **is_str)
-            .map(|(i, _)| i)
+            .map(|(i, _)| CapCheck::Path(i))
             .collect(),
-        "env" | "net" | "process" => match arg_is_str.first() {
-            Some(true) => vec![0],
-            _ => Vec::new(),
-        },
+        "env" => first_str_arg(arg_is_str)
+            .map(|i| vec![CapCheck::Name(i)])
+            .unwrap_or_default(),
+        "process" => first_str_arg(arg_is_str)
+            .map(|i| vec![CapCheck::Path(i)])
+            .unwrap_or_default(),
+        "net" => net_checked_args(callee, arg_is_str),
+        _ => Vec::new(),
+    }
+}
+
+fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
+    arg_is_str.iter().position(|is_str| *is_str)
+}
+
+/// `net`'s resource arguments, by function. The host is argument 0 and the
+/// port argument 1 in `connect`; `listen` has only a port. Everything else in
+/// the namespace — the `Socket`/`Listener` methods, `send`, `recv` — names no
+/// resource the grant governs, and is admitted by the domain gate alone.
+fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
+    match callee {
+        "connect" => vec![CapCheck::HostPort(0, 1)],
+        "listen" => vec![CapCheck::Port(0)],
         _ => Vec::new(),
     }
 }

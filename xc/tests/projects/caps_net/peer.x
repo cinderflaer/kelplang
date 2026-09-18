@@ -1,0 +1,68 @@
+impl "std/net"
+impl "std/mem"
+impl "std/str"
+
+// This module holds `net` because `main.x` delegated it. The grant names one
+// host and any port — the vocabulary that could not be written at all before
+// S3, because the compiler counted `net` as a path domain and rejected
+// anything that was not an absolute path. This file *is* the regression test
+// for that: before the fix, the `impl` line in `main.x` was a compile error.
+//
+// One process, loopback only, no fixed port: the listener binds port 0, asks
+// the kernel which port it got, and the client connects to that. Nothing here
+// touches the internet, so the fixture cannot flake on a network.
+
+// `String.push_str` takes a view, so a number formatted with `str.from_u64`
+// needs a place to live before it can be appended.
+fun push_num(out: mut String, n: u64) {
+    val text = str.from_u64(n)
+    out.push_str(text.as_str())
+}
+
+fun report().R: String {
+    val listener = net.listen(0)
+    val port = listener.port()
+    val client = net.connect("127.0.0.1", port)
+    val server = net.accept(listener)
+
+    // `send` is one `send(2)` and reports how much it took; `send_all` is the
+    // one that finishes the job.
+    val first_send = net.send(client, Bytes.from_str("ping"))
+    // `recv_into` writes into a buffer the caller sized: the "read exactly the
+    // bytes I know are coming" form. The buffer's length is its capacity.
+    var buf = mem.alloc(4)
+    val first_recv = net.recv_into(server, buf, 0)
+    net.send_all(client, Bytes.from_str("+more"))
+    val second = net.recv(server, 64)
+    net.send_text(server, "pong")
+    val back = net.recv(client, 64)
+
+    // The peer address is the *connected* address, so it starts with the
+    // address the client named; the port is whatever the kernel assigned.
+    val who = server.peer_addr()
+    val loopback = str.starts_with(who.as_str(), "127.0.0.1:")
+
+    var out = String.empty()
+    push_num(out, first_send.to_u64())
+    out.push_str(" ")
+    push_num(out, first_recv.to_u64())
+    out.push_str(" ")
+    out.push_str(second.as_str())
+    out.push_str(" ")
+    out.push_str(back.as_str())
+    out.push_str(" ")
+    if loopback {
+        out.push_str("loopback")
+    } else {
+        out.push_str("other")
+    }
+    // A port the kernel assigned is never 0 for a bound listener.
+    if port > 0 {
+        out.push_str(" bound")
+    }
+
+    net.close(client)
+    net.close(server)
+    listener.close()
+    return out
+}

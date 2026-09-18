@@ -431,13 +431,13 @@ fn unqualified_imported_item_is_rejected() {
 
 #[test]
 fn unshipped_stdlib_module_is_rejected() {
-    // `std/net` is not shipped yet (M7 gates the domain but the module has no
-    // items), and the error names what *is* shipped so the reservation stays
+    // `std/http` is the next module in the roadmap (S4) and is deliberately
+    // absent; the error names what *is* shipped so the reservation stays
     // useful.
     assert_project_rejected(
         "stdlib_import",
         &project("stdlib_import").join("main.x"),
-        "stdlib module 'net' is not implemented yet (shipped today: std/mem",
+        "stdlib module 'http' is not implemented yet (shipped today: std/mem",
     );
 }
 
@@ -1122,6 +1122,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "io_stdio",
         "io_streams",
         "process_spawn",
+        "net_loopback",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
@@ -1476,5 +1477,63 @@ fn a_granted_module_cannot_run_a_program_outside_its_grant() {
         "process_denied",
         &project("process_denied").join("main.x"),
         "is outside the process capability granted to module 'runner'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S3: `net` — the capability vocabulary (`host`, `host:port`, `*.host`,
+// `*:port`, `*`), sockets, and the one-process loopback test.
+//
+// Every `net` test is one process, loopback only, and never a fixed port: the
+// listener binds 0 and `Listener.port` reports what the kernel assigned. The
+// internet is never touched, so nothing here can flake on a network.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_entry_module_holds_net_as_the_whole_resource_wildcard() {
+    // A single-file program, so `main` holds every domain with a `*` pattern:
+    // `net` resolves with no `with caps(...)` clause, and the runtime check is
+    // the `*` the vocabulary gained in S3 (before it, `net` was a path domain
+    // and every host would have been denied by the path normalizer).
+    assert_compiles_and_runs("tests/fixtures/net_loopback.x", "hello\n");
+}
+
+#[test]
+fn a_granted_module_speaks_the_net_vocabulary_and_round_trips_bytes() {
+    // The grant is `peer`'s, not `main`'s, and it is written in the vocabulary
+    // open item 32 was about: `127.0.0.1:*` — a host and a wildcard port. The
+    // program binds port 0, learns the port, connects, accepts, and exchanges
+    // bytes in both directions, printing `send`'s byte count, `recv_into`'s,
+    // both payloads, and whether the peer address is the requested loopback.
+    assert_project_runs(
+        "caps_net",
+        &project("caps_net").join("main.x"),
+        "4 4 +more pong loopback bound\n",
+    );
+}
+
+#[test]
+fn the_net_check_matches_the_host_as_written() {
+    // `util` holds `127.0.0.1:*` and connects to `localhost` — the same
+    // machine under another name. The check runs before `getaddrinfo`, so this
+    // is denied, and the denial prints the string the code wrote. The granted
+    // pattern (not the host as written) is what the assertion reads, per the
+    // determinism rule.
+    assert_project_denied_at_runtime(
+        "caps_net_denied",
+        &project("caps_net_denied").join("main.x"),
+        "127.0.0.1:*",
+    );
+}
+
+#[test]
+fn a_net_pattern_that_is_not_a_host_is_rejected() {
+    // The `net` vocabulary has its own validator now, so this is not the
+    // "patterns are absolute paths" error a path domain gives: it names what a
+    // host pattern looks like.
+    assert_project_rejected(
+        "caps_bad_net_pattern",
+        &project("caps_bad_net_pattern").join("main.x"),
+        "is not a host",
     );
 }

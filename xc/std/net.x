@@ -1,0 +1,156 @@
+impl "std/io"
+impl "std/str"
+
+// std/net — sockets (S3). Gated on the `net` capability.
+//
+// The grant names a *host*, unlike `fs`/`process`, which name paths: the
+// vocabulary is `host`, `host:port`, `*.host`, `*:port`, and `*`, matched as
+// a name. That distinction is the whole of open item 32 — `net` used to be
+// classified as a path domain, which rejected `api.example.com:443` at the
+// `impl` line and, had it been accepted, would have denied every host through
+// a path normalizer.
+//
+// The rule that matters: **the check matches the host as the code wrote it**.
+// `getaddrinfo` runs inside the call, *after* the check, so a grant for
+// `example.com` does not cover `net.connect("93.184.216.34", 80)`. That is the
+// same rule `fs` follows for the opposite reason — `fs` resolves symlinks
+// before matching because a link is not a name the author chose, while a host
+// string is exactly the name the author chose.
+//
+// Nothing here closes on drop: a `Socket`/`Listener` that goes out of scope
+// leaks a descriptor (the same rule as `io.File`). Closing is explicit.
+//
+// IPv4 and IPv6 both work for a *client*: `connect` walks the address list, so
+// a name resolving to both `::1` and `127.0.0.1` works whichever is listening.
+// `listen` binds IPv4 (`0.0.0.0`), which is what makes `net.listen(0)` plus a
+// `127.0.0.1` connect deterministic; a dual-stack listener is a later
+// question. An IPv6 literal is not expressible as a *pattern* either, because
+// the `:` is what separates the port, so a grant for one is written by host
+// name.
+
+extern fun connect_raw(host: &str, port: u16).R: i32
+extern fun listen_raw(port: u16).R: i32
+extern fun accept_raw(fd: i32).R: i32
+extern fun close_raw(fd: i32)
+extern fun shutdown_write_raw(fd: i32)
+extern fun send_raw(fd: i32, data: Bytes).R: usize
+extern fun send_all_raw(fd: i32, data: Bytes).R: usize
+extern fun recv_raw(fd: i32, max: usize).R: Bytes
+extern fun recv_into_raw(fd: i32, buf: mut Bytes, at: usize).R: usize
+extern fun local_port_raw(fd: i32).R: u16
+extern fun peer_addr_raw(fd: i32).R: String
+
+// A connected socket. Not `Copy` (no `datac` is), so passing one to a
+// function is a borrow and there is never a silent second close.
+datac Socket(val fd: i32)
+
+// A bound, listening socket. Distinct from `Socket` so that `accept` cannot be
+// handed a connected one by mistake — there is no `Copy` in v1 to blur the two,
+// only the type name, which is exactly what a type name is for.
+datac Listener(val fd: i32)
+
+// Connects to `host:port`.
+//
+// `host` is resolved by `getaddrinfo` and every address in the list is tried
+// in order, so `localhost` works whether it resolves to `::1` or `127.0.0.1`.
+// DNS is blocking and has no timeout in v1; a name that hangs hangs here.
+//
+// Panics: if `host:port` is outside the granted capability, the host does not
+// resolve, or every address refuses the connection.
+fun connect(host: &str, port: u16).R: Socket = Socket(fd = connect_raw(host, port))
+
+// Binds `port` on every interface and listens, leaving the backlog to the
+// kernel. Port 0 asks the kernel for a free port, which `Listener.port` then
+// reports — the loopback test's way of needing no fixed port.
+//
+// The check for this call matches the *port* only: a listener binds the
+// machine, not a named host, so the port is the resource a `net` grant governs
+// for listening, and a pattern with no port (`api.example.com`) constrains
+// none. That is deliberately different from `connect`, which matches the host
+// as written — a listener has no host to name, and v1 has no
+// `net.listen(host, port)`.
+//
+// Panics: if the port is outside the granted capability, or the bind fails
+// (including "address already in use").
+fun listen(port: u16).R: Listener = Listener(fd = listen_raw(port))
+
+// Blocks until a peer connects, then returns a socket for it. One thread can
+// serve many sockets by asking `wait_readable` first instead.
+//
+// Panics: if `accept` fails.
+fun accept(l: Listener).R: Socket = Socket(fd = accept_raw(l.fd))
+
+// Panics: if the descriptor cannot be closed.
+fun close(s: Socket) {
+    close_raw(s.fd)
+}
+
+// The listener's own close. A listener holds a descriptor like anything else
+// and nothing closes on drop, so it needs the matching close — the sketch in
+// `plan.md` had only `net.close(s: Socket)`, and separate types with separate
+// closes is what keeps `accept` from being handed a connected socket.
+//
+// Panics: if the descriptor cannot be closed.
+fun Listener.close() {
+    close_raw(fd)
+}
+
+// Closes only the writing half: the peer sees end of file, and this end can
+// still read whatever is in flight. This is what an HTTP client does when it
+// stops sending but has a response to read.
+//
+// Panics: if the shutdown fails.
+fun shutdown_write(s: Socket) {
+    shutdown_write_raw(s.fd)
+}
+
+// One `send(2)`: it may write fewer bytes than it was given, and it does not
+// block until they are all out. `send_all` is the one most callers want. A
+// peer that has closed its end turns into a panic here rather than a `SIGPIPE`
+// that kills the process.
+//
+// Panics: if the send fails or the peer has closed.
+fun send(s: Socket, data: Bytes).R: usize = send_raw(s.fd, data)
+
+// The whole buffer, looping over short writes in the same primitive that
+// `io.File.write` uses — a pipe or socket may take fewer bytes than it was
+// offered, so one `send` is not a write.
+//
+// Panics: as `send`.
+fun send_all(s: Socket, data: Bytes).R: usize = send_all_raw(s.fd, data)
+
+// The `&str` form, for a literal or a view. Allocates one `Bytes` copy of the
+// text, because `send` takes bytes and v1 has no byte view (open item 44).
+//
+// Panics: as `send`.
+fun send_text(s: Socket, text: &str) {
+    send_all(s, Bytes.from_str(text))
+}
+
+// One `recv(2)`: up to `max` bytes, whatever is available. Empty means the peer
+// closed — there is no `Option` in v1 to say it another way. Use `recv_into`
+// when the length is known: a fresh fixed-size buffer cannot express "read
+// exactly `Content-Length`" without growth.
+//
+// Panics: if the receive fails.
+fun recv(s: Socket, max: usize).R: Bytes = recv_raw(s.fd, max)
+
+// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 when
+// the peer has closed). The buffer is written in place and its length is not
+// changed, so this is the form for a message of a known size — the
+// `Content-Length` case the HTTP client needs.
+//
+// Panics: if the receive fails.
+fun recv_into(s: Socket, buf: mut Bytes, at: usize).R: usize = recv_into_raw(s.fd, buf, at)
+
+// The port this listener is bound to, from `getsockname`. With
+// `net.listen(0)` this is how the kernel-assigned port is learned.
+//
+// Panics: if the socket has no local address.
+fun Listener.port().R: u16 = local_port_raw(fd)
+
+// The peer's address as `ip:port`, from `getpeername`.
+//
+// Panics: if the socket has no peer.
+fun Socket.peer_addr().R: String = peer_addr_raw(fd)
+

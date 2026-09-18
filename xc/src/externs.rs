@@ -336,6 +336,67 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     ("std/process", "exit_raw", "    exit(x_code);\n"),
     ("std/process", "getpid_raw", "    return (int64_t)getpid();\n"),
+    // ---- std/net (S3) ------------------------------------------------------
+    //
+    // The sockets themselves. Every one of these runs *after* the capability
+    // check the compiler inserted at the caller's call site, so the check is
+    // against the host string the code wrote and `getaddrinfo` here never
+    // sees an unchecked name.
+    (
+        "std/net",
+        "connect_raw",
+        "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    char service[8];\n    snprintf(service, sizeof service, \"%u\", (unsigned)x_port);\n    struct addrinfo* list = NULL;\n    if (getaddrinfo(x_host, service, &hints, &list) != 0) {\n        x_panic(\"net.connect: cannot resolve host\");\n    }\n    /* Every address in order, so a name resolving to both ::1 and 127.0.0.1\n       works whichever one is listening. */\n    int fd = -1;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);\n        if (fd < 0) {\n            continue;\n        }\n        if (connect(fd, a->ai_addr, a->ai_addrlen) == 0) {\n            break;\n        }\n        close(fd);\n        fd = -1;\n    }\n    freeaddrinfo(list);\n    if (fd < 0) {\n        x_panic(\"net.connect: connection failed\");\n    }\n    return fd;\n",
+    ),
+    (
+        "std/net",
+        "listen_raw",
+        "    /* IPv4 (`0.0.0.0`): a listener that answers every interface, with\n       one family, so `net.listen(0)` plus a `127.0.0.1` connect is\n       deterministic. An IPv6 listener is a later question. */\n    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_INET;\n    hints.ai_socktype = SOCK_STREAM;\n    hints.ai_flags = AI_PASSIVE;\n    char service[8];\n    snprintf(service, sizeof service, \"%u\", (unsigned)x_port);\n    struct addrinfo* list = NULL;\n    if (getaddrinfo(NULL, service, &hints, &list) != 0) {\n        x_panic(\"net.listen: cannot resolve the bind address\");\n    }\n    int fd = -1;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);\n        if (fd < 0) {\n            continue;\n        }\n        int on = 1;\n        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);\n        if (bind(fd, a->ai_addr, a->ai_addrlen) == 0 && listen(fd, 128) == 0) {\n            break;\n        }\n        close(fd);\n        fd = -1;\n    }\n    freeaddrinfo(list);\n    if (fd < 0) {\n        x_panic(\"net.listen: cannot bind\");\n    }\n    return fd;\n",
+    ),
+    (
+        "std/net",
+        "accept_raw",
+        "    int c;\n    do {\n        c = accept(x_fd, NULL, NULL);\n    } while (c < 0 && errno == EINTR);\n    if (c < 0) {\n        x_panic(\"net.accept: accept failed\");\n    }\n    return c;\n",
+    ),
+    (
+        "std/net",
+        "close_raw",
+        "    if (close(x_fd) != 0) {\n        x_panic(\"net.close: close failed\");\n    }\n",
+    ),
+    (
+        "std/net",
+        "shutdown_write_raw",
+        "    if (shutdown(x_fd, SHUT_WR) != 0) {\n        x_panic(\"net.shutdown_write: shutdown failed\");\n    }\n",
+    ),
+    (
+        "std/net",
+        "send_raw",
+        "    /* `MSG_NOSIGNAL`: a peer that has closed its end must not kill this\n       process with SIGPIPE; the failure comes back as a panic instead. */\n    ssize_t n;\n    do {\n        n = send(x_fd, x_data->data, x_data->len, MSG_NOSIGNAL);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        x_panic(\"net.send: send failed (the peer may have closed)\");\n    }\n    return (size_t)n;\n",
+    ),
+    (
+        "std/net",
+        "send_all_raw",
+        "    size_t off = 0;\n    while (off < x_data->len) {\n        ssize_t n = send(x_fd, x_data->data + off, x_data->len - off, MSG_NOSIGNAL);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            x_panic(\"net.send: send failed (the peer may have closed)\");\n        }\n        off += (size_t)n;\n    }\n    return off;\n",
+    ),
+    (
+        "std/net",
+        "recv_raw",
+        "    x_Bytes b = x_bytes_alloc_raw(x_max);\n    ssize_t n;\n    do {\n        n = recv(x_fd, b.data, x_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        x_panic(\"net.recv: receive failed\");\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+    ),
+    (
+        "std/net",
+        "recv_into_raw",
+        "    /* `buf`'s length is the capacity here, exactly as in `io.read_into`\n       (open item 51): the caller sized it, and filling it does not change\n       that length, so the NUL terminator slot is always inside the\n       allocation. */\n    size_t room = x_at < x_buf->len ? x_buf->len - x_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n;\n    do {\n        n = recv(x_fd, x_buf->data + x_at, room, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        x_panic(\"net.recv_into: receive failed\");\n    }\n    x_buf->data[x_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/net",
+        "local_port_raw",
+        "    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    if (getsockname(x_fd, (struct sockaddr*)&ss, &len) != 0) {\n        x_panic(\"net.port: getsockname failed\");\n    }\n    if (ss.ss_family == AF_INET) {\n        return (uint16_t)ntohs(((struct sockaddr_in*)&ss)->sin_port);\n    }\n    if (ss.ss_family == AF_INET6) {\n        return (uint16_t)ntohs(((struct sockaddr_in6*)&ss)->sin6_port);\n    }\n    x_panic(\"net.port: unknown address family\");\n    return 0;\n",
+    ),
+    (
+        "std/net",
+        "peer_addr_raw",
+        "    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    if (getpeername(x_fd, (struct sockaddr*)&ss, &len) != 0) {\n        x_panic(\"net.peer_addr: getpeername failed\");\n    }\n    char host[INET6_ADDRSTRLEN];\n    char text[INET6_ADDRSTRLEN + 16];\n    if (ss.ss_family == AF_INET) {\n        inet_ntop(AF_INET, &((struct sockaddr_in*)&ss)->sin_addr, host, sizeof host);\n        snprintf(text, sizeof text, \"%s:%u\", host,\n                 (unsigned)ntohs(((struct sockaddr_in*)&ss)->sin_port));\n    } else if (ss.ss_family == AF_INET6) {\n        inet_ntop(AF_INET6, &((struct sockaddr_in6*)&ss)->sin6_addr, host, sizeof host);\n        snprintf(text, sizeof text, \"[%s]:%u\", host,\n                 (unsigned)ntohs(((struct sockaddr_in6*)&ss)->sin6_port));\n    } else {\n        x_panic(\"net.peer_addr: unknown address family\");\n    }\n    return x_String__from_str(text);\n",
+    ),
 ];
 
 /// The C body for an `extern fun` in `module`, or `None` when the compiler

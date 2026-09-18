@@ -1,0 +1,12 @@
+impl "std/net"
+
+// This module holds `net` for `127.0.0.1:*` only. It connects to `localhost`,
+// which is the same machine but not the same name: the denial happens before
+// any resolution, so the port need not be listening for this to be denied.
+//
+// `net.close` is never reached — the panic is at the `connect` call site.
+fun connect_by_another_name().R: i64 {
+    val s = net.connect("localhost", 1)
+    net.close(s)
+    return 0
+}

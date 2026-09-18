@@ -1,0 +1,9 @@
+// A `net` pattern is a host and an optional port — not a path, and not a URL.
+// Before S3 the compiler treated `net` as a path domain, so this file's error
+// was "capability patterns are absolute paths"; now the vocabulary has its own
+// validator, and this reports what a host actually looks like.
+impl "std/net" with caps(net = ["http://api.example.com/443"])
+
+fun main() {
+    print("unreachable")
+}

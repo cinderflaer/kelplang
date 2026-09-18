@@ -568,6 +568,103 @@ static void x_cap_check_name(const char* domain, const char* name, const char* c
     return x_cap_deny(domain, name, patterns, count, module, at);
 }
 
+/* ---- net (S3): a host, or a host and a port ------------------------------
+   `plan.md`'s vocabulary: `host`, `host:port`, `*.host`, `*:port`, `*`. `*`
+   matches within one label — it does not cross `.` or `:` — so `*.example.com`
+   is one label plus a domain, and a lone `*` (handled before this) is the
+   whole-resource wildcard the entry module holds. There is no `**` here:
+   there is nothing for it to mean that `*` does not already say. */
+static bool x_host_glob(const char* pat, const char* text) {
+    while (*pat != 0) {
+        if (*pat == '*') {
+            const char* rest = pat + 1;
+            for (const char* p = text; ; p++) {
+                if (x_host_glob(rest, p)) {
+                    return true;
+                }
+                if (*p == 0 || *p == '.' || *p == ':') {
+                    return false;
+                }
+            }
+        }
+        if (*pat != *text) {
+            return false;
+        }
+        pat++;
+        text++;
+    }
+    return *text == 0;
+}
+
+/* The host part of `hostport` ("h:p" -> "h"), copied into `out`. */
+static void x_host_part(const char* hostport, char* out, size_t cap) {
+    const char* colon = strrchr(hostport, ':');
+    size_t n = colon == NULL ? strlen(hostport) : (size_t)(colon - hostport);
+    if (n >= cap) {
+        n = cap - 1;
+    }
+    memcpy(out, hostport, n);
+    out[n] = 0;
+}
+
+/* Whether `pat` admits the resource `hostport`. The match is on the string
+   the code wrote — no DNS before matching, which is the rule that keeps a
+   grant for `example.com` from covering `93.184.216.34` (`fs` resolves
+   symlinks first for the opposite reason: a link is not a name the author
+   chose). A pattern with no port admits any port. */
+static bool x_host_match(const char* pat, const char* hostport) {
+    if (strcmp(pat, "*") == 0) {
+        return true;
+    }
+    if (strrchr(pat, ':') == NULL) {
+        char host[PATH_MAX];
+        x_host_part(hostport, host, sizeof host);
+        return x_host_glob(pat, host);
+    }
+    return x_host_glob(pat, hostport);
+}
+
+/* A host and a port together. The port is the *call's* argument, so the
+   checked string is the one the code named, not a peer address. */
+static void x_cap_check_hostport(const char* domain, const char* host, uint16_t port,
+                                 const char* const* patterns, size_t count,
+                                 const char* module, const char* at) {
+    char hostport[PATH_MAX];
+    snprintf(hostport, sizeof hostport, "%s:%u", host, (unsigned)port);
+    for (size_t i = 0; i < count; i++) {
+        if (x_host_match(patterns[i], hostport)) {
+            return;
+        }
+    }
+    return x_cap_deny(domain, hostport, patterns, count, module, at);
+}
+
+/* A port on its own (`net.listen`). The grant's port is what governs a
+   listener: `net.listen` binds every interface (there is no
+   `net.listen(host, port)` in v1), so the port is the resource, and a pattern
+   with no port at all constrains none. See `std/net.x` for why. */
+static void x_cap_check_port(const char* domain, uint16_t port, const char* const* patterns,
+                             size_t count, const char* module, const char* at) {
+    char text[32];
+    char number[16];
+    snprintf(number, sizeof number, "%u", (unsigned)port);
+    snprintf(text, sizeof text, "*:%s", number);
+    for (size_t i = 0; i < count; i++) {
+        const char* pat = patterns[i];
+        if (strcmp(pat, "*") == 0) {
+            return;
+        }
+        const char* colon = strrchr(pat, ':');
+        if (colon == NULL) {
+            return;   /* a host-only pattern constrains no port */
+        }
+        if (x_host_glob(colon + 1, number)) {
+            return;
+        }
+    }
+    return x_cap_deny(domain, text, patterns, count, module, at);
+}
+
 // ---- end X capability runtime ---------------------------------------------
 "#;
 
@@ -635,8 +732,12 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     out.push_str("#include <limits.h>\n");
     out.push_str("#include <dirent.h>\n");
     out.push_str("#include <fcntl.h>\n");
+    out.push_str("#include <arpa/inet.h>\n");
     out.push_str("#include <math.h>\n");
+    out.push_str("#include <netdb.h>\n");
+    out.push_str("#include <netinet/in.h>\n");
     out.push_str("#include <poll.h>\n");
+    out.push_str("#include <sys/socket.h>\n");
     out.push_str("#include <sys/stat.h>\n");
     out.push_str("#include <sys/types.h>\n");
     out.push_str("#include <sys/wait.h>\n");
@@ -1831,6 +1932,8 @@ impl<'a> Gen<'a> {
     /// whole thing is a statement expression so it works in value position
     /// (`val b = fs.read(p)`) as well as statement position.
     fn cap_checked_call(&self, callee: &str, call: String, args: &[Expr], span: Span) -> String {
+        use crate::stdlib::CapCheck;
+
         let Some(domain) = self.caps.gated.get(callee) else {
             return call;
         };
@@ -1838,18 +1941,15 @@ impl<'a> Gen<'a> {
             return call;
         };
         let arg_is_str: Vec<bool> = args.iter().map(|a| is_str_like_ty(&a.ty)).collect();
-        let checked = crate::stdlib::checked_args(domain, &arg_is_str);
+        // `cap_checked_call` is handed the call's key, which for an imported
+        // module is qualified (`std.net.connect`); the per-function table in
+        // `stdlib.rs` is keyed on the bare name the author wrote.
+        let bare = callee.rsplit('.').next().unwrap_or(callee);
+        let checked = crate::stdlib::checked_args(domain, bare, &arg_is_str);
         if checked.is_empty() {
             return call;
         }
         let symbol = CapTable::symbol(&self.module, domain);
-        // `fs`/`net`/`process` match paths (normalized, symlinks resolved);
-        // `env` matches variable names, which have no path structure.
-        let check_fn = if crate::stdlib::patterns_are_paths(domain) {
-            "x_cap_check_path"
-        } else {
-            "x_cap_check_name"
-        };
         // The call site, as the author wrote it. The generated C carries no
         // `#line` directives, so this is the only way a runtime denial can
         // name a `.x` location.
@@ -1858,15 +1958,52 @@ impl<'a> Gen<'a> {
             .locate(&self.module, span)
             .unwrap_or_else(|| self.module.clone());
         let mut checks = String::new();
-        for i in checked {
-            let path = self.expr_value(&args[i]);
-            write!(
-                checks,
-                "{check_fn}(\"{domain}\", {path}, {symbol}, {}, \"{}\", \"{at}\"); ",
-                patterns.len(),
-                self.module
-            )
-            .unwrap();
+        for check in checked {
+            match check {
+                CapCheck::Path(i) => {
+                    // A path is normalized lexically, then resolved through
+                    // symlinks, and only then matched.
+                    let path = self.expr_value(&args[i]);
+                    write!(
+                        checks,
+                        "x_cap_check_path(\"{domain}\", {path}, {symbol}, {}, \"{}\", \"{at}\"); ",
+                        patterns.len(),
+                        self.module
+                    )
+                    .unwrap();
+                }
+                CapCheck::Name(i) => {
+                    let name = self.expr_value(&args[i]);
+                    write!(
+                        checks,
+                        "x_cap_check_name(\"{domain}\", {name}, {symbol}, {}, \"{}\", \"{at}\"); ",
+                        patterns.len(),
+                        self.module
+                    )
+                    .unwrap();
+                }
+                CapCheck::HostPort(host_at, port_at) => {
+                    let host = self.expr_value(&args[host_at]);
+                    let port = self.expr_value(&args[port_at]);
+                    write!(
+                        checks,
+                        "x_cap_check_hostport(\"{domain}\", {host}, {port}, {symbol}, {}, \"{}\", \"{at}\"); ",
+                        patterns.len(),
+                        self.module
+                    )
+                    .unwrap();
+                }
+                CapCheck::Port(i) => {
+                    let port = self.expr_value(&args[i]);
+                    write!(
+                        checks,
+                        "x_cap_check_port(\"{domain}\", {port}, {symbol}, {}, \"{}\", \"{at}\"); ",
+                        patterns.len(),
+                        self.module
+                    )
+                    .unwrap();
+                }
+            }
         }
         format!("({{ {checks}{call}; }})")
     }

@@ -777,13 +777,13 @@ fn module_id_of(file: &Path, src_dir: &Path) -> Result<String, Diagnostic> {
 /// identical, or the held one ends in `/**` and the delegated one is inside
 /// that root. Glob-to-glob inclusion is undecidable in general, and being
 /// conservative here can only under-grant — never let a module hand out more
-/// than it holds.
+/// than it holds. `net` and `env` are name domains: the only pattern that
+/// covers another one is the whole-resource `*`.
 fn pattern_covered(held: &str, granted: &str, domain: &str) -> bool {
     if held == granted {
         return true;
     }
     if !crate::stdlib::patterns_are_paths(domain) {
-        // A name domain: `*` is the only pattern that covers other patterns.
         return held == "*";
     }
     match held.strip_suffix("/**") {
@@ -811,6 +811,11 @@ fn validate_cap_pattern(
     if pattern.is_empty() {
         return err(format!("a '{domain}' pattern must not be empty"));
     }
+    if domain == "net" {
+        // Anchored here so the net vocabulary is validated in one place.
+        return validate_net_pattern(pattern)
+            .map_err(|message| Diagnostic::new(message, span, module));
+    }
     if !crate::stdlib::patterns_are_paths(domain) {
         if domain == "env" && pattern.contains('/') {
             return err(format!(
@@ -834,6 +839,57 @@ fn validate_cap_pattern(
             return err(format!(
                 "'**' is only legal as a whole segment in '{pattern}' ('*' matches within one segment)"
             ));
+        }
+    }
+    Ok(())
+}
+
+/// `net`'s vocabulary: `host`, `host:port`, `*.host`, `*:port`, `*`. The host
+/// is split from the port at the **last** `:` — so a host can never contain
+/// one, which makes an IPv6 literal unexpressible rather than ambiguous, and
+/// the message says so. `*` matches within one label (it does not cross `.`
+/// or `:`); a lone `*` is the whole-resource wildcard the entry module holds.
+fn validate_net_pattern(pattern: &str) -> Result<(), String> {
+    let vocabulary = "a 'net' pattern names a host and an optional port \
+        ('api.example.com:443', '*.example.com', '*:8080', or '*')";
+    if pattern.contains('/') || pattern.contains(char::is_whitespace) {
+        return Err(format!("'{pattern}' is not a host — {vocabulary}"));
+    }
+    if pattern.contains("**") {
+        return Err(format!(
+            "'**' has no meaning in a 'net' pattern — write '*' ('{pattern}')"
+        ));
+    }
+    let (host, port) = match pattern.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (pattern, None),
+    };
+    if host.is_empty() {
+        return Err(format!("'{pattern}' has no host — {vocabulary}"));
+    }
+    if host.contains(':') {
+        return Err(format!(
+            "'{pattern}' has more than one ':' — an IPv6 literal is not expressible as a 'net' pattern, because the ':' is what separates the port ({vocabulary})"
+        ));
+    }
+    if host != "*" && (host.starts_with('.') || host.ends_with('.') || host.contains("..")) {
+        return Err(format!(
+            "'{pattern}' is not a host name — no label of it may be empty"
+        ));
+    }
+    if let Some(port) = port {
+        if port.is_empty() {
+            return Err(format!(
+                "'{pattern}' names a port after ':' — write the number, or '*' for any ({vocabulary})"
+            ));
+        }
+        if port != "*" {
+            if !port.chars().all(|c| c.is_ascii_digit()) {
+                return Err(format!("the port in '{pattern}' must be a number or '*'"));
+            }
+            if port.parse::<u32>().map(|p| p > 65535).unwrap_or(true) {
+                return Err(format!("the port in '{pattern}' must be 0-65535"));
+            }
         }
     }
     Ok(())
