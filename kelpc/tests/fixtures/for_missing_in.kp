@@ -1,0 +1,8 @@
+// A-5: `in` is read contextually, so a missing one is a parse error that names
+// what was expected rather than a confusing "undefined function `in`".
+fun main() {
+    val xs: List<i32> = List.empty()
+    for x xs {
+        print(x)
+    }
+}

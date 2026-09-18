@@ -1,0 +1,62 @@
+// A-5: the `for` loop. It is a parser desugar to an index and a `while`, so
+// what this fixture pins is the desugaring's observable behaviour — the element
+// binding, a non-place iterable evaluated exactly once, nesting (each loop's
+// synthesized names are fresh), and iteration over a list the function only
+// borrows.
+impl "std/str"
+
+fun make().R: List<i32> {
+    var out: List<i32> = List.empty()
+    out.push(7)
+    out.push(8)
+    out.push(9)
+    return out
+}
+
+fun sum_all(xs: List<i32>).R: i32 {
+    // A parameter is a borrow, so the loop must not move the list out of it.
+    var total: i32 = 0
+    for x in xs {
+        total += x
+    }
+    return total
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+
+    // A `Copy` element is a value.
+    var sum: i32 = 0
+    for x in xs {
+        sum += x
+    }
+    print(sum)
+    // The iterable was a place, so it was borrowed, not moved.
+    print(xs.len())
+
+    // A call is evaluated once, into a temporary the desugared block owns.
+    for x in make() {
+        print(x)
+    }
+
+    // An owned element binds as a shared borrow, exactly as `List.get` gives
+    // it — hence the `.as_str()` (the open-item-21 wart, unchanged here).
+    val names = str.split("a,b,c", ",")
+    for name in names {
+        print(name.as_str())
+    }
+
+    // Nesting: two loops, two synthesized index names, no interference.
+    for a in xs {
+        for b in xs {
+            print!(a * b)
+            print!(" ")
+        }
+    }
+    print("")
+
+    print(sum_all(xs))
+}

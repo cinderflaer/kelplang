@@ -60,6 +60,11 @@ pub enum TokenKind {
     If,
     Else,
     While,
+    /// `for x in xs { ... }` — the indexed walk over a `List` (A-5,
+    /// `plan/syntax.md` §6.2). The parser desugars it to a `while`, so no pass
+    /// after the parser knows this form exists. `in` is **not** a keyword; it
+    /// is read contextually, exactly as `let` is after `if`.
+    For,
     When,
     Return,
     True,
@@ -479,6 +484,7 @@ impl<'a> Lexer<'a> {
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
                         "while" => TokenKind::While,
+                        "for" => TokenKind::For,
                         "when" => TokenKind::When,
                         "return" => TokenKind::Return,
                         "true" => TokenKind::True,
@@ -720,7 +726,7 @@ mod tests {
     #[test]
     fn lexes_keywords_and_idents() {
         assert_eq!(
-            kinds("fun val var mut if else while when return true false datac foo"),
+            kinds("fun val var mut if else while for when return true false datac foo"),
             vec![
                 TokenKind::Fun,
                 TokenKind::Val,
@@ -729,6 +735,7 @@ mod tests {
                 TokenKind::If,
                 TokenKind::Else,
                 TokenKind::While,
+                TokenKind::For,
                 TokenKind::When,
                 TokenKind::Return,
                 TokenKind::True,

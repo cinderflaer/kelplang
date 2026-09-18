@@ -1257,6 +1257,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // A-4 phase D: `option`/`result`/`list` callbacks over owned payloads.
         "stdlib_combinators",
         "stdlib_list_callbacks",
+        // A-5: `for` over a list of owned elements, plus a call iterable the
+        // desugared block owns and frees once.
+        "for_loop",
         // A-4 phase E: a closure owns its environment, and the fixture below
         // frees exactly one per capture; `closure_move` covers the three drop
         // points (block end, early `return`, one per loop iteration), and the
@@ -1399,6 +1402,32 @@ fn a_list_grows_indexes_and_shrinks() {
         "tests/fixtures/list_basic.kp",
         "0\ntrue\n3\nfalse\n1\n3\n1 20 3 \n3\n2\n0\n",
     );
+}
+
+#[test]
+fn a_for_loop_walks_a_list_without_an_index() {
+    // A-5: the parser desugars `for x in xs { }` to an index and a `while`, so
+    // this pins the desugaring where a caller can see it — the element binding
+    // (value for `Copy`, shared borrow for owned), a call iterable evaluated
+    // once, nesting, and a list a function only borrows.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_loop.kp",
+        "6\n3\n7\n8\n9\na\nb\nc\n1 2 3 2 4 6 3 6 9 \n6\n",
+    );
+}
+
+#[test]
+fn a_for_loop_needs_its_in() {
+    // `in` is not a keyword (syntax.md 2.3): it is read contextually, so the
+    // diagnostic says what is missing instead of resolving a function `in`.
+    assert_rejected_with("tests/fixtures/for_missing_in.kp", "'in'");
+}
+
+#[test]
+fn a_for_loop_only_walks_a_list() {
+    // The desugar is `.len()`/`.get()`, so a non-list fails on `.len()` and the
+    // span is the iterable — `for x in 5` points at `5`, not at the `for`.
+    assert_rejected_with("tests/fixtures/for_not_a_list.kp", "has no method 'len'");
 }
 
 #[test]

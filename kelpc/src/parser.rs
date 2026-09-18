@@ -7,6 +7,9 @@ pub struct Parser {
     /// How many `if let`s have been desugared, so each one's synthesized
     /// scrutinee binding has a name of its own (`parser::IF_LET_PREFIX`).
     if_lets: usize,
+    /// How many `for` loops have been desugared, for the same reason
+    /// (`parser::FOR_PREFIX`).
+    fors: usize,
 }
 
 #[derive(Debug)]
@@ -23,12 +26,18 @@ type PResult<T> = Result<T, ParseError>;
 /// parameter.
 const IF_LET_PREFIX: &str = "#iflet";
 
+/// The name prefix of the two locals a `for` loop synthesizes: the sequence
+/// (`#for0`) and its index (`#for0_i`). Same `#` trick as `IF_LET_PREFIX`, so
+/// a synthesized name can never collide with one the user wrote.
+const FOR_PREFIX: &str = "#for";
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
             tokens,
             pos: 0,
             if_lets: 0,
+            fors: 0,
         }
     }
 
@@ -870,6 +879,7 @@ impl Parser {
         match self.peek_kind() {
             TokenKind::Val | TokenKind::Var => self.parse_let_stmt(),
             TokenKind::While => self.parse_while_stmt(),
+            TokenKind::For => self.parse_for_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
             _ => {
                 let expr = self.parse_expr()?;
@@ -911,6 +921,148 @@ impl Parser {
         let body = self.parse_block()?;
         let span = start.to(body.span);
         Ok(Stmt::While { cond, body, span })
+    }
+
+    /// `for x in xs { BODY }`, desugared here into an indexed walk over the
+    /// `List` — the same trick the boolean `when` and `if let` already use, so
+    /// nothing downstream learns a new form (A-5, `plan/syntax.md` §6.2):
+    ///
+    /// ```text
+    /// {
+    ///     var #for0_i: usize = 0
+    ///     while #for0_i < SEQ.len() {
+    ///         { val x = SEQ.get(#for0_i)  BODY }
+    ///         #for0_i = #for0_i + 1
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// `SEQ` is the iterable as written when it is a place, and a synthesized
+    /// `val #for0 = EXPR` otherwise (so a call is evaluated once and freed at
+    /// the end of the block). Binding a place by value would move the list, and
+    /// a parameter *is* a borrow — `for x in xs` inside a function would move
+    /// out of a borrow, which is the common case.
+    ///
+    /// The element binding is exactly what `List.get` gives: a copy for a
+    /// `Copy` element, a shared borrow for an owned one. It lives in a block
+    /// of its own so the borrow ends before the increment, and so `BODY`'s own
+    /// tail expression stays the tail of a block.
+    fn parse_for_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.expect(TokenKind::For, "'for'")?.span;
+        let (binding, binding_span) = self.expect_ident()?;
+        // `in` is an ordinary identifier (2.3): it is the separator only in
+        // this position, the way `let` is a pattern only after `if` (6.1).
+        let (word, word_span) = self.expect_ident()?;
+        if word != "in" {
+            return Err(ParseError {
+                message: format!(
+                    "expected 'in' between the 'for' binding and what it iterates, found '{word}'"
+                ),
+                span: word_span,
+            });
+        }
+        let iterable = self.parse_expr()?;
+        let body = self.parse_block()?;
+        let span = start.to(body.span);
+
+        self.fors += 1;
+        let seq_name = format!("{}{}", FOR_PREFIX, self.fors - 1);
+        let idx_name = format!("{seq_name}_i");
+        // Every synthesized node is spelled with the `for`'s own span: a
+        // diagnostic about a desugared `.len()`/`.get()` should point at the
+        // loop, not at nothing.
+        let idx_span = word_span;
+
+        let mut stmts = Vec::new();
+        let iterable = if is_iteration_place(&iterable) {
+            iterable
+        } else {
+            let init_span = iterable.span();
+            stmts.push(Stmt::Let {
+                name: seq_name.clone(),
+                mutable: false,
+                ty: None,
+                init: iterable,
+                span: init_span,
+            });
+            Expr::Ident(seq_name.clone(), init_span)
+        };
+        let seq_span = iterable.span();
+
+        let cond = Expr::Binary {
+            op: BinOp::Lt,
+            lhs: Box::new(Expr::Ident(idx_name.clone(), idx_span)),
+            rhs: Box::new(Expr::MethodCall {
+                receiver: Box::new(iterable.clone()),
+                method: "len".to_string(),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                span: seq_span,
+            }),
+            span,
+        };
+        let element = Stmt::Let {
+            name: binding,
+            mutable: false,
+            ty: None,
+            init: Expr::MethodCall {
+                receiver: Box::new(iterable),
+                method: "get".to_string(),
+                type_args: Vec::new(),
+                args: vec![CallArg {
+                    name: None,
+                    value: Expr::Ident(idx_name.clone(), idx_span),
+                }],
+                span: binding_span,
+            },
+            span: binding_span,
+        };
+        let mut element_block_stmts = vec![element];
+        element_block_stmts.extend(body.stmts);
+
+        let increment = Stmt::Expr {
+            expr: Expr::Assign {
+                target: Box::new(Expr::Ident(idx_name.clone(), idx_span)),
+                value: Box::new(Expr::Binary {
+                    op: BinOp::Add,
+                    lhs: Box::new(Expr::Ident(idx_name.clone(), idx_span)),
+                    rhs: Box::new(Expr::IntLit(1, idx_span)),
+                    span: idx_span,
+                }),
+                span: idx_span,
+            },
+            span: idx_span,
+        };
+
+        stmts.push(Stmt::Let {
+            name: idx_name,
+            mutable: true,
+            ty: Some(TypeExpr::named("usize", idx_span)),
+            init: Expr::IntLit(0, idx_span),
+            span: idx_span,
+        });
+        stmts.push(Stmt::While {
+            cond,
+            body: Block {
+                stmts: vec![
+                    Stmt::Expr {
+                        expr: Expr::Block(Block {
+                            stmts: element_block_stmts,
+                            span: body.span,
+                        }),
+                        span: body.span,
+                    },
+                    increment,
+                ],
+                span: body.span,
+            },
+            span,
+        });
+
+        Ok(Stmt::Expr {
+            expr: Expr::Block(Block { stmts, span }),
+            span,
+        })
     }
 
     fn parse_return_stmt(&mut self) -> PResult<Stmt> {
@@ -1538,6 +1690,19 @@ impl Parser {
     }
 }
 
+/// Whether a `for` iterable may be read as written on every iteration. A place
+/// costs nothing to re-read, and binding one by value would *move* it — a
+/// parameter is a borrow, so the common `for x in xs` inside a function would
+/// move out of a borrow. Anything else (a call, a literal, a `when`) is bound
+/// to a temporary by `parse_for_stmt` instead, so it is evaluated once and
+/// freed with the desugared block.
+fn is_iteration_place(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Ident(..) | Expr::FieldAccess { .. } | Expr::Deref { .. }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1773,6 +1938,105 @@ mod tests {
                 assert!(arms[1].pattern.is_none());
             }
             other => panic!("expected the `when`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_loop_desugars_to_a_synthesized_index_and_a_while() {
+        // A-5: `for x in xs { BODY }` becomes
+        // `{ var #for0_i: usize = 0  while #for0_i < xs.len() {
+        //      { val x = xs.get(#for0_i) BODY }  #for0_i = #for0_i + 1 } }`.
+        // A place iterable is used as written, so there is no `#for0` binding.
+        let p = parse(
+            "fun main() {\n    for x in xs {\n        print(x)\n    }\n}",
+        );
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        let outer = match &stmts[0] {
+            Stmt::Expr { expr: Expr::Block(b), .. } => b,
+            other => panic!("expected a desugared block, got {other:?}"),
+        };
+        assert_eq!(outer.stmts.len(), 2);
+        match &outer.stmts[0] {
+            Stmt::Let { name, mutable, ty, .. } => {
+                assert_eq!(name, "#for0_i");
+                assert!(*mutable);
+                assert_eq!(ty.as_ref().map(|t| t.name.as_str()), Some("usize"));
+            }
+            other => panic!("expected the index binding, got {other:?}"),
+        }
+        let while_body = match &outer.stmts[1] {
+            Stmt::While { cond, body, .. } => {
+                let lhs = match cond {
+                    Expr::Binary { op: BinOp::Lt, lhs, .. } => lhs,
+                    other => panic!("expected an index comparison, got {other:?}"),
+                };
+                assert!(matches!(**lhs, Expr::Ident(ref n, _) if n == "#for0_i"));
+                body
+            }
+            other => panic!("expected the while, got {other:?}"),
+        };
+        assert_eq!(while_body.stmts.len(), 2);
+        let inner = match &while_body.stmts[0] {
+            Stmt::Expr { expr: Expr::Block(b), .. } => b,
+            other => panic!("expected the element block, got {other:?}"),
+        };
+        match &inner.stmts[0] {
+            Stmt::Let { name, init, .. } => {
+                assert_eq!(name, "x");
+                match init {
+                    Expr::MethodCall { method, args, .. } if method == "get" => {
+                        assert!(matches!(
+                            args[0].value,
+                            Expr::Ident(ref n, _) if n == "#for0_i"
+                        ));
+                    }
+                    other => panic!("expected the element read, got {other:?}"),
+                }
+            }
+            other => panic!("expected the element binding, got {other:?}"),
+        }
+        // The body's statement survives, and the increment is last.
+        assert!(matches!(&inner.stmts[1], Stmt::Expr { .. }));
+        assert!(matches!(&while_body.stmts[1], Stmt::Expr { expr: Expr::Assign { .. }, .. }));
+    }
+
+    #[test]
+    fn a_non_place_iterable_is_bound_to_a_temporary_first() {
+        // A call result is evaluated once, into `#for0`, which the desugared
+        // block owns and frees — the reason `for x in make()` is not a call
+        // per iteration.
+        let p = parse("fun main() {\n    for x in make() {\n        print(x)\n    }\n}");
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        let outer = match &stmts[0] {
+            Stmt::Expr { expr: Expr::Block(b), .. } => b,
+            other => panic!("expected a desugared block, got {other:?}"),
+        };
+        assert_eq!(outer.stmts.len(), 3);
+        match &outer.stmts[0] {
+            Stmt::Let { name, init, .. } => {
+                assert_eq!(name, "#for0");
+                assert!(matches!(init, Expr::Call { .. }));
+            }
+            other => panic!("expected the sequence binding, got {other:?}"),
+        }
+        match &outer.stmts[2] {
+            Stmt::While { cond, .. } => match cond {
+                Expr::Binary { rhs, .. } => match &**rhs {
+                    Expr::MethodCall { receiver, method, .. } => {
+                        assert_eq!(method, "len");
+                        assert!(matches!(**receiver, Expr::Ident(ref n, _) if n == "#for0"));
+                    }
+                    other => panic!("expected the length call, got {other:?}"),
+                },
+                other => panic!("expected an index comparison, got {other:?}"),
+            },
+            other => panic!("expected the while, got {other:?}"),
         }
     }
 
