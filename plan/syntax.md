@@ -1497,7 +1497,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding |
 | `argument 'b' has type 'String', expected 'str'` | add `.as_str()` |
 | `argument 's' has type '&String', but this call moves its argument in` | the callee is a `move T` parameter (or a container's `push`-shaped builtin): a borrow cannot be moved out of, so pass an owned value — `Box.take()` moves one out of a box |
-| `'move' cannot be written on the borrowed type 'str'` | a `str`/`&T` is already borrowed, so there is nothing to own: write the owned type (`move String`) |
+| `'move' cannot be written on the borrowed type 'str'` | a `str`/`&T` is already borrowed, so there is nothing to own: write the owned type (`move String`). A `fun` value is already `Copy` for the same reason; `move closure(...)` *is* legal, because a closure owns its environment |
 | `'mut' and 'move' cannot be combined on one parameter` | `mut T` is an exclusive borrow, `move T` takes ownership — pick the one the callee needs |
 | `'move' cannot be written on a receiver` | a receiver is always borrowed; a move-taking parameter is `name: move T` |
 | `'first' is a generic function` (as a value) | a function value needs one concrete signature; wrap the call in a small non-generic function |

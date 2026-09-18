@@ -1,6 +1,6 @@
 # The "Kelp" language milestone record (shipped)
 
-The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type), and **MK8-S1-M2 phases A-D** (`move T`, function values, `fun` literals, and the stdlib callbacks — with captures still open).
+The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type), and **MK8-S1-M2 phases A-F, which close A-4**: `move T`, function values, `fun` literals, **captures and the closure type**, and the stdlib callbacks taking closures.
 
 Entries are append-only history, so an older entry can describe a state a later one changed; each such entry names the one that superseded it.
 
@@ -766,3 +766,152 @@ A-4's middle, and the part that makes the first phase useful. Phase A gave a par
 **Tests**: `fn_value`, `fn_literal`, `stdlib_combinators`, `stdlib_list_callbacks` — all four in the AddressSanitizer pass, since each hands an owned buffer to a function value that frees it. 14 rejections for phase B (a generic function, a passdown reader, `main`, an overloaded stdlib name, named arguments and arity in an indirect call, `mut`/`&` on a function type, a container element, a nested function-type return, `print`, a wrong-shaped callback, a borrow where `move` is required), 6 for phase C (a capture, a passdown, a borrow return in a literal and in a function type, a bad tail, a bodyless literal), and 3 for phase D (the `Copy`-only helpers). Plus two parser unit tests. The suite is **77 unit tests and 203 end-to-end tests**, all green.
 
 *What is left of A-4*: **captures** — a function value carries no environment, so a closure is a representation decision (a data pointer, and a rule for what a capture owns), not more plumbing. Two smaller pieces follow from *other* items rather than from closures: a `sort_by`-shaped comparator over an owned element type, and the helpers that hand an owned payload out by value, both of which need A-11's partial moves. MK5-S7-M1's two prerequisites for threads — function values and a move-taking parameter — are both met, so MK6-S1-M1's language surface is no longer its blocker.
+
+### MK8-S1-M2 phase E captures, and the closure type (DONE)
+
+A-4's last language piece, and the representation decision the earlier phases
+left open. A `fun` literal that names a binding from the enclosing scope now
+captures it: the literal becomes a **closure** — a function value plus the heap
+environment those captures were moved into — typed `closure(T).R: U`, the
+function type one keyword apart, and called identically. A literal that
+captures *nothing* is still a plain `fun` value, `Copy` and environment-free,
+so every placement phases B and C established keeps its exact meaning.
+
+- **The representation is `{ fn, env, drop }`, monomorphized per signature.**
+  `fn` takes the environment as its hidden first parameter, so a literal's
+  generated function is emitted with `void* env_raw` first and casts it back to
+  its own environment struct. That cast is the point: the environment's layout
+  belongs to the one literal that made it, and keeping it out of the type
+  system is what lets two closures of the same signature share a C type
+  (`kelp_Closure__<sig>`, emitted like a container, before every `datac`).
+  `env` is type-erased for the same reason, and `drop` is what makes erasure
+  sound — the value cannot know its own layout, so it carries the destructor
+  beside the pointer. This is the design the A-4 record named and the one the
+  docs now describe; the alternative considered and rejected was a fat pointer
+  *without* the destructor, which cannot free an environment the value no
+  longer has the type of.
+- **Captures are move-only, and `Copy` decides what that means.** A `Copy`
+  binding is copied into the environment and the enclosing binding stays
+  usable; an owned one is moved in and the binding is gone from that point on,
+  exactly as after `val b = a`. `tir::ExprKind::ClosureLit` carries one
+  initializer per environment field, written in the enclosing function's terms,
+  and `borrowck` marks the owned ones moved through the same
+  `use_value_moving` a bare read uses. A **borrow cannot be captured at all**
+  (`str`, `&T`): the environment outlives the frame the borrow points into, and
+  v1 has no lifetime syntax to say otherwise.
+- **Inside the body a capture is a place.** `tir::ExprKind::Capture { index }`
+  is a read of one environment field, so an owned capture can be used in place
+  — a method called on it, a field read, passed to a parameter — while reading
+  it out whole is the partial move `borrowck` already refuses for an owned
+  `datac` field and an owned enum payload. `is_tir_place` counts a capture too,
+  which is what makes `prefix.as_str()` inside a literal borrow the
+  environment's value instead of a temporary.
+- **The environment is dropped where the closure dies**, through the generated
+  `kelp_env_drop__<literal>`: each owned field through its own drop, then the
+  struct. `closure_move.kp` runs under AddressSanitizer over the three drop
+  points (block end, early `return`, once per loop iteration), where a missed
+  drop is a leak and a second one a double free.
+- **One widening connects the two types, and it lives in `check_expr`.** A
+  plain function value used where a closure is expected — `val f:
+  closure(i32).R: i32 = double`, `Holder(cb = fun(x: i32).R: i32 = x)`,
+  `Box.of(...)` — is wrapped in a one-field environment holding the pointer,
+  with a thunk generated per signature calling through it. Putting it in
+  `check_expr` is what makes one implementation cover every site that knows the
+  expected type, and there is deliberately no conversion the other way: a
+  closure carries an environment a `fun` value has no room for, and the message
+  says so rather than reporting a bare type mismatch.
+- **What a literal still cannot do is named, not papered over**: read a
+  passdown (a hidden argument a generated function has no room for), return a
+  borrow, capture a field of the receiver it was written in (a partial move out
+  of a borrowed receiver, A-11), be a `List`/`Map` element (elements are
+  inline), or be borrowed with `&` (it is owned; a parameter already borrows it
+  and `move closure(...)` takes it over). `Box<closure(...)>` works and is the
+  optional-callback shape, and a `datac`/`enum` field holds one.
+- **A nested literal copies a `Copy` capture out of the enclosing
+  environment**, and the enclosing literal captures a name it only needs on its
+  inner literal's behalf — so a literal two frames down reaches a binding of
+  the function above it, which is what makes `fun` inside `fun` behave like the
+  lexical nesting it looks like. An owned capture cannot be moved out of an
+  environment: the same partial move, one level up.
+- **A closure the frame holds is callable from inside another literal.** The
+  call's callee path consults captures now, and `borrowck` reads an indirect
+  callee as a *place* rather than a whole value — which was a real bug the
+  first cut had: calling a closure marked the binding that held it moved, so
+  the closure was never dropped and the call after it was a use of a moved
+  value.
+
+**Tests**: `fn_literal_capture` (the smallest capture, which used to be the
+"cannot capture yet" refusal), `closure_basic` (a `Copy` capture, an owned one
+read through a borrow, a capturing literal passed to a borrowed and to a `move`
+closure parameter, a closure returned out of its frame, one in a `datac` field,
+one in a `Box`, and an inner literal calling a closure the frame holds), and
+`closure_move` (the three drop points). Six rejections that check the message —
+a captured borrow, a receiver's field, an owned capture moved out of a nested
+environment, an owned capture read by value, `&closure(...)`, and
+`List<closure(...)>` — plus a closure where a plain function value is expected,
+a signature mismatch through the widening, use after capture, and use after a
+`move` parameter. Two parser unit tests for the closure type. `syntax.md` §2.3
+(the keyword), §3 (the type table and the placement rules), §7.2, §7.4
+(captures, the closure type, the widening, and the limits that remain) and
+§17/§18. The suite is **78 unit tests and 207 end-to-end tests**, all green,
+with both allocating fixtures in the AddressSanitizer pass.
+
+### MK8-S1-M2 phase F a callback can carry a binding (DONE)
+
+The phase that makes the two before it useful to code that already exists: the
+shipped callbacks take closures now, so `list.map(xs, fun(x: &i32).R: i32 = x *
+factor)` is what it reads as.
+
+- **The three modules' callback parameters are `closure(...)`** — `std/list`'s
+  six, `std/option`'s four, `std/result`'s five. The bodies are unchanged: a
+  closure parameter borrows the closure, so `f(x)` inside each helper is the
+  same call, and the payload is still read through a borrow, which is what
+  keeps the helpers working at every instantiation.
+- **A named function still costs nothing.** The widening now distinguishes what
+  it is wrapping. A value that *names* a function — a declared `fun`, or a
+  literal that captured nothing, both of which are `ExprKind::FnRef` — gets a
+  generated **shim**: the same signature with the ignored hidden parameter, so
+  `env` is `NULL`, `drop` is `NULL` and the conversion allocates nothing. Only
+  a function value whose identity is known at the call (`val g = pick(true)`,
+  then `list.map(xs, g)`) needs the one-field environment and the thunk.
+  Without the split, retyping the callbacks would have put a `malloc` in front
+  of every `list.map(xs, inc)` — which is the reason the split came with this
+  phase rather than an earlier one.
+- **A latent parser bug this flushed out, which had to be fixed first.** The
+  lexer suppressed newline tokens at any `paren_depth > 0`, and a `{` does not
+  change that, so a `fun` literal with a *multi-statement* body could not be
+  written as a call argument at all: the literal's inner newlines were swallowed
+  by the enclosing call's parens and the parse failed with `unexpected token
+  Newline`. Phase C only ever wrote one-statement block bodies in argument
+  position, which is why nothing caught it — and the first multi-statement one
+  was exactly the shape this phase wants (`list.each(xs, fun(x: &i32) { ... })`).
+  The lexer now tracks the paren depth in force at each unclosed `{`: a block
+  whose braces were opened inside parens tokenizes newlines again, while a
+  function body's own braces are at depth 0, so a wrapped argument list inside
+  one still ignores them. The first cut of the fix (a plain brace counter) broke
+  three fixtures whose argument lists wrap — a trailing-comma argument list
+  inside a function body became newline-sensitive again — which is what the
+  depth comparison is for.
+
+**Tests**: `stdlib_closure_callbacks` — a capturing callback through
+`map`/`any`/`each` (one of them capturing an owned `String`, so the
+environment's drop is what frees it), a declared function and a non-capturing
+literal (the shim path), a function value known only at the call (the
+heap-wrapper path), and the same widening through `option.map` and
+`result.map`/`map_err`. It is in the AddressSanitizer pass, as is
+`stdlib_combinators`, which now exercises the shim path for every plain
+callback it passes. `syntax.md` §7.4 gained the shim, and §16.13/§16.14/§16.15
+spell the signatures as they now are. The suite is **78 unit tests and 208
+end-to-end tests**, all green.
+
+*What is left of A-4 is now nothing that belongs to A-4.* The two pieces the
+earlier record listed as "left" are both waiting on **A-11's partial moves**
+rather than on closures: a `sort_by`-shaped comparator over an *owned* element
+type, and the helpers that hand an owned payload out by value (`option.unwrap`
+on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, `list.filter`
+over a `List<String>`). Both are recorded under A-11 and in each module's
+header. MK5-S7-M1's two prerequisites for threads — function values and a
+move-taking parameter — have been met since phase A, and open item 60's (a) and
+(b) are now the closure half of that story as well: a thread entry point may be
+a closure, and (c)–(e) (the panic policy, the per-thread frame story, and
+atomics plus a `Send`-shaped rule) are what MK6-S1-M1 still needs.
