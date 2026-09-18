@@ -448,18 +448,13 @@ fn c_string_literal(s: &str) -> String {
 /// `.x` identifiers are valid C identifiers as-is; prefix to dodge any
 /// accidental collision with a C keyword or our own runtime symbols.
 /// `main` is left alone since the C runtime requires that exact name for
-/// the process entry point.
+/// the process entry point. Qualified names (M5 module prefixes, `Type#name`
+/// method keys) go through `types::c_ident`.
 fn c_name(name: &str) -> String {
     if name == "main" {
         name.to_string()
     } else {
-        // `infer::sig_key` mangles a receiver method's name as `Type#name`
-        // (`#` can't appear in a real `.x` identifier, so it can't collide
-        // with a hand-written name at the source level); render it as a
-        // double underscore in C, which — while not fully collision-proof
-        // against a hand-named `Type__name` free function — is unlikely
-        // enough for v1 and not worth a real name-mangling scheme yet.
-        format!("x_{}", name.replace('#', "__"))
+        format!("x_{}", crate::types::c_ident(name))
     }
 }
 

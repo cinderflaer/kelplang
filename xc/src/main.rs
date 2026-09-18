@@ -1,80 +1,47 @@
 mod ast;
 mod borrowck;
 mod codegen_c;
+mod diag;
 mod driver;
 mod infer;
 mod lexer;
 mod parser;
 mod pretty;
+mod resolve;
 mod tir;
 mod types;
 
-use lexer::{Lexer, Span};
-use parser::Parser;
+use diag::SourceMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-fn line_col(src: &str, offset: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut col = 1;
-    for (i, c) in src.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if c == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
-}
-
-fn report_error(path: &str, src: &str, message: &str, span: Span) {
-    let (line, col) = line_col(src, span.start);
-    eprintln!("error: {message}");
-    eprintln!("  --> {path}:{line}:{col}");
-}
-
-/// Runs the full pipeline (lex, parse, typecheck, codegen, `cc`) and
-/// produces a native binary at `out_path`. Returns `false` (having already
-/// printed a diagnostic) on any failure.
+/// Runs the full pipeline (load modules, typecheck, borrowcheck, codegen,
+/// `cc`) and produces a native binary at `out_path`. Returns `false`
+/// (having already printed a diagnostic) on any failure.
+///
+/// `path` may be a `.x` file or a project directory containing `x.toml`
+/// (in which case the manifest's entry point is used).
 fn build(path: &str, out_path: &Path) -> bool {
-    let src = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: could not read '{path}': {e}");
+    let mut sources = SourceMap::new();
+
+    let loaded = match resolve::load(Path::new(path), &mut sources) {
+        Ok(l) => l,
+        Err(d) => {
+            sources.report(&d);
             return false;
         }
     };
 
-    let tokens = match Lexer::new(&src).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            report_error(path, &src, &e.message, e.span);
-            return false;
-        }
-    };
-
-    let program = match Parser::new(tokens).parse_program() {
+    let typed = match infer::check_program(&loaded.program, &loaded.project) {
         Ok(p) => p,
-        Err(e) => {
-            report_error(path, &src, &e.message, e.span);
+        Err(d) => {
+            sources.report(&d);
             return false;
         }
     };
 
-    let typed = match infer::check_program(&program) {
-        Ok(p) => p,
-        Err(e) => {
-            report_error(path, &src, &e.message, e.span);
-            return false;
-        }
-    };
-
-    if let Err(e) = borrowck::check_program(&typed) {
-        report_error(path, &src, &e.message, e.span);
+    if let Err(d) = borrowck::check_program(&typed) {
+        sources.report(&d);
         return false;
     }
 

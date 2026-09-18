@@ -1,0 +1,515 @@
+//! Multi-file module loading and name resolution (M5).
+//!
+//! Surface design (see `plan.md`'s "Imports & project structure"):
+//!
+//! - `impl "shapes/circle"` pulls in `src/shapes/circle.x`. The last path
+//!   segment (`circle`) becomes the default alias; `impl "time" as t` picks
+//!   another. No `mod` declarations, no package registry.
+//! - v1 is local-files-only: paths are relative to `src/`, may not contain
+//!   `..`, and may not reach outside the project. `std/...` is recognized
+//!   but not implemented until M6/M7.
+//! - Names are strictly module-qualified: module `m`'s items are reachable
+//!   from elsewhere only as `circle.Item` (never bare), and a file's own
+//!   items are reachable bare inside that file.
+//!
+//! This pass turns the module graph into *one* flat `ast::Program` whose
+//! top-level names carry their declaring module's prefix
+//! (`Circle` in `shapes/circle` becomes `shapes.circle.Circle`) and whose
+//! declarations record the module they came from. `infer.rs` then resolves
+//! `circle.Item` references against the per-module alias table this pass
+//! hands it. A single merged program keeps the rest of the pipeline
+//! (infer → borrowck → C codegen → one `cc` invocation) completely
+//! unchanged in shape.
+
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::ast;
+use crate::diag::{Diagnostic, SourceMap};
+use crate::lexer::{Lexer, Span};
+use crate::parser::Parser;
+
+/// One loaded module, as seen by the rest of the compiler.
+#[derive(Debug, Clone)]
+pub struct ModuleInfo {
+    /// Canonical id: path relative to `src/` without `.x` (`shapes/circle`).
+    pub id: String,
+    /// Symbol prefix for this module's top-level items. Empty for the entry
+    /// module; otherwise the id with `/` replaced by `.` plus a trailing
+    /// `.` (`shapes.circle.`).
+    pub prefix: String,
+    /// alias -> target module id, for the `impl` lines *this* module wrote.
+    pub aliases: HashMap<String, String>,
+}
+
+pub struct Project {
+    /// Directory containing `x.toml`, when there is one. A loose `.x` file
+    /// with no manifest still compiles; it is then its own module root.
+    #[allow(dead_code)] // not read yet — later milestones (`pd` wiring, `xc fmt`) will.
+    pub root: Option<PathBuf>,
+    /// Base directory `impl` paths are resolved against (`<root>/src`, or
+    /// the entry file's own directory when there is no manifest).
+    #[allow(dead_code)]
+    pub src_dir: PathBuf,
+    /// Module id of the entry module — the one whose `main` is the program
+    /// entry point, and the only module whose symbols are unprefixed.
+    pub entry: String,
+    #[allow(dead_code)]
+    pub modules: Vec<ModuleInfo>,
+    #[allow(dead_code)]
+    pub name: Option<String>,
+    #[allow(dead_code)]
+    pub version: Option<String>,
+    prefixes: HashMap<String, String>,
+    /// Per module: alias -> the target module's symbol prefix (what
+    /// `infer.rs` needs to qualify `circle.Item`).
+    alias_prefixes: HashMap<String, HashMap<String, String>>,
+}
+
+impl Project {
+    /// Symbol prefix for a module id (`""` for the entry module).
+    pub fn prefix_of(&self, module: &str) -> &str {
+        self.prefixes.get(module).map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// `alias -> prefix` table for one module, used to resolve
+    /// module-qualified references inside that module's bodies.
+    pub fn alias_prefixes_of(&self, module: &str) -> HashMap<String, String> {
+        self.alias_prefixes.get(module).cloned().unwrap_or_default()
+    }
+}
+
+pub struct Loaded {
+    /// One merged program: all modules' decls, prefixed and module-tagged.
+    pub program: ast::Program,
+    pub project: Project,
+}
+
+/// Loads the entry file, follows every `impl` transitively, rejects import
+/// cycles and bad paths, and returns the merged program plus the module
+/// tables `infer.rs` needs.
+pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagnostic> {
+    let given = fs::canonicalize(entry_path).map_err(|e| {
+        Diagnostic::new(
+            format!("cannot read '{}': {e}", entry_path.display()),
+            Span::new(0, 0),
+            "",
+        )
+    })?;
+
+    let (entry_file, root, src_dir, source_name, source_version) = if given.is_dir() {
+        let manifest_path = given.join("x.toml");
+        let text = fs::read_to_string(&manifest_path).map_err(|_| {
+            Diagnostic::new(
+                format!(
+                    "'{}' is a directory but has no x.toml (pass a .x file, or add a manifest)",
+                    given.display()
+                ),
+                Span::new(0, 0),
+                "",
+            )
+        })?;
+        let manifest = parse_manifest(&text, &manifest_path)?;
+        let entry_file = fs::canonicalize(given.join(&manifest.entry)).map_err(|e| {
+            Diagnostic::new(
+                format!(
+                    "cannot read the manifest's entry point '{}': {e}",
+                    manifest.entry
+                ),
+                Span::new(0, 0),
+                "",
+            )
+        })?;
+        (
+            entry_file,
+            Some(given.clone()),
+            given.join("src"),
+            manifest.name,
+            manifest.version,
+        )
+    } else {
+        match find_manifest_root(&given) {
+            Some(root) => {
+                let manifest_path = root.join("x.toml");
+                let text = fs::read_to_string(&manifest_path).unwrap_or_default();
+                let manifest = parse_manifest(&text, &manifest_path)?;
+                let src_dir = root.join("src");
+                if !given.starts_with(&src_dir) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "entry file '{}' is not inside '{}'",
+                            given.display(),
+                            src_dir.display()
+                        ),
+                        Span::new(0, 0),
+                        "",
+                    ));
+                }
+                (given, Some(root), src_dir, manifest.name, manifest.version)
+            }
+            None => {
+                let dir = given
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."));
+                (given, None, dir, None, None)
+            }
+        }
+    };
+
+    let entry = module_id_of(&entry_file, &src_dir)?;
+
+    let mut loader = Loader {
+        src_dir: src_dir.clone(),
+        entry: entry.clone(),
+        sources,
+        parsed: HashMap::new(),
+        state: HashMap::new(),
+        stack: Vec::new(),
+        modules: Vec::new(),
+        prefixes: HashMap::new(),
+    };
+    loader.visit(&entry, Span::new(0, 0), "")?;
+
+    let mut program = ast::Program {
+        impls: Vec::new(),
+        datacs: Vec::new(),
+        functions: Vec::new(),
+    };
+    for m in &loader.modules {
+        let parsed = &loader.parsed[&m.id];
+        for d in &parsed.datacs {
+            let mut d = d.clone();
+            d.name = format!("{}{}", m.prefix, d.name);
+            d.module = m.id.clone();
+            program.datacs.push(d);
+        }
+        for f in &parsed.functions {
+            let mut f = f.clone();
+            match &mut f.receiver {
+                // A method's key is `Type#name`, so the *receiver type* gets
+                // the prefix, not the method name.
+                Some(r) => r.type_name = format!("{}{}", m.prefix, r.type_name),
+                None => f.name = format!("{}{}", m.prefix, f.name),
+            }
+            f.module = m.id.clone();
+            program.functions.push(f);
+        }
+    }
+
+    let mut alias_prefixes = HashMap::new();
+    for m in &loader.modules {
+        let mut table = HashMap::new();
+        for (alias, target) in &m.aliases {
+            let prefix = loader
+                .prefixes
+                .get(target)
+                .cloned()
+                .unwrap_or_default();
+            table.insert(alias.clone(), prefix);
+        }
+        alias_prefixes.insert(m.id.clone(), table);
+    }
+
+    let project = Project {
+        root,
+        src_dir,
+        entry,
+        modules: loader.modules,
+        name: source_name,
+        version: source_version,
+        prefixes: loader.prefixes,
+        alias_prefixes,
+    };
+    Ok(Loaded { program, project })
+}
+
+struct Loader<'a> {
+    src_dir: PathBuf,
+    /// Module id of the entry module — the only one with an empty prefix.
+    entry: String,
+    sources: &'a mut SourceMap,
+    parsed: HashMap<String, ast::Program>,
+    /// 1 = currently being loaded (on `stack`), 2 = finished.
+    state: HashMap<String, u8>,
+    stack: Vec<String>,
+    modules: Vec<ModuleInfo>,
+    prefixes: HashMap<String, String>,
+}
+
+impl Loader<'_> {
+    fn visit(&mut self, id: &str, at: Span, from: &str) -> Result<(), Diagnostic> {
+        match self.state.get(id) {
+            Some(2) => return Ok(()),
+            Some(_) => {
+                let start = self.stack.iter().position(|m| m == id).unwrap_or(0);
+                let mut chain: Vec<String> = self.stack[start..].to_vec();
+                chain.push(id.to_string());
+                return Err(Diagnostic::new(
+                    format!("import cycle: {}", chain.join(" -> ")),
+                    at,
+                    from,
+                ));
+            }
+            _ => {}
+        }
+
+        let path = self.src_dir.join(format!("{id}.x"));
+        let text = fs::read_to_string(&path).map_err(|_| {
+            Diagnostic::new(
+                format!("cannot find module '{id}': expected '{}'", path.display()),
+                at,
+                from,
+            )
+        })?;
+        self.sources.insert(id, &path, text.clone());
+
+        let tokens = Lexer::new(&text)
+            .tokenize()
+            .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
+        let program = Parser::new(tokens)
+            .parse_program()
+            .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
+
+        self.state.insert(id.to_string(), 1);
+        self.stack.push(id.to_string());
+
+        let mut aliases = HashMap::new();
+        let mut seen_aliases: HashSet<String> = HashSet::new();
+        for imp in &program.impls {
+            validate_impl_path(&imp.path, imp.span, id)?;
+            let alias = match &imp.alias {
+                Some(a) => a.clone(),
+                None => default_alias(&imp.path),
+            };
+            validate_alias(&alias, imp.span, id)?;
+            if !seen_aliases.insert(alias.clone()) {
+                return Err(Diagnostic::new(
+                    format!("alias '{alias}' is already used by another import in this module"),
+                    imp.span,
+                    id,
+                ));
+            }
+            let target = imp.path.clone();
+            aliases.insert(alias, target.clone());
+            self.visit(&target, imp.span, id)?;
+        }
+
+        self.stack.pop();
+        self.state.insert(id.to_string(), 2);
+
+        // Dependencies are pushed first (post-order), so by the time a
+        // module is pushed here every prefix it needs is already known.
+        let prefix = if id == self.entry {
+            String::new()
+        } else {
+            format!("{}.", id.replace('/', "."))
+        };
+        self.prefixes.insert(id.to_string(), prefix.clone());
+        self.modules.push(ModuleInfo {
+            id: id.to_string(),
+            prefix,
+            aliases,
+        });
+        self.parsed.insert(id.to_string(), program);
+        Ok(())
+    }
+}
+
+/// The alias used when `as` is not written: the last path segment.
+fn default_alias(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
+    let mut manifest = Manifest {
+        name: None,
+        version: None,
+        entry: "src/main.x".to_string(),
+    };
+    let at = Span::new(0, 0);
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            return Err(Diagnostic::new(
+                format!("x.toml sections are not supported (found '{line}')"),
+                at,
+                "",
+            ));
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(Diagnostic::new(
+                format!("expected 'key = \"value\"' in x.toml, found '{line}'"),
+                at,
+                "",
+            ));
+        };
+        let key = key.trim();
+        let value = value.trim();
+        let Some(value) = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+        else {
+            return Err(Diagnostic::new(
+                format!("x.toml value for '{key}' must be a double-quoted string"),
+                at,
+                "",
+            ));
+        };
+        match key {
+            "name" => manifest.name = Some(value.to_string()),
+            "version" => manifest.version = Some(value.to_string()),
+            "entry" => manifest.entry = value.to_string(),
+            other => {
+                return Err(Diagnostic::new(
+                    format!("unknown key '{other}' in {}", path.display()),
+                    at,
+                    "",
+                ))
+            }
+        }
+    }
+    Ok(manifest)
+}
+
+struct Manifest {
+    name: Option<String>,
+    version: Option<String>,
+    /// Path relative to the project root; `xc build <dir>` uses it.
+    entry: String,
+}
+
+fn find_manifest_root(file: &Path) -> Option<PathBuf> {
+    let mut dir = file.parent().map(|p| p.to_path_buf());
+    while let Some(d) = dir {
+        if d.join("x.toml").is_file() {
+            return Some(d);
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    None
+}
+
+/// Canonical module id for a file: its path relative to `src/`, minus the
+/// `.x` suffix, with `/` separators.
+fn module_id_of(file: &Path, src_dir: &Path) -> Result<String, Diagnostic> {
+    let rel = file.strip_prefix(src_dir).map_err(|_| {
+        Diagnostic::new(
+            format!(
+                "entry file '{}' is not inside '{}'",
+                file.display(),
+                src_dir.display()
+            ),
+            Span::new(0, 0),
+            "",
+        )
+    })?;
+    let stem = rel
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let dir = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/"));
+    let id = match dir.as_deref() {
+        Some(d) if !d.is_empty() && d != "." => format!("{d}/{stem}"),
+        _ => stem,
+    };
+    if id.is_empty() {
+        return Err(Diagnostic::new(
+            format!("cannot determine a module name for '{}'", file.display()),
+            Span::new(0, 0),
+            "",
+        ));
+    }
+    Ok(id)
+}
+
+/// `impl` paths are `src/`-relative, identifier-only, and may not escape the
+/// project. `std/...` is reserved for compiler-shipped modules (M6/M7).
+fn validate_impl_path(path: &str, span: Span, module: &str) -> Result<(), Diagnostic> {
+    let err = |message: String| Err(Diagnostic::new(message, span, module));
+    if path.is_empty() {
+        return err("'impl' path must not be empty".to_string());
+    }
+    if path.ends_with(".x") {
+        return err(format!(
+            "'impl' paths omit the '.x' extension — write \"{}\"",
+            path.trim_end_matches(".x")
+        ));
+    }
+    if path.starts_with('/') {
+        return err("'impl' paths are relative to 'src/' and must not start with '/'".to_string());
+    }
+    if path.contains('\\') {
+        return err("use '/' as the separator in 'impl' paths".to_string());
+    }
+    if path == "std" || path.starts_with("std/") {
+        return err(format!(
+            "'impl \"{path}\"' — the standard library is not implemented yet (milestone M6/M7)"
+        ));
+    }
+    for seg in path.split('/') {
+        if seg.is_empty() {
+            return err("'impl' path has an empty segment".to_string());
+        }
+        if seg == "." || seg == ".." {
+            return err("'impl' paths must not contain '.' or '..' segments".to_string());
+        }
+        if !is_ident(seg) {
+            return err(format!(
+                "'{seg}' is not a valid module name — use snake_case identifiers with no dashes or dots"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_alias(alias: &str, span: Span, module: &str) -> Result<(), Diagnostic> {
+    if !is_ident(alias) {
+        return Err(Diagnostic::new(
+            format!("'{alias}' is not a valid module alias"),
+            span,
+            module,
+        ));
+    }
+    if is_keyword(alias) {
+        return Err(Diagnostic::new(
+            format!("'{alias}' is a language keyword and cannot be a module alias"),
+            span,
+            module,
+        ));
+    }
+    Ok(())
+}
+
+fn is_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "fun" | "val"
+            | "var"
+            | "mut"
+            | "if"
+            | "else"
+            | "while"
+            | "when"
+            | "return"
+            | "true"
+            | "false"
+            | "datac"
+            | "impl"
+            | "as"
+            | "print"
+    )
+}

@@ -2,14 +2,33 @@ use crate::lexer::Span;
 
 #[derive(Debug, Clone)]
 pub struct Program {
+    /// `impl "path"` lines, in source order. One file's list only; the
+    /// multi-file loader in `resolve.rs` owns the whole module graph.
+    pub impls: Vec<ImplDecl>,
     pub datacs: Vec<DatacDecl>,
     pub functions: Vec<FunctionDecl>,
+}
+
+/// One `impl "shapes/circle"` / `impl "time" as t` line.
+#[derive(Debug, Clone)]
+pub struct ImplDecl {
+    /// The string literal's contents, verbatim (`shapes/circle` — no `.x`).
+    pub path: String,
+    /// `Some` only when written `as alias`.
+    pub alias: Option<String>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct DatacDecl {
     pub name: String,
     pub fields: Vec<FieldDecl>,
+    /// Canonical id of the module this was declared in: `""` for the entry
+    /// module, otherwise its path relative to `src/` without the `.x`
+    /// suffix (`"shapes/circle"`). Set by `resolve.rs`; the parser leaves it
+    /// empty. Used to attribute a diagnostic to the right source file — a
+    /// `Span` is only meaningful inside its own file.
+    pub module: String,
     pub span: Span,
 }
 
@@ -35,6 +54,8 @@ pub struct FunctionDecl {
     /// The `.R: T` clause. `None` means `Unit`.
     pub return_type: Option<TypeExpr>,
     pub body: FunctionBody,
+    /// See `DatacDecl::module`.
+    pub module: String,
     pub span: Span,
 }
 

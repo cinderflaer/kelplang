@@ -6,13 +6,15 @@ Merged document: language plan + compiler milestones + standard library. The std
 
 ## Current state
 
-The compiler exists and runs. `xc/` implements the new syntax end-to-end (lexer → parser → type check → move/borrow check → C codegen), `cargo test` is green (33 unit tests + 21 end-to-end fixture tests), and the milestone record below reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once this file absorbed it — do not recreate it).
+The compiler exists and runs. `xc/` implements the new syntax end-to-end (lexer → parser → type check → move/borrow check → C codegen), `cargo test` is green (38 unit tests + 34 end-to-end fixture/project tests), and the milestone record below reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once this file absorbed it — do not recreate it).
 
-- **Done**: M0 (scaffold + parser for the full new syntax), M1 (types + C codegen + first running binary), M2 (`datac`, per-field `val`/`var`, while loops), M3 (move checking), M4 (borrowing — free-function parameters and local `&`/`&mut`/`*`), M4.5 (receiver-form methods, the piece M4 cut out — see below).
-- **Next**: `impl` multi-file imports and `pd` passdowns are the next real-feature milestone (M5); everything currently deferred is stdlib-blocking (see "Deferred" below).
-- **Deferred despite being in `syntax&shii.md`'s deltas**: `pd` passdowns, `impl` imports, string templates, `caps(...)`. Those deltas were aspirational scheduling and lost to implementation order; the milestone list below records where each one is now targeted.
+- **Done**: M0 (scaffold + parser for the full new syntax), M1 (types + C codegen + first running binary), M2 (`datac`, per-field `val`/`var`, while loops), M3 (move checking), M4 (borrowing — free-function parameters and local `&`/`&mut`/`*`), M4.5 (receiver-form methods, the piece M4 cut out — see below), M5.1 (multi-file `impl` imports, `x.toml`, strict module-qualified names).
+- **Next**: `pd` passdowns plus string templates (M5.2), then the `%*alias*%` text-substitution preprocessor (M5.3); after that everything remaining is stdlib-blocking (see "Deferred" below).
+- **Deferred despite being in `syntax&shii.md`'s deltas**: `pd` passdowns, `alias` substitution, string templates, `caps(...)`. Those deltas were aspirational scheduling and lost to implementation order; the milestone list below records where each one is now targeted (`impl` imports have since shipped, as M5.1).
+- **`pd var` semantics, resolved** (was `syntax&shii.md` §9's open question): a `pd var` is **read-only inside functions**. It may only be assigned outside a function body — i.e. at its own top-level declaration, since v1 has no top-level statement form beyond `pd` itself. Functions that reference a passdown always get a shared borrow of it and can never write through it. This is the narrowest reading that keeps the feature without introducing reachable mutable global state, and it is what M5.2 will implement. `syntax&shii.md` §9's list of options is answered by that sentence; the syntax authority is unchanged and the question is closed here (semantics are this file's call, not the syntax file's).
 - **Not started**: the stdlib (`xc/std/` does not exist yet), so every stdlib API sketch below is a plan, not a description.
 - **Known doc bug, not a compiler bug**: `syntax&shii.md`'s (and this file's) own "Full example" mutates a `val` field (`datac Circle(val r: f64)` then `fun mut Circle.grow(by: f64) { r += by }`), which directly contradicts the `Counter` example's own stated rule just above it ("no binding mutability can fix" a `val` field). The compiler correctly rejects this — `xc/tests/fixtures/receiver_methods.x` uses `var r: f64` instead. Left un-edited in `syntax&shii.md` itself since that file is locked as the syntax authority and nobody asked for that edit; flagging it here so it doesn't get "fixed" by loosening the compiler instead.
+- **Also deliberately left as-is in `syntax&shii.md`**: §8's `impl "logger" with caps(fs = ["/var/log/myapp/*"])` and §11's full example both use `with caps(...)`, which the parser rejects with an explicit "not implemented until M7" message (M5.1 lexes `[`/`]` for exactly this). `caps` is scheduled, not dropped.
 
 ## Context
 
@@ -193,7 +195,7 @@ fun log_area(c: Circle) {
 
 `log_area` uses both passdowns — wired in. `classify` uses neither — no wiring, no cost.
 
-**Unresolved:** `pd var` is mutable global state reachable from any function, and v1 has no closures and no `unsafe` to make that safe. Borrow checking has to say what a passdown's lifetime is and whether two functions can hold exclusive access at once. Options when the wiring pass is built: (a) `pd var` is per-function-call scratch, (b) `pd var` mutable only from functions that name it in a hidden declaration, (c) `pd var` rejected in v1 and only `pd val` ships.
+**Resolved (was: Unresolved):** `pd var` is mutable global state reachable from any function, and v1 has no closures and no `unsafe` to make that safe. The decision, recorded in full under "Current state": **`pd var` is read-only inside functions** — it can only be assigned outside a function body (i.e. at its own top-level declaration), so no function ever holds an exclusive borrow of a passdown and no cross-function exclusivity rule is needed. That is closer to option (b) than to (a) or (c): the feature is kept, but writability is confined to the top level rather than exposed inside functions. `pd` wiring itself lands in M5.2.
 
 ### Retained Kotlin-look rules
 
@@ -258,7 +260,7 @@ fun main() {
 
 ## Compiler crate layout
 
-What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, and `tests/` exist now; `preprocess.rs`, `resolve.rs`, and `std/` do not yet.
+What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, and `tests/` exist now; `preprocess.rs` and `std/` do not yet.
 
 Cargo workspace at repo root:
 
@@ -267,7 +269,7 @@ x/
   Cargo.toml                # workspace
   xc/                        # the compiler binary crate
     src/
-      main.rs                # CLI: `xc build foo.x`, `xc run foo.x`, later `xc fmt`
+      main.rs                # CLI: `xc build <file.x | project-dir>`, `xc run <same>`, later `xc fmt`
       lexer.rs                # source -> tokens (span-carrying, newline-sensitive)
       ast.rs                  # parsed syntax tree types
       parser.rs               # tokens -> AST (recursive descent + Pratt for expressions)
@@ -278,20 +280,24 @@ x/
       borrowck.rs              # move checker (M3), borrow checker (M4), drop (M6)
       codegen_c.rs             # typed IR -> C source text
       driver.rs                # orchestrates pipeline, invokes `cc`
-      preprocess.rs            # `%*alias*%` expansion, runs before the parser (M5)
-      resolve.rs              # name resolution / scopes, `impl` imports, capability gating (M5/M7)
+      resolve.rs              # project/manifest loading, `impl` imports, module naming (M5.1), capability gating (M7)
+      diag.rs                 # cross-file diagnostics: module id -> file/line/col (M5.1)
+      preprocess.rs            # `%*alias*%` expansion, runs before the parser (M5.3)
     std/                       # stdlib, written in X (M6+, does not exist yet)
       fs.x  path.x  math.x  str.x  mem.x  io.x  time.x  rand.x
     tests/
       compile_and_run.rs       # end-to-end: compile .x fixtures, run binary, assert stdout
       stdlib/                  # per-module stdlib fixtures (M6+)
-      fixtures/*.x             # 12 today
+      fixtures/*.x             # 19 today — one loose file per single-file test
+      projects/*/              # 13 multi-file projects today (M5.1: x.toml or manifest-less)
   examples/
     hello.x
     fib.x
 ```
 
-Fixtures live in `xc/tests/fixtures/*.x` (17 today: `datac_basic`, `while_accumulator`, `named_args`, `when_expr`, `if_expr`, `assign_to_immutable`, `val_field_immutable`, `type_mismatch`, `use_after_move`, `double_move_in_loop`, `move_then_reinit`, `field_read_does_not_move`, `borrow_basic`, `borrow_conflict`, `same_call_aliasing`, `write_through_shared_borrow`, `move_while_borrowed`). `xc/tests/compile_and_run.rs` compiles each one with the real `xc` binary and checks stdout or the expected rejection.
+Fixtures live in `xc/tests/fixtures/*.x` (19 today: `datac_basic`, `while_accumulator`, `named_args`, `when_expr`, `if_expr`, `assign_to_immutable`, `val_field_immutable`, `type_mismatch`, `use_after_move`, `double_move_in_loop`, `move_then_reinit`, `field_read_does_not_move`, `borrow_basic`, `borrow_conflict`, `same_call_aliasing`, `write_through_shared_borrow`, `move_while_borrowed`, `receiver_methods`, `receiver_mut_on_val`). `xc/tests/compile_and_run.rs` compiles each one with the real `xc` binary and checks stdout or the expected rejection.
+
+Multi-file work lives in `xc/tests/projects/<name>/` instead, because a module graph needs a directory: `shapes` (manifest + nested imports + methods), `alias` (`impl "." as u`, qualified type in a signature), `same_name` (two modules both declaring `Item` + `describe`), `loose` (manifest-less sibling import), plus one rejected project per import rule — `cycle`, `unknown_module`, `duplicate_alias`, `dotdot`, `bad_path`, `unknown_member`, `unqualified_import`, `stdlib_import`, `caps_clause`.
 
 Single crate is fine at this scale (a compiler is inherently one pipeline); no need to over-modularize into multiple crates.
 
@@ -299,11 +305,11 @@ Single crate is fine at this scale (a compiler is inherently one pipeline); no n
 
 Explicit reaction against Java/Kotlin's convention (package must mirror deeply-nested directory path, plus a Gradle/Maven build-tool layer with its own DSL files, wrapper scripts, and cache dirs). Instead:
 
-- **One manifest file**, `x.toml`, at the project root — name, version, entry point. No separate build-tool layer; `xc` itself is the build tool.
+- **One manifest file**, `x.toml`, at the project root — name, version, entry point. No separate build-tool layer; `xc` itself is the build tool. **As shipped (M5.1): the manifest is optional.** `xc build <dir>` needs one; `xc build <file.x>` walks up looking for one and, finding none, treats that file's own directory as the module root. Everything in `xc/tests/fixtures/` and `examples/` relies on the manifest-less path — a single loose file is still a complete program.
 - **`src/` holds everything**, flat by default, with subfolders only when the user actually wants to group files — a file's path is never required to match any declared namespace.
 - **Imports are path-based**, not namespace-based: `impl "shapes/circle"` pulls in `src/shapes/circle.x` by its file path relative to `src/`, and you refer to its items as `circle.Circle` (last path segment becomes the default alias). No `mod` declarations needed to "announce" a file into a tree — the file existing under `src/` is enough.
 - **File names are therefore part of the API**: the last path segment becomes the alias, so file names must be valid identifiers — `snake_case`, no dashes, no dots.
-- **v1 is local-files-only**: `impl` can only reach files inside the current project's `src/`. No external/third-party dependency support yet (no registry, no git-url deps, no lockfile). The stdlib is the one exception: `impl "std/fs"` reaches compiler-shipped modules, not project files.
+- **v1 is local-files-only**: `impl` can only reach files inside the current project's `src/`. No external/third-party dependency support yet (no registry, no git-url deps, no lockfile). The stdlib is the one exception: `impl "std/fs"` reaches compiler-shipped modules, not project files. **As shipped (M5.1): `std/...` is reserved but unimplemented** — it is rejected with an explicit M6/M7 message rather than reported as a missing file, so the reservation is visible in the error.
 
 Example:
 ```
@@ -318,6 +324,8 @@ myproject/
 
 `resolve.rs` handles turning an `impl "shapes/circle"` path into a loaded/parsed file plus a name binding for its exported items; this is pure file-path resolution, no separate package-registry concept to build.
 
+**How M5.1 implements the namespace (as shipped).** Strict module-qualified, not a flat merge: after loading, every module's top-level names are prefixed with the module's dotted path (`Circle` in `shapes/circle` → `shapes.circle.Circle`), and the *entry* module is left unprefixed — so a file's own items stay bare inside that file, and imported items are reachable only as `alias.Item`. Two modules may therefore both declare `Item` and `describe` with no collision (fixture: `same_name`). A module alias is shadowed by a local of the same name, exactly like any other name lookup. Referencing an imported item unqualified is a compile error that names the qualified form (`did you mean 'prov.Thing'?`). See the M5.1 milestone entry for the rest, including the one thing this rules out in v1: extension methods on an imported type (`fun circle.Circle.helper()`) are not expressible.
+
 **General alias/expansion system (`alias.xconf` + inline `alias` declarations)**: a flat, global, purely-textual substitution mechanism, deliberately simple (no parameters, no hygiene, no scoping).
 
 - **Reference syntax**: `%*name*%` used anywhere in `.x` source (including inside an `impl "..."` path string). The sigil exists specifically so it can never be confused with a real identifier/variable — the lexer/preprocessor recognizes it unambiguously and substitutes before real parsing happens.
@@ -327,7 +335,7 @@ myproject/
 - **Known tradeoff, stated explicitly**: because this is pure text substitution, a bad alias can produce nonsense that only surfaces as a type error at the (already-expanded) use site — accepted as the cost of keeping this "pretty simple" rather than a hygienic macro system. Error messages should still point back to both the alias's definition span and its use span so this stays debuggable.
 - Import-path aliasing is just this same mechanism applied to `impl "..."` strings — no separate implementation needed once general expansion exists.
 
-Lands as part of M3 alongside the rest of the import system, since both are about the token/file layer before real parsing.
+Lands as M5.3 (`preprocess.rs`), on the token/file layer before real parsing — it was originally pencilled in alongside the import work, but the import layer shipped first as M5.1 with no dependency on it, and `%*alias*%` remains the last piece of the original M5. Note it is the one M5 item that is *textual*, not name-resolution: `resolve.rs` never sees an unexpanded `%*name*%`.
 
 ## Capability-based security (the headline feature)
 
@@ -377,9 +385,11 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 - `print(expr)` / `print!(expr)` builtins for output, emitted directly to C `printf`
 - String templates `"$name"` / `"${expr}"` desugaring to `print`/`printf` formatting
 - Named arguments at call sites with 2+ params
-- `pd` passdowns; `alias` substitution; `impl` imports; `with caps(...)` grants; receiver-form methods; string templates
+- `pd` passdowns; `alias` substitution; string templates: **not yet** (M5.2/M5.3)
+- `impl` imports; receiver-form methods: **done** (M5.1 / M4.5)
+- `with caps(...)` grants: **not yet** (M7)
 
-Not yet implemented despite being listed above as v1 scope: that last bullet in full, plus `mem`/`Bytes`/`String` and the entire stdlib. See "Current state".
+Not yet implemented despite being listed above as v1 scope: `pd`/`alias`/string templates, `with caps(...)`, plus `mem`/`Bytes`/`String` and the entire stdlib. See "Current state".
 
 Deferred beyond v1 (explicitly out of scope for now, revisit later): generics, traits/interfaces, enums/pattern matching, closures, heap collections (`Vec`), explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope — see Imports & Capabilities sections).
 
@@ -430,12 +440,28 @@ This section is the record of what actually happened, and it overrides `syntax&s
 - `codegen_c.rs`: `c_name` maps a method key's `#` to `__` (e.g. `Circle#area` → `x_Circle__area`) — not fully collision-proof against a hand-named `Circle__area` free function, but low-risk and simple; noted as a known limitation rather than engineered around.
 - Fixtures: `receiver_methods.x` (the spec's own `Circle.area`/`Circle.grow` example, adjusted for the doc bug noted in "Current state" above), `receiver_mut_on_val.x` (calling a `mut` receiver method on a `val`-bound local, rejected — exactly the free-function `write_through_shared_borrow.x` check, now exercised through method-call syntax).
 
-**M5 — Multi-file imports, aliases, and the remaining deferred sugar**
-- `preprocess.rs`: `%*alias*%` collection and expansion before the parser, with cycle rejection.
-- `resolve.rs`: parse `impl "path/to/file"`, load and parse the referenced file relative to `src/`, bind its top-level items under the last path segment as the alias (`circle.Circle`), reject import cycles.
-- `x.toml` manifest parsing (name, version, entry point) so `xc build` finds the project root and `src/` layout instead of a single loose file.
-- String templates `"$name"` / `"${expr}"`, and `pd` passdown wiring (hidden parameters, inserted only into functions that reference the name).
-- Fixtures: a multi-file project, an `alias.xconf` case, an alias inside an `impl` path string, a rejected alias cycle.
+**M5.1 — Multi-file imports (DONE)**
+
+Split out of the original M5 on the same reasoning that split M4/M4.5: the file/import layer is independently testable, and the remaining M5 items (`pd`, templates, aliases) do not depend on it landing together. Shipped:
+
+- **`diag.rs` (new).** A `Span` is only meaningful inside the file it was lexed from, so every diagnostic now carries the canonical id of the module it came from, and `SourceMap` maps that id back to path+text to print `--> file:line:col`. `ast::DatacDecl`/`ast::FunctionDecl` and `tir::Function` carry a `module` field for exactly this; `infer.rs` and `borrowck.rs` tag their errors with it at the function/decl boundary, so their internals are otherwise unchanged. Verified: a borrow error inside an imported module points at the imported file, not the entry file.
+- **`resolve.rs` (new).** Loads the entry file, follows `impl` transitively, and returns one *merged* `ast::Program` plus a `Project` naming table. `impl "shapes/circle"` resolves to `src/shapes/circle.x` relative to the project's `src/`; the last path segment is the default alias, `as` overrides it (line-segment validation rejects absolute paths, `..`/`.`, non-identifier segments, a trailing `.x`, and reserved `std/...` with a "not implemented until M6/M7" message). Import cycles are rejected with the chain printed (`import cycle: a -> b -> a`), duplicate aliases within one file are rejected, and a module reached twice (diamond) is loaded once.
+- **Merging, not a real module system.** Each module's top-level names are prefixed with the module's dotted path (`Circle` in `shapes/circle` becomes `shapes.circle.Circle`; the *entry* module is unprefixed) and `FunctionDecl.module` records the origin. Nothing else about the pipeline changed shape: infer → borrowck → one C translation unit → one `cc` call. `resolve.rs` rewrites a receiver's type name too, so `sig_key`'s existing `Type#name` scheme keeps working unchanged.
+- **Strict module-qualified namespace** (chosen over a flat merge): a module's items are reachable from another module only as `alias.Item`, never bare, and a file's own items are reachable bare inside that file. `circle.Circle(r = 2.0)` and `circle.scale(x)` are parsed as method/field syntax and re-interpreted in `infer.rs::check_expr` when the base identifier is an `impl` alias that no local shadows — so a local `val util = 5` still shadows a `util` module alias, exactly like any other name lookup. Type annotations use the same alias table (`fun describe(t: u.Tally)`). Unqualified references to an imported item get a targeted "did you mean 'prov.Thing'?" hint; so does a module used as a value.
+- **`x.toml`** (`name`, `version`, `entry`, hand-parsed — no TOML dependency, unknown keys rejected): `xc build <dir>` uses the manifest's entry point, and `xc build <file>` walks up to find the manifest and requires the file to live under `<root>/src`. **A manifest is optional**: with no `x.toml` found, the entry file's own directory is the module root, which is what keeps all 19 single-file fixtures and both `examples/` compiling with no manifest at all.
+- **Codegen mangling**: `types::c_ident` turns `.` and `#` into `__` (`shapes.circle.Circle#area` → `x_shapes__circle__Circle__area`, struct tag `struct_shapes__circle__Circle`). Same low-risk/collision caveat M4.5 recorded for `#`, now covering module prefixes too.
+- Tests: 34 fixture/project tests (`cargo test` = 38 unit + 34) — `shapes` (manifest, nested import inside an imported module, receiver methods on an imported type), `same_name` (two modules both declaring `Item` and `describe`, proving the prefixing avoids collisions), `alias` (`impl "util" as u` plus a qualified type in a signature), `loose` (manifest-less sibling import), and rejected `cycle`, `unknown_module`, `duplicate_alias`, `dotdot`, `bad_path`, `unknown_member`, `unqualified_import`, `stdlib_import`, `caps_clause`.
+- **Deliberately not in M5.1**: `pd` wiring, string templates, `%*alias*%`/`alias.xconf`. Also worth remembering: **extension methods on an imported type are not expressible** — `fun circle.Circle.helper()` cannot be parsed (the receiver grammar takes one bare type name), so helper methods must live in the module that declares the type. That is a v1 restriction, not a bug, and it is the natural thing to revisit if user-definable-cross-module extension methods ever matter.
+
+**M5.2 — `pd` passdowns and string templates**
+- `pd val`/`pd var` at the top of a file, in canonical position (after `impl`, before `datac`/`fun`). Wiring only into functions that reference the name.
+- **`pd var` semantics are settled** (see "Current state"): read-only inside functions, assignable only at its own top-level declaration. Concretely the wiring pass hands every referencing function a shared borrow, and an assignment to a passdown name anywhere inside a `fun` is a compile error — no new borrowck state, no reachable mutable global.
+- String templates `"$name"` / `"${expr}"` desugaring into the existing `print`/`printf` machinery. Blocked in practice on deciding what a template with a non-`str`, non-numeric value is (today `print` rejects `datac`/`Unit`/references outright), so scope this to the printable types v1 already has unless `String` arrives first (M6).
+- Fixtures: a passdown read by two functions and by none, a `pd var` assignment inside a function (rejected), a template with a field access inside `${...}`.
+
+**M5.3 — `%*alias*%` substitution (`preprocess.rs`)**
+- `preprocess.rs`: collect alias definitions from `alias.xconf` + inline `alias` declarations, expand every `%*name*%` occurrence (including inside `impl "..."` strings), reject cycles, feed the expanded token stream to the parser. Errors must span both the definition and the use site, per the tradeoff recorded in "Imports & project structure".
+- Fixtures: an `alias.xconf` case, an alias inside an `impl` path string, a rejected alias cycle.
 
 **M6 — Heap: builtin `Bytes` and owned `String`**
 - `Bytes` and `String` as compiler builtins: allocation on construction, `free` at end of scope, non-`Copy`, moves, no user-defined destructors, no growable buffers (stdlib decision 5).
@@ -779,11 +805,11 @@ Details:
 | --- | --- | --- | --- |
 | Builtin owned `Bytes` + drop | `fs`, allocation-returning `str`/`path` | Real: heap, drop insertion, move checking with runtime consequence | M6 |
 | Builtin owned `String` | `datac` fields, `str`/`env` text results | Small once `Bytes` exists | M6 |
-| `&str` return elision (borrow from first ref param) | all of `str`, `path` | Small, but unblocks a whole namespace | M4 |
-| `const NAME: T = expr` at top level, compile-time folded | `math.PI`, `math.E` | Small parser + const-fold in `infer.rs` | M5 |
+| `&str` return elision (borrow from first ref param) | all of `str`, `path` | Small, but unblocks a whole namespace | post-v1 — moot until `&str` routes through `Ty::Ref` |
+| `const NAME: T = expr` at top level, compile-time folded | `math.PI`, `math.E` | Small parser + const-fold in `infer.rs` | post-M5.3 (stdlib prereq) |
 | `extern` declarations with compiler-supplied bodies | stdlib written in X | Small parser surface, new codegen path | M6 |
-| Argument-type overloading, stdlib-only | `math.abs/min/max/clamp` across numeric types | Medium: overload resolution in `infer.rs`; kept stdlib-only to avoid user-facing complexity | M5 |
-| `u8`, `u16`, `usize`, `isize` | byte buffers, indices, `Bytes.len` | Small; `usize`/`isize` needed regardless for indexing | M4 |
+| Argument-type overloading, stdlib-only | `math.abs/min/max/clamp` across numeric types | Medium: overload resolution in `infer.rs`; kept stdlib-only to avoid user-facing complexity | post-M5.3 (stdlib prereq) |
+| `u8`, `u16`, `usize`, `isize` | byte buffers, indices, `Bytes.len` | Small; `usize`/`isize` needed regardless for indexing | M6 (stdlib prereq) |
 | Slice/array type | `fs.list`, `process.run(argv)`, `env.args`, `str.split` | Large — collections milestone | post-v1 |
 | `Option`/`Result` + generics | replaces error `datac`s | Large | post-v1 |
 
@@ -822,14 +848,14 @@ Details:
 ## Open items
 
 1. ~~**Move-taking parameters have no spelling.**~~ Resolved in M4: there is no move-taking parameter spelling in v1, by design — a `datac`-typed parameter is always a borrow (shared, or exclusive via `mut T`), and a value is only ever moved by local rebinding.
-2. **`pd var` semantics and the `pd` wiring pass.** Lifetime of a passdown, and whether two functions can hold exclusive access at once. Options listed under "Passdowns."
-3. **`pd` and `Bytes`/`String`.** A passdown holding an owned type is a global whose drop point is unclear, and `pd var` makes it mutable from anywhere. Same milestone decision as item 2. `Bytes`/`String` land at M6 and `pd` wiring at M5, so the ordering question is live.
+2. ~~**`pd var` semantics and the `pd` wiring pass.**~~ Resolved (see "Current state"): `pd var` is read-only inside functions and assignable only at its own top-level declaration, so the wiring pass hands referencing functions a shared borrow and an assignment inside a `fun` is a compile error. Implementation lands with the rest of `pd` in M5.2.
+3. ~~**`pd` and `Bytes`/`String`.**~~ Narrowed by the item 2 decision: since nothing inside a function can *write* a passdown, the drop-point problem for an owned passdown is reduced to "the entry module's scope", which is where `main`'s frame already drops things. The remaining ordering question — whether `pd` wiring must wait for M6's drop insertion — is answered "no": `pd val` of an owned type is a binding that lives as long as the program, so M5.2 can land `pd` for the types v1 has today and extend it when `Bytes`/`String` exist. Re-open only if a `pd`-held owned value turns out to need a drop at a point other than process exit.
 4. **`when` is boolean-only in v1.** Exhaustiveness checking and value patterns wait for enums; say so in diagnostics rather than letting users expect Kotlin's `when`.
 5. **`process.run_shell`** — ship it gated in v1, or wait for argv slices and ship nothing that shells out?
 6. **Is `io` (stdin/stdout/stderr) really ungated?** WASI gates stdin as an input capability. Interactive CLI usability says ungated; purity says gated. Recommend ungated in v1, revisit when `x.toml` gains a way to restrict `main`.
 7. **`math` on `f32`.** Either add `f32` overloads or accept implicit `f32 -> f64` promotion, which interacts badly with inference. With overloading locked in (stdlib decision 4), the clean answer is `f32` overloads.
 8. **`String` API surface.** The section above sketches `String` largely in parallel with `Bytes`, and decides that text-returning `str.*` functions return `String` rather than `Bytes`. That decision is this document's, not `syntax&shii.md`'s — confirm it, especially whether `path.join`/`path.normalize` should return `String`.
-9. **Canonical top-of-file order** is `impl`, then `pd`, then `datac`/`fun`, and `%*alias*%` may appear in any of those. Confirm before M5.
+9. **Canonical top-of-file order** is `impl`, then `pd`, then `datac`/`fun`, and `%*alias*%` may appear in any of those. Confirmed and enforced for `impl` in M5.1 (an `impl` after any `datac`/`fun` is a parse error); `pd` and `%*alias*%` keep their slots when M5.2/M5.3 land.
 10. **`xc fmt`** is the enforcement story for the style rules, but is not scheduled; until it exists the rules are conventions only.
-11. **`syntax&shii.md`'s milestone deltas are stale, and it still contains them.** The implemented order is M0–M3 done, M4 borrowing, receivers at M4, `impl`/templates/`pd` at M5. Either annotate that file's §12 deltas or leave it as the syntax authority only and ignore its scheduling. The precedence rule covers syntax and style, not scheduling — but the file does not say that yet.
+11. **`syntax&shii.md`'s milestone deltas are stale, and it still contains them.** The implemented order is M0–M3 done, M4 borrowing, receivers at M4.5, `impl` imports at M5.1, with templates/`pd` at M5.2 and aliases at M5.3. Either annotate that file's §12 deltas or leave it as the syntax authority only and ignore its scheduling. The precedence rule covers syntax and style, not scheduling — but the file does not say that yet.
 12. **User-code naming case is a configurable lint** (see "Retained Kotlin-look rules" above): a numbered option, `0` = `camelCase` (default), `1` = `snake_case`, room to append more — far-future, lint-only (a beauty warning, never a compile error; any case keeps compiling regardless of the configured preference). Not scheduled to a milestone. Open sub-questions for whenever `xc fmt`/a lint pass is actually built: where the setting lives (`x.toml`? an `xc fmt` flag?), and whether the stdlib's locked `snake_case` convention (naming decision, "Naming and style rules for the stdlib" below) stays an intentional exception or should track the configured case too.

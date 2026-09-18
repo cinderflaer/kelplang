@@ -35,12 +35,22 @@ pub enum TokenKind {
     True,
     False,
     Datac,
+    /// `impl "path/to/module"` — the import keyword (`syntax&shii.md` §8;
+    /// `impl` method blocks do not exist, receivers replaced them).
+    Impl,
+    /// `impl "path" as alias`.
+    As,
 
     // punctuation
     LParen,
     RParen,
     LBrace,
     RBrace,
+    // `[`/`]` are not used by any expression yet — they exist so M7's
+    // `with caps(fs = ["..."])` grant lists lex (and so the parser can
+    // reject them with a real message instead of a lex error).
+    LBracket,
+    RBracket,
     Comma,
     Colon,
     Dot,
@@ -188,6 +198,14 @@ impl<'a> Lexer<'a> {
                 b'}' => {
                     self.advance();
                     TokenKind::RBrace
+                }
+                b'[' => {
+                    self.advance();
+                    TokenKind::LBracket
+                }
+                b']' => {
+                    self.advance();
+                    TokenKind::RBracket
                 }
                 b',' => {
                     self.advance();
@@ -388,6 +406,8 @@ impl<'a> Lexer<'a> {
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "datac" => TokenKind::Datac,
+                        "impl" => TokenKind::Impl,
+                        "as" => TokenKind::As,
                         _ => TokenKind::Ident(text.to_string()),
                     }
                 }

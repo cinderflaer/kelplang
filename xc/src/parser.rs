@@ -91,17 +91,68 @@ impl Parser {
 
     pub fn parse_program(&mut self) -> PResult<Program> {
         self.skip_newlines();
+        let mut impls = Vec::new();
         let mut datacs = Vec::new();
         let mut functions = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::Eof) {
-            if self.check(&TokenKind::Datac) {
+            if self.check(&TokenKind::Impl) {
+                if !datacs.is_empty() || !functions.is_empty() {
+                    return Err(ParseError {
+                        message: "'impl' lines must come before any 'datac' or 'fun' (canonical order: impl, pd, datac/fun)".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                impls.push(self.parse_impl_decl()?);
+            } else if self.check(&TokenKind::Datac) {
                 datacs.push(self.parse_datac_decl()?);
             } else {
                 functions.push(self.parse_function()?);
             }
             self.skip_newlines();
         }
-        Ok(Program { datacs, functions })
+        Ok(Program {
+            impls,
+            datacs,
+            functions,
+        })
+    }
+
+    /// `impl "shapes/circle"` / `impl "time" as t`. `with caps(...)` is
+    /// milestone M7 (capability-based security); a file that writes it gets
+    /// a clear "not yet" error rather than a confusing parse error.
+    fn parse_impl_decl(&mut self) -> PResult<ImplDecl> {
+        let start = self.expect(TokenKind::Impl, "'impl'")?.span;
+        let (path, path_span) = match self.peek_kind().clone() {
+            TokenKind::StringLit(s) => {
+                let span = self.peek().span;
+                self.advance();
+                (s, span)
+            }
+            other => {
+                return Err(ParseError {
+                    message: format!("expected a quoted module path after 'impl', found {other:?}"),
+                    span: self.peek().span,
+                })
+            }
+        };
+        let (alias, end) = if self.check(&TokenKind::As) {
+            self.advance();
+            let (name, span) = self.expect_ident()?;
+            (Some(name), span)
+        } else {
+            (None, path_span)
+        };
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
+            return Err(ParseError {
+                message: "'with caps(...)' grants are not implemented yet (milestone M7)".to_string(),
+                span: self.peek().span,
+            });
+        }
+        Ok(ImplDecl {
+            path,
+            alias,
+            span: start.to(end),
+        })
     }
 
     fn parse_datac_decl(&mut self) -> PResult<DatacDecl> {
@@ -136,6 +187,7 @@ impl Parser {
         Ok(DatacDecl {
             name,
             fields,
+            module: String::new(),
             span: start.to(end),
         })
     }
@@ -249,6 +301,7 @@ impl Parser {
             params,
             return_type,
             body,
+            module: String::new(),
             span: start.to(end),
         })
     }
@@ -263,7 +316,19 @@ impl Parser {
         } else {
             None
         };
-        let (name, span) = self.expect_ident()?;
+        let (first, first_span) = self.expect_ident()?;
+        // A dotted name is a module-qualified reference to an imported item
+        // (`circle.Circle`) — see `resolve.rs`, which rewrites it to the
+        // item's canonical, module-prefixed name.
+        let mut name = first;
+        let mut span = first_span;
+        while self.check(&TokenKind::Dot) {
+            self.advance();
+            let (part, part_span) = self.expect_ident()?;
+            name.push('.');
+            name.push_str(&part);
+            span = span.to(part_span);
+        }
         Ok(TypeExpr {
             name,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
@@ -1048,5 +1113,41 @@ mod tests {
             Stmt::Let { init, .. } => assert!(matches!(init, Expr::Unary { op: UnOp::Not, .. })),
             other => panic!("expected let stmt, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_impl_lines_before_decls() {
+        let p = parse("impl \"shapes/circle\"\nimpl \"time\" as t\n\nfun main() {}");
+        assert_eq!(p.impls.len(), 2);
+        assert_eq!(p.impls[0].path, "shapes/circle");
+        assert_eq!(p.impls[0].alias, None);
+        assert_eq!(p.impls[1].path, "time");
+        assert_eq!(p.impls[1].alias.as_deref(), Some("t"));
+        assert_eq!(p.functions.len(), 1);
+    }
+
+    #[test]
+    fn parses_module_qualified_type_names() {
+        let p = parse("fun f(c: circle.Circle).R: circle.Circle = c");
+        assert_eq!(p.functions[0].params[0].ty.name, "circle.Circle");
+        assert_eq!(p.functions[0].return_type.as_ref().unwrap().name, "circle.Circle");
+    }
+
+    #[test]
+    fn impl_after_a_declaration_is_rejected() {
+        // Canonical order is impl, pd, then datac/fun.
+        let e = parse_err("fun main() {}\nimpl \"util\"");
+        assert!(e.message.contains("must come before"), "got: {}", e.message);
+    }
+
+    #[test]
+    fn caps_clause_is_a_clear_not_yet_error() {
+        let e = parse_err("impl \"util\" with caps(fs = [\"/tmp/*\"])");
+        assert!(e.message.contains("M7"), "got: {}", e.message);
+    }
+
+    #[test]
+    fn impl_requires_a_string_path() {
+        parse_err("impl util");
     }
 }

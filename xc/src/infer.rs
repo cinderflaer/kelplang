@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::ast::{self, BinOp, UnOp};
+use crate::diag::Diagnostic;
 use crate::lexer::Span;
+use crate::resolve::Project;
 use crate::tir;
 use crate::types::{FieldDef, FnSig, StructDef, Ty};
 
@@ -12,6 +14,14 @@ pub struct TypeError {
 }
 
 type Result<T> = std::result::Result<T, TypeError>;
+
+impl TypeError {
+    /// A `Span` only means something inside the file it came from, so every
+    /// error leaving this pass is tagged with the module that produced it.
+    fn in_module(self, module: &str) -> Diagnostic {
+        Diagnostic::new(self.message, self.span, module)
+    }
+}
 
 #[derive(Clone)]
 struct VarInfo {
@@ -24,6 +34,15 @@ struct Ctx {
     structs: HashMap<String, StructDef>,
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
+    /// Symbol prefix of the module being checked (`""` for the entry
+    /// module, else `"shapes.circle."`) — a bare type name in this module
+    /// resolves to `prefix + name`.
+    prefix: String,
+    /// alias -> target module's symbol prefix, for this module's `impl`
+    /// lines (M5). This is also how a module-qualified *call* is
+    /// recognized: `circle.make(...)` is a module item reference, not a
+    /// method call, when `circle` is one of these aliases.
+    aliases: HashMap<String, String>,
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
@@ -63,6 +82,82 @@ impl Ctx {
         let sname = self.receiver_struct.as_deref()?;
         self.structs.get(sname)?.field(name).map(|f| f.ty.clone())
     }
+
+    fn type_scope(&self) -> TypeScope<'_> {
+        TypeScope {
+            structs: &self.structs,
+            prefix: &self.prefix,
+            aliases: &self.aliases,
+        }
+    }
+}
+
+/// Everything needed to turn a *written* type name into a `Ty`, with M5's
+/// module qualification rules:
+/// - a builtin (`i32`, `f64`, `str`, ...) is itself;
+/// - `alias.Item` resolves through the current module's `impl` table;
+/// - a bare name belongs to the current module, so it gets that module's
+///   prefix — imported types are never reachable unqualified (strict
+///   module-qualified namespace, per plan.md).
+struct TypeScope<'a> {
+    structs: &'a HashMap<String, StructDef>,
+    prefix: &'a str,
+    aliases: &'a HashMap<String, String>,
+}
+
+impl TypeScope<'_> {
+    fn resolve(&self, ty: &ast::TypeExpr) -> Result<Ty> {
+        if let Some(builtin) = Ty::from_name(&ty.name) {
+            return Ok(builtin);
+        }
+        // A name that is already a known `struct` key is canonical: this is
+        // how a receiver declaration (`fun Circle.area()` inside
+        // `shapes/circle.x`) arrives here, since `resolve.rs` rewrites the
+        // receiver type to its module-prefixed name when it merges modules.
+        // Everything else is a name as the user wrote it and still needs
+        // qualifying.
+        if self.structs.contains_key(&ty.name) {
+            return Ok(Ty::Struct(ty.name.clone()));
+        }
+        let qualified = match ty.name.split_once('.') {
+            Some((alias, item)) => match self.aliases.get(alias) {
+                Some(prefix) => format!("{prefix}{item}"),
+                None => {
+                    return Err(TypeError {
+                        message: format!(
+                            "unknown module alias '{alias}' in type '{}' — was it imported?",
+                            ty.name
+                        ),
+                        span: ty.span,
+                    })
+                }
+            },
+            None => format!("{}{}", self.prefix, ty.name),
+        };
+        if self.structs.contains_key(&qualified) {
+            Ok(Ty::Struct(qualified))
+        } else {
+            Err(TypeError {
+                message: match qualified_hint(&ty.name, self.structs.keys(), self.aliases) {
+                    Some(hint) => format!("unknown type '{}' — did you mean {hint}?", ty.name),
+                    None => format!("unknown type '{}'", ty.name),
+                },
+                span: ty.span,
+            })
+        }
+    }
+
+    fn resolve_param(&self, p: &ast::Param) -> Result<Ty> {
+        Ok(implicit_borrow_wrap(self.resolve(&p.ty)?, p.mutable))
+    }
+
+    fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
+        let te = ast::TypeExpr {
+            name: r.type_name.clone(),
+            span: r.span,
+        };
+        Ok(implicit_borrow_wrap(self.resolve(&te)?, r.mutable))
+    }
 }
 
 /// A function's lookup key in `sigs`/`tir::Function.name`: a receiver-form
@@ -80,26 +175,40 @@ fn sig_key(f: &ast::FunctionDecl) -> String {
 
 const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 
-pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
+pub fn check_program(
+    program: &ast::Program,
+    project: &Project,
+) -> std::result::Result<tir::Program, Diagnostic> {
     let mut structs = HashMap::new();
     for d in &program.datacs {
         if structs.contains_key(&d.name) {
-            return Err(TypeError {
-                message: format!("datac '{}' is defined more than once", d.name),
-                span: d.span,
-            });
+            return Err(Diagnostic::new(
+                format!("datac '{}' is defined more than once", d.name),
+                d.span,
+                d.module.clone(),
+            ));
         }
+        let prefix = project.prefix_of(&d.module);
+        let aliases = project.alias_prefixes_of(&d.module);
         let mut fields = Vec::new();
         for f in &d.fields {
             if fields.iter().any(|fd: &FieldDef| fd.name == f.name) {
-                return Err(TypeError {
-                    message: format!("field '{}' is defined more than once in datac '{}'", f.name, d.name),
-                    span: f.span,
-                });
+                return Err(Diagnostic::new(
+                    format!("field '{}' is defined more than once in datac '{}'", f.name, d.name),
+                    f.span,
+                    d.module.clone(),
+                ));
             }
+            let ty = TypeScope {
+                structs: &structs,
+                prefix,
+                aliases: &aliases,
+            }
+            .resolve(&f.ty)
+            .map_err(|e| e.in_module(&d.module))?;
             fields.push(FieldDef {
                 name: f.name.clone(),
-                ty: resolve_type(&f.ty, &structs)?,
+                ty,
                 mutable: f.mutable,
             });
         }
@@ -120,23 +229,33 @@ pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
                 Some(r) => format!("method '{}.{}' is defined more than once", r.type_name, f.name),
                 None => format!("function '{}' is defined more than once", f.name),
             };
-            return Err(TypeError { message, span: f.span });
+            return Err(Diagnostic::new(message, f.span, f.module.clone()));
         }
         // A receiver method's key already can't collide with a struct name
         // (it always contains `#`), so this check only applies to plain
         // functions.
         if f.receiver.is_none() && structs.contains_key(&f.name) {
-            return Err(TypeError {
-                message: format!("'{}' is used for both a function and a datac", f.name),
-                span: f.span,
-            });
+            return Err(Diagnostic::new(
+                format!("'{}' is used for both a function and a datac", f.name),
+                f.span,
+                f.module.clone(),
+            ));
         }
+        let prefix = project.prefix_of(&f.module);
+        let aliases = project.alias_prefixes_of(&f.module);
+        let scope = TypeScope {
+            structs: &structs,
+            prefix,
+            aliases: &aliases,
+        };
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
-            params.push(("self".to_string(), resolve_receiver_type(r, &structs)?));
+            let ty = scope.resolve_receiver(r).map_err(|e| e.in_module(&f.module))?;
+            params.push(("self".to_string(), ty));
         }
         for p in &f.params {
-            params.push((p.name.clone(), resolve_param_type(p, &structs)?));
+            let ty = scope.resolve_param(p).map_err(|e| e.in_module(&f.module))?;
+            params.push((p.name.clone(), ty));
         }
         // `.R: T` never goes through `resolve_param_type`, so a function's
         // return type is always a plain owned `Ty` — never `Ty::Ref`. That's
@@ -145,39 +264,29 @@ pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
         // its caller, so a borrow can never escape the call frame that took
         // it.
         let ret = match &f.return_type {
-            Some(t) => resolve_type(t, &structs)?,
+            Some(t) => scope.resolve(t).map_err(|e| e.in_module(&f.module))?,
             None => Ty::Unit,
         };
         sigs.insert(key, FnSig { params, ret });
     }
 
     if !sigs.contains_key("main") {
-        return Err(TypeError {
-            message: "no 'main' function found".to_string(),
-            span: Span::new(0, 0),
-        });
+        return Err(Diagnostic::new(
+            "no 'main' function found".to_string(),
+            Span::new(0, 0),
+            project.entry.clone(),
+        ));
     }
 
     let mut functions = Vec::new();
     for f in &program.functions {
-        functions.push(check_function(f, &sigs, &structs)?);
+        let checked = check_function(f, &sigs, &structs, project)
+            .map_err(|e| e.in_module(&f.module))?;
+        functions.push(checked);
     }
     Ok(tir::Program {
         structs: structs.into_values().collect(),
         functions,
-    })
-}
-
-fn resolve_type(ty: &ast::TypeExpr, structs: &HashMap<String, StructDef>) -> Result<Ty> {
-    if let Some(t) = Ty::from_name(&ty.name) {
-        return Ok(t);
-    }
-    if structs.contains_key(&ty.name) {
-        return Ok(Ty::Struct(ty.name.clone()));
-    }
-    Err(TypeError {
-        message: format!("unknown type '{}'", ty.name),
-        span: ty.span,
     })
 }
 
@@ -187,20 +296,8 @@ fn resolve_type(ty: &ast::TypeExpr, structs: &HashMap<String, StructDef>) -> Res
 /// `mut`-marked, since borrowing a Copy scalar by default would add
 /// indirection nobody asked for. There is no move-taking parameter spelling
 /// in v1 — a `datac` value is only ever moved via local rebinding
-/// (`val q = p`), which M3 already checks.
-fn resolve_param_type(p: &ast::Param, structs: &HashMap<String, StructDef>) -> Result<Ty> {
-    let base = resolve_type(&p.ty, structs)?;
-    Ok(implicit_borrow_wrap(base, p.mutable))
-}
-
-/// Same rule as `resolve_param_type`, for a receiver (`Type` before the
-/// `.` in `fun [mut] Type.name(...)`).
-fn resolve_receiver_type(r: &ast::Receiver, structs: &HashMap<String, StructDef>) -> Result<Ty> {
-    let te = ast::TypeExpr { name: r.type_name.clone(), span: r.span };
-    let base = resolve_type(&te, structs)?;
-    Ok(implicit_borrow_wrap(base, r.mutable))
-}
-
+/// (`val q = p`), which M3 already checks. See `TypeScope::resolve_param`
+/// and `resolve_receiver` for the M5 module-qualification rule.
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
@@ -296,6 +393,7 @@ fn check_function(
     f: &ast::FunctionDecl,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    project: &Project,
 ) -> Result<tir::Function> {
     let key = sig_key(f);
     let sig = sigs.get(&key).unwrap().clone();
@@ -308,6 +406,8 @@ fn check_function(
         structs: structs.clone(),
         ret_ty: sig.ret.clone(),
         scopes: vec![HashMap::new()],
+        prefix: project.prefix_of(&f.module).to_string(),
+        aliases: project.alias_prefixes_of(&f.module),
         receiver_struct,
     };
     let mut params = Vec::new();
@@ -360,6 +460,7 @@ fn check_function(
         params,
         ret: sig.ret,
         body,
+        module: f.module.clone(),
     })
 }
 
@@ -397,7 +498,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
             ..
         } => {
             let expected = match ty {
-                Some(t) => Some(resolve_type(t, &ctx.structs)?),
+                Some(t) => Some(ctx.type_scope().resolve(t)?),
                 None => None,
             };
             let init = check_expr(init, ctx, expected.as_ref())?;
@@ -555,6 +656,16 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
         ast::Expr::Binary { op, lhs, rhs, span } => check_binary(*op, lhs, rhs, *span, ctx, expected),
         ast::Expr::Call { callee, args, span } => check_call(callee, args, *span, ctx),
         ast::Expr::FieldAccess { base, field, span } => {
+            if let ast::Expr::Ident(name, _) = base.as_ref() {
+                if ctx.lookup(name).is_none() && ctx.aliases.contains_key(name) {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{name}' is a module, not a value — call its items as '{name}.{field}(...)'"
+                        ),
+                        span: *span,
+                    });
+                }
+            }
             let base_t = check_expr(base, ctx, None)?;
             let Some(sname) = struct_name_of(&base_t.ty).map(|s| s.to_string()) else {
                 return Err(TypeError {
@@ -625,7 +736,21 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: *span,
             })
         }
-        ast::Expr::MethodCall { receiver, method, args, span } => check_method_call(receiver, method, args, *span, ctx),
+        ast::Expr::MethodCall { receiver, method, args, span } => {
+            // `circle.make(...)`: a module-qualified reference to an
+            // imported item, not a method call. Recognized only when the
+            // receiver is a bare identifier that names an `impl` alias and
+            // is *not* shadowed by a local (locals win, exactly like any
+            // other name lookup); anything else is a real method call.
+            if let ast::Expr::Ident(name, _) = receiver.as_ref() {
+                if ctx.lookup(name).is_none() {
+                    if let Some(prefix) = ctx.aliases.get(name).cloned() {
+                        return check_module_item(name, &prefix, method, args, *span, ctx);
+                    }
+                }
+            }
+            check_method_call(receiver, method, args, *span, ctx)
+        }
     }
 }
 
@@ -926,7 +1051,10 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
     }
 
     let sig = ctx.sigs.get(callee).cloned().ok_or_else(|| TypeError {
-        message: format!("call to undefined function '{callee}'"),
+        message: match qualified_hint(callee, ctx.structs.keys().chain(ctx.sigs.keys()), &ctx.aliases) {
+            Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
+            None => format!("call to undefined function '{callee}'"),
+        },
         span,
     })?;
     let checked = match_args(&format!("function '{callee}'"), &sig.params, args, span, ctx)?;
@@ -972,6 +1100,71 @@ fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], 
     Ok(tir::Expr {
         kind: tir::ExprKind::Call { callee: key, args: checked_args },
         ty: sig.ret,
+        span,
+    })
+}
+
+/// A bare name that only exists as an imported item's *qualified* name is a
+/// very likely strict-namespace mistake (M5: imported items are reached
+/// only as `alias.Item`). Returns a "did you mean ..." fragment when `name`
+/// matches some qualified key's last segment.
+fn qualified_hint<'a>(
+    name: &str,
+    keys: impl Iterator<Item = &'a String>,
+    aliases: &HashMap<String, String>,
+) -> Option<String> {
+    let want = format!(".{name}");
+    let key = keys
+        .into_iter()
+        .find(|k| k.ends_with(&want) && k.contains('.'))?;
+    let (module_path, _) = key.rsplit_once('.')?;
+    let qualified_prefix = format!("{module_path}.");
+    Some(match aliases.iter().find(|(_, p)| p.as_str() == qualified_prefix) {
+        Some((alias, _)) => format!("'{alias}.{name}'"),
+        None => {
+            let import_path = module_path.replace('.', "/");
+            format!(
+                "'{name}' is declared in module '{import_path}' — add `impl \"{import_path}\"` and reach it as `<alias>.{name}`"
+            )
+        }
+    })
+}
+
+/// `alias.item(args)` — a reference to an item in an imported module, per
+/// M5's strict module-qualified namespace. `prefix` is that module's symbol
+/// prefix, so the actual lookup key is just `prefix + item`: the same
+/// table `check_call` uses for any other call, which is why imported
+/// `datac` construction and imported free functions need no new lowering.
+fn check_module_item(
+    alias: &str,
+    prefix: &str,
+    item: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let qualified = format!("{prefix}{item}");
+    if ctx.structs.contains_key(&qualified) || ctx.sigs.contains_key(&qualified) {
+        return check_call(&qualified, args, span, ctx);
+    }
+    // A receiver method lives under a `Type#name` key, which a module path
+    // can't spell — say so rather than "no such item".
+    let method_suffix = format!("#{item}");
+    if let Some(key) = ctx
+        .sigs
+        .keys()
+        .find(|k| k.starts_with(prefix) && k.ends_with(&method_suffix))
+    {
+        let type_name = key.trim_end_matches(&method_suffix).trim_end_matches(prefix);
+        return Err(TypeError {
+            message: format!(
+                "'{item}' is a method on '{type_name}', not a free function — call it on a value ('value.{item}(...)')"
+            ),
+            span,
+        });
+    }
+    Err(TypeError {
+        message: format!("module '{alias}' has no item '{item}'"),
         span,
     })
 }

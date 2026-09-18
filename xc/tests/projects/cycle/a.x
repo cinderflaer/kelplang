@@ -1,0 +1,3 @@
+impl "b"
+
+fun main() {}

@@ -1,0 +1,11 @@
+impl "geom"
+
+datac Circle(var r: f64)
+
+fun Circle.area().R: f64 = 3.14159 * r * r
+
+fun mut Circle.grow(by: f64) {
+    r += by
+}
+
+fun quadrupled(c: Circle).R: f64 = geom.scale(c.area(), factor = 4.0)

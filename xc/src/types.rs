@@ -67,7 +67,7 @@ impl Ty {
             Ty::Char => "char".to_string(),
             Ty::Unit => "void".to_string(),
             Ty::Str => "const char*".to_string(),
-            Ty::Struct(name) => format!("struct_{name}"),
+            Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
                     format!("{}*", inner.c_type())
@@ -95,6 +95,18 @@ impl Ty {
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
         }
     }
+}
+
+/// Mangles an `.x` top-level name into a valid C identifier.
+///
+/// M5 prefixes every module's items with their module path
+/// (`shapes.circle.Circle`), and a receiver method is keyed `Type#name` —
+/// neither `.` nor `#` is legal in a C identifier, so both become `__`.
+/// Not fully collision-proof against a hand-written `shapes__circle__Circle`
+/// (nothing can be, short of a real mangling scheme), but low-risk and
+/// simple, same tradeoff as the pre-M5 `#`-only version.
+pub fn c_ident(name: &str) -> String {
+    name.replace('.', "__").replace('#', "__")
 }
 
 /// A function's checked signature. Parameter names are kept (not just

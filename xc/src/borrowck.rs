@@ -50,6 +50,7 @@
 
 use std::collections::HashMap;
 
+use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::tir;
 use crate::types::Ty;
@@ -245,9 +246,9 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
     }
 }
 
-pub fn check_program(program: &tir::Program) -> Result<()> {
+pub fn check_program(program: &tir::Program) -> std::result::Result<(), Diagnostic> {
     for f in &program.functions {
-        check_function(f)?;
+        check_function(f).map_err(|e| Diagnostic::new(e.message, e.span, f.module.clone()))?;
     }
     Ok(())
 }

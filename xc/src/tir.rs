@@ -17,6 +17,10 @@ pub struct Function {
     pub params: Vec<(String, Ty)>,
     pub ret: Ty,
     pub body: Block,
+    /// Canonical id of the module this function was declared in — needed so
+    /// `borrowck.rs` can tag its diagnostics with the right source file (a
+    /// `Span` is only meaningful inside its own file).
+    pub module: String,
 }
 
 #[derive(Debug, Clone, Default)]

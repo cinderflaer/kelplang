@@ -1,0 +1,3 @@
+impl "../outside"
+
+fun main() {}
