@@ -1,23 +1,39 @@
-// std/env — the gated environment namespace (M7).
+// std/env — the gated environment namespace (M7, bodies MK5-S5).
 //
 // The gate, the grant and the runtime name check are real: this module's
-// items are unreachable from a module that was not granted `env`, and an
-// argument is matched against the granted variable names before the call.
-// The bodies themselves are stubs — the plan keeps `net`/`process`/`env`
-// structurally gated with stub bodies until there is a reason to flesh them
-// out, and this is the one shipped as the worked example of that.
+// items are unreachable from a module that was not granted `env`, and the
+// *name* argument is matched against the granted variable names before the
+// call. A grant of `["PATH"]` therefore does not let the holder even ask
+// whether `HOME` is set — the denial is a property of the name, not of the
+// answer, which is the point of checking before the call rather than after.
+//
+// `env.names()` is deliberately absent: listing the environment reads *all*
+// of it, which a grant of one name should not permit.
 
-extern fun unsupported_bool(what: &str).R: bool
-extern fun unsupported_string(what: &str).R: String
-extern fun unsupported_unit(what: &str)
+extern fun has_raw(name: &str).R: bool
+extern fun get_raw(name: &str).R: String
+extern fun set_raw(name: &str, value: &str)
+extern fun unset_raw(name: &str)
 
-// Panics: the namespace is gated but not implemented yet.
-fun has(name: &str).R: bool = unsupported_bool("env.has")
+// Whether the variable is present.
+fun has(name: &str).R: bool = has_raw(name)
 
-// Panics: the namespace is gated but not implemented yet.
-fun get(name: &str).R: String = unsupported_string("env.get")
+// The variable's value, or the empty string when it is unset. There is no
+// `Option` yet, so an unset variable and a variable set to "" are not
+// distinguishable here; `has` is the way to tell.
+fun get(name: &str).R: String = get_raw(name)
 
-// Panics: the namespace is gated but not implemented yet.
+// Sets the variable for this process and any child it spawns (`setenv` with
+// overwrite = 1).
+//
+// Panics: if the variable cannot be set.
 fun set(name: &str, value: &str) {
-    unsupported_unit("env.set")
+    set_raw(name, value)
+}
+
+// Removes the variable from this process's environment.
+//
+// Panics: if the variable cannot be removed.
+fun unset(name: &str) {
+    unset_raw(name)
 }

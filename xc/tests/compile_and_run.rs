@@ -979,13 +979,26 @@ fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
 }
 
 #[test]
-fn a_granted_env_reference_passes_the_name_check_and_reaches_the_stub() {
-    // The domain, the grant and the variable-name check are real; the body is
-    // the gated stub, which panics on its own terms.
-    assert_project_denied_at_runtime(
+fn a_granted_env_reads_sets_and_unsets_only_the_granted_names() {
+    // MK5-S5: the bodies are real now. `HOME` is read through the grant, and
+    // `XC_ENV_PROBE` is set, read back, unset and confirmed gone — all inside
+    // the child process, so the harness's environment is untouched.
+    assert_project_runs(
         "caps_env",
         &project("caps_env").join("main.x"),
-        "gated but not implemented yet",
+        "true\ntrue\ntrue\n",
+    );
+}
+
+#[test]
+fn an_ungranted_env_name_is_denied_before_the_call() {
+    // The name is the governed resource: a grant on PATH does not let the
+    // holder ask whether HOME exists, so the panic names the attempted name
+    // and the granted pattern.
+    assert_project_denied_at_runtime(
+        "caps_env_denied",
+        &project("caps_env_denied").join("main.x"),
+        "'HOME' is outside the env capability granted to module 'util'",
     );
 }
 

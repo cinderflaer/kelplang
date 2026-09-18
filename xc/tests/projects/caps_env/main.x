@@ -1,7 +1,10 @@
-// `env` is a gated namespace whose domain works end to end (the grant, the
-// gate, and the variable-name check) while its bodies are still stubs.
-impl "util" with caps(env = ["HOME"])
+// `env` is a gated namespace with real bodies (MK5-S5). `util` holds a grant
+// on exactly the two variable names it uses; the check is on the name, before
+// the call, so an ungranted name is denied (see caps_env_denied).
+impl "util" with caps(env = ["HOME", "XC_ENV_PROBE"])
 
 fun main() {
-    print(util.lookup())
+    print(util.has_home())
+    print(util.get_home_nonempty())
+    print(util.set_read_unset())
 }

@@ -279,18 +279,23 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/env",
-        "unsupported_bool",
-        "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n    return false;\n",
+        "has_raw",
+        "    return getenv(x_name) != NULL;\n",
     ),
     (
         "std/env",
-        "unsupported_string",
-        "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n    return x_String__empty();\n",
+        "get_raw",
+        "    const char* v = getenv(x_name);\n    if (v == NULL) {\n        return x_String__empty();\n    }\n    return x_String__from_str(v);\n",
     ),
     (
         "std/env",
-        "unsupported_unit",
-        "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n",
+        "set_raw",
+        "    if (setenv(x_name, x_value, 1) != 0) {\n        x_panic(\"env.set: cannot set variable\");\n    }\n",
+    ),
+    (
+        "std/env",
+        "unset_raw",
+        "    if (unsetenv(x_name) != 0) {\n        x_panic(\"env.unset: cannot unset variable\");\n    }\n",
     ),
     // ---- std/io (S2) -------------------------------------------------------
     (
