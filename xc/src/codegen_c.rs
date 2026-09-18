@@ -18,7 +18,8 @@ use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{DropPlan, DropTarget};
 use crate::lexer::Span;
 use crate::tir::*;
-use crate::types::{StructDef, Ty};
+use crate::types::{drop_fn_name, needs_drop, owned_structs, StructDef, Ty};
+use std::collections::HashSet;
 use std::fmt::Write;
 
 /// The fixed C support code every generated program carries: the `Bytes`
@@ -40,6 +41,32 @@ typedef struct {
 static void x_panic(const char* msg) {
     fprintf(stderr, "panic: %s\n", msg);
     exit(1);
+}
+
+static bool x_utf8_valid(const unsigned char* p, size_t n) {
+    size_t i = 0;
+    while (i < n) {
+        unsigned char c = p[i];
+        size_t extra;
+        unsigned long cp;
+        if (c < 0x80) { i += 1; continue; }
+        else if ((c & 0xE0) == 0xC0) { extra = 1; cp = c & 0x1F; }
+        else if ((c & 0xF0) == 0xE0) { extra = 2; cp = c & 0x0F; }
+        else if ((c & 0xF8) == 0xF0) { extra = 3; cp = c & 0x07; }
+        else { return false; }
+        if (i + extra >= n) { return false; }
+        for (size_t k = 1; k <= extra; k++) {
+            if ((p[i + k] & 0xC0) != 0x80) { return false; }
+            cp = (cp << 6) | (p[i + k] & 0x3F);
+        }
+        if (extra == 1 && cp < 0x80) { return false; }
+        if (extra == 2 && cp < 0x800) { return false; }
+        if (extra == 3 && cp < 0x10000) { return false; }
+        if (cp > 0x10FFFF) { return false; }
+        if (cp >= 0xD800 && cp <= 0xDFFF) { return false; }
+        i += extra + 1;
+    }
+    return true;
 }
 
 static x_Bytes x_Bytes__empty(void) {
@@ -102,10 +129,111 @@ static void x_bytes_drop(x_Bytes* b) {
     b->data = NULL;
     b->len = 0;
 }
+
+// ---- x_String (M6.2) ------------------------------------------------------
+// Same shape as x_Bytes, kept a distinct type so text and raw bytes are not
+// interchangeable. `from_bytes`/`into_bytes` transfer ownership of the same
+// buffer rather than copying it.
+typedef struct {
+    unsigned char* data;
+    size_t len;
+} x_String;
+
+static x_String x_String__empty(void) {
+    x_String s;
+    s.data = NULL;
+    s.len = 0;
+    return s;
+}
+
+static x_String x_String__from_str(const char* text) {
+    size_t n = strlen(text);
+    unsigned char* p = (unsigned char*)malloc(n + 1);
+    if (p == NULL) {
+        x_panic("out of memory");
+    }
+    memcpy(p, text, n + 1);
+    x_String s;
+    s.data = p;
+    s.len = n;
+    return s;
+}
+
+/* Takes ownership of `b`'s buffer: the caller's binding is moved into this
+   call, so nothing else frees it. */
+static x_String x_String__from_bytes(x_Bytes b) {
+    if (!x_utf8_valid(b.data, b.len)) {
+        x_panic("String.from_bytes: input is not valid utf-8");
+    }
+    x_String s;
+    s.data = b.data;
+    s.len = b.len;
+    return s;
+}
+
+/* Hands the buffer to the caller: the receiver is moved into this call. */
+static x_Bytes x_String__into_bytes(x_String self) {
+    x_Bytes b;
+    b.data = self.data;
+    b.len = self.len;
+    return b;
+}
+
+static size_t x_String__len(const x_String* self) {
+    return self->len;
+}
+
+static bool x_String__is_empty(const x_String* self) {
+    return self->len == 0;
+}
+
+static size_t x_String__char_count(const x_String* self) {
+    size_t n = 0;
+    for (size_t i = 0; i < self->len; i++) {
+        if ((self->data[i] & 0xC0) != 0x80) {
+            n++;
+        }
+    }
+    return n;
+}
+
+static x_String x_String__clone(const x_String* self) {
+    unsigned char* p = (unsigned char*)malloc(self->len + 1);
+    if (p == NULL) {
+        x_panic("out of memory");
+    }
+    memcpy(p, self->data, self->len);
+    p[self->len] = 0;
+    x_String s;
+    s.data = p;
+    s.len = self->len;
+    return s;
+}
+
+static void x_string_drop(x_String* s) {
+    free(s->data);
+    s->data = NULL;
+    s->len = 0;
+}
+
+/* The allocation primitive `std/mem` wraps (M6.2): an owned, zero-filled,
+   NUL-terminated buffer of `n` bytes. */
+static x_Bytes x_bytes_alloc_raw(size_t n) {
+    unsigned char* p = (unsigned char*)malloc(n + 1);
+    if (p == NULL) {
+        x_panic("out of memory");
+    }
+    memset(p, 0, n + 1);
+    x_Bytes b;
+    b.data = p;
+    b.len = n;
+    return b;
+}
 // ---- end X runtime -------------------------------------------------------
 "#;
 
 pub fn generate(program: &Program, drops: &DropPlan) -> String {
+    let owned = owned_structs(&program.structs);
     let mut out = String::new();
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
@@ -116,13 +244,13 @@ pub fn generate(program: &Program, drops: &DropPlan) -> String {
     out.push('\n');
 
     for s in &program.structs {
-        write_struct(&mut out, s);
+        write_struct(&mut out, s, &owned);
     }
     if !program.structs.is_empty() {
         out.push('\n');
     }
 
-    write_pd_globals(&mut out, &program.pds, drops);
+    write_pd_globals(&mut out, &program.pds, drops, &owned);
 
     for f in &program.functions {
         if f.name == "main" {
@@ -134,6 +262,11 @@ pub fn generate(program: &Program, drops: &DropPlan) -> String {
     out.push('\n');
 
     for f in &program.functions {
+        if f.extern_ {
+            write_extern(&mut out, f);
+            out.push('\n');
+            continue;
+        }
         let mut gen = Gen::new(drops, f.name.clone());
         gen.write_function(f, !program.pds.is_empty());
         out.push_str(&gen.out);
@@ -143,20 +276,44 @@ pub fn generate(program: &Program, drops: &DropPlan) -> String {
     out
 }
 
+/// Emits an `extern` declaration's body, which comes from the compiler rather
+/// than from `.x` source (see `externs.rs`). `infer.rs` has already rejected
+/// an `extern` with no known body, so reaching the `expect` here would mean
+/// the table and the checker disagreed.
+fn write_extern(out: &mut String, f: &Function) {
+    let body = crate::externs::body(&f.module, &f.name)
+        .unwrap_or_else(|| panic!("no compiler-supplied body for extern '{}'", f.name));
+    // The C signature renames every parameter (`n` -> `x_n`), so a body's C
+    // text has to use the mangled spelling; list the mapping next to the
+    // body so that is readable rather than mysterious.
+    if !f.params.is_empty() {
+        let names: Vec<String> = f
+            .params
+            .iter()
+            .map(|(n, _)| format!("{n} -> {}", c_name(n)))
+            .collect();
+        writeln!(out, "// extern '{}' parameters: {}", f.name, names.join(", ")).unwrap();
+    }
+    write_signature(out, f);
+    out.push_str(" {\n");
+    out.push_str(body);
+    out.push_str("}\n");
+}
+
 /// Emits one file-scope global per passdown plus the generated function that
 /// initializes them, in declaration order (M5.2). The global's name is the
 /// same `pd#...` name a referencing function takes as a hidden parameter, so
 /// inside such a function the parameter shadows its own global and both
 /// spell the same symbol in C — including inside `main`, which can take no
 /// parameters and therefore reads the globals directly.
-fn write_pd_globals(out: &mut String, pds: &[Pd], drops: &DropPlan) {
+fn write_pd_globals(out: &mut String, pds: &[Pd], drops: &DropPlan, owned: &HashSet<String>) {
     if pds.is_empty() {
         return;
     }
     // A `pd` initializer is not a function, so no drop point can be keyed to
     // it; an owned local inside one would leak. `infer.rs` rejects owned
-    // passdown *values*, so this only affects an initializer that happens to
-    // build and discard one.
+    // locals in initializers, so this only affects an initializer that
+    // happens to build and discard one.
     let gen = Gen::new(drops, String::new());
     out.push_str("// passdowns: assigned once by x_init_pds(), read-only afterwards\n");
     for pd in pds {
@@ -169,7 +326,30 @@ fn write_pd_globals(out: &mut String, pds: &[Pd], drops: &DropPlan) {
         .unwrap();
     }
     out.push('\n');
+    // An owned passdown (M6.2) has no scope to die at, so its drop point is
+    // process exit: an `atexit` handler registered by the initializer. One
+    // handler for all of them, freeing in declaration order.
+    let droppable: Vec<&Pd> = pds
+        .iter()
+        .filter(|pd| needs_drop(&pd.value_ty, owned))
+        .collect();
+    if !droppable.is_empty() {
+        out.push_str("static void x_drop_pds(void) {\n");
+        for pd in &droppable {
+            writeln!(
+                out,
+                "    {}(&{});",
+                drop_fn_name(&pd.value_ty),
+                c_name(&pd.name)
+            )
+            .unwrap();
+        }
+        out.push_str("}\n\n");
+    }
     out.push_str("static void x_init_pds(void) {\n");
+    if !droppable.is_empty() {
+        out.push_str("    atexit(x_drop_pds);\n");
+    }
     for pd in pds {
         writeln!(
             out,
@@ -183,12 +363,38 @@ fn write_pd_globals(out: &mut String, pds: &[Pd], drops: &DropPlan) {
     out.push_str("}\n\n");
 }
 
-fn write_struct(out: &mut String, s: &StructDef) {
+/// One `datac`'s C typedef, plus its drop function when it owns heap memory
+/// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
+/// `datac`s, so a struct's drop function is always defined before the struct
+/// that calls it — no forward declarations needed.
+fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
     write!(out, "typedef struct {{\n").unwrap();
     for f in &s.fields {
         write!(out, "    {} {};\n", f.ty.c_type(), field_name(&f.name)).unwrap();
     }
-    write!(out, "}} {};\n", Ty::Struct(s.name.clone()).c_type()).unwrap();
+    let ty = Ty::Struct(s.name.clone());
+    write!(out, "}} {};\n", ty.c_type()).unwrap();
+    if needs_drop(&ty, owned) {
+        writeln!(
+            out,
+            "static void x_drop_{}({}* v) {{",
+            crate::types::c_ident(&s.name),
+            ty.c_type()
+        )
+        .unwrap();
+        for f in &s.fields {
+            if needs_drop(&f.ty, owned) {
+                writeln!(
+                    out,
+                    "    {}(&v->{});",
+                    drop_fn_name(&f.ty),
+                    field_name(&f.name)
+                )
+                .unwrap();
+            }
+        }
+        out.push_str("}\n");
+    }
 }
 
 fn write_signature(out: &mut String, f: &Function) {
@@ -729,14 +935,14 @@ impl<'a> Gen<'a> {
             Ty::U8 | Ty::U16 => ("%u", format!("(unsigned){value}")),
             Ty::Usize => ("%zu", format!("(size_t){value}")),
             Ty::Isize => ("%lld", format!("(long long){value}")),
-            // A borrowed `Bytes` is the only way `print` sees one — `infer.rs`
-            // auto-borrows an owned place — so `->` is the accessor that
-            // applies. The length is cast because `%.*s` takes an `int`.
-            Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes) => (
+            // A borrowed `Bytes`/`String` is the only way `print` sees one —
+            // `infer.rs` auto-borrows an owned place — so `->` is the accessor
+            // that applies. The length is cast because `%.*s` takes an `int`.
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes | Ty::String) => (
                 "%.*s",
                 format!("(int)({value})->len, (const char*)({value})->data"),
             ),
-            Ty::Bytes => (
+            Ty::Bytes | Ty::String => (
                 "%.*s",
                 format!("(int)({value}).len, (const char*)({value}).data"),
             ),
@@ -759,14 +965,12 @@ fn fresh_temp() -> String {
     format!("_xtmp{}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
-/// One `free`, as a C statement. The only dropable type in v1 is `Bytes`: a
-/// `datac` field of an owned type is rejected by `infer.rs` precisely so this
-/// stays a one-liner instead of a recursive walk.
+/// One drop call, as a C statement. The function names come from
+/// `types::drop_fn_name`: the two builtin owned types have bodies in the
+/// runtime preamble, and a `datac` that owns memory gets a generated one
+/// (see `write_struct`).
 fn drop_call(target: &DropTarget) -> String {
-    match target.ty {
-        Ty::Bytes => format!("x_bytes_drop(&{});", c_name(&target.name)),
-        ref other => unreachable!("no drop rule for type '{}'", other.display()),
-    }
+    format!("{}(&{});", drop_fn_name(&target.ty), c_name(&target.name))
 }
 
 /// Escapes literal template text for embedding in a generated `printf`

@@ -345,11 +345,13 @@ fn unqualified_imported_item_is_rejected() {
 }
 
 #[test]
-fn stdlib_import_is_rejected_until_m6() {
+fn unshipped_stdlib_module_is_rejected() {
+    // M6.2 ships `std/mem` only; `std/fs` and the rest arrive with M6.3/M7,
+    // and the error names what *is* shipped so the reservation stays useful.
     assert_project_rejected(
         "stdlib_import",
         &project("stdlib_import").join("main.x"),
-        "standard library is not implemented yet",
+        "stdlib module 'fs' is not implemented yet (shipped today: std/mem",
     );
 }
 
@@ -556,6 +558,62 @@ fn printing_a_temporary_bytes_is_rejected() {
     assert_rejected("tests/fixtures/heap_temporary_print.x");
 }
 
+// ---------------------------------------------------------------------------
+// M6.2: owned `String`, `extern fun`, the first stdlib module, owned `datac`
+// fields, and owned passdowns.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_constructs_measures_and_round_trips_through_bytes() {
+    // `len` is bytes (h + é(2) + l + l + o = 6) and `char_count` is
+    // characters (5) — the distinction the two functions exist to make.
+    assert_compiles_and_runs(
+        "tests/fixtures/string_basic.x",
+        "6\n5\nfalse\nhéllo\nhéllo\n6\nhéllo\ntrue\n0\n",
+    );
+}
+
+#[test]
+fn owned_datac_fields_are_dropped_with_the_struct() {
+    assert_compiles_and_runs(
+        "tests/fixtures/string_field.x",
+        "first\n7\nafter scope\nsecond\n7\ndone\n",
+    );
+}
+
+#[test]
+fn an_owned_passdown_is_freed_at_exit() {
+    assert_compiles_and_runs("tests/fixtures/pd_owned.x", "== x ==\n== x ==\n");
+}
+
+#[test]
+fn a_compiler_shipped_stdlib_module_can_be_imported() {
+    // `impl "std/mem"` — the module's X body calls a compiler-supplied
+    // `extern` for the allocation itself.
+    assert_compiles_and_runs("tests/fixtures/stdlib_mem.x", "3\nhi\n0\n");
+}
+
+#[test]
+fn an_extern_without_a_compiler_supplied_body_is_rejected() {
+    assert_rejected("tests/fixtures/extern_no_body.x");
+}
+
+#[test]
+fn an_extern_receiver_declaration_is_rejected() {
+    assert_rejected("tests/fixtures/extern_receiver.x");
+}
+
+#[test]
+fn a_modules_own_items_are_reachable_bare_inside_it() {
+    // `util.x` calls `doubled` and constructs `Pair` without qualifying
+    // either, even though `resolve.rs` stores both prefixed.
+    assert_project_runs(
+        "self_call",
+        &project("self_call").join("main.x"),
+        "12\n3\n",
+    );
+}
+
 /// The M6 gate, run rather than argued: every `Bytes` fixture is rebuilt with
 /// AddressSanitizer and executed, so a double free, a use-after-free, or a
 /// leak fails the suite. If `cc` has no AddressSanitizer the check is skipped
@@ -571,10 +629,17 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "heap_reassign",
         "heap_branches",
         "heap_param_borrow",
+        "string_basic",
+        "string_field",
+        "pd_owned",
+        "stdlib_mem",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");
-        let bin = out_path(name);
+        // A distinct output path: the individually-run fixture tests build
+        // the same names, and racing them for one file makes the binary
+        // unreadable to whichever loses.
+        let bin = out_path(&format!("{name}_asan_src"));
         let build = Command::new(xc_bin())
             .arg("build")
             .arg(fixture(&source))

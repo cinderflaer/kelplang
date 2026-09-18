@@ -1,0 +1,12 @@
+// M6.2: an owned passdown. It lives in a generated file-scope global and is
+// freed by an `atexit` handler — v1's only drop point at process exit.
+pd val banner = String.from_str("== x ==")
+
+fun show() {
+    print(banner)
+}
+
+fun main() {
+    show()
+    print(banner)
+}

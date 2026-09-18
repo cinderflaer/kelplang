@@ -3,12 +3,14 @@ mod borrowck;
 mod codegen_c;
 mod diag;
 mod driver;
+mod externs;
 mod infer;
 mod lexer;
 mod parser;
 mod preprocess;
 mod pretty;
 mod resolve;
+mod stdlib;
 mod tir;
 mod types;
 

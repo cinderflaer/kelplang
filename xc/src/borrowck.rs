@@ -210,6 +210,10 @@ impl Scope {
 struct Ctx {
     scopes: Vec<Scope>,
     plan: FnDrops,
+    /// Which `datac`s own heap memory (transitively) — `Ty::Struct(_)`
+    /// cannot answer that on its own, so the struct table decision is made
+    /// once in `check_program` and threaded here.
+    owned_structs: std::collections::HashSet<String>,
 }
 
 impl Ctx {
@@ -448,8 +452,9 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
 
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
     let mut plan = DropPlan::default();
+    let owned = crate::types::owned_structs(&program.structs);
     for f in &program.functions {
-        let function = check_function(f).map_err(|e| {
+        let function = check_function(f, &owned).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -457,17 +462,21 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
     Ok(plan)
 }
 
-fn check_function(f: &tir::Function) -> Result<FnDrops> {
+fn check_function(
+    f: &tir::Function,
+    owned_structs: &std::collections::HashSet<String>,
+) -> Result<FnDrops> {
     let mut ctx = Ctx {
         scopes: vec![Scope::default()],
         plan: FnDrops::default(),
+        owned_structs: owned_structs.clone(),
     };
     for (name, ty) in &f.params {
         ctx.define(name, ty);
-        // A parameter is never owned in v1 (`Bytes` parameters are borrows),
-        // but registering one costs nothing and keeps the plan honest if
-        // move-taking parameters ever exist.
-        if ty.needs_drop() {
+        // A parameter is never owned in v1 (`Bytes`/`String` parameters are
+        // borrows), but registering one costs nothing and keeps the plan
+        // honest if move-taking parameters ever exist.
+        if crate::types::needs_drop(ty, &ctx.owned_structs) {
             ctx.define_owned(name, ty);
         }
     }
@@ -502,7 +511,7 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
         tir::Stmt::Let { name, ty, init } => {
             check_let_init(init, ctx)?;
             ctx.define(name, ty);
-            if ty.needs_drop() {
+            if crate::types::needs_drop(ty, &ctx.owned_structs) {
                 ctx.define_owned(name, ty);
             }
             Ok(())
@@ -637,9 +646,12 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // stored *is* the old value.
             if let tir::ExprKind::Ident(name) = &target.kind {
                 let self_assign = matches!(&value.kind, tir::ExprKind::Ident(src) if src == name);
-                let owned = ctx
+                let owned = ctx.owned_structs.clone();
+                let target_ty = ctx
                     .lookup_mut(name)
-                    .map(|state| state.ty.needs_drop())
+                    .map(|state| state.ty.clone());
+                let owned = target_ty
+                    .map(|ty| crate::types::needs_drop(&ty, &owned))
                     .unwrap_or(false);
                 if owned && !self_assign {
                     ctx.plan.at_assign.insert(

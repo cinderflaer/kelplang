@@ -1,0 +1,11 @@
+// M6.2: a compiler-shipped stdlib module used from a project.
+impl "std/mem"
+
+fun main() {
+    var b = mem.alloc(3)
+    b.set(0, 104)
+    b.set(1, 105)
+    print(b.len())
+    print(b)
+    print(b.get(2))
+}

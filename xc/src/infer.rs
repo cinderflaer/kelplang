@@ -156,6 +156,19 @@ impl Ctx {
         self.structs.get(sname)?.field(name).map(|f| f.ty.clone())
     }
 
+    /// `resolve.rs` stores a non-entry module's top-level names with their
+    /// module prefix, but plan.md's rule is that a file's own items are
+    /// reachable *bare* inside that file — so a bare lookup has to try the
+    /// prefixed spelling too. The entry module's prefix is empty, so this is
+    /// the identity there.
+    fn qualify_own(&self, name: &str) -> String {
+        if self.prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}{name}", self.prefix)
+        }
+    }
+
     fn type_scope(&self) -> TypeScope<'_> {
         TypeScope {
             structs: &self.structs,
@@ -326,6 +339,33 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             false,
         );
         add("Bytes#clone", vec![("self".to_string(), shared)], bytes, false);
+
+        // The `String` surface (M6.2): construct, measure, copy, and convert
+        // to/from `Bytes` with an ownership transfer. `as_str`/`as_bytes`
+        // return a borrow of the receiver, which needs the `&str`
+        // return-elision rule (M6.3) before it can be typed at all.
+        let string = Ty::String;
+        let string_shared = Ty::Ref { mutable: false, inner: Box::new(string.clone()) };
+        add("String#empty", vec![], string.clone(), true);
+        add("String#from_str", vec![("s".to_string(), Ty::Str)], string.clone(), true);
+        // By value: `from_bytes` takes ownership of the buffer, so the
+        // receiver local is moved into this call rather than borrowed.
+        add("String#from_bytes", vec![("b".to_string(), Ty::Bytes)], string.clone(), true);
+        add("String#len", vec![("self".to_string(), string_shared.clone())], Ty::Usize, false);
+        add(
+            "String#char_count",
+            vec![("self".to_string(), string_shared.clone())],
+            Ty::Usize,
+            false,
+        );
+        add("String#is_empty", vec![("self".to_string(), string_shared.clone())], Ty::Bool, false);
+        add("String#clone", vec![("self".to_string(), string_shared)], string.clone(), false);
+        add(
+            "String#into_bytes",
+            vec![("self".to_string(), string)],
+            Ty::Bytes,
+            false,
+        );
         m
     });
 
@@ -334,8 +374,9 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
 fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
     match ty {
         Ty::Bytes => Some("Bytes"),
-        // A `Bytes` parameter is a borrow (M4's rule: every owned parameter is
-        // borrowed), so `b.len()` on one arrives here as `&Bytes`.
+        Ty::String => Some("String"),
+        // An owned parameter is a borrow (M4's rule: every owned parameter is
+        // borrowed), so `b.len()` on one arrives here as `&Bytes`/`&String`.
         Ty::Ref { inner, .. } => builtin_type_name(inner),
         _ => None,
     }
@@ -407,17 +448,9 @@ pub fn check_program(
             }
             .resolve(&f.ty)
             .map_err(|e| e.in_module(&d.module))?;
-            if ty.needs_drop() {
-                return Err(Diagnostic::new(
-                    format!(
-                        "field '{}' has owned heap type '{}' — a datac cannot hold an owned value yet (dropping a struct is not implemented)",
-                        f.name,
-                        ty.display()
-                    ),
-                    f.span,
-                    d.module.clone(),
-                ));
-            }
+            // An owned field (`Bytes`, `String`, or a `datac` holding one) is
+            // allowed from M6.2 on: `codegen_c.rs` generates a drop function
+            // per datac, so dropping a struct recurses into its fields.
             if matches!(ty, Ty::Str | Ty::Ref { .. }) {
                 return Err(Diagnostic::new(
                     format!(
@@ -647,16 +680,9 @@ fn collect_pds(
                     .ty
             }
         };
-        if value_ty.needs_drop() {
-            return Err(Diagnostic::new(
-                format!(
-                    "passdown '{bare}' has owned heap type '{}' — a 'pd' cannot hold an owned value yet (there is no drop point at process exit)",
-                    value_ty.display()
-                ),
-                decl.span,
-                decl.module.clone(),
-            ));
-        }
+        // An owned passdown is allowed from M6.2 on: it lives in a generated
+        // file-scope global and is freed by an `atexit` handler, which is
+        // v1's only drop point at process exit (see `write_pd_globals`).
         out.push(PdInfo {
             qualified: decl.name.clone(),
             name: bare,
@@ -897,6 +923,8 @@ fn scan_pd_uses(
     match &f.body {
         ast::FunctionBody::Block(b) => scan.scan_block(b),
         ast::FunctionBody::Expr(e) => scan.scan_expr(e),
+        // An `extern` has no body to scan for passdown references.
+        ast::FunctionBody::Extern => {}
     }
 
     let mut used: Vec<PdInfo> = scan
@@ -921,7 +949,7 @@ fn scan_pd_uses(
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
-    } else if matches!(base, Ty::Struct(_) | Ty::Bytes) {
+    } else if matches!(base, Ty::Struct(_) | Ty::Bytes | Ty::String) {
         Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
         base
@@ -939,33 +967,35 @@ fn struct_name_of(ty: &Ty) -> Option<&str> {
     }
 }
 
-/// Whether a type can be printed as text straight out of its buffer — the
-/// builtin `Bytes` and a borrow of one.
-fn is_bytes_like(ty: &Ty) -> bool {
+/// Whether a type is one of the builtin owned buffers, or a borrow of one —
+/// the types `print` renders straight out of their buffer.
+fn is_printable_buffer(ty: &Ty) -> bool {
     match ty {
-        Ty::Bytes => true,
-        Ty::Ref { inner, .. } => matches!(**inner, Ty::Bytes),
+        Ty::Bytes | Ty::String => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::Bytes | Ty::String),
         _ => false,
     }
 }
 
-/// `print`/templates read a `Bytes` without consuming it, so an owned one is
-/// borrowed here rather than passed by value (which would be a move). The
-/// borrow has to come from a place: C cannot take the address of a temporary
-/// for the two arguments (`len` and `data`) a `%.*s` needs, and doing it
-/// twice would evaluate the temporary twice.
+/// `print`/templates read an owned buffer without consuming it, so an owned
+/// one is borrowed here rather than passed by value (which would be a move).
+/// The borrow has to come from a place: C cannot take the address of a
+/// temporary for the two arguments (`len` and `data`) a `%.*s` needs, and
+/// doing it twice would evaluate the temporary twice.
 fn borrow_for_print(value: tir::Expr, what: &str, _ctx: &Ctx) -> Result<tir::Expr> {
-    if !matches!(value.ty, Ty::Bytes) {
+    if !matches!(value.ty, Ty::Bytes | Ty::String) {
         return Ok(value);
     }
     if !is_tir_place(&value) {
         return Err(TypeError {
             message: format!(
-                "cannot print a temporary 'Bytes' with {what} — bind it to a 'val' or 'var' first (v1 has no way to hold a temporary's address across a call)"
+                "cannot print a temporary '{}' with {what} — bind it to a 'val' or 'var' first (v1 has no way to hold a temporary's address across a call)",
+                value.ty.display()
             ),
             span: value.span,
         });
     }
+    let inner = value.ty.clone();
     let span = value.span;
     Ok(tir::Expr {
         kind: tir::ExprKind::Ref {
@@ -974,7 +1004,7 @@ fn borrow_for_print(value: tir::Expr, what: &str, _ctx: &Ctx) -> Result<tir::Exp
         },
         ty: Ty::Ref {
             mutable: false,
-            inner: Box::new(Ty::Bytes),
+            inner: Box::new(inner),
         },
         span,
     })
@@ -1133,6 +1163,27 @@ fn check_function(
                 span: e.span(),
             }
         }
+        ast::FunctionBody::Extern => {
+            // No `.x` body: `codegen_c.rs` writes the compiler-supplied C
+            // (see `externs.rs`). Confirm there *is* one before accepting
+            // the declaration — otherwise the failure would surface as a
+            // `cc` error at best, or as a silently missing symbol.
+            let prefix = project.prefix_of(&f.module);
+            let bare = f.name.strip_prefix(prefix).unwrap_or(&f.name);
+            if !crate::externs::has_body(&f.module, bare) {
+                return Err(TypeError {
+                    message: format!(
+                        "extern function '{bare}' has no compiler-supplied body — only compiler-shipped stdlib modules may declare 'extern fun'"
+                    ),
+                    span: f.span,
+                });
+            }
+            tir::Block {
+                stmts: vec![],
+                tail: None,
+                span: f.span,
+            }
+        }
     };
 
     // A function can satisfy its return type either via a tail expression or
@@ -1162,6 +1213,7 @@ fn check_function(
         ret: sig.ret,
         body,
         module: f.module.clone(),
+        extern_: f.extern_,
     })
 }
 
@@ -1258,7 +1310,22 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                 span: stmt_span(stmt),
             })
         }
-        ast::Stmt::Expr { expr, .. } => Ok(tir::Stmt::Expr(check_expr(expr, ctx, None)?)),
+        ast::Stmt::Expr { expr, .. } => {
+            let checked = check_expr(expr, ctx, None)?;
+            // A non-tail expression statement discards its value, and nothing
+            // owns an owned value afterwards — v1 has no drop point for a
+            // temporary, so this would leak. Reject it instead.
+            if !checked.ty.is_copy() {
+                return Err(TypeError {
+                    message: format!(
+                        "this expression produces an owned '{}' value that is never used — bind it to a 'val' or 'var', print it, or pass it to something that takes it by value",
+                        checked.ty.display()
+                    ),
+                    span: stmt_span(stmt),
+                });
+            }
+            Ok(tir::Stmt::Expr(checked))
+        }
     }
 }
 
@@ -1341,7 +1408,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 // In a `pd` initializer only Copy values can be read out of
                 // a passdown: a non-Copy one is handed around as a shared
                 // borrow, and a passdown has to hold a value.
-                if ctx.init_state.is_some() && matches!(pd.value_ty, Ty::Struct(_)) {
+                if ctx.init_state.is_some() && !pd.value_ty.is_copy() {
                     return Err(TypeError {
                         message: format!(
                             "passdown '{}' cannot be read in another passdown's initializer: its value is not Copy",
@@ -1801,7 +1868,7 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         let arg = borrow_for_print(arg, callee, ctx)?;
         let printable = arg.ty.is_numeric()
             || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str)
-            || is_bytes_like(&arg.ty);
+            || is_printable_buffer(&arg.ty);
         if !printable {
             return Err(TypeError {
                 message: format!("cannot pass a value of type '{}' to '{callee}'", arg.ty.display()),
@@ -1818,9 +1885,14 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         });
     }
 
-    if let Some(sdef) = ctx.structs.get(callee).cloned() {
+    if let Some(sdef) = ctx
+        .structs
+        .get(callee)
+        .or_else(|| ctx.structs.get(&ctx.qualify_own(callee)))
+        .cloned()
+    {
         let params: Vec<(String, Ty)> = sdef.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
-        let checked = match_args(&format!("datac '{callee}'"), &params, args, span, ctx)?;
+        let checked = match_args(&format!("datac '{}'", sdef.name), &params, args, span, ctx)?;
         let fields = sdef
             .fields
             .iter()
@@ -1829,27 +1901,40 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
             .collect();
         return Ok(tir::Expr {
             kind: tir::ExprKind::StructLit {
-                name: callee.to_string(),
+                name: sdef.name.clone(),
                 fields,
             },
-            ty: Ty::Struct(callee.to_string()),
+            ty: Ty::Struct(sdef.name.clone()),
             span,
         });
     }
 
-    let sig = ctx.sigs.get(callee).cloned().ok_or_else(|| TypeError {
-        message: match qualified_hint(callee, ctx.structs.keys().chain(ctx.sigs.keys()), &ctx.aliases) {
-            Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
-            None => format!("call to undefined function '{callee}'"),
+    let owned_key = ctx.qualify_own(callee);
+    let (key, sig) = match ctx.sigs.get(callee) {
+        Some(sig) => (callee.to_string(), sig.clone()),
+        None => match ctx.sigs.get(&owned_key) {
+            Some(sig) => (owned_key.clone(), sig.clone()),
+            None => {
+                return Err(TypeError {
+                    message: match qualified_hint(
+                        callee,
+                        ctx.structs.keys().chain(ctx.sigs.keys()),
+                        &ctx.aliases,
+                    ) {
+                        Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
+                        None => format!("call to undefined function '{callee}'"),
+                    },
+                    span,
+                })
+            }
         },
-        span,
-    })?;
-    let mut checked = match_args(&format!("function '{callee}'"), &sig.params, args, span, ctx)?;
-    checked.extend(hidden_args(callee, span, ctx)?);
+    };
+    let mut checked = match_args(&format!("function '{key}'"), &sig.params, args, span, ctx)?;
+    checked.extend(hidden_args(&key, span, ctx)?);
 
     Ok(tir::Expr {
         kind: tir::ExprKind::Call {
-            callee: callee.to_string(),
+            callee: key,
             args: checked,
         },
         ty: sig.ret,
@@ -1904,7 +1989,7 @@ fn check_template(
                 let value = borrow_for_print(value, "a string template", ctx)?;
                 let printable = value.ty.is_numeric()
                     || matches!(value.ty, Ty::Bool | Ty::Char | Ty::Str)
-                    || is_bytes_like(&value.ty);
+                    || is_printable_buffer(&value.ty);
                 if !printable {
                     return Err(TypeError {
                         message: format!(

@@ -1,0 +1,24 @@
+// M6.2: an owned `datac` field. Dropping the struct recurses into its
+// fields, so the `String` inside `Holder` is freed exactly once, when
+// `Holder` dies — and never when it is moved.
+datac Holder(val name: String, val n: i32)
+
+fun make(label: &str).R: Holder = Holder(name = String.from_str(label), n = 7)
+
+fun show(h: Holder) {
+    print(h.name)
+    print(h.n)
+}
+
+fun main() {
+    {
+        val inner = make(label = "first")
+        show(inner)
+    }
+    print("after scope")
+
+    val outer = make(label = "second")
+    val moved = outer
+    show(moved)
+    print("done")
+}

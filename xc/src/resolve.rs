@@ -366,14 +366,26 @@ impl Loader<'_> {
         if let Some(tokens) = self.raw.get(id) {
             return Ok(tokens.clone());
         }
-        let path = self.src_dir.join(format!("{id}.x"));
-        let text = fs::read_to_string(&path).map_err(|_| {
-            Diagnostic::new(
-                format!("cannot find module '{id}': expected '{}'", path.display()),
-                at,
-                from,
-            )
-        })?;
+        // A `std/...` id comes from the compiler's own shipped sources (M6.2)
+        // instead of the project directory; everything downstream — lexing,
+        // aliases, parsing, prefixing — is identical.
+        let (path, text) = match crate::stdlib::source(id) {
+            Some(text) => (
+                self.src_dir.join(id).with_extension("x"),
+                text.to_string(),
+            ),
+            None => {
+                let path = self.src_dir.join(format!("{id}.x"));
+                let text = fs::read_to_string(&path).map_err(|_| {
+                    Diagnostic::new(
+                        format!("cannot find module '{id}': expected '{}'", path.display()),
+                        at,
+                        from,
+                    )
+                })?;
+                (path, text)
+            }
+        };
         self.sources.insert(id, &path, text.clone());
 
         let tokens = Lexer::new(&text)
@@ -622,8 +634,16 @@ fn validate_impl_path(path: &str, span: Span, module: &str) -> Result<(), Diagno
         return err("use '/' as the separator in 'impl' paths".to_string());
     }
     if path == "std" || path.starts_with("std/") {
+        // `std/mem` and friends ship with the compiler (M6.2). A `std/...`
+        // module that is not shipped yet is reported as such rather than as
+        // a missing file, so the reservation stays visible.
+        if crate::stdlib::source(path).is_some() {
+            return Ok(());
+        }
         return err(format!(
-            "'impl \"{path}\"' — the standard library is not implemented yet (milestone M6/M7)"
+            "'impl \"{path}\"' — stdlib module '{}' is not implemented yet (shipped today: {}; the rest land in M6.3/M7)",
+            path.trim_start_matches("std/"),
+            crate::stdlib::shipped().join(", ")
         ));
     }
     for seg in path.split('/') {

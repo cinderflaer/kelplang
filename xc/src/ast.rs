@@ -68,6 +68,9 @@ pub struct FieldDecl {
 #[derive(Debug, Clone)]
 pub struct FunctionDecl {
     pub name: String,
+    /// `extern fun ...` — the body is supplied by the compiler (M6.2), so
+    /// `body` is always `FunctionBody::Extern` here.
+    pub extern_: bool,
     /// `Some` for `fun Type.name(...)` / `fun mut Type.name(...)` —
     /// receiver-form methods. The receiver is *not* one of `params`; it's
     /// a separate implicit first argument, matching how the surface syntax
@@ -98,6 +101,10 @@ pub enum FunctionBody {
     /// `fun f(...).R: T = expr` — sugar checked/lowered as if it were
     /// `fun f(...).R: T { return expr }`.
     Expr(Expr),
+    /// `extern fun f(...)` — no body in `.x` at all; `codegen_c.rs` writes
+    /// the compiler-supplied C body instead. Never reaches `check_function`'s
+    /// block/expression paths.
+    Extern,
 }
 
 #[derive(Debug, Clone)]

@@ -21,6 +21,12 @@ pub enum Ty {
     /// allocated on construction and freed at the end of the owning scope.
     /// Non-`Copy`, so it moves; `&Bytes` is the borrow (`Ty::Ref`).
     Bytes,
+    /// The builtin owned heap utf-8 text type (M6.2). Same representation as
+    /// `Bytes` (pointer plus length) and the same move/drop rules; it exists
+    /// as its own type so text and arbitrary bytes are not interchangeable.
+    /// `String.from_bytes`/`String.into_bytes` convert with an ownership
+    /// transfer, not a cast.
+    String,
     /// A `datac` value type, named by its declaration.
     Struct(String),
     /// A borrow of a value of type `inner` — shared (`mutable: false`) or
@@ -52,23 +58,24 @@ impl Ty {
             "usize" => Ty::Usize,
             "isize" => Ty::Isize,
             "Bytes" => Ty::Bytes,
+            "String" => Ty::String,
             _ => return None,
         })
     }
 
-    /// Whether a value of this type is `Copy`. Everything is, except the two
+    /// Whether a value of this type is `Copy`. Everything is, except the
     /// kinds of thing that own heap memory: a `datac` and the builtin
-    /// `Bytes`. Reading a non-`Copy` value as a whole moves it (M3).
+    /// `Bytes`/`String`. Reading a non-`Copy` value as a whole moves it (M3).
     pub fn is_copy(&self) -> bool {
-        !matches!(self, Ty::Struct(_) | Ty::Bytes)
+        !matches!(self, Ty::Struct(_) | Ty::Bytes | Ty::String)
     }
 
-    /// Whether this type owns heap memory, and therefore has to be dropped at
-    /// the end of the scope holding it. Same set as `!is_copy()` today; kept
-    /// separate because "can be moved" and "must be freed" are different
-    /// questions (a future `datac` of only `Copy` fields, say).
-    pub fn needs_drop(&self) -> bool {
-        matches!(self, Ty::Bytes)
+    /// Whether this type *itself* owns heap memory, ignoring whether a
+    /// `datac` does. Use `needs_drop` below when the struct table is
+    /// available — a `datac` with an owned field owns memory too, and out of
+    /// context `Ty::Struct(_)` cannot know that.
+    pub fn owns_heap(&self) -> bool {
+        matches!(self, Ty::Bytes | Ty::String)
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -115,6 +122,7 @@ impl Ty {
             Ty::Usize => "size_t".to_string(),
             Ty::Isize => "ptrdiff_t".to_string(),
             Ty::Bytes => "x_Bytes".to_string(),
+            Ty::String => "x_String".to_string(),
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
@@ -143,10 +151,45 @@ impl Ty {
             Ty::Usize => "usize".to_string(),
             Ty::Isize => "isize".to_string(),
             Ty::Bytes => "Bytes".to_string(),
+            Ty::String => "String".to_string(),
             Ty::Struct(name) => name.clone(),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
         }
+    }
+}
+
+/// Which `datac`s own heap memory, transitively. A `datac` may only name
+/// `datac`s declared before it (open item 12), so one pass in declaration
+/// order is already a valid fixpoint — no repeating until stable.
+pub fn owned_structs(structs: &[StructDef]) -> std::collections::HashSet<String> {
+    let mut owned = std::collections::HashSet::new();
+    for s in structs {
+        if s.fields.iter().any(|f| needs_drop(&f.ty, &owned)) {
+            owned.insert(s.name.clone());
+        }
+    }
+    owned
+}
+
+/// Whether a value of `ty` has to be freed — the builtin owned types, or a
+/// `datac` that (transitively) holds one.
+pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) -> bool {
+    match ty {
+        Ty::Struct(name) => owned_structs.contains(name),
+        other => other.owns_heap(),
+    }
+}
+
+/// The C function that frees a value of `ty`, taking a pointer to it.
+/// Generated per `datac` by `codegen_c.rs`; the builtins are in the fixed
+/// runtime preamble.
+pub fn drop_fn_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Bytes => "x_bytes_drop".to_string(),
+        Ty::String => "x_string_drop".to_string(),
+        Ty::Struct(name) => format!("x_drop_{}", c_ident(name)),
+        other => unreachable!("no drop rule for type '{}'", other.display()),
     }
 }
 

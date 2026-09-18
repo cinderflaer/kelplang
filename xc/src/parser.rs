@@ -233,6 +233,15 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> PResult<FunctionDecl> {
+        // `extern fun ...` — a declaration whose body the compiler supplies
+        // (M6.2). It has no body at all, and cannot be a receiver method
+        // (there is nothing to give it a body with).
+        let extern_ = if self.check(&TokenKind::Extern) {
+            self.advance();
+            true
+        } else {
+            false
+        };
         let start = self.expect(TokenKind::Fun, "'fun'")?.span;
 
         // A receiver-form decl is `fun [mut] Type.name(...)`; a plain one
@@ -297,6 +306,14 @@ impl Parser {
         }
         self.expect(TokenKind::RParen, "')'")?;
 
+        if extern_ && receiver.is_some() {
+            return Err(ParseError {
+                message: "'extern' cannot be used on a receiver method — declare it as a free function"
+                    .to_string(),
+                span: start,
+            });
+        }
+
         let return_type = if self.check(&TokenKind::Dot) {
             self.advance();
             let (marker, mspan) = self.expect_ident()?;
@@ -312,7 +329,19 @@ impl Parser {
             None
         };
 
-        let body = if self.check(&TokenKind::Eq) {
+        let body = if extern_ {
+            // No body and no `=`: the C is supplied by the compiler. A
+            // written body would be dead code, so say so rather than ignore
+            // it.
+            if self.check(&TokenKind::Eq) || self.check(&TokenKind::LBrace) {
+                return Err(ParseError {
+                    message: "an 'extern fun' declaration has no body — the compiler supplies it"
+                        .to_string(),
+                    span: self.peek().span,
+                });
+            }
+            FunctionBody::Extern
+        } else if self.check(&TokenKind::Eq) {
             let eq_span = self.advance().span;
             if return_type.is_none() {
                 return Err(ParseError {
@@ -334,9 +363,11 @@ impl Parser {
         let end = match &body {
             FunctionBody::Block(b) => b.span,
             FunctionBody::Expr(e) => e.span(),
+            FunctionBody::Extern => return_type.as_ref().map(|t| t.span).unwrap_or(start),
         };
         Ok(FunctionDecl {
             name,
+            extern_,
             receiver,
             params,
             return_type,

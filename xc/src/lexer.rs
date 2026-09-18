@@ -63,6 +63,11 @@ pub enum TokenKind {
     Impl,
     /// `impl "path" as alias`.
     As,
+    /// `extern fun name(...).R: T` — a declaration whose body the compiler
+    /// supplies (M6.2). Only compiler-shipped stdlib modules may use it: the
+    /// whole point is to confine the unportable primitive (a syscall, a
+    /// `malloc`) to a body that is not `.x` source.
+    Extern,
 
     // punctuation
     LParen,
@@ -439,6 +444,7 @@ impl<'a> Lexer<'a> {
                         "pd" => TokenKind::Pd,
                         "impl" => TokenKind::Impl,
                         "as" => TokenKind::As,
+                        "extern" => TokenKind::Extern,
                         _ => TokenKind::Ident(text.to_string()),
                     }
                 }
@@ -555,7 +561,47 @@ impl<'a> Lexer<'a> {
                     }
                     chunk_start = self.pos;
                 }
-                Some(c) => text.push(c as char),
+                Some(c) if c < 0x80 => text.push(c as char),
+                Some(c) => {
+                    // A non-ASCII byte starts a multi-byte UTF-8 sequence.
+                    // `src` is UTF-8, so reassemble the character instead of
+                    // pushing each byte as its own Latin-1 scalar — the
+                    // latter re-encodes as mojibake and inflates the
+                    // literal's byte length, which `String.len` would then
+                    // report.
+                    let first = self.pos - 1;
+                    let width = match c {
+                        0xC2..=0xDF => 2,
+                        0xE0..=0xEF => 3,
+                        0xF0..=0xF4 => 4,
+                        _ => {
+                            return Err(LexError {
+                                message: "string literal is not valid utf-8".to_string(),
+                                span: Span::new(first, self.pos),
+                            })
+                        }
+                    };
+                    while self.pos < first + width {
+                        match self.peek() {
+                            Some(b) if (b & 0xC0) == 0x80 => self.pos += 1,
+                            _ => {
+                                return Err(LexError {
+                                    message: "string literal is not valid utf-8".to_string(),
+                                    span: Span::new(first, self.pos),
+                                })
+                            }
+                        }
+                    }
+                    match self.src.get(first..first + width) {
+                        Some(s) => text.push_str(s),
+                        None => {
+                            return Err(LexError {
+                                message: "string literal is not valid utf-8".to_string(),
+                                span: Span::new(first, self.pos),
+                            })
+                        }
+                    }
+                }
                 None => {
                     return Err(LexError {
                         message: "unterminated string literal".to_string(),
@@ -672,6 +718,22 @@ mod tests {
                 TokenKind::IntLit(42),
                 TokenKind::FloatLit(3.14),
                 TokenKind::StringLit("hi\n".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_multibyte_utf8_in_string_literals() {
+        // The lexer is byte-oriented, so a literal used to push each byte of a
+        // multi-byte character as its own Latin-1 scalar — `"héllo"` came out
+        // as `"hÃ©llo"`, and `String.len` then reported 8 bytes for 6. The
+        // character has to survive verbatim.
+        assert_eq!(
+            kinds("\"héllo\" \"→\""),
+            vec![
+                TokenKind::StringLit("héllo".to_string()),
+                TokenKind::StringLit("→".to_string()),
                 TokenKind::Eof,
             ]
         );

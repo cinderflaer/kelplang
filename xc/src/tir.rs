@@ -38,6 +38,9 @@ pub struct Function {
     /// `borrowck.rs` can tag its diagnostics with the right source file (a
     /// `Span` is only meaningful inside its own file).
     pub module: String,
+    /// `extern fun` (M6.2): the body below is synthetic (empty) and
+    /// `codegen_c.rs` writes the compiler-supplied C for it instead.
+    pub extern_: bool,
 }
 
 #[derive(Debug, Clone)]

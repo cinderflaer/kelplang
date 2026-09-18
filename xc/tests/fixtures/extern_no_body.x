@@ -1,0 +1,8 @@
+// M6.2: `extern fun` is for compiler-shipped stdlib modules only. User code
+// has no way to supply the body, so the declaration is rejected with a
+// message saying so rather than failing later at `cc`.
+extern fun not_a_real_primitive(n: i32).R: i32
+
+fun main() {
+    print(not_a_real_primitive(n = 1))
+}

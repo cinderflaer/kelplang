@@ -44,6 +44,9 @@ fn print_datac(out: &mut String, d: &DatacDecl) {
 
 fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
     indent(out, depth);
+    if f.extern_ {
+        out.push_str("extern ");
+    }
     out.push_str("fun ");
     if let Some(r) = &f.receiver {
         if r.mutable {
@@ -74,6 +77,7 @@ fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
             indent(out, depth);
             out.push_str("}\n");
         }
+        FunctionBody::Extern => out.push('\n'),
     }
 }
 
