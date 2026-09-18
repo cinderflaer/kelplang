@@ -1068,9 +1068,8 @@ fn write_pd_globals(
     for pd in pds {
         writeln!(
             out,
-            "static {} {};",
-            pd.value_ty.c_type(),
-            c_name(&pd.name)
+            "static {};",
+            pd.value_ty.c_decl(&c_name(&pd.name))
         )
         .unwrap();
     }
@@ -1122,7 +1121,7 @@ fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
     // forward declaration of the tag is what makes that legal C.
     write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&s.name)).unwrap();
     for f in &s.fields {
-        write!(out, "    {} {};\n", f.ty.c_type(), field_name(&f.name)).unwrap();
+        write!(out, "    {};\n", f.ty.c_decl(&field_name(&f.name))).unwrap();
     }
     let ty = Ty::Struct(s.name.clone());
     write!(out, "}} {};\n", ty.c_type()).unwrap();
@@ -1174,7 +1173,7 @@ fn write_enum(out: &mut String, e: &EnumDef, owned: &HashSet<String>) {
             out.push_str("            char kelp_none;\n");
         }
         for f in &v.fields {
-            writeln!(out, "            {} {};", f.ty.c_type(), field_name(&f.name)).unwrap();
+            writeln!(out, "            {};", f.ty.c_decl(&field_name(&f.name))).unwrap();
         }
         writeln!(out, "        }} {};", variant_member(&v.name)).unwrap();
     }
@@ -1785,6 +1784,12 @@ fn collect_containers(
                     note_expr(a, lists, boxes, maps);
                 }
             }
+            ExprKind::IndirectCall { callee, args } => {
+                note_expr(callee, lists, boxes, maps);
+                for a in args {
+                    note_expr(a, lists, boxes, maps);
+                }
+            }
             ExprKind::FieldAccess { base, .. } => note_expr(base, lists, boxes, maps),
             ExprKind::StructLit { fields, .. } => {
                 for (_, v) in fields {
@@ -1879,18 +1884,56 @@ fn collect_containers(
 }
 
 fn write_signature(out: &mut String, f: &Function) {
-    write!(out, "{} {}(", f.ret.c_type(), c_name(&f.name)).unwrap();
-    if f.params.is_empty() {
+    // A function that *returns* a function value is the one declarator C
+    // cannot write as `ret name(params)`: the returned pointer's own
+    // parameter list has to be attached to the name, before this function's.
+    // One level is what a function type is allowed to be here (a function
+    // type may not return a function type — `infer.rs` refuses that), so one
+    // level is what this handles.
+    match &f.ret {
+        Ty::Fn { params, ret } => {
+            write!(
+                out,
+                "{} (*{}(",
+                ret.c_type(),
+                c_name(&f.name)
+            )
+            .unwrap();
+            write_params(out, &f.params);
+            write!(out, "))({})", fn_params_of(params)).unwrap();
+            return;
+        }
+        other => {
+            write!(out, "{} {}(", other.c_type(), c_name(&f.name)).unwrap();
+        }
+    }
+    write_params(out, &f.params);
+    out.push(')');
+}
+
+/// The parenthesized parameter list of a function's own signature — `void`
+/// when it takes none, which is what a C definition requires.
+fn write_params(out: &mut String, params: &[(String, Ty)]) {
+    if params.is_empty() {
         out.push_str("void");
     } else {
-        for (i, (name, ty)) in f.params.iter().enumerate() {
+        for (i, (name, ty)) in params.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
             }
-            write!(out, "{} {}", ty.c_type(), c_name(name)).unwrap();
+            out.push_str(&ty.c_decl(&c_name(name)));
         }
     }
-    out.push(')');
+}
+
+/// A function type's own parameter list, as C — the same text a declarator
+/// needs after the name, so `types.rs` and this emitter agree on one spelling.
+fn fn_params_of(params: &[Ty]) -> String {
+    if params.is_empty() {
+        "void".to_string()
+    } else {
+        params.iter().map(|p| p.c_type()).collect::<Vec<_>>().join(", ")
+    }
 }
 
 /// Writing state that outlives a single expression: the output buffer, the
@@ -2067,7 +2110,7 @@ impl<'a> Gen<'a> {
             Stmt::Let { name, ty, init } => {
                 let value = self.expr_value(init);
                 indent(&mut self.out, depth);
-                writeln!(self.out, "{} {} = {value};", ty.c_type(), c_name(name)).unwrap();
+                writeln!(self.out, "{} = {value};", ty.c_decl(&c_name(name))).unwrap();
             }
             Stmt::Return { value, span } => {
                 let drops = self.drops_at_return(*span);
@@ -2173,7 +2216,7 @@ impl<'a> Gen<'a> {
         let tmp = fresh_temp();
         let value = self.expr_value(expr);
         indent(&mut self.out, depth);
-        writeln!(self.out, "{} {tmp} = {value};", expr.ty.c_type()).unwrap();
+        writeln!(self.out, "{} = {value};", expr.ty.c_decl(&tmp)).unwrap();
         self.write_drops(drops, depth);
         tmp
     }
@@ -2219,6 +2262,19 @@ impl<'a> Gen<'a> {
                 format!("({l} {sym} {r})")
             }
             ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span, &expr.ty),
+            // A function *reference* is the C function itself (A-4): the
+            // value carries no environment, so there is nothing to build.
+            // Every function in the program is emitted with a prototype, so
+            // naming one here needs nothing else.
+            ExprKind::FnRef(key) => c_name(key),
+            // A call through a function value: the callee is an expression
+            // (a local, and later a field), so it is parenthesized before
+            // the argument list — `(f)(x)`.
+            ExprKind::IndirectCall { callee, args } => {
+                let callee = self.expr_value(callee);
+                let rendered: Vec<String> = args.iter().map(|a| self.expr_value(a)).collect();
+                format!("({callee})({})", rendered.join(", "))
+            }
             ExprKind::Template { newline, pieces } => {
                 // One `printf` with a generated format string: literal chunks
                 // are escaped into it, each interpolated value contributes
@@ -2239,7 +2295,7 @@ impl<'a> Gen<'a> {
                             if matches!(value.ty, Ty::Bytes | Ty::String) {
                                 let tmp = fresh_temp();
                                 let rendered = self.expr_value(value);
-                                holds.push(format!("{} {tmp} = {rendered};", value.ty.c_type()));
+                                holds.push(format!("{} = {rendered};", value.ty.c_decl(&tmp)));
                                 let (spec, text) = self.printf_piece_with(&tmp, &value.ty);
                                 fmt.push_str(spec);
                                 args.push(text);
@@ -2406,7 +2462,7 @@ impl<'a> Gen<'a> {
                 // which is why `infer.rs` only allows this for a shared
                 // borrow of something that is not itself returned.
                 let tmp = fresh_temp();
-                format!("({{ {} {tmp} = {inner}; &{tmp}; }})", sub.ty.c_type())
+                format!("({{ {} = {inner}; &{tmp}; }})", sub.ty.c_decl(&tmp))
             }
             ExprKind::Deref { expr: sub } => {
                 // `*p` on a `&str` view is the view itself: a `str` is
@@ -2441,7 +2497,7 @@ impl<'a> Gen<'a> {
                 // overwritten) and before it is stored.
                 let tmp = fresh_temp();
                 let mut out = String::new();
-                writeln!(out, "{} {tmp} = {value_text};", target_ty.c_type()).unwrap();
+                writeln!(out, "{} = {value_text};", target_ty.c_decl(&tmp)).unwrap();
                 for d in &drops {
                     writeln!(out, "{}", drop_call(d)).unwrap();
                 }
@@ -2474,7 +2530,7 @@ impl<'a> Gen<'a> {
                     gen.out.push('\n');
                 } else {
                     let tmp = fresh_temp();
-                    writeln!(gen.out, "{} {tmp};", expr.ty.c_type()).unwrap();
+                    writeln!(gen.out, "{};", expr.ty.c_decl(&tmp)).unwrap();
                     writeln!(gen.out, "if ({cond}) {{").unwrap();
                     gen.write_block_assign(then_block, &tmp, 1);
                     gen.out.push('}');
@@ -2672,8 +2728,8 @@ impl<'a> Gen<'a> {
                 let value = self.expr_value(arg);
                 let (fmt, rendered) = self.printf_piece_with(&tmp, &arg.ty);
                 return format!(
-                    "({{ {} {tmp} = {value}; printf(\"{fmt}{newline}\", {rendered}); {}(&{tmp}); }})",
-                    arg.ty.c_type(),
+                    "({{ {} = {value}; printf(\"{fmt}{newline}\", {rendered}); {}(&{tmp}); }})",
+                    arg.ty.c_decl(&tmp),
                     drop_fn_name(&arg.ty)
                 );
             }
@@ -2698,7 +2754,7 @@ impl<'a> Gen<'a> {
                     matches!(&a.ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str));
                 if !is_str_view && !is_place(sub) {
                     let tmp = fresh_temp();
-                    writeln!(prelude, "{} {tmp} = {};", sub.ty.c_type(), self.expr_value(sub))
+                    writeln!(prelude, "{} = {};", sub.ty.c_decl(&tmp), self.expr_value(sub))
                         .unwrap();
                     args_text.push(format!("&{tmp}"));
                     hoisted.push((tmp, sub.ty.clone()));
@@ -2896,6 +2952,10 @@ impl<'a> Gen<'a> {
             Ty::U8 | Ty::U16 => ("%u", format!("(unsigned){value}")),
             Ty::Usize => ("%zu", format!("(size_t){value}")),
             Ty::Isize => ("%lld", format!("(long long){value}")),
+            // `infer.rs` refuses a function value in `print` (there is no C
+            // format for a pointer to code), so this is unreachable rather
+            // than a missing case.
+            Ty::Fn { .. } => unreachable!("a function value cannot be printed"),
             // A borrowed `Bytes`/`String` is the only way `print` sees one —
             // `infer.rs` auto-borrows an owned place — so `->` is the accessor
             // that applies. The length is cast because `%.*s` takes an `int`.

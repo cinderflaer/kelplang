@@ -1,0 +1,7 @@
+// A-4: a function value has no `print` spelling.
+fun double(x: i32).R: i32 = x * 2
+
+fun main() {
+    val f = double
+    print(f)
+}

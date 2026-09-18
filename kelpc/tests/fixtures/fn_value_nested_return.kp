@@ -1,0 +1,9 @@
+// A-4: C cannot write a declarator for a function type that returns a function
+// type, so that placement is refused and `datac` is named as the way round it.
+fun outer().R: fun().R: fun(i32).R: i32 {
+    print(1)
+}
+
+fun main() {
+    print(1)
+}

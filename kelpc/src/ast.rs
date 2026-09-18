@@ -195,17 +195,60 @@ pub enum FunctionBody {
 pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
-    /// `true` when the param type was written `mut T` — requests an
-    /// exclusive borrow instead of the implicit shared borrow (for a
-    /// `datac` type) or plain by-value passing (for a Copy type).
-    pub mutable: bool,
-    /// `true` when the param type was written `move T` — the callee takes
-    /// ownership of the argument and the call site moves it (A-4). The
-    /// resolved type is the bare `T`, not a borrow, which is what makes a
-    /// moved argument visible to the borrow checker as an ordinary
-    /// whole-value read. Never set together with `mutable`.
-    pub move_: bool,
+    /// `Borrow` (the default), `mut T` (an exclusive borrow) or `move T`
+    /// (the callee takes ownership, A-4).
+    pub mode: ParamMode,
     pub span: Span,
+}
+
+/// How a parameter receives its argument. One enum rather than two flags,
+/// because the three are exclusive by construction: `mut move T` is not a
+/// state that can be represented, so it cannot be checked for either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamMode {
+    /// The default: an implicit shared borrow for a `datac`-shaped type,
+    /// plain by-value for a `Copy` type.
+    Borrow,
+    /// `mut T` — an exclusive borrow.
+    Mut,
+    /// `move T` — the callee owns the argument and the call site moves it.
+    Move,
+}
+
+impl ParamMode {
+    pub fn mutable(self) -> bool {
+        matches!(self, ParamMode::Mut)
+    }
+
+    pub fn moves(self) -> bool {
+        matches!(self, ParamMode::Move)
+    }
+
+    /// The qualifier as written, for the pretty-printer.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            ParamMode::Borrow => "",
+            ParamMode::Mut => "mut ",
+            ParamMode::Move => "move ",
+        }
+    }
+}
+
+/// One parameter of a function *type* (A-4): `fun(String)` (a borrow),
+/// `fun(mut Counter)` (an exclusive borrow), `fun(move Job)` (ownership).
+/// There is no binding name — a function type is not a declaration — so this
+/// is a mode and a type, exactly as `Param` is minus the name.
+#[derive(Debug, Clone)]
+pub struct FnTypeParam {
+    pub mode: ParamMode,
+    pub ty: TypeExpr,
+}
+
+impl FnTypeParam {
+    /// The parameter as written, for diagnostics and the pretty-printer.
+    pub fn display(&self) -> String {
+        format!("{}{}", self.mode.keyword(), self.ty.display())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -222,18 +265,51 @@ pub struct TypeExpr {
     /// under the elision rule, whereas a parameter's `&str` is what `str`
     /// already is (a borrowed view passed by value).
     pub amp: bool,
+    /// `fun(i32, String).R: bool` — the parameters, when this is a function
+    /// type (A-4). `Some`, even when empty (`fun()`), is what marks it as one;
+    /// `None` for every ordinary type. `name` is `"fun"` in that case, which
+    /// cannot collide with a real name because `fun` is a keyword.
+    pub fn_params: Option<Vec<FnTypeParam>>,
+    /// The `.R: T` of a function type. `None` means `Unit`, exactly as it
+    /// does on a declaration.
+    pub fn_ret: Option<Box<TypeExpr>>,
     pub span: Span,
 }
 
 impl TypeExpr {
+    /// An ordinary named type with no arguments — the shape almost every
+    /// construction site wants.
+    pub fn named(name: impl Into<String>, span: Span) -> TypeExpr {
+        TypeExpr {
+            name: name.into(),
+            args: Vec::new(),
+            amp: false,
+            fn_params: None,
+            fn_ret: None,
+            span,
+        }
+    }
+
+    /// Whether this is a function type (`fun(i32).R: i32`).
+    pub fn is_fn(&self) -> bool {
+        self.fn_params.is_some()
+    }
+
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
-        if self.args.is_empty() {
+        let mut s = if let Some(params) = &self.fn_params {
+            let args: Vec<String> = params.iter().map(|p| p.display()).collect();
+            format!("fun({})", args.join(", "))
+        } else if self.args.is_empty() {
             self.name.clone()
         } else {
             let args: Vec<String> = self.args.iter().map(|a| a.display()).collect();
             format!("{}<{}>", self.name, args.join(", "))
+        };
+        if let Some(ret) = &self.fn_ret {
+            s.push_str(&format!(".R: {}", ret.display()));
         }
+        s
     }
 }
 

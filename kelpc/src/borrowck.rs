@@ -884,7 +884,19 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_value(lhs, ctx)?;
             check_value(rhs, ctx)
         }
+        // A function reference is a value with no owner: nothing to move,
+        // nothing to drop (A-4).
+        tir::ExprKind::FnRef(_) => Ok(()),
         tir::ExprKind::Call { .. } => check_call(expr, ctx),
+        // A call through a function value (A-4): the callee is read as a
+        // value — a function value is Copy, so that read moves nothing — and
+        // the arguments follow exactly the rule a named call's do.
+        tir::ExprKind::IndirectCall { callee, args } => {
+            check_value(callee, ctx)?;
+            let taken = take_call_arguments(args, ctx)?;
+            release_call_borrows(&taken, ctx);
+            Ok(())
+        }
         // `expr?` reads its operand as a whole value: the failure payload is
         // moved out onto the return path and the success payload is the
         // expression's value, so a named operand is moved exactly as a bare
@@ -1036,18 +1048,7 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     let tir::ExprKind::Call { callee, args } = &expr.kind else {
         unreachable!("check_call is only called on a Call node")
     };
-    let mut taken = Vec::new();
-    for a in args {
-        if let tir::ExprKind::Ref { mutable, expr: inner } = &a.kind {
-            check_place(inner, ctx)?;
-            if let Some(root) = tir_root_ident(inner) {
-                ctx.start_borrow(root, *mutable, a.span)?;
-                taken.push(root.to_string());
-            }
-        } else {
-            check_value(a, ctx)?;
-        }
-    }
+    let mut taken = take_call_arguments(args, ctx)?;
     if matches!(expr.ty, Ty::Ref { .. }) {
         let idx = ctx.borrow_root_param_of(callee);
         if let Some(root) = idx
@@ -1060,8 +1061,33 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             taken.retain(|r| r != root);
         }
     }
-    for root in &taken {
+    release_call_borrows(&taken, ctx);
+    Ok(())
+}
+
+/// One argument list, borrowed for the duration of a call: a `Ref` argument's
+/// place is checked and its borrow started, everything else is read as a
+/// value. Returns the roots whose borrow has to be released afterwards. Shared
+/// by a named call and a call through a function value (A-4), because the two
+/// borrow their arguments identically.
+fn take_call_arguments(args: &[tir::Expr], ctx: &mut Ctx) -> Result<Vec<String>> {
+    let mut taken = Vec::new();
+    for a in args {
+        if let tir::ExprKind::Ref { mutable, expr: inner } = &a.kind {
+            check_place(inner, ctx)?;
+            if let Some(root) = tir_root_ident(inner) {
+                ctx.start_borrow(root, *mutable, a.span)?;
+                taken.push(root.to_string());
+            }
+        } else {
+            check_value(a, ctx)?;
+        }
+    }
+    Ok(taken)
+}
+
+fn release_call_borrows(taken: &[String], ctx: &mut Ctx) {
+    for root in taken {
         ctx.end_borrow(root);
     }
-    Ok(())
 }
