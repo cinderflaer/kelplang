@@ -536,7 +536,7 @@ static void x_cap_deny(const char* domain, const char* path, const char* const* 
 }
 
 /* A path argument: lexically normalized, then resolved through symlinks, and
-   only then matched — the order `plan.md` insists on, because a link inside
+   only then matched — the order the plan insists on, because a link inside
    the grant that points outside it must be denied. */
 static void x_cap_check_path(const char* domain, const char* path, const char* const* patterns,
                              size_t count, const char* module, const char* at) {
@@ -569,7 +569,7 @@ static void x_cap_check_name(const char* domain, const char* name, const char* c
 }
 
 /* ---- net (S3): a host, or a host and a port ------------------------------
-   `plan.md`'s vocabulary: `host`, `host:port`, `*.host`, `*:port`, `*`. `*`
+   the plan's vocabulary: `host`, `host:port`, `*.host`, `*:port`, `*`. `*`
    matches within one label — it does not cross `.` or `:` — so `*.example.com`
    is one label plus a domain, and a lone `*` (handled before this) is the
    whole-resource wildcard the entry module holds. There is no `**` here:

@@ -56,9 +56,9 @@ pub enum TokenKind {
     False,
     Datac,
     /// `pd val name = expr` / `pd var name = expr` — a passdown
-    /// (`syntax&shii.md` §9).
+    /// (`plan/syntax.md` §9).
     Pd,
-    /// `impl "path/to/module"` — the import keyword (`syntax&shii.md` §8;
+    /// `impl "path/to/module"` — the import keyword (`plan/syntax.md` §8;
     /// `impl` method blocks do not exist, receivers replaced them).
     Impl,
     /// `impl "path" as alias`.

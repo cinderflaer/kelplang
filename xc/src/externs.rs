@@ -1,6 +1,6 @@
 //! Compiler-supplied C bodies for `extern fun` declarations (M6.2).
 //!
-//! Stdlib decision 3 in `plan.md`: the stdlib ships as `.x` sources, and the
+//! Stdlib decision 3 in the plan: the stdlib ships as `.x` sources, and the
 //! few operations that cannot be written in X at all — a raw syscall, a
 //! `malloc`, a byte read out of a `&str` — are declared `extern` and have
 //! their body supplied here. That keeps the *policy* (the public function,

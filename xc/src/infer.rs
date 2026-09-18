@@ -61,7 +61,7 @@ struct Ctx {
     /// method call, when `circle` is one of these aliases.
     aliases: HashMap<String, String>,
     /// This module's passdowns, keyed by the bare name a function writes.
-    /// `syntax&shii.md` §9 leaves the cross-module question open; M5.2
+    /// `plan/syntax.md` §9 leaves the cross-module question open; M5.2
     /// answers it the same way M5.1 answered imports — module-scoped, so
     /// only functions in the declaring module can name it.
     pds: HashMap<String, PdInfo>,
@@ -85,7 +85,7 @@ struct Ctx {
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
-    /// r` — no `self.` qualifier written, per `syntax&shii.md` §5's "no
+    /// r` — no `self.` qualifier written, per `plan/syntax.md` §5's "no
     /// `self` keyword").
     receiver_struct: Option<String>,
 }
@@ -231,7 +231,7 @@ impl Ctx {
     }
 
     /// `resolve.rs` stores a non-entry module's top-level names with their
-    /// module prefix, but plan.md's rule is that a file's own items are
+    /// module prefix, but the plan's rule is that a file's own items are
     /// reachable *bare* inside that file — so a bare lookup has to try the
     /// prefixed spelling too. The entry module's prefix is empty, so this is
     /// the identity there.
@@ -271,7 +271,7 @@ impl Ctx {
 /// - `alias.Item` resolves through the current module's `impl` table;
 /// - a bare name belongs to the current module, so it gets that module's
 ///   prefix — imported types are never reachable unqualified (strict
-///   module-qualified namespace, per plan.md).
+///   module-qualified namespace, per the plan).
 struct TypeScope<'a> {
     structs: &'a HashMap<String, StructDef>,
     prefix: &'a str,
@@ -1842,7 +1842,7 @@ fn scan_pd_uses(
     used
 }
 
-/// Resolves a parameter's type per `syntax&shii.md` §5: a `datac` param is
+/// Resolves a parameter's type per `plan/syntax.md` §5: a `datac` param is
 /// an implicit shared borrow unless `mut`-marked (exclusive); everything
 /// else (Copy types) stays a plain by-value type unless explicitly
 /// `mut`-marked, since borrowing a Copy scalar by default would add
@@ -2297,7 +2297,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             }
             // Not a local or parameter — inside a receiver-form method,
             // fall back to the receiver's field of that name (no `self.`
-            // qualifier is ever written; see `syntax&shii.md` §5).
+            // qualifier is ever written; see `plan/syntax.md` §5).
             if let Some(field_ty) = ctx.receiver_field_ty(name) {
                 let self_ty = ctx.lookup("self").expect("receiver binding exists whenever receiver_struct is set").ty.clone();
                 let base = tir::Expr { kind: tir::ExprKind::Ident("self".to_string()), ty: self_ty, span: *span };
@@ -2759,7 +2759,7 @@ fn match_args(
 /// Checks one call-site argument against its matched parameter type. When
 /// the parameter is `Ty::Ref`, the caller never writes `&` — a plain place
 /// argument (`p`, `p.x`) is auto-borrowed here (the callee's signature is
-/// what decides shared vs exclusive), matching `syntax&shii.md`'s "shared
+/// what decides shared vs exclusive), matching `plan/syntax.md`'s "shared
 /// borrow is implicit — write nothing." An argument that's already a borrow
 /// (an explicit `&expr`, or forwarding an existing `Ref`-typed parameter)
 /// type-matches directly instead of double-wrapping; a shared parameter

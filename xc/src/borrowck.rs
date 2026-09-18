@@ -10,7 +10,7 @@
 //!
 //! ## Borrowing (M4)
 //!
-//! Per `syntax&shii.md` §5, a `datac`-typed function parameter is an
+//! Per `plan/syntax.md` §5, a `datac`-typed function parameter is an
 //! implicit shared borrow unless `mut`-marked (exclusive) — `infer.rs`
 //! resolves this into `Ty::Ref` and, at call sites, synthesizes the
 //! `tir::ExprKind::Ref` node itself (callers never write `&`). There is no

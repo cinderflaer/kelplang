@@ -1,7 +1,7 @@
 //! The compiler-shipped standard library (M6.2) and its capability domains
 //! (M7).
 //!
-//! Stdlib decision 3 in `plan.md`: stdlib modules are `.x` sources shipped
+//! Stdlib decision 3 in the plan: stdlib modules are `.x` sources shipped
 //! *with the compiler* rather than generated from C snippets, so the API is
 //! reviewable X code. They are embedded into the binary with `include_str!`
 //! rather than read from a directory next to the executable: `xc` is then a
@@ -71,7 +71,7 @@ pub fn shipped() -> &'static [&'static str] {
     ]
 }
 
-/// The capability domains of v1 (`plan.md`'s "Capability domains"). Each has
+/// The capability domains of v1 (the plan's "Capability domains"). Each has
 /// a corresponding bare built-in namespace, and the *only* way to reach the
 /// underlying resource is through it.
 pub const DOMAINS: &[&str] = &["fs", "net", "process", "env", "time", "rand"];

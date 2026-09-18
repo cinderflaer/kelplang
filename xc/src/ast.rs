@@ -29,12 +29,12 @@ pub struct ConstDecl {
 }
 
 /// One `pd val name = expr` / `pd var name: T = expr` — a passdown
-/// (`syntax&shii.md` §9): a top-level binding a function can name without
+/// (`plan/syntax.md` §9): a top-level binding a function can name without
 /// being passed it.
 #[derive(Debug, Clone)]
 pub struct PdDecl {
     pub name: String,
-    /// `true` for `pd var`. Per plan.md's resolution of §9's open question,
+    /// `true` for `pd var`. Per the plan's resolution of §9's open question,
     /// writability is confined to the top level either way — inside a
     /// function body a passdown is read-only — so this only records which
     /// keyword was written (and is what a future top-level statement form

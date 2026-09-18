@@ -1,7 +1,7 @@
 //! `%*alias*%` text substitution (M5.3).
 //!
 //! A flat, global, purely-textual substitution pass, exactly as specified in
-//! `plan.md`'s "Imports & project structure": no parameters, no hygiene, no
+//! the plan's "Imports & project structure": no parameters, no hygiene, no
 //! scoping. Two definition sites feed one table:
 //!
 //! - `alias.xconf` at the project root, zsh-alias-flavored — one

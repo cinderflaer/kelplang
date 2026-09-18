@@ -1,6 +1,6 @@
 //! Multi-file module loading and name resolution (M5).
 //!
-//! Surface design (see `plan.md`'s "Imports & project structure"):
+//! Surface design (see the plan's "Imports & project structure"):
 //!
 //! - `impl "shapes/circle"` pulls in `src/shapes/circle.x`. The last path
 //!   segment (`circle`) becomes the default alias; `impl "time" as t` picks
