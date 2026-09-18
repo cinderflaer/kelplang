@@ -121,6 +121,15 @@ struct FunctionState {
     /// Instances whose bodies still have to be checked, in creation order
     /// alongside the type arguments they were built with.
     pending: std::collections::VecDeque<(String, Vec<Ty>)>,
+    /// The synthesized `tir::Function` for each `fun` literal checked (A-4).
+    /// A literal has no declaration in the AST, so `infer.rs` is what creates
+    /// its function; the bodies are collected here and appended to the
+    /// program's function list once checking is done. Shared through
+    /// `FuncEnv`'s `Rc`, so a literal discovered inside another literal's body
+    /// lands in the same table.
+    literals: Vec<tir::Function>,
+    /// How many literals have been synthesized, for the next one's name.
+    literal_count: usize,
 }
 
 /// The program's function templates and their instances (A-2), shared between
@@ -155,6 +164,12 @@ fn instance_key(name: &str, args: &[Ty]) -> String {
     format!("{}<{}>", name, parts.join(", "))
 }
 
+/// Cloned once per function body checked, and once more per `fun` literal
+/// (A-4), whose body is checked in a scope of its own with the same module
+/// tables. The two `Rc` fields are what make a clone share state: a generic
+/// instantiation (or a literal's synthesized function) created while checking
+/// one clone is visible to every other.
+#[derive(Clone)]
 struct Ctx {
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, StructDef>,
@@ -228,6 +243,11 @@ struct Ctx {
     /// of naming a parameter. Every other function that references a
     /// passdown is wired and uses its parameter.
     pd_global_borrow: bool,
+    /// True while checking the body of a `fun` literal (A-4). A literal is
+    /// its own function, so two diagnostics need to know: a name it cannot
+    /// see is a *capture* it is not allowed to make yet, and a passdown is a
+    /// hidden argument it cannot receive.
+    in_fn_literal: bool,
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
@@ -966,6 +986,17 @@ impl TypeScope<'_> {
         let mut resolved = Vec::with_capacity(params.len());
         for p in params {
             resolved.push(self.resolve_param_mode(&p.ty, p.mode)?);
+        }
+        if let Some(r) = &ty.fn_ret {
+            if r.amp {
+                return Err(TypeError {
+                    message: format!(
+                        "a function type cannot return a borrow ('&{}') — the elision rule that says which argument a borrow comes from reads a declaration's parameter list, and a function *type* is called through a pointer where there is none; return an owned value instead",
+                        r.display()
+                    ),
+                    span: r.span,
+                });
+            }
         }
         let ret = match &ty.fn_ret {
             Some(r) if r.is_fn() => {
@@ -2847,6 +2878,11 @@ pub fn check_program(
         sums.extend(st.sums.values().cloned());
     }
     order_declarations(&mut records, &mut sums);
+    // A-4: one function per `fun` literal, synthesized while bodies were
+    // checked (a literal inside a literal's body included). They are ordinary
+    // functions from here on — borrowck drops their owned parameters and
+    // codegen emits them with a prototype like any other.
+    functions.extend(fns.instances.borrow_mut().literals.drain(..));
     Ok(tir::Program {
         structs: records,
         enums: sums,
@@ -3145,6 +3181,7 @@ fn base_ctx(
         wired: wired.clone(),
         init_state: None,
         pd_global_borrow: false,
+        in_fn_literal: false,
         receiver_struct: None,
     }
 }
@@ -3238,6 +3275,10 @@ impl PdScan {
 
     fn scan_expr(&mut self, expr: &ast::Expr) {
         match expr {
+            // A `fun` literal's body is a function of its own, and it cannot
+            // read a passdown at all (A-4), so the enclosing scan does not
+            // descend into it.
+            ast::Expr::FnLit { .. } => {}
             ast::Expr::Ident(name, _) => self.note(name),
             ast::Expr::Unary { expr, .. }
             | ast::Expr::Ref { expr, .. }
@@ -3810,8 +3851,135 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
     }
 }
 
+/// A `fun` literal (A-4): `fun(x: i32).R: i32 = x * 2`.
+///
+/// A literal is one synthesized top-level function, so most of the work is
+/// the same work a declaration needs — resolve the signature, bind the
+/// parameters, check the body against the declared return — and the rest is
+/// the two things that make it a *literal*: its body is checked in a scope of
+/// its own (no captures yet), and the checked body is stored where codegen
+/// will emit it.
+fn check_fn_literal(
+    params_ast: &[ast::Param],
+    return_type: &Option<ast::TypeExpr>,
+    body: &ast::FunctionBody,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    // The signature, resolved where the literal was written: a parameter type
+    // resolves against the enclosing module and the enclosing generic
+    // instance's type parameters, exactly as a nested declaration's would.
+    let (params, ret) = {
+        let scope = ctx.type_scope();
+        let mut params = Vec::with_capacity(params_ast.len());
+        for p in params_ast {
+            params.push((p.name.clone(), scope.resolve_param(p)?));
+        }
+        let ret = match return_type {
+            Some(rt) => {
+                // A borrow would outlive the frame that produced it, and a
+                // function value is a plain pointer to code — the elision
+                // rule that says *which* argument a borrow comes from has no
+                // place to be written here.
+                if rt.amp {
+                    return Err(TypeError {
+                        message: format!(
+                            "a 'fun' literal cannot return a borrow ('&{}') — an indirect call has no parameter an elided lifetime could bind to; return an owned value instead",
+                            rt.display()
+                        ),
+                        span: rt.span,
+                    });
+                }
+                scope.resolve(rt, false)?
+            }
+            None => Ty::Unit,
+        };
+        (params, ret)
+    };
+    // One literal, one function. The key starts with `#`, which no `.kp`
+    // identifier can contain, so it cannot collide with anything a program
+    // declares (the same trick receiver methods use for `Type#name`).
+    let key = {
+        let mut st = ctx.fns.instances.borrow_mut();
+        st.literal_count += 1;
+        format!("#funlit{}", st.literal_count)
+    };
+    // The body's own scope. The enclosing locals are *not* visible: a literal
+    // that captured something would be a closure, which is a later phase, so
+    // this is the honest boundary rather than a silent borrow of a name the
+    // generated C function cannot see.
+    let mut inner = (*ctx).clone();
+    inner.scopes = vec![HashMap::new()];
+    inner.ret_ty = ret.clone();
+    inner.receiver_struct = None;
+    inner.init_state = None;
+    inner.in_fn_literal = true;
+    let mut tir_params = Vec::with_capacity(params.len());
+    for (name, ty) in &params {
+        inner.define(name, ty.clone(), false);
+        tir_params.push((name.clone(), ty.clone()));
+    }
+    let checked = match body {
+        ast::FunctionBody::Block(b) => check_block(b, &mut inner, Some(&ret))?,
+        ast::FunctionBody::Expr(e) => {
+            let value = check_expr(e, &mut inner, Some(&ret))?;
+            tir::Block {
+                stmts: vec![],
+                tail: Some(Box::new(value)),
+                span: e.span(),
+            }
+        }
+        ast::FunctionBody::Extern => unreachable!("the parser requires a literal body"),
+    };
+    // The same tail-versus-declared-return rule a declaration follows,
+    // including the one divergence case (`panic` as the tail).
+    let tail_diverges = checked
+        .tail
+        .as_ref()
+        .is_some_and(|e| matches!(&e.kind, tir::ExprKind::Call { callee, .. } if callee == "panic"));
+    if ret != Ty::Unit
+        && checked.tail.is_some()
+        && !tail_diverges
+        && !str_view_compatible(&checked.ty(), &ret)
+    {
+        return Err(TypeError {
+            message: format!(
+                "this 'fun' literal is declared to return '{}' but its body evaluates to '{}'",
+                ret.display(),
+                checked.ty().display()
+            ),
+            span,
+        });
+    }
+    let fn_ty = Ty::Fn {
+        params: params.iter().map(|(_, t)| t.clone()).collect(),
+        ret: Box::new(ret.clone()),
+    };
+    ctx.fns.instances.borrow_mut().literals.push(tir::Function {
+        name: key.clone(),
+        params: tir_params,
+        ret,
+        body: checked,
+        module: ctx.module.clone(),
+        extern_: false,
+    });
+    Ok(tir::Expr {
+        kind: tir::ExprKind::FnRef(key),
+        ty: fn_ty,
+        span,
+    })
+}
+
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
     match expr {
+        // A `fun` literal (A-4): one synthesized top-level function per
+        // literal, and the expression's value is a reference to it.
+        ast::Expr::FnLit {
+            params,
+            return_type,
+            body,
+            span,
+        } => check_fn_literal(params, return_type, body, *span, ctx),
         ast::Expr::IntLit(v, span) => {
             let ty = match expected {
                 Some(t) if t.is_integer() => t.clone(),
@@ -3864,6 +4032,19 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     span: *span,
                 });
             }
+            // A passdown is a hidden *argument* of the function that names
+            // it, so a function value cannot carry one (A-4): a literal that
+            // read one would be a function pointer with a parameter its
+            // signature does not have. Refused where it is written, with the
+            // way round it.
+            if ctx.in_fn_literal && ctx.pds.contains_key(name) {
+                return Err(TypeError {
+                    message: format!(
+                        "a 'fun' literal cannot read passdown '{name}' — a passdown is passed to the function that names it as a hidden argument, and a function value is a plain pointer to code; pass the value as a parameter instead"
+                    ),
+                    span: *span,
+                });
+            }
             // Not a local or receiver field — a passdown (M5.2), which the
             // wiring scan has already made this function take as a hidden
             // parameter named `pd#...`, so the reference is that parameter.
@@ -3908,6 +4089,19 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 let mut value = c.value;
                 value.span = *span;
                 return Ok(value);
+            }
+            // Inside a `fun` literal, a name that is none of the above can
+            // only have come from the enclosing scope — which is a capture,
+            // and captures are a later phase (A-4). Say that rather than
+            // "undefined variable", because the name *is* defined one frame
+            // up and the reader needs to know why that does not help.
+            if ctx.in_fn_literal && ctx.lookup(name).is_none() {
+                return Err(TypeError {
+                    message: format!(
+                        "a 'fun' literal cannot capture '{name}' from the enclosing scope yet — a function value is a plain pointer to code, with no environment to carry it; pass it as a parameter, or as a 'move' parameter to hand over ownership"
+                    ),
+                    span: *span,
+                });
             }
             Err(TypeError {
                 message: match ctx.foreign_pds.get(name) {

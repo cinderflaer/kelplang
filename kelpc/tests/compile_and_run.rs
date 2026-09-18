@@ -1223,6 +1223,8 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // A-4: a function value for a `move` parameter hands a buffer to a
         // callee that frees it, and a passdown function value reads a global.
         "fn_value",
+        // A-4: a `fun` literal whose `move` parameter owns and frees a buffer.
+        "fn_literal",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2591,4 +2593,56 @@ fn indirect_call_misuse_is_rejected() {
     );
     // A call's *result* is not itself callable: `pick()(4)` needs a binding.
     assert_rejected("tests/fixtures/fn_value_call_result.kp");
+}
+
+// ---------------------------------------------------------------------------
+// A-4 phase C: anonymous `fun` literals — one synthesized function each,
+// checked in a scope of their own.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_fun_literal_is_a_function_value() {
+    // Also in the AddressSanitizer list: the `move` literal frees what it is
+    // handed. Covers a literal passed directly, a block body, a nested
+    // literal, a literal in a `datac` field, a literal returned from a
+    // function, and `?` propagating against the literal's own `.R`.
+    assert_compiles_and_runs(
+        "tests/fixtures/fn_literal.kp",
+        "42\n6\n7\n4\n31\n9\n12\ntrue\n4\n",
+    );
+}
+
+#[test]
+fn a_fun_literal_cannot_capture_yet() {
+    assert_rejected_with(
+        "tests/fixtures/fn_literal_capture.kp",
+        "a 'fun' literal cannot capture 'k' from the enclosing scope yet",
+    );
+}
+
+#[test]
+fn fun_literal_misuse_is_rejected() {
+    // A passdown is a hidden argument a function value cannot carry, a borrow
+    // return has no elision root, the tail is checked against `.R` like any
+    // function's, and a body is required.
+    assert_rejected_with(
+        "tests/fixtures/fn_literal_passdown.kp",
+        "a 'fun' literal cannot read passdown 'base'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_literal_borrow_return.kp",
+        "a 'fun' literal cannot return a borrow ('&str')",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_type_borrow_return.kp",
+        "a function type cannot return a borrow ('&Point')",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_literal_tail_type.kp",
+        "this 'fun' literal is declared to return 'i32' but its body evaluates to 'unit'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_literal_no_body.kp",
+        "a 'fun' literal needs a body",
+    );
 }

@@ -462,6 +462,24 @@ pub enum Expr {
         args: Vec<CallArg>,
         span: Span,
     },
+    /// `fun(x: i32).R: i32 = x * 2` — an anonymous function (A-4), written
+    /// where an expression is expected. It takes no captures yet (that is a
+    /// later phase), so its body sees its own parameters and nothing else
+    /// from the enclosing scope; `infer.rs` synthesizes one top-level
+    /// function per literal and the expression's value is a reference to it.
+    FnLit {
+        params: Vec<Param>,
+        /// The `.R: T`. `None` means `Unit`, exactly as on a declaration —
+        /// there is no return-type inference, because a literal's type *is*
+        /// its signature.
+        return_type: Option<TypeExpr>,
+        /// `= expr` or `{ ... }`. Never `FunctionBody::Extern`: the parser
+        /// requires a body. Boxed because the body holds expressions and a
+        /// literal may appear inside one, so the two types are mutually
+        /// recursive.
+        body: Box<FunctionBody>,
+        span: Span,
+    },
     /// A string literal with `$name` / `${expr}` interpolation, already split
     /// into parts by the lexer. Can only be consumed by `print`/`print!` in
     /// v1 — building a `str` value out of pieces needs the owned `String`
@@ -534,6 +552,7 @@ impl Expr {
             | Expr::Deref { span: s, .. }
             | Expr::MethodCall { span: s, .. }
             | Expr::Template { span: s, .. }
+            | Expr::FnLit { span: s, .. }
             | Expr::When { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }

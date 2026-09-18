@@ -501,31 +501,7 @@ impl Parser {
             (None, first, name_params)
         };
 
-        self.expect(TokenKind::LParen, "'('")?;
-        let mut params = Vec::new();
-        while !self.check(&TokenKind::RParen) {
-            let (pname, pspan) = self.expect_ident()?;
-            self.expect(TokenKind::Colon, "':'")?;
-            // `mut T` requests an exclusive borrow and `move T` takes
-            // ownership (A-4); this is the *only* spelling for either in
-            // parameter position — `&mut T` is rejected here (the leading
-            // `&` in `parse_type` expects an identifier next, not the `mut`
-            // keyword token), and `&`/`mut` stay expression-only.
-            let mode = self.parse_param_mode()?;
-            let ty = self.parse_type()?;
-            params.push(Param {
-                name: pname,
-                ty,
-                mode,
-                span: pspan,
-            });
-            if self.check(&TokenKind::Comma) {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        self.expect(TokenKind::RParen, "')'")?;
+        let params = self.parse_params()?;
 
         if extern_ && receiver.is_some() {
             return Err(ParseError {
@@ -652,6 +628,81 @@ impl Parser {
             fn_params: None,
             fn_ret: None,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
+        })
+    }
+
+    /// `( name: T, ... )` — one parameter list, shared by a declaration and a
+    /// `fun` literal (A-4), since the two take exactly the same parameters.
+    fn parse_params(&mut self) -> PResult<Vec<Param>> {
+        self.expect(TokenKind::LParen, "'('")?;
+        let mut params = Vec::new();
+        while !self.check(&TokenKind::RParen) {
+            let (pname, pspan) = self.expect_ident()?;
+            self.expect(TokenKind::Colon, "':'")?;
+            // `mut T` requests an exclusive borrow and `move T` takes
+            // ownership (A-4); this is the *only* spelling for either in
+            // parameter position — `&mut T` is rejected here (the leading
+            // `&` in `parse_type` expects an identifier next, not the `mut`
+            // keyword token), and `&`/`mut` stay expression-only.
+            let mode = self.parse_param_mode()?;
+            let ty = self.parse_type()?;
+            params.push(Param {
+                name: pname,
+                ty,
+                mode,
+                span: pspan,
+            });
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "')'")?;
+        Ok(params)
+    }
+
+    /// `fun(x: i32).R: i32 = x * 2` in expression position — an anonymous
+    /// function (A-4). A body is required (there is no `extern` spelling for
+    /// a literal), and everything else about the header is a declaration's:
+    /// the same parameter list, the same optional `.R: T`.
+    fn parse_fn_literal(&mut self) -> PResult<Expr> {
+        let start = self.expect(TokenKind::Fun, "'fun'")?.span;
+        let params = self.parse_params()?;
+        let return_type = if self.check(&TokenKind::Dot) {
+            self.advance();
+            let (marker, mspan) = self.expect_ident()?;
+            if marker != "R" {
+                return Err(ParseError {
+                    message: format!("expected 'R' after '.', found '{marker}'"),
+                    span: mspan,
+                });
+            }
+            self.expect(TokenKind::Colon, "':'")?;
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let (body, end) = if self.check(&TokenKind::Eq) {
+            self.advance();
+            let e = self.parse_expr()?;
+            let end = e.span();
+            (FunctionBody::Expr(e), end)
+        } else if self.check(&TokenKind::LBrace) {
+            let b = self.parse_block()?;
+            let end = b.span;
+            (FunctionBody::Block(b), end)
+        } else {
+            return Err(ParseError {
+                message: "a 'fun' literal needs a body: '= expr' or '{ ... }'".to_string(),
+                span: self.peek().span,
+            });
+        };
+        Ok(Expr::FnLit {
+            params,
+            return_type,
+            body: Box::new(body),
+            span: start.to(end),
         })
     }
 
@@ -1137,6 +1188,7 @@ impl Parser {
                 let block = self.parse_block()?;
                 Ok(Expr::Block(block))
             }
+            TokenKind::Fun => self.parse_fn_literal(),
             TokenKind::If => self.parse_if(),
             TokenKind::When => self.parse_when(),
             other => Err(ParseError {
@@ -1931,6 +1983,31 @@ mod tests {
         assert!(ret.fn_ret.is_none());
         assert!(ret.fn_params.as_ref().unwrap()[0].mode.moves());
         assert_eq!(ret.display(), "fun(move String)");
+    }
+
+    #[test]
+    fn parses_a_fun_literal_in_expression_position() {
+        let p = parse("fun main() {\n    val f = fun(x: move String).R: usize = x.len()\n}");
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        match &stmts[0] {
+            Stmt::Let {
+                init: Expr::FnLit { params, return_type, .. },
+                ..
+            } => {
+                assert_eq!(params.len(), 1);
+                assert!(params[0].mode.moves());
+                assert_eq!(return_type.as_ref().unwrap().name, "usize");
+            }
+            other => panic!("expected a fun literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_fun_literal_needs_a_body() {
+        parse_err("fun main() {\n    val f = fun(x: i32).R: i32\n}");
     }
 
     #[test]

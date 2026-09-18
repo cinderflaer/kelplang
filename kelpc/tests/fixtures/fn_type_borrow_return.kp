@@ -1,0 +1,11 @@
+// A-4: and the same rule for a written function *type*: `resolve` would drop
+// the `&`, so the type would say "returns a value" while the function returns a
+// pointer.
+datac Point(val x: i32)
+
+fun origin().R: Point = Point(x = 1)
+
+fun main() {
+    val f: fun().R: &Point = origin
+    print(f().x)
+}
