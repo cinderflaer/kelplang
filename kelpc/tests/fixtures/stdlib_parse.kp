@@ -1,27 +1,49 @@
-// S1: parsing. `ok` is false unless the whole string is one number, and an
-// out-of-range value is a failure, not a wrapped number.
+// MK5-S6-M1: the parsers return `Result<T, str.ParseErr>` now. The whole
+// string has to be one number, and the *reason* a failure failed is a variant,
+// so `if let Err(e)` can tell an empty string from a malformed one.
 impl "std/str"
+impl "std/result"
+
+// The reason, as a number, so the fixture can print it.
+fun why(s: &str).R: i32 {
+    val r = str.parse_i64(s)
+    if let Err(e) = r {
+        if let Empty = e {
+            return 1
+        }
+        if let Invalid = e {
+            return 2
+        }
+    }
+    return 0
+}
 
 fun main() {
     val a = str.parse_i64("123")
-    print(a.ok)
-    print(a.value)
+    print(result.is_ok(r = a))
+    print(result.unwrap(r = a))
     val m = str.parse_i64("-9223372036854775808")
-    print(m.ok)
-    print(m.value)
-    print(str.parse_i64("9223372036854775808").ok)
-    print(str.parse_i64("12x").ok)
-    print(str.parse_i64("").ok)
-    print(str.parse_i64(" 12").ok)
+    print(result.is_ok(r = m))
+    print(result.unwrap(r = m))
+    print(result.is_err(r = str.parse_i64("9223372036854775808")))
+    print(result.is_err(r = str.parse_i64("12x")))
+    print(result.is_err(r = str.parse_i64("")))
+    print(result.is_err(r = str.parse_i64(" 12")))
+    print(why(s = ""))
+    print(why(s = "12x"))
+    print(why(s = "5"))
+
     val u = str.parse_u64("18446744073709551615")
-    print(u.ok)
-    print(str.from_u64(u.value))
-    print(str.parse_u64("-1").ok)
-    print(str.parse_u64("18446744073709551616").ok)
+    print(result.is_ok(r = u))
+    print(str.from_u64(result.unwrap(r = u)))
+    print(result.is_err(r = str.parse_u64("-1")))
+    print(result.is_err(r = str.parse_u64("18446744073709551616")))
+
     val f = str.parse_f64("2.5e2")
-    print(f.ok)
-    print(f.value)
-    print(str.parse_f64("2.5x").ok)
+    print(result.is_ok(r = f))
+    print(result.unwrap(r = f))
+    print(result.is_err(r = str.parse_f64("2.5x")))
+
     // Codepoint-level text: `char_at` is a character index, `byte_index` maps
     // it back, and a multi-byte character reports its codepoint (é = 233).
     print(str.char_at("héllo", 0))

@@ -9,6 +9,7 @@
 impl "std/http" with caps(net = ["127.0.0.1:*"])
 impl "std/process"
 impl "std/str"
+impl "std/result"
 
 fun hdrs().R: List<http.Header> {
     var l: List<http.Header> = List.empty()
@@ -18,8 +19,11 @@ fun hdrs().R: List<http.Header> {
 // The harness passes the canned server's port as the first argument.
 fun server_port().R: u16 {
     val args = process.args()
-    val p = str.parse_u64(args.get(1).as_str())
-    return p.value.to_u16()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "server_port: argv[1] is not a port number",
+    )
+    return p.to_u16()
 }
 
 fun url_for(path: &str).R: String {

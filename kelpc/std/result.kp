@@ -54,3 +54,19 @@ fun unwrap_err<T, E>(r: &Result<T, E>).R: E {
     }
     panic("Result.unwrap_err: value is Ok")
 }
+
+// The success payload, or a panic carrying `message`. `T` must be `Copy`.
+fun expect<T, E>(r: &Result<T, E>, message: &str).R: T {
+    if let Ok(v) = r {
+        return v
+    }
+    panic(message)
+}
+
+// The failure payload, or a panic carrying `message`. `E` must be `Copy`.
+fun expect_err<T, E>(r: &Result<T, E>, message: &str).R: E {
+    if let Err(e) = r {
+        return e
+    }
+    panic(message)
+}

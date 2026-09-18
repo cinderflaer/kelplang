@@ -1010,7 +1010,7 @@ fun is_empty(s: &str).R: bool
 fun char_count(s: &str).R: usize
 fun char_at(s: &str, i: usize).R: u32
 fun substring(s: &str, from: usize).R: &str
-fun index_of(s: &str, needle: &str).R: Match          // datac Match(val ok: bool, val at: usize)
+fun index_of(s: &str, needle: &str).R: Option<usize>   // None when absent
 fun starts_with(s: &str, prefix: &str).R: bool
 fun starts_with_at(s: &str, needle: &str, at: usize).R: bool
 fun ends_with(s: &str, suffix: &str).R: bool
@@ -1032,9 +1032,9 @@ fun concat(a: &str, b: &str).R: String
 fun from_i64(n: i64).R: String
 fun from_u64(n: u64).R: String
 fun from_f64(x: f64, decimals: i32).R: String
-fun parse_i64(s: &str).R: ParseInt              // datac ParseInt(val ok: bool, val value: i64)
-fun parse_u64(s: &str).R: ParseUint
-fun parse_f64(s: &str).R: ParseFloat
+fun parse_i64(s: &str).R: Result<i64, ParseErr>   // enum ParseErr { Empty Invalid }
+fun parse_u64(s: &str).R: Result<u64, ParseErr>
+fun parse_f64(s: &str).R: Result<f64, ParseErr>
 ```
 
 `str.len` and `str.byte` are byte-oriented; `str.char_count` and `str.char_at` are the codepoint-oriented pair. `str.substring` returns a view into the original, so it borrows its argument.
@@ -1112,13 +1112,12 @@ fun File.wait_writable(timeout_ms: u64).R: bool
 
 fun stdin().R: File      fun stdout().R: File      fun stderr().R: File
 
-datac Line(val ok: bool, val text: String)
 datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
 fun buf_reader(f: File).R: BufReader
 fun mut BufReader.read_line_into(out: mut String).R: bool
-fun mut BufReader.read_line().R: Line
+fun mut BufReader.read_line().R: Option<String>   // None at end of file
 fun mut BufReader.read_all().R: Bytes
-fun read_line().R: Line            // buffered stdin
+fun read_line().R: Option<String>   // buffered stdin
 fun read_lines().R: List<String>
 fun read_all().R: Bytes
 
@@ -1126,7 +1125,7 @@ fun print(s: &str)        fun print_bare(s: &str)
 fun eprint(s: &str)       fun eprint_bare(s: &str)
 ```
 
-A `File` is one descriptor: a file, a pipe, a socket and a terminal are the same type. `Line.ok` is `false` at end of input. Moving text out of a `Line` is not possible (no partial moves), so the owning form is `BufReader.read_line_into(out)`.
+A `File` is one descriptor: a file, a pipe, a socket and a terminal are the same type. A line reader returns `Option<String>` — `None` at end of input — since end of file carries no reason for a `Result`. `BufReader.read_line_into(out)` is the form that reuses one buffer.
 
 ### 16.7 `std/fs` (domain `fs`)
 

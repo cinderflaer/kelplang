@@ -356,7 +356,7 @@ No `Option`, no `Result`, no exceptions. Available conventions:
 1. **Panic** `fs.read` on a missing file panics with the call-site span and the granted allowlist printed. Simple, correct, unusable for expected failures.
 2. **Sentinel** `str.index_of` returns `i64` with `-1` for absent. Cheap, breaks down for non-numeric returns.
 3. **Out-param + bool** `fun path.try_join(a: &str, b: &str, out: mut Bytes).R: bool`. Composable, ugly, C-flavored.
-4. **Error `datac`** `datac Match(val ok: bool, val at: usize)` then `if m.ok { }`. No pattern matching needed, names the failure, works today.
+4. **Error `datac`** — *superseded by MK5-S6-M1*: `datac Match(val ok: bool, val at: usize)` then `if m.ok { }`. It was the failure model until `Option`/`Result` shipped; every such native now returns one of those (see the stdlib sections).
 
 Locked (decision 2): panic for programmer errors and unrecoverable IO; convention 4 for the recoverable cases people actually branch on (`str.index_of`, `str.parse_i64` on bad input). Conventions 2 and 3 are rejected: no `-1` sentinels, no out-param `try_` family. Document `Panics:` in the doc comment of every panicking function.
 
@@ -425,7 +425,7 @@ fun str.trim_end(s: &str).R: &str
 fun str.starts_with(s: &str, prefix: &str).R: bool
 fun str.ends_with(s: &str, suffix: &str).R: bool
 fun str.contains(s: &str, needle: &str).R: bool
-fun str.index_of(s: &str, needle: &str).R: Match   // datac Match(val ok: bool, val at: usize)
+fun str.index_of(s: &str, needle: &str).R: Option<usize>   // `None` when absent
 fun str.eq_ignore_case(a: &str, b: &str).R: bool
 fun str.char_at(s: &str, i: usize).R: u32    // MK5-S1 shipped `u32`, not `char` (item 53)
 fun str.byte_index(s: &str, i: usize).R: usize
@@ -509,7 +509,7 @@ fun io.eprint_bare(s: &str)
 fun io.stdin().R: File                   // one stream type over an fd; see MK5-S2-M1
 fun io.stdout().R: File
 fun io.stderr().R: File
-datac Line(val ok: bool, val text: String)   // ok = false at EOF
+fun read_line().R: Option<String>   // `None` at end of file
 fun io.read_line().R: Line                 // needs String, and a buffer: MK5-S2-M1
 fun io.read_all().R: Bytes
 fun io.read_lines().R: List<String>
@@ -725,7 +725,7 @@ Details:
 - Namespaces and functions `snake_case`. No `get_` prefix on getters (`fs.size`, not `fs.get_size`). `is_`/`has_` for predicates.
 - Verb-first for effectful functions (`fs.read`, `process.run`); noun-first reads as data access.
 - `try_` prefix is **not** used: the out-param family was rejected (decision 2). Recoverable functions return an error `datac` instead, and their doc comment names the datac.
-- **The error-`datac` convention** (MK5-S6-M1's cheap half, so the eventual `Result<T, E>` migration is mechanical): `ok: bool` is the **first** field; the success payload is named for its type (`value` for a number, `text` for a `String`, `bytes` for a `Bytes`, `at` for an index or offset); and a `message: String` is added when the failure is textual. Each error `datac` then becomes a `Result` with the same field names inside `Ok`/`Err`, and the old name stays as a wrapper. As shipped: `Line(ok, text)`, `Match(ok, at)`, `ParseInt(ok, value)`, `ParseUint(ok, value)`, `ParseFloat(ok, value)`.
+- **The error-`datac` convention — used, then retired (MK5-S6-M1).** It said: `ok: bool` **first**; the success payload named for its type (`value` for a number, `text` for a `String`, `bytes` for a `Bytes`, `at` for an index or offset); a `message: String` when the failure is textual. That convention carried the stdlib from MK3 to MK5-S5, and it is what made the migration mechanical: every native that returned one now returns `Option` or `Result`, and each call site became an `if let`/`?` instead of an `ok` flag. The rule applied in the migration is the one `std/option`/`std/result` state: **a failure that carries no reason is an `Option`, one that carries a reason is a `Result`** — so `Line(ok, text)` became `Option<String>` (end of file is not a reason), `Match(ok, at)` became `Option<usize>` (ditto), and `ParseInt`/`ParseUint`/`ParseFloat(ok, value)` became `Result<T, ParseErr>` with `enum ParseErr { Empty Invalid }`, which is a reason two variants wide. No wrapper names survive: keeping them would have kept the old call shape compiling and hidden the point of the milestone.
 - A **panic on a failed syscall** reports `errno` and `strerror` on a **second line** below the unchanged `panic: <msg>` prefix (`kelp_panic_errno`), so a golden assertion on the message still holds; a `getaddrinfo` failure reports `gai_strerror` instead, because it is a return code and not `errno`. Panics raised by argument validation, and the ambiguous short read/short write cases, carry no errno line.
 - `_all` suffix for recursive variants (`fs.mkdir_all`, later `fs.remove_all`).
 - Receiver form for the fluent cases (`s.trim()`, `p.parent()`), plain namespace call for the rest.

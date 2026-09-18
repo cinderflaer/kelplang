@@ -1,4 +1,6 @@
 impl "std/mem"
+impl "std/option"
+impl "std/result"
 
 // The three operations on a `&str` that Kelp cannot express: its byte length, a
 // byte at an index, and a borrow of the suffix starting at an index. All
@@ -45,27 +47,27 @@ fun char_count(s: &str).R: usize {
     return count
 }
 
-datac Match(val ok: bool, val at: usize)
-
-// The index of `needle` in `s`, or `ok = false`. The failure model is the
-// error-`datac` convention from the stdlib decisions — no `-1` sentinel.
-fun index_of(s: &str, needle: &str).R: Match {
+// The index of `needle` in `s`, or `None`. The old `Match(ok, at)` datac is
+// gone: a failure that carries no reason is an `Option`, which is what makes
+// `if let Some(at) = ...` and `?` usable at the call site instead of an `ok`
+// flag (MK5-S6-M1).
+fun index_of(s: &str, needle: &str).R: option.Option<usize> {
     val ls = len(s)
     val ln = len(needle)
     if ln == 0 {
-        return Match(ok = true, at = 0)
+        return option.Option.Some(value = 0)
     }
     if ln > ls {
-        return Match(ok = false, at = 0)
+        return option.Option.None
     }
     var i: usize = 0
     while i + ln <= ls {
         if starts_with_at(s, needle, i) {
-            return Match(ok = true, at = i)
+            return option.Option.Some(value = i)
         }
         i = i + 1
     }
-    return Match(ok = false, at = 0)
+    return option.Option.None
 }
 
 // Whether `needle` occurs in `s` starting exactly at byte `at`. Private to
@@ -99,8 +101,7 @@ fun ends_with(s: &str, suffix: &str).R: bool {
 }
 
 fun contains(s: &str, needle: &str).R: bool {
-    val m = index_of(s, needle)
-    return m.ok
+    return option.is_some(o = index_of(s, needle))
 }
 
 // Text equality, which `==` deliberately does not provide for `str` (it
@@ -368,35 +369,59 @@ extern fun from_f64_raw(x: f64, decimals: i32).R: String
 
 fun from_f64(x: f64, decimals: i32).R: String = from_f64_raw(x, decimals)
 
-datac ParseInt(val ok: bool, val value: i64)
-datac ParseUint(val ok: bool, val value: u64)
-datac ParseFloat(val ok: bool, val value: f64)
+// Why a parse failed (MK5-S6-M1). `Invalid` covers everything the C
+// conversion refused, including a value that does not fit the type: the
+// primitives report one bit, so a finer reason would have to come from them.
+// A payload-less variant is still a variant, which is what lets the failure
+// ride in a `Result` and be matched by name.
+enum ParseErr {
+    Empty
+    Invalid
+}
 
-// `ok` is false unless the *whole* string is one number: no trailing
-// characters, no whitespace, no empty string. The numeric conversion itself
-// is one C primitive per type.
+// `Ok(v)` only when the *whole* string is one number: no trailing characters,
+// no whitespace, no empty string, and a value that fits. The numeric
+// conversion itself is one C primitive per type.
 extern fun parse_i64_raw(s: &str, out: mut i64).R: bool
 extern fun parse_u64_raw(s: &str, out: mut u64).R: bool
 extern fun parse_f64_raw(s: &str, out: mut f64).R: bool
 
-fun parse_i64(s: &str).R: ParseInt {
+fun parse_i64(s: &str).R: result.Result<i64, ParseErr> {
     var v: i64 = 0
     val ok = parse_i64_raw(s, out = v)
-    return ParseInt(ok = ok, value = v)
+    if !ok {
+        return result.Result.Err(error = parse_err(s))
+    }
+    return result.Result.Ok(value = v)
 }
 
-fun parse_u64(s: &str).R: ParseUint {
+fun parse_u64(s: &str).R: result.Result<u64, ParseErr> {
     var v: u64 = 0
     val ok = parse_u64_raw(s, out = v)
-    return ParseUint(ok = ok, value = v)
+    if !ok {
+        return result.Result.Err(error = parse_err(s))
+    }
+    return result.Result.Ok(value = v)
 }
 
 // Accepts what `strtod` accepts, minus leading whitespace: decimal and
 // exponent forms, and `inf`/`nan`.
-fun parse_f64(s: &str).R: ParseFloat {
+fun parse_f64(s: &str).R: result.Result<f64, ParseErr> {
     var v: f64 = 0.0
     val ok = parse_f64_raw(s, out = v)
-    return ParseFloat(ok = ok, value = v)
+    if !ok {
+        return result.Result.Err(error = parse_err(s))
+    }
+    return result.Result.Ok(value = v)
+}
+
+// The one distinction the primitives leave visible: an empty string is not a
+// malformed one.
+fun parse_err(s: &str).R: ParseErr {
+    if len(s) == 0 {
+        return ParseErr.Empty
+    }
+    return ParseErr.Invalid
 }
 
 // Every non-overlapping occurrence of `from` replaced by `to`. An empty
