@@ -109,9 +109,17 @@ fun spawn(program: &str, args: List<String>).R: Child {
 // Runs `program` to completion with its stdin closed and both output streams
 // captured. There is deliberately no `chdir` in v1: a process-wide working
 // directory would make every grant pattern's meaning depend on mutable global
-// state. A `spawn_in(dir, ...)` can arrive later if a real program needs one.
+// state. A `spawn_in(dir, ...)` can arrive later if a real program needs one —
+// and one did: Coral runs `git`/`cargo` inside specific directories, which
+// `chdir` in the *child* (between `fork` and `exec`) answers without touching
+// the parent's directory or any grant pattern's meaning. That, and the
+// fallible shape for the panics below, are recorded in `backlog.md`, "What the
+// port hit".
 //
-// Panics: as `spawn`.
+// Panics: as `spawn`. A *missing* binary is not one of them — the child's
+// `execvp` fails, the child exits 127, and that is the code returned here; what
+// panics is a `program` that is not absolute or is outside the grant, and a
+// pipe or fork failure.
 fun run(program: &str, args: List<String>).R: RunResult {
     var child = spawn(program, args)
     child.stdin.close()

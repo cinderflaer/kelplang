@@ -12,6 +12,13 @@ impl "std/io"
 //
 // Paths are `/`-separated on every platform in this API (the plan's `path`
 // section): translating to `\` belongs at the syscall boundary.
+//
+// Deliberately absent: creating a symlink. Symlinks appear here only where the
+// capability check *resolves* one (`realpath`, and the rule each gated module's
+// header states), because a link is not a name the author chose — but there is
+// no `symlink`/`read_link` primitive, and a tool that has to create one (Coral's
+// toolchain link, `~/.coral/bin/coral`) has nothing to call. Recorded with the
+// rest of what a port asked for in `backlog.md`, "What the port hit".
 
 extern fun read_raw(path: &str).R: Bytes
 extern fun write_raw(path: &str, data: Bytes)
