@@ -1,0 +1,6 @@
+// The alias table is flat and global: a declaration in an imported module is
+// visible in the importing one, and `alias.kpconf` is not the only way to
+// share a substitution.
+alias %*greeting*% = "hello from an imported alias"
+
+fun double(n: i32).R: i32 = n * 2

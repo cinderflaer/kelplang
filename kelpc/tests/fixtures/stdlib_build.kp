@@ -1,0 +1,21 @@
+// S1: building text in ordinary Kelp — concatenation is a function (open item
+// 40), replacement is a loop over `starts_with_at`, and number formatting is
+// a digit loop over the growable buffer. Only the float format is C.
+impl "std/str"
+
+fun main() {
+    print(str.concat("foo", "bar"))
+    print(str.replace("a-b-c", "-", ":"))
+    print(str.replace("aaa", "", "x"))
+    print(str.from_i64(0))
+    print(str.from_i64(145))
+    print(str.from_i64(0 - 145))
+    // The two live edge cases: `u64`'s maximum (no literal can spell it) and
+    // `i64`'s minimum (negating it would overflow), both round-tripped
+    // through the parsers instead.
+    val big = str.parse_u64("18446744073709551615")
+    print(str.from_u64(big.value))
+    val min = str.parse_i64("-9223372036854775808")
+    print(str.from_i64(min.value))
+    print(str.from_u64(9))
+}

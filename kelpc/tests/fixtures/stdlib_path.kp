@@ -1,0 +1,15 @@
+// M6.2: `std/path` — built on `std/str` and `std/mem`, both of which it
+// imports; every `/` it inserts or drops is decided in Kelp.
+impl "std/path"
+
+fun main() {
+    val a = path.join(a = "/tmp", b = "x.txt")
+    print(a)
+    val b = path.join(a = "/tmp/", b = "x.txt")
+    print(b)
+    // An absolute second argument replaces the first.
+    val c = path.join(a = "/tmp", b = "/abs")
+    print(c)
+    print(path.is_absolute("/x"))
+    print(path.is_absolute("x"))
+}

@@ -1,0 +1,39 @@
+// Writes 20 GiB to a fresh file in 1 MiB chunks, syncs it to storage, verifies
+// the size, then deletes it.
+//
+// The last four lines are the machine-readable contract shared by all four
+// implementations: BYTES, WORK_NS, FLUSH_NS, DELETE_NS.
+impl "std/fs"
+impl "std/mem"
+impl "std/time"
+
+const MIB: usize = 1048576
+const TOTAL: usize = 21474836480
+
+fun main() {
+    val path = "/mnt/bigdrive/kelp_bench_write20gb_kelp.bin"
+    val chunk = mem.alloc(MIB)
+
+    val work_start = time.now_mono_ns()
+    var written: usize = 0
+    while written < TOTAL {
+        fs.append(path, chunk)
+        written = written + MIB
+    }
+    val work_ns = time.now_mono_ns() - work_start
+
+    val flush_start = time.now_mono_ns()
+    fs.sync(path)
+    val flush_ns = time.now_mono_ns() - flush_start
+
+    val size = fs.size(path)
+    print("BYTES $size")
+
+    val delete_start = time.now_mono_ns()
+    fs.remove(path)
+    val delete_ns = time.now_mono_ns() - delete_start
+
+    print("WORK_NS $work_ns")
+    print("FLUSH_NS $flush_ns")
+    print("DELETE_NS $delete_ns")
+}

@@ -1,0 +1,20 @@
+// M6.2: `std/str` — an Kelp-body stdlib module whose only non-Kelp operations are
+// the two compiler-supplied byte accesses (`str.len`, `str.byte`).
+impl "std/str"
+
+fun main() {
+    // `len` is bytes; the allocation-returning functions hand back an owned
+    // `String`, which is why the result has to be bound before it is printed.
+    val up = str.to_upper(s = "hi there")
+    print(up)
+    print(up.len())
+    print(str.len("hi there"))
+    print(str.is_empty(""))
+    print(str.is_empty("x"))
+    val lo = str.to_lower("HeLLo")
+    print(lo)
+    print(str.byte("abc", 1))
+    val rep = str.repeat(s = "ab", n = 3)
+    print(rep)
+    print(rep.len())
+}

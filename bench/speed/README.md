@@ -5,7 +5,7 @@
 ## Method
 
 Four CPU-bound workloads, the **same algorithm and the same op counts** in
-Rust, X, C++ and Python. Every program times its own workloads with a
+Rust, Kelp, C++ and Python. Every program times its own workloads with a
 monotonic clock and prints one line per workload:
 
     RESULT <workload> <ops> <work_ns> <checksum>
@@ -26,13 +26,13 @@ the timings comparable: they prove the four programs did the same work.
 
 ## Caveats worth knowing
 
-- **X compiles to C** and shells out to `clang -O2`, so X and C++ share a
-  backend and a single C++ file's `-O2` flags. X being level with C++ is the
-  expected result, not a surprise — what the numbers can show is that X's own
+- **Kelp compiles to C** and shells out to `clang -O2`, so Kelp and C++ share a
+  backend and a single C++ file's `-O2` flags. Kelp being level with C++ is the
+  expected result, not a surprise — what the numbers can show is that Kelp's own
   front end adds nothing (no bounds checks, no hidden allocation, no slow ABI)
   on these workloads.
 - **Rust is built with `rustc -O`** (no cargo, no LTO), C++ with
-  `clang++ -O2`, X with `xc build` (its whole pipeline plus the `cc` call).
+  `clang++ -O2`, Kelp with `kelpc build` (its whole pipeline plus the `cc` call).
   Python has no compile step: it parses and compiles at import, which is why
   its compile column says n/a and its startup column is ~13 ms.
 - **`collatz` is measured per start value**, not per inner step, so its

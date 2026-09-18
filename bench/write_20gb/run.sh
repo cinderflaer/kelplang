@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiles and runs four 20 GiB writers (Rust, X, C++, Python) and reports
+# Compiles and runs four 20 GiB writers (Rust, Kelp, C++, Python) and reports
 # compile time, wall clock, and the phases each program timed for itself.
 #
 # Each program writes a fresh file, syncs it to storage, verifies the size and
@@ -20,22 +20,22 @@ now() { date +%s%N; }
 
 # Rebuild the compiler outside the measured region: the language's compile time
 # should not include building its own compiler.
-echo "building xc (not counted)..." >&2
-( cd "$DIR/../../" && cargo build -q --release -p xc ) || exit 1
-XC="$DIR/../../target/release/xc"
+echo "building kelpc (not counted)..." >&2
+( cd "$DIR/../../" && cargo build -q --release -p kelpc ) || exit 1
+KELPC="$DIR/../../target/release/kelpc"
 
 printf '%-7s %12s %12s %12s %12s %12s %14s %10s\n' \
     lang compile_s wall_s work_s flush_s delete_s startup_s MiB/s | tee "$RESULTS"
 
-for lang in rust x cpp py; do
+for lang in rust kelp cpp py; do
     case "$lang" in
-        rust) src="$DIR/write20gb.rs";  out="$BUILD/write20gb_rust";  path="$TARGET_DIR/xc_bench_write20gb_rust.bin"
+        rust) src="$DIR/write20gb.rs";  out="$BUILD/write20gb_rust";  path="$TARGET_DIR/kelp_bench_write20gb_rust.bin"
               compile_cmd="rustc -O -o $out $src"; run_cmd="$out $path" ;;
-        cpp)  src="$DIR/write20gb.cpp"; out="$BUILD/write20gb_cpp";   path="$TARGET_DIR/xc_bench_write20gb_cpp.bin"
+        cpp)  src="$DIR/write20gb.cpp"; out="$BUILD/write20gb_cpp";   path="$TARGET_DIR/kelp_bench_write20gb_cpp.bin"
               compile_cmd="clang++ -O2 -o $out $src"; run_cmd="$out $path" ;;
-        x)    src="$DIR/write20gb.x";   out="$BUILD/write20gb_x";     path="$TARGET_DIR/xc_bench_write20gb_x.bin"
-              compile_cmd="$XC build $src -o $out"; run_cmd="$out" ;;
-        py)   src="$DIR/write20gb.py";  out="";                       path="$TARGET_DIR/xc_bench_write20gb_py.bin"
+        kelp) src="$DIR/write20gb.kp";   out="$BUILD/write20gb_kelp";     path="$TARGET_DIR/kelp_bench_write20gb_kelp.bin"
+              compile_cmd="$KELPC build $src -o $out"; run_cmd="$out" ;;
+        py)   src="$DIR/write20gb.py";  out="";                       path="$TARGET_DIR/kelp_bench_write20gb_py.bin"
               compile_cmd=""; run_cmd="python3 $src $path" ;;
     esac
 

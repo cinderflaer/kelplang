@@ -1,0 +1,10 @@
+[package]
+name = "kelpc"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "kelpc"
+path = "src/main.rs"
+
+[dependencies]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compares the working speed of the same three CPU-bound workloads in Rust, X,
+# Compares the working speed of the same three CPU-bound workloads in Rust, Kelp,
 # C++ and Python.
 #
 # Every language runs the *same* algorithm with the *same* op counts, so the
@@ -19,9 +19,9 @@ rm -f "$BUILD"/wall.*.tsv "$BUILD"/*.out "$BUILD"/results.tsv
 
 now() { date +%s%N; }
 
-echo "building xc (not counted)..." >&2
-( cd "$DIR/../../" && cargo build -q --release -p xc ) >/dev/null 2>&1 || exit 1
-XC="$DIR/../../target/release/xc"
+echo "building kelpc (not counted)..." >&2
+( cd "$DIR/../../" && cargo build -q --release -p kelpc ) >/dev/null 2>&1 || exit 1
+KELPC="$DIR/../../target/release/kelpc"
 
 : > "$TSV"
 : > "$REPORT"
@@ -47,18 +47,18 @@ compile_one() {
 : > "$BUILD/compile.tsv"
 compile_one rust "rustc -O -o $BUILD/speed_rust $DIR/speed.rs" || exit 1
 compile_one cpp  "clang++ -O2 -o $BUILD/speed_cpp $DIR/speed.cpp" || exit 1
-compile_one x    "$XC build $DIR/speed.x -o $BUILD/speed_x" || exit 1
+compile_one kelp    "$KELPC build $DIR/speed.kp -o $BUILD/speed_kelp" || exit 1
 compile_one py   "" || exit 1
 
 # What a bare interpreter start costs, for context on Python's startup line.
 { s=$(now); python3 -c pass; e=$(now); printf "baseline: python3 -c pass (interpreter startup only) %.1f ms\n\n" "$(( (e - s) / 1000 ))e-3"; } | tee -a "$REPORT"
 
 for trial in $(seq 1 "$TRIALS"); do
-    for lang in rust cpp x py; do
+    for lang in rust cpp kelp py; do
         case "$lang" in
             rust) exe="$BUILD/speed_rust" ;;
             cpp)  exe="$BUILD/speed_cpp" ;;
-            x)    exe="$BUILD/speed_x" ;;
+            kelp) exe="$BUILD/speed_kelp" ;;
             py)   exe="python3 $DIR/speed.py" ;;
         esac
         w0=$(now)
@@ -92,7 +92,7 @@ END {
     for (w = 1; w <= nwl; w++) {
         wl = wlnames[w]
         cpp_nsop = 0
-        split("rust x cpp py", order, " ")
+        split("rust kelp cpp py", order, " ")
         for (i = 1; i <= 4; i++) {
             k = order[i] " " wl
             if (k in best) { cpp_nsop = best["cpp " wl] / ops["cpp " wl]; break }
@@ -111,7 +111,7 @@ END {
     for (w = 1; w <= nwl; w++) {
         wl = wlnames[w]
         printf "checksum %-8s ", wl
-        split("rust x cpp py", order, " ")
+        split("rust kelp cpp py", order, " ")
         for (i = 1; i <= 4; i++) {
             k = order[i] " " wl
             printf "%s=%s ", order[i], (k in cks) ? cks[k] : "?"
