@@ -58,34 +58,73 @@ myproject/
     coral.toml
     src/main.kp              # entry module, the only one with unprefixed names
     src/shapes/circle.kp     # impl "shapes/circle"
-    alias.kpconf             # optional, see 15.3
+    alias.kpconf             # optional, see 13.3
 ```
 
 ```sh
 kelpc build myproject/
 ```
 
-A loose `.kp` file that is not inside a project still compiles, and is then its own module root.
+A loose `.kp` file that is not inside a project still compiles, and is then its own module root. A file *inside* a project's `src/` finds the manifest by walking up, and is compiled as a module of that project (so `impl "shapes/circle"` still means `src/shapes/circle.kp`, whatever directory you are standing in).
+
+```sh
+kelpc build src/main.kp -o myproject/main    # from the project root: same module graph
+```
+
+With no `-o`, the binary is written into the **current working directory**, named after the last path segment you passed: `kelpc build myproject/` writes `./myproject` and `kelpc build src/main.kp` writes `./main`, wherever you are standing. The emitted C lands beside it as `<name>.c`. Pass `-o` when that is not where you want the output — the fixtures and `bench/` always do.
+
+What a project buys you, concretely:
+
+- **`impl` paths and module ids are relative to `src/`**, not to the working directory or to the importing file. `impl "shapes/circle"` is always `<root>/src/shapes/circle.kp`, however deep the importer sits (§13.3).
+- **The entry module can be somewhere other than `src/main.kp`**, and it is the only module whose top-level names are unprefixed — everything else is reached as `alias.Item` (§13.3).
+- **A `alias.kpconf` at the project root** (beside `coral.toml`, not in `src/`).
+- **The program-level settings** in the manifest — today `http_pool`.
 
 ### 1.4 `coral.toml`
 
-The manifest is flat: one `key = value` per line, `#` starts a comment, sections are refused, and an unknown key is an error rather than an ignored line.
+The manifest is flat: one `key = value` per line, `#` starts a comment, and an unknown key is an error rather than an ignored line. Every value is a double-quoted string except `http_pool`, which is a number.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | quoted string | none | project name |
 | `version` | quoted string | none | project version, unvalidated free text |
-| `entry` | quoted string | `"src/main.kp"` | path of the entry file, relative to the project root |
+| `entry` | quoted string | `"src/main.kp"` | path of the entry file, **relative to the project root** |
 | `http_pool` | number | `4` | kept-alive connections per `host:port` in `std/http`; `0` disables pooling |
 
 ```toml
-name = "myproject"
-version = "0.1.0"
-entry = "src/main.kp"
-http_pool = 4
+# myproject/coral.toml
+name = "myproject"          # recorded; not used by the compiler yet
+version = "0.1.0"           # free text, unvalidated
+entry = "src/main.kp"       # relative to this file's directory
+http_pool = 4               # the one numeric key
+
+# Anything from the first [section] on belongs to Coral (the project-layer
+# build tool), not to kelpc, so the compiler reads no further. Today that means
+# kelpc ignores it; it does not reject it.
+[package]
 ```
 
-`http_pool` is the one numeric key. It is spliced into the shipped `std/http` source before it is compiled, so changing it changes the connection ceiling for the whole program.
+How it is used, end to end:
+
+1. `kelpc build myproject/` reads `myproject/coral.toml`, resolves `entry` against that directory, and requires the file to exist.
+2. Everything reachable from the entry file's `impl` lines is loaded from `<root>/src/`. A path that leaves `src/`, names a missing file, or forms a cycle is a diagnostic (§13.1).
+3. `http_pool` is **spliced into the shipped `std/http` source** before it is compiled, so it changes the connection ceiling for the whole program rather than for one call site. Nothing else in the manifest reaches the compiler.
+4. `name` and `version` are parsed and recorded; no pass reads them today. Coral owns what they mean.
+
+Rules and errors:
+
+| What you wrote | What happens |
+| --- | --- |
+| a bare `key value` with no `=` | `expected 'key = "value"' in coral.toml, found '<line>'` |
+| `entry = src/main.kp` (no quotes) | `coral.toml value for 'entry' must be a double-quoted string` |
+| an unknown key | `unknown key 'wat' in <path to coral.toml>` — a typo is an error, not a silent default |
+| `http_pool = "4"` or `http_pool = -1` | `coral.toml value for 'http_pool' must be a non-negative whole number, found '"4"'` |
+| `entry = "src/nope.kp"` | `cannot read the manifest's entry point 'src/nope.kp': <os error>` |
+| `kelpc build <dir>` where the directory has no manifest | `'<dir>' is a directory but has no coral.toml (pass a .kp file, or add a manifest)` |
+| a `.kp` file under a project but outside `src/` | `entry file '<path>' is not inside '<root>/src'` — the layout is not advisory |
+| `[tasks]` and anything after it | ignored by `kelpc` (Coral's surface); the four keys above must come **before** the first `[` |
+
+Blank lines and `#` comments are free, keys may appear in any order, and a manifest with only `entry` is a complete manifest. `kelpc build` and `kelpc run` both take a project directory or a `.kp` file; `kelpc run <dir>` compiles and runs it in one step.
 
 ## 2. Lexical structure
 
@@ -1743,7 +1782,10 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'View' is a borrowed view` | same: a `View` points at text somebody else owns, so it cannot be stored or be an element (11.5) |
 | `cannot find module 'x': expected '<path>'` | the `impl` path is wrong, or the file is missing |
 | `import cycle: a -> b -> a` | remove the cycle |
-| `coral.toml sections are not supported` / `unknown key 'x' in coral.toml` | the manifest is flat: `name`, `version`, `entry`, `http_pool` |
+| `unknown key 'x' in <path>` | the manifest is flat and its keys are `name`, `version`, `entry`, `http_pool` (1.4); a typo is an error rather than a default |
+| `coral.toml value for 'entry' must be a double-quoted string` | every value is quoted except `http_pool`, which is a number (1.4) |
+| `'<dir>' is a directory but has no coral.toml` | `kelpc build <dir>` needs a manifest in that directory; pass a `.kp` file instead, or add one (1.4) |
+| `entry file '<path>' is not inside '<root>/src'` | a project's modules live under `src/`; the manifest's `entry` is resolved against the project root, not against `src/` (1.3) |
 | `no 'main' function found` | the entry module needs `fun main()` |
 | `'fs.read' needs the 'fs' capability, which module 'm' was not granted` | grant it at the `impl` line: `impl "m" with caps(fs = ["/path/**"])` |
 | `datac 'Bad' cannot hold itself by value` | a recursive field needs indirection: `Box<Bad>` or `List<Bad>` |
