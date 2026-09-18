@@ -1,3 +1,3 @@
-fn main() {
-    let x: i32 = "not a number";
+fun main() {
+    val x: i32 = "not a number"
 }

@@ -23,16 +23,18 @@ pub enum TokenKind {
     Ident(String),
 
     // keywords
-    Fn,
-    Let,
+    Fun,
+    Val,
+    Var,
     Mut,
     If,
     Else,
     While,
+    When,
     Return,
     True,
     False,
-    Struct,
+    Datac,
 
     // punctuation
     LParen,
@@ -41,8 +43,11 @@ pub enum TokenKind {
     RBrace,
     Comma,
     Colon,
-    Semi,
-    Arrow, // ->
+    Dot,
+    Arrow, // -> (reserved for `when` arms)
+    Newline,
+
+    // operators
     Eq,
     EqEq,
     NotEq,
@@ -55,11 +60,15 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
     AndAnd,
     OrOr,
     Bang,
     Amp,
-    Dot,
 
     Eof,
 }
@@ -74,6 +83,10 @@ pub struct Lexer<'a> {
     src: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    /// Depth of unclosed `(`. Newlines are insignificant (not tokenized)
+    /// while this is > 0 — this is what lets a `datac`'s field-list parens,
+    /// or any parenthesized sub-expression, span multiple lines.
+    paren_depth: usize,
 }
 
 #[derive(Debug)]
@@ -88,6 +101,7 @@ impl<'a> Lexer<'a> {
             src,
             bytes: src.as_bytes(),
             pos: 0,
+            paren_depth: 0,
         }
     }
 
@@ -105,10 +119,13 @@ impl<'a> Lexer<'a> {
         Some(b)
     }
 
+    /// Skips spaces/tabs/comments (never newlines — those are handled by
+    /// the caller, since whether they're significant depends on
+    /// `paren_depth`).
     fn skip_trivia(&mut self) {
         loop {
             match self.peek() {
-                Some(b' ') | Some(b'\t') | Some(b'\r') | Some(b'\n') => {
+                Some(b' ') | Some(b'\t') | Some(b'\r') => {
                     self.pos += 1;
                 }
                 Some(b'/') if self.peek_at(1) == Some(b'/') => {
@@ -129,6 +146,22 @@ impl<'a> Lexer<'a> {
         loop {
             self.skip_trivia();
             let start = self.pos;
+
+            if self.peek() == Some(b'\n') {
+                let nl_start = self.pos;
+                while self.peek() == Some(b'\n') {
+                    self.pos += 1;
+                    self.skip_trivia();
+                }
+                if self.paren_depth == 0 {
+                    tokens.push(Token {
+                        kind: TokenKind::Newline,
+                        span: Span::new(nl_start, self.pos),
+                    });
+                }
+                continue;
+            }
+
             let Some(b) = self.peek() else {
                 tokens.push(Token {
                     kind: TokenKind::Eof,
@@ -140,10 +173,12 @@ impl<'a> Lexer<'a> {
             let kind = match b {
                 b'(' => {
                     self.advance();
+                    self.paren_depth += 1;
                     TokenKind::LParen
                 }
                 b')' => {
                     self.advance();
+                    self.paren_depth = self.paren_depth.saturating_sub(1);
                     TokenKind::RParen
                 }
                 b'{' => {
@@ -162,35 +197,54 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     TokenKind::Colon
                 }
-                b';' => {
-                    self.advance();
-                    TokenKind::Semi
-                }
                 b'.' => {
                     self.advance();
                     TokenKind::Dot
                 }
                 b'+' => {
                     self.advance();
-                    TokenKind::Plus
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        TokenKind::PlusEq
+                    } else {
+                        TokenKind::Plus
+                    }
                 }
                 b'*' => {
                     self.advance();
-                    TokenKind::Star
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        TokenKind::StarEq
+                    } else {
+                        TokenKind::Star
+                    }
                 }
                 b'/' => {
                     self.advance();
-                    TokenKind::Slash
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        TokenKind::SlashEq
+                    } else {
+                        TokenKind::Slash
+                    }
                 }
                 b'%' => {
                     self.advance();
-                    TokenKind::Percent
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        TokenKind::PercentEq
+                    } else {
+                        TokenKind::Percent
+                    }
                 }
                 b'-' => {
                     self.advance();
                     if self.peek() == Some(b'>') {
                         self.advance();
                         TokenKind::Arrow
+                    } else if self.peek() == Some(b'=') {
+                        self.advance();
+                        TokenKind::MinusEq
                     } else {
                         TokenKind::Minus
                     }
@@ -312,18 +366,28 @@ impl<'a> Lexer<'a> {
                     {
                         self.pos += 1;
                     }
+                    // Fold the specific adjacent shape `ident!(` into one
+                    // identifier token (covers `print!`), rather than
+                    // merging `!` into identifiers generally — that would
+                    // wrongly swallow `!=` when written without a space
+                    // (`x!=y`).
+                    if self.peek() == Some(b'!') && self.peek_at(1) == Some(b'(') {
+                        self.pos += 1;
+                    }
                     let text = &self.src[start..self.pos];
                     match text {
-                        "fn" => TokenKind::Fn,
-                        "let" => TokenKind::Let,
+                        "fun" => TokenKind::Fun,
+                        "val" => TokenKind::Val,
+                        "var" => TokenKind::Var,
                         "mut" => TokenKind::Mut,
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
                         "while" => TokenKind::While,
+                        "when" => TokenKind::When,
                         "return" => TokenKind::Return,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
-                        "struct" => TokenKind::Struct,
+                        "datac" => TokenKind::Datac,
                         _ => TokenKind::Ident(text.to_string()),
                     }
                 }
@@ -360,18 +424,20 @@ mod tests {
     #[test]
     fn lexes_keywords_and_idents() {
         assert_eq!(
-            kinds("fn let mut if else while return true false struct foo"),
+            kinds("fun val var mut if else while when return true false datac foo"),
             vec![
-                TokenKind::Fn,
-                TokenKind::Let,
+                TokenKind::Fun,
+                TokenKind::Val,
+                TokenKind::Var,
                 TokenKind::Mut,
                 TokenKind::If,
                 TokenKind::Else,
                 TokenKind::While,
+                TokenKind::When,
                 TokenKind::Return,
                 TokenKind::True,
                 TokenKind::False,
-                TokenKind::Struct,
+                TokenKind::Datac,
                 TokenKind::Ident("foo".to_string()),
                 TokenKind::Eof,
             ]
@@ -379,9 +445,9 @@ mod tests {
     }
 
     #[test]
-    fn lexes_operators() {
+    fn lexes_operators_including_compound_assign() {
         assert_eq!(
-            kinds("-> == != <= >= && || + - * / % < > = ! &"),
+            kinds("-> == != <= >= && || + - * / % < > = ! & += -= *= /= %="),
             vec![
                 TokenKind::Arrow,
                 TokenKind::EqEq,
@@ -400,6 +466,11 @@ mod tests {
                 TokenKind::Eq,
                 TokenKind::Bang,
                 TokenKind::Amp,
+                TokenKind::PlusEq,
+                TokenKind::MinusEq,
+                TokenKind::StarEq,
+                TokenKind::SlashEq,
+                TokenKind::PercentEq,
                 TokenKind::Eof,
             ]
         );
@@ -422,7 +493,81 @@ mod tests {
     fn skips_line_comments() {
         assert_eq!(
             kinds("1 // this is a comment\n2"),
-            vec![TokenKind::IntLit(1), TokenKind::IntLit(2), TokenKind::Eof]
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Newline,
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_is_significant_at_top_level() {
+        assert_eq!(
+            kinds("1\n2"),
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Newline,
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn consecutive_newlines_collapse_to_one_token() {
+        assert_eq!(
+            kinds("1\n\n\n2"),
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Newline,
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_is_insignificant_inside_parens() {
+        assert_eq!(
+            kinds("f(1,\n2)"),
+            vec![
+                TokenKind::Ident("f".to_string()),
+                TokenKind::LParen,
+                TokenKind::IntLit(1),
+                TokenKind::Comma,
+                TokenKind::IntLit(2),
+                TokenKind::RParen,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn folds_bang_paren_into_macro_like_ident() {
+        assert_eq!(
+            kinds("print!(1)"),
+            vec![
+                TokenKind::Ident("print!".to_string()),
+                TokenKind::LParen,
+                TokenKind::IntLit(1),
+                TokenKind::RParen,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn does_not_fold_not_equal_without_spaces() {
+        assert_eq!(
+            kinds("x!=y"),
+            vec![
+                TokenKind::Ident("x".to_string()),
+                TokenKind::NotEq,
+                TokenKind::Ident("y".to_string()),
+                TokenKind::Eof,
+            ]
         );
     }
 

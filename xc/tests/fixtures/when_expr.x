@@ -1,0 +1,11 @@
+fun classify(n: i32).R: &str = when {
+    n > 0 -> "pos"
+    n < 0 -> "neg"
+    else -> "zero"
+}
+
+fun main() {
+    print(classify(5))
+    print(classify(-5))
+    print(classify(0))
+}

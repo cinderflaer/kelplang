@@ -2,12 +2,12 @@ use crate::lexer::Span;
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub structs: Vec<StructDecl>,
+    pub datacs: Vec<DatacDecl>,
     pub functions: Vec<FunctionDecl>,
 }
 
 #[derive(Debug, Clone)]
-pub struct StructDecl {
+pub struct DatacDecl {
     pub name: String,
     pub fields: Vec<FieldDecl>,
     pub span: Span,
@@ -16,6 +16,9 @@ pub struct StructDecl {
 #[derive(Debug, Clone)]
 pub struct FieldDecl {
     pub name: String,
+    /// `var` field: reassignable through a `var`-bound value. `val` field:
+    /// never reassignable, regardless of the binding's own mutability.
+    pub mutable: bool,
     pub ty: TypeExpr,
     pub span: Span,
 }
@@ -24,9 +27,18 @@ pub struct FieldDecl {
 pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
+    /// The `.R: T` clause. `None` means `Unit`.
     pub return_type: Option<TypeExpr>,
-    pub body: Block,
+    pub body: FunctionBody,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum FunctionBody {
+    Block(Block),
+    /// `fun f(...).R: T = expr` — sugar checked/lowered as if it were
+    /// `fun f(...).R: T { return expr }`.
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +64,7 @@ pub struct Block {
 pub enum Stmt {
     Let {
         name: String,
+        /// `true` for `var`, `false` for `val`.
         mutable: bool,
         ty: Option<TypeExpr>,
         init: Expr,
@@ -66,11 +79,13 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
+    /// An expression used as a full statement. Whether it's the block's
+    /// *tail* (value-producing) or purely a side-effecting statement is
+    /// decided positionally — textually the block's last statement is the
+    /// tail — there's no `;` to mark it either way now that statements are
+    /// newline-terminated.
     Expr {
         expr: Expr,
-        /// false only for a tail expression: the last statement in a block,
-        /// written without a trailing semicolon, whose value is the block's value.
-        has_semi: bool,
         span: Span,
     },
 }
@@ -98,6 +113,14 @@ pub enum UnOp {
     Not,
 }
 
+/// One argument at a call site: `f(1, 2)` (positional) or `f(x = 1)`
+/// (named) or a mix of both.
+#[derive(Debug, Clone)]
+pub struct CallArg {
+    pub name: Option<String>,
+    pub value: Expr,
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     IntLit(i64, Span),
@@ -116,19 +139,17 @@ pub enum Expr {
         rhs: Box<Expr>,
         span: Span,
     },
+    /// Also covers `datac` construction (`Circle(r = 2.0)`) — at parse
+    /// time a call and a construction look identical; `infer.rs`
+    /// disambiguates by whether `callee` names a function or a `datac`.
     Call {
         callee: String,
-        args: Vec<Expr>,
+        args: Vec<CallArg>,
         span: Span,
     },
     FieldAccess {
         base: Box<Expr>,
         field: String,
-        span: Span,
-    },
-    StructLit {
-        name: String,
-        fields: Vec<(String, Expr)>,
         span: Span,
     },
     Assign {
@@ -163,7 +184,6 @@ impl Expr {
             | Expr::Binary { span: s, .. }
             | Expr::Call { span: s, .. }
             | Expr::FieldAccess { span: s, .. }
-            | Expr::StructLit { span: s, .. }
             | Expr::Assign { span: s, .. }
             | Expr::If { span: s, .. } => *s,
             Expr::Block(b) => b.span,

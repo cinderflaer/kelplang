@@ -1,0 +1,16 @@
+datac Point(var x: i32, var y: i32)
+
+fun dist_sq(p: Point).R: i32 {
+    return p.x * p.x + p.y * p.y
+}
+
+fun main() {
+    val p = Point(x = 3, y = 4)
+    print(p.x)
+    print(p.y)
+    print(dist_sq(p))
+
+    var q = Point(x = 1, y = 1)
+    q.x = 10
+    print(q.x + q.y)
+}

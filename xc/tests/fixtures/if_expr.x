@@ -1,16 +1,16 @@
-fn classify(n: i32) -> i32 {
-    let result = if n < 0 {
+fun classify(n: i32).R: i32 {
+    val result = if n < 0 {
         -1
     } else if n == 0 {
         0
     } else {
         1
-    };
-    return result;
+    }
+    return result
 }
 
-fn main() {
-    println(classify(-5));
-    println(classify(0));
-    println(classify(42));
+fun main() {
+    print(classify(-5))
+    print(classify(0))
+    print(classify(42))
 }

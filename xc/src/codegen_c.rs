@@ -44,8 +44,8 @@ pub fn generate(program: &Program) -> String {
 
 fn write_struct(out: &mut String, s: &StructDef) {
     write!(out, "typedef struct {{\n").unwrap();
-    for (name, ty) in &s.fields {
-        write!(out, "    {} {};\n", ty.c_type(), field_name(name)).unwrap();
+    for f in &s.fields {
+        write!(out, "    {} {};\n", f.ty.c_type(), field_name(&f.name)).unwrap();
     }
     write!(out, "}} {};\n", Ty::Struct(s.name.clone()).c_type()).unwrap();
 }
@@ -76,20 +76,43 @@ fn write_function(out: &mut String, f: &Function) {
         // every statement-writing function below.
         out.push_str("int main(void) {\n");
         let mut body = String::new();
-        write_block_body(&mut body, &f.body, 1);
+        write_function_body(&mut body, &f.body, 1, &f.ret);
         out.push_str(&body.replace("return;\n", "return 0;\n"));
         out.push_str("}\n");
         return;
     }
     write_signature(out, f);
     out.push_str(" {\n");
-    write_block_body(out, &f.body, 1);
+    write_function_body(out, &f.body, 1, &f.ret);
     out.push_str("}\n");
+}
+
+/// Writes a function body's statements. Unlike a nested block used as a
+/// mere statement (`write_block_body`), a present tail expression here
+/// becomes the function's `return` — not a discarded expression statement —
+/// whenever the function actually returns a value; `infer.rs` treats a
+/// tail-expression body exactly like `return <tail>;` (see
+/// `check_function`), so codegen has to honor that too. For a `Unit`-
+/// returning function (including `main`), the tail is still discarded, same
+/// as any other statement-position block.
+fn write_function_body(out: &mut String, block: &Block, depth: usize, ret_ty: &Ty) {
+    for stmt in &block.stmts {
+        write_stmt(out, stmt, depth);
+    }
+    if let Some(tail) = &block.tail {
+        if *ret_ty == Ty::Unit {
+            write_stmt_like_expr(out, tail, depth);
+        } else {
+            indent(out, depth);
+            writeln!(out, "return {};", expr_value(tail)).unwrap();
+        }
+    }
 }
 
 /// Writes a block's statements (and its discarded tail, if any) as plain C
 /// statements, indented by `depth` levels. Used for a block appearing in
-/// statement position (function bodies, `if`/`while` bodies).
+/// statement position (`if`/`while` bodies, nested `{ }` blocks) — as
+/// opposed to a function's own top-level body (see `write_function_body`).
 fn write_block_body(out: &mut String, block: &Block, depth: usize) {
     for stmt in &block.stmts {
         write_stmt(out, stmt, depth);
@@ -348,9 +371,11 @@ fn write_block_value(out: &mut String, block: &Block, depth: usize) {
 }
 
 fn call_value(callee: &str, args: &[Expr]) -> String {
-    if callee == "println" || callee == "print" {
+    if callee == "print" || callee == "print!" {
         let arg = &args[0];
-        let newline = if callee == "println" { "\\n" } else { "" };
+        // `print` appends a newline, `print!` doesn't — opposite of the old
+        // `println`/`print` naming.
+        let newline = if callee == "print" { "\\n" } else { "" };
         let (fmt, value) = printf_piece(arg);
         return format!("printf(\"{fmt}{newline}\", {value})");
     }

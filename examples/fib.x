@@ -1,10 +1,10 @@
-fn fib(n: i32) -> i32 {
+fun fib(n: i32).R: i32 {
     if n < 2 {
-        return n;
+        return n
     }
-    return fib(n - 1) + fib(n - 2);
+    return fib(n - 1) + fib(n - 2)
 }
 
-fn main() {
-    println(fib(10));
+fun main() {
+    print(fib(10))
 }

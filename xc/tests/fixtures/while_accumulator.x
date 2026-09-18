@@ -1,13 +1,13 @@
-fn sum_to(n: i32) -> i32 {
-    let mut total = 0;
-    let mut i = 1;
+fun sum_to(n: i32).R: i32 {
+    var total = 0
+    var i = 1
     while i <= n {
-        total = total + i;
-        i = i + 1;
+        total += i
+        i += 1
     }
-    return total;
+    return total
 }
 
-fn main() {
-    println(sum_to(10));
+fun main() {
+    print(sum_to(10))
 }

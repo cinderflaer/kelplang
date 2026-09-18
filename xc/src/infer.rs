@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{self, BinOp, UnOp};
 use crate::lexer::Span;
 use crate::tir;
-use crate::types::{FnSig, StructDef, Ty};
+use crate::types::{FieldDef, FnSig, StructDef, Ty};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -52,31 +52,35 @@ impl Ctx {
     }
 }
 
-const PRINTABLE_BUILTINS: &[&str] = &["println", "print"];
+const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 
 pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
     let mut structs = HashMap::new();
-    for s in &program.structs {
-        if structs.contains_key(&s.name) {
+    for d in &program.datacs {
+        if structs.contains_key(&d.name) {
             return Err(TypeError {
-                message: format!("struct '{}' is defined more than once", s.name),
-                span: s.span,
+                message: format!("datac '{}' is defined more than once", d.name),
+                span: d.span,
             });
         }
         let mut fields = Vec::new();
-        for f in &s.fields {
-            if fields.iter().any(|(n, _): &(String, Ty)| n == &f.name) {
+        for f in &d.fields {
+            if fields.iter().any(|fd: &FieldDef| fd.name == f.name) {
                 return Err(TypeError {
-                    message: format!("field '{}' is defined more than once in struct '{}'", f.name, s.name),
+                    message: format!("field '{}' is defined more than once in datac '{}'", f.name, d.name),
                     span: f.span,
                 });
             }
-            fields.push((f.name.clone(), resolve_type(&f.ty, &structs)?));
+            fields.push(FieldDef {
+                name: f.name.clone(),
+                ty: resolve_type(&f.ty, &structs)?,
+                mutable: f.mutable,
+            });
         }
         structs.insert(
-            s.name.clone(),
+            d.name.clone(),
             StructDef {
-                name: s.name.clone(),
+                name: d.name.clone(),
                 fields,
             },
         );
@@ -90,9 +94,15 @@ pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
                 span: f.span,
             });
         }
+        if structs.contains_key(&f.name) {
+            return Err(TypeError {
+                message: format!("'{}' is used for both a function and a datac", f.name),
+                span: f.span,
+            });
+        }
         let mut params = Vec::new();
         for p in &f.params {
-            params.push(resolve_type(&p.ty, &structs)?);
+            params.push((p.name.clone(), resolve_type(&p.ty, &structs)?));
         }
         let ret = match &f.return_type {
             Some(t) => resolve_type(t, &structs)?,
@@ -144,14 +154,24 @@ fn check_function(
         scopes: vec![HashMap::new()],
     };
     let mut params = Vec::new();
-    for (p, ty) in f.params.iter().zip(sig.params.iter()) {
-        // Parameters are immutable bindings, like `let` without `mut`; v1 has
-        // no syntax to declare a mutable parameter.
+    for (p, (_, ty)) in f.params.iter().zip(sig.params.iter()) {
+        // Parameters are immutable bindings, like `val`; v1 has no syntax
+        // to declare a mutable parameter (that's receiver/borrow-checker
+        // territory, deferred along with receiver-form methods).
         ctx.define(&p.name, ty.clone(), false);
         params.push((p.name.clone(), ty.clone()));
     }
 
-    let body = check_block(&f.body, &mut ctx, Some(&sig.ret))?;
+    let body = match &f.body {
+        ast::FunctionBody::Block(b) => check_block(b, &mut ctx, Some(&sig.ret))?,
+        ast::FunctionBody::Expr(e) => {
+            let checked = check_expr(e, &mut ctx, Some(&sig.ret))?;
+            tir::Block {
+                stmts: vec![],
+                tail: Some(Box::new(checked)),
+            }
+        }
+    };
 
     // A function can satisfy its return type either via a tail expression or
     // via explicit `return` statements on every path; the latter isn't
@@ -167,7 +187,7 @@ fn check_function(
                 sig.ret.display(),
                 body.ty().display()
             ),
-            span: f.body.span,
+            span: f.span,
         });
     }
 
@@ -186,8 +206,9 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
 
     for (i, stmt) in block.stmts.iter().enumerate() {
         let is_last = i + 1 == block.stmts.len();
-        let is_tail = is_last
-            && matches!(stmt, ast::Stmt::Expr { has_semi: false, .. });
+        // Statements are newline-terminated now (no `;`), so "textually
+        // last in the block" is the only signal for tail-expression status.
+        let is_tail = is_last && matches!(stmt, ast::Stmt::Expr { .. });
 
         if is_tail {
             if let ast::Stmt::Expr { expr, .. } = stmt {
@@ -364,8 +385,8 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 });
             };
             let sdef = ctx.structs.get(sname).expect("struct types are only produced for known structs");
-            let field_ty = sdef.field_ty(field).cloned().ok_or_else(|| TypeError {
-                message: format!("struct '{sname}' has no field '{field}'"),
+            let field_ty = sdef.field(field).map(|f| f.ty.clone()).ok_or_else(|| TypeError {
+                message: format!("datac '{sname}' has no field '{field}'"),
                 span: *span,
             })?;
             Ok(tir::Expr {
@@ -374,57 +395,6 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     field: field.clone(),
                 },
                 ty: field_ty,
-                span: *span,
-            })
-        }
-        ast::Expr::StructLit { name, fields, span } => {
-            let sdef = ctx.structs.get(name).cloned().ok_or_else(|| TypeError {
-                message: format!("unknown struct '{name}'"),
-                span: *span,
-            })?;
-            if fields.len() != sdef.fields.len() {
-                return Err(TypeError {
-                    message: format!(
-                        "struct '{name}' has {} field(s), but {} were provided",
-                        sdef.fields.len(),
-                        fields.len()
-                    ),
-                    span: *span,
-                });
-            }
-            let mut seen: Vec<&str> = Vec::new();
-            let mut checked_fields = Vec::new();
-            for (fname, fval) in fields {
-                if seen.contains(&fname.as_str()) {
-                    return Err(TypeError {
-                        message: format!("field '{fname}' specified more than once"),
-                        span: *span,
-                    });
-                }
-                seen.push(fname.as_str());
-                let field_ty = sdef.field_ty(fname).cloned().ok_or_else(|| TypeError {
-                    message: format!("struct '{name}' has no field '{fname}'"),
-                    span: *span,
-                })?;
-                let checked = check_expr(fval, ctx, Some(&field_ty))?;
-                if checked.ty != field_ty {
-                    return Err(TypeError {
-                        message: format!(
-                            "field '{fname}' has type '{}', expected '{}'",
-                            checked.ty.display(),
-                            field_ty.display()
-                        ),
-                        span: fval.span(),
-                    });
-                }
-                checked_fields.push((fname.clone(), checked));
-            }
-            Ok(tir::Expr {
-                kind: tir::ExprKind::StructLit {
-                    name: name.clone(),
-                    fields: checked_fields,
-                },
-                ty: Ty::Struct(name.clone()),
                 span: *span,
             })
         }
@@ -448,10 +418,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
 }
 
 /// Walks a `place` expression (an `Ident`, or a chain of `.field` accesses
-/// rooted in one) down to its root identifier. Mutability in v1 is a
-/// property of the root binding only — there's no separate per-field
-/// mutability, so `p.x = 1` is allowed exactly when `p` itself was bound
-/// `mut`.
+/// rooted in one) down to its root identifier.
 fn root_ident(expr: &ast::Expr) -> Option<&str> {
     match expr {
         ast::Expr::Ident(name, _) => Some(name),
@@ -479,9 +446,37 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
     })?;
     if !info.mutable {
         return Err(TypeError {
-            message: format!("cannot assign to '{root}': not declared 'mut'"),
+            message: format!("cannot assign to '{root}': not declared 'var'"),
             span,
         });
+    }
+
+    // For a field target, mutating it also requires the field itself be
+    // declared `var` — a `val` field is never reassignable, regardless of
+    // the root binding's own mutability (a `var` binding of a datac with a
+    // `val` field can't reassign that field; there's no per-object
+    // mutability distinct from the binding in v1's value-type model, only
+    // per-field). Note only the *immediate* field being assigned needs to
+    // be `var`; fields merely read-through on the way there do not.
+    if let ast::Expr::FieldAccess { base, field, span: fspan } = target {
+        let base_t = check_expr(base, ctx, None)?;
+        let Ty::Struct(sname) = &base_t.ty else {
+            return Err(TypeError {
+                message: format!("cannot access field '{field}' on non-struct type '{}'", base_t.ty.display()),
+                span: *fspan,
+            });
+        };
+        let sdef = ctx.structs.get(sname).expect("struct types are only produced for known structs");
+        let fdef = sdef.field(field).ok_or_else(|| TypeError {
+            message: format!("datac '{sname}' has no field '{field}'"),
+            span: *fspan,
+        })?;
+        if !fdef.mutable {
+            return Err(TypeError {
+                message: format!("cannot assign to '{field}': declared 'val'"),
+                span: *fspan,
+            });
+        }
     }
 
     let target_t = check_expr(target, ctx, None)?;
@@ -587,7 +582,71 @@ fn check_binary(
     }
 }
 
-fn check_call(callee: &str, args: &[ast::Expr], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
+/// Matches call-site arguments (each optionally named, `f(x = 1)`) against
+/// a callee's declared parameter list, by name first and positionally for
+/// the rest — shared between plain function calls and `datac` construction,
+/// since both look identical at a call site.
+fn match_args(
+    what: &str,
+    params: &[(String, Ty)],
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<Vec<tir::Expr>> {
+    if args.len() != params.len() {
+        return Err(TypeError {
+            message: format!("{what} expects {} argument(s), found {}", params.len(), args.len()),
+            span,
+        });
+    }
+
+    let mut named: HashMap<&str, &ast::CallArg> = HashMap::new();
+    for a in args {
+        if let Some(n) = &a.name {
+            if named.insert(n.as_str(), a).is_some() {
+                return Err(TypeError {
+                    message: format!("argument '{n}' specified more than once"),
+                    span,
+                });
+            }
+        }
+    }
+
+    let mut positional = args.iter().filter(|a| a.name.is_none());
+    let mut result = Vec::with_capacity(params.len());
+    for (pname, pty) in params {
+        let arg = match named.remove(pname.as_str()) {
+            Some(a) => a,
+            None => positional.next().ok_or_else(|| TypeError {
+                message: format!("{what} is missing argument '{pname}'"),
+                span,
+            })?,
+        };
+        let checked = check_expr(&arg.value, ctx, Some(pty))?;
+        if checked.ty != *pty {
+            return Err(TypeError {
+                message: format!(
+                    "argument '{pname}' has type '{}', expected '{}'",
+                    checked.ty.display(),
+                    pty.display()
+                ),
+                span: arg.value.span(),
+            });
+        }
+        result.push(checked);
+    }
+
+    if let Some((&leftover, _)) = named.iter().next() {
+        return Err(TypeError {
+            message: format!("{what} has no parameter named '{leftover}'"),
+            span,
+        });
+    }
+
+    Ok(result)
+}
+
+fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     if PRINTABLE_BUILTINS.contains(&callee) {
         if args.len() != 1 {
             return Err(TypeError {
@@ -595,9 +654,14 @@ fn check_call(callee: &str, args: &[ast::Expr], span: Span, ctx: &mut Ctx) -> Re
                 span,
             });
         }
-        let arg = check_expr(&args[0], ctx, None)?;
-        let printable = arg.ty.is_numeric()
-            || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str);
+        if args[0].name.is_some() {
+            return Err(TypeError {
+                message: format!("'{callee}' does not take named arguments"),
+                span,
+            });
+        }
+        let arg = check_expr(&args[0].value, ctx, None)?;
+        let printable = arg.ty.is_numeric() || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str);
         if !printable {
             return Err(TypeError {
                 message: format!("cannot pass a value of type '{}' to '{callee}'", arg.ty.display()),
@@ -614,42 +678,35 @@ fn check_call(callee: &str, args: &[ast::Expr], span: Span, ctx: &mut Ctx) -> Re
         });
     }
 
-    let sig = ctx.sigs.get(callee).cloned().ok_or_else(|| TypeError {
-        message: format!("call to undefined function '{callee}'"),
-        span,
-    })?;
-
-    if args.len() != sig.params.len() {
-        return Err(TypeError {
-            message: format!(
-                "'{callee}' expects {} argument(s), found {}",
-                sig.params.len(),
-                args.len()
-            ),
+    if let Some(sdef) = ctx.structs.get(callee).cloned() {
+        let params: Vec<(String, Ty)> = sdef.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
+        let checked = match_args(&format!("datac '{callee}'"), &params, args, span, ctx)?;
+        let fields = sdef
+            .fields
+            .iter()
+            .zip(checked)
+            .map(|(f, e)| (f.name.clone(), e))
+            .collect();
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::StructLit {
+                name: callee.to_string(),
+                fields,
+            },
+            ty: Ty::Struct(callee.to_string()),
             span,
         });
     }
 
-    let mut checked_args = Vec::new();
-    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-        let checked = check_expr(arg, ctx, Some(param_ty))?;
-        if checked.ty != *param_ty {
-            return Err(TypeError {
-                message: format!(
-                    "argument to '{callee}' has type '{}', expected '{}'",
-                    checked.ty.display(),
-                    param_ty.display()
-                ),
-                span: arg.span(),
-            });
-        }
-        checked_args.push(checked);
-    }
+    let sig = ctx.sigs.get(callee).cloned().ok_or_else(|| TypeError {
+        message: format!("call to undefined function '{callee}'"),
+        span,
+    })?;
+    let checked = match_args(&format!("function '{callee}'"), &sig.params, args, span, ctx)?;
 
     Ok(tir::Expr {
         kind: tir::ExprKind::Call {
             callee: callee.to_string(),
-            args: checked_args,
+            args: checked,
         },
         ty: sig.ret,
         span,

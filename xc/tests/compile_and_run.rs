@@ -87,8 +87,8 @@ fn type_mismatch_is_rejected() {
 }
 
 #[test]
-fn struct_fields_and_mutation_work() {
-    assert_compiles_and_runs("tests/fixtures/struct_basic.x", "3\n4\n25\n11\n");
+fn datac_fields_and_mutation_work() {
+    assert_compiles_and_runs("tests/fixtures/datac_basic.x", "3\n4\n25\n11\n");
 }
 
 #[test]
@@ -99,4 +99,19 @@ fn while_loop_accumulates_correctly() {
 #[test]
 fn assignment_to_immutable_binding_is_rejected() {
     assert_rejected("tests/fixtures/assign_to_immutable.x");
+}
+
+#[test]
+fn assignment_to_val_field_is_rejected() {
+    assert_rejected("tests/fixtures/val_field_immutable.x");
+}
+
+#[test]
+fn when_desugars_to_if_else_chain() {
+    assert_compiles_and_runs("tests/fixtures/when_expr.x", "pos\nneg\nzero\n");
+}
+
+#[test]
+fn named_and_positional_args_match_correctly() {
+    assert_compiles_and_runs("tests/fixtures/named_args.x", "7\n7\n7\n");
 }

@@ -10,6 +10,7 @@ pub enum Ty {
     Char,
     Unit,
     Str,
+    /// A `datac` value type, named by its declaration.
     Struct(String),
 }
 
@@ -78,20 +79,33 @@ impl Ty {
     }
 }
 
+/// A function's checked signature. Parameter names are kept (not just
+/// types) because call sites can pass named arguments (`f(x = 1)`), which
+/// `infer.rs` resolves against these names.
 #[derive(Debug, Clone)]
 pub struct FnSig {
-    pub params: Vec<Ty>,
+    pub params: Vec<(String, Ty)>,
     pub ret: Ty,
+}
+
+/// One `datac` field: `val`/`var` name: Type.
+#[derive(Debug, Clone)]
+pub struct FieldDef {
+    pub name: String,
+    pub ty: Ty,
+    /// `var` field: reassignable (given a `var`-bound value). `val` field:
+    /// never reassignable, regardless of the binding's own mutability.
+    pub mutable: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: String,
-    pub fields: Vec<(String, Ty)>,
+    pub fields: Vec<FieldDef>,
 }
 
 impl StructDef {
-    pub fn field_ty(&self, name: &str) -> Option<&Ty> {
-        self.fields.iter().find(|(n, _)| n == name).map(|(_, t)| t)
+    pub fn field(&self, name: &str) -> Option<&FieldDef> {
+        self.fields.iter().find(|f| f.name == name)
     }
 }
