@@ -1,0 +1,9 @@
+// A-4: the parameter types are part of the function type, so a callback of the
+// wrong shape is an ordinary argument-type mismatch.
+fun double(x: i32).R: i32 = x * 2
+
+fun apply(f: fun(f64).R: f64, x: f64).R: f64 = f(x)
+
+fun main() {
+    print(apply(double, 1.0))
+}

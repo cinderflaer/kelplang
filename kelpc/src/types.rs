@@ -65,6 +65,19 @@ pub enum Ty {
     /// Copy regardless of `inner` — copying a pointer doesn't move what it
     /// points at.
     Ref { mutable: bool, inner: Box<Ty> },
+    /// A function value (A-4): a plain C function pointer, with no captured
+    /// environment — so it is `Copy`, it owns nothing, and it needs no drop.
+    /// `params` are the *declared* parameter types, already through the
+    /// parameter rule (an owned type is a borrow unless the type was written
+    /// `move T`), which is what makes a written function type and a
+    /// declaration's signature the same type when they spell the same thing.
+    ///
+    /// A bare name of a declared `fun` is how a value of this type is made;
+    /// calling one goes through `tir::ExprKind::IndirectCall`. Anonymous
+    /// `fun` literals and closures (a value that carries an environment) are
+    /// later A-4 phases, and would be a separate variant: this one is
+    /// deliberately the environment-free half.
+    Fn { params: Vec<Ty>, ret: Box<Ty> },
 }
 
 impl Ty {
@@ -161,6 +174,14 @@ impl Ty {
             // a pointer to a pointer. The borrow lives in the type system
             // and the borrow checker, not in the representation.
             Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => "const char*".to_string(),
+            // A function *type* is a pointer type, and a pointer type cannot
+            // be printed as `ret (*)(params)` and then followed by a name
+            // (`c_decl` is what puts a declarator together). Inside another
+            // declarator this spelling is the correct C fragment, which is
+            // all a return position needs.
+            Ty::Fn { params, ret } => {
+                format!("{} (*)({})", ret.c_type(), fn_params_c(params))
+            }
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
@@ -196,8 +217,50 @@ impl Ty {
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
+            Ty::Fn { params, ret } => {
+                // The return is written `.R: T` exactly as a declaration
+                // writes it, and a `Unit` return is left off — so a written
+                // function type and a signature read the same way.
+                let mut s = format!("fun({})", join_types(params));
+                if **ret != Ty::Unit {
+                    s.push_str(&format!(".R: {}", ret.display()));
+                }
+                s
+            }
         }
     }
+
+    /// The C declaration of a variable called `name` with this type: the C
+    /// type followed by the name, except for a function value, where the name
+    /// goes *inside* the pointer declarator (`int32_t (*kelp_f)(int32_t)`).
+    /// Every declaration site — a parameter, a `val`/`var`, a `datac` field,
+    /// an enum payload, a passdown — goes through this rather than pairing
+    /// `c_type()` with a name by hand, because a function type is the one type
+    /// where that pairing does not produce valid C.
+    pub fn c_decl(&self, name: &str) -> String {
+        match self {
+            Ty::Fn { params, ret } => {
+                format!("{} (*{name})({})", ret.c_type(), fn_params_c(params))
+            }
+            other => format!("{} {name}", other.c_type()),
+        }
+    }
+}
+
+/// `ret (*)(params)`'s parameter half: `void` for none, the C parameter types
+/// otherwise. Shared with `c_decl`, since a declarator and a bare function
+/// pointer type differ only in where the name goes.
+fn fn_params_c(params: &[Ty]) -> String {
+    if params.is_empty() {
+        "void".to_string()
+    } else {
+        params.iter().map(|p| p.c_type()).collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// `T, U` for a diagnostic or a written type.
+fn join_types(types: &[Ty]) -> String {
+    types.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ")
 }
 
 /// Which user-declared types own heap memory, transitively: a `datac` whose
@@ -363,6 +426,15 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::List(elem) => format!("List__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
+        // A function type never reaches a container or a type argument (both
+        // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
+        // unreachable arm and by diagnostics, so it gets an identifier-shaped
+        // answer rather than a string with `(`/`)`/`:` in it.
+        Ty::Fn { params, ret } => format!(
+            "Fn__{}{}",
+            params.iter().map(|p| format!("{}__", ty_mangle(p))).collect::<String>(),
+            ty_mangle(ret)
+        ),
         other => other.display().replace('&', "ref"),
     }
 }
@@ -459,6 +531,13 @@ pub fn c_ident(name: &str) -> String {
         .replace(',', "_")
         .replace('<', "__l__")
         .replace('>', "__g__")
+        // A function type argument (`Holder<fun(i32).R: i32>`) is the one
+        // type whose written form carries parentheses and a colon, and its
+        // instantiation key is built from that written form, so the two have
+        // to mangle too or the key is not a C identifier.
+        .replace('(', "__lp__")
+        .replace(')', "__rp__")
+        .replace(':', "__c__")
         .replace(' ', "")
 }
 

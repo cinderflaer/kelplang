@@ -1,0 +1,11 @@
+// A-4: a function value is Copy, so a borrow of one is a pointer to a pointer
+// that nothing can write through — `mut` and `&` are both refused.
+fun double(x: i32).R: i32 = x * 2
+
+fun take(f: mut fun(i32).R: i32) {
+    print(f(1))
+}
+
+fun main() {
+    take(double)
+}

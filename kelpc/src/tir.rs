@@ -192,6 +192,19 @@ pub enum ExprKind {
         else_block: Option<Block>,
     },
     Block(Block),
+    /// A named function used as a *value* (A-4): `val f = double`. The key is
+    /// the declaration's canonical name, so codegen emits `kelp_double` — a
+    /// function reference carries no environment, so the C function *is* the
+    /// value and there is nothing to allocate or drop.
+    FnRef(String),
+    /// A call through a function value: `f(x)`, where `f` is a local (or,
+    /// later, a field) of a `Ty::Fn` type. `callee` is a value expression, so
+    /// codegen parenthesizes it before the argument list. Distinct from
+    /// `Call`, whose `callee` is a resolved declaration key.
+    IndirectCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
     /// A borrow: either an explicit `&expr`/`&mut expr` from the surface
     /// syntax, or one synthesized by `infer::check_call_arg` when a plain
     /// place is passed to a `Ty::Ref`-typed parameter (call sites never

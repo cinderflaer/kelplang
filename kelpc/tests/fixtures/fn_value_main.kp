@@ -1,0 +1,5 @@
+// A-4: the entry point cannot be called, so it cannot be a value either.
+fun main() {
+    val f = main
+    print(1)
+}

@@ -527,6 +527,12 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // A function type (A-4): `fun(i32, String).R: bool`. Checked before
+        // every name, because it is the one written type that is not one —
+        // and `fun` cannot be a name at all, since it is a keyword.
+        if let Some(params) = &ty.fn_params {
+            return self.resolve_fn_type(ty, params);
+        }
         // A type parameter in scope (`datac Pair<A, B>`'s `A`) is whatever
         // the instantiation bound it to (A-2). Checked before every other
         // name, so a parameter shadows a type of the same name.
@@ -875,35 +881,106 @@ impl TypeScope<'_> {
     }
 
     fn resolve_param(&self, p: &ast::Param) -> Result<Ty> {
-        if p.move_ {
-            return self.resolve_move_param(p);
-        }
-        Ok(implicit_borrow_wrap(self.resolve(&p.ty, false)?, p.mutable))
+        self.resolve_param_mode(&p.ty, p.mode)
     }
 
-    /// The type of a `move T` parameter, with the two spellings that have
-    /// nothing to hand over refused: a `str` is already a borrowed view, and
-    /// `&T` is already a copy of a borrow. Either would read as an ownership
-    /// transfer and mean nothing.
-    fn resolve_move_param(&self, p: &ast::Param) -> Result<Ty> {
-        let base = self.resolve(&p.ty, false)?;
-        if p.ty.amp || matches!(base, Ty::Str | Ty::Ref { .. }) {
+    /// One parameter's type, from the type as written and the qualifier in
+    /// front of it. Shared by a declaration's parameter and a function type's
+    /// parameter (A-4), because the two have to mean the same thing: a
+    /// written `fun(String)` has to be the type of `fun f(s: String)`.
+    ///
+    /// `move T` resolves to the bare type — the same by-value shape a `Copy`
+    /// type already has. That is the whole type-level difference, and it is
+    /// what makes a moved argument an ordinary whole-value read at the call
+    /// site: no new argument-matching rule, and `borrowck.rs` marks the
+    /// caller's binding moved exactly as `val q = p` does.
+    fn resolve_param_mode(&self, ty: &ast::TypeExpr, mode: ast::ParamMode) -> Result<Ty> {
+        if mode.moves() {
+            return self.resolve_move_param(ty);
+        }
+        let base = self.resolve(ty, false)?;
+        if mode.mutable() && matches!(base, Ty::Fn { .. }) {
+            // A function value is Copy, so an exclusive borrow of one would
+            // need a pointer to a function pointer that nothing can usefully
+            // write through.
+            return Err(TypeError {
+                message: format!(
+                    "'mut' cannot be written on the function type '{}' — a function value is Copy (it is a plain function pointer), so there is nothing to write through; write the type without 'mut'",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        Ok(implicit_borrow_wrap(base, mode.mutable()))
+    }
+
+    /// The type of a `move T` parameter, with the spellings that have nothing
+    /// to hand over refused: a `str` is already a borrowed view, `&T` is
+    /// already a copy of a borrow, and a function value is already Copy.
+    /// Those would read as an ownership transfer and mean nothing.
+    fn resolve_move_param(&self, ty: &ast::TypeExpr) -> Result<Ty> {
+        let base = self.resolve(ty, false)?;
+        let nothing_to_own = ty.amp
+            || matches!(base, Ty::Str | Ty::Ref { .. } | Ty::Fn { .. });
+        if nothing_to_own {
             // `TypeExpr::display` prints only the name, so an explicit `&`
             // has to be put back for the diagnostic to quote what was
             // written.
-            let written = if p.ty.amp {
-                format!("&{}", p.ty.display())
+            let written = if ty.amp {
+                format!("&{}", ty.display())
             } else {
-                p.ty.display()
+                ty.display()
             };
             return Err(TypeError {
                 message: format!(
-                    "'move' cannot be written on the borrowed type '{written}' — a 'str' is already a borrowed view and '&T' is already a copy of a borrow, so there is nothing to take ownership of; write the owned type instead ('move String')"
+                    "'move' cannot be written on '{written}' — a 'str' is already a borrowed view, '&T' is already a copy of a borrow, and a function value is already Copy, so there is nothing to take ownership of; write the owned type instead ('move String')"
                 ),
-                span: p.ty.span,
+                span: ty.span,
             });
         }
         Ok(base)
+    }
+
+    /// A function type (A-4). Each parameter goes through the *same* rule a
+    /// declaration's parameter does — an implicit shared borrow for an owned
+    /// type, `mut` for an exclusive one, `move` for ownership — which is what
+    /// makes a written `fun(String)` and the signature of `fun f(s: String)`
+    /// the same type, and therefore what makes passing `f` where a
+    /// `fun(String)` is expected type-check with no conversion.
+    ///
+    /// Two placements are refused, both because the C declarator has no
+    /// sensible spelling for them: a function type that *returns* a function
+    /// type, and a borrow of a function value (which is Copy, so there is
+    /// nothing to borrow). A function type as a parameter of a function type
+    /// is fine — `int32_t (*)(int32_t (*)(int32_t))` is ordinary C.
+    fn resolve_fn_type(&self, ty: &ast::TypeExpr, params: &[ast::FnTypeParam]) -> Result<Ty> {
+        if ty.amp {
+            return Err(TypeError {
+                message: format!(
+                    "'&' cannot be written on the function type '{}' — a function value is Copy (it is a plain function pointer), so a borrowed one would be a pointer to a pointer; write the type without '&'",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        let mut resolved = Vec::with_capacity(params.len());
+        for p in params {
+            resolved.push(self.resolve_param_mode(&p.ty, p.mode)?);
+        }
+        let ret = match &ty.fn_ret {
+            Some(r) if r.is_fn() => {
+                return Err(TypeError {
+                    message: format!(
+                        "a function type cannot return another function type ('{}') — C cannot write that declarator, and nothing needs it; return a 'datac' holding the function value instead",
+                        ty.display()
+                    ),
+                    span: r.span,
+                })
+            }
+            Some(r) => self.resolve(r, false)?,
+            None => Ty::Unit,
+        };
+        Ok(Ty::Fn { params: resolved, ret: Box::new(ret) })
     }
 
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
@@ -936,12 +1013,7 @@ impl TypeScope<'_> {
                 span: r.span,
             });
         }
-        let te = ast::TypeExpr {
-            name: r.type_name.clone(),
-            args: Vec::new(),
-            amp: false,
-            span: r.span,
-        };
+        let te = ast::TypeExpr::named(r.type_name.clone(), r.span);
         Ok(implicit_borrow_wrap(self.resolve(&te, false)?, r.mutable))
     }
 
@@ -960,6 +1032,176 @@ impl TypeScope<'_> {
             Ok(base)
         }
     }
+}
+
+
+/// The `Ty::Fn` a declared signature has (A-4): its parameter types, in order,
+/// and its return type. A function *type* spells exactly this, so a written
+/// `fun(String).R: usize` and the signature of `fun f(s: String).R: usize` are
+/// the same type with no conversion anywhere.
+fn fn_value_ty(sig: &FnSig) -> Ty {
+    Ty::Fn {
+        params: sig.params.iter().map(|(_, t)| t.clone()).collect(),
+        ret: Box::new(sig.ret.clone()),
+    }
+}
+
+/// The canonical key and function type of a *bare* name used as a value
+/// (A-4), or `None` when the name is not a function at all (so the caller can
+/// report whatever else it might have been).
+///
+/// The lookup order is a call's: the calling module's own spelling first, then
+/// the name as written. Three names that *are* functions are refused rather
+/// than silently dropped, because "undefined variable" would be a lie:
+/// a generic template (its signature is not concrete until a call
+/// instantiates it), `main` (the entry point cannot be called), and a function
+/// that reads a passdown (the hidden argument it receives is not part of a C
+/// function pointer).
+fn function_value(name: &str, ctx: &Ctx, span: Span) -> Result<Option<(String, Ty)>> {
+    let owned = ctx.qualify_own(name);
+    if ctx.sig_of(&owned).is_some() {
+        return function_value_at(&owned, name, ctx, span);
+    }
+    function_value_at(name, name, ctx, span)
+}
+
+/// `function_value` for an already-canonical key, with `written` as the name
+/// to show in a diagnostic (a bare name, or `math.sqrt`).
+fn function_value_at(
+    key: &str,
+    written: &str,
+    ctx: &Ctx,
+    span: Span,
+) -> Result<Option<(String, Ty)>> {
+    if let Some(sig) = ctx.sig_of(key) {
+        if key == "main" {
+            return Err(TypeError {
+                message: "cannot reference 'main': it is the program entry point".to_string(),
+                span,
+            });
+        }
+        if ctx.wired_for(key).is_some_and(|w| !w.is_empty()) {
+            return Err(TypeError {
+                message: format!(
+                    "'{written}' reads a passdown, so it cannot be a function value — a passdown is passed to the callee as a hidden argument, and a function value is a plain C function pointer; call it directly instead"
+                ),
+                span,
+            });
+        }
+        return Ok(Some((key.to_string(), fn_value_ty(&sig))));
+    }
+    if ctx.fns.templates.contains_key(key) {
+        return Err(TypeError {
+            message: format!(
+                "'{written}' is a generic function — a function value needs one concrete signature, so wrap the call in a small non-generic function and pass that"
+            ),
+            span,
+        });
+    }
+    Ok(None)
+}
+
+/// The callee *expression* and type of a name that holds a function value
+/// (A-4): a local, or a passdown. `Ok(None)` when the name holds no function
+/// value at all, so the caller can report it as an undefined function.
+fn indirect_callee(
+    name: &str,
+    span: Span,
+    ctx: &Ctx,
+) -> Result<Option<(tir::Expr, Ty)>> {
+    if let Some(info) = ctx.lookup(name) {
+        if matches!(info.ty, Ty::Fn { .. }) {
+            let ty = info.ty.clone();
+            return Ok(Some((
+                tir::Expr {
+                    kind: tir::ExprKind::Ident(name.to_string()),
+                    ty: ty.clone(),
+                    span,
+                },
+                ty,
+            )));
+        }
+        return Ok(None);
+    }
+    // A passdown holding a function value is the same thing one module up:
+    // its storage is the generated global (or the hidden parameter), so the
+    // callee expression is whatever a read of that passdown already is.
+    if let Some(pd) = ctx.pds.get(name) {
+        if !matches!(pd.value_ty, Ty::Fn { .. }) {
+            return Ok(None);
+        }
+        if !ctx.pd_initialized(&pd.hidden) {
+            return Err(TypeError {
+                message: format!(
+                    "passdown '{}' is read before it is initialized — a 'pd' initializer can only use passdowns declared before it",
+                    pd.qualified
+                ),
+                span,
+            });
+        }
+        return Ok(Some((pd.value(span, ctx.pd_global_borrow), pd.value_ty.clone())));
+    }
+    Ok(None)
+}
+
+/// `f(x)` where `f` holds a function value (A-4): a local, a passdown, or a
+/// `datac` field (`cfg.on_event(x)`). A function *type* has no parameter
+/// names, so arguments are positional and counted against the callee's own
+/// list; everything else — the borrow an owned parameter implies, the move a
+/// `move` parameter implies — is the rule `check_call_arg` already applies to
+/// a declared call, because the parameter types are the same types.
+fn check_indirect_call_expr(
+    callee: tir::Expr,
+    fn_ty: &Ty,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    what: &str,
+) -> Result<tir::Expr> {
+    let Ty::Fn { params, ret } = fn_ty else {
+        unreachable!("an indirect call is only reached with a function type")
+    };
+    if args.len() != params.len() {
+        return Err(TypeError {
+            message: format!(
+                "a call through {what} takes {} argument(s), found {}",
+                params.len(),
+                args.len()
+            ),
+            span,
+        });
+    }
+    for a in args {
+        if a.name.is_some() {
+            return Err(TypeError {
+                message: format!(
+                    "a call through {what} cannot use named arguments — a function type has no parameter names, so every argument is positional"
+                ),
+                span: a.value.span(),
+            });
+        }
+    }
+    let mut checked = Vec::with_capacity(args.len());
+    for (i, (pty, a)) in params.iter().zip(args).enumerate() {
+        checked.push(check_call_arg(&(i + 1).to_string(), pty, &a.value, ctx)?);
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::IndirectCall {
+            callee: Box::new(callee),
+            args: checked,
+        },
+        ty: (**ret).clone(),
+        span,
+    })
+}
+
+/// The type of a `datac` field read through a (possibly borrowed) receiver —
+/// `None` when there is no such field. Used only to find a field holding a
+/// function value, which is callable with method syntax.
+fn fn_field_ty(ty: &Ty, name: &str, ctx: &Ctx) -> Option<Ty> {
+    let owner = struct_name_of(ty)?.to_string();
+    let def = ctx.struct_def(&owner)?;
+    Some(def.field(name)?.ty.clone())
 }
 
 /// A function's lookup key in `sigs`/`tir::Function.name`: a receiver-form
@@ -1243,9 +1485,30 @@ fn borrowed_element_reason(ty: &Ty) -> Option<String> {
     })
 }
 
+/// Why a *function value* cannot be a container element, in one sentence
+/// that says the real reason (A-4). It is not the borrow rule and not the
+/// inline-storage rule: a function pointer is a plain inline value, and the
+/// only thing missing is a C spelling — a container's generated type names its
+/// element as a prefix (`kelp_List__i32`), and a function pointer's name goes
+/// *inside* the declarator (`int32_t (*kelp_f)(int32_t)`), so there is no such
+/// prefix. The way round it is a one-field `datac`, which is what a program
+/// needing a table of callbacks should write anyway.
+fn fn_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    if !matches!(ty, Ty::Fn { .. }) {
+        return None;
+    }
+    Some(format!(
+        "'{}' cannot be a '{container}' element yet — a function value is a plain inline value, but a container's generated C type names its element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead",
+        ty.display()
+    ))
+}
+
 /// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
 /// type position and `List.of(x)` give the same explanation.
 fn list_element_error(ty: &Ty) -> String {
+    if let Some(reason) = fn_element_reason(ty, "List") {
+        return reason;
+    }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
             "{reason} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
@@ -1261,6 +1524,9 @@ fn list_element_error(ty: &Ty) -> String {
 /// position and `Map.new()` share the explanation. The value set is the
 /// `List` element set, so only the wording differs.
 fn map_element_error(ty: &Ty) -> String {
+    if let Some(reason) = fn_element_reason(ty, "Map") {
+        return reason;
+    }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
             "{reason} — a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
@@ -1275,6 +1541,9 @@ fn map_element_error(ty: &Ty) -> String {
 /// The same for a `Box<T>` element, which may be a container: a box holds a
 /// pointer, so `Box<List<i32>>` and `Box<Box<i32>>` are both fine.
 fn box_element_error(ty: &Ty) -> String {
+    if let Some(reason) = fn_element_reason(ty, "Box") {
+        return reason;
+    }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
             "{reason} — a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another 'Box'/'List'"
@@ -3622,6 +3891,17 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 }
                 return Ok(pd.value(*span, ctx.pd_global_borrow));
             }
+            // Not a local, receiver field, or passdown — a declared `fun`
+            // named as a *value* (A-4): `val f = double`. A function
+            // reference carries no environment, so the C function itself is
+            // the value.
+            if let Some((key, fn_ty)) = function_value(name, ctx, *span)? {
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::FnRef(key),
+                    ty: fn_ty,
+                    span: *span,
+                });
+            }
             // Not a local, receiver field, or passdown — a compile-time
             // constant (M6.3), substituted as the literal it folded to.
             if let Some(c) = ctx.consts.get(&ctx.qualify_own(name)).cloned() {
@@ -3695,6 +3975,26 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                             let mut value = c.value;
                             value.span = *span;
                             return Ok(value);
+                        }
+                        // `val f = math.sqrt` — a module's item named as a
+                        // function value (A-4), the qualified spelling of the
+                        // same thing a bare name means inside its own module.
+                        if let Some((key, fn_ty)) =
+                            function_value_at(&qualified, &format!("{name}.{field}"), ctx, *span)?
+                        {
+                            return Ok(tir::Expr {
+                                kind: tir::ExprKind::FnRef(key),
+                                ty: fn_ty,
+                                span: *span,
+                            });
+                        }
+                        if ctx.sigs.keys().any(|k| k.split('@').next() == Some(&qualified)) {
+                            return Err(TypeError {
+                                message: format!(
+                                    "'{name}.{field}' is an overloaded stdlib function — its parameter types are part of the name, so it is not a value; write a non-generic wrapper function and pass that"
+                                ),
+                                span: *span,
+                            });
                         }
                     }
                     return Err(TypeError {
@@ -5119,7 +5419,9 @@ fn match_args(
                 span,
             })?,
         };
-        result.push(check_call_arg(pname, pty, &arg.value, ctx)?);
+        // The label the diagnostics use: a declared parameter is quoted by
+        // name, which is what a call site can see.
+        result.push(check_call_arg(&format!("'{pname}'"), pty, &arg.value, ctx)?);
     }
 
     if let Some((&leftover, _)) = named.iter().next() {
@@ -5182,6 +5484,9 @@ fn require_place_for_borrowed_arg(
     Ok(())
 }
 
+/// `pname` is how the argument is named in a diagnostic — `'b'` for a
+/// declared parameter, `1` for the position in a call through a function value
+/// (a function *type* has no parameter names).
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
     let Ty::Ref { mutable, inner } = pty else {
         let checked = check_expr(arg_expr, ctx, Some(pty))?;
@@ -5200,7 +5505,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         if matches!(checked.ty, Ty::Ref { .. }) && !pty.is_copy() {
             return Err(TypeError {
                 message: format!(
-                    "argument '{pname}' has type '{}', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')",
+                    "argument {pname} has type '{}', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')",
                     checked.ty.display()
                 ),
                 span: arg_expr.span(),
@@ -5209,7 +5514,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         if checked.ty != *pty {
             return Err(TypeError {
                 message: format!(
-                    "argument '{pname}' has type '{}', expected '{}'",
+                    "argument {pname} has type '{}', expected '{}'",
                     checked.ty.display(),
                     pty.display()
                 ),
@@ -5232,7 +5537,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             if *mutable {
                 if !is_tir_place(&checked) {
                     return Err(TypeError {
-                        message: format!("argument '{pname}' must be a variable or field, not a temporary value"),
+                        message: format!("argument {pname} must be a variable or field, not a temporary value"),
                         span: arg_expr.span(),
                     });
                 }
@@ -5248,14 +5553,14 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         Ty::Ref { mutable: a_mut, inner: a_inner } if a_inner == inner => {
             if *mutable && !a_mut {
                 return Err(TypeError {
-                    message: format!("argument '{pname}' requires an exclusive borrow, found a shared one"),
+                    message: format!("argument {pname} requires an exclusive borrow, found a shared one"),
                     span: arg_expr.span(),
                 });
             }
             Ok(checked)
         }
         other => Err(TypeError {
-            message: format!("argument '{pname}' has type '{}', expected '{}'", other.display(), pty.display()),
+            message: format!("argument {pname} has type '{}', expected '{}'", other.display(), pty.display()),
             span: arg_expr.span(),
         }),
     }
@@ -5409,11 +5714,27 @@ fn check_call(
                 Some(tmpl_key) => {
                     instantiate_function(ctx, &tmpl_key, &explicit, args, span, expected, None)?
                 }
-                // A compiler-provided free function (`panic`, `assert`) lives
-                // in the same table as the builtin methods, so it is consulted
-                // after the program's own signatures — a user function of the
-                // same name wins, and there is no shadowing surprise.
-                None => match builtin_sig(callee) {
+                // A local holding a function value (A-4): `f(x)`, where `f`
+                // came from `val f = double`. Checked after every declared
+                // function, so a call that names a real function is never
+                // diverted by a binding of the same name.
+                None => match indirect_callee(callee, span, ctx)? {
+                    Some((callee_expr, fn_ty)) => {
+                        return check_indirect_call_expr(
+                            callee_expr,
+                            &fn_ty,
+                            args,
+                            span,
+                            ctx,
+                            &format!("'{callee}'"),
+                        )
+                    }
+                    // A compiler-provided free function (`panic`, `assert`)
+                    // lives in the same table as the builtin methods, so it is
+                    // consulted after the program's own signatures — a user
+                    // function of the same name wins, and there is no
+                    // shadowing surprise.
+                    None => match builtin_sig(callee) {
                     Some(sig) => (callee.to_string(), sig),
                     None => {
                         return Err(TypeError {
@@ -5431,6 +5752,7 @@ fn check_call(
                             span,
                         })
                     }
+                },
                 },
             },
         },
@@ -5852,6 +6174,33 @@ fn check_method_call(
             span,
         });
     };
+    // `cfg.on_event(x)` where the receiver has a *field* of function type
+    // (A-4): the call syntax is a method's, the callee is a field, and the
+    // field is a place holding a function value. A declared method of the
+    // same name wins — the declaration is the more specific statement of what
+    // the type does — so this is only consulted when there is no such method.
+    if ctx.sig_of(&format!("{owner}#{method}")).is_none() {
+        if let Some(fn_ty) = fn_field_ty(&probe.ty, method, ctx) {
+            if matches!(fn_ty, Ty::Fn { .. }) {
+                let callee = tir::Expr {
+                    kind: tir::ExprKind::FieldAccess {
+                        base: Box::new(probe),
+                        field: method.to_string(),
+                    },
+                    ty: fn_ty.clone(),
+                    span,
+                };
+                return check_indirect_call_expr(
+                    callee,
+                    &fn_ty,
+                    args,
+                    span,
+                    ctx,
+                    &format!("field '{method}'"),
+                );
+            }
+        }
+    }
     let key = format!("{owner}#{method}");
     let container_elem = crate::types::list_elem_of(&probe.ty)
         .or_else(|| crate::types::box_elem_of(&probe.ty))
@@ -5929,7 +6278,7 @@ fn check_method_call(
     };
 
     let mut checked_args = Vec::with_capacity(sig.params.len());
-    checked_args.push(check_call_arg("self", &sig.params[0].1, receiver, ctx)?);
+    checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?);
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
     // A method whose result borrows from its receiver (`s.as_str()`) has the
     // same rule as a free function.

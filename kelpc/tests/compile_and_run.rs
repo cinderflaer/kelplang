@@ -1220,6 +1220,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // freed exactly once by whichever function owns it at scope exit.
         "move_param",
         "move_param_return",
+        // A-4: a function value for a `move` parameter hands a buffer to a
+        // callee that frees it, and a passdown function value reads a global.
+        "fn_value",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2484,11 +2487,11 @@ fn move_parameter_misuse_is_rejected() {
     // `str` and `&T` are already borrowed, so there is nothing to own.
     assert_rejected_with(
         "tests/fixtures/move_param_str.kp",
-        "'move' cannot be written on the borrowed type 'str'",
+        "'move' cannot be written on 'str'",
     );
     assert_rejected_with(
         "tests/fixtures/move_param_ref.kp",
-        "'move' cannot be written on the borrowed type '&String'",
+        "'move' cannot be written on '&String'",
     );
     // One parameter cannot both borrow exclusively and take ownership.
     assert_rejected_with(
@@ -2500,4 +2503,92 @@ fn move_parameter_misuse_is_rejected() {
         "tests/fixtures/move_param_receiver.kp",
         "'move' cannot be written on a receiver",
     );
+}
+
+// ---------------------------------------------------------------------------
+// A-4 phase B: function values — a declared `fun` as a value of type
+// `fun(T).R: U`, called through a local, a field, a passdown or a parameter.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_function_name_is_a_value_and_a_value_is_callable() {
+    // Also in the AddressSanitizer list (the `move` callback frees a buffer).
+    assert_compiles_and_runs(
+        "tests/fixtures/fn_value.kp",
+        "42\n10\n12\n12\n4\n2\n12\n18\n27\n22\n0\n2\n4\n30\n4.000000\n",
+    );
+}
+
+#[test]
+fn a_function_value_with_the_wrong_shape_is_rejected() {
+    // The parameter types are part of the function type, so a callback of the
+    // wrong shape is an ordinary argument-type mismatch — and a `fun(move
+    // String)` callback cannot be handed a borrow.
+    assert_rejected_with(
+        "tests/fixtures/fn_value_mismatch.kp",
+        "expected 'fun(f64).R: f64'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_move_arg.kp",
+        "this call moves its argument in, and a borrow cannot be moved out of",
+    );
+}
+
+#[test]
+fn a_function_value_that_needs_something_extra_is_rejected() {
+    // Each of these names a *function* the compiler cannot turn into a plain
+    // C function pointer, so each says which and why rather than "undefined
+    // variable".
+    assert_rejected_with(
+        "tests/fixtures/fn_value_generic.kp",
+        "'first' is a generic function",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_passdown.kp",
+        "'uses_greeting' reads a passdown, so it cannot be a function value",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_main.kp",
+        "cannot reference 'main': it is the program entry point",
+    );
+}
+
+#[test]
+fn function_type_misuse_is_rejected() {
+    // A borrow of a function value (`mut` and `&` spellings), a container
+    // element, a function type returning a function type, and `print`.
+    assert_rejected_with(
+        "tests/fixtures/fn_value_borrow.kp",
+        "'mut' cannot be written on the function type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_amp.kp",
+        "'&' cannot be written on the function type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_element.kp",
+        "cannot be a 'List' element yet",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_nested_return.kp",
+        "a function type cannot return another function type",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_print.kp",
+        "cannot pass a value of type 'fun(i32).R: i32' to 'print'",
+    );
+}
+
+#[test]
+fn indirect_call_misuse_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/fn_value_named_args.kp",
+        "cannot use named arguments",
+    );
+    assert_rejected_with(
+        "tests/fixtures/fn_value_arity.kp",
+        "a call through 'f' takes 1 argument(s), found 2",
+    );
+    // A call's *result* is not itself callable: `pick()(4)` needs a binding.
+    assert_rejected("tests/fixtures/fn_value_call_result.kp");
 }

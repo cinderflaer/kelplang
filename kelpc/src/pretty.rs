@@ -83,14 +83,7 @@ fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
         if i > 0 {
             out.push_str(", ");
         }
-        let qualifier = if p.move_ {
-            "move "
-        } else if p.mutable {
-            "mut "
-        } else {
-            ""
-        };
-        write!(out, "{}: {qualifier}{}", p.name, p.ty.display()).unwrap();
+        write!(out, "{}: {}{}", p.name, p.mode.keyword(), p.ty.display()).unwrap();
     }
     out.push(')');
     if let Some(rt) = &f.return_type {

@@ -1,0 +1,12 @@
+// A-4: `fun(move String)` takes ownership, so a borrow cannot satisfy it —
+// the same rule a declared `move` parameter follows.
+fun consume(s: move String).R: usize = s.len()
+
+fun forward(s: String).R: usize {
+    val f: fun(move String).R: usize = consume
+    return f(s)
+}
+
+fun main() {
+    print(forward(String.from_str("x")))
+}

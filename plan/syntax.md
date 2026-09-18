@@ -174,6 +174,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `Box<T>` | owned | one heap cell that holds a `T` or nothing |
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
+| `fun(T, U).R: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
 | `Unit` | Copy | absent value, the implicit return type |
 
 Rules that follow from the table:
@@ -184,6 +185,7 @@ Rules that follow from the table:
 - No `List` or `Map` may hold another `List` or `Map` directly, because elements are stored inline. Put it in a `Box`.
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
 - `Unit` is not a value and cannot be stored.
+- A function type is Copy and owns nothing: a function value is a plain function pointer, so copying one is copying a pointer. It cannot be borrowed (`&`/`mut`), stored in a container, or used as a type argument's *element* — the placements 7.4 lists.
 
 ## 4. Bindings and assignment
 
@@ -417,7 +419,7 @@ A name that the function does not declare is an error; so is naming an argument 
 
 - A user program cannot overload a name. Two `fun pick(a: i32)` and `fun pick(a: f64)` collide: `function 'pick' is defined more than once for the same parameter types`. Overloading exists only inside the shipped standard library, and only for `abs`, `min`, `max` and `clamp`, which is how `math.min` accepts `i32`, `i64` and `f64`.
 - Recursion is unrestricted, including mutual recursion.
-- There are no closures and no function values: a function name is not a value, and a function cannot be passed to another function.
+- A function name *is* a value: see 7.4. There are no closures and no anonymous functions yet (A-4's later phases), so a function value is a pointer to a declared top-level `fun`, never to a captured environment.
 - A function may take type parameters: `fun first<T>(xs: List<T>).R: T`. A receiver method on a generic type takes the *type's* parameters instead: `fun Pair<A, B>.first().R: A`. Each call site is instantiated for the types it uses (9.3).
 
 ### 7.3 `main`
@@ -427,6 +429,57 @@ fun main() { ... }
 ```
 
 `main` must exist in the entry module, takes no parameters, returns `Unit`, and cannot be called. A program with no `main` fails with `no 'main' function found`.
+
+### 7.4 Function values
+
+A bare name of a declared `fun` is a value, and its type is written `fun(T, U).R: V` — the `fun` keyword, the parameter types, and the same `.R:` return clause a declaration uses. No `.R` means `Unit`.
+
+```kelp
+fun double(x: i32).R: i32 = x * 2
+
+fun apply(f: fun(i32).R: i32, x: i32).R: i32 = f(x)     // takes a callback
+
+val f = double                     // a function value
+print(f(21))                       // ...called through the binding
+print(apply(double, 5))            // ...and passed
+print(apply(f, 6))
+```
+
+The parameter types of a function type follow the same rule a declaration's do, so a written type and a signature are the same type when they spell the same thing: `fun(String)` is a parameter that borrows, `fun(mut Counter)` one that borrows exclusively, `fun(move String)` one that takes ownership (7.1).
+
+```kelp
+fun consume(s: move String).R: usize = s.len()
+
+val g: fun(move String).R: usize = consume
+print(g(String.from_str("abcd")))
+```
+
+A function value can live anywhere a `Copy` value can, and is called with ordinary call syntax wherever it is held:
+
+```kelp
+datac Handlers(val on_i32: fun(i32).R: i32)
+
+fun call_through(h: Handlers, x: i32).R: i32 = h.on_i32(x)   // a field, called
+
+fun pick(which: bool).R: fun(i32).R: i32 {                   // returned
+    if which {
+        return double
+    }
+    return triple
+}
+
+val p = pick(true)
+print(p(9))
+```
+
+Rules and limits of this first phase:
+
+- **A call through a function value is positional.** A function *type* has no parameter names, so `f(x = 1)` is refused and the argument count is checked against the callee's own list.
+- **A call's result cannot be called directly.** `pick(true)(4)` is not the grammar; bind it (`val p = pick(true)`) and call `p(4)`.
+- **A module's item is named with its qualified spelling** — `val f = math.sqrt` — and a bare name means a function of the current module. An *overloaded* item (`math.abs`, which is `i32`/`i64`/`f64`) is refused: its parameter types are part of its name, so it is several functions, not one.
+- **A function value is a declared top-level function.** A generic function (no single signature), a function that reads a passdown (its C signature has a hidden argument), and `main` are each refused with a message that says which. A receiver method is not reachable as a value at all, and an overloaded standard-library name (`math.abs`) is refused because its parameter types are part of its name.
+- **Placements with no C spelling are refused**: a function type may not return a function type, may not be borrowed, and may not be a container element (`List<fun(...)>` — hold it in a one-field `datac` instead). A function type *is* fine as a parameter, a `val`/`var`, a `datac`/`enum` field, a passdown, a function's return type, and a type argument.
+- There is no `print` for a function value.
 
 ## 8. Methods and receivers
 
@@ -1307,6 +1360,8 @@ These are deliberate, and each one has a workaround in this document:
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`.
 - No character literal, and no `char` values.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
+- Function values (7.4) are declared functions only: no anonymous `fun` literals, no closures, no captures, and a function value cannot be called as the result of another call (`f()(x)`).
+- A function value cannot be a container element or the return type of a function *type*, and a function that reads a passdown is not a value.
 - `kelpc` has no formatter or linter command yet, and `kelpc run` cannot pass arguments to the program.
 - Capability patterns are static text: they cannot be computed, narrowed or revoked at runtime.
 
@@ -1332,6 +1387,13 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'move' cannot be written on the borrowed type 'str'` | a `str`/`&T` is already borrowed, so there is nothing to own: write the owned type (`move String`) |
 | `'mut' and 'move' cannot be combined on one parameter` | `mut T` is an exclusive borrow, `move T` takes ownership — pick the one the callee needs |
 | `'move' cannot be written on a receiver` | a receiver is always borrowed; a move-taking parameter is `name: move T` |
+| `'first' is a generic function` (as a value) | a function value needs one concrete signature; wrap the call in a small non-generic function |
+| `'f' reads a passdown, so it cannot be a function value` | a passdown is a hidden argument, so its C signature is not a plain function pointer; call it directly |
+| `a call through 'f' cannot use named arguments` | a function type has no parameter names; pass the arguments positionally |
+| `a call through 'f' takes 1 argument(s), found 2` | an indirect call is counted against the callee's own parameter list |
+| `'mut'/'&' cannot be written on the function type` | a function value is Copy, so a borrow of one is a pointer to a pointer |
+| `a function type cannot return another function type` | C cannot write that declarator; return a `datac` holding the function value |
+| `'fun(i32).R: i32' cannot be a 'List' element yet` | a container's generated C type names its element type as a prefix; hold it in a one-field `datac` |
 | `a string template can only be printed` | a template is not a value; build the text with `str.concat` or a `String` |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
@@ -1399,7 +1461,9 @@ fun          := [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident
 param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
-type         := [ "&" ] ident [ "<" type ("," type)* ">" ] [ "." ident ]
+type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
+                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" ":" type ] )
+fparam       := [ "mut" | "move" ] type
 
 stmt         := "val" | "var" | "while" | "return" | expr
 val          := "val" ident [ ":" type ] "=" expr

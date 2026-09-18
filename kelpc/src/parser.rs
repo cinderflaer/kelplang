@@ -510,37 +510,13 @@ impl Parser {
             // ownership (A-4); this is the *only* spelling for either in
             // parameter position — `&mut T` is rejected here (the leading
             // `&` in `parse_type` expects an identifier next, not the `mut`
-            // keyword token), and `&`/`mut` stay expression-only. The two
-            // qualifiers are mutually exclusive: one says "I write through
-            // your value", the other "I now own it".
-            let mut mutable = false;
-            let mut move_ = false;
-            loop {
-                if !mutable && self.check(&TokenKind::Mut) {
-                    self.advance();
-                    mutable = true;
-                    continue;
-                }
-                if !move_ && self.check(&TokenKind::Move) {
-                    let mspan = self.peek().span;
-                    if mutable {
-                        return Err(ParseError {
-                            message: "'mut' and 'move' cannot be combined on one parameter — 'mut T' is an exclusive borrow, 'move T' takes ownership".to_string(),
-                            span: mspan,
-                        });
-                    }
-                    self.advance();
-                    move_ = true;
-                    continue;
-                }
-                break;
-            }
+            // keyword token), and `&`/`mut` stay expression-only.
+            let mode = self.parse_param_mode()?;
             let ty = self.parse_type()?;
             params.push(Param {
                 name: pname,
                 ty,
-                mutable,
-                move_,
+                mode,
                 span: pspan,
             });
             if self.check(&TokenKind::Comma) {
@@ -634,6 +610,12 @@ impl Parser {
         } else {
             None
         };
+        // A function type (A-4): `fun(i32, String).R: bool`. `fun` is a
+        // keyword, so this can never be an ordinary type name.
+        if self.check(&TokenKind::Fun) {
+            let start = self.advance().span;
+            return self.parse_fn_type(start, amp_start);
+        }
         let (first, first_span) = self.expect_ident()?;
         // A dotted name is a module-qualified reference to an imported item
         // (`circle.Circle`) — see `resolve.rs`, which rewrites it to the
@@ -658,6 +640,8 @@ impl Parser {
                 name,
                 args,
                 amp: amp_start.is_some(),
+                fn_params: None,
+                fn_ret: None,
                 span: amp_start.map(|a| a.to(span)).unwrap_or(span),
             });
         }
@@ -665,6 +649,79 @@ impl Parser {
             name,
             args: Vec::new(),
             amp: amp_start.is_some(),
+            fn_params: None,
+            fn_ret: None,
+            span: amp_start.map(|a| a.to(span)).unwrap_or(span),
+        })
+    }
+
+    /// The `mut`/`move` qualifier before a parameter's type, in either
+    /// parameter position (`name: mut T` in a declaration, `fun(mut T)` in a
+    /// function type). Reading at most one is what makes the two mutually
+    /// exclusive: `mut` says "I write through your value", `move` says "I own
+    /// it", and one parameter cannot say both.
+    fn parse_param_mode(&mut self) -> PResult<ParamMode> {
+        let mode = if self.check(&TokenKind::Mut) {
+            self.advance();
+            ParamMode::Mut
+        } else if self.check(&TokenKind::Move) {
+            self.advance();
+            ParamMode::Move
+        } else {
+            return Ok(ParamMode::Borrow);
+        };
+        if self.check(&TokenKind::Mut) || self.check(&TokenKind::Move) {
+            return Err(ParseError {
+                message: "'mut' and 'move' cannot be combined on one parameter — 'mut T' is an exclusive borrow, 'move T' takes ownership".to_string(),
+                span: self.peek().span,
+            });
+        }
+        Ok(mode)
+    }
+
+    /// The rest of `fun(i32, String).R: bool`, with `fun` already consumed.
+    /// A parameter of a function type takes the same `mut`/`move` qualifiers
+    /// a declaration's parameter takes, because the two have to agree: a
+    /// written `fun(String)` is a function whose parameter is a borrow, and
+    /// `fun(move String)` is one that takes ownership, exactly as
+    /// `fun f(s: String)` and `fun f(s: move String)` do.
+    fn parse_fn_type(&mut self, start: Span, amp_start: Option<Span>) -> PResult<TypeExpr> {
+        self.expect(TokenKind::LParen, "'('")?;
+        let mut params = Vec::new();
+        while !self.check(&TokenKind::RParen) {
+            let mode = self.parse_param_mode()?;
+            let ty = self.parse_type()?;
+            params.push(FnTypeParam { mode, ty });
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        let close = self.expect(TokenKind::RParen, "')'")?;
+        let mut span = start.to(close.span);
+        let ret = if self.check(&TokenKind::Dot) {
+            self.advance();
+            let (marker, mspan) = self.expect_ident()?;
+            if marker != "R" {
+                return Err(ParseError {
+                    message: format!("expected 'R' after '.', found '{marker}'"),
+                    span: mspan,
+                });
+            }
+            self.expect(TokenKind::Colon, "':'")?;
+            let ty = self.parse_type()?;
+            span = span.to(ty.span);
+            Some(Box::new(ty))
+        } else {
+            None
+        };
+        Ok(TypeExpr {
+            name: "fun".to_string(),
+            args: Vec::new(),
+            amp: amp_start.is_some(),
+            fn_params: Some(params),
+            fn_ret: ret,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
     }
@@ -1849,9 +1906,31 @@ mod tests {
     fn parses_a_move_parameter() {
         let p = parse("fun consume(s: move String).R: usize = s.len()");
         let param = &p.functions[0].params[0];
-        assert!(param.move_);
-        assert!(!param.mutable);
+        assert!(param.mode.moves());
+        assert!(!param.mode.mutable());
         assert_eq!(param.ty.name, "String");
+    }
+
+    #[test]
+    fn parses_a_function_type_in_parameter_and_return_position() {
+        let p = parse("fun apply(f: fun(i32).R: i32, x: i32).R: fun(move String) = f");
+        let f = &p.functions[0];
+        let param = &f.params[0];
+        assert!(param.ty.is_fn());
+        let params = param.ty.fn_params.as_ref().unwrap();
+        assert_eq!(params.len(), 1);
+        assert!(!params[0].mode.mutable());
+        assert_eq!(params[0].ty.name, "i32");
+        assert_eq!(param.ty.fn_ret.as_ref().unwrap().name, "i32");
+
+        // The return type is a function type with no `.R`, so it returns
+        // `Unit` — and its parameter is a `move`, which a function type
+        // spells the same way a declaration does.
+        let ret = f.return_type.as_ref().unwrap();
+        assert!(ret.is_fn());
+        assert!(ret.fn_ret.is_none());
+        assert!(ret.fn_params.as_ref().unwrap()[0].mode.moves());
+        assert_eq!(ret.display(), "fun(move String)");
     }
 
     #[test]
@@ -1870,7 +1949,7 @@ mod tests {
     #[test]
     fn parses_ref_deref_and_mut_param() {
         let p = parse("fun bump(c: mut Counter) {\n    val r = &c\n    val m = &mut c\n    val v = *r\n}");
-        assert!(p.functions[0].params[0].mutable);
+        assert!(p.functions[0].params[0].mode.mutable());
         let stmts = match &p.functions[0].body {
             FunctionBody::Block(b) => &b.stmts,
             _ => panic!("expected block body"),

@@ -1,0 +1,8 @@
+// A-4: a function *type* has no parameter names, so an indirect call cannot
+// use named arguments.
+fun double(x: i32).R: i32 = x * 2
+
+fun main() {
+    val f = double
+    print(f(x = 1))
+}
