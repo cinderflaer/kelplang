@@ -2886,3 +2886,51 @@ fn the_closure_type_and_its_limits_are_checked() {
         "use of moved value 'g'",
     );
 }
+
+// ---------------------------------------------------------------------------
+// The CLI itself (MK8-S1-M3's release added `kelpc version`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_cli_reports_its_version() {
+    // `env!("CARGO_PKG_VERSION")` here is the same `[package] version` the
+    // compiler takes its own string from, so this cannot pass by the two
+    // drifting apart.
+    let out = Command::new(kelpc_bin())
+        .arg("version")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        out.status.success(),
+        "'kelpc version' should succeed, got:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("kelpc {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(out.stderr.is_empty(), "'kelpc version' should not warn");
+}
+
+#[test]
+fn an_unknown_command_prints_the_usage_and_fails() {
+    // Including `kelpc` with no arguments at all, which is the case a new user
+    // hits first — and the usage line has to name every command that exists.
+    for args in [vec![], vec!["bogus"], vec!["build"]] {
+        let out = Command::new(kelpc_bin())
+            .args(&args)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            !out.status.success(),
+            "'kelpc {}' should fail",
+            args.join(" ")
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("usage: kelpc build <file.kp>") && stderr.contains("kelpc version"),
+            "unexpected usage text for 'kelpc {}':\n{stderr}",
+            args.join(" ")
+        );
+    }
+}

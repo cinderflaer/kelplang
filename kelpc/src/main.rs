@@ -22,6 +22,20 @@ use std::process::{Command, ExitCode};
 /// crate's `[package] name` and `[[bin]] name` in `Cargo.toml`.
 const BIN_NAME: &str = "kelpc";
 
+/// The version `kelpc version` prints, taken from `[package] version` at
+/// compile time so it cannot drift from `Cargo.toml`.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn usage() {
+    eprintln!(
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>]\n       \
+         {BIN_NAME} run <file.{EXT}>\n       \
+         {BIN_NAME} version",
+        BIN_NAME = BIN_NAME,
+        EXT = resolve::EXT
+    );
+}
+
 /// Runs the full pipeline (load modules, typecheck, borrowcheck, codegen,
 /// `cc`) and produces a native binary at `out_path`. Returns `false`
 /// (having already printed a diagnostic) on any failure.
@@ -75,16 +89,26 @@ fn default_out_path(source_path: &str) -> PathBuf {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 || (args[1] != "build" && args[1] != "run") {
-        eprintln!(
-            "usage: {BIN_NAME} build <file.{EXT}> [-o <out>]\n       {BIN_NAME} run <file.{EXT}>",
-            BIN_NAME = BIN_NAME,
-            EXT = resolve::EXT
-        );
-        return ExitCode::FAILURE;
-    }
-    let command = args[1].as_str();
-    let path = &args[2];
+    let command = match args.get(1).map(String::as_str) {
+        // `kelpc version` needs no further arguments, so it is answered before
+        // the two commands that do.
+        Some("version") => {
+            println!("{BIN_NAME} {VERSION}");
+            return ExitCode::SUCCESS;
+        }
+        Some(c @ ("build" | "run")) => c,
+        _ => {
+            usage();
+            return ExitCode::FAILURE;
+        }
+    };
+    let path = match args.get(2) {
+        Some(p) => p.as_str(),
+        None => {
+            usage();
+            return ExitCode::FAILURE;
+        }
+    };
     let out_path = match args.iter().position(|a| a == "-o") {
         Some(i) => match args.get(i + 1) {
             Some(p) => PathBuf::from(p),
