@@ -48,6 +48,9 @@ pub enum Stmt {
     },
     Expr {
         expr: Expr,
+        /// false only for a tail expression: the last statement in a block,
+        /// written without a trailing semicolon, whose value is the block's value.
+        has_semi: bool,
         span: Span,
     },
 }

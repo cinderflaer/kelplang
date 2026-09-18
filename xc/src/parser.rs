@@ -140,11 +140,19 @@ impl Parser {
                 if self.check(&TokenKind::Semi) {
                     let semi = self.advance();
                     let span = expr.span().to(semi.span);
-                    Ok(Stmt::Expr { expr, span })
+                    Ok(Stmt::Expr {
+                        expr,
+                        has_semi: true,
+                        span,
+                    })
                 } else if block_like || self.check(&TokenKind::RBrace) {
                     // block-like statement, or a tail expression ending a block
                     let span = expr.span();
-                    Ok(Stmt::Expr { expr, span })
+                    Ok(Stmt::Expr {
+                        expr,
+                        has_semi: false,
+                        span,
+                    })
                 } else {
                     Err(ParseError {
                         message: format!("expected ';', found {:?}", self.peek_kind()),

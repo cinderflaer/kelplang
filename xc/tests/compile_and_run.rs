@@ -1,0 +1,87 @@
+//! End-to-end regression suite: compiles `.x` fixtures with the real `xc`
+//! binary, then either runs the resulting binary and checks its stdout, or
+//! (for fixtures that should be rejected) checks that `xc build` fails.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn xc_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_xc"))
+}
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(name)
+}
+
+fn out_path(name: &str) -> PathBuf {
+    let mut p = PathBuf::from(std::env::var("CARGO_TARGET_TMPDIR").unwrap_or_else(|_| {
+        std::env::temp_dir().to_string_lossy().to_string()
+    }));
+    p.push(format!("xc_test_{name}"));
+    p
+}
+
+/// Compiles `source` and asserts the resulting binary's stdout equals
+/// `expected` exactly.
+fn assert_compiles_and_runs(source: &str, expected: &str) {
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin).output().expect("failed to run compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the binary for '{source}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(stdout, expected, "unexpected stdout for '{source}'");
+}
+
+/// Asserts that `xc build` rejects `source` (a compile error is expected).
+fn assert_rejected(source: &str) {
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        !build.status.success(),
+        "expected '{source}' to be rejected by the compiler, but it built successfully"
+    );
+}
+
+#[test]
+fn hello_prints_greeting() {
+    assert_compiles_and_runs("../examples/hello.x", "hello, world\n");
+}
+
+#[test]
+fn fib_computes_correctly() {
+    assert_compiles_and_runs("../examples/fib.x", "55\n");
+}
+
+#[test]
+fn if_expression_classifies_correctly() {
+    assert_compiles_and_runs("tests/fixtures/if_expr.x", "-1\n0\n1\n");
+}
+
+#[test]
+fn type_mismatch_is_rejected() {
+    assert_rejected("tests/fixtures/type_mismatch.x");
+}

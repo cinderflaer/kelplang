@@ -1,13 +1,19 @@
-#![allow(dead_code)] // spans and struct fields go unused until type-checking/codegen land (M1+)
+#![allow(dead_code)] // spans and struct fields go unused until borrow-checking lands (M3+)
 
 mod ast;
+mod codegen_c;
+mod driver;
+mod infer;
 mod lexer;
 mod parser;
 mod pretty;
+mod tir;
+mod types;
 
 use lexer::{Lexer, Span};
 use parser::Parser;
-use std::process::ExitCode;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode};
 
 fn line_col(src: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
@@ -32,19 +38,15 @@ fn report_error(path: &str, src: &str, message: &str, span: Span) {
     eprintln!("  --> {path}:{line}:{col}");
 }
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 || args[1] != "build" {
-        eprintln!("usage: xc build <file.x>");
-        return ExitCode::FAILURE;
-    }
-    let path = &args[2];
-
+/// Runs the full pipeline (lex, parse, typecheck, codegen, `cc`) and
+/// produces a native binary at `out_path`. Returns `false` (having already
+/// printed a diagnostic) on any failure.
+fn build(path: &str, out_path: &Path) -> bool {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: could not read '{path}': {e}");
-            return ExitCode::FAILURE;
+            return false;
         }
     };
 
@@ -52,7 +54,7 @@ fn main() -> ExitCode {
         Ok(t) => t,
         Err(e) => {
             report_error(path, &src, &e.message, e.span);
-            return ExitCode::FAILURE;
+            return false;
         }
     };
 
@@ -60,11 +62,75 @@ fn main() -> ExitCode {
         Ok(p) => p,
         Err(e) => {
             report_error(path, &src, &e.message, e.span);
-            return ExitCode::FAILURE;
+            return false;
         }
     };
 
-    print!("{}", pretty::pretty_print(&program));
+    let typed = match infer::check_program(&program) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(path, &src, &e.message, e.span);
+            return false;
+        }
+    };
+
+    let c_source = codegen_c::generate(&typed);
+
+    if let Err(e) = driver::compile_c(&c_source, out_path) {
+        eprintln!("error: {}", e.message);
+        return false;
+    }
+
+    true
+}
+
+fn default_out_path(source_path: &str) -> PathBuf {
+    let stem = Path::new(source_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "a.out".to_string());
+    PathBuf::from(stem)
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 3 || (args[1] != "build" && args[1] != "run") {
+        eprintln!("usage: xc build <file.x> [-o <out>]\n       xc run <file.x>");
+        return ExitCode::FAILURE;
+    }
+    let command = args[1].as_str();
+    let path = &args[2];
+    let out_path = match args.iter().position(|a| a == "-o") {
+        Some(i) => match args.get(i + 1) {
+            Some(p) => PathBuf::from(p),
+            None => {
+                eprintln!("error: '-o' requires a path argument");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => default_out_path(path),
+    };
+
+    if !build(path, &out_path) {
+        return ExitCode::FAILURE;
+    }
+
+    if command == "run" {
+        let abs_out = if out_path.is_absolute() {
+            out_path.clone()
+        } else {
+            PathBuf::from("./").join(&out_path)
+        };
+        match Command::new(&abs_out).status() {
+            Ok(status) => {
+                return ExitCode::from(status.code().unwrap_or(1) as u8);
+            }
+            Err(e) => {
+                eprintln!("error: could not run '{}': {e}", abs_out.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
 
     ExitCode::SUCCESS
 }
