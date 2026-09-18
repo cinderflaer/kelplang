@@ -1,0 +1,6 @@
+name = "http_pool_off"
+# 0 is the documented "no pooling" setting: every request gets its own
+# connection and nothing is kept. This is also the regression test for the
+# compiler's one configuration value — the ceiling is spliced into the shipped
+# stdlib source from this file, so a wrong substitution shows up here.
+http_pool = 0

@@ -486,9 +486,26 @@ impl<'a> Lexer<'a> {
                 Some(b'\\') => match self.advance() {
                     Some(b'n') => text.push('\n'),
                     Some(b't') => text.push('\t'),
+                    // CR is not decoration: every text protocol ends its lines
+                    // with CRLF, and before this arm existed `"\r\n"` decoded to
+                    // the letter `r` followed by a newline (the fallback below),
+                    // so an HTTP request came out malformed with no diagnostic.
+                    Some(b'r') => text.push('\r'),
                     Some(b'"') => text.push('"'),
                     Some(b'\\') => text.push('\\'),
-                    Some(c) => text.push(c as char),
+                    // Anything else is an error rather than the bare character:
+                    // passing it through made `"\q"` mean `"q"`, so a typo was
+                    // silently a different string. `\0` is rejected for a second
+                    // reason — a `str` is NUL-terminated and could not hold one.
+                    Some(c) => {
+                        return Err(LexError {
+                            message: format!(
+                                "unknown escape '\\{}' in a string literal — the escapes are \\n, \\t, \\r, \\\" and \\\\",
+                                c as char
+                            ),
+                            span: Span::new(start, self.pos),
+                        })
+                    }
                     None => {
                         return Err(LexError {
                             message: "unterminated string literal".to_string(),

@@ -1,0 +1,17 @@
+impl "std/str"
+
+// The escape set, pinned: `\n`, `\t`, `\r`, `\"` and `\\`. `\r` is the one S4
+// found broken — it decoded to the letter `r`, because the lexer passed an
+// unknown escape through as the character itself. A protocol whose line ending
+// is CRLF cannot be written without it.
+//
+// Each escape is printed as its byte value, so the fixture fails if any of them
+// changes meaning rather than merely changing shape.
+fun main() {
+    print(str.byte("\r", 0))
+    print(str.len("\r\n"))
+    print(str.byte("\n", 0))
+    print(str.byte("\t", 0))
+    print(str.byte("\\", 0))
+    print(str.byte("\"", 0))
+}

@@ -14,7 +14,36 @@
 
 /// Source for the stdlib module with `impl` id `id` (`std/mem`), or `None`
 /// when the compiler does not ship it.
-pub fn source(id: &str) -> Option<&'static str> {
+///
+/// This is the *configured* form: the shipped text of `std/http` carries a
+/// placeholder for the project's connection ceiling, and this substitutes the
+/// default so that the text is always lexable. Anything that only wants to
+/// know whether a module is shipped can call it and ignore the text.
+pub fn source(id: &str) -> Option<String> {
+    source_configured(id, DEFAULT_HTTP_POOL)
+}
+
+/// The compiler's default when `x.toml` says nothing: four kept-alive
+/// connections per `host:port`. `0` disables pooling entirely, which is what
+/// the manifest writes when a program wants the one-socket-per-request
+/// behavior back.
+pub const DEFAULT_HTTP_POOL: usize = 4;
+
+/// The placeholder `std/http.x` carries instead of a literal pool ceiling.
+/// Substitution happens on the source text *before* lexing, so this spelling
+/// never reaches the parser — and it deliberately avoids `%*name*%`, which is
+/// the alias sigil and would be expanded by `preprocess.rs` first.
+const HTTP_POOL_PLACEHOLDER: &str = "__X_HTTP_POOL__";
+
+/// The shipped source for `id` with the project's configuration spliced in
+/// (S4). Only `std/http` is configuration-dependent so far; every other
+/// module's text is returned unchanged, and an unknown id is `None`.
+pub fn source_configured(id: &str, http_pool: usize) -> Option<String> {
+    let text = raw_source(id)?;
+    Some(text.replace(HTTP_POOL_PLACEHOLDER, &http_pool.to_string()))
+}
+
+fn raw_source(id: &str) -> Option<&'static str> {
     Some(match id {
         "std/mem" => include_str!("../std/mem.x"),
         "std/str" => include_str!("../std/str.x"),
@@ -28,6 +57,7 @@ pub fn source(id: &str) -> Option<&'static str> {
         "std/io" => include_str!("../std/io.x"),
         "std/process" => include_str!("../std/process.x"),
         "std/net" => include_str!("../std/net.x"),
+        "std/http" => include_str!("../std/http.x"),
         _ => return None,
     })
 }
@@ -37,7 +67,7 @@ pub fn source(id: &str) -> Option<&'static str> {
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
-        "std/fmt", "std/io", "std/process", "std/net",
+        "std/fmt", "std/io", "std/process", "std/net", "std/http",
     ]
 }
 

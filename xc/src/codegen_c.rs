@@ -2307,6 +2307,17 @@ fn printf_text(s: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
+            // CR was missing, and a raw carriage return inside a C string
+            // literal is not a string at all — it breaks the generated line.
+            // Nothing could reach this until the lexer learned `\r` (S4), so
+            // it took a protocol that ends its lines with CRLF to find it.
+            '\r' => out.push_str("\\r"),
+            // Any other control byte goes out as three octal digits. Not
+            // `\x`: C's hex escape swallows the hex digits that follow it, so
+            // `\x0d` + "a" would be one escape, not two characters.
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\{:03o}", c as u32));
+            }
             c => out.push(c),
         }
     }
@@ -2322,6 +2333,17 @@ fn c_string_literal(s: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
+            // CR was missing, and a raw carriage return inside a C string
+            // literal is not a string at all — it breaks the generated line.
+            // Nothing could reach this until the lexer learned `\r` (S4), so a
+            // protocol that ends its lines with CRLF is what found it.
+            '\r' => out.push_str("\\r"),
+            // Any other control byte goes out as three octal digits. Not
+            // `\x`: C's hex escape swallows the hex digits that follow it, so
+            // `\x0d` followed by "a" would be one escape, not two characters.
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\{:03o}", c as u32));
+            }
             c => out.push(c),
         }
     }

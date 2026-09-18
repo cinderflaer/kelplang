@@ -2,9 +2,14 @@
 //! binary, then either runs the resulting binary and checks its stdout, or
 //! (for fixtures that should be rejected) checks that `xc build` fails.
 
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn xc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_xc"))
@@ -431,13 +436,14 @@ fn unqualified_imported_item_is_rejected() {
 
 #[test]
 fn unshipped_stdlib_module_is_rejected() {
-    // `std/http` is the next module in the roadmap (S4) and is deliberately
-    // absent; the error names what *is* shipped so the reservation stays
-    // useful.
+    // `std/tls` is the next module in the roadmap (S4b, behind open item 37)
+    // and is deliberately absent; the error names what *is* shipped so the
+    // reservation stays useful. `std/http` shipped in S4 and is no longer the
+    // example here.
     assert_project_rejected(
         "stdlib_import",
         &project("stdlib_import").join("main.x"),
-        "stdlib module 'http' is not implemented yet (shipped today: std/mem",
+        "stdlib module 'tls' is not implemented yet (shipped today: std/mem",
     );
 }
 
@@ -854,7 +860,11 @@ fn an_owned_value_in_statement_position_is_rejected() {
 /// absolute (a grant must be), so the path has to exist before the program
 /// runs and is removed afterwards.
 fn caps_scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("xc_caps_{name}"));
+    // `/tmp` literally, not `std::env::temp_dir()`: the capability patterns in
+    // the fixtures are source text and say `/tmp/xc_caps_<name>/**`, so a
+    // `TMPDIR` that points somewhere else (a sandbox, a CI runner) would leave
+    // the harness writing one directory while the program reads another.
+    let dir = PathBuf::from("/tmp").join(format!("xc_caps_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("could not create the capability scratch directory");
     dir
@@ -1574,5 +1584,359 @@ fn a_net_pattern_that_is_not_a_host_is_rejected() {
         "caps_bad_net_pattern",
         &project("caps_bad_net_pattern").join("main.x"),
         "is not a host",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S4: `std/http`. The client blocks inside `send` until the response arrives,
+// so — unlike S3's `net` fixtures, which could be both ends in one process —
+// an HTTP test needs a real server in another process (or, here, in another
+// thread of the harness).
+//
+// The helper binds loopback, hands the port to the compiled program through
+// argv, serves canned bytes, and counts accepted connections. That count is
+// the point: it turns "the pool reused the socket" into an assertion instead of
+// a timing inference, and it is the only way to see a connection that was made
+// and not reused.
+// ---------------------------------------------------------------------------
+
+/// A canned 200 with a body and one extra header.
+const BODY_200_HELLO: &[u8] =
+    b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Test: yes\r\n\r\nhello";
+
+/// The same, with no `Content-Length`: the body ends at end of file, which is
+/// the one framing that cannot be pooled.
+const BODY_200_CLOSE: &[u8] = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbyebye";
+
+/// `chunk!`, split into two chunks and terminated, with no trailers.
+const CHUNKED_200: &[u8] =
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nchunk\r\n1\r\n!\r\n0\r\n\r\n";
+
+const STATUS_404: &[u8] = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+
+/// A relative redirect, so the follow-up keeps the same host (and therefore the
+/// same pooled connection).
+const REDIRECT_301: &[u8] =
+    b"HTTP/1.1 301 Moved Permanently\r\nLocation: /a\r\nContent-Length: 0\r\n\r\n";
+
+/// A redirect to a *different name* for the same machine. Port 80 is never
+/// reached: the capability check denies the host string first, which is the
+/// point of the test.
+const REDIRECT_ELSEWHERE: &[u8] =
+    b"HTTP/1.1 301 Moved Permanently\r\nLocation: http://localhost/a\r\nContent-Length: 0\r\n\r\n";
+
+/// A 200 whose body echoes the request's, so a POST can assert what arrived.
+fn echo_response(body: &str) -> Vec<u8> {
+    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\ngot:{body}", body.len() + 4)
+        .into_bytes()
+}
+
+/// One connection carrying `responses`, in order.
+fn one_connection(responses: &[&[u8]]) -> Vec<Vec<Vec<u8>>> {
+    vec![responses.iter().map(|r| r.to_vec()).collect()]
+}
+
+/// `n` connections, one response each.
+fn n_connections(response: &[u8], n: usize) -> Vec<Vec<Vec<u8>>> {
+    (0..n).map(|_| vec![response.to_vec()]).collect()
+}
+
+/// A loopback server serving canned responses, and counting the connections it
+/// accepted. It lives in a thread for the duration of one test.
+struct CannedServer {
+    port: u16,
+    accepted: Arc<AtomicUsize>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl CannedServer {
+    /// `connections[i]` is the list of responses to write on the `i`-th
+    /// accepted connection, one per request read from it.
+    fn start(connections: Vec<Vec<Vec<u8>>>) -> CannedServer {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        let handle = thread::spawn(move || serve(listener, connections, counter));
+        CannedServer { port, accepted, handle: Some(handle) }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    /// Waits for the serving thread, so the connection count is final.
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Reads one request: the head, plus the `Content-Length` bytes of body. Returns
+/// false when the peer closed before a request arrived.
+fn read_http_request(stream: &mut TcpStream) -> bool {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&buf[..pos]).to_string();
+            let mut want = 0usize;
+            for line in head.split("\r\n").skip(1) {
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        want = value.trim().parse().unwrap_or(0);
+                    }
+                }
+            }
+            let mut have = buf.len() - (pos + 4);
+            while have < want {
+                match stream.read(&mut chunk) {
+                    Ok(0) => return false,
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        have += n;
+                    }
+                    Err(_) => return false,
+                }
+            }
+            return true;
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) => return false,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => return false,
+        }
+    }
+}
+
+fn serve(
+    listener: TcpListener,
+    connections: Vec<Vec<Vec<u8>>>,
+    accepted: Arc<AtomicUsize>,
+) {
+    let _ = listener.set_nonblocking(true);
+    // A bounded wait: if the client opens fewer connections than the test
+    // canned (because it failed, or reused more than expected), the thread
+    // gives up and the assertion on `accepted` reports the difference. Without
+    // this, a wrong client would hang the suite instead of failing it.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for responses in connections {
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break Some(stream),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() > deadline {
+                        break None;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => break None,
+            }
+        };
+        let Some(mut stream) = stream.take() else { return };
+        // Non-blocking was only for the accept loop: an accepted socket
+        // inherits the listener's mode on Linux, and a non-blocking read here
+        // would report `WouldBlock` for a request that is still in flight.
+        let _ = stream.set_nonblocking(false);
+        accepted.fetch_add(1, Ordering::SeqCst);
+        for response in &responses {
+            if !read_http_request(&mut stream) {
+                break;
+            }
+            if stream.write_all(response).is_err() {
+                break;
+            }
+        }
+        // Dropping the stream closes it, which is what a server that has said
+        // everything it intends to say does. A client that tries to reuse a
+        // connection the server has closed sees end of file, exactly as it
+        // would against a real peer that timed the connection out.
+    }
+}
+
+/// Compiles a project, runs it with the canned server's port as `argv[1]`,
+/// asserts its stdout and how many connections the server accepted.
+fn assert_project_served(
+    name: &str,
+    target: &Path,
+    connections: Vec<Vec<Vec<u8>>>,
+    expected_connections: usize,
+    expected: &str,
+) {
+    let mut server = CannedServer::start(connections);
+    let bin = out_path(name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected project '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .output()
+        .expect("failed to run the compiled binary");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the binary for '{name}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for '{name}'"
+    );
+    assert_eq!(
+        server.accepted(),
+        expected_connections,
+        "'{name}' made an unexpected number of connections"
+    );
+}
+
+/// As `assert_project_served`, for a project expected to be denied at runtime by
+/// the capability check while the server is up.
+fn assert_project_served_denied(
+    name: &str,
+    target: &Path,
+    connections: Vec<Vec<Vec<u8>>>,
+    needle: &str,
+) {
+    let mut server = CannedServer::start(connections);
+    let bin = out_path(name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected project '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .output()
+        .expect("failed to run the compiled binary");
+    server.finish();
+    assert!(
+        !run.status.success(),
+        "expected '{name}' to be denied at runtime, but it exited successfully"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains(needle),
+        "expected the denial for '{name}' to mention '{needle}', got:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_pooled_client_reuses_one_connection_for_five_requests() {
+    // Five requests, one accepted connection: keep-alive and the pool are what
+    // make the second, third, fourth and fifth requests cost nothing.
+    assert_project_served(
+        "http_get",
+        &project("http_get"),
+        one_connection(&[
+            BODY_200_HELLO,
+            BODY_200_HELLO,
+            CHUNKED_200,
+            STATUS_404,
+            BODY_200_CLOSE,
+        ]),
+        1,
+        "200\nhello\ntrue\ntrue\nfalse\nyes\n1\n200\n1\n200\nchunk!\ntrue\n404\nfalse\n200\nbyebye\nfalse\n0\n",
+    );
+}
+
+#[test]
+fn a_relative_redirect_is_followed_on_the_pooled_connection() {
+    // Two hops on one connection (a relative `Location` keeps the host), then a
+    // POST on a second: `http.post_text` goes through `Client.send`, which
+    // never consults a pool.
+    assert_project_served(
+        "http_redirect",
+        &project("http_redirect"),
+        vec![
+            vec![REDIRECT_301.to_vec(), BODY_200_HELLO.to_vec()],
+            vec![echo_response("payload")],
+        ],
+        2,
+        "200\nhello\n1\n200\ngot:payload\n",
+    );
+}
+
+#[test]
+fn the_pool_ceiling_comes_from_the_manifest() {
+    // `http_pool = 0` in this project's `x.toml` reaches `std/http` as the
+    // compiled-in ceiling, so the same two requests now cost two connections.
+    // This is the regression test for S4's only compiler-side change.
+    assert_project_served(
+        "http_pool_off",
+        &project("http_pool_off"),
+        n_connections(BODY_200_HELLO, 2),
+        2,
+        "0\n200\n200\n0\n",
+    );
+}
+
+#[test]
+fn a_redirect_to_a_host_the_grant_does_not_name_is_denied() {
+    // The grant names `127.0.0.1`; the redirect names `localhost`. The check
+    // matches the host as written, so the denial happens even though both names
+    // are the same machine — and it happens before any connection to port 80.
+    assert_project_served_denied(
+        "http_redirect_denied",
+        &project("http_redirect_denied"),
+        one_connection(&[REDIRECT_ELSEWHERE]),
+        "outside the net capability granted to module 'std/http'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The two compiler fixes S4 forced. Both were found by the first real HTTP
+// request: a request whose line ending is not CRLF is not a request.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn carriage_return_is_an_escape_like_any_other() {
+    // `"\r"` used to decode to the letter `r`, because the lexer passed an
+    // unknown escape through as the character itself. Fixing that exposed the
+    // second half: `c_string_literal` did not escape CR either, so the
+    // *generated C* had a raw carriage return inside a string literal, which
+    // is not a string literal at all. Each escape is now pinned as a byte
+    // value, so a change of meaning fails here rather than in a malformed
+    // protocol on the wire.
+    assert_compiles_and_runs("tests/fixtures/escapes.x", "13\n2\n10\n9\n92\n34\n");
+}
+
+#[test]
+fn an_unknown_string_escape_is_rejected_by_name() {
+    // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
+    // string. It is now a diagnostic that names the supported set.
+    let bin = out_path("unknown_escape");
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture("tests/fixtures/unknown_escape.x"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        !build.status.success(),
+        "expected an unknown escape to be rejected, but it built successfully"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("unknown escape '\\q'"),
+        "expected the diagnostic to name the escape, got:\n{stderr}"
     );
 }

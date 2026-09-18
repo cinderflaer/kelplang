@@ -1,0 +1,4 @@
+name = "http_get"
+# The pool ceiling is the project's, not the call site's (S4): how many
+# kept-alive connections to 127.0.0.1:<port> the program agrees to keep.
+http_pool = 2

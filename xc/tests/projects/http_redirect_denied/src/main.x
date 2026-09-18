@@ -1,0 +1,50 @@
+// S4: a redirect to a host the grant does not cover is denied — which is the
+// capability model working, not a limitation.
+//
+// The grant names `127.0.0.1`, the first request names `127.0.0.1`, and the
+// harness answers it with a 301 whose `Location` is `http://localhost/a`. The
+// follow-up request therefore names a host the code never wrote, so it re-runs
+// the connect path and `localhost` fails the compiled-in allowlist. The check
+// matches the host *as written*, so the address being the same machine is
+// irrelevant — which is exactly why `caps_net_denied` exists too.
+impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/str"
+
+fun hdrs().R: List<http.Header> {
+    var l: List<http.Header> = List.empty()
+    return l
+}
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = str.parse_u64(args.get(1).as_str())
+    return p.value.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("http://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+// The URL is built into a local first: `as_str()` needs a place, and a call
+// result is not one (the same rule that makes `x.fmt().as_str()` an error).
+fun req_for(path: &str).R: http.Request {
+    val url = url_for(path)
+    return http.Request(
+        method = String.from_str("GET"),
+        url = url,
+        headers = hdrs(),
+        body = Bytes.empty(),
+    )
+}
+
+fun main() {
+    var pool = http.pool("127.0.0.1", server_port())
+    val r = pool.send(req_for("/redirect-elsewhere"))
+    print(r.status)
+}

@@ -1,0 +1,83 @@
+// S4: the HTTP client over a pooled connection. The harness is the server (a
+// client blocks inside `send` until the response arrives, so one process cannot
+// be both ends), and it asserts that *one* connection carried all five
+// requests — which is what makes the reuse claim a test result rather than a
+// timing inference.
+//
+// The grant names the host as the URL spells it, because that is the string the
+// capability check matches (S3's rule): `127.0.0.1` covers every port on it.
+impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/str"
+
+fun hdrs().R: List<http.Header> {
+    var l: List<http.Header> = List.empty()
+    return l
+}
+
+// The harness passes the canned server's port as the first argument.
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = str.parse_u64(args.get(1).as_str())
+    return p.value.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("http://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+// The URL is built into a local first: `as_str()` needs a place, and a call
+// result is not one (the same rule that makes `x.fmt().as_str()` an error).
+fun req_for(path: &str).R: http.Request {
+    val url = url_for(path)
+    return http.Request(
+        method = String.from_str("GET"),
+        url = url,
+        headers = hdrs(),
+        body = Bytes.empty(),
+    )
+}
+
+fun main() {
+    var pool = http.pool("127.0.0.1", server_port())
+
+    // A framed 200: status, body, and the reuse verdict.
+    val r1 = pool.send(req_for("/a"))
+    print(r1.status)
+    print(r1.body.as_str())
+    print(r1.reusable)
+    print(r1.has_header("x-test"))
+    print(r1.has_header("absent"))
+    print(r1.header("x-test"))
+    print(pool.len())
+
+    // The same URL again, and it goes out on the socket that is already open.
+    val r2 = pool.send(req_for("/a"))
+    print(r2.status)
+    print(pool.len())
+
+    // Chunked: the framing keep-alive makes mandatory.
+    val r3 = pool.send(req_for("/chunked"))
+    print(r3.status)
+    print(r3.body.as_str())
+    print(r3.reusable)
+
+    // A 404 is a normal return, not a panic.
+    val r4 = pool.send(req_for("/missing"))
+    print(r4.status)
+    print(r4.is_ok())
+
+    // `Connection: close` means the body is read to end of file and the
+    // connection is *not* kept: the pool goes back to empty.
+    val r5 = pool.send(req_for("/close"))
+    print(r5.status)
+    print(r5.body.as_str())
+    print(r5.reusable)
+    print(pool.len())
+    pool.close_all()
+}

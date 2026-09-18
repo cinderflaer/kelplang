@@ -1,0 +1,57 @@
+// S4: redirects, and the pooled one-liner.
+//
+// A relative `Location` keeps the same host, so the redirect is followed on the
+// *pooled* connection — one connection carries both hops. The POST at the end
+// goes through `http.post_text`, which uses `Client.send` and therefore a fresh
+// connection: the harness sees exactly two connections and asserts both.
+impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/str"
+
+fun hdrs().R: List<http.Header> {
+    var l: List<http.Header> = List.empty()
+    return l
+}
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = str.parse_u64(args.get(1).as_str())
+    return p.value.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("http://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+// The URL is built into a local first: `as_str()` needs a place, and a call
+// result is not one (the same rule that makes `x.fmt().as_str()` an error).
+fun req_for(path: &str).R: http.Request {
+    val url = url_for(path)
+    return http.Request(
+        method = String.from_str("GET"),
+        url = url,
+        headers = hdrs(),
+        body = Bytes.empty(),
+    )
+}
+
+fun main() {
+    var pool = http.pool("127.0.0.1", server_port())
+
+    // 301 -> /a, same host, so hop 2 reuses hop 1's connection.
+    val r = pool.send(req_for("/redirect"))
+    print(r.status)
+    print(r.body.as_str())
+    print(pool.len())
+
+    // A POST with a body and a content type, straight through `Client.send`.
+    val echo_url = url_for("/echo")
+    val posted = http.post_text(echo_url.as_str(), "payload", "text/plain")
+    print(posted.status)
+    print(posted.text())
+}

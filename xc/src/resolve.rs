@@ -125,7 +125,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         )
     })?;
 
-    let (entry_file, root, src_dir, source_name, source_version) = if given.is_dir() {
+    let (entry_file, root, src_dir, source_name, source_version, http_pool) = if given.is_dir() {
         let manifest_path = given.join("x.toml");
         let text = fs::read_to_string(&manifest_path).map_err(|_| {
             Diagnostic::new(
@@ -154,6 +154,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
             given.join("src"),
             manifest.name,
             manifest.version,
+            manifest.http_pool,
         )
     } else {
         match find_manifest_root(&given) {
@@ -173,14 +174,28 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
                         "",
                     ));
                 }
-                (given, Some(root), src_dir, manifest.name, manifest.version)
+                (
+                    given,
+                    Some(root),
+                    src_dir,
+                    manifest.name,
+                    manifest.version,
+                    manifest.http_pool,
+                )
             }
             None => {
                 let dir = given
                     .parent()
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| PathBuf::from("."));
-                (given, None, dir, None, None)
+                (
+                    given,
+                    None,
+                    dir,
+                    None,
+                    None,
+                    crate::stdlib::DEFAULT_HTTP_POOL,
+                )
             }
         }
     };
@@ -199,6 +214,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         entry: entry.clone(),
         xconf_path,
         sources,
+        http_pool,
         aliases: AliasTable::new(),
         raw: HashMap::new(),
         parsed: HashMap::new(),
@@ -369,6 +385,11 @@ struct Loader<'a> {
     entry: String,
     /// `<project root>/alias.xconf`, whether or not it exists.
     xconf_path: PathBuf,
+    /// The manifest's `http_pool` ceiling (S4), or the compiler default when
+    /// there is no manifest. Threaded into the loader because the value is
+    /// spliced into `std/http`'s *source text* before it is lexed — the one
+    /// configuration value the shipped stdlib reads.
+    http_pool: usize,
     sources: &'a mut SourceMap,
     /// The one flat, global alias table: `alias.xconf` plus every inline
     /// declaration in the project.
@@ -503,10 +524,10 @@ impl Loader<'_> {
         // A `std/...` id comes from the compiler's own shipped sources (M6.2)
         // instead of the project directory; everything downstream — lexing,
         // aliases, parsing, prefixing — is identical.
-        let (path, text) = match crate::stdlib::source(id) {
+        let (path, text) = match crate::stdlib::source_configured(id, self.http_pool) {
             Some(text) => (
                 self.src_dir.join(id).with_extension("x"),
-                text.to_string(),
+                text,
             ),
             None => {
                 let path = self.src_dir.join(format!("{id}.x"));
@@ -671,6 +692,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         name: None,
         version: None,
         entry: "src/main.x".to_string(),
+        http_pool: crate::stdlib::DEFAULT_HTTP_POOL,
     };
     let at = Span::new(0, 0);
     for raw in text.lines() {
@@ -694,6 +716,29 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         };
         let key = key.trim();
         let value = value.trim();
+        // `http_pool` is the one numeric key (S4): a program-level connection
+        // budget is a number, and writing `"4"` for it would be silly. Every
+        // other key is still a double-quoted string, and an unknown key is
+        // still an error rather than an ignored line.
+        if key == "http_pool" {
+            if value.is_empty() || !value.chars().all(|c| c.is_ascii_digit()) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "x.toml value for 'http_pool' must be a non-negative whole number, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            manifest.http_pool = value.parse::<usize>().map_err(|_| {
+                Diagnostic::new(
+                    format!("x.toml value for 'http_pool' is out of range: '{value}'"),
+                    at,
+                    "",
+                )
+            })?;
+            continue;
+        }
         let Some(value) = value
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
@@ -725,6 +770,10 @@ struct Manifest {
     version: Option<String>,
     /// Path relative to the project root; `xc build <dir>` uses it.
     entry: String,
+    /// `http_pool = <n>` (S4): kept-alive HTTP connections per `host:port`.
+    /// `0` disables pooling. Absent means `stdlib::DEFAULT_HTTP_POOL`. A
+    /// loose `.x` file with no manifest always gets the default.
+    http_pool: usize,
 }
 
 fn find_manifest_root(file: &Path) -> Option<PathBuf> {
