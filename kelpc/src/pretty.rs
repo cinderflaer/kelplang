@@ -17,6 +17,10 @@ pub fn pretty_print(program: &Program) -> String {
         print_datac(&mut out, d);
         out.push('\n');
     }
+    for e in &program.enums {
+        print_enum(&mut out, e);
+        out.push('\n');
+    }
     for f in &program.functions {
         print_function(&mut out, f, 0);
         out.push('\n');
@@ -40,6 +44,26 @@ fn print_datac(out: &mut String, d: &DatacDecl) {
         write!(out, "{kw} {}: {}", f.name, f.ty.display()).unwrap();
     }
     out.push_str(")\n");
+}
+
+fn print_enum(out: &mut String, e: &EnumDecl) {
+    write!(out, "enum {} {{\n", e.name).unwrap();
+    for v in &e.variants {
+        write!(out, "    {}", v.name).unwrap();
+        if !v.fields.is_empty() {
+            out.push('(');
+            for (i, f) in v.fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                let kw = if f.mutable { "var" } else { "val" };
+                write!(out, "{kw} {}: {}", f.name, f.ty.display()).unwrap();
+            }
+            out.push(')');
+        }
+        out.push('\n');
+    }
+    out.push_str("}\n");
 }
 
 fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
@@ -254,6 +278,36 @@ fn print_expr(out: &mut String, expr: &Expr) {
                 }
             }
             out.push('"');
+        }
+        Expr::When {
+            scrutinee, arms, ..
+        } => {
+            out.push_str("when ");
+            print_expr(out, scrutinee);
+            out.push_str(" {\n");
+            for arm in arms {
+                out.push_str("    ");
+                match &arm.pattern {
+                    None => out.push_str("else"),
+                    Some(p) => {
+                        out.push_str(&p.variant);
+                        if !p.binds.is_empty() {
+                            out.push('(');
+                            for (i, b) in p.binds.iter().enumerate() {
+                                if i > 0 {
+                                    out.push_str(", ");
+                                }
+                                out.push_str(b.as_deref().unwrap_or("_"));
+                            }
+                            out.push(')');
+                        }
+                    }
+                }
+                out.push_str(" -> ");
+                print_expr(out, &arm.body);
+                out.push('\n');
+            }
+            out.push('}');
         }
     }
 }

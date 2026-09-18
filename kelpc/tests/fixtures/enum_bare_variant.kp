@@ -1,0 +1,9 @@
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun main() {
+    val s = Shape.Circle
+    print(s)
+}

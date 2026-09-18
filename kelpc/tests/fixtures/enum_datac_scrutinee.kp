@@ -1,0 +1,10 @@
+datac Point(val x: i32, val y: i32)
+
+fun f(p: &Point).R: i32 = when p {
+    else -> 0
+}
+
+fun main() {
+    val p = Point(x = 1, y = 2)
+    print(f(p))
+}

@@ -11,6 +11,11 @@ pub struct Program {
     /// `impl`, before `datac`/`fun`).
     pub pds: Vec<PdDecl>,
     pub datacs: Vec<DatacDecl>,
+    /// `enum Name { Variant(...) ... }` declarations, in source order, on the
+    /// same footing as `datacs`: both declare a type, and either may follow
+    /// the other (a field or payload that names another type by value still
+    /// has to name an earlier one).
+    pub enums: Vec<EnumDecl>,
     pub functions: Vec<FunctionDecl>,
 }
 
@@ -78,12 +83,42 @@ pub struct CapGrant {
 pub struct DatacDecl {
     pub name: String,
     pub fields: Vec<FieldDecl>,
+    /// Declaration index within this file, across `datac`s *and* `enum`s, so
+    /// `resolve.rs` can rebuild one merged declaration order out of two
+    /// lists (A-1). A field may only name an earlier type by value, and
+    /// `codegen_c.rs` emits typedefs in that same order.
+    pub order: usize,
     /// Canonical id of the module this was declared in: `""` for the entry
     /// module, otherwise its path relative to `src/` without the `.kp`
     /// suffix (`"shapes/circle"`). Set by `resolve.rs`; the parser leaves it
     /// empty. Used to attribute a diagnostic to the right source file — a
     /// `Span` is only meaningful inside its own file.
     pub module: String,
+    pub span: Span,
+}
+
+/// One `enum Shape { Circle(val r: f64) Empty }` — a tagged union (A-1).
+/// `variants` is never empty, and variant names are unique within the enum;
+/// both are checked in `infer.rs`.
+#[derive(Debug, Clone)]
+pub struct EnumDecl {
+    pub name: String,
+    pub variants: Vec<VariantDecl>,
+    /// Declaration index within this file, across `datac`s *and* `enum`s, so
+    /// `resolve.rs` can rebuild one merged declaration order out of two
+    /// lists (A-1). A field or payload may only name an earlier type by
+    /// value, and `codegen_c.rs` emits typedefs in that same order.
+    pub order: usize,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    pub span: Span,
+}
+
+/// One variant of an `enum`: a name, with zero or more payload fields.
+#[derive(Debug, Clone)]
+pub struct VariantDecl {
+    pub name: String,
+    pub fields: Vec<FieldDecl>,
     pub span: Span,
 }
 
@@ -322,6 +357,35 @@ pub enum Expr {
         parts: Vec<TemplatePart>,
         span: Span,
     },
+    /// `when expr { Variant(bind) -> value ... }` — pattern matching over an
+    /// `enum` scrutinee (A-1, `plan/syntax.md` §6.3). Distinct from the
+    /// boolean `when`, which has no scrutinee and is desugared by the parser
+    /// (see `parser::parse_when`); this form is checked by `infer.rs`, which
+    /// is the first pass that knows the scrutinee's type.
+    When {
+        scrutinee: Box<Expr>,
+        arms: Vec<WhenArm>,
+        span: Span,
+    },
+}
+
+/// One arm of the pattern form of `when`. `pattern` is `None` for an `else`
+/// arm, which covers every variant not named above it.
+#[derive(Debug, Clone)]
+pub struct WhenArm {
+    pub pattern: Option<VariantPattern>,
+    pub body: Expr,
+    pub span: Span,
+}
+
+/// `Rect(w, h)` / `Empty` — a variant name and one binding per payload
+/// field, in field order. `None` in `binds` is `_`: that payload is ignored
+/// rather than named.
+#[derive(Debug, Clone)]
+pub struct VariantPattern {
+    pub variant: String,
+    pub binds: Vec<Option<String>>,
+    pub span: Span,
 }
 
 /// One piece of a string template: literal text, or an interpolated
@@ -355,7 +419,8 @@ impl Expr {
             | Expr::Ref { span: s, .. }
             | Expr::Deref { span: s, .. }
             | Expr::MethodCall { span: s, .. }
-            | Expr::Template { span: s, .. } => *s,
+            | Expr::Template { span: s, .. }
+            | Expr::When { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }
     }

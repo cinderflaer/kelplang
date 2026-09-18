@@ -55,6 +55,10 @@ pub enum TokenKind {
     True,
     False,
     Datac,
+    /// `enum Shape { Circle(val r: f64) Empty }` — a tagged union
+    /// (`plan/syntax.md` §9.2): exactly one variant is live, and `when` on a
+    /// scrutinee matches it (A-1).
+    Enum,
     /// `pd val name = expr` / `pd var name = expr` — a passdown
     /// (`plan/syntax.md` §9).
     Pd,
@@ -443,6 +447,7 @@ impl<'a> Lexer<'a> {
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "datac" => TokenKind::Datac,
+                        "enum" => TokenKind::Enum,
                         "pd" => TokenKind::Pd,
                         "impl" => TokenKind::Impl,
                         "as" => TokenKind::As,

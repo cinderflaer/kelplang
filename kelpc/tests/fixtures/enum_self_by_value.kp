@@ -1,0 +1,8 @@
+enum Loop {
+    More(val next: Loop)
+    Stop
+}
+
+fun main() {
+    print(1)
+}

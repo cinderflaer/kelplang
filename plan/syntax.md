@@ -109,11 +109,11 @@ Inside `(` `)` newlines are insignificant, which is what lets a field list or an
 An identifier starts with a letter or `_`. These words are keywords:
 
 ```
-as  const  datac  else  extern  false  fun  if  impl  mut
+as  const  datac  else  enum  extern  false  fun  if  impl  mut
 pd  return  true  val  var  when  while
 ```
 
-`fn`, `let`, `struct`, `use`, `for`, `loop`, `break`, `continue`, `match`, `enum`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8).
+`fn`, `let`, `struct`, `use`, `for`, `loop`, `break`, `continue`, `match`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8).
 
 ### 2.4 Literals
 
@@ -171,6 +171,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `Map<V>` | owned | keys are always `String`, values are `V`, insertion order |
 | `Box<T>` | owned | one heap cell that holds a `T` or nothing |
 | `datac` name | owned | record with per-field `val`/`var` |
+| `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2) |
 | `Unit` | Copy | absent value, the implicit return type |
 
 Rules that follow from the table:
@@ -279,7 +280,22 @@ fun classify(n: i32).R: &str = when {
 }
 ```
 
-Each arm is `condition -> value` and `->` appears nowhere else in the language. `when` is the boolean form only: conditions, not patterns. Arms are evaluated in order, `else` is required when a value is produced, and there is no exhaustiveness analysis beyond that. `when` desugars to nested `if`/`else if`/`else`.
+Each arm is `condition -> value` and `->` appears nowhere else in the language. Arms are evaluated in order, `else` is required when a value is produced, and there is no exhaustiveness analysis beyond that. `when` desugars to nested `if`/`else if`/`else`.
+
+With a scrutinee, `when` becomes pattern matching over an `enum`, and `->` is the same arrow:
+
+```kelp
+fun area(s: &Shape).R: f64 = when s {
+    Circle(r) -> math.PI * r * r
+    Rect(w, h) -> w * h
+    Empty -> 0.0
+}
+```
+
+- The scrutinee's type is an `enum`, and every arm head is one of its variants (9.2). An `else ->` arm matches every variant not named above it.
+- Matching must be exhaustive: either every variant has an arm, or an `else` arm is present. A missing variant is a compile error that names it.
+- There are no guards, no literal patterns and no nested patterns in v1; an arm head is a variant name with one binding per payload field, and `_` ignores a payload.
+- `when` without a scrutinee is the boolean form above. The two forms cannot be mixed: `when` with a scrutinee never evaluates a condition.
 
 ### 6.4 `return`
 
@@ -376,7 +392,11 @@ print(c.total())
 - Passing a receiver to a method does not move it.
 - Builtin types have methods too, listed in 12 and 13 (`String.push_str`, `List.push`, `n.to_u64`, and so on).
 
-## 9. `datac`
+## 9. `datac` and `enum`
+
+### 9.1 `datac`
+
+A `datac` is a record: every field exists, in every value.
 
 ```kelp
 datac Point(val x: i32, val y: i32)
@@ -407,6 +427,43 @@ c.count = 5              // ok: field is var and c is a var binding
 Reading an owned field *by value* is refused, because the language has no partial moves: `let s = node.text` would produce two owners of the same buffer. Borrow it instead (pass it to a parameter, call a method on it), or store it in a `Box` and `take()` it out.
 
 `datac` values are dropped at the end of the owning scope, fields recursively, in the order that frees what each field points at.
+
+### 9.2 `enum`
+
+An `enum` is a tagged union: exactly one variant is live in a value.
+
+```kelp
+enum Shape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+```
+
+- Variants are newline-separated, and each is a name, optionally followed by `val`/`var` payload fields in parentheses.
+- A payload field obeys every `datac` field rule: owned data only, and a field of another type is stored inline, so that type is declared earlier in the same file. A self-referencing or forward-referencing payload must be behind a `Box` or a `List`.
+- An `enum` value is owned and not `Copy`, like a `datac`. Assigning or passing one moves it, and dropping it drops the live variant's payloads.
+- Construction names the variant, qualified by the `enum`: `Shape.Circle(r = 1.0)`, `Shape.Rect(w = 2.0, h = 3.0)`, `Shape.Empty`. Arguments may be named or positional, as in a `datac` construction.
+- Matching reads the live variant (6.3):
+
+```kelp
+fun area(s: &Shape).R: f64 = when s {
+    Circle(r) -> 3.14159 * r * r
+    Rect(w, h) -> w * h
+    Empty -> 0.0
+}
+
+fun label(s: &Shape).R: &str = when s {
+    Circle(_) -> "circle"
+    Rect(_, _) -> "rect"
+    Empty -> "empty"
+}
+```
+
+- A payload binds as a copy when it is `Copy` and as a shared borrow otherwise, so matching never partially moves the scrutinee: `r` above is an `f64`, and a `Word(val text: String)` payload would bind as `&String`.
+- The scrutinee must be a place (a binding, a field path, or a dereference) — not a call's result — because a payload that is not `Copy` binds as a borrow of it and that borrow has to outlive the arm's body. Bind the value to a `val` first when you have an expression.
+- The number of bindings must equal the number of payload fields, and `_` ignores one.
+- Matching is exhaustive over the variants, or covered by an `else` arm (6.3).
 
 ## 10. Ownership, moves and borrowing
 
@@ -1033,8 +1090,8 @@ Responses frame their body by `Content-Length`, chunked encoding, a bodyless rul
 These are deliberate, and each one has a workaround in this document:
 
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
-- No `Option`, `Result`, `enum` or pattern matching. Fallible stdlib calls return a `datac` with an `ok` flag, or panic.
-- No generics, no closures, no function values, no traits. `List`, `Map` and `Box` are builtins.
+- No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` waits on generics.
+- No generics, so an `enum` cannot carry a type parameter: `enum Option<T>` is not expressible yet. `List`, `Map` and `Box` are builtins.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - No partial moves: an owned field cannot be read out of a borrowed structure (9), so move it with `Box.take` or pass a borrow.
 - No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.

@@ -1166,6 +1166,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "net_loopback",
         "net_poll",
         "net_resolve",
+        // A-1: an owned payload, a recursive `Box` chain, and an enum inside
+        // `List`/`Map` — each one a place a tag switch could free the wrong
+        // variant or leak one.
+        "enum_owned",
+        "enum_recursive",
+        "enum_container",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2109,4 +2115,69 @@ fn the_download_example_writes_exactly_what_it_received() {
         "unexpected stdout:\n{stdout}"
     );
     let _ = std::fs::remove_file(&out);
+}
+
+// ---------------------------------------------------------------------------
+// A-1: `enum` — tagged unions, variant construction, and pattern `when`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_enum_matches_on_its_live_variant() {
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_basic.kp",
+        "12.000000\n12.000000\n0.000000\n1\n2\n2\n",
+    );
+}
+
+#[test]
+fn an_owned_payload_binds_as_a_borrow() {
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_owned.kp",
+        "5\n0\n0\n5\nfirst\n4\n0\n0\n",
+    );
+}
+
+#[test]
+fn a_recursive_enum_nests_through_a_box() {
+    assert_compiles_and_runs("tests/fixtures/enum_recursive.kp", "0\n7\n6\n");
+}
+
+#[test]
+fn an_enum_is_a_container_element_and_a_container_drops_it() {
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_container.kp",
+        "12.000000\n0.000000\n27.000000\n0.000000\n4\n12\n0\n4\n",
+    );
+}
+
+#[test]
+fn when_arms_do_not_need_a_newline_inside_parentheses() {
+    // A `when` is an expression, and inside `(` `)` the lexer emits no
+    // newline tokens at all — so an arm separator cannot be required there.
+    assert_compiles_and_runs("tests/fixtures/when_in_args.kp", "1\n2\n2\n");
+}
+
+#[test]
+fn enum_misuse_is_rejected() {
+    for name in [
+        // Exhaustiveness, and arm/pattern shape.
+        "enum_non_exhaustive",
+        "enum_unknown_variant",
+        "enum_duplicate_arm",
+        "enum_bind_count",
+        "enum_temp_scrutinee",
+        "enum_datac_scrutinee",
+        // Construction and access.
+        "enum_ctor_name",
+        "enum_bare_variant",
+        "enum_field_access",
+        "enum_method",
+        // Declaration rules, shared with `datac`.
+        "enum_datac_clash",
+        "enum_self_by_value",
+        // No partial moves: a payload binds by borrow, never by move.
+        "enum_payload_move",
+    ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
 }

@@ -1,0 +1,14 @@
+enum Token {
+    Word(val text: String)
+    Blank
+}
+
+fun take(t: &Token).R: String = when t {
+    Word(text) -> text
+    Blank -> String.from_str(s = "")
+}
+
+fun main() {
+    val t = Token.Blank
+    print(take(t).as_str())
+}

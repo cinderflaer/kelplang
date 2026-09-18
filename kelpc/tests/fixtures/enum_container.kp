@@ -1,0 +1,55 @@
+// A-1: an enum is a type like any other, so it can be a `List` element and a
+// `Map` value — and the containers' generated code drops it through the same
+// `needs_drop` machinery a `datac` uses.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun area(s: &Shape).R: f64 = when s {
+    Circle(r) -> 3.0 * r * r
+    Empty -> 0.0
+}
+
+// A variant that owns memory, so the container's drop has to reach through
+// the enum's tag switch: exactly one payload is live, and the others must not
+// be touched.
+enum Token {
+    Word(val text: String)
+    Digits(val n: i64)
+    Blank
+}
+
+fun label(t: &Token).R: usize = when t {
+    Word(text) -> text.len()
+    Digits(n) -> n.to_usize()
+    Blank -> 0
+}
+
+fun main() {
+    var xs: List<Shape> = List.empty()
+    xs.push(Shape.Circle(r = 2.0))
+    xs.push(Shape.Empty)
+    var i: usize = 0
+    while i < xs.len() {
+        print(area(xs.get(i)))
+        i += 1
+    }
+
+    var m: Map<Shape> = Map.empty()
+    m.insert(key = "a", v = Shape.Circle(r = 3.0))
+    m.insert(key = "b", v = Shape.Empty)
+    print(area(m.get(key = "a")))
+    print(area(m.get(key = "b")))
+
+    var ts: List<Token> = List.empty()
+    ts.push(Token.Word(text = String.from_str(s = "four")))
+    ts.push(Token.Digits(n = 12))
+    ts.push(Token.Blank)
+    var j: usize = 0
+    while j < ts.len() {
+        print(label(ts.get(j)))
+        j += 1
+    }
+    print(label(ts.remove(i = 0)))
+}

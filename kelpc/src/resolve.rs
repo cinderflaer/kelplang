@@ -241,6 +241,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         consts: Vec::new(),
         pds: Vec::new(),
         datacs: Vec::new(),
+        enums: Vec::new(),
         functions: Vec::new(),
     };
     for m in &loader.modules {
@@ -263,6 +264,16 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
             d.module = m.id.clone();
             program.datacs.push(d);
         }
+        for e in &parsed.enums {
+            let mut e = e.clone();
+            // The enum's name is prefixed like a `datac`'s, and each variant
+            // is addressed as `Enum.Variant` at the surface — the same
+            // `Type.member` shape a method call has, which is what makes
+            // construction parse without a new expression form (A-1).
+            e.name = format!("{}{}", m.prefix, e.name);
+            e.module = m.id.clone();
+            program.enums.push(e);
+        }
         for f in &parsed.functions {
             let mut f = f.clone();
             match &mut f.receiver {
@@ -273,6 +284,36 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
             }
             f.module = m.id.clone();
             program.functions.push(f);
+        }
+    }
+
+    // One merged declaration order across `datac`s and `enum`s (A-1). Each
+    // declaration carries its index *within its own file*, and the module
+    // list is already in load order, so renumbering here is what gives
+    // `types::owned_types` and `codegen_c` a single sequence to walk: a
+    // field or payload may only name a type declared before it by value, and
+    // the two declaration lists are separate vectors.
+    let mut merged_order = 0usize;
+    for m in &loader.modules {
+        let mut local: Vec<(usize, bool, usize)> = Vec::new();
+        for (i, d) in program.datacs.iter().enumerate() {
+            if d.module == m.id {
+                local.push((d.order, false, i));
+            }
+        }
+        for (i, e) in program.enums.iter().enumerate() {
+            if e.module == m.id {
+                local.push((e.order, true, i));
+            }
+        }
+        local.sort_by_key(|(order, _, _)| *order);
+        for (_, is_enum, idx) in local {
+            if is_enum {
+                program.enums[idx].order = merged_order;
+            } else {
+                program.datacs[idx].order = merged_order;
+            }
+            merged_order += 1;
         }
     }
 

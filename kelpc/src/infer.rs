@@ -5,7 +5,7 @@ use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::resolve::Project;
 use crate::tir;
-use crate::types::{FieldDef, FnSig, StructDef, Ty};
+use crate::types::{EnumDef, FieldDef, FnSig, StructDef, Ty};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -32,6 +32,12 @@ struct VarInfo {
 struct Ctx {
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, StructDef>,
+    /// The `enum` table (A-1), keyed exactly like `structs`. An enum name is
+    /// also present in `structs` (as a definition with no fields) purely so
+    /// that one name-resolution path covers both kinds of user type; this
+    /// table is what construction, pattern matching and the `has no fields`
+    /// diagnostics consult.
+    enums: HashMap<String, EnumDef>,
     /// Top-level `const`s (M6.3), keyed by their module-qualified name and
     /// already folded to a literal — so a use site is a substitution, not a
     /// load from anywhere.
@@ -307,7 +313,7 @@ impl TypeScope<'_> {
                 if resolved == Ty::Struct(ip.to_string()) {
                     return Err(TypeError {
                         message: format!(
-                            "datac '{ip}' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<{ip}>', or a 'List<{ip}>' for many)"
+                            "'{ip}' cannot hold itself by value — that type has no finite size; put it behind indirection ('val next: Box<{ip}>', or a 'List<{ip}>' for many)"
                         ),
                         span: ty.span,
                     });
@@ -407,7 +413,7 @@ impl TypeScope<'_> {
             } else {
                 Err(TypeError {
                     message: format!(
-                        "'{}' is declared after this datac — a datac may only name datacs declared before it by value; behind a 'Box' or 'List' it may name any datac, including itself",
+                        "'{}' is declared after this type — a type may only name types declared before it by value; behind a 'Box' or 'List' it may name any type, including itself",
                         ty.name
                     ),
                     span: ty.span,
@@ -1280,13 +1286,164 @@ pub fn check_program(
     // made a struct-embedding-struct program compile or fail *at random*
     // from one run to the next.
     let mut struct_order: Vec<String> = Vec::new();
-    for (i, d) in program.datacs.iter().enumerate() {
-        let later_datacs: std::collections::HashSet<String> = program
+    // A-1: `datac`s and `enum`s share one declaration order, because either
+    // may name the other's earlier-declared half by value. `merged` is that
+    // order, and `later_of` answers the "declared after this type" question
+    // that turns a forward reference into an explanation instead of
+    // "unknown type".
+    let mut merged: Vec<(usize, String, bool)> = program
+        .datacs
+        .iter()
+        .map(|d| (d.order, d.name.clone(), false))
+        .chain(program.enums.iter().map(|e| (e.order, e.name.clone(), true)))
+        .collect();
+    merged.sort_by_key(|(order, _, _)| *order);
+    let later_of: HashMap<String, std::collections::HashSet<String>> = merged
+        .iter()
+        .enumerate()
+        .map(|(i, (_, name, _))| {
+            (
+                name.clone(),
+                merged[i + 1..].iter().map(|(_, n, _)| n.clone()).collect(),
+            )
+        })
+        .collect();
+    let mut enums: HashMap<String, EnumDef> = HashMap::new();
+    let mut enum_order: Vec<String> = Vec::new();
+    for (order, name, is_enum) in &merged {
+        if *is_enum {
+            let e = program
+                .enums
+                .iter()
+                .find(|e| &e.name == name)
+                .expect("merged order names only declared enums");
+            if enums.contains_key(name) {
+                return Err(Diagnostic::new(
+                    format!("enum '{}' is defined more than once", e.name),
+                    e.span,
+                    e.module.clone(),
+                ));
+            }
+            if structs.contains_key(name) {
+                return Err(Diagnostic::new(
+                    format!("'{}' is used for both a datac and an enum", e.name),
+                    e.span,
+                    e.module.clone(),
+                ));
+            }
+            if Ty::from_name(&e.name).is_some() {
+                return Err(Diagnostic::new(
+                    format!("'{}' is a builtin type and cannot be redeclared as an enum", e.name),
+                    e.span,
+                    e.module.clone(),
+                ));
+            }
+            // Registered *before* its payloads are resolved, exactly as a
+            // `datac` is: that is what lets a payload name the enum being
+            // declared behind a `Box`/`List` (the recursive case), and
+            // `in_progress` below is what rejects naming it by value.
+            structs.insert(
+                e.name.clone(),
+                StructDef {
+                    name: e.name.clone(),
+                    fields: Vec::new(),
+                    order: *order,
+                },
+            );
+            let prefix = project.prefix_of(&e.module);
+            let aliases = project.alias_prefixes_of(&e.module);
+            // A payload of the enum being declared, *by value*, is the
+            // infinite-size case `TypeScope::in_progress` rejects; behind a
+            // `Box` or a `List` it is the recursive type (`Cons` holding
+            // `Box<List2>`) the container rules already allow.
+            let in_progress = Some(e.name.clone());
+            let later_datacs = later_of[name].clone();
+            let mut variants = Vec::new();
+            for v in &e.variants {
+                if variants
+                    .iter()
+                    .any(|vd: &crate::types::VariantDef| vd.name == v.name)
+                {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "variant '{}' is defined more than once in enum '{}'",
+                            v.name, e.name
+                        ),
+                        v.span,
+                        e.module.clone(),
+                    ));
+                }
+                let mut fields: Vec<FieldDef> = Vec::new();
+                for f in &v.fields {
+                    if fields.iter().any(|fd: &FieldDef| fd.name == f.name) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "payload field '{}' is defined more than once in variant '{}'",
+                                f.name, v.name
+                            ),
+                            f.span,
+                            e.module.clone(),
+                        ));
+                    }
+                    let ty = TypeScope {
+                        structs: &structs,
+                        prefix,
+                        aliases: &aliases,
+                        later_datacs: Some(&later_datacs),
+                        in_progress: in_progress.as_deref(),
+                    }
+                    .resolve(&f.ty, false)
+                    .map_err(|err| err.in_module(&e.module))?;
+                    if matches!(ty, Ty::Str | Ty::Ref { .. }) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "payload field '{}' is a borrowed type ('{}') — an enum holds owned data only in v1, so a '&str' or reference payload is not expressible",
+                                f.name,
+                                ty.display()
+                            ),
+                            f.span,
+                            e.module.clone(),
+                        ));
+                    }
+                    fields.push(FieldDef {
+                        name: f.name.clone(),
+                        ty,
+                        mutable: f.mutable,
+                    });
+                }
+                variants.push(crate::types::VariantDef {
+                    name: v.name.clone(),
+                    fields,
+                });
+            }
+            enum_order.push(e.name.clone());
+            enums.insert(
+                e.name.clone(),
+                EnumDef {
+                    name: e.name.clone(),
+                    variants,
+                    order: *order,
+                },
+            );
+            // The placeholder inserted above stays: an enum name is a type
+            // name like any other, so one name-resolution path covers it.
+            // Reading a field off an enum is caught explicitly in
+            // `check_expr`/`check_call`, where the real message lives.
+            continue;
+        }
+        let d = program
             .datacs
             .iter()
-            .skip(i + 1)
-            .map(|later| later.name.clone())
-            .collect();
+            .find(|d| &d.name == name)
+            .expect("merged order names only declared datacs");
+        let later_datacs = later_of[name].clone();
+        if enums.contains_key(&d.name) {
+            return Err(Diagnostic::new(
+                format!("'{}' is used for both a datac and an enum", d.name),
+                d.span,
+                d.module.clone(),
+            ));
+        }
         if structs.contains_key(&d.name) {
             return Err(Diagnostic::new(
                 format!("datac '{}' is defined more than once", d.name),
@@ -1313,6 +1470,7 @@ pub fn check_program(
             StructDef {
                 name: d.name.clone(),
                 fields: Vec::new(),
+                order: *order,
             },
         );
         let in_progress = Some(d.name.clone());
@@ -1363,6 +1521,7 @@ pub fn check_program(
             StructDef {
                 name: d.name.clone(),
                 fields,
+                order: *order,
             },
         );
     }
@@ -1470,7 +1629,7 @@ pub fn check_program(
     //      passdowns declared before that point visible).
     //   3. the wiring scan says which functions reference which passdowns.
     //   4. initializers and function bodies are checked for real.
-    let all_pds = collect_pds(program, project, &sigs, &structs, &consts, &overloads)?;
+    let all_pds = collect_pds(program, project, &sigs, &structs, &enums, &consts, &overloads)?;
     let wired = scan_all(program, &all_pds, &structs, &decl_keys);
 
     if !sigs.contains_key("main") {
@@ -1489,6 +1648,7 @@ pub fn check_program(
             pd,
             &sigs,
             &structs,
+            &enums,
             &consts,
             &overloads,
             project,
@@ -1513,6 +1673,7 @@ pub fn check_program(
             &decl_keys[i],
             &sigs,
             &structs,
+            &enums,
             &consts,
             &overloads,
             project,
@@ -1540,6 +1701,7 @@ pub fn check_program(
             .iter()
             .map(|name| structs[name].clone())
             .collect(),
+        enums: enum_order.iter().map(|name| enums[name].clone()).collect(),
         pds: checked_pds,
         functions,
         caps,
@@ -1566,6 +1728,7 @@ fn collect_pds(
     project: &Project,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
 ) -> std::result::Result<Vec<PdInfo>, Diagnostic> {
@@ -1619,6 +1782,7 @@ fn collect_pds(
                     &decl.module,
                     sigs,
                     structs,
+                    enums,
                     consts,
                     overloads,
                     project,
@@ -1663,6 +1827,7 @@ fn check_pd_initializer(
     pd: &PdInfo,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
@@ -1674,6 +1839,7 @@ fn check_pd_initializer(
         &pd.module,
         sigs,
         structs,
+        enums,
         consts,
         overloads,
         project,
@@ -1692,6 +1858,7 @@ fn base_ctx(
     module: &str,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
@@ -1713,6 +1880,7 @@ fn base_ctx(
     Ctx {
         sigs: sigs.clone(),
         structs: structs.clone(),
+        enums: enums.clone(),
         consts: consts.clone(),
         overloads: overloads.clone(),
         module: module.to_string(),
@@ -1868,6 +2036,25 @@ impl PdScan {
                     }
                 }
             }
+            // A pattern binding shadows a passdown of the same name inside
+            // its arm body, exactly as a `val` does, so the bindings push a
+            // scope of their own (A-1).
+            ast::Expr::When {
+                scrutinee, arms, ..
+            } => {
+                self.scan_expr(scrutinee);
+                for arm in arms {
+                    let mut shadowed = std::collections::HashSet::new();
+                    if let Some(p) = &arm.pattern {
+                        for b in p.binds.iter().flatten() {
+                            shadowed.insert(b.clone());
+                        }
+                    }
+                    self.scopes.push(shadowed);
+                    self.scan_expr(&arm.body);
+                    self.scopes.pop();
+                }
+            }
             ast::Expr::IntLit(..)
             | ast::Expr::FloatLit(..)
             | ast::Expr::StringLit(..)
@@ -1998,7 +2185,10 @@ fn borrow_for_print(value: tir::Expr, _what: &str, _ctx: &Ctx) -> Result<tir::Ex
 fn is_tir_place(expr: &tir::Expr) -> bool {
     matches!(
         expr.kind,
-        tir::ExprKind::Ident(_) | tir::ExprKind::FieldAccess { .. } | tir::ExprKind::Deref { .. }
+        tir::ExprKind::Ident(_)
+            | tir::ExprKind::FieldAccess { .. }
+            | tir::ExprKind::EnumField { .. }
+            | tir::ExprKind::Deref { .. }
     )
 }
 
@@ -2097,6 +2287,7 @@ fn check_function(
     key: &str,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
@@ -2123,6 +2314,7 @@ fn check_function(
         &f.module,
         sigs,
         structs,
+        enums,
         consts,
         overloads,
         project,
@@ -2493,6 +2685,55 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     });
                 }
             }
+            // `Shape.Empty` — a payload-less variant, written without a call
+            // (A-1). `Shape.Circle` is the error case: a variant that carries
+            // payload has to be constructed with its arguments.
+            if let Some(ename) = enum_path(base, ctx) {
+                let edef = ctx
+                    .enums
+                    .get(&ename)
+                    .cloned()
+                    .expect("enum_path only returns known enums");
+                let Some((vidx, vdef)) = edef.variant(field) else {
+                    let names: Vec<String> = edef
+                        .variants
+                        .iter()
+                        .map(|v| format!("'{}'", v.name))
+                        .collect();
+                    return Err(TypeError {
+                        message: format!(
+                            "'{field}' is not a variant of enum '{ename}' — the variants are {}",
+                            names.join(", ")
+                        ),
+                        span: *span,
+                    });
+                };
+                if !vdef.fields.is_empty() {
+                    let fields: Vec<String> =
+                        vdef.fields.iter().map(|f| f.name.clone()).collect();
+                    return Err(TypeError {
+                        message: format!(
+                            "variant '{}.{}' carries payload ({}) — construct it as '{}.{}({})'",
+                            ename,
+                            field,
+                            fields.join(", "),
+                            ename,
+                            field,
+                            fields.join(" = ..., ")
+                        ),
+                        span: *span,
+                    });
+                }
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::EnumLit {
+                        enum_name: ename.clone(),
+                        variant: vidx,
+                        fields: Vec::new(),
+                    },
+                    ty: Ty::Struct(ename),
+                    span: *span,
+                });
+            }
             let base_t = check_expr(base, ctx, None)?;
             let Some(sname) = struct_name_of(&base_t.ty).map(|s| s.to_string()) else {
                 return Err(TypeError {
@@ -2500,6 +2741,16 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     span: *span,
                 });
             };
+            // An enum has no fields to read: its payload is reached through a
+            // pattern, and its tag through `when` (A-1).
+            if ctx.enums.contains_key(&sname) {
+                return Err(TypeError {
+                    message: format!(
+                        "enum '{sname}' has no field '{field}' — match it with 'when {sname} {{ ... }}' to read a payload"
+                    ),
+                    span: *span,
+                });
+            }
             let sdef = ctx.structs.get(&sname).expect("struct types are only produced for known structs");
             let field_ty = sdef.field(field).map(|f| f.ty.clone()).ok_or_else(|| TypeError {
                 message: format!("datac '{sname}' has no field '{field}'"),
@@ -2585,9 +2836,351 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     }
                 }
             }
+            // `Shape.Circle(r = 1.0)` — construction of an `enum` variant
+            // (A-1). Checked before method resolution because it is the same
+            // `Type.member(...)` shape as a method call, and the receiver is
+            // a *type*, not a value.
+            if let Some(ename) = enum_path(receiver, ctx) {
+                return check_enum_construction(&ename, method, args, *span, ctx);
+            }
+            check_method_call_enum_guard(receiver, method, *span, ctx)?;
             check_method_call(receiver, method, args, *span, ctx, expected)
         }
+        ast::Expr::When {
+            scrutinee,
+            arms,
+            span,
+        } => check_when(scrutinee, arms, *span, ctx, expected),
     }
+}
+
+/// The dotted path an expression names, if it is one: `Shape`, `shapes.Shape`,
+/// `sh.Shape`. Used to recognize the enum half of `Enum.Variant(...)` before
+/// the receiver is checked as a value (A-1).
+fn expr_path(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Ident(name, _) => Some(name.clone()),
+        ast::Expr::FieldAccess { base, field, .. } => {
+            Some(format!("{}.{}", expr_path(base)?, field))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `expr` names an `enum` (A-1), resolving the same way a type name
+/// does: a bare name belongs to this module, and an alias-qualified one to the
+/// module it was imported from.
+fn enum_path(expr: &ast::Expr, ctx: &Ctx) -> Option<String> {
+    // A local, parameter or passdown of the same name shadows the type, the
+    // same way it shadows a module alias.
+    if let ast::Expr::Ident(name, _) = expr {
+        if ctx.lookup(name).is_some() || ctx.pds.contains_key(name) {
+            return None;
+        }
+    }
+    let path = expr_path(expr)?;
+    if ctx.enums.contains_key(&path) {
+        return Some(path);
+    }
+    let qualified = match path.split_once('.') {
+        Some((alias, item)) => format!("{}{}", ctx.aliases.get(alias)?, item),
+        None => ctx.qualify_own(&path),
+    };
+    ctx.enums.contains_key(&qualified).then_some(qualified)
+}
+
+/// `Shape.Circle(r = 1.0)` — one variant's worth of payload, checked against
+/// the payload fields exactly as a `datac` construction is checked against its
+/// fields (A-1).
+fn check_enum_construction(
+    ename: &str,
+    variant: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let edef = ctx
+        .enums
+        .get(ename)
+        .cloned()
+        .expect("enum_path only returns known enums");
+    let Some((vidx, vdef)) = edef.variant(variant) else {
+        let names: Vec<String> = edef
+            .variants
+            .iter()
+            .map(|v| format!("'{}'", v.name))
+            .collect();
+        return Err(TypeError {
+            message: format!(
+                "'{ename}.{variant}' is not a variant — the variants of '{ename}' are {}",
+                names.join(", ")
+            ),
+            span,
+        });
+    };
+    let params: Vec<(String, Ty)> = vdef
+        .fields
+        .iter()
+        .map(|f| (f.name.clone(), f.ty.clone()))
+        .collect();
+    let fields = match_args(
+        &format!("variant '{}.{}'", ename, variant),
+        &params,
+        args,
+        span,
+        ctx,
+    )?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::EnumLit {
+            enum_name: ename.to_string(),
+            variant: vidx,
+            fields,
+        },
+        ty: Ty::Struct(ename.to_string()),
+        span,
+    })
+}
+
+/// `when s { Circle(r) -> ... else -> ... }` (A-1) — a pattern match over an
+/// `enum`, lowered here to a chain of `if <tag test> { <bindings> <body> }
+/// else ...`: the same TIR shape the boolean `when` already lowers to in the
+/// parser, plus two node kinds (`EnumTag`, `EnumField`) that codegen emits as
+/// `.tag ==` and `.v.<Variant>.<field>`. No new statement machinery and no new
+/// drop plan are needed as a result.
+fn check_when(
+    scrutinee: &ast::Expr,
+    arms: &[ast::WhenArm],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    // The scrutinee has to be a place: its payloads are copied or borrowed
+    // per arm, and a temporary would have to be evaluated once and kept alive
+    // behind the borrow checker's back. Binding it to a `val` first is the
+    // fix, and the message says so.
+    if !is_ast_place(scrutinee) {
+        return Err(TypeError {
+            message: "the scrutinee of a pattern 'when' must be a place (a binding, a field path, or a '*deref') — bind it to a 'val' first".to_string(),
+            span: scrutinee.span(),
+        });
+    }
+    let scrut = check_expr(scrutinee, ctx, None)?;
+    let Some(ename) = struct_name_of(&scrut.ty).map(|s| s.to_string()) else {
+        return Err(TypeError {
+            message: format!(
+                "'when' with a scrutinee matches an 'enum', but '{}' is not one — for a chain of conditions write 'when {{ cond -> value }}' with no scrutinee",
+                scrut.ty.display()
+            ),
+            span: scrut.span,
+        });
+    };
+    let Some(edef) = ctx.enums.get(&ename).cloned() else {
+        return Err(TypeError {
+            message: format!(
+                "'when' with a scrutinee matches an 'enum', but '{ename}' is a datac — read its fields with '.' instead"
+            ),
+            span: scrut.span,
+        });
+    };
+
+    let mut covered: Vec<Option<usize>> = vec![None; edef.variants.len()];
+    let mut else_seen = false;
+    let mut checked: Vec<(Option<usize>, tir::Block)> = Vec::new();
+    let mut arm_ty: Option<Ty> = None;
+
+    for (ai, arm) in arms.iter().enumerate() {
+        if else_seen {
+            return Err(TypeError {
+                message: "an 'else' arm must be the last arm of a 'when'".to_string(),
+                span: arm.span,
+            });
+        }
+        let variant = match &arm.pattern {
+            None => {
+                else_seen = true;
+                None
+            }
+            Some(p) => {
+                let Some((vidx, vdef)) = edef.variant(&p.variant) else {
+                    let names: Vec<String> = edef
+                        .variants
+                        .iter()
+                        .map(|v| format!("'{}'", v.name))
+                        .collect();
+                    return Err(TypeError {
+                        message: format!(
+                            "'{}' is not a variant of enum '{ename}' — the variants are {}",
+                            p.variant,
+                            names.join(", ")
+                        ),
+                        span: p.span,
+                    });
+                };
+                if covered[vidx].is_some() {
+                    return Err(TypeError {
+                        message: format!("variant '{}' is matched more than once", p.variant),
+                        span: p.span,
+                    });
+                }
+                if p.binds.len() != vdef.fields.len() {
+                    let fields: Vec<String> =
+                        vdef.fields.iter().map(|f| f.name.clone()).collect();
+                    return Err(TypeError {
+                        message: format!(
+                            "pattern '{}({})' has {} binding(s) but variant '{}' carries {} payload field(s) ({})",
+                            p.variant,
+                            p.binds
+                                .iter()
+                                .map(|b| b.as_deref().unwrap_or("_").to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            p.binds.len(),
+                            p.variant,
+                            vdef.fields.len(),
+                            fields.join(", ")
+                        ),
+                        span: p.span,
+                    });
+                }
+                covered[vidx] = Some(ai);
+                Some(vidx)
+            }
+        };
+
+        // Payload bindings live in a scope of their own, so the same name may
+        // be used by two arms and shadows nothing outside them.
+        let mut bind_stmts: Vec<tir::Stmt> = Vec::new();
+        ctx.scopes.push(HashMap::new());
+        if let (Some(vidx), Some(p)) = (variant, &arm.pattern) {
+            for (fi, f) in edef.variants[vidx].fields.iter().enumerate() {
+                let Some(bind) = &p.binds[fi] else { continue };
+                let field = tir::Expr {
+                    kind: tir::ExprKind::EnumField {
+                        base: Box::new(scrut.clone()),
+                        variant: vidx,
+                        field: fi,
+                    },
+                    ty: f.ty.clone(),
+                    span: p.span,
+                };
+                let (ty, init) = if f.ty.is_copy() {
+                    (f.ty.clone(), field)
+                } else {
+                    // An owned payload binds as a shared borrow: v1 has no
+                    // partial moves, so a payload can never be moved out of
+                    // the scrutinee — the same rule `List.get` follows for an
+                    // owned element.
+                    let ty = Ty::Ref {
+                        mutable: false,
+                        inner: Box::new(f.ty.clone()),
+                    };
+                    (
+                        ty.clone(),
+                        tir::Expr {
+                            kind: tir::ExprKind::Ref {
+                                mutable: false,
+                                expr: Box::new(field),
+                            },
+                            ty,
+                            span: p.span,
+                        },
+                    )
+                };
+                ctx.define(bind, ty.clone(), false);
+                bind_stmts.push(tir::Stmt::Let {
+                    name: bind.clone(),
+                    ty,
+                    init,
+                });
+            }
+        }
+        let body = check_expr(&arm.body, ctx, expected.or(arm_ty.as_ref()))?;
+        ctx.scopes.pop();
+        match &arm_ty {
+            Some(t) if *t != body.ty => {
+                return Err(TypeError {
+                    message: format!(
+                        "'when' arms have different types: '{}' and '{}'",
+                        t.display(),
+                        body.ty.display()
+                    ),
+                    span: arm.span,
+                })
+            }
+            None => arm_ty = Some(body.ty.clone()),
+            _ => {}
+        }
+        checked.push((
+            variant,
+            tir::Block {
+                stmts: bind_stmts,
+                tail: Some(Box::new(body)),
+                span: arm.span,
+            },
+        ));
+    }
+
+    if !else_seen {
+        let missing: Vec<String> = edef
+            .variants
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| covered[*i].is_none())
+            .map(|(_, v)| format!("'{}'", v.name))
+            .collect();
+        if !missing.is_empty() {
+            return Err(TypeError {
+                message: format!(
+                    "this 'when' is not exhaustive: {} of enum '{ename}' has no arm — add an arm, or an 'else' arm",
+                    missing.join(" and ")
+                ),
+                span,
+            });
+        }
+    }
+
+    // Fold right-to-left. The last arm becomes the base `else` and gets no
+    // tag test of its own: after every other arm's test has failed, only its
+    // variant can be live (and when it is an `else` arm, that is its meaning).
+    // Doing it this way also means the chain always has an `else`, so the
+    // temporary an `if`-as-a-value lowers to is always assigned on both
+    // paths — no uninitialized read, and nothing for a C warning to flag.
+    let (_, base_block) = checked
+        .pop()
+        .expect("a 'when' always parses with at least one arm");
+    let mut acc: tir::Block = base_block;
+    for (variant, block) in checked.into_iter().rev() {
+        let vidx = variant.expect("only the last arm may be an 'else' arm");
+        let cond = tir::Expr {
+            kind: tir::ExprKind::EnumTag {
+                expr: Box::new(scrut.clone()),
+                variant: vidx,
+            },
+            ty: Ty::Bool,
+            span,
+        };
+        let block_ty = block.ty();
+        let if_expr = tir::Expr {
+            kind: tir::ExprKind::If {
+                cond: Box::new(cond),
+                then_block: block,
+                else_block: Some(acc),
+            },
+            ty: block_ty,
+            span,
+        };
+        acc = tir::Block {
+            stmts: Vec::new(),
+            tail: Some(Box::new(if_expr)),
+            span,
+        };
+    }
+    let ty = acc.ty();
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Block(acc),
+        ty,
+        span,
+    })
 }
 
 /// Whether a bare identifier names an `impl` alias rather than a value. A
@@ -3000,6 +3593,27 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         });
     }
 
+    // `Shape(r = 1.0)` — an enum is constructed by naming a variant, never by
+    // calling the type itself.
+    if ctx.enums.contains_key(callee) || ctx.enums.contains_key(&ctx.qualify_own(callee)) {
+        let ename = if ctx.enums.contains_key(callee) {
+            callee.to_string()
+        } else {
+            ctx.qualify_own(callee)
+        };
+        let variants: Vec<String> = ctx.enums[&ename]
+            .variants
+            .iter()
+            .map(|v| format!("'{ename}.{}'", v.name))
+            .collect();
+        return Err(TypeError {
+            message: format!(
+                "'{ename}' is an enum — construct one of its variants: {}",
+                variants.join(", ")
+            ),
+            span,
+        });
+    }
     if let Some(sdef) = ctx
         .structs
         .get(callee)
@@ -3241,6 +3855,38 @@ fn check_template(
 /// `List.empty()` gets it from the binding's written type
 /// (`val xs: List<String> = List.empty()`), and `List.of(x)` from `x` or
 /// from `expected` when both are available.
+/// `s.method(...)` where `s` is an `enum` (A-1): there are no methods on an
+/// enum, and the message says what to write instead. Checked before the
+/// method tables so the diagnostic is about the type, not about a missing
+/// `datac 'Shape'`.
+fn check_method_call_enum_guard(receiver: &ast::Expr, method: &str, span: Span, ctx: &mut Ctx) -> Result<()> {
+    if let Some(ename) = enum_path(receiver, ctx) {
+        return Err(TypeError {
+            message: format!(
+                "enum '{ename}' has no method '{method}' — an enum carries no methods in v1; match it with 'when'"
+            ),
+            span,
+        });
+    }
+    // A value of enum type reached any other way (`val s = Shape.Empty` then
+    // `s.to_text()`).
+    if let ast::Expr::Ident(name, _) = receiver {
+        if let Some(info) = ctx.lookup(name) {
+            if let Some(tname) = struct_name_of(&info.ty) {
+                if ctx.enums.contains_key(tname) {
+                    return Err(TypeError {
+                        message: format!(
+                            "enum '{tname}' has no method '{method}' — an enum carries no methods in v1; match it with 'when'"
+                        ),
+                        span,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_method_call(
     receiver: &ast::Expr,
     method: &str,
@@ -3387,7 +4033,16 @@ fn check_container_associated(
         "Map" => Ty::Map(Box::new(elem)),
         _ => Ty::Box(Box::new(elem)),
     };
-    let key = format!("{container}#{method}");
+    // `Map.empty()` and `Map.new()` are one operation — a map starts empty —
+    // so they lower to one key. They used to lower to two and codegen only
+    // ever emitted `__new`, so `Map.empty()` compiled to a call to a function
+    // that did not exist; a `datac`/`enum` value type is not what exposed it,
+    // just what asked for it first.
+    let key = if container == "Map" && method == "empty" {
+        "Map#new".to_string()
+    } else {
+        format!("{container}#{method}")
+    };
     match method {
         "new" if container == "Map" => {
             if !args.is_empty() {

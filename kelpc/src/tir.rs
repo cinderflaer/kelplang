@@ -3,11 +3,17 @@
 
 use crate::ast::{BinOp, UnOp};
 use crate::lexer::Span;
-use crate::types::{StructDef, Ty};
+use crate::types::{EnumDef, StructDef, Ty};
 
 #[derive(Debug, Clone)]
 pub struct Program {
     pub structs: Vec<StructDef>,
+    /// `enum` declarations (A-1), in the same merged declaration order as
+    /// `structs` — each carries its `order`, so `codegen_c.rs` can emit the
+    /// two kinds in one interleaved sequence. An `enum` value is a
+    /// `Ty::Struct` at the type level; this table is what makes it a tagged
+    /// union instead of a record.
+    pub enums: Vec<EnumDef>,
     /// Passdowns (M5.2) in initialization order — module load order, then
     /// declaration order within a module. `codegen_c.rs` emits one global
     /// per entry plus a generated init function that runs before `main`'s
@@ -135,6 +141,30 @@ pub enum ExprKind {
     StructLit {
         name: String,
         fields: Vec<(String, Expr)>,
+    },
+    /// Construction of one `enum` variant (A-1): `Shape.Circle(r = 1.0)`.
+    /// `variant` is the variant's index within the enum, and `fields` is one
+    /// value per payload field in declaration order. Emitted as a C compound
+    /// literal whose `tag` is that index.
+    EnumLit {
+        enum_name: String,
+        variant: usize,
+        fields: Vec<Expr>,
+    },
+    /// Whether the scrutinee's live tag is `variant` — the test that a
+    /// `when` arm lowers to. `ty` is `bool`.
+    EnumTag {
+        expr: Box<Expr>,
+        variant: usize,
+    },
+    /// One payload field of one variant, read out of a value whose tag is
+    /// known to be `variant`. A *place* (like `FieldAccess`), which is what
+    /// lets an owned payload be bound as a shared borrow rather than moved
+    /// out — v1 has no partial moves.
+    EnumField {
+        base: Box<Expr>,
+        variant: usize,
+        field: usize,
     },
     Assign {
         target: Box<Expr>,

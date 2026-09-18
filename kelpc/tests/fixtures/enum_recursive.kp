@@ -1,0 +1,30 @@
+// A-1: a recursive enum, the shape an `Option`/`Result` will take. The
+// payload is indirect (`Box<IntList>`), which is what gives the type a finite
+// size, and the drop function switches on the tag so only the live variant's
+// payload is freed.
+enum IntList {
+    Nil
+    Cons(val head: i64, val tail: Box<IntList>)
+}
+
+fun sum(xs: &IntList).R: i64 = when xs {
+    Nil -> 0
+    Cons(head, tail) -> head + sum(tail.get())
+}
+
+fun main() {
+    val empty = IntList.Nil
+    print(sum(empty))
+
+    val one = IntList.Cons(head = 7, tail = Box.of(IntList.Nil))
+    print(sum(one))
+
+    val three = IntList.Cons(
+        head = 1,
+        tail = Box.of(IntList.Cons(
+            head = 2,
+            tail = Box.of(IntList.Cons(head = 3, tail = Box.of(IntList.Nil))),
+        )),
+    )
+    print(sum(three))
+}

@@ -1,0 +1,42 @@
+// A-1: an owned payload binds as a shared borrow (`&String`), never as a move —
+// v1 has no partial moves, so a `when` can read a payload but cannot take it
+// out of the value that owns it.
+enum Token {
+    Word(val text: String)
+    Digits(val n: i64)
+    Blank
+}
+
+fun width(t: &Token).R: usize = when t {
+    Word(text) -> text.len()
+    Digits(_) -> 0
+    Blank -> 0
+}
+
+// An enum value can live in a `datac` field, in a `List`, or behind a `Box`,
+// and dropping it drops only the live variant's payloads.
+datac Line(val token: Token, val note: String)
+
+fun main() {
+    val a = Token.Word(text = String.from_str(s = "hello"))
+    val b = Token.Digits(n = 42)
+    val c = Token.Blank
+    print(width(a))
+    print(width(b))
+    print(width(c))
+
+    val line = Line(token = Token.Word(text = String.from_str(s = "boxed")), note = String.from_str(s = "first"))
+    print(width(line.token))
+    print(line.note)
+
+    var i: usize = 0
+    while i < 3 {
+        val t = if i == 0 {
+            Token.Word(text = String.from_str(s = "loop"))
+        } else {
+            Token.Blank
+        }
+        print(width(t))
+        i += 1
+    }
+}

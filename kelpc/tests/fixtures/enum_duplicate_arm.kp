@@ -1,0 +1,15 @@
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun area(s: &Shape).R: f64 = when s {
+    Circle(r) -> r
+    Circle(q) -> q
+    Empty -> 0.0
+}
+
+fun main() {
+    val s = Shape.Empty
+    print(area(s))
+}

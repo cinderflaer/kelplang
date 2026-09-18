@@ -1,0 +1,31 @@
+// A-1: a tagged union. Exactly one variant is live, `when` matches on the
+// tag, and a payload binds as a copy (`f64`) or as a borrow (an owned one).
+enum Shape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+
+fun area(s: &Shape).R: f64 = when s {
+    Circle(r) -> 3.0 * r * r
+    Rect(w, h) -> w * h
+    Empty -> 0.0
+}
+
+// `_` ignores a payload; `else` covers every variant not named above it.
+fun tag(s: &Shape).R: i32 = when s {
+    Circle(_) -> 1
+    else -> 2
+}
+
+fun main() {
+    val c = Shape.Circle(r = 2.0)
+    val r = Shape.Rect(w = 3.0, h = 4.0)
+    val e = Shape.Empty
+    print(area(c))
+    print(area(r))
+    print(area(e))
+    print(tag(c))
+    print(tag(r))
+    print(tag(e))
+}

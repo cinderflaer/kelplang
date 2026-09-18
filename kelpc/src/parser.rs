@@ -95,34 +95,47 @@ impl Parser {
         let mut consts = Vec::new();
         let mut pds = Vec::new();
         let mut datacs = Vec::new();
+        let mut enums = Vec::new();
         let mut functions = Vec::new();
+        // One counter across both type declarations: it is what `resolve.rs`
+        // uses to rebuild a single merged declaration order from the two
+        // lists (A-1).
+        let mut type_order = 0usize;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
             if self.check(&TokenKind::Impl) {
-                if !consts.is_empty() || !pds.is_empty() || !datacs.is_empty() || !functions.is_empty() {
+                if !consts.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'impl' lines must come first (canonical order: impl, const/pd, datac/fun)".to_string(),
+                        message: "'impl' lines must come first (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
                 impls.push(self.parse_impl_decl()?);
             } else if self.check(&TokenKind::Const) {
-                if !pds.is_empty() || !datacs.is_empty() || !functions.is_empty() {
+                if !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'const' lines must come before any 'pd', 'datac' or 'fun' (canonical order: impl, const/pd, datac/fun)".to_string(),
+                        message: "'const' lines must come before any 'pd', 'datac', 'enum' or 'fun' (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
                 consts.push(self.parse_const_decl()?);
             } else if self.check(&TokenKind::Pd) {
-                if !datacs.is_empty() || !functions.is_empty() {
+                if !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'pd' lines must come before any 'datac' or 'fun' (canonical order: impl, const/pd, datac/fun)".to_string(),
+                        message: "'pd' lines must come before any 'datac', 'enum' or 'fun' (canonical order: impl, const/pd, datac/enum/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
                 pds.push(self.parse_pd_decl()?);
             } else if self.check(&TokenKind::Datac) {
-                datacs.push(self.parse_datac_decl()?);
+                let mut d = self.parse_datac_decl()?;
+                d.order = type_order;
+                type_order += 1;
+                datacs.push(d);
+            } else if self.check(&TokenKind::Enum) {
+                let mut e = self.parse_enum_decl()?;
+                e.order = type_order;
+                type_order += 1;
+                enums.push(e);
             } else {
                 functions.push(self.parse_function()?);
             }
@@ -133,6 +146,7 @@ impl Parser {
             consts,
             pds,
             datacs,
+            enums,
             functions,
         })
     }
@@ -284,6 +298,22 @@ impl Parser {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
         let (name, _) = self.expect_ident()?;
         self.expect(TokenKind::LParen, "'('")?;
+        let fields = self.parse_field_list()?;
+        let end = self.expect(TokenKind::RParen, "')'")?.span;
+        Ok(DatacDecl {
+            name,
+            fields,
+            order: 0,
+            module: String::new(),
+            span: start.to(end),
+        })
+    }
+
+    /// The payload of a variant, or a `datac`'s field list, with the opening
+    /// `(` already consumed and the closing `)` left for the caller. Shared
+    /// so an `enum` variant and a `datac` field obey exactly the same
+    /// `val`/`var name: Type` rules.
+    fn parse_field_list(&mut self) -> PResult<Vec<FieldDecl>> {
         let mut fields = Vec::new();
         while !self.check(&TokenKind::RParen) {
             let mutable = if self.check(&TokenKind::Var) {
@@ -308,10 +338,55 @@ impl Parser {
                 break;
             }
         }
-        let end = self.expect(TokenKind::RParen, "')'")?.span;
-        Ok(DatacDecl {
+        Ok(fields)
+    }
+
+    /// `enum Shape { Circle(val r: f64) Rect(val w: f64, val h: f64) Empty }`
+    /// — variants are newline-separated, and a variant's payload list is the
+    /// same one a `datac` uses (`plan/syntax.md` §9.2).
+    fn parse_enum_decl(&mut self) -> PResult<EnumDecl> {
+        let start = self.expect(TokenKind::Enum, "'enum'")?.span;
+        let (name, _) = self.expect_ident()?;
+        self.expect(TokenKind::LBrace, "'{'")?;
+        self.skip_newlines();
+        let mut variants = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let (vname, vspan) = self.expect_ident()?;
+            let mut fields = Vec::new();
+            if self.check(&TokenKind::LParen) {
+                self.advance();
+                fields = self.parse_field_list()?;
+                self.expect(TokenKind::RParen, "')'")?;
+            }
+            variants.push(VariantDecl {
+                name: vname,
+                fields,
+                span: vspan,
+            });
+            if !self.check(&TokenKind::RBrace) {
+                if !self.check(&TokenKind::Newline) {
+                    return Err(ParseError {
+                        message: format!(
+                            "expected a newline or '}}' after an enum variant, found {:?}",
+                            self.peek_kind()
+                        ),
+                        span: self.peek().span,
+                    });
+                }
+                self.skip_newlines();
+            }
+        }
+        let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+        if variants.is_empty() {
+            return Err(ParseError {
+                message: "an 'enum' needs at least one variant".to_string(),
+                span: start.to(end),
+            });
+        }
+        Ok(EnumDecl {
             name,
-            fields,
+            variants,
+            order: 0,
             module: String::new(),
             span: start.to(end),
         })
@@ -930,11 +1005,21 @@ impl Parser {
         })
     }
 
-    /// Parses `when { cond -> expr, ..., else -> expr }` and immediately
-    /// desugars it to a nested `if`/`else if`/`else` chain — `infer.rs` and
-    /// `codegen_c.rs` never see a `when` at all.
+    /// Parses both forms of `when`:
+    ///
+    /// - `when { cond -> value, ..., else -> value }` — no scrutinee, so it
+    ///   is desugared here and now to a nested `if`/`else` chain; `infer.rs`
+    ///   and `codegen_c.rs` never see this form at all.
+    /// - `when expr { Variant(bind) -> value, ..., else -> value }` — a
+    ///   pattern match (A-1), kept as `Expr::When` because only `infer.rs`
+    ///   knows the scrutinee's type, and therefore which variants exist.
+    ///
+    /// The two never collide: the boolean form has no scrutinee.
     fn parse_when(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::When, "'when'")?.span;
+        if !self.check(&TokenKind::LBrace) {
+            return self.parse_when_patterns(start);
+        }
         self.expect(TokenKind::LBrace, "'{'")?;
         self.skip_newlines();
 
@@ -950,16 +1035,12 @@ impl Parser {
             let body = self.parse_expr()?;
             arms.push((cond, body));
 
+            // A newline separates arms, but it is not *required* to: inside
+            // `(` `)` the lexer does not emit newline tokens at all (see
+            // `Lexer::paren_depth`), and a `when` is allowed to be a call
+            // argument. An arm head is unambiguous either way — every arm is
+            // `head -> value`, and `->` appears nowhere else in the language.
             if !self.check(&TokenKind::RBrace) {
-                if !self.check(&TokenKind::Newline) {
-                    return Err(ParseError {
-                        message: format!(
-                            "expected a newline or '}}' after a 'when' arm, found {:?}",
-                            self.peek_kind()
-                        ),
-                        span: self.peek().span,
-                    });
-                }
                 self.skip_newlines();
             }
         }
@@ -1005,6 +1086,79 @@ impl Parser {
             ElseBranch::If(e) => Ok(e),
             ElseBranch::Block(b) => Ok(Expr::Block(b)),
         }
+    }
+
+    /// `when s { Circle(r) -> ... else -> ... }` — the pattern form. Arm
+    /// heads are *shapes*, not expressions: a variant name with an optional
+    /// `(bind, ...)` list, where each bind is an identifier or `_`.
+    fn parse_when_patterns(&mut self, start: Span) -> PResult<Expr> {
+        let scrutinee = self.parse_expr()?;
+        self.expect(TokenKind::LBrace, "'{'")?;
+        self.skip_newlines();
+
+        let mut arms: Vec<WhenArm> = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let pattern = if self.check(&TokenKind::Else) {
+                self.advance();
+                None
+            } else {
+                let (variant, vspan) = self.expect_ident()?;
+                let mut binds = Vec::new();
+                if self.check(&TokenKind::LParen) {
+                    self.advance();
+                    while !self.check(&TokenKind::RParen) {
+                        let (bind, _) = self.expect_ident()?;
+                        // `_` is the ignore-a-payload binding; it lexes as an
+                        // identifier because an identifier may start with `_`.
+                        binds.push(if bind == "_" { None } else { Some(bind) });
+                        if self.check(&TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen, "')'")?;
+                }
+                Some(VariantPattern {
+                    variant,
+                    binds,
+                    span: vspan,
+                })
+            };
+            self.expect(TokenKind::Arrow, "'->'")?;
+            let body = self.parse_expr()?;
+            let arm_span = pattern
+                .as_ref()
+                .map(|p| p.span)
+                .unwrap_or_else(|| body.span())
+                .to(body.span());
+            arms.push(WhenArm {
+                pattern,
+                body,
+                span: arm_span,
+            });
+
+            // A newline separates arms, but it is not *required* to: inside
+            // `(` `)` the lexer does not emit newline tokens at all (see
+            // `Lexer::paren_depth`), and a `when` is allowed to be a call
+            // argument. An arm head is unambiguous either way — every arm is
+            // `head -> value`, and `->` appears nowhere else in the language.
+            if !self.check(&TokenKind::RBrace) {
+                self.skip_newlines();
+            }
+        }
+        let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+        if arms.is_empty() {
+            return Err(ParseError {
+                message: "'when' needs at least one arm".to_string(),
+                span: start.to(end),
+            });
+        }
+        Ok(Expr::When {
+            scrutinee: Box::new(scrutinee),
+            arms,
+            span: start.to(end),
+        })
     }
 }
 
@@ -1165,6 +1319,51 @@ mod tests {
                 }
             }
             other => panic!("expected while stmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_an_enum_and_a_pattern_when() {
+        let p = parse(
+            "enum Shape {\n    Circle(val r: f64)\n    Rect(val w: f64, val h: f64)\n    Empty\n}\n\ndatac Point(val x: i32)\n\nfun area(s: &Shape).R: f64 = when s {\n    Circle(r) -> r\n    Rect(w, h) -> w * h\n    Empty -> 0.0\n}",
+        );
+        assert_eq!(p.enums.len(), 1);
+        let e = &p.enums[0];
+        assert_eq!(e.name, "Shape");
+        assert_eq!(e.variants.len(), 3);
+        assert_eq!(e.variants[0].fields.len(), 1);
+        assert_eq!(e.variants[0].fields[0].name, "r");
+        assert_eq!(e.variants[1].fields.len(), 2);
+        assert!(e.variants[2].fields.is_empty());
+        // `datac` and `enum` share one declaration order, which is what
+        // `resolve.rs` merges and codegen emits in.
+        assert_eq!(e.order, 0);
+        assert_eq!(p.datacs[0].order, 1);
+
+        match &p.functions[0].body {
+            FunctionBody::Expr(Expr::When { arms, .. }) => {
+                assert_eq!(arms.len(), 3);
+                let first = arms[0].pattern.as_ref().unwrap();
+                assert_eq!(first.variant, "Circle");
+                assert_eq!(first.binds, vec![Some("r".to_string())]);
+                assert!(arms[2].pattern.as_ref().unwrap().binds.is_empty());
+                assert!(matches!(arms[2].body, Expr::FloatLit(..)));
+            }
+            other => panic!("expected a pattern `when`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_else_arm_in_a_pattern_when_parses_as_a_catch_all() {
+        let p = parse(
+            "enum Flag {\n    On\n    Off\n}\n\nfun f(x: &Flag).R: i32 = when x {\n    On -> 1\n    else -> 2\n}",
+        );
+        match &p.functions[0].body {
+            FunctionBody::Expr(Expr::When { arms, .. }) => {
+                assert!(arms[0].pattern.is_some());
+                assert!(arms[1].pattern.is_none());
+            }
+            other => panic!("expected a pattern `when`, got {other:?}"),
         }
     }
 

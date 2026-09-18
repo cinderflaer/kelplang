@@ -1,0 +1,8 @@
+enum Shape {
+    Circle(val r: f64)
+}
+
+fun main() {
+    val s = Shape(r = 1.0)
+    print(s)
+}

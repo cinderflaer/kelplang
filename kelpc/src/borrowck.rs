@@ -548,6 +548,7 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
     match &expr.kind {
         tir::ExprKind::Ident(name) => Some(name),
         tir::ExprKind::FieldAccess { base, .. } => tir_root_ident(base),
+        tir::ExprKind::EnumField { base, .. } => tir_root_ident(base),
         tir::ExprKind::Deref { expr: inner } => tir_root_ident(inner),
         // A `pd` read in `main`/an initializer is `Deref(Ref(global))` — the
         // explicit borrow of the generated global — so the chain has to
@@ -581,6 +582,7 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
         tir::ExprKind::StringLit(_) => Some(STATIC_ROOT.to_string()),
         tir::ExprKind::Ident(name) => Some(name.clone()),
         tir::ExprKind::FieldAccess { base, .. }
+        | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
         | tir::ExprKind::Deref { expr: base } => borrow_root(base, ctx),
         tir::ExprKind::Call { callee, args } => {
@@ -616,7 +618,7 @@ fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<String> {
 
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
     let mut plan = DropPlan::default();
-    let owned = crate::types::owned_structs(&program.structs);
+    let owned = crate::types::owned_types(&program.structs, &program.enums);
     // Every callee whose result is a borrow, with the parameter its elided
     // lifetime binds to. Builtins (`String.as_str`) join the same table, so
     // `check_call` has one rule for both.
@@ -895,6 +897,30 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
+        // Construction of an enum variant (A-1): each payload value is used
+        // exactly as a struct field's initializer is.
+        tir::ExprKind::EnumLit { fields, .. } => {
+            for v in fields {
+                check_value(v, ctx)?;
+            }
+            Ok(())
+        }
+        // Reading the tag is a read of the place, not a move of the value.
+        tir::ExprKind::EnumTag { expr: base, .. } => check_place(base, ctx),
+        // A payload read is a *place* read, and it obeys the same
+        // no-partial-moves rule as an owned datac field: an owned payload
+        // cannot be read by value, only borrowed (which is what the `when`
+        // lowering does).
+        tir::ExprKind::EnumField { base, .. } => {
+            check_place(base, ctx)?;
+            if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
+                return Err(BorrowError {
+                    message: "cannot read an owned payload by value: v1 has no partial moves, so this would give two owners of the same buffer — match it and use the binding, which borrows it".to_string(),
+                    span: expr.span,
+                });
+            }
+            Ok(())
+        }
         tir::ExprKind::Assign { target, value } => {
             check_value(value, ctx)?;
             // Read *before* `check_assign_target` reinitializes the binding:
@@ -975,6 +1001,7 @@ fn check_place(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &base.kind {
         tir::ExprKind::Ident(name) => ctx.use_place(name, base.span),
         tir::ExprKind::FieldAccess { base: inner, .. } => check_place(inner, ctx),
+        tir::ExprKind::EnumField { base: inner, .. } => check_place(inner, ctx),
         tir::ExprKind::Deref { expr: inner } => check_value(inner, ctx),
         _ => check_value(base, ctx),
     }

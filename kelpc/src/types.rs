@@ -198,14 +198,49 @@ impl Ty {
     }
 }
 
-/// Which `datac`s own heap memory, transitively. A `datac` may only name
-/// `datac`s declared before it (open item 12), so one pass in declaration
-/// order is already a valid fixpoint — no repeating until stable.
-pub fn owned_structs(structs: &[StructDef]) -> std::collections::HashSet<String> {
+/// Which user-declared types own heap memory, transitively: a `datac` whose
+/// field owns memory, or an `enum` with one such payload in any variant.
+///
+/// A type may only name a type declared before it *by value* (open item 12),
+/// so one pass in merged declaration order is already a valid fixpoint — no
+/// repeating until stable. Merged order matters here for the first time in
+/// A-1: a `datac` and an `enum` may each name the other's earlier-declared
+/// half, so the two declaration lists have to be walked as one sequence.
+pub fn owned_types(
+    structs: &[StructDef],
+    enums: &[EnumDef],
+) -> std::collections::HashSet<String> {
+    enum Decl<'a> {
+        Record(&'a StructDef),
+        Sum(&'a EnumDef),
+    }
+    let mut decls: Vec<(usize, Decl)> = structs
+        .iter()
+        .map(|s| (s.order, Decl::Record(s)))
+        .chain(enums.iter().map(|e| (e.order, Decl::Sum(e))))
+        .collect();
+    decls.sort_by_key(|(order, _)| *order);
+
     let mut owned = std::collections::HashSet::new();
-    for s in structs {
-        if s.fields.iter().any(|f| needs_drop(&f.ty, &owned)) {
-            owned.insert(s.name.clone());
+    for (_, decl) in decls {
+        let (name, fields_own) = match decl {
+            Decl::Record(s) => (
+                &s.name,
+                s.fields.iter().any(|f| needs_drop(&f.ty, &owned)),
+            ),
+            // An `enum` owns memory as soon as *one* variant does: the drop
+            // function switches on the live tag, so any owned payload means
+            // the value needs a drop call.
+            Decl::Sum(e) => (
+                &e.name,
+                e.variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter())
+                    .any(|f| needs_drop(&f.ty, &owned)),
+            ),
+        };
+        if fields_own {
+            owned.insert(name.clone());
         }
     }
     owned
@@ -419,6 +454,38 @@ pub struct FieldDef {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
+    /// Position in the program's merged declaration order, across every
+    /// `datac` *and* `enum` (A-1). A field or payload may only name an
+    /// earlier declaration by value, so this order is a valid topological
+    /// order — for `owned_types`' single pass and for the C typedefs
+    /// `codegen_c.rs` emits.
+    pub order: usize,
+}
+
+/// One variant of an `enum` (A-1): a name and the payload fields it carries.
+#[derive(Debug, Clone)]
+pub struct VariantDef {
+    pub name: String,
+    pub fields: Vec<FieldDef>,
+}
+
+/// A tagged union (A-1): exactly one variant is live in a value. At the type
+/// level an `enum` is a `Ty::Struct`, so it is nominal, non-`Copy` and
+/// droppable exactly like a `datac`; the difference lives here, in the
+/// declaration table, in the pattern checker and in the C layout
+/// (`tag` + `union` instead of a flat field list).
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<VariantDef>,
+    /// See `StructDef::order`.
+    pub order: usize,
+}
+
+impl EnumDef {
+    pub fn variant(&self, name: &str) -> Option<(usize, &VariantDef)> {
+        self.variants.iter().enumerate().find(|(_, v)| v.name == name)
+    }
 }
 
 impl StructDef {

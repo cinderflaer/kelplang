@@ -1,0 +1,9 @@
+datac Shape(val x: i32)
+
+enum Shape {
+    Empty
+}
+
+fun main() {
+    print(1)
+}

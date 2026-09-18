@@ -19,7 +19,7 @@ use crate::borrowck::{DropPlan, DropTarget};
 use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::tir::*;
-use crate::types::{drop_fn_name, needs_drop, owned_structs, StructDef, Ty};
+use crate::types::{drop_fn_name, needs_drop, owned_types, EnumDef, StructDef, Ty};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -787,7 +787,7 @@ fn is_str_like_ty(ty: &Ty) -> bool {
 }
 
 pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> String {
-    let owned = owned_structs(&program.structs);
+    let owned = owned_types(&program.structs, &program.enums);
     let caps = CapTable {
         gated: program.gated.clone(),
         patterns: program
@@ -895,7 +895,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         .collect();
     containers.sort_by_key(|t| (container_depth(t), container_name(t)));
     if !containers.is_empty() {
-        write_tags(&mut out, &program.structs);
+        write_tags(&mut out, &program.structs, &program.enums);
         out.push('\n');
         for ty in &containers {
             write_container_typedef(&mut out, ty);
@@ -913,10 +913,28 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
     }
 
-    for s in &program.structs {
-        write_struct(&mut out, s, &owned);
+    // A-1: `datac`s and `enum`s are emitted in one merged declaration order,
+    // because a field or payload may only name an earlier type by value — so
+    // this order is what makes every typedef complete at the point it is
+    // used, exactly as the single-kind declaration order did before.
+    enum Decl<'a> {
+        Record(&'a StructDef),
+        Sum(&'a EnumDef),
     }
-    if !program.structs.is_empty() {
+    let mut decls: Vec<(usize, Decl)> = program
+        .structs
+        .iter()
+        .map(|s| (s.order, Decl::Record(s)))
+        .chain(program.enums.iter().map(|e| (e.order, Decl::Sum(e))))
+        .collect();
+    decls.sort_by_key(|(order, _)| *order);
+    for (_, decl) in &decls {
+        match decl {
+            Decl::Record(s) => write_struct(&mut out, s, &owned),
+            Decl::Sum(e) => write_enum(&mut out, e, &owned),
+        }
+    }
+    if !decls.is_empty() {
         out.push('\n');
     }
 
@@ -942,7 +960,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     }
     out.push('\n');
 
-    write_pd_globals(&mut out, &program.pds, drops, &owned, sources);
+    write_pd_globals(&mut out, &program.pds, &program.enums, drops, &owned, sources);
 
     for f in &program.functions {
         if f.extern_ {
@@ -950,7 +968,15 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             out.push('\n');
             continue;
         }
-        let mut gen = Gen::new(drops, &owned, f.name.clone(), f.module.clone(), &caps, sources);
+        let mut gen = Gen::new(
+            drops,
+            &owned,
+            &program.enums,
+            f.name.clone(),
+            f.module.clone(),
+            &caps,
+            sources,
+        );
         gen.write_function(f, !program.pds.is_empty());
         out.push_str(&gen.out);
         out.push('\n');
@@ -992,6 +1018,7 @@ fn write_extern(out: &mut String, f: &Function) {
 fn write_pd_globals(
     out: &mut String,
     pds: &[Pd],
+    enums: &[EnumDef],
     drops: &DropPlan,
     owned: &HashSet<String>,
     sources: &SourceMap,
@@ -1010,7 +1037,15 @@ fn write_pd_globals(
         gated: HashMap::new(),
         patterns: HashMap::new(),
     };
-    let gen = Gen::new(drops, owned, String::new(), String::new(), &no_caps, sources);
+    let gen = Gen::new(
+        drops,
+        owned,
+        enums,
+        String::new(),
+        String::new(),
+        &no_caps,
+        sources,
+    );
     out.push_str("// passdowns: assigned once by kelp_init_pds(), read-only afterwards\n");
     for pd in pds {
         writeln!(
@@ -1096,6 +1131,77 @@ fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
     }
 }
 
+/// The generated C member name of one variant's payload struct inside an
+/// `enum`'s union (`v_` keeps a variant named like a C keyword harmless, the
+/// same job `field_name`'s `kelp_` prefix does for fields).
+fn variant_member(name: &str) -> String {
+    format!("kelp_v_{}", crate::types::c_ident(name))
+}
+
+/// One `enum`'s C typedef and drop function (A-1). A tagged union: the tag is
+/// the variant's index, and each variant keeps its payload in a struct of its
+/// own inside a union — so exactly one payload is live, which is the whole
+/// difference from a `datac`.
+///
+/// A variant with no payload still gets a member with one `char` field: an
+/// empty struct is not valid C, and an empty union would be neither valid nor
+/// non-empty when every variant is payload-less (`enum Flag { On Off }`).
+fn write_enum(out: &mut String, e: &EnumDef, owned: &HashSet<String>) {
+    write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&e.name)).unwrap();
+    out.push_str("    int32_t kelp_tag;\n");
+    out.push_str("    union {\n");
+    for v in &e.variants {
+        writeln!(out, "        struct {{").unwrap();
+        if v.fields.is_empty() {
+            out.push_str("            char kelp_none;\n");
+        }
+        for f in &v.fields {
+            writeln!(out, "            {} {};", f.ty.c_type(), field_name(&f.name)).unwrap();
+        }
+        writeln!(out, "        }} {};", variant_member(&v.name)).unwrap();
+    }
+    out.push_str("    } kelp_v;\n");
+    let ty = Ty::Struct(e.name.clone());
+    write!(out, "}} {};\n", ty.c_type()).unwrap();
+
+    if needs_drop(&ty, owned) {
+        writeln!(
+            out,
+            "static void kelp_drop_{}({}* v) {{",
+            crate::types::c_ident(&e.name),
+            ty.c_type()
+        )
+        .unwrap();
+        out.push_str("    switch (v->kelp_tag) {\n");
+        for (i, v) in e.variants.iter().enumerate() {
+            let owned_fields: Vec<&crate::types::FieldDef> = v
+                .fields
+                .iter()
+                .filter(|f| needs_drop(&f.ty, owned))
+                .collect();
+            if owned_fields.is_empty() {
+                continue;
+            }
+            writeln!(out, "    case {i}: {{").unwrap();
+            for f in owned_fields {
+                writeln!(
+                    out,
+                    "        {}(&v->kelp_v.{}.{});",
+                    drop_fn_name(&f.ty),
+                    variant_member(&v.name),
+                    field_name(&f.name)
+                )
+                .unwrap();
+            }
+            out.push_str("        break;\n    }\n");
+        }
+        // No `default:` arm on purpose — `switch` on an unknown tag is a
+        // compiler-visible hole, and every tag this program can produce is
+        // one of the cases above.
+        out.push_str("    }\n}\n");
+    }
+}
+
 /// A container's C typedef, emitted before every `datac`: both containers
 /// hold their contents through a pointer, so a container can be named by the
 /// `datac`s that use it — including the `datac` whose *own* body has not been
@@ -1150,9 +1256,15 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
 
 /// `struct tag_Foo;` for every `datac`, so a container typedef can hold a
 /// pointer to a struct whose body comes later.
-fn write_tags(out: &mut String, structs: &[StructDef]) {
+fn write_tags(out: &mut String, structs: &[StructDef], enums: &[EnumDef]) {
+    // Both kinds are typedef'd through a tagged struct, so both need their tag
+    // forward-declared: a container typedef emitted before them may hold a
+    // pointer to either (`Box<Node>`, `List<Shape>`).
     for s in structs {
         writeln!(out, "struct {};", crate::types::struct_tag(&s.name)).unwrap();
+    }
+    for e in enums {
+        writeln!(out, "struct {};", crate::types::struct_tag(&e.name)).unwrap();
     }
 }
 
@@ -1573,6 +1685,14 @@ fn collect_containers(
                     note_expr(v, lists, boxes, maps);
                 }
             }
+            ExprKind::EnumLit { fields, .. } => {
+                for v in fields {
+                    note_expr(v, lists, boxes, maps);
+                }
+            }
+            ExprKind::EnumTag { expr: base, .. } | ExprKind::EnumField { base, .. } => {
+                note_expr(base, lists, boxes, maps)
+            }
             ExprKind::If {
                 cond,
                 then_block,
@@ -1624,6 +1744,16 @@ fn collect_containers(
             note_ty(&f.ty, lists, boxes, maps);
         }
     }
+    // An enum payload is a struct field as far as containers are concerned: a
+    // `List<Shape>` payload needs its instantiation emitted like any other.
+    for e in &program.enums {
+        note_ty(&Ty::Struct(e.name.clone()), lists, boxes, maps);
+        for v in &e.variants {
+            for f in &v.fields {
+                note_ty(&f.ty, lists, boxes, maps);
+            }
+        }
+    }
     for pd in &program.pds {
         note_ty(&pd.value_ty, lists, boxes, maps);
         note_expr(&pd.init, lists, boxes, maps);
@@ -1658,6 +1788,10 @@ fn write_signature(out: &mut String, f: &Function) {
 struct Gen<'a> {
     out: String,
     drops: &'a DropPlan,
+    /// The `enum` table, so a variant construction and a payload read can name
+    /// the C union member and field they mean (A-1). A slice, not a map: the
+    /// declaration order is what codegen walks, and the lookups are few.
+    enums: &'a [EnumDef],
     /// Which `datac`s own heap memory, so a temporary hoisted for a borrowed
     /// call argument can be freed after the call (see `call_value`).
     owned: &'a HashSet<String>,
@@ -1673,9 +1807,14 @@ struct Gen<'a> {
 }
 
 impl<'a> Gen<'a> {
+    fn enum_def(&self, name: &str) -> Option<&EnumDef> {
+        self.enums.iter().find(|e| e.name == name)
+    }
+
     fn new(
         drops: &'a DropPlan,
         owned: &'a HashSet<String>,
+        enums: &'a [EnumDef],
         function: String,
         module: String,
         caps: &'a CapTable,
@@ -1684,6 +1823,7 @@ impl<'a> Gen<'a> {
         Gen {
             out: String::new(),
             drops,
+            enums,
             owned,
             function,
             module,
@@ -1698,6 +1838,7 @@ impl<'a> Gen<'a> {
         Gen::new(
             self.drops,
             self.owned,
+            self.enums,
             self.function.clone(),
             self.module.clone(),
             self.caps,
@@ -2013,6 +2154,61 @@ impl<'a> Gen<'a> {
                 }
             }
             ExprKind::FieldAccess { base, field } => self.field_access(base, field),
+            // A variant construction is a compound literal in one expression:
+            // the tag is the variant's index, and the payload goes into that
+            // variant's union member by designator. A payload-less variant
+            // needs no initializer at all — C zero-initializes what the
+            // designators do not mention.
+            ExprKind::EnumLit {
+                enum_name,
+                variant,
+                fields,
+            } => {
+                let ty = Ty::Struct(enum_name.clone());
+                let edef = self.enum_def(enum_name);
+                let member = match edef {
+                    Some(e) => variant_member(&e.variants[*variant].name),
+                    None => unreachable!("every enum literal names a declared enum"),
+                };
+                let payload = if fields.is_empty() {
+                    String::new()
+                } else {
+                    let inits: Vec<String> = fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, f)| {
+                            let name = match edef {
+                                Some(e) => {
+                                    field_name(&e.variants[*variant].fields[i].name)
+                                }
+                                None => unreachable!("every enum literal names a declared enum"),
+                            };
+                            format!(".{name} = {}", self.expr_value(f))
+                        })
+                        .collect();
+                    format!(", .kelp_v = {{ .{member} = {{ {} }} }}", inits.join(", "))
+                };
+                format!("({}){{ .kelp_tag = {variant}{payload} }}", ty.c_type())
+            }
+            ExprKind::EnumTag { expr: base, variant } => {
+                format!("({} == {variant})", self.enum_tag_access(base))
+            }
+            ExprKind::EnumField {
+                base,
+                variant,
+                field,
+            } => {
+                // The base's own type names the enum, so nothing has to be
+                // threaded through the TIR node beyond the two indices.
+                let ename =
+                    struct_name_of_ty(&base.ty).expect("an enum field's base is enum-typed");
+                let edef = self
+                    .enum_def(ename)
+                    .expect("an enum field's base names a declared enum");
+                let member = variant_member(&edef.variants[*variant].name);
+                let fname = field_name(&edef.variants[*variant].fields[*field].name);
+                self.enum_member_access(base, &format!("{member}.{fname}"))
+            }
             ExprKind::Ref { expr: sub, .. } => {
                 // A `&str` borrow is the same C value as the `str` it points
                 // at (both `const char*`), so no `&` is emitted for it. Every
@@ -2421,6 +2617,28 @@ impl<'a> Gen<'a> {
     /// sees `c`'s `Ref` type and emits `->`, the outer one sees `inner`'s
     /// plain `Struct` type and emits `.`, with no extra state threaded
     /// through.
+    /// `<base>.kelp_tag`, or `<base>->kelp_tag` when the base is itself a
+    /// borrow — the same rule `field_access` uses for a datac field.
+    fn enum_tag_access(&self, base: &Expr) -> String {
+        let base_text = self.expr_value(base);
+        if matches!(base.ty, Ty::Ref { .. }) {
+            format!("({base_text})->kelp_tag")
+        } else {
+            format!("({base_text}).kelp_tag")
+        }
+    }
+
+    /// One payload of one variant: `<base>.kelp_v.kelp_v_Circle.kelp_r`, or
+    /// the `->` form for a borrowed base.
+    fn enum_member_access(&self, base: &Expr, member: &str) -> String {
+        let base_text = self.expr_value(base);
+        if matches!(base.ty, Ty::Ref { .. }) {
+            format!("({base_text})->kelp_v.{member}")
+        } else {
+            format!("({base_text}).kelp_v.{member}")
+        }
+    }
+
     fn field_access(&self, base: &Expr, field: &str) -> String {
         let base_text = self.expr_value(base);
         if matches!(base.ty, Ty::Ref { .. }) {
@@ -2504,10 +2722,24 @@ fn indent(out: &mut String, depth: usize) {
 /// chain rooted in one, or a dereferenced borrow. Mirrors
 /// `infer::is_tir_place` — used here only to decide whether a borrow needs a
 /// hoisted temporary.
+/// The user type a value names, looking through a borrow — the codegen-side
+/// twin of `infer::struct_name_of`, and the reason an `EnumField` node does
+/// not have to carry the enum's name.
+fn struct_name_of_ty(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(name) => Some(name),
+        Ty::Ref { inner, .. } => struct_name_of_ty(inner),
+        _ => None,
+    }
+}
+
 fn is_place(expr: &Expr) -> bool {
     matches!(
         expr.kind,
-        ExprKind::Ident(_) | ExprKind::FieldAccess { .. } | ExprKind::Deref { .. }
+        ExprKind::Ident(_)
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::EnumField { .. }
+            | ExprKind::Deref { .. }
     )
 }
 

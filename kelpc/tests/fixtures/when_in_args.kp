@@ -1,0 +1,7 @@
+// A `when` is an expression, so it can be a call argument — and inside `(` `)`
+// the lexer emits no newline tokens, so arms there need no separator.
+fun main() {
+    print(when { true -> 1 else -> 2 })
+    print(when { false -> 1 else -> 2 })
+    print(when { 1 > 2 -> 1 2 > 1 -> 2 else -> 3 })
+}
