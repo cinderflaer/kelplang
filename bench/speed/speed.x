@@ -1,0 +1,103 @@
+// Three CPU-bound workloads, the same algorithm in all four languages.
+//
+// `RESULT <name> <ops> <work_ns> <checksum>` per workload; the checksums must
+// agree across languages, which is what makes the timings comparable.
+impl "std/time"
+
+const COLLATZ_N: i64 = 1000000
+const FLOAT_ITERS: i64 = 100000000
+const CALL_ITERS: i64 = 50000000
+const FIB_N: i64 = 34
+const FLOAT_STEP: f64 = 0.00000001
+const FLOAT_THRESHOLD: f64 = 0.75
+
+// Branchy integer work: ~100 dependent steps per start value.
+fun collatz_total(n_end: i64).R: i64 {
+    var total: i64 = 0
+    var n: i64 = 1
+    while n <= n_end {
+        var x: i64 = n
+        var steps: i64 = 0
+        while x != 1 {
+            if x % 2 == 0 {
+                x = x / 2
+            } else {
+                x = x * 3 + 1
+            }
+            steps = steps + 1
+        }
+        total = total + steps
+        n = n + 1
+    }
+    return total
+}
+
+// Floating point: one division and one add per step. Returns the sum; the
+// caller counts the values above the threshold, which is what consumes them.
+fun float_sum(iters: i64, above: mut i64).R: f64 {
+    var x: f64 = 0.0
+    var acc: f64 = 0.0
+    var i: i64 = 0
+    while i < iters {
+        x = x + FLOAT_STEP
+        val v = 1.0 / (1.0 + x * x)
+        acc = acc + v
+        if v > FLOAT_THRESHOLD {
+            // A `mut T` parameter is a borrow, so reading and writing the
+            // pointee takes an explicit `*` — the same rule Rust has.
+            *above = *above + 1
+        }
+        i = i + 1
+    }
+    return acc
+}
+
+// Call-heavy integer work: one small function call per iteration.
+fun mix(a: i64, b: i64).R: i64 = (a * 31 + b % 97) % 1000003
+
+fun call_chain(iters: i64).R: i64 {
+    var a: i64 = 12345
+    var i: i64 = 0
+    while i < iters {
+        a = mix(a, i)
+        i = i + 1
+    }
+    return a
+}
+
+// Recursion, naively exponential, with a counter that makes each call
+// observable through a borrow. Without that side effect LLVM turns the
+// recursion into a loop, which would make this a repetition of `mix` instead
+// of a call-cost measurement. `calls` is also the operation count.
+fun fib(n: i64, calls: mut i64).R: i64 {
+    *calls = *calls + 1
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1, calls) + fib(n - 2, calls)
+}
+
+fun main() {
+    var t0 = time.now_mono_ns()
+    val c = collatz_total(COLLATZ_N)
+    var ns = time.now_mono_ns() - t0
+    print("RESULT collatz $COLLATZ_N $ns $c")
+
+    var above: i64 = 0
+    t0 = time.now_mono_ns()
+    val acc = float_sum(FLOAT_ITERS, above)
+    ns = time.now_mono_ns() - t0
+    print("RESULT float $FLOAT_ITERS $ns $above")
+    print("VALUE $acc")
+
+    t0 = time.now_mono_ns()
+    val c2 = call_chain(CALL_ITERS)
+    ns = time.now_mono_ns() - t0
+    print("RESULT mix $CALL_ITERS $ns $c2")
+
+    var calls: i64 = 0
+    t0 = time.now_mono_ns()
+    val c3 = fib(FIB_N, calls)
+    ns = time.now_mono_ns() - t0
+    print("RESULT fib $calls $ns $c3")
+}

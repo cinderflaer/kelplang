@@ -981,6 +981,16 @@ Details:
 - Manual smoke test after each milestone: `cargo run -p xc -- build examples/hello.x && ./hello` (and similarly for `fib.x`, etc.) to confirm the CLI path works, not just the test harness.
 - After M4, deliberately write a handful of "should fail" `.x` snippets (double move, two simultaneous exclusive borrows, use of a borrow after its owner's scope ends) and confirm the compiler rejects each with a sensible error — this is the actual proof that the borrow checker works, not just that "well-behaved" programs compile. M3's fixtures (`use_after_move.x`, `double_move_in_loop.x`) are the first two entries in that set. M6.2 added four more ("an `extern` needs a compiler body", "an `extern` takes no receiver", "comparing owned values has no meaning", "an owned value in statement position would never be freed").
 - **Heap fixtures are run under AddressSanitizer** (M6.1, extended in M6.2): `heap_fixtures_are_double_free_and_leak_clean` builds every fixture that owns memory — the `Bytes` ones, the two `String` ones, the owned-`pd` one, and the three stdlib ones — rebuilds the generated C with `-fsanitize=address -O1`, and runs it. A double free, a use-after-free, or a leak fails the suite, which is what turns "the `atexit` drop works" and "a struct drops its fields" into test results rather than claims. This is the only test that depends on a toolchain feature, so it skips itself if `cc` has no AddressSanitizer — which means the memory-safety claim is verified on every machine that can verify it, and the rest still pass. Note what the sanitizer does *not* cover: the M6.2 field-assignment leak (open item 15) is real and would be caught by ASAN if a fixture exercised it, so no fixture does.
+- **Two benchmarks under `bench/`**, both with a recorded `results.txt`:
+  `write_20gb/` writes 20 GiB in four languages (Rust, X, C++, Python) and
+  shows the workload is entirely device-bound — all four within 2% at
+  ~1650-1700 MiB/s — and `speed/` runs four CPU-bound workloads with
+  cross-language checksums, which is where a language difference is actually
+  visible (X, C++ and Rust level to within ~1%; Python 27-87x slower
+  depending on the workload). The `speed/` README records the method and the
+  caveats, including the one worth remembering: an unconstrained naive `fib`
+  is rewritten into a loop by LLVM at 0.5 ns/op, so the call-cost workload
+  needs a side-effecting counter to measure anything.
 - Capability tests are compile-time-first: an ungranted `fs.*` reference must fail at resolution, never reach a runtime check. Runtime-denial tests cover the dynamic cases (out-of-grant path, `..` escape, symlink escape, `fs.rename` with only one path granted).
 
 ## Divergence from Kotlin (kept intentionally)
