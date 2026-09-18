@@ -748,12 +748,13 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         if line.is_empty() {
             continue;
         }
+        // A `[section]` header hands the rest of the file to Coral: `name`,
+        // `version`, `entry` and `http_pool` must appear before the first
+        // one, but everything from here to EOF (`[tasks]`, `[dependencies]`,
+        // …) is Coral's manifest surface, not the compiler's, so kelpc reads
+        // it no further rather than rejecting it.
         if line.starts_with('[') {
-            return Err(Diagnostic::new(
-                format!("{MANIFEST_NAME} sections are not supported (found '{line}')"),
-                at,
-                "",
-            ));
+            break;
         }
         let Some((key, value)) = line.split_once('=') else {
             return Err(Diagnostic::new(
