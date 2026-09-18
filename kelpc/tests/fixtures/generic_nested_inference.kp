@@ -1,0 +1,33 @@
+// A-2: inference through a nested generic constructor. `label = 9` binds the
+// `enum`'s parameter first, and the `Box<Tree<T>>` fields then hand it down to
+// `Box.of(Tree.Leaf)` — no annotation anywhere.
+enum Tree<T> {
+    Leaf
+    Branch(val label: T, val left: Box<Tree<T>>, val right: Box<Tree<T>>)
+}
+
+datac Pair<A, B>(val first: A, val second: B)
+
+fun depth(t: &Tree<i32>).R: i32 = when t {
+    Leaf -> 0
+    Branch(_l, left, right) -> 1 + depth(t = left.get())
+}
+
+fun main() {
+    val t = Tree.Branch(
+        label = 9,
+        left = Box.of(Tree.Leaf),
+        right = Box.of(Tree.Branch(
+            label = 8,
+            left = Box.of(Tree.Leaf),
+            right = Box.of(Tree.Leaf),
+        )),
+    )
+    print(depth(t = t))
+
+    // A generic datac nested inside another one, both inferred from the
+    // innermost arguments.
+    val p = Pair(first = Pair(first = 1, second = 2), second = 3)
+    print(p.first.second)
+    print(p.second)
+}

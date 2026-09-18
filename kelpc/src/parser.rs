@@ -609,27 +609,73 @@ impl Parser {
         // a type position, and v1 knows exactly one generic name, so a
         // comma-separated list is parsed here and rejected in `infer.rs`
         // with a message naming which type does not take arguments.
-        let mut args = Vec::new();
         if self.check(&TokenKind::Lt) {
-            self.advance();
-            loop {
-                let arg = self.parse_type()?;
-                args.push(arg);
-                if self.check(&TokenKind::Comma) {
-                    self.advance();
-                    continue;
-                }
-                break;
-            }
-            let close = self.expect(TokenKind::Gt, "'>' to close the type argument list")?;
-            span = span.to(close.span);
+            let (args, close) = self.parse_type_arg_list()?;
+            span = span.to(close);
+            return Ok(TypeExpr {
+                name,
+                args,
+                amp: amp_start.is_some(),
+                span: amp_start.map(|a| a.to(span)).unwrap_or(span),
+            });
         }
         Ok(TypeExpr {
             name,
-            args,
+            args: Vec::new(),
             amp: amp_start.is_some(),
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
+    }
+
+    /// `"<" type ("," type)* ">"`, with the `<` not yet consumed. Returns the
+    /// arguments and the closing `>`'s span, which the expression-level
+    /// speculative reader needs in order to check adjacency.
+    fn parse_type_arg_list(&mut self) -> PResult<(Vec<TypeExpr>, Span)> {
+        self.expect(TokenKind::Lt, "'<'")?;
+        let mut args = Vec::new();
+        loop {
+            args.push(self.parse_type()?);
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        let close = self.expect(TokenKind::Gt, "'>' to close the type argument list")?;
+        Ok((args, close.span))
+    }
+
+    /// `<T, U>` in an *expression*, immediately followed by `(` — the explicit
+    /// instantiation of a generic construction or call, `Pair<i32, String>(...)`
+    /// or `Option.Some<i32>(v = 1)` (A-2).
+    ///
+    /// This is the one place the spelling is ambiguous: `a < b > (c)` is a
+    /// valid comparison chain, and `a < b, c > (d)` is not (a comma cannot
+    /// appear in an expression there), so a lookahead that simply tries is not
+    /// safe. The rule is adjacency — the `<` must touch the name and the `(`
+    /// must touch the `>` — so comparison code, which is written with spaces,
+    /// can never be misread. Returns `None` and restores the token position
+    /// when the form does not apply.
+    fn try_explicit_type_args(&mut self) -> PResult<Option<Vec<TypeExpr>>> {
+        if !self.check(&TokenKind::Lt) {
+            return Ok(None);
+        }
+        let prev_end = if self.pos == 0 {
+            0
+        } else {
+            self.tokens[self.pos - 1].span.end
+        };
+        if self.peek().span.start != prev_end {
+            return Ok(None);
+        }
+        let save = self.pos;
+        if let Ok((args, close)) = self.parse_type_arg_list() {
+            if self.check(&TokenKind::LParen) && self.peek().span.start == close.end {
+                return Ok(Some(args));
+            }
+        }
+        self.pos = save;
+        Ok(None)
     }
 
     fn parse_block(&mut self) -> PResult<Block> {
@@ -872,12 +918,17 @@ impl Parser {
             if self.check(&TokenKind::Dot) {
                 self.advance();
                 let (name, nspan) = self.expect_ident()?;
+                // `Option.Some<i32>(v = 1)` — an explicit instantiation on a
+                // generic `enum`'s variant (A-2). Recognized only in the
+                // adjacent form, so `a.b < c > (d)` stays a comparison.
+                let type_args = self.try_explicit_type_args()?.unwrap_or_default();
                 if self.check(&TokenKind::LParen) {
                     let (args, end) = self.parse_call_args()?;
                     let span = expr.span().to(end);
                     expr = Expr::MethodCall {
                         receiver: Box::new(expr),
                         method: name,
+                        type_args,
                         args,
                         span,
                     };
@@ -952,10 +1003,12 @@ impl Parser {
             TokenKind::Ident(ref name) => {
                 let name = name.clone();
                 self.advance();
+                let type_args = self.try_explicit_type_args()?.unwrap_or_default();
                 if self.check(&TokenKind::LParen) {
                     let (args, end) = self.parse_call_args()?;
                     Ok(Expr::Call {
                         callee: name,
+                        type_args,
                         args,
                         span: tok.span.to(end),
                     })
@@ -1486,6 +1539,36 @@ mod tests {
                 assert!(matches!(**base, Expr::FieldAccess { .. }));
             }
             other => panic!("expected field access, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn explicit_type_arguments_are_recognized_only_when_adjacent() {
+        // A-2: `Pair<i32, String>(...)` — the `<` touches the name and the
+        // `(` touches the `>`, which is what keeps an ordinary comparison
+        // chain (`a < b > (c)`) from being read as an instantiation.
+        let p = parse("fun main() {\n    val x = Pair<i32, String>(a = 1)\n}");
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        match &stmts[0] {
+            Stmt::Let { init: Expr::Call { type_args, .. }, .. } => {
+                assert_eq!(type_args.len(), 2);
+                assert_eq!(type_args[0].name, "i32");
+                assert_eq!(type_args[1].name, "String");
+            }
+            other => panic!("expected a call with type arguments, got {other:?}"),
+        }
+
+        let p = parse("fun main() {\n    val y = a < b > (d)\n}");
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        match &stmts[0] {
+            Stmt::Let { init: Expr::Binary { op: BinOp::Gt, .. }, .. } => {}
+            other => panic!("expected a comparison, got {other:?}"),
         }
     }
 

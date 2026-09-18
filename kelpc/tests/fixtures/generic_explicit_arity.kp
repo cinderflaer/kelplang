@@ -1,0 +1,6 @@
+// A-2: the explicit instantiation's argument count is checked.
+datac Pair<A, B>(val first: A, val second: B)
+
+fun main() {
+    val p = Pair<i32>(first = 1, second = 2)
+}

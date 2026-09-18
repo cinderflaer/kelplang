@@ -1181,8 +1181,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // per-instantiation body owns and drops like any other function.
         "generic_function_owned",
         // A-2: a generic *method* over an instantiation holding an owned
-        // payload.
+        // payload, and a tree of instantiations built by nested inference.
         "generic_method_basic",
+        "generic_nested_inference",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2238,6 +2239,33 @@ fn a_method_on_a_generic_type_is_instantiated_per_receiver() {
         "tests/fixtures/generic_method_basic.kp",
         "1\n3\n2\n3\n9\n7\n4\n",
     );
+}
+
+#[test]
+fn explicit_type_arguments_are_written_at_the_call() {
+    assert_compiles_and_runs(
+        "tests/fixtures/generic_explicit_args.kp",
+        "1\none\n7\n0\n5\ntext\ntrue\n",
+    );
+}
+
+#[test]
+fn nested_generic_constructions_infer_from_their_arguments() {
+    assert_compiles_and_runs("tests/fixtures/generic_nested_inference.kp", "1\n2\n3\n");
+}
+
+#[test]
+fn explicit_type_argument_misuse_is_rejected() {
+    for name in [
+        // The wrong number of arguments.
+        "generic_explicit_arity",
+        // A type argument list on something that is not generic.
+        "generic_explicit_plain",
+        // A method's parameters come from its receiver, so it takes none.
+        "generic_explicit_method",
+    ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
 }
 
 #[test]
