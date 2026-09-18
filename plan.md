@@ -10,6 +10,7 @@ The compiler exists and runs. `xc/` implements the new syntax end-to-end (lexer 
 
 - **Done**: M0 (scaffold + parser for the full new syntax), M1 (types + C codegen + first running binary), M2 (`datac`, per-field `val`/`var`, while loops), M3 (move checking), M4 (borrowing — free-function parameters and local `&`/`&mut`/`*`), M4.5 (receiver-form methods, the piece M4 cut out — see below), M5.1 (multi-file `impl` imports, `x.toml`, strict module-qualified names), M5.2 (`pd` passdowns and string templates), M5.3 (`%*alias*%` substitution — `alias.xconf` + inline `alias` declarations), M6.1 (the builtin owned `Bytes`), M6.2 (owned `String`, `extern fun`, the first stdlib modules in `xc/std/`, owned `datac` fields, owned passdowns), M6.3 (`const`, stdlib-only argument-type overloading, `&str` return elision, the rest of the `str`/`path` surface), M6.4 (a `pd var` is writable from any function), M7 (**capability-based security** — `with caps(...)`, a real `fs`, real `time`/`rand`, and `env` as the gated stub).
 - **Next**: M8 (the stretch milestone: user-definable owned types) or the post-v1 list — collections first, since `fs.list`/`str.split`/argv all wait on a growable sequence type. Nothing is scheduled between here and those.
+- **Far future, and wanted**: M9 — the language's **own backend**, so `xc` emits machine code instead of C. The measured case for it is compile time (~95% of `xc build` is the C toolchain's fixed overhead, not X's compiler) and the measured cost is runtime (`-O0` vs `-O2`, 1.2–5.4x on the `bench/speed` workloads). It is on the list because "my own language, not C with a mask" is a project goal in its own right, not because it would make X faster.
 - **Deferred despite being in `syntax&shii.md`'s deltas**: `caps(...)` is the last one. Those deltas were aspirational scheduling and lost to implementation order; the milestone list below records where each one is now targeted (`impl` imports shipped as M5.1, `pd` and templates as M5.2, `alias` substitution as M5.3, `caps(...)` at M7).
 - **The heap exists, and ownership is checkable at runtime.** `Bytes` and `String` are non-`Copy`, so assigning or returning one moves it; it is freed at the end of the block that owns it, and a `datac` with an owned field drops its fields recursively. A passdown of an owned type is freed by an `atexit` handler, which is v1's only drop point at process exit. The suite proves all of that rather than asserting it: every heap fixture is rebuilt with `-fsanitize=address` and run, so a double free, a use-after-free, or a leak fails `cargo test`. That caught two real bugs during M6.1 (a branch merge that dropped the drop candidates, and a reassignment that leaked) — which is the point of the milestone.
 - **The stdlib is no longer hypothetical.** `xc/std/` ships eight modules inside the compiler binary (`stdlib.rs`, `include_str!`), all written in X and reachable as `impl "std/fs"` etc.: `mem`, `str`, `path`, `math` (ungated), `fs`, `time`, `rand`, `env` (gated). The only non-X pieces are `extern fun` bodies supplied by `externs.rs` — allocation, `strlen`, three `&str` primitives, the libm calls, the syscalls behind `fs`/`time`/`rand`, and `env`'s three stub panics. That is stdlib decision 3 in practice: the policy is X source, the unportable primitive is C.
@@ -27,7 +28,7 @@ The user wants a new statically-typed, systems-level programming language (files
 
 Decisions locked in via discussion:
 - **Memory model**: full ownership + borrowing (moves, borrows, borrow checker) — attempted from the start, not deferred to "moves only."
-- **Backend**: transpile to C, then shell out to `cc`/`clang` to produce a native binary. Chosen over LLVM for implementation simplicity while still getting native `-O2` codegen.
+- **Backend**: transpile to C, then shell out to `cc`/`clang` to produce a native binary. Chosen over LLVM for implementation simplicity while still getting native `-O2` codegen. **This choice is deliberate and re-measured, not accidental** — see M9 for the numbers and for the far-future plan to stop being "C with a mask".
 - **Type system**: fully static with local type inference (Kotlin/Rust-style — annotate signatures, infer locals).
 - **Syntax**: brace-delimited, Kotlin-shaped surface (`fun`, `val`/`var`, `datac`, `.R: T`, no semicolons, receivers instead of `self`/`impl` blocks) over a Rust-shaped memory model. Full spec in the "Syntax & style" section below.
 - **Implementation language**: Rust (good fit for tree-walking, pattern matching over ASTs, and enums for typed IR).
@@ -404,7 +405,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 
 Everything listed above as v1 scope now exists except the modules named under "Not shipped, and known" in "Current state": `net`, `process`, `io`, the `env` bodies, and `fs.mkdir_all`. See "Current state".
 
-Deferred beyond v1 (explicitly out of scope for now, revisit later): generics, traits/interfaces, enums/pattern matching, closures, heap collections (`Vec`), explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope — see Imports & Capabilities sections).
+Deferred beyond v1 (explicitly out of scope for now, revisit later): generics, traits/interfaces, enums/pattern matching, closures, heap collections (`Vec`), explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope — see Imports & Capabilities sections), and the language's own machine-code backend (M9).
 
 ## Compiler pipeline (per milestone)
 
@@ -610,6 +611,42 @@ M5.2 resolved the `pd var` question by making a passdown read-only inside every 
 **Fixtures**: `caps_granted` (read + `exists` inside the grant), `caps_write` (write, size, rename, remove, mkdir), `caps_denied` (a path outside the grant, denied at runtime), `caps_symlink` (a link inside the grant pointing outside it, denied after resolution), `caps_ungranted` (resolution error), `caps_escalation` (over-delegation refused), `caps_bad_pattern` (`..`), `caps_bad_path_pattern` (relative), `caps_bad_domain` (`disk`), `caps_env` (granted stub: the name check passes, the body panics), `caps_time_rand`, `path_normalize`.
 
 **M8 (stretch, only after M0–M7 are solid)** — user-definable owned types, i.e. `Box<T>`-style owners beyond the two builtins. This wants generics, so it is where the first generic machinery gets scoped, or a monomorphic single-parameter special case is hand-rolled. Explicitly a "come back to this later" milestone.
+
+**M9 (far future) — own backend: compile X to machine code, not to C**
+
+Stated as a goal in its own right: *X should stop being C with a mask*. Nothing about the language's identity lives in the backend — the differentiators are the capability system and the move/borrow model — so this is not about making X faster. It is about X not depending on a C compiler to exist, and about fixing the one thing that is actually bad today: **compile time is ~95% somebody else's fixed overhead.**
+
+**Why (measured 2026-09-18 on this machine, best-of-5, using the C that `xc build` already keeps next to the binary):**
+
+| program | `xc build` | clang + link | X's own pipeline |
+| --- | --- | --- | --- |
+| `examples/hello.x` (230 lines of C) | 80 ms | 76 ms | **~3 ms** |
+| `bench/speed/speed.x` (532 lines of C) | 108 ms | 102 ms | **~4 ms** |
+
+And inside clang's share: cc1 startup plus system-header preprocessing ~38 ms (that is the *entire* cost of `-O0 -c` on the trivial file), optimizer ~25 ms on the bigger one, link ~46 ms even for a prebuilt `.o`. So ~76–102 ms of every `xc build` is fixed toolchain cost, and our whole lexer → preprocess → parser → infer → borrowck → codegen pipeline is 3–4 ms. A backend that emits an object and calls `ld` directly could plausibly reach ~10 ms compiles — a 10x compile-time win and no `cc` dependency.
+
+**What it costs, measured rather than guessed:** the *same* generated C compiled `-O0` vs `-O2`, on the four `bench/speed` workloads:
+
+| workload | `-O0` | `-O2` | penalty |
+| --- | --- | --- | --- |
+| `collatz` (branchy int) | 446 ms | 83 ms | 5.4x |
+| `float` (div + add loop) | 265 ms | 101 ms | 2.6x |
+| `mix` (div-bound loop) | 204 ms | 168 ms | 1.2x |
+| `fib` (real calls) | 28.4 ms | 24.0 ms | 1.2x |
+
+`-O0` is the worst realistic case (everything spilled, nothing inlined). A hand-written backend with a decent register allocator lands between `-O0` and `-O2`: call-heavy code barely notices, branchy and FP-heavy code notices a lot. Closing the rest of the gap means writing an optimizer — inlining, CSE, LICM, strength reduction — which is the multi-year part (LLVM is millions of lines; Cranelift is six figures and lands around `-O1`). **That is the trade: ~10x faster compiles and no toolchain, for ~1.5–3x runtime on numeric code until an optimizer exists.**
+
+**Staged path** (each stage is testable with what already exists):
+
+1. **Backend boundary.** `codegen_c.rs` becomes one implementation of a backend, `driver.rs` (43 lines, and the only place that shells out) picks one, and `xc build --backend=…` selects it — with an env-var override so the 97 end-to-end tests, which are backend-agnostic by construction (compile, run, compare stdout), can validate both backends in one `cargo test`.
+2. **Cranelift** (`cranelift-codegen` + `cranelift-frontend` + `object`) for the scalar subset first: no `Bytes`/`String`/`datac`. This is where the compile-time win lands and where the runtime gap is smallest. The `tir` surface is small enough for this to be a real option: 177 lines, ~16 node kinds, four scalar widths.
+3. **`datac` layout**, calling convention, and `extern "C"` calls so the ~20 one-line externs (`sqrt`, `clock_gettime`, `stat`, …) keep working as direct calls.
+4. **Move the non-trivial runtime out of C**: `externs.rs` (251 lines of C bodies) plus `PATH_RUNTIME`/`CAP_RUNTIME` (the glob matcher, the `..`-rejecting path normalizer, `realpath`-with-a-missing-tail). Two fiddly pieces to plan for: `print` currently goes through C's `printf`, and on x86-64 SysV calling a variadic function requires setting `AL` to the number of vector registers used; and the capability checker's matcher/normalizer are X-visible behaviour that is currently C text.
+5. **Then decide.** Keep Cranelift, hand-write x86-64 (own register allocator, no optimizer), or go all the way to a static ELF with raw syscalls and our own runtime — allocator, formatter, and `fs` — which is the only path to a genuinely self-contained binary.
+
+Things that get *better* rather than worse on the way: GNU statement expressions and compound literals leave the strategy (a real backend handles value-position blocks natively), `-fwrapv` becomes explicit wrap semantics we control, and the `#line` gap (open item 20) stops being something we cannot do.
+
+Gate it on `bench/speed/` (runtime parity, four workloads with cross-language checksums) plus a compile-time column — that pair is the whole argument, and it is already in the repo.
 
 Rejected numbering: an earlier revision of this file put moves and borrow checking at M1 and retired M3/M4, on the theory that `syntax&shii.md`'s deltas won. The implementation did not do that — M3 (moves) shipped as M3 — so the record above is the numbering that counts.
 
@@ -1035,3 +1072,5 @@ Details:
 23. **User-code naming case is a configurable lint** (see "Retained Kotlin-look rules" above): a numbered option, `0` = `camelCase` (default), `1` = `snake_case`, room to append more — far-future, lint-only (a beauty warning, never a compile error; any case keeps compiling regardless of the configured preference). Not scheduled to a milestone. Open sub-questions for whenever `xc fmt`/a lint pass is actually built: where the setting lives (`x.toml`? an `xc fmt` flag?), and whether the stdlib's locked `snake_case` convention (naming decision, "Naming and style rules for the stdlib" below) stays an intentional exception or should track the configured case too.
 24. **No extension methods on a builtin or imported type.** M5.1 recorded that `fun circle.Circle.helper()` cannot be parsed (the receiver grammar takes one bare type name), and the same wall is why the stdlib plan's "receiver form is available and preferred in user code" (`name.trim()`) is not true: `fun str.trim(s: &str)` is a *free* function in `std/str`, so callers write `str.trim(s)`. `&str` return elision (M6.3) removed the *other* blocker, so what is left is purely the extension-method spelling. Recorded here because the stdlib's own naming section promises the receiver form.
 25. **`String` still is not a full peer of the plan's sketch.** `as_str` shipped in M6.3 (as a builtin returning a view); `as_bytes` and `slice` are still missing, the first because nothing needs a `&Bytes` and the second because slicing by *length* needs the length-carrying view type of item 22. `String.char_count` counts non-continuation bytes, which is the cheap right answer but not grapheme-aware. **Equality is settled by refusal**: M6.2 made `==`/`!=` on an owned value, a `datac`, or a `str` a type error (`compare_owned.x`, `str_comparison.x`), because the alternative was an invalid C `==` on two structs — and for `str`, a comparison of addresses rather than text, which is silently wrong; `str.eq` is the text comparison. Byte equality for `Bytes` is still absent, and `String.concat` does not exist (whether concatenation should be an operator or `str.concat(a, b)` remains open).
+
+26. **The backend is a C compiler, and the test suite cannot yet tell.** M9 records why that is deliberate and what replacing it would take; the immediate, small prerequisite is that `xc build` has no way to select a backend, so a second one could not be validated by the suite that already exists. Two things to do when M9 starts, both small: an `--backend=` flag (plus an environment override) and a `cargo test` that runs the fixture suite twice. Worth its own item because it is the one gap this file's verification section cannot currently cover: every memory-safety and capability claim in it is verified *through clang*, so an own backend inherits the obligation to re-verify all of that, not just the performance numbers.
