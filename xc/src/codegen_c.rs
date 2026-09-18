@@ -453,7 +453,13 @@ fn c_name(name: &str) -> String {
     if name == "main" {
         name.to_string()
     } else {
-        format!("x_{name}")
+        // `infer::sig_key` mangles a receiver method's name as `Type#name`
+        // (`#` can't appear in a real `.x` identifier, so it can't collide
+        // with a hand-written name at the source level); render it as a
+        // double underscore in C, which — while not fully collision-proof
+        // against a hand-named `Type__name` free function — is unlikely
+        // enough for v1 and not worth a real name-mangling scheme yet.
+        format!("x_{}", name.replace('#', "__"))
     }
 }
 

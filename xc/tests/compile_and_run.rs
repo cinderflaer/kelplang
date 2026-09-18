@@ -160,3 +160,13 @@ fn writing_through_a_shared_borrow_is_rejected() {
 fn moving_a_borrowed_value_is_rejected() {
     assert_rejected("tests/fixtures/move_while_borrowed.x");
 }
+
+#[test]
+fn receiver_methods_resolve_and_mutate_through_self() {
+    assert_compiles_and_runs("tests/fixtures/receiver_methods.x", "12.566360\n28.274310\n");
+}
+
+#[test]
+fn mut_receiver_method_on_val_binding_is_rejected() {
+    assert_rejected("tests/fixtures/receiver_mut_on_val.x");
+}

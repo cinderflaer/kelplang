@@ -34,7 +34,14 @@ fn print_datac(out: &mut String, d: &DatacDecl) {
 
 fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
     indent(out, depth);
-    write!(out, "fun {}(", f.name).unwrap();
+    out.push_str("fun ");
+    if let Some(r) = &f.receiver {
+        if r.mutable {
+            out.push_str("mut ");
+        }
+        write!(out, "{}.", r.type_name).unwrap();
+    }
+    write!(out, "{}(", f.name).unwrap();
     for (i, p) in f.params.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
@@ -205,6 +212,20 @@ fn print_expr(out: &mut String, expr: &Expr) {
         Expr::Deref { expr, .. } => {
             out.push('*');
             print_expr(out, expr);
+        }
+        Expr::MethodCall { receiver, method, args, .. } => {
+            print_expr(out, receiver);
+            write!(out, ".{method}(").unwrap();
+            for (i, a) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                if let Some(name) = &a.name {
+                    write!(out, "{name} = ").unwrap();
+                }
+                print_expr(out, &a.value);
+            }
+            out.push(')');
         }
     }
 }

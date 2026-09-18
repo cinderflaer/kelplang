@@ -26,10 +26,25 @@ pub struct FieldDecl {
 #[derive(Debug, Clone)]
 pub struct FunctionDecl {
     pub name: String,
+    /// `Some` for `fun Type.name(...)` / `fun mut Type.name(...)` —
+    /// receiver-form methods. The receiver is *not* one of `params`; it's
+    /// a separate implicit first argument, matching how the surface syntax
+    /// keeps it outside the parens.
+    pub receiver: Option<Receiver>,
     pub params: Vec<Param>,
     /// The `.R: T` clause. `None` means `Unit`.
     pub return_type: Option<TypeExpr>,
     pub body: FunctionBody,
+    pub span: Span,
+}
+
+/// `Type` (shared) or `mut Type` (exclusive) before the `.` in a receiver
+/// declaration, e.g. `Circle` in `fun Circle.area()` or `Circle` +
+/// `mutable: true` in `fun mut Circle.grow()`.
+#[derive(Debug, Clone)]
+pub struct Receiver {
+    pub type_name: String,
+    pub mutable: bool,
     pub span: Span,
 }
 
@@ -181,6 +196,18 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
+    /// `receiver.method(args)` — syntactically indistinguishable from
+    /// `.field` access until the parser sees a `(` right after the method
+    /// name. `infer.rs` resolves `method` against the receiver expression's
+    /// type and lowers this to a plain `Call` (the receiver becomes the
+    /// first argument, auto-borrowed exactly like any other `Ty::Ref`
+    /// parameter) — no new `tir`/codegen shape needed.
+    MethodCall {
+        receiver: Box<Expr>,
+        method: String,
+        args: Vec<CallArg>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -204,7 +231,8 @@ impl Expr {
             | Expr::Assign { span: s, .. }
             | Expr::If { span: s, .. }
             | Expr::Ref { span: s, .. }
-            | Expr::Deref { span: s, .. } => *s,
+            | Expr::Deref { span: s, .. }
+            | Expr::MethodCall { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }
     }

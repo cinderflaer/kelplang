@@ -142,7 +142,39 @@ impl Parser {
 
     fn parse_function(&mut self) -> PResult<FunctionDecl> {
         let start = self.expect(TokenKind::Fun, "'fun'")?.span;
-        let (name, _) = self.expect_ident()?;
+
+        // A receiver-form decl is `fun [mut] Type.name(...)`; a plain one
+        // is `fun name(...)`. `mut` here can only ever start a receiver
+        // (free functions never write `fun mut name(...)`), so seeing it
+        // commits to that form.
+        let receiver_mutable = if self.check(&TokenKind::Mut) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        let (first, first_span) = self.expect_ident()?;
+        let (receiver, name) = if self.check(&TokenKind::Dot) {
+            self.advance();
+            let (method, _) = self.expect_ident()?;
+            (
+                Some(Receiver {
+                    type_name: first,
+                    mutable: receiver_mutable,
+                    span: first_span,
+                }),
+                method,
+            )
+        } else {
+            if receiver_mutable {
+                return Err(ParseError {
+                    message: "'mut' before a function name is only valid on a receiver ('fun mut Type.method(...)')".to_string(),
+                    span: first_span,
+                });
+            }
+            (None, first)
+        };
+
         self.expect(TokenKind::LParen, "'('")?;
         let mut params = Vec::new();
         while !self.check(&TokenKind::RParen) {
@@ -213,6 +245,7 @@ impl Parser {
         };
         Ok(FunctionDecl {
             name,
+            receiver,
             params,
             return_type,
             body,
@@ -476,18 +509,57 @@ impl Parser {
         loop {
             if self.check(&TokenKind::Dot) {
                 self.advance();
-                let (field, fspan) = self.expect_ident()?;
-                let span = expr.span().to(fspan);
-                expr = Expr::FieldAccess {
-                    base: Box::new(expr),
-                    field,
-                    span,
-                };
+                let (name, nspan) = self.expect_ident()?;
+                if self.check(&TokenKind::LParen) {
+                    let (args, end) = self.parse_call_args()?;
+                    let span = expr.span().to(end);
+                    expr = Expr::MethodCall {
+                        receiver: Box::new(expr),
+                        method: name,
+                        args,
+                        span,
+                    };
+                } else {
+                    let span = expr.span().to(nspan);
+                    expr = Expr::FieldAccess {
+                        base: Box::new(expr),
+                        field: name,
+                        span,
+                    };
+                }
             } else {
                 break;
             }
         }
         Ok(expr)
+    }
+
+    /// Parses a parenthesized, comma-separated argument list (each
+    /// optionally named, `f(x = 1)`), starting at the `(`. Shared between
+    /// plain calls (`f(...)`) and method calls (`recv.m(...)`).
+    fn parse_call_args(&mut self) -> PResult<(Vec<CallArg>, Span)> {
+        self.expect(TokenKind::LParen, "'('")?;
+        let mut args = Vec::new();
+        while !self.check(&TokenKind::RParen) {
+            // A named argument is exactly `ident =` (not `==`); parens
+            // already make newlines insignificant here.
+            let name = if matches!(self.peek_kind(), TokenKind::Ident(_)) && matches!(self.peek2_kind(), TokenKind::Eq) {
+                let (n, _) = self.expect_ident()?;
+                self.advance(); // '='
+                Some(n)
+            } else {
+                None
+            };
+            let value = self.parse_expr()?;
+            args.push(CallArg { name, value });
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        let end = self.expect(TokenKind::RParen, "')'")?.span;
+        Ok((args, end))
     }
 
     fn parse_primary(&mut self) -> PResult<Expr> {
@@ -518,29 +590,7 @@ impl Parser {
                 let name = name.clone();
                 self.advance();
                 if self.check(&TokenKind::LParen) {
-                    self.advance();
-                    let mut args = Vec::new();
-                    while !self.check(&TokenKind::RParen) {
-                        // A named argument is exactly `ident =` (not `==`);
-                        // parens already make newlines insignificant here.
-                        let name = if matches!(self.peek_kind(), TokenKind::Ident(_))
-                            && matches!(self.peek2_kind(), TokenKind::Eq)
-                        {
-                            let (n, _) = self.expect_ident()?;
-                            self.advance(); // '='
-                            Some(n)
-                        } else {
-                            None
-                        };
-                        let value = self.parse_expr()?;
-                        args.push(CallArg { name, value });
-                        if self.check(&TokenKind::Comma) {
-                            self.advance();
-                        } else {
-                            break;
-                        }
-                    }
-                    let end = self.expect(TokenKind::RParen, "')'")?.span;
+                    let (args, end) = self.parse_call_args()?;
                     Ok(Expr::Call {
                         callee: name,
                         args,

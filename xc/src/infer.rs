@@ -24,6 +24,12 @@ struct Ctx {
     structs: HashMap<String, StructDef>,
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
+    /// Set while checking a receiver-form function whose receiver resolves
+    /// to a `datac`: lets a bare identifier that isn't a local fall back to
+    /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
+    /// r` — no `self.` qualifier written, per `syntax&shii.md` §5's "no
+    /// `self` keyword").
+    receiver_struct: Option<String>,
 }
 
 impl Ctx {
@@ -49,6 +55,26 @@ impl Ctx {
             }
         }
         None
+    }
+
+    /// Looks up `name` as a field of the current receiver's `datac`, if
+    /// this function has one.
+    fn receiver_field_ty(&self, name: &str) -> Option<Ty> {
+        let sname = self.receiver_struct.as_deref()?;
+        self.structs.get(sname)?.field(name).map(|f| f.ty.clone())
+    }
+}
+
+/// A function's lookup key in `sigs`/`tir::Function.name`: a receiver-form
+/// method is keyed `Type#name` (a receiver method and a free function can
+/// share a bare name with no collision, and `#` can't appear in a real
+/// identifier so it can't collide with a hand-written name either) — a
+/// plain function is keyed by its bare name, unchanged from before
+/// receivers existed.
+fn sig_key(f: &ast::FunctionDecl) -> String {
+    match &f.receiver {
+        Some(r) => format!("{}#{}", r.type_name, f.name),
+        None => f.name.clone(),
     }
 }
 
@@ -88,19 +114,27 @@ pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
 
     let mut sigs = HashMap::new();
     for f in &program.functions {
-        if sigs.contains_key(&f.name) {
-            return Err(TypeError {
-                message: format!("function '{}' is defined more than once", f.name),
-                span: f.span,
-            });
+        let key = sig_key(f);
+        if sigs.contains_key(&key) {
+            let message = match &f.receiver {
+                Some(r) => format!("method '{}.{}' is defined more than once", r.type_name, f.name),
+                None => format!("function '{}' is defined more than once", f.name),
+            };
+            return Err(TypeError { message, span: f.span });
         }
-        if structs.contains_key(&f.name) {
+        // A receiver method's key already can't collide with a struct name
+        // (it always contains `#`), so this check only applies to plain
+        // functions.
+        if f.receiver.is_none() && structs.contains_key(&f.name) {
             return Err(TypeError {
                 message: format!("'{}' is used for both a function and a datac", f.name),
                 span: f.span,
             });
         }
         let mut params = Vec::new();
+        if let Some(r) = &f.receiver {
+            params.push(("self".to_string(), resolve_receiver_type(r, &structs)?));
+        }
         for p in &f.params {
             params.push((p.name.clone(), resolve_param_type(p, &structs)?));
         }
@@ -114,7 +148,7 @@ pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
             Some(t) => resolve_type(t, &structs)?,
             None => Ty::Unit,
         };
-        sigs.insert(f.name.clone(), FnSig { params, ret });
+        sigs.insert(key, FnSig { params, ret });
     }
 
     if !sigs.contains_key("main") {
@@ -156,12 +190,24 @@ fn resolve_type(ty: &ast::TypeExpr, structs: &HashMap<String, StructDef>) -> Res
 /// (`val q = p`), which M3 already checks.
 fn resolve_param_type(p: &ast::Param, structs: &HashMap<String, StructDef>) -> Result<Ty> {
     let base = resolve_type(&p.ty, structs)?;
-    if p.mutable {
-        Ok(Ty::Ref { mutable: true, inner: Box::new(base) })
+    Ok(implicit_borrow_wrap(base, p.mutable))
+}
+
+/// Same rule as `resolve_param_type`, for a receiver (`Type` before the
+/// `.` in `fun [mut] Type.name(...)`).
+fn resolve_receiver_type(r: &ast::Receiver, structs: &HashMap<String, StructDef>) -> Result<Ty> {
+    let te = ast::TypeExpr { name: r.type_name.clone(), span: r.span };
+    let base = resolve_type(&te, structs)?;
+    Ok(implicit_borrow_wrap(base, r.mutable))
+}
+
+fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
+    if mut_marked {
+        Ty::Ref { mutable: true, inner: Box::new(base) }
     } else if matches!(base, Ty::Struct(_)) {
-        Ok(Ty::Ref { mutable: false, inner: Box::new(base) })
+        Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
-        Ok(base)
+        base
     }
 }
 
@@ -236,23 +282,46 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
     }
 }
 
+/// `Type.name` for a receiver method, `name` for a plain function — for
+/// diagnostics only (`sig_key` is the lookup key; this is what a person
+/// reads).
+fn display_name(f: &ast::FunctionDecl) -> String {
+    match &f.receiver {
+        Some(r) => format!("{}.{}", r.type_name, f.name),
+        None => f.name.clone(),
+    }
+}
+
 fn check_function(
     f: &ast::FunctionDecl,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
 ) -> Result<tir::Function> {
-    let sig = sigs.get(&f.name).unwrap().clone();
+    let key = sig_key(f);
+    let sig = sigs.get(&key).unwrap().clone();
+    let receiver_struct = f
+        .receiver
+        .as_ref()
+        .and_then(|_| struct_name_of(&sig.params[0].1).map(|s| s.to_string()));
     let mut ctx = Ctx {
         sigs: sigs.clone(),
         structs: structs.clone(),
         ret_ty: sig.ret.clone(),
         scopes: vec![HashMap::new()],
+        receiver_struct,
     };
     let mut params = Vec::new();
-    for (p, (_, ty)) in f.params.iter().zip(sig.params.iter()) {
-        // Parameters are immutable bindings, like `val`; v1 has no syntax
-        // to declare a mutable parameter (that's receiver/borrow-checker
-        // territory, deferred along with receiver-form methods).
+    // Parameters (and the receiver, if any) are immutable bindings, like
+    // `val`; v1 has no syntax to declare a mutable *binding* for one (the
+    // borrow itself can still be exclusive — that's `Ty::Ref { mutable:
+    // true, .. }`, a property of the type, not the binding).
+    if f.receiver.is_some() {
+        let (pname, ty) = &sig.params[0];
+        ctx.define(pname, ty.clone(), false);
+        params.push((pname.clone(), ty.clone()));
+    }
+    let declared = if f.receiver.is_some() { &sig.params[1..] } else { &sig.params[..] };
+    for (p, (_, ty)) in f.params.iter().zip(declared.iter()) {
         ctx.define(&p.name, ty.clone(), false);
         params.push((p.name.clone(), ty.clone()));
     }
@@ -278,7 +347,7 @@ fn check_function(
         return Err(TypeError {
             message: format!(
                 "function '{}' declared to return '{}' but body evaluates to '{}'",
-                f.name,
+                display_name(f),
                 sig.ret.display(),
                 body.ty().display()
             ),
@@ -287,7 +356,7 @@ fn check_function(
     }
 
     Ok(tir::Function {
-        name: f.name.clone(),
+        name: key,
         params,
         ret: sig.ret,
         body,
@@ -428,13 +497,27 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             span: *span,
         }),
         ast::Expr::Ident(name, span) => {
-            let info = ctx.lookup(name).ok_or_else(|| TypeError {
+            if let Some(info) = ctx.lookup(name) {
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::Ident(name.clone()),
+                    ty: info.ty.clone(),
+                    span: *span,
+                });
+            }
+            // Not a local or parameter — inside a receiver-form method,
+            // fall back to the receiver's field of that name (no `self.`
+            // qualifier is ever written; see `syntax&shii.md` §5).
+            if let Some(field_ty) = ctx.receiver_field_ty(name) {
+                let self_ty = ctx.lookup("self").expect("receiver binding exists whenever receiver_struct is set").ty.clone();
+                let base = tir::Expr { kind: tir::ExprKind::Ident("self".to_string()), ty: self_ty, span: *span };
+                return Ok(tir::Expr {
+                    kind: tir::ExprKind::FieldAccess { base: Box::new(base), field: name.clone() },
+                    ty: field_ty,
+                    span: *span,
+                });
+            }
+            Err(TypeError {
                 message: format!("undefined variable '{name}'"),
-                span: *span,
-            })?;
-            Ok(tir::Expr {
-                kind: tir::ExprKind::Ident(name.clone()),
-                ty: info.ty.clone(),
                 span: *span,
             })
         }
@@ -542,6 +625,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: *span,
             })
         }
+        ast::Expr::MethodCall { receiver, method, args, span } => check_method_call(receiver, method, args, *span, ctx),
     }
 }
 
@@ -852,6 +936,41 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
             callee: callee.to_string(),
             args: checked,
         },
+        ty: sig.ret,
+        span,
+    })
+}
+
+/// `receiver.method(args)`: resolves `method` against the receiver
+/// expression's `datac` type, then lowers to a plain `tir::ExprKind::Call`
+/// — the receiver becomes the first argument, auto-borrowed through
+/// `check_call_arg` exactly like any other `Ty::Ref` parameter (so a
+/// `fun mut T.m()` method reuses M4's aliasing checks with no special
+/// casing). No new `tir`/codegen shape is needed for method calls at all.
+fn check_method_call(receiver: &ast::Expr, method: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
+    // Type-only probe to learn the receiver's struct name; re-checked for
+    // real (with its actual borrow/move effects) via `check_call_arg`
+    // below. `check_expr` has no persistent side effects beyond reading
+    // `ctx`, so checking the same expression twice here is safe.
+    let probe = check_expr(receiver, ctx, None)?;
+    let Some(sname) = struct_name_of(&probe.ty).map(|s| s.to_string()) else {
+        return Err(TypeError {
+            message: format!("cannot call method '{method}' on non-struct type '{}'", probe.ty.display()),
+            span,
+        });
+    };
+    let key = format!("{sname}#{method}");
+    let sig = ctx.sigs.get(&key).cloned().ok_or_else(|| TypeError {
+        message: format!("datac '{sname}' has no method '{method}'"),
+        span,
+    })?;
+
+    let mut checked_args = Vec::with_capacity(sig.params.len());
+    checked_args.push(check_call_arg("self", &sig.params[0].1, receiver, ctx)?);
+    checked_args.extend(match_args(&format!("method '{sname}.{method}'"), &sig.params[1..], args, span, ctx)?);
+
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: key, args: checked_args },
         ty: sig.ret,
         span,
     })
