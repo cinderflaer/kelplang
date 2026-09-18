@@ -1,0 +1,31 @@
+// S1: growing an owned `String` in place. `push`/`push_str` append,
+// `reserve` grows without writing, `clear` keeps the buffer, and every path
+// re-terminates it — which is what keeps `as_str` a valid view after growth.
+//
+// `push` takes a `u8` rather than the sketch's `char`: v1 has no char
+// literal and no function that returns a `char`, so `u8` is the only byte
+// value a program can actually write down.
+fun main() {
+    var s = String.empty()
+    print(s.len())
+    s.push(104)
+    s.push(105)
+    print(s)
+    s.push_str(" there")
+    print(s)
+    print(s.len())
+    s.reserve(64)
+    s.push_str("!")
+    print(s)
+    print(s.len())
+
+    val fresh = String.with_capacity(4)
+    print(fresh.len())
+    print(fresh.is_empty())
+
+    s.clear()
+    print(s.len())
+    print(s.is_empty())
+    s.push(120)
+    print(s)
+}

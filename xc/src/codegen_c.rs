@@ -37,11 +37,42 @@ const RUNTIME: &str = r#"// ---- X runtime (M6) --------------------------------
 typedef struct {
     unsigned char* data;
     size_t len;
+    /* Usable bytes at `data`, *excluding* the NUL terminator slot: the
+       allocation is always `cap + 1` bytes, and `data[len]` is kept 0 so a
+       `str` view of the buffer stays valid (S1 growth invariant). */
+    size_t cap;
 } x_Bytes;
 
 static void x_panic(const char* msg) {
     fprintf(stderr, "panic: %s\n", msg);
     exit(1);
+}
+
+static void x_assert(bool cond) {
+    if (!cond) {
+        x_panic("assertion failed");
+    }
+}
+
+/* The one growth routine both owned buffers share: make room for `extra`
+   more bytes past `len`, doubling (or jumping to 8) so appending is
+   amortized O(1), and re-terminate. `data`/`cap` are passed by pointer
+   because `realloc` may move the buffer. */
+static void x_buf_reserve(unsigned char** data, size_t len, size_t* cap, size_t extra) {
+    if (len + extra <= *cap) {
+        return;
+    }
+    size_t want = *cap == 0 ? 8 : *cap;
+    while (want < len + extra) {
+        want *= 2;
+    }
+    unsigned char* p = (unsigned char*)realloc(*data, want + 1);
+    if (p == NULL) {
+        x_panic("out of memory");
+    }
+    *data = p;
+    *cap = want;
+    p[len] = 0;
 }
 
 static bool x_utf8_valid(const unsigned char* p, size_t n) {
@@ -74,6 +105,7 @@ static x_Bytes x_Bytes__empty(void) {
     x_Bytes b;
     b.data = NULL;
     b.len = 0;
+    b.cap = 0;
     return b;
 }
 
@@ -87,6 +119,7 @@ static x_Bytes x_Bytes__from_str(const char* s) {
     x_Bytes b;
     b.data = p;
     b.len = n;
+    b.cap = n;
     return b;
 }
 
@@ -122,7 +155,35 @@ static x_Bytes x_Bytes__clone(const x_Bytes* self) {
     x_Bytes b;
     b.data = p;
     b.len = self->len;
+    b.cap = self->len;
     return b;
+}
+
+static void x_Bytes__push(x_Bytes* self, uint8_t byte) {
+    x_buf_reserve(&self->data, self->len, &self->cap, 1);
+    self->data[self->len++] = byte;
+    self->data[self->len] = 0;
+}
+
+static void x_Bytes__append(x_Bytes* self, const x_Bytes* other) {
+    if (other->len == 0) {
+        return;
+    }
+    x_buf_reserve(&self->data, self->len, &self->cap, other->len);
+    memcpy(self->data + self->len, other->data, other->len);
+    self->len += other->len;
+    self->data[self->len] = 0;
+}
+
+static void x_Bytes__reserve(x_Bytes* self, size_t extra) {
+    x_buf_reserve(&self->data, self->len, &self->cap, extra);
+}
+
+static void x_Bytes__clear(x_Bytes* self) {
+    self->len = 0;
+    if (self->data != NULL) {
+        self->data[0] = 0;
+    }
 }
 
 static void x_bytes_drop(x_Bytes* b) {
@@ -138,12 +199,15 @@ static void x_bytes_drop(x_Bytes* b) {
 typedef struct {
     unsigned char* data;
     size_t len;
+    /* Same invariant as `x_Bytes.cap`. */
+    size_t cap;
 } x_String;
 
 static x_String x_String__empty(void) {
     x_String s;
     s.data = NULL;
     s.len = 0;
+    s.cap = 0;
     return s;
 }
 
@@ -157,6 +221,7 @@ static x_String x_String__from_str(const char* text) {
     x_String s;
     s.data = p;
     s.len = n;
+    s.cap = n;
     return s;
 }
 
@@ -169,6 +234,7 @@ static x_String x_String__from_bytes(x_Bytes b) {
     x_String s;
     s.data = b.data;
     s.len = b.len;
+    s.cap = b.cap;
     return s;
 }
 
@@ -177,6 +243,7 @@ static x_Bytes x_String__into_bytes(x_String self) {
     x_Bytes b;
     b.data = self.data;
     b.len = self.len;
+    b.cap = self.cap;
     return b;
 }
 
@@ -208,7 +275,48 @@ static x_String x_String__clone(const x_String* self) {
     x_String s;
     s.data = p;
     s.len = self->len;
+    s.cap = self->len;
     return s;
+}
+
+/* One byte, unchecked: `String.push` is a byte append, matching
+   `String.len`'s byte length (a multi-byte codepoint goes through
+   `str`/`utf8` helpers, not here). */
+static void x_String__push(x_String* self, char ch) {
+    x_buf_reserve(&self->data, self->len, &self->cap, 1);
+    self->data[self->len++] = (unsigned char)ch;
+    self->data[self->len] = 0;
+}
+
+static void x_String__push_str(x_String* self, const char* text) {
+    size_t n = strlen(text);
+    if (n == 0) {
+        return;
+    }
+    x_buf_reserve(&self->data, self->len, &self->cap, n);
+    memcpy(self->data + self->len, text, n);
+    self->len += n;
+    self->data[self->len] = 0;
+}
+
+static void x_String__reserve(x_String* self, size_t extra) {
+    x_buf_reserve(&self->data, self->len, &self->cap, extra);
+}
+
+static x_String x_String__with_capacity(size_t n) {
+    x_String s;
+    s.data = NULL;
+    s.len = 0;
+    s.cap = 0;
+    x_buf_reserve(&s.data, 0, &s.cap, n);
+    return s;
+}
+
+static void x_String__clear(x_String* self) {
+    self->len = 0;
+    if (self->data != NULL) {
+        self->data[0] = 0;
+    }
 }
 
 /* A borrowed view of the same buffer (M6.3). Every constructor keeps the
@@ -241,6 +349,7 @@ static x_Bytes x_bytes_alloc_raw(size_t n) {
     x_Bytes b;
     b.data = p;
     b.len = n;
+    b.cap = n;
     return b;
 }
 // ---- end X runtime -------------------------------------------------------

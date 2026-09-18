@@ -544,6 +544,35 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         );
         add("Bytes#clone", vec![("self".to_string(), shared)], bytes, false);
 
+        // Growing a `Bytes` in place (S1). `push`/`append` need an exclusive
+        // borrow, so the borrow checker refuses to grow a buffer while a
+        // `str`/`&Bytes` view of it is alive — which is what makes the
+        // reallocation sound without a lifetime syntax (see the bump of
+        // `cap` in the runtime preamble).
+        let bytes_exclusive = Ty::Ref { mutable: true, inner: Box::new(Ty::Bytes) };
+        add(
+            "Bytes#push",
+            vec![("self".to_string(), bytes_exclusive.clone()), ("b".to_string(), Ty::U8)],
+            Ty::Unit,
+            false,
+        );
+        add(
+            "Bytes#append",
+            vec![
+                ("self".to_string(), bytes_exclusive.clone()),
+                ("other".to_string(), Ty::Ref { mutable: false, inner: Box::new(Ty::Bytes) }),
+            ],
+            Ty::Unit,
+            false,
+        );
+        add(
+            "Bytes#reserve",
+            vec![("self".to_string(), bytes_exclusive.clone()), ("extra".to_string(), Ty::Usize)],
+            Ty::Unit,
+            false,
+        );
+        add("Bytes#clear", vec![("self".to_string(), bytes_exclusive)], Ty::Unit, false);
+
         // The `String` surface (M6.2): construct, measure, copy, and convert
         // to/from `Bytes` with an ownership transfer. `as_str`/`as_bytes`
         // return a borrow of the receiver, which needs the `&str`
@@ -566,7 +595,7 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         add("String#clone", vec![("self".to_string(), string_shared.clone())], string.clone(), false);
         add(
             "String#into_bytes",
-            vec![("self".to_string(), string)],
+            vec![("self".to_string(), string.clone())],
             Ty::Bytes,
             false,
         );
@@ -595,6 +624,39 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             str_ref,
             false,
         );
+
+        // Growing a `String` in place (S1). The same exclusive-borrow rule
+        // as `Bytes`, and the same NUL-termination invariant: `push_str`
+        // appends a borrowed view, so a view of `self` would alias the
+        // buffer `realloc` may move — the borrow checker rejects that.
+        let string_exclusive = Ty::Ref { mutable: true, inner: Box::new(Ty::String) };
+        add(
+            "String#push",
+            vec![("self".to_string(), string_exclusive.clone()), ("b".to_string(), Ty::U8)],
+            Ty::Unit,
+            false,
+        );
+        add(
+            "String#push_str",
+            vec![("self".to_string(), string_exclusive.clone()), ("s".to_string(), Ty::Str)],
+            Ty::Unit,
+            false,
+        );
+        add(
+            "String#reserve",
+            vec![("self".to_string(), string_exclusive.clone()), ("extra".to_string(), Ty::Usize)],
+            Ty::Unit,
+            false,
+        );
+        add("String#clear", vec![("self".to_string(), string_exclusive)], Ty::Unit, false);
+        add("String#with_capacity", vec![("n".to_string(), Ty::Usize)], string.clone(), true);
+
+        // Failing deliberately (S1): `x_panic`/`x_assert` already exist in
+        // the runtime, these two entries are all that was missing. They are
+        // free functions, not methods — the map key is a bare name, which is
+        // the same namespace `print` occupies.
+        add("panic", vec![("msg".to_string(), Ty::Str)], Ty::Unit, false);
+        add("assert", vec![("cond".to_string(), Ty::Bool)], Ty::Unit, false);
         m
     });
 
@@ -2814,19 +2876,26 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         Some(found) => found,
         None => match resolve_overload(callee, &owned_key, args, span, ctx)? {
             Some(found) => found,
-            None => {
-                return Err(TypeError {
-                    message: match qualified_hint(
-                        callee,
-                        ctx.structs.keys().chain(ctx.sigs.keys()),
-                        &ctx.aliases,
-                    ) {
-                        Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
-                        None => format!("call to undefined function '{callee}'"),
-                    },
-                    span,
-                })
-            }
+            // A compiler-provided free function (`panic`, `assert`) lives in
+            // the same table as the builtin methods, so it is consulted after
+            // the program's own signatures — a user function of the same name
+            // wins, and there is no shadowing surprise.
+            None => match builtin_sig(callee) {
+                Some(sig) => (callee.to_string(), sig),
+                None => {
+                    return Err(TypeError {
+                        message: match qualified_hint(
+                            callee,
+                            ctx.structs.keys().chain(ctx.sigs.keys()),
+                            &ctx.aliases,
+                        ) {
+                            Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
+                            None => format!("call to undefined function '{callee}'"),
+                        },
+                        span,
+                    })
+                }
+            },
         },
     };
     ctx.check_capability(&key, span)?;

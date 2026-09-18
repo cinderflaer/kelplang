@@ -620,6 +620,43 @@ fn string_constructs_measures_and_round_trips_through_bytes() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// S1: growing an owned buffer in place, and failing deliberately.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_string_grows_in_place_and_survives_growth() {
+    // Every append re-terminates the buffer, so printing `s` after each one
+    // is the check that growth kept the `str` view valid.
+    assert_compiles_and_runs(
+        "tests/fixtures/string_build.x",
+        "0\nhi\nhi there\n8\nhi there!\n9\n0\ntrue\n0\ntrue\nx\n",
+    );
+}
+
+#[test]
+fn bytes_grow_by_push_and_append() {
+    assert_compiles_and_runs(
+        "tests/fixtures/bytes_build.x",
+        "0\n2\n1\n2\n5\n97\n98\n99\n7\nfalse\n0\ntrue\n1\n9\n",
+    );
+}
+
+#[test]
+fn growing_a_string_needs_an_exclusive_borrow_and_a_var_binding() {
+    // `realloc` can move the buffer a live `str` view points into, and a
+    // `val` binding is not writable — both are compile errors, which is what
+    // makes growth sound here without a lifetime syntax.
+    assert_rejected("tests/fixtures/grow_while_borrowed.x");
+    assert_rejected("tests/fixtures/push_to_val_string.x");
+}
+
+#[test]
+fn panic_reports_its_message_and_assert_reports_failure() {
+    assert_fixture_panics("panic_msg", "panic: deliberate failure");
+    assert_fixture_panics("assert_fail", "panic: assertion failed");
+}
+
 #[test]
 fn owned_datac_fields_are_dropped_with_the_struct() {
     assert_compiles_and_runs(
@@ -932,6 +969,8 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "heap_branches",
         "heap_param_borrow",
         "string_basic",
+        "string_build",
+        "bytes_build",
         "string_field",
         "pd_owned",
         "stdlib_mem",
