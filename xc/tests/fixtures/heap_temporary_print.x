@@ -1,6 +1,13 @@
-// M6 rejection: `%.*s` needs the buffer's length and pointer as two separate
-// arguments, so the receiver has to be a place — a temporary has no address
-// to take, and evaluating it twice would allocate twice.
+// M6.3: printing a *temporary* owned buffer is allowed now. `%.*s` still
+// needs the length and the pointer as two arguments, so codegen hoists the
+// temporary into a C variable, prints through it, and drops it right after —
+// which is also why this fixture is in the AddressSanitizer pass: the
+// allocation must be freed exactly once.
+impl "std/str"
+
 fun main() {
     print(Bytes.from_str("x"))
+    print(String.from_str("y"))
+    print(str.to_upper("ab"))
+    print("w = ${str.to_upper("cd")}")
 }

@@ -5,11 +5,27 @@ pub struct Program {
     /// `impl "path"` lines, in source order. One file's list only; the
     /// multi-file loader in `resolve.rs` owns the whole module graph.
     pub impls: Vec<ImplDecl>,
+    /// `const NAME: T = expr` lines, in source order.
+    pub consts: Vec<ConstDecl>,
     /// `pd val`/`pd var` lines, in source order (canonical position: after
     /// `impl`, before `datac`/`fun`).
     pub pds: Vec<PdDecl>,
     pub datacs: Vec<DatacDecl>,
     pub functions: Vec<FunctionDecl>,
+}
+
+/// One `const NAME: T = expr` — a top-level compile-time constant (M6.3).
+/// The type is mandatory (a `const` is a declared contract, unlike `val`),
+/// and the initializer has to fold to a literal, so there is nothing to
+/// allocate and nothing to drop.
+#[derive(Debug, Clone)]
+pub struct ConstDecl {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub init: Expr,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    pub span: Span,
 }
 
 /// One `pd val name = expr` / `pd var name: T = expr` — a passdown
@@ -121,6 +137,11 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
     pub name: String,
+    /// `&T` was written with a leading `&`. Only meaningful in a *return*
+    /// position (M6.3): `&str`/`&T` there is a borrow of the caller's value
+    /// under the elision rule, whereas a parameter's `&str` is what `str`
+    /// already is (a borrowed view passed by value).
+    pub amp: bool,
     pub span: Span,
 }
 

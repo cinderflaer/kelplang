@@ -32,6 +32,14 @@ struct VarInfo {
 struct Ctx {
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, StructDef>,
+    /// Top-level `const`s (M6.3), keyed by their module-qualified name and
+    /// already folded to a literal — so a use site is a substitution, not a
+    /// load from anywhere.
+    consts: HashMap<String, ConstInfo>,
+    /// Overload sets for compiler-shipped stdlib functions (M6.3): plain key
+    /// (`std.math.abs`) -> each declaration's parameter types and its
+    /// type-suffixed key.
+    overloads: HashMap<String, Vec<(Vec<Ty>, String)>>,
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
     /// Symbol prefix of the module being checked (`""` for the entry
@@ -271,9 +279,26 @@ impl TypeScope<'_> {
     fn resolve_receiver(&self, r: &ast::Receiver) -> Result<Ty> {
         let te = ast::TypeExpr {
             name: r.type_name.clone(),
+            amp: false,
             span: r.span,
         };
         Ok(implicit_borrow_wrap(self.resolve(&te)?, r.mutable))
+    }
+
+    /// A declared return type. This is the one place a borrow *can* be
+    /// written down: `&str`/`&T` in a return position becomes a `Ty::Ref`
+    /// under the elision rule, meaning "a borrow of the first reference
+    /// parameter" (see `borrowck.rs`, which enforces exactly that).
+    fn resolve_return(&self, ty: &ast::TypeExpr) -> Result<Ty> {
+        let base = self.resolve(ty)?;
+        if ty.amp {
+            Ok(Ty::Ref {
+                mutable: false,
+                inner: Box::new(base),
+            })
+        } else {
+            Ok(base)
+        }
     }
 }
 
@@ -291,6 +316,43 @@ fn sig_key(f: &ast::FunctionDecl) -> String {
 }
 
 const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
+
+/// Function names that may be declared more than once, once per parameter
+/// type, in a compiler-shipped module (M6.3, stdlib decision 4). The call
+/// site picks by argument type; user code cannot define overloads at all,
+/// and cannot see the mechanism except as `math.abs` working on whatever
+/// number it is given.
+const OVERLOADABLE: &[&str] = &["abs", "min", "max", "clamp"];
+
+/// Whether a module id belongs to the compiler-shipped standard library —
+/// what stdlib decision 4's "available only to compiler-shipped modules"
+/// means in code.
+fn is_std_module(module: &str) -> bool {
+    module == "std" || module.starts_with("std/")
+}
+
+/// The name a callee key shows in a diagnostic: overload keys carry their
+/// parameter types (`std.math.abs@f64`), which read as noise in an error
+/// message about arguments.
+fn display_callee(key: &str) -> &str {
+    key.split('@').next().unwrap_or(key)
+}
+
+/// A function's signature key. An overloadable name in a stdlib module
+/// carries its parameter types, which is what lets several declarations of
+/// `abs` coexist in `std/math.x` and be told apart at a call site.
+fn sig_key_for(f: &ast::FunctionDecl, prefix: &str, params: &[(String, Ty)]) -> String {
+    let plain = sig_key(f);
+    if f.receiver.is_none()
+        && is_std_module(&f.module)
+        && OVERLOADABLE.contains(&bare_name(&f.name, prefix))
+    {
+        let types: Vec<String> = params.iter().map(|(_, t)| t.display()).collect();
+        format!("{plain}@{}", types.join(","))
+    } else {
+        plain
+    }
+}
 
 /// A compiler-provided function (M6). These live in `sigs`' namespace (keyed
 /// `Type#name`, exactly like a receiver method) but their bodies are emitted
@@ -359,11 +421,36 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
             false,
         );
         add("String#is_empty", vec![("self".to_string(), string_shared.clone())], Ty::Bool, false);
-        add("String#clone", vec![("self".to_string(), string_shared)], string.clone(), false);
+        add("String#clone", vec![("self".to_string(), string_shared.clone())], string.clone(), false);
         add(
             "String#into_bytes",
             vec![("self".to_string(), string)],
             Ty::Bytes,
+            false,
+        );
+        // A borrowed view of an owned buffer (M6.3). Both are the return-
+        // borrow form: the result borrows from `self`, which is the whole
+        // point of `&str` return elision.
+        let str_ref = Ty::Ref {
+            mutable: false,
+            inner: Box::new(Ty::Str),
+        };
+        add(
+            "String#as_str",
+            vec![("self".to_string(), string_shared.clone())],
+            str_ref.clone(),
+            false,
+        );
+        add(
+            "Bytes#as_str",
+            vec![(
+                "self".to_string(),
+                Ty::Ref {
+                    mutable: false,
+                    inner: Box::new(Ty::Bytes),
+                },
+            )],
+            str_ref,
             false,
         );
         m
@@ -390,10 +477,308 @@ fn builtin_sig(key: &str) -> Option<FnSig> {
     })
 }
 
+/// For a callee whose result is a *borrow*, the parameter index the elided
+/// lifetime binds to — always the first reference parameter, which is why
+/// this only has to answer for functions that return one at all.
+/// `borrowck.rs` needs it at every return site and every call site; builtins
+/// share the rule with `.x` functions.
+pub fn borrow_root_param(params: &[(String, Ty)]) -> Option<usize> {
+    params.iter().position(|(_, t)| is_ref_param(t))
+}
+
+/// Whether a parameter is a reference the elision rule can borrow from.
+/// `str` counts: a `str` parameter *is* `&str`, modelled as a flat borrowed
+/// view (`Ty::Str`) rather than a `Ty::Ref`.
+pub fn is_ref_param(ty: &Ty) -> bool {
+    matches!(ty, Ty::Str | Ty::Ref { .. })
+}
+
+/// The elided borrow root for a builtin method, if it returns a borrow.
+pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
+    let b = BUILTINS.get(key)?;
+    if matches!(b.ret, Ty::Ref { .. }) {
+        Some(borrow_root_param(&b.params))
+    } else {
+        None
+    }
+}
+
+/// A `str` and a `&str` are the same value, so a function declaring one may
+/// return the other; whether a *borrowed* return is reachable is the borrow
+/// checker's call, not the type's (see `borrowck::check_return_borrow`).
+fn str_view_compatible(actual: &Ty, declared: &Ty) -> bool {
+    actual == declared || (is_str_like(actual) && is_str_like(declared))
+}
+
+/// Whether a type is `str` or a borrow of one — the two spellings of the
+/// same borrowed view, which `print` and argument matching treat alike.
+fn is_str_like(ty: &Ty) -> bool {
+    match ty {
+        Ty::Str => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::Str),
+        _ => false,
+    }
+}
+
+/// One checked compile-time constant (M6.3). Folded at its declaration and
+/// substituted at every use, so it has no storage, no initializer function,
+/// and no runtime cost — `math.PI` is the literal `3.141592653589793` in the
+/// generated C.
+#[derive(Debug, Clone)]
+struct ConstInfo {
+    value: tir::Expr,
+}
+
+/// A folded constant value. Deliberately small: a `const` may only be a
+/// number, a `bool`, or a `&str`, so there is nothing to allocate and
+/// nothing to drop.
+#[derive(Debug, Clone, PartialEq)]
+enum ConstValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+}
+
 /// Stand-in for "no later datacs" at the sites where every `datac` in the
 /// program is already known (signatures, bodies, passdown types).
 static EMPTY_DATACS: std::sync::LazyLock<std::collections::HashSet<String>> =
     std::sync::LazyLock::new(std::collections::HashSet::new);
+
+/// Resolves every top-level `const`, folding its initializer to a literal on
+/// the way. Order matters: a `const` may only reference constants declared
+/// before it, which is what keeps folding a single pass.
+fn collect_consts(
+    program: &ast::Program,
+    project: &Project,
+    structs: &HashMap<String, StructDef>,
+) -> std::result::Result<HashMap<String, ConstInfo>, Diagnostic> {
+    let mut out: HashMap<String, ConstInfo> = HashMap::new();
+    for decl in &program.consts {
+        let prefix = project.prefix_of(&decl.module);
+        let aliases = project.alias_prefixes_of(&decl.module);
+        let bare = bare_name(&decl.name, prefix).to_string();
+        let declared = TypeScope {
+            structs,
+            prefix,
+            aliases: &aliases,
+            later_datacs: None,
+        }
+        .resolve(&decl.ty)
+        .map_err(|e| e.in_module(&decl.module))?;
+        if out.contains_key(&decl.name) {
+            return Err(Diagnostic::new(
+                format!("const '{bare}' is declared more than once"),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
+        // A const shares its module's top-level namespace with `datac`s,
+        // pds and functions. `resolve.rs` has already prefixed `decl.name`,
+        // so a plain comparison against the prefixed names is enough.
+        if structs.contains_key(&decl.name)
+            || program
+                .functions
+                .iter()
+                .any(|f| f.receiver.is_none() && f.name == decl.name)
+            || program.pds.iter().any(|p| p.name == decl.name)
+        {
+            return Err(Diagnostic::new(
+                format!("'{bare}' is used for both a const and another top-level item"),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
+        let value = fold_const(&decl.init, &declared, prefix, &aliases, &out)
+            .map_err(|e| e.in_module(&decl.module))?;
+        let literal = literal_for(&value, &declared).map_err(|why| {
+            Diagnostic::new(
+                format!(
+                    "const '{bare}' is declared as '{}' but {why}",
+                    declared.display()
+                ),
+                decl.span,
+                decl.module.clone(),
+            )
+        })?;
+        out.insert(decl.name.clone(), ConstInfo { value: literal });
+    }
+    Ok(out)
+}
+
+/// The name a module's own source writes for a prefixed top-level item.
+fn bare_name<'a>(qualified: &'a str, prefix: &str) -> &'a str {
+    qualified.strip_prefix(prefix).unwrap_or(qualified)
+}
+
+/// The folded value behind a `ConstInfo`, for a const referenced by another
+/// const's initializer.
+fn value_of(e: &tir::Expr) -> Option<ConstValue> {
+    match &e.kind {
+        tir::ExprKind::IntLit(v) => Some(ConstValue::Int(*v)),
+        tir::ExprKind::FloatLit(v) => Some(ConstValue::Float(*v)),
+        tir::ExprKind::BoolLit(b) => Some(ConstValue::Bool(*b)),
+        tir::ExprKind::StringLit(s) => Some(ConstValue::Str(s.clone())),
+        _ => None,
+    }
+}
+
+/// Turns a folded value into the literal node a use site substitutes. The
+/// typed C literal comes out of `codegen_c.rs`'s ordinary literal path — a
+/// `const` adds no code path of its own.
+fn literal_for(
+    value: &ConstValue,
+    declared: &Ty,
+) -> std::result::Result<tir::Expr, String> {
+    use ConstValue::*;
+    let kind = match (value, declared) {
+        (Int(v), t) if t.is_integer() => tir::ExprKind::IntLit(*v),
+        (Int(v), t) if t.is_float() => tir::ExprKind::FloatLit(*v as f64),
+        (Float(v), t) if t.is_float() => tir::ExprKind::FloatLit(*v),
+        (Bool(b), Ty::Bool) => tir::ExprKind::BoolLit(*b),
+        (Str(s), Ty::Str) => tir::ExprKind::StringLit(s.clone()),
+        (_, t) => return Err(format!("its initializer is not a '{}' value", t.display())),
+    };
+    Ok(tir::Expr {
+        kind,
+        ty: declared.clone(),
+        span: Span::new(0, 0),
+    })
+}
+
+/// Folds a `const` initializer. Only what a compile-time value can honestly
+/// be: literals, earlier constants, and arithmetic on those.
+fn fold_const(
+    expr: &ast::Expr,
+    declared: &Ty,
+    prefix: &str,
+    aliases: &HashMap<String, String>,
+    seen: &HashMap<String, ConstInfo>,
+) -> Result<ConstValue> {
+    let span = expr.span();
+    let unsupported = || TypeError {
+        message: "a 'const' initializer must be a literal, an earlier 'const', or arithmetic on those"
+            .to_string(),
+        span,
+    };
+    match expr {
+        ast::Expr::IntLit(v, _) => Ok(if declared.is_float() {
+            ConstValue::Float(*v as f64)
+        } else {
+            ConstValue::Int(*v)
+        }),
+        ast::Expr::FloatLit(v, _) => Ok(ConstValue::Float(*v)),
+        ast::Expr::BoolLit(b, _) => Ok(ConstValue::Bool(*b)),
+        ast::Expr::StringLit(s, _) => Ok(ConstValue::Str(s.clone())),
+        ast::Expr::Ident(name, _) => {
+            let key = format!("{prefix}{name}");
+            match seen.get(&key).and_then(|c| value_of(&c.value)) {
+                Some(v) => Ok(v),
+                None => Err(TypeError {
+                    message: format!(
+                        "undefined const '{name}' — a 'const' can only use constants declared before it"
+                    ),
+                    span,
+                }),
+            }
+        }
+        ast::Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
+            if !args.is_empty() {
+                return Err(unsupported());
+            }
+            let ast::Expr::Ident(alias, _) = receiver.as_ref() else {
+                return Err(unsupported());
+            };
+            let Some(target_prefix) = aliases.get(alias) else {
+                return Err(TypeError {
+                    message: format!("unknown module alias '{alias}' in a 'const' initializer"),
+                    span,
+                });
+            };
+            let key = format!("{target_prefix}{method}");
+            match seen.get(&key).and_then(|c| value_of(&c.value)) {
+                Some(v) => Ok(v),
+                None => Err(TypeError {
+                    message: format!("module '{alias}' has no const '{method}' declared before this one"),
+                    span,
+                }),
+            }
+        }
+        ast::Expr::Unary { op, expr: sub, .. } => {
+            let v = fold_const(sub, declared, prefix, aliases, seen)?;
+            match (op, v) {
+                (ast::UnOp::Neg, ConstValue::Int(i)) => Ok(ConstValue::Int(i.wrapping_neg())),
+                (ast::UnOp::Neg, ConstValue::Float(f)) => Ok(ConstValue::Float(-f)),
+                (ast::UnOp::Not, ConstValue::Bool(b)) => Ok(ConstValue::Bool(!b)),
+                _ => Err(unsupported()),
+            }
+        }
+        ast::Expr::Binary { op, lhs, rhs, .. } => {
+            let l = fold_const(lhs, declared, prefix, aliases, seen)?;
+            let r = fold_const(rhs, declared, prefix, aliases, seen)?;
+            fold_binary(*op, l, r, span)
+        }
+        _ => Err(unsupported()),
+    }
+}
+
+fn fold_binary(op: ast::BinOp, l: ConstValue, r: ConstValue, span: Span) -> Result<ConstValue> {
+    use ast::BinOp::*;
+    use ConstValue::*;
+    let mismatch = || TypeError {
+        message: "a 'const' expression mixes values of different kinds".to_string(),
+        span,
+    };
+    let zero = || TypeError {
+        message: "division by zero in a 'const' initializer".to_string(),
+        span,
+    };
+    match (l, r) {
+        (Int(a), Int(b)) => Ok(match op {
+            Add => Int(a.wrapping_add(b)),
+            Sub => Int(a.wrapping_sub(b)),
+            Mul => Int(a.wrapping_mul(b)),
+            Div if b == 0 => return Err(zero()),
+            Div => Int(a.wrapping_div(b)),
+            Mod if b == 0 => return Err(zero()),
+            Mod => Int(a.wrapping_rem(b)),
+            Eq => Bool(a == b),
+            NotEq => Bool(a != b),
+            Lt => Bool(a < b),
+            LtEq => Bool(a <= b),
+            Gt => Bool(a > b),
+            GtEq => Bool(a >= b),
+            And | Or => return Err(mismatch()),
+        }),
+        (Float(a), Float(b)) => Ok(match op {
+            Add => Float(a + b),
+            Sub => Float(a - b),
+            Mul => Float(a * b),
+            Div => Float(a / b),
+            Mod => Float(a % b),
+            Eq => Bool(a == b),
+            NotEq => Bool(a != b),
+            Lt => Bool(a < b),
+            LtEq => Bool(a <= b),
+            Gt => Bool(a > b),
+            GtEq => Bool(a >= b),
+            And | Or => return Err(mismatch()),
+        }),
+        (Bool(a), Bool(b)) => match op {
+            And => Ok(Bool(a && b)),
+            Or => Ok(Bool(a || b)),
+            Eq => Ok(Bool(a == b)),
+            NotEq => Ok(Bool(a != b)),
+            _ => Err(mismatch()),
+        },
+        _ => Err(mismatch()),
+    }
+}
 
 pub fn check_program(
     program: &ast::Program,
@@ -478,16 +863,19 @@ pub fn check_program(
         );
     }
 
+    // Compile-time constants (M6.3) are folded before signatures are built:
+    // a `const` may not call anything, so it needs no function table, and
+    // folding early means every later site can treat a const as a literal.
+    let consts = collect_consts(program, project, &structs)?;
+
     let mut sigs = HashMap::new();
+    let mut overloads: HashMap<String, Vec<(Vec<Ty>, String)>> = HashMap::new();
+    // Signature key per declaration, in declaration order: once overloads
+    // exist a function's key is not derivable from its AST alone, and both
+    // the passdown scan and the body checker need the same spelling the call
+    // sites will use.
+    let mut decl_keys: Vec<String> = Vec::with_capacity(program.functions.len());
     for f in &program.functions {
-        let key = sig_key(f);
-        if sigs.contains_key(&key) {
-            let message = match &f.receiver {
-                Some(r) => format!("method '{}.{}' is defined more than once", r.type_name, f.name),
-                None => format!("function '{}' is defined more than once", f.name),
-            };
-            return Err(Diagnostic::new(message, f.span, f.module.clone()));
-        }
         // A receiver method's key already can't collide with a struct name
         // (it always contains `#`), so this check only applies to plain
         // functions.
@@ -532,9 +920,36 @@ pub fn check_program(
         // its caller, so a borrow can never escape the call frame that took
         // it.
         let ret = match &f.return_type {
-            Some(t) => scope.resolve(t).map_err(|e| e.in_module(&f.module))?,
+            Some(t) => scope.resolve_return(t).map_err(|e| e.in_module(&f.module))?,
             None => Ty::Unit,
         };
+        // A returned borrow has to have something to borrow from, which the
+        // borrow checker enforces per return site (M6.3): either the first
+        // reference parameter, or a `str` literal (whose storage is static,
+        // which is what `fun classify(n: i32).R: &str = "pos"` needs).
+        // `borrowck.rs` cannot be stricter here without knowing the body.
+        let key = sig_key_for(f, prefix, &params);
+        if sigs.contains_key(&key) {
+            let message = match &f.receiver {
+                Some(r) => format!("method '{}.{}' is defined more than once", r.type_name, f.name),
+                None => format!(
+                    "function '{}' is defined more than once for the same parameter types",
+                    display_callee(&key)
+                ),
+            };
+            return Err(Diagnostic::new(message, f.span, f.module.clone()));
+        }
+        if f.receiver.is_none()
+            && is_std_module(&f.module)
+            && OVERLOADABLE.contains(&bare_name(&f.name, prefix))
+        {
+            let types = params.iter().map(|(_, t)| t.clone()).collect();
+            overloads
+                .entry(sig_key(f))
+                .or_default()
+                .push((types, key.clone()));
+        }
+        decl_keys.push(key.clone());
         sigs.insert(key, FnSig { params, ret });
     }
 
@@ -550,8 +965,8 @@ pub fn check_program(
     //      passdowns declared before that point visible).
     //   3. the wiring scan says which functions reference which passdowns.
     //   4. initializers and function bodies are checked for real.
-    let all_pds = collect_pds(program, project, &sigs, &structs)?;
-    let wired = scan_all(program, &all_pds, &structs);
+    let all_pds = collect_pds(program, project, &sigs, &structs, &consts, &overloads)?;
+    let wired = scan_all(program, &all_pds, &structs, &decl_keys);
 
     if !sigs.contains_key("main") {
         return Err(Diagnostic::new(
@@ -569,6 +984,8 @@ pub fn check_program(
             pd,
             &sigs,
             &structs,
+            &consts,
+            &overloads,
             project,
             &all_pds,
             &wired,
@@ -585,9 +1002,19 @@ pub fn check_program(
     }
 
     let mut functions = Vec::new();
-    for f in &program.functions {
-        let checked = check_function(f, &sigs, &structs, project, &all_pds, &wired)
-            .map_err(|e| e.in_module(&f.module))?;
+    for (i, f) in program.functions.iter().enumerate() {
+        let checked = check_function(
+            f,
+            &decl_keys[i],
+            &sigs,
+            &structs,
+            &consts,
+            &overloads,
+            project,
+            &all_pds,
+            &wired,
+        )
+        .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
     }
     Ok(tir::Program {
@@ -619,6 +1046,8 @@ fn collect_pds(
     project: &Project,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    consts: &HashMap<String, ConstInfo>,
+    overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
 ) -> std::result::Result<Vec<PdInfo>, Diagnostic> {
     let mut out: Vec<PdInfo> = Vec::new();
     for (index, decl) in program.pds.iter().enumerate() {
@@ -669,6 +1098,8 @@ fn collect_pds(
                     &decl.module,
                     sigs,
                     structs,
+                    consts,
+                    overloads,
                     project,
                     &out,
                     None,
@@ -704,12 +1135,24 @@ fn check_pd_initializer(
     pd: &PdInfo,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    consts: &HashMap<String, ConstInfo>,
+    overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
     all: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
     initialized: &std::collections::HashSet<String>,
 ) -> Result<tir::Expr> {
-    let mut ctx = base_ctx(&pd.module, sigs, structs, project, all, Some(pd.index), wired);
+    let mut ctx = base_ctx(
+        &pd.module,
+        sigs,
+        structs,
+        consts,
+        overloads,
+        project,
+        all,
+        Some(pd.index),
+        wired,
+    );
     ctx.init_state = Some(initialized.clone());
     check_expr(init, &mut ctx, Some(&pd.value_ty))
 }
@@ -718,6 +1161,8 @@ fn base_ctx(
     module: &str,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    consts: &HashMap<String, ConstInfo>,
+    overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
     all_pds: &[PdInfo],
     before: Option<usize>,
@@ -737,6 +1182,8 @@ fn base_ctx(
     Ctx {
         sigs: sigs.clone(),
         structs: structs.clone(),
+        consts: consts.clone(),
+        overloads: overloads.clone(),
         ret_ty: Ty::Unit,
         scopes: vec![HashMap::new()],
         prefix: project.prefix_of(module).to_string(),
@@ -757,9 +1204,10 @@ fn scan_all(
     program: &ast::Program,
     all: &[PdInfo],
     structs: &HashMap<String, StructDef>,
+    decl_keys: &[String],
 ) -> HashMap<String, Vec<PdInfo>> {
     let mut wired = HashMap::new();
-    for f in &program.functions {
+    for (i, f) in program.functions.iter().enumerate() {
         // `main` gets no hidden parameters (see `Ctx::pd_global_borrow`), and
         // it is not callable, so it never needs an entry here either.
         if f.receiver.is_none() && f.name == "main" {
@@ -768,7 +1216,7 @@ fn scan_all(
         let visible = pd_map(all, &f.module, None);
         let used = scan_pd_uses(f, &visible, structs);
         if !used.is_empty() {
-            wired.insert(sig_key(f), used);
+            wired.insert(decl_keys[i].clone(), used);
         }
     }
     wired
@@ -977,23 +1425,20 @@ fn is_printable_buffer(ty: &Ty) -> bool {
     }
 }
 
-/// `print`/templates read an owned buffer without consuming it, so an owned
+/// `print`/templates read an owned buffer without consuming it, so a *named*
 /// one is borrowed here rather than passed by value (which would be a move).
-/// The borrow has to come from a place: C cannot take the address of a
-/// temporary for the two arguments (`len` and `data`) a `%.*s` needs, and
-/// doing it twice would evaluate the temporary twice.
-fn borrow_for_print(value: tir::Expr, what: &str, _ctx: &Ctx) -> Result<tir::Expr> {
+///
+/// A temporary is passed through as the owned value it is: `codegen_c.rs`
+/// hoists it into a C temporary and frees it right after the `printf`, which
+/// is what makes `print(str.to_upper(s))` allocate once, print, and free
+/// (M6.3 — until then this was a diagnostic telling the author to bind a
+/// `val` first).
+fn borrow_for_print(value: tir::Expr, _what: &str, _ctx: &Ctx) -> Result<tir::Expr> {
     if !matches!(value.ty, Ty::Bytes | Ty::String) {
         return Ok(value);
     }
     if !is_tir_place(&value) {
-        return Err(TypeError {
-            message: format!(
-                "cannot print a temporary '{}' with {what} — bind it to a 'val' or 'var' first (v1 has no way to hold a temporary's address across a call)",
-                value.ty.display()
-            ),
-            span: value.span,
-        });
+        return Ok(value);
     }
     let inner = value.ty.clone();
     let span = value.span;
@@ -1102,14 +1547,16 @@ fn display_name(f: &ast::FunctionDecl) -> String {
 
 fn check_function(
     f: &ast::FunctionDecl,
+    key: &str,
     sigs: &HashMap<String, FnSig>,
     structs: &HashMap<String, StructDef>,
+    consts: &HashMap<String, ConstInfo>,
+    overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
     all_pds: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
 ) -> Result<tir::Function> {
-    let key = sig_key(f);
-    let sig = sigs.get(&key).unwrap().clone();
+    let sig = sigs.get(key).unwrap().clone();
     let receiver_struct = f
         .receiver
         .as_ref()
@@ -1123,12 +1570,14 @@ fn check_function(
     let hidden = if key == "main" {
         Vec::new()
     } else {
-        wired.get(&key).cloned().unwrap_or_default()
+        wired.get(key).cloned().unwrap_or_default()
     };
     let mut ctx = base_ctx(
         &f.module,
         sigs,
         structs,
+        consts,
+        overloads,
         project,
         all_pds,
         None,
@@ -1192,7 +1641,7 @@ fn check_function(
     // scope for M1/M2), so a mismatch is only reported when a tail
     // expression is actually present and disagrees with the declared return
     // type.
-    if sig.ret != Ty::Unit && body.tail.is_some() && body.ty() != sig.ret {
+    if sig.ret != Ty::Unit && body.tail.is_some() && !str_view_compatible(&body.ty(), &sig.ret) {
         return Err(TypeError {
             message: format!(
                 "function '{}' declared to return '{}' but body evaluates to '{}'",
@@ -1205,7 +1654,7 @@ fn check_function(
     }
 
     Ok(tir::Function {
-        name: key,
+        name: key.to_string(),
         params: {
             params.extend(hidden.iter().map(|pd| (pd.hidden.clone(), pd.param_ty.clone())));
             params
@@ -1295,7 +1744,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                 None => None,
             };
             let actual = value.as_ref().map(|v| v.ty.clone()).unwrap_or(Ty::Unit);
-            if actual != ret_ty {
+            if !str_view_compatible(&actual, &ret_ty) {
                 return Err(TypeError {
                     message: format!(
                         "return type mismatch: expected '{}', found '{}'",
@@ -1426,6 +1875,13 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                     span: *span,
                 });
             }
+            // Not a local, receiver field, or passdown — a compile-time
+            // constant (M6.3), substituted as the literal it folded to.
+            if let Some(c) = ctx.consts.get(&ctx.qualify_own(name)).cloned() {
+                let mut value = c.value;
+                value.span = *span;
+                return Ok(value);
+            }
             Err(TypeError {
                 message: match ctx.foreign_pds.get(name) {
                     Some(module) => format!(
@@ -1478,6 +1934,17 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
         ast::Expr::FieldAccess { base, field, span } => {
             if let ast::Expr::Ident(name, _) = base.as_ref() {
                 if is_module_alias(name, ctx) {
+                    // `math.PI` — a module's `const`, written without call
+                    // parentheses (M6.3). Everything else in a module is a
+                    // function and needs a call.
+                    if let Some(prefix) = ctx.aliases.get(name).cloned() {
+                        let qualified = format!("{prefix}{field}");
+                        if let Some(c) = ctx.consts.get(&qualified).cloned() {
+                            let mut value = c.value;
+                            value.span = *span;
+                            return Ok(value);
+                        }
+                    }
                     return Err(TypeError {
                         message: format!(
                             "'{name}' is a module, not a value — call its items as '{name}.{field}(...)'"
@@ -1650,10 +2117,12 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
 /// directly: an owned value, a `datac`, or a `str` has no comparison of its
 /// own, and emitting one produces invalid C at `cc` (or, for `str`, a
 /// comparison of *addresses* rather than text — silently wrong, which is
-/// worse). References are allowed: comparing two borrows compares addresses,
-/// which is exactly what the author asked for.
+/// worse). References are allowed *except* `&str`, which is the same address
+/// comparison in disguise.
 fn comparable(ty: &Ty) -> bool {
-    ty.is_numeric() || matches!(ty, Ty::Bool | Ty::Char | Ty::Ref { .. })
+    ty.is_numeric()
+        || matches!(ty, Ty::Bool | Ty::Char)
+        || (matches!(ty, Ty::Ref { .. }) && !is_str_like(ty))
 }
 
 fn comparison_error(ty: &Ty, op: BinOp) -> String {
@@ -1666,9 +2135,14 @@ fn comparison_error(ty: &Ty, op: BinOp) -> String {
         BinOp::GtEq => ">=",
         _ => unreachable!("not a comparison operator"),
     };
+    if is_str_like(ty) {
+        return format!(
+            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
+        );
+    }
     match ty {
         Ty::Str => format!(
-            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — compare bytes with 'str.len'/'str.byte'"
+            "cannot compare 'str' values with '{sym}': a 'str' is a borrowed pointer, so this would compare addresses rather than text — use 'str.eq', or compare bytes with 'str.len'/'str.byte'"
         ),
         Ty::Bytes | Ty::String => format!(
             "cannot compare '{}' values with '{}': v1 has no equality for owned values",
@@ -1834,6 +2308,12 @@ fn match_args(
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
     let Ty::Ref { mutable, inner } = pty else {
         let checked = check_expr(arg_expr, ctx, Some(pty))?;
+        // A `&str` view and a `str` are the same value (both are the flat
+        // borrowed view type), so a view satisfies a `str` parameter
+        // directly — that is what makes `str.len(s.as_str())` work (M6.3).
+        if is_str_like(pty) && is_str_like(&checked.ty) {
+            return Ok(checked);
+        }
         if checked.ty != *pty {
             return Err(TypeError {
                 message: format!(
@@ -1912,7 +2392,8 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         let arg = check_expr(&args[0].value, ctx, None)?;
         let arg = borrow_for_print(arg, callee, ctx)?;
         let printable = arg.ty.is_numeric()
-            || matches!(arg.ty, Ty::Bool | Ty::Char | Ty::Str)
+            || matches!(arg.ty, Ty::Bool | Ty::Char)
+            || is_str_like(&arg.ty)
             || is_printable_buffer(&arg.ty);
         if !printable {
             return Err(TypeError {
@@ -1955,10 +2436,15 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
     }
 
     let owned_key = ctx.qualify_own(callee);
-    let (key, sig) = match ctx.sigs.get(callee) {
-        Some(sig) => (callee.to_string(), sig.clone()),
-        None => match ctx.sigs.get(&owned_key) {
-            Some(sig) => (owned_key.clone(), sig.clone()),
+    let direct = ctx
+        .sigs
+        .get(callee)
+        .map(|s| (callee.to_string(), s.clone()))
+        .or_else(|| ctx.sigs.get(&owned_key).map(|s| (owned_key.clone(), s.clone())));
+    let (key, sig) = match direct {
+        Some(found) => found,
+        None => match resolve_overload(callee, &owned_key, args, span, ctx)? {
+            Some(found) => found,
             None => {
                 return Err(TypeError {
                     message: match qualified_hint(
@@ -1974,7 +2460,13 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
             }
         },
     };
-    let mut checked = match_args(&format!("function '{key}'"), &sig.params, args, span, ctx)?;
+    let mut checked = match_args(
+        &format!("function '{}'", display_callee(&key)),
+        &sig.params,
+        args,
+        span,
+        ctx,
+    )?;
     checked.extend(hidden_args(&key, span, ctx)?);
 
     Ok(tir::Expr {
@@ -1985,6 +2477,88 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
         ty: sig.ret,
         span,
     })
+}
+
+/// Argument-type overloading (M6.3, stdlib decision 4). Picks the single
+/// declaration whose parameter types match the first argument's type. Every
+/// parameter of one overload has the same type, so which argument is probed
+/// does not matter; and the rule exists only for compiler-shipped modules,
+/// so user code has no overload set to resolve against in the first place.
+fn resolve_overload(
+    callee: &str,
+    owned_key: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<Option<(String, FnSig)>> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let bases = [callee, owned_key];
+    if !bases.iter().any(|b| ctx.overloads.contains_key(*b)) {
+        return Ok(None);
+    }
+    // A type-only probe: `check_expr` has no persistent side effects beyond
+    // reading `ctx`, the same assumption `check_method_call` makes.
+    let probe = check_expr(&args[0].value, ctx, None)?;
+    let mut hits: Vec<String> = Vec::new();
+    for base in bases {
+        if let Some(set) = ctx.overloads.get(base) {
+            for (ptys, key) in set {
+                if ptys.iter().all(|t| *t == probe.ty) {
+                    hits.push(key.clone());
+                }
+            }
+        }
+    }
+    hits.sort();
+    hits.dedup();
+    match hits.len() {
+        0 => Err(TypeError {
+            message: format!(
+                "no overload of '{}' takes '{}'{}",
+                display_callee(callee),
+                probe.ty.display(),
+                overload_options(callee, owned_key, ctx)
+            ),
+            span,
+        }),
+        1 => {
+            let key = hits.remove(0);
+            let sig = ctx
+                .sigs
+                .get(&key)
+                .cloned()
+                .expect("every overload key is in sigs");
+            Ok(Some((key, sig)))
+        }
+        _ => Err(TypeError {
+            message: format!(
+                "call to '{}' is ambiguous for argument type '{}'",
+                display_callee(callee),
+                probe.ty.display()
+            ),
+            span,
+        }),
+    }
+}
+
+/// " — it is declared for i32, i64, f64", for the message above.
+fn overload_options(callee: &str, owned_key: &str, ctx: &Ctx) -> String {
+    for base in [callee, owned_key] {
+        if let Some(set) = ctx.overloads.get(base) {
+            let mut names: Vec<String> = set
+                .iter()
+                .filter_map(|(ptys, _)| ptys.first().map(|t| t.display()))
+                .collect();
+            names.sort();
+            names.dedup();
+            if !names.is_empty() {
+                return format!(" — it is declared for {}", names.join(", "));
+            }
+        }
+    }
+    String::new()
 }
 
 /// The hidden passdown arguments a call to `callee` has to pass, in the
@@ -2033,7 +2607,8 @@ fn check_template(
                 let value = check_expr(e, ctx, None)?;
                 let value = borrow_for_print(value, "a string template", ctx)?;
                 let printable = value.ty.is_numeric()
-                    || matches!(value.ty, Ty::Bool | Ty::Char | Ty::Str)
+                    || matches!(value.ty, Ty::Bool | Ty::Char)
+                    || is_str_like(&value.ty)
                     || is_printable_buffer(&value.ty);
                 if !printable {
                     return Err(TypeError {
@@ -2163,8 +2738,25 @@ fn check_module_item(
     ctx: &mut Ctx,
 ) -> Result<tir::Expr> {
     let qualified = format!("{prefix}{item}");
-    if ctx.structs.contains_key(&qualified) || ctx.sigs.contains_key(&qualified) {
+    if ctx.structs.contains_key(&qualified)
+        || ctx.sigs.contains_key(&qualified)
+        || ctx.overloads.contains_key(&qualified)
+    {
         return check_call(&qualified, args, span, ctx);
+    }
+    // A module's `const` is reached the same way as its functions: as
+    // `math.PI` (M6.3). It takes no arguments, so a call-shaped reference to
+    // one is worth a message of its own.
+    if let Some(c) = ctx.consts.get(&qualified).cloned() {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'{alias}.{item}' is a constant, not a function"),
+                span,
+            });
+        }
+        let mut value = c.value;
+        value.span = span;
+        return Ok(value);
     }
     // A receiver method lives under a `Type#name` key, which a module path
     // can't spell — say so rather than "no such item".

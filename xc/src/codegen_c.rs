@@ -210,6 +210,19 @@ static x_String x_String__clone(const x_String* self) {
     return s;
 }
 
+/* A borrowed view of the same buffer (M6.3). Every constructor keeps the
+   buffer NUL-terminated, which is what a `str` (a `const char*`) requires. */
+static const char* x_String__as_str(const x_String* self) {
+    return (const char*)self->data;
+}
+
+static const char* x_Bytes__as_str(const x_Bytes* self) {
+    if (!x_utf8_valid(self->data, self->len)) {
+        x_panic("Bytes.as_str: input is not valid utf-8");
+    }
+    return (const char*)self->data;
+}
+
 static void x_string_drop(x_String* s) {
     free(s->data);
     s->data = NULL;
@@ -235,6 +248,9 @@ static x_Bytes x_bytes_alloc_raw(size_t n) {
 pub fn generate(program: &Program, drops: &DropPlan) -> String {
     let owned = owned_structs(&program.structs);
     let mut out = String::new();
+    // Included unconditionally: `std/math`'s externs call the C library
+    // directly, and an unused declaration costs nothing.
+    out.push_str("#include <math.h>\n");
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
     out.push_str("#include <stdio.h>\n");
@@ -693,31 +709,67 @@ impl<'a> Gen<'a> {
                 // the same mapping `print` uses).
                 let mut fmt = String::new();
                 let mut args: Vec<String> = Vec::new();
+                let mut holds: Vec<String> = Vec::new();
+                let mut drops: Vec<String> = Vec::new();
                 for piece in pieces {
                     match piece {
                         TemplatePiece::Text(text) => fmt.push_str(&printf_text(text)),
                         TemplatePiece::Value(value) => {
-                            let (spec, rendered) = self.printf_piece(value);
-                            fmt.push_str(spec);
-                            args.push(rendered);
+                            // An owned temporary (nothing else owns it) is
+                            // held in a C temporary and freed right after the
+                            // `printf`, so interpolating an allocation does
+                            // not leak.
+                            if matches!(value.ty, Ty::Bytes | Ty::String) {
+                                let tmp = fresh_temp();
+                                let rendered = self.expr_value(value);
+                                holds.push(format!("{} {tmp} = {rendered};", value.ty.c_type()));
+                                let (spec, text) = self.printf_piece_with(&tmp, &value.ty);
+                                fmt.push_str(spec);
+                                args.push(text);
+                                drops.push(format!("{}(&{tmp});", drop_fn_name(&value.ty)));
+                            } else {
+                                let (spec, rendered) = self.printf_piece(value);
+                                fmt.push_str(spec);
+                                args.push(rendered);
+                            }
                         }
                     }
                 }
                 if *newline {
                     fmt.push_str("\\n");
                 }
-                if args.is_empty() {
+                let call = if args.is_empty() {
                     format!("printf(\"{fmt}\")")
                 } else {
                     format!("printf(\"{fmt}\", {})", args.join(", "))
+                };
+                if holds.is_empty() {
+                    call
+                } else {
+                    format!(
+                        "({{ {}{call}; {} }})",
+                        holds.join(" "),
+                        drops.join(" ")
+                    )
                 }
             }
             ExprKind::FieldAccess { base, field } => self.field_access(base, field),
             ExprKind::Ref { expr: sub, .. } => {
+                // A `&str` borrow is the same C value as the `str` it points
+                // at (both `const char*`), so no `&` is emitted for it. Every
+                // other pointee is represented by its address.
+                if matches!(&expr.ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str)) {
+                    return self.expr_value(sub);
+                }
                 let inner = self.expr_value(sub);
                 format!("(&{inner})")
             }
             ExprKind::Deref { expr: sub } => {
+                // `*p` on a `&str` view is the view itself: a `str` is
+                // already the pointer.
+                if expr.ty == Ty::Str {
+                    return self.expr_value(sub);
+                }
                 let inner = self.expr_value(sub);
                 format!("(*{inner})")
             }
@@ -866,6 +918,20 @@ impl<'a> Gen<'a> {
             // `print` appends a newline, `print!` doesn't — opposite of the
             // old `println`/`print` naming.
             let newline = if callee == "print" { "\\n" } else { "" };
+            // An owned buffer that arrives *unwrapped* is a temporary nothing
+            // else owns (`infer.rs` wraps a named place in `Ref`), so it is
+            // hoisted into a C temporary and freed after the `printf`:
+            // `print(str.to_upper(s))` allocates once, prints, frees.
+            if matches!(arg.ty, Ty::Bytes | Ty::String) {
+                let tmp = fresh_temp();
+                let value = self.expr_value(arg);
+                let (fmt, rendered) = self.printf_piece_with(&tmp, &arg.ty);
+                return format!(
+                    "({{ {} {tmp} = {value}; printf(\"{fmt}{newline}\", {rendered}); {}(&{tmp}); }})",
+                    arg.ty.c_type(),
+                    drop_fn_name(&arg.ty)
+                );
+            }
             let (fmt, value) = self.printf_piece(arg);
             return format!("printf(\"{fmt}{newline}\", {value})");
         }
@@ -923,15 +989,24 @@ impl<'a> Gen<'a> {
     /// one argument.
     fn printf_piece(&self, expr: &Expr) -> (&'static str, String) {
         let value = self.expr_value(expr);
-        match &expr.ty {
-            Ty::I32 => ("%d", value),
+        self.printf_piece_with(&value, &expr.ty)
+    }
+
+    /// The specifier and argument text for a value that has already been
+    /// rendered (usually because codegen hoisted it into a temporary).
+    fn printf_piece_with(&self, value: &str, ty: &Ty) -> (&'static str, String) {
+        match ty {
+            Ty::I32 => ("%d", value.to_string()),
             Ty::I64 => ("%lld", format!("(long long){value}")),
-            Ty::U32 => ("%u", value),
+            Ty::U32 => ("%u", value.to_string()),
             Ty::U64 => ("%llu", format!("(unsigned long long){value}")),
             Ty::F32 | Ty::F64 => ("%f", format!("(double){value}")),
             Ty::Bool => ("%s", format!("({value} ? \"true\" : \"false\")")),
-            Ty::Char => ("%c", value),
-            Ty::Str => ("%s", value),
+            Ty::Char => ("%c", value.to_string()),
+            Ty::Str => ("%s", value.to_string()),
+            // A `&str` view carries the pointer itself; `%.*s`-style length
+            // handling stays for the owned buffers below.
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => ("%s", value.to_string()),
             Ty::U8 | Ty::U16 => ("%u", format!("(unsigned){value}")),
             Ty::Usize => ("%zu", format!("(size_t){value}")),
             Ty::Isize => ("%lld", format!("(long long){value}")),

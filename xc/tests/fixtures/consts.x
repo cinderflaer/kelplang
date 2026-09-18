@@ -1,0 +1,15 @@
+// M6.3: top-level compile-time constants. Folded at the declaration and
+// substituted as literals, so there is no storage and no init function.
+const ANSWER: i32 = 40 + 2
+const HALF: f64 = 3.0 / 2.0
+const DOUBLED: i32 = ANSWER * 2
+const NAME: str = "x"
+const BIG: bool = DOUBLED > ANSWER
+
+fun main() {
+    print(ANSWER)
+    print(HALF)
+    print(DOUBLED)
+    print(NAME)
+    print(BIG)
+}

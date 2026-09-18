@@ -554,8 +554,14 @@ fn a_borrowed_datac_field_is_rejected() {
 }
 
 #[test]
-fn printing_a_temporary_bytes_is_rejected() {
-    assert_rejected("tests/fixtures/heap_temporary_print.x");
+fn printing_a_temporary_owned_buffer_works() {
+    // Until M6.3 this was a diagnostic telling the author to bind a `val`
+    // first; now codegen hoists the temporary and drops it after the printf,
+    // and the fixture runs under AddressSanitizer to prove it is freed.
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_temporary_print.x",
+        "x\ny\nAB\nw = CD\n",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +642,76 @@ fn an_owned_value_in_statement_position_is_rejected() {
     assert_rejected("tests/fixtures/owned_statement.x");
 }
 
+// ---------------------------------------------------------------------------
+// M6.3: `const`, stdlib-only argument-type overloading, and `&str` return
+// elision (which is what the rest of the `str`/`path` surface needed).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn const_declarations_fold_at_compile_time() {
+    assert_compiles_and_runs(
+        "tests/fixtures/consts.x",
+        "42\n1.500000\n84\nx\ntrue\n",
+    );
+}
+
+#[test]
+fn std_math_overloads_resolve_on_argument_type() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_math.x",
+        "3.141593\n6.283185\n7\n7.500000\n3\n9\n10\n1.414214\n2.000000\n-1.000000\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn str_views_borrow_and_owned_truncations_allocate() {
+    assert_compiles_and_runs(
+        "tests/fixtures/string_views.x",
+        "hello\n5\nhello  \n7\nello\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\n2\nraw\n5\nown\n",
+    );
+}
+
+#[test]
+fn path_components_split_a_path() {
+    assert_compiles_and_runs(
+        "tests/fixtures/path_parts.x",
+        "notes.txt\ntxt\n/tmp\nbare.txt\ntxt\n\n/var/log\ntrue\n",
+    );
+}
+
+#[test]
+fn returning_a_borrow_of_the_wrong_parameter_is_rejected() {
+    assert_rejected("tests/fixtures/elision_wrong_param.x");
+}
+
+#[test]
+fn returning_a_view_of_a_local_is_rejected() {
+    assert_rejected("tests/fixtures/elision_not_from_param.x");
+}
+
+#[test]
+fn a_live_view_keeps_its_owner_pinned() {
+    assert_rejected("tests/fixtures/view_pins_owner.x");
+}
+
+#[test]
+fn a_view_releases_its_owner_at_scope_end() {
+    assert_compiles_and_runs(
+        "tests/fixtures/view_released_at_scope_end.x",
+        "hi\nhi\n",
+    );
+}
+
+#[test]
+fn comparing_str_values_is_rejected() {
+    assert_rejected("tests/fixtures/str_comparison.x");
+}
+
+#[test]
+fn a_const_that_does_not_fold_is_rejected() {
+    assert_rejected("tests/fixtures/const_not_constant.x");
+}
+
 #[test]
 fn a_modules_own_items_are_reachable_bare_inside_it() {
     // `util.x` calls `doubled` and constructs `Pair` without qualifying
@@ -668,6 +744,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_mem",
         "stdlib_str",
         "stdlib_path",
+        "stdlib_math",
+        "string_views",
+        "path_parts",
+        "view_released_at_scope_end",
+        "heap_temporary_print",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.x");

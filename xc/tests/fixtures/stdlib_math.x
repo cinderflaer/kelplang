@@ -1,0 +1,18 @@
+// M6.3: `std/math` — constants, argument-type overloading, and the C
+// library's transcendentals behind one extern each.
+impl "std/math"
+
+fun main() {
+    print(math.PI)
+    print(math.TAU)
+    print(math.abs(x = -7))
+    print(math.abs(x = -7.5))
+    print(math.min(a = 3, b = 9))
+    print(math.max(a = 3, b = 9))
+    print(math.clamp(x = 15, lo = 0, hi = 10))
+    print(math.sqrt(2.0))
+    print(math.floor(x = 2.75))
+    print(math.sign(x = -3.5))
+    print(math.is_finite(x = 1.0))
+    print(math.is_nan(x = 0.0))
+}

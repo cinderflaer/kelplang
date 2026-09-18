@@ -32,6 +32,91 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "byte_at_raw",
         "    if (x_i >= strlen(x_s)) {\n        x_panic(\"str.byte: index out of bounds\");\n    }\n    return (uint8_t)x_s[x_i];\n",
     ),
+    (
+        "std/str",
+        "slice_from_raw",
+        "    if (x_from > strlen(x_s)) {\n        x_panic(\"str.substring: index out of bounds\");\n    }\n    return x_s + x_from;\n",
+    ),
+    (
+        "std/math",
+        "sqrt_raw",
+        "    return sqrt(x_x);\n",
+    ),
+    (
+        "std/math",
+        "pow_raw",
+        "    return pow(x_base, x_exp);\n",
+    ),
+    (
+        "std/math",
+        "floor_raw",
+        "    return floor(x_x);\n",
+    ),
+    (
+        "std/math",
+        "ceil_raw",
+        "    return ceil(x_x);\n",
+    ),
+    (
+        "std/math",
+        "round_raw",
+        "    return round(x_x);\n",
+    ),
+    (
+        "std/math",
+        "trunc_raw",
+        "    return trunc(x_x);\n",
+    ),
+    (
+        "std/math",
+        "exp_raw",
+        "    return exp(x_x);\n",
+    ),
+    (
+        "std/math",
+        "ln_raw",
+        "    return log(x_x);\n",
+    ),
+    (
+        "std/math",
+        "log2_raw",
+        "    return log2(x_x);\n",
+    ),
+    (
+        "std/math",
+        "log10_raw",
+        "    return log10(x_x);\n",
+    ),
+    (
+        "std/math",
+        "sin_raw",
+        "    return sin(x_x);\n",
+    ),
+    (
+        "std/math",
+        "cos_raw",
+        "    return cos(x_x);\n",
+    ),
+    (
+        "std/math",
+        "tan_raw",
+        "    return tan(x_x);\n",
+    ),
+    (
+        "std/math",
+        "atan2_raw",
+        "    return atan2(x_y, x_x);\n",
+    ),
+    (
+        "std/math",
+        "is_nan_raw",
+        "    return isnan(x_x);\n",
+    ),
+    (
+        "std/math",
+        "is_finite_raw",
+        "    return isfinite(x_x);\n",
+    ),
 ];
 
 /// The C body for an `extern fun` in `module`, or `None` when the compiler

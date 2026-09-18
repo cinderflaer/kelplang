@@ -1,0 +1,10 @@
+// M6.3: a returned borrow has to come from the caller's value — a view of a
+// local would dangle the moment this frame returns.
+fun make(a: &str).R: &str {
+    val s = String.from_str("temp")
+    return s.as_str()
+}
+
+fun main() {
+    print(make(a = "x"))
+}

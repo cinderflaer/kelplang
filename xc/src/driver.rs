@@ -20,6 +20,11 @@ pub fn compile_c(c_source: &str, out_path: &Path) -> Result<(), CompileError> {
         .arg("-o")
         .arg(out_path)
         .arg(&c_path)
+        // `-fwrapv` makes signed overflow wrap instead of being UB, which is
+        // what `plan.md`'s arithmetic-overflow section promises. `-lm` is for
+        // `std/math`'s externs (an unused library is free to link).
+        .arg("-fwrapv")
+        .arg("-lm")
         .output()
         .map_err(|e| CompileError {
             message: format!("could not invoke 'cc': {e}"),

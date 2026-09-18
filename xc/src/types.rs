@@ -123,6 +123,11 @@ impl Ty {
             Ty::Isize => "ptrdiff_t".to_string(),
             Ty::Bytes => "x_Bytes".to_string(),
             Ty::String => "x_String".to_string(),
+            // A `&str` is the same C value as the `str` it points at (both
+            // `const char*`): a reference to an already-borrowed view is not
+            // a pointer to a pointer. The borrow lives in the type system
+            // and the borrow checker, not in the representation.
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => "const char*".to_string(),
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
@@ -198,11 +203,16 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 /// M5 prefixes every module's items with their module path
 /// (`shapes.circle.Circle`), and a receiver method is keyed `Type#name` —
 /// neither `.` nor `#` is legal in a C identifier, so both become `__`.
-/// Not fully collision-proof against a hand-written `shapes__circle__Circle`
-/// (nothing can be, short of a real mangling scheme), but low-risk and
-/// simple, same tradeoff as the pre-M5 `#`-only version.
+/// M6.3's stdlib overloads add `name@i32` keys, so `@` becomes `__ov_` and
+/// the `,` between parameter types becomes `_`. Not fully collision-proof
+/// against a hand-written `shapes__circle__Circle` (nothing can be, short of
+/// a real mangling scheme), but low-risk and simple, same tradeoff as the
+/// pre-M5 `#`-only version.
 pub fn c_ident(name: &str) -> String {
-    name.replace('.', "__").replace('#', "__")
+    name.replace('.', "__")
+        .replace('#', "__")
+        .replace('@', "__ov_")
+        .replace(',', "_")
 }
 
 /// A function's checked signature. Parameter names are kept (not just

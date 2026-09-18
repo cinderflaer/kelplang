@@ -214,6 +214,19 @@ struct Ctx {
     /// cannot answer that on its own, so the struct table decision is made
     /// once in `check_program` and threaded here.
     owned_structs: std::collections::HashSet<String>,
+    /// For every callee whose result is a borrow: the parameter index the
+    /// elided lifetime binds to (M6.3). Both `.x` functions and builtins
+    /// follow the same rule, so both are in here.
+    fn_borrow_root: HashMap<String, Option<usize>>,
+    /// The current function's own return-borrow rule: the name of the
+    /// parameter a returned borrow must be rooted at, when the function
+    /// declares a borrowed return type. `None` with `ret_is_borrow` set
+    /// means the function takes no reference parameter at all, so only a
+    /// `str` literal (static storage) is a legal returned borrow.
+    ret_borrow_param: Option<String>,
+    ret_is_borrow: bool,
+    /// The declared return type, for the wording of that diagnostic.
+    ret_ty: Ty,
 }
 
 impl Ctx {
@@ -407,6 +420,57 @@ impl Ctx {
         self.scopes.last_mut().unwrap().scope_borrows.push(root.to_string());
     }
 
+    /// The parameter index a callee's returned borrow is elided from, for a
+    /// `.x` function or a builtin method.
+    fn borrow_root_param_of(&self, callee: &str) -> Option<usize> {
+        match self.fn_borrow_root.get(callee).copied() {
+            Some(v) => v,
+            None => crate::infer::builtin_borrow_root(callee)?,
+        }
+    }
+
+    /// The elided-borrow rule, enforced at every return site of a function
+    /// that declares a borrowed return type: the value must be derived from
+    /// the first reference parameter (or be a `str` literal, whose storage is
+    /// static). This is what makes `&str` return elision sound without real
+    /// lifetime inference — the caller keeps the owner borrowed for as long
+    /// as the view lives (see `check_call`), and the callee cannot hand back
+    /// anything that did not come from that same owner.
+    fn check_return_borrow(&mut self, value: &tir::Expr) -> Result<()> {
+        if !self.ret_is_borrow {
+            return Ok(());
+        }
+        let root = borrow_root(value, self);
+        if root.as_deref() == Some(STATIC_ROOT) {
+            return Ok(());
+        }
+        if let (Some(root), Some(param)) = (root, self.ret_borrow_param.clone()) {
+            if root == param {
+                return Ok(());
+            }
+            return Err(BorrowError {
+                message: format!(
+                    "cannot return a borrow of '{root}': '{}' borrows from its first reference parameter '{param}', so the returned value must be derived from '{param}'",
+                    self.ret_ty.display()
+                ),
+                span: value.span,
+            });
+        }
+        Err(BorrowError {
+            message: match &self.ret_borrow_param {
+                Some(param) => format!(
+                    "cannot return this value as '{}': it is not derived from a reference parameter (an elided return lifetime is '{param}', or a 'str' literal)",
+                    self.ret_ty.display()
+                ),
+                None => format!(
+                    "cannot return this value as '{}': with no reference parameter to borrow from, only a 'str' literal can be returned (its storage is static)",
+                    self.ret_ty.display()
+                ),
+            },
+            span: value.span,
+        })
+    }
+
     fn snapshot(&self) -> Vec<Scope> {
         self.scopes.clone()
     }
@@ -450,11 +514,76 @@ fn tir_root_ident(expr: &tir::Expr) -> Option<&str> {
     }
 }
 
+/// The root of a call argument, which is usually an auto-borrow node that
+/// `check_call_arg` synthesized — so this unwraps one `Ref` before asking
+/// `tir_root_ident`.
+fn arg_root(expr: &tir::Expr) -> Option<&str> {
+    match &expr.kind {
+        tir::ExprKind::Ref { expr: inner, .. } => tir_root_ident(inner),
+        _ => tir_root_ident(expr),
+    }
+}
+
+/// Stands in for a `str` literal's storage: static, so it satisfies any
+/// return lifetime and never pins an owner.
+const STATIC_ROOT: &str = "<static>";
+
+/// The variable a borrow is ultimately derived from. A borrow-returning call
+/// chains back through its own elided lifetime, so `trim_start(s)` roots at
+/// `s`, and `f(s.as_str())` roots at whatever `s` was borrowed from. `None`
+/// when the value has no such root.
+fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
+    match &expr.kind {
+        tir::ExprKind::StringLit(_) => Some(STATIC_ROOT.to_string()),
+        tir::ExprKind::Ident(name) => Some(name.clone()),
+        tir::ExprKind::FieldAccess { base, .. }
+        | tir::ExprKind::Ref { expr: base, .. }
+        | tir::ExprKind::Deref { expr: base } => borrow_root(base, ctx),
+        tir::ExprKind::Call { callee, args } => {
+            let idx = ctx.borrow_root_param_of(callee)?;
+            borrow_root(args.get(idx)?, ctx)
+        }
+        // `if`/`when` in value position: every branch has to agree, or the
+        // value has no single owner — which is exactly why
+        // `fun classify(n: i32).R: &str = when { ... "pos" ... }` works
+        // (all branches are literals) and a branch mixing a parameter with a
+        // literal does not.
+        tir::ExprKind::Block(b) => block_tail_root(b, ctx),
+        tir::ExprKind::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            let then_root = block_tail_root(then_block, ctx)?;
+            let else_root = block_tail_root(else_block.as_ref()?, ctx)?;
+            if then_root == else_root {
+                Some(then_root)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<String> {
+    borrow_root(block.tail.as_deref()?, ctx)
+}
+
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
     let mut plan = DropPlan::default();
     let owned = crate::types::owned_structs(&program.structs);
+    // Every callee whose result is a borrow, with the parameter its elided
+    // lifetime binds to. Builtins (`String.as_str`) join the same table, so
+    // `check_call` has one rule for both.
+    let mut fn_borrow_root: HashMap<String, Option<usize>> = HashMap::new();
     for f in &program.functions {
-        let function = check_function(f, &owned).map_err(|e| {
+        if matches!(f.ret, Ty::Ref { .. }) {
+            fn_borrow_root.insert(f.name.clone(), crate::infer::borrow_root_param(&f.params));
+        }
+    }
+    for f in &program.functions {
+        let function = check_function(f, &owned, &fn_borrow_root).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -465,11 +594,23 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
 fn check_function(
     f: &tir::Function,
     owned_structs: &std::collections::HashSet<String>,
+    fn_borrow_root: &HashMap<String, Option<usize>>,
 ) -> Result<FnDrops> {
     let mut ctx = Ctx {
         scopes: vec![Scope::default()],
         plan: FnDrops::default(),
         owned_structs: owned_structs.clone(),
+        fn_borrow_root: fn_borrow_root.clone(),
+        // A borrowed return type borrows from the first reference
+        // parameter — `infer.rs` has already rejected a function that
+        // returns one without taking any.
+        ret_borrow_param: if matches!(f.ret, Ty::Ref { .. }) {
+            crate::infer::borrow_root_param(&f.params).map(|i| f.params[i].0.clone())
+        } else {
+            None
+        },
+        ret_is_borrow: matches!(f.ret, Ty::Ref { .. }),
+        ret_ty: f.ret.clone(),
     };
     for (name, ty) in &f.params {
         ctx.define(name, ty);
@@ -481,6 +622,12 @@ fn check_function(
         }
     }
     check_block(&f.body, &mut ctx)?;
+
+    // A tail expression is the function's returned value, so it is bound by
+    // the same elision rule an explicit `return` is.
+    if let Some(tail) = &f.body.tail {
+        ctx.check_return_borrow(tail)?;
+    }
 
     // Anything still owned in the frame at the end belongs to the function
     // body's own block (parameters live as long as the body does).
@@ -518,9 +665,9 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
         }
         tir::Stmt::While { cond, body } => check_while(cond, body, ctx),
         tir::Stmt::Return { value, span } => {
-            match value {
-                Some(v) => check_value(v, ctx)?,
-                None => {}
+            if let Some(v) = value {
+                check_value(v, ctx)?;
+                ctx.check_return_borrow(v)?;
             }
             // Planned after the value is checked: a local being returned is
             // moved by that check and so is not dropped here.
@@ -621,7 +768,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             check_value(lhs, ctx)?;
             check_value(rhs, ctx)
         }
-        tir::ExprKind::Call { args, .. } => check_call(args, ctx),
+        tir::ExprKind::Call { .. } => check_call(expr, ctx),
         tir::ExprKind::Template { pieces, .. } => {
             for piece in pieces {
                 if let tir::TemplatePiece::Value(v) = piece {
@@ -724,7 +871,14 @@ fn check_assign_target(target: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 /// them are released*, so `start_borrow`'s own conflict check catches a
 /// same-call aliasing violation like `f(&mut c, &c)` — not a separate
 /// pass. All of them release together right after.
-fn check_call(args: &[tir::Expr], ctx: &mut Ctx) -> Result<()> {
+///
+/// The one exception is a call that *returns* a borrow (M6.3): the argument
+/// the elided lifetime binds to is left borrowed for the enclosing scope, so
+/// the caller cannot move or free the owner while the view lives.
+fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
+    let tir::ExprKind::Call { callee, args } = &expr.kind else {
+        unreachable!("check_call is only called on a Call node")
+    };
     let mut taken = Vec::new();
     for a in args {
         if let tir::ExprKind::Ref { mutable, expr: inner } = &a.kind {
@@ -735,6 +889,18 @@ fn check_call(args: &[tir::Expr], ctx: &mut Ctx) -> Result<()> {
             }
         } else {
             check_value(a, ctx)?;
+        }
+    }
+    if matches!(expr.ty, Ty::Ref { .. }) {
+        let idx = ctx.borrow_root_param_of(callee);
+        if let Some(root) = idx
+            .and_then(|i| args.get(i))
+            .and_then(arg_root)
+        {
+            // Held for the scope the result lives in, exactly like
+            // `val p = &c` (see `check_let_init`).
+            ctx.register_scope_borrow(root);
+            taken.retain(|r| r != root);
         }
     }
     for root in &taken {

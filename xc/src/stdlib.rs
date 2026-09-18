@@ -18,6 +18,7 @@ pub fn source(id: &str) -> Option<&'static str> {
         "std/mem" => include_str!("../std/mem.x"),
         "std/str" => include_str!("../std/str.x"),
         "std/path" => include_str!("../std/path.x"),
+        "std/math" => include_str!("../std/math.x"),
         _ => return None,
     })
 }
@@ -25,5 +26,5 @@ pub fn source(id: &str) -> Option<&'static str> {
 /// The names of every stdlib module the compiler ships, for diagnostics that
 /// want to list them.
 pub fn shipped() -> &'static [&'static str] {
-    &["std/mem", "std/str", "std/path"]
+    &["std/mem", "std/str", "std/path", "std/math"]
 }

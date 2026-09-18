@@ -92,22 +92,31 @@ impl Parser {
     pub fn parse_program(&mut self) -> PResult<Program> {
         self.skip_newlines();
         let mut impls = Vec::new();
+        let mut consts = Vec::new();
         let mut pds = Vec::new();
         let mut datacs = Vec::new();
         let mut functions = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::Eof) {
             if self.check(&TokenKind::Impl) {
-                if !pds.is_empty() || !datacs.is_empty() || !functions.is_empty() {
+                if !consts.is_empty() || !pds.is_empty() || !datacs.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'impl' lines must come first (canonical order: impl, pd, datac/fun)".to_string(),
+                        message: "'impl' lines must come first (canonical order: impl, const/pd, datac/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
                 impls.push(self.parse_impl_decl()?);
+            } else if self.check(&TokenKind::Const) {
+                if !pds.is_empty() || !datacs.is_empty() || !functions.is_empty() {
+                    return Err(ParseError {
+                        message: "'const' lines must come before any 'pd', 'datac' or 'fun' (canonical order: impl, const/pd, datac/fun)".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                consts.push(self.parse_const_decl()?);
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
-                        message: "'pd' lines must come before any 'datac' or 'fun' (canonical order: impl, pd, datac/fun)".to_string(),
+                        message: "'pd' lines must come before any 'datac' or 'fun' (canonical order: impl, const/pd, datac/fun)".to_string(),
                         span: self.peek().span,
                     });
                 }
@@ -121,9 +130,29 @@ impl Parser {
         }
         Ok(Program {
             impls,
+            consts,
             pds,
             datacs,
             functions,
+        })
+    }
+
+    /// `const NAME: T = expr` — the type is mandatory, since a `const` is a
+    /// declared contract rather than an inferred binding.
+    fn parse_const_decl(&mut self) -> PResult<ConstDecl> {
+        let start = self.expect(TokenKind::Const, "'const'")?.span;
+        let (name, _) = self.expect_ident()?;
+        self.expect(TokenKind::Colon, "':' (a 'const' must declare its type)")?;
+        let ty = self.parse_type()?;
+        self.expect(TokenKind::Eq, "'='")?;
+        let init = self.parse_expr()?;
+        let span = start.to(init.span());
+        Ok(ConstDecl {
+            name,
+            ty,
+            init,
+            module: String::new(),
+            span,
         })
     }
 
@@ -378,10 +407,11 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> PResult<TypeExpr> {
-        // A leading `&` is accepted and discarded: v1 has no real
-        // reference/borrow type yet (that's borrow-checker territory,
-        // deferred), but the only string type is spelled `&str` in
-        // examples, so the annotation needs to at least parse.
+        // A leading `&` is recorded but not applied here: in a parameter
+        // position `&str`/`&T` is exactly what the bare name already means
+        // (a borrowed view passed by value), while in a *return* position it
+        // is the elided-borrow form `infer.rs` turns into a `Ty::Ref`
+        // (M6.3). Only the resolver knows which position it is looking at.
         let amp_start = if self.check(&TokenKind::Amp) {
             Some(self.advance().span)
         } else {
@@ -402,6 +432,7 @@ impl Parser {
         }
         Ok(TypeExpr {
             name,
+            amp: amp_start.is_some(),
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
         })
     }
