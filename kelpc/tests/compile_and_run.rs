@@ -1225,6 +1225,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "fn_value",
         // A-4: a `fun` literal whose `move` parameter owns and frees a buffer.
         "fn_literal",
+        // A-4 phase D: `option`/`result`/`list` callbacks over owned payloads.
+        "stdlib_combinators",
+        "stdlib_list_callbacks",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2644,5 +2647,48 @@ fn fun_literal_misuse_is_rejected() {
     assert_rejected_with(
         "tests/fixtures/fn_literal_no_body.kp",
         "a 'fun' literal needs a body",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A-4 phase D: the stdlib callbacks — what function values and a move-taking
+// parameter were for.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn option_and_result_combinators_take_callbacks() {
+    // Also in the AddressSanitizer list: `map` builds owned `String`s.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_combinators.kp",
+        "5\nHELLO\n2\ntrue\n7\n7\n42\n105\n4\n11\n4\n",
+    );
+}
+
+#[test]
+fn list_callbacks_work_over_copy_and_owned_elements() {
+    // Also in the AddressSanitizer list.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_list_callbacks.kp",
+        "6\n2\n123\ntrue\ntrue\n2\n2\n4\n1\ntrue\n2\n",
+    );
+}
+
+#[test]
+fn a_combinator_needing_a_copy_payload_says_so() {
+    // `result.map` rebuilds `Err`, `option.unwrap` hands the payload out, and
+    // `list.filter` reads an accepted element out — each needs a `Copy`
+    // payload or element, and each fails inside the module, so the message
+    // names the module and says why.
+    assert_rejected_with(
+        "tests/fixtures/stdlib_combinators_owned_error.kp",
+        "this is inside the shipped standard library ('std/result')",
+    );
+    assert_rejected_with(
+        "tests/fixtures/stdlib_option_unwrap_owned.kp",
+        "this is inside the shipped standard library ('std/option')",
+    );
+    assert_rejected_with(
+        "tests/fixtures/stdlib_list_filter_owned.kp",
+        "this is inside the shipped standard library ('std/list')",
     );
 }

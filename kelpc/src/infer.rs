@@ -248,6 +248,11 @@ struct Ctx {
     /// see is a *capture* it is not allowed to make yet, and a passdown is a
     /// hidden argument it cannot receive.
     in_fn_literal: bool,
+    /// The names bound by the scopes a literal's body was checked *inside*
+    /// (A-4). The body itself cannot see them — that is the point — but the
+    /// diagnostic has to tell "this is a capture" apart from "this name does
+    /// not exist at all", which is what a typo or a missing `impl` is.
+    outer_locals: std::collections::HashSet<String>,
     /// Set while checking a receiver-form function whose receiver resolves
     /// to a `datac`: lets a bare identifier that isn't a local fall back to
     /// an implicit `self.field` (`fun Circle.area().R: f64 = 3.14159 * r *
@@ -3182,6 +3187,7 @@ fn base_ctx(
         init_state: None,
         pd_global_borrow: false,
         in_fn_literal: false,
+        outer_locals: std::collections::HashSet::new(),
         receiver_struct: None,
     }
 }
@@ -3809,9 +3815,17 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
             };
             let actual = value.as_ref().map(|v| v.ty.clone()).unwrap_or(Ty::Unit);
             if !str_view_compatible(&actual, &ret_ty) {
+                // A borrow where an owned value is wanted, inside a stdlib
+                // module, is a `Copy`-only accessor: the arm that hands the
+                // value out cannot take it from the borrow it was given.
+                let note = if matches!(&actual, Ty::Ref { inner, .. } if **inner == ret_ty) {
+                    stdlib_instantiation_note(ctx)
+                } else {
+                    String::new()
+                };
                 return Err(TypeError {
                     message: format!(
-                        "return type mismatch: expected '{}', found '{}'",
+                        "return type mismatch: expected '{}', found '{}'{note}",
                         ret_ty.display(),
                         actual.display()
                     ),
@@ -3908,8 +3922,14 @@ fn check_fn_literal(
     // that captured something would be a closure, which is a later phase, so
     // this is the honest boundary rather than a silent borrow of a name the
     // generated C function cannot see.
+    let outer_locals: std::collections::HashSet<String> = ctx
+        .scopes
+        .iter()
+        .flat_map(|scope| scope.keys().cloned())
+        .collect();
     let mut inner = (*ctx).clone();
     inner.scopes = vec![HashMap::new()];
+    inner.outer_locals = outer_locals;
     inner.ret_ty = ret.clone();
     inner.receiver_struct = None;
     inner.init_state = None;
@@ -4095,7 +4115,7 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
             // and captures are a later phase (A-4). Say that rather than
             // "undefined variable", because the name *is* defined one frame
             // up and the reader needs to know why that does not help.
-            if ctx.in_fn_literal && ctx.lookup(name).is_none() {
+            if ctx.in_fn_literal && ctx.outer_locals.contains(name) {
                 return Err(TypeError {
                     message: format!(
                         "a 'fun' literal cannot capture '{name}' from the enclosing scope yet — a function value is a plain pointer to code, with no environment to carry it; pass it as a parameter, or as a 'move' parameter to hand over ownership"
@@ -4593,6 +4613,23 @@ fn bind_type_params(
         Ty::Ref { inner, .. } => inner.as_ref(),
         other => other,
     };
+    // A function type (A-4) pairs a written type against a function value
+    // structurally: the parameters in order, then the return. This is what
+    // lets `map<T, U>(o: &Option<T>, f: fun(&T).R: U)` take both `T` and `U`
+    // from its arguments, and it is the only place a function type is bound.
+    if let Some(written_params) = &written.fn_params {
+        if let Ty::Fn { params: actual_params, ret } = actual {
+            if written_params.len() == actual_params.len() {
+                for (w, a) in written_params.iter().zip(actual_params.iter()) {
+                    bind_type_params(env, prefix, aliases, &w.ty, a, params, out);
+                }
+                if let Some(written_ret) = &written.fn_ret {
+                    bind_type_params(env, prefix, aliases, written_ret, ret, params, out);
+                }
+            }
+        }
+        return;
+    }
     if written.args.is_empty() {
         if params.iter().any(|p| p == &written.name) {
             out.entry(written.name.clone())
@@ -5382,6 +5419,20 @@ fn check_when(
 /// Whether a bare identifier names an `impl` alias rather than a value. A
 /// local, parameter, receiver field, or passdown shadows it, exactly as it
 /// would shadow any other name.
+/// A note appended to an error only a stdlib *instantiation* can produce: a
+/// helper written for a `Copy` payload or element fails inside the module, and
+/// the span points into a file the caller never opened. Empty everywhere else.
+fn stdlib_instantiation_note(ctx: &Ctx) -> String {
+    if is_std_module(&ctx.module) {
+        format!(
+            " — this is inside the shipped standard library ('{}'), so the instantiation you asked for is one it does not offer: a helper that hands a value out is written for a 'Copy' payload or element, and the module's header says which",
+            ctx.module
+        )
+    } else {
+        String::new()
+    }
+}
+
 fn is_module_alias(name: &str, ctx: &Ctx) -> bool {
     ctx.lookup(name).is_none()
         && !ctx.pds.contains_key(name)
@@ -5699,8 +5750,9 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         if matches!(checked.ty, Ty::Ref { .. }) && !pty.is_copy() {
             return Err(TypeError {
                 message: format!(
-                    "argument {pname} has type '{}', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()')",
-                    checked.ty.display()
+                    "argument {pname} has type '{}', but this call moves its argument in, and a borrow cannot be moved out of — pass an owned value (a 'Box' holding one moves it out with 'take()'){}",
+                    checked.ty.display(),
+                    stdlib_instantiation_note(ctx)
                 ),
                 span: arg_expr.span(),
             });

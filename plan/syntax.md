@@ -875,6 +875,11 @@ while !xs.is_empty() {
 
 The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice` and `Map.values` are offered only for element types that support them.
 
+The element-wise methods above are builtin. The callback-shaped operations
+(`map`, `filter`, `each`, `find_index`, `any`, `all`) live in `std/list`,
+because a callback's result type cannot be generated per element type: see
+16.15.
+
 ### 12.2 `Map<K, V>`
 
 A keyed container: keys of type `K`, values of type `V`. Entries keep insertion order, which is why `keys()` and `values()` are lists and not hash order.
@@ -1061,7 +1066,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Fifteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+Sixteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -1078,6 +1083,7 @@ Fifteen modules ship inside the compiler binary. Import them with `impl "std/<na
 | `std/process` | `process` | argv, spawn, wait, kill, exit |
 | `std/net` | `net` | TCP sockets, listener, readiness, DNS |
 | `std/http` | none (holds `net`) | HTTP client, request and response types, connection pool |
+| `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |
 
@@ -1339,11 +1345,24 @@ fun is_some<T>(o: &Option<T>).R: bool
 fun is_none<T>(o: &Option<T>).R: bool
 fun unwrap_or<T>(o: &Option<T>, fallback: T).R: T   // `T` must be Copy
 fun unwrap<T>(o: &Option<T>).R: T                   // `T` must be Copy; panics on None
+
+fun map<T, U>(o: &Option<T>, f: fun(&T).R: U).R: Option<U>
+fun and_then<T, U>(o: &Option<T>, f: fun(&T).R: Option<U>).R: Option<U>
+fun or_else<T>(o: &Option<T>, f: fun().R: Option<T>).R: Option<T>   // `T` must be Copy
+fun each<T>(o: &Option<T>, f: fun(&T))
 ```
 
 The enum is the point: `Some`/`None` is one of the two shapes `?` (5) and `if let` (6.1) understand, so a function that can fail one way returns `Option<T>` and its caller writes `val x = f(...)?`. Nothing in the compiler knows this module exists — the *shape* is the contract, so a program's own `Option` works identically.
 
-`unwrap_or` and `unwrap` are offered for a `Copy` payload, because the payload comes out of a *borrow* and v1 has no partial moves: `Option<String>.unwrap()` is a compile error saying so. A `move` parameter (7.1) does not lift that by itself — the payload would still have to be moved out of the enum, and `when`/`if let` binds a payload as a borrow — so `if let`/`when` is what reads an owned payload out of the borrow. `map`/`and_then`/`or_else` need function values and do not exist yet.
+The **callbacks borrow the payload** (`fun(&T).R: U`), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is already a borrow, so `map` needs no `Copy` and hands nothing on:
+
+```kelp
+val text = option.Option.Some(value = String.from_str("hello"))
+val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
+val shout = option.map(o = text, f = fun(s: &String).R = str.to_upper(s.as_str()))
+```
+
+What is still offered for a **`Copy` payload only** is anything that hands the payload *out by value*: `unwrap_or`, `unwrap`, and `or_else` (which rebuilds `Some` from the payload it was handed). That is not a missing function but a missing *rule*: reading an owned payload out of an enum is a partial move, which v1 does not have (see 17), and a `move` parameter does not lift it — the payload would still have to move out of the enum. A program with an owned payload reads it with `if let`/`when`, which borrows it.
 
 ### 16.14 `std/result`
 
@@ -1358,9 +1377,41 @@ fun is_err<T, E>(r: &Result<T, E>).R: bool
 fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).R: T   // `T` must be Copy
 fun unwrap<T, E>(r: &Result<T, E>).R: T                   // `T` must be Copy; panics on Err
 fun unwrap_err<T, E>(r: &Result<T, E>).R: E               // `E` must be Copy; panics on Ok
+
+fun map<T, U, E>(r: &Result<T, E>, f: fun(&T).R: U).R: Result<U, E>      // `E` must be Copy
+fun map_err<T, E, F>(r: &Result<T, E>, f: fun(&E).R: F).R: Result<T, F>  // `T` must be Copy
+fun and_then<T, U, E>(r: &Result<T, E>, f: fun(&T).R: Result<U, E>).R: Result<U, E>
+fun or_else<T, E, F>(r: &Result<T, E>, f: fun(&E).R: Result<T, F>).R: Result<T, F>
+fun each<T, E>(r: &Result<T, E>, f: fun(&T))
 ```
 
 `Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
+
+The `Copy` requirements here are on the *other* side of the result: the arm that has to **rebuild** a variant takes a copy (so `map` needs a `Copy` error and `map_err` a `Copy` success). That is the consequential one in practice, because a `datac` is never `Copy`: `result.map` over a `Result<T, MyErr>` needs the partial-move rule 17 lists, and until then the error type has to be an integer or another scalar. When an instantiation fails there, the diagnostic points inside `std/result.kp` and says that the helper is written for a `Copy` payload.
+
+### 16.15 `std/list`
+
+The element-wise API of `List<T>` (`len`, `get`, `push`, `sort`, …) is builtin, because a list is monomorphized and its methods are generated C per element type (12.1). The operations that need a **function value** cannot be generated without knowing what the callback returns, so they are free functions in a module — `list.map(xs, f)` — the same shape `str.*` and `math.*` have.
+
+```kelp
+fun map<T, U>(xs: &List<T>, f: fun(&T).R: U).R: List<U>
+fun filter<T>(xs: &List<T>, f: fun(&T).R: bool).R: List<T>          // `T` must be Copy
+fun each<T>(xs: &List<T>, f: fun(&T))
+fun find_index<T>(xs: &List<T>, f: fun(&T).R: bool).R: Option<usize>
+fun any<T>(xs: &List<T>, f: fun(&T).R: bool).R: bool
+fun all<T>(xs: &List<T>, f: fun(&T).R: bool).R: bool
+```
+
+Every callback borrows the element, so nothing is ever moved out of the list and the same functions work for a `Copy` and an owned element type:
+
+```kelp
+var names: List<String> = List.empty()
+names.push(String.from_str("ab"))
+val lens = list.map(xs = names, f = fun(s: &String).R: usize = s.len())
+print(names.len())                       // still owned here
+```
+
+`filter` is the exception, and for the same reason `or_else` is: an accepted element is read *out* of the list by value, which is the partial move v1 does not have. `list.filter` over `List<String>` is a compile error saying so; `find_index`/`any`/`all` cover the predicates that only need to know *which* one, and a `Copy` element type filters directly.
 
 ## 17. Limits in v1
 
@@ -1371,7 +1422,7 @@ These are deliberate, and each one has a workaround in this document:
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
-- No partial moves: an owned field cannot be read out of a borrowed structure (9), so move it with `Box.take` or pass a borrow.
+- No partial moves: an owned field cannot be read out of a borrowed structure (9), and an owned `enum` payload cannot be read out of an owned one either, so move it with `Box.take` or pass a borrow. This is what makes the `Copy`-only helpers in 16.13/16.14/16.15 `Copy`-only: `option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, and `list.filter` over a `List<String>` each need a move out that does not exist yet.
 - No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`.
 - No character literal, and no `char` values.
