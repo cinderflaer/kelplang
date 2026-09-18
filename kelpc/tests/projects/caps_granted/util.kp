@@ -3,4 +3,4 @@
 // compiler-inserted check passes.
 impl "std/fs"
 
-fun read_note().R: String = fs.read_text("/tmp/xc_caps_granted/note.txt")
+fun read_note().R: String = fs.read_text("/tmp/kelp_caps_granted/note.txt")

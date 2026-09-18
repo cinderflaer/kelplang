@@ -215,7 +215,7 @@ Two tiers:
 - **Prelude, always in scope, ungated** `print`, `print!`, `panic`, `assert`, and the pure namespaces `math`, `str`, `path`, `mem`, `io`. No import needed, no capability. These cannot reach the outside world; they are arithmetic and byte shuffling.
 - **Gated, requires an explicit grant** `fs`, `env`, `process`, `net`, `time`, `rand`. Reached only through an `impl` that carries `with caps(...)`:
 
-```x
+```kelp
 impl "std/fs" with caps(fs = ["/var/log/myapp/**"])
 impl "std/rand"
 impl "std/fs"          // legal but useless: fs.* will not resolve
@@ -232,7 +232,7 @@ Cheap conveniences stay ungated on purpose: `io.print`/`io.read_line` (stdin/std
 
 Compiler-provided, not user-definable via `datac` (a `datac` cannot hold a pointer in v1, and these must).
 
-```x
+```kelp
 // compiler builtins
 datac Bytes      // opaque: owned heap byte buffer, freed at end of scope (drop)
 datac String     // opaque: owned heap utf-8 text, same move/drop rules
@@ -273,7 +273,7 @@ Rules:
 
 ### `Box<T>` the builtin owning pointer (MK3-S2-M2)
 
-```x
+```kelp
 datac Node(val value: i32, val next: Box<Node>)   // the reason it exists
 
 val empty: Box<i32> = Box.empty()     // a cell holding nothing (NULL)
@@ -293,7 +293,7 @@ fun Box.take().R: T                   // moves the value out; panics when empty
 
 ### `List<T>` the builtin owned sequence (MK3-S2-M1)
 
-```x
+```kelp
 val names: List<String> = List.empty()     // element type from the written type
 var nums = List.of(1)                      // element type from the argument
 
@@ -365,7 +365,7 @@ When generics arrive, replace every error `datac` with `Option<T>` / `Result<T, 
 
 #### math (pure, ungated)
 
-```x
+```kelp
 const PI: f64 = 3.141592653589793
 const E: f64 = 2.718281828459045
 const TAU: f64 = 6.283185307179586
@@ -414,7 +414,7 @@ C signed overflow is UB, so it must be defined:
 
 **Shipped in MK3-S1-M2** (`kelpc/std/str.kp`): `str.len`, `str.byte` (the bounds-checked one the section below does not name, but which `to_upper`/`join` are built on), `str.is_empty`, `str.to_upper`, `str.to_lower`, `str.repeat`; MK2-S2-M1 added the `&str`-returning half and `path`; MK3-S2-M1 added `split`/`join`/`copy_range`/`copy_into`, which are the `List<String>` entry and exit. Still unwritten and needing no new rule: `replace`, `from_i64`, `from_f64`, `concat` (see open item 25 concatenation still has no spelling, which is why a path is built with `path.join` or `str.join`).
 
-```x
+```kelp
 fun str.len(s: &str).R: usize              // bytes, not chars
 fun str.is_empty(s: &str).R: bool
 fun str.char_count(s: &str).R: usize
@@ -451,7 +451,7 @@ Receiver form is available and preferred in user code: `name.trim()`, `s.contain
 
 **Shipped in MK3-S1-M2** (`kelpc/std/path.kp`): `path.is_absolute` and `path.join`. The predicate/slicing family below (`file_name`, `parent`, `extension`, `stem`) returns `&str` and waits on return elision with the rest of `str`. `path.normalize` is deferred *on purpose* it is the same lexical normalization the MK4-S1-M1 capability matcher needs for its `..` rejection, so it should be written once, against the grant matcher, rather than written here and then re-derived there. `path.join` does not normalize (`a/` + `b` collapses the duplicate separator, which is what users mean, but `..` is left alone).
 
-```x
+```kelp
 fun path.is_absolute(s: &str).R: bool
 fun path.file_name(s: &str).R: &str
 fun path.parent(s: &str).R: &str
@@ -468,7 +468,7 @@ Path separator is `/` on every platform; codegen translates to `\` for Windows a
 
 **Shipped**, with the grant/gate/check machinery described under MK4-S1-M1 and the test suite that goes with it: `read`, `read_text`, `write`, `write_text`, `exists`, `is_file`, `is_dir`, `size`, `remove`, `rename`, `mkdir`, plus two that were not in the sketch: `append(path, data)` (the streaming primitive it needs one buffer's worth of data at a time, not a growable one, which is why streaming a file needed no collections work) and `sync(path)` (an fsync, so a timing of a write is a timing of storage rather than of the page cache). `mkdir_all` is the one function from the sketch below that is *not* here (it needs to walk prefixes of its path).
 
-```x
+```kelp
 fun fs.read(path: &str).R: Bytes
 fun fs.read_text(path: &str).R: String
 fun fs.write(path: &str, data: Bytes)
@@ -500,7 +500,7 @@ Glob metacharacters inside a granted path *argument* are literal `fs.read("*.txt
 
 #### io (ungated; the full sketch is MK5-S2-M1's)
 
-```x
+```kelp
 fun io.print(s: &str)
 fun io.print_bare(s: &str)               // `print`/`print!` already do these two
 fun io.eprint(s: &str)
@@ -519,7 +519,7 @@ datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize
 
 #### fmt (ungated, pure)
 
-```x
+```kelp
 fun fmt.int(n: i64).R: String
 fun fmt.uint(n: u64).R: String
 fun fmt.float(x: f64, decimals: i32).R: String    // one extern: snprintf("%.*f")
@@ -533,7 +533,7 @@ fun fmt.bytes(b: Bytes).R: String                 // "1f 8b 08" the first debugg
 
 #### Map (a compiler builtin, `String` keys)
 
-```x
+```kelp
 fun Map.new().R: Map<V>
 fun Map.len().R: usize
 fun Map.is_empty().R: bool
@@ -552,7 +552,7 @@ fun Map.values().R: List<V>
 
 #### http (MK5-S4 the payoff)
 
-```x
+```kelp
 // ungated module that holds `net`; the importer's grant governs it
 impl "std/net"
 impl "std/str"
@@ -598,7 +598,7 @@ Four body-length cases, all framed without ambiguity: `Content-Length` (a `mem.a
 
 #### process (gated: process) **shipped in MK5-S2-M1**
 
-```x
+```kelp
 // `program` is separate from `args` because that is what makes the grant
 // matchable: one absolute path, and argv stays a list.
 fun process.run(program: &str, args: List<String>).R: RunResult
@@ -619,7 +619,7 @@ There is **no `run_shell`**: the string-handed-to-a-shell form the earlier sketc
 
 #### net (gated: net, `host[:port]` allowlist)
 
-```x
+```kelp
 datac Socket(val fd: i32)
 fun net.connect(host: &str, port: u16).R: Socket   // Panics: resolution, connect, or the grant
 fun net.listen(port: u16).R: Listener
@@ -645,7 +645,7 @@ All shipped in MK5-S3. The pattern vocabulary is `host`, `host:port`, `*.host`, 
 
 #### time / rand (gated: time, rand)
 
-```x
+```kelp
 fun time.now_unix().R: i64
 fun time.now_mono_ns().R: i64
 fun time.sleep_ms(ms: u64)          // lives in gated std/time today, so sleeping needs a grant (item 45)
@@ -658,7 +658,7 @@ Both are real and both are gated; sleeping is ungated "in spirit" per the plan's
 
 #### env (gated: env, variable-name allowlist)
 
-```x
+```kelp
 fun env.has(name: &str).R: bool
 fun env.get(name: &str).R: String      // "" when unset (no Option)
 fun env.set(name: &str, value: &str)
@@ -701,7 +701,7 @@ Bluntly: **real** gaps are 1, 2, 3 and 6 (and 5 as a precondition for 6) without
 
 Stdlib as `.kp` sources shipped with the compiler (`std/fs.kp`, `std/math.kp`, ...), with a small intrinsic escape hatch for the actual syscalls. Dogfoods the language, keeps the API reviewable as Kelp code, and lets the capability wrapper live in the same file as the gated namespace.
 
-```x
+```kelp
 // std/fs.kp
 extern fun fs_read_raw(path: &str).R: Bytes     // compiler-provided body
 

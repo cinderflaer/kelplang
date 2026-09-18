@@ -2,22 +2,22 @@ impl "std/fs"
 
 fun exercise() {
     val text = String.from_str("hello")
-    fs.write_text("/tmp/xc_caps_write/a.txt", text)
-    print(fs.exists("/tmp/xc_caps_write/a.txt"))
-    print(fs.size("/tmp/xc_caps_write/a.txt"))
+    fs.write_text("/tmp/kelp_caps_write/a.txt", text)
+    print(fs.exists("/tmp/kelp_caps_write/a.txt"))
+    print(fs.size("/tmp/kelp_caps_write/a.txt"))
 
-    fs.rename("/tmp/xc_caps_write/a.txt", "/tmp/xc_caps_write/b.txt")
-    print(fs.exists("/tmp/xc_caps_write/a.txt"))
-    val back = fs.read("/tmp/xc_caps_write/b.txt")
+    fs.rename("/tmp/kelp_caps_write/a.txt", "/tmp/kelp_caps_write/b.txt")
+    print(fs.exists("/tmp/kelp_caps_write/a.txt"))
+    val back = fs.read("/tmp/kelp_caps_write/b.txt")
     print(back)
 
-    fs.remove("/tmp/xc_caps_write/b.txt")
-    print(fs.exists("/tmp/xc_caps_write/b.txt"))
+    fs.remove("/tmp/kelp_caps_write/b.txt")
+    print(fs.exists("/tmp/kelp_caps_write/b.txt"))
 
-    fs.mkdir("/tmp/xc_caps_write/sub")
-    print(fs.is_dir("/tmp/xc_caps_write/sub"))
+    fs.mkdir("/tmp/kelp_caps_write/sub")
+    print(fs.is_dir("/tmp/kelp_caps_write/sub"))
 
     val bytes = Bytes.from_str("raw")
-    fs.write("/tmp/xc_caps_write/c.bin", bytes)
-    print(fs.size("/tmp/xc_caps_write/c.bin"))
+    fs.write("/tmp/kelp_caps_write/c.bin", bytes)
+    print(fs.size("/tmp/kelp_caps_write/c.bin"))
 }

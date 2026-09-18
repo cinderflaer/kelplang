@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-fn xc_bin() -> PathBuf {
+fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
 }
 
@@ -23,7 +23,7 @@ fn out_path(name: &str) -> PathBuf {
     let mut p = PathBuf::from(std::env::var("CARGO_TARGET_TMPDIR").unwrap_or_else(|_| {
         std::env::temp_dir().to_string_lossy().to_string()
     }));
-    p.push(format!("xc_test_{name}"));
+    p.push(format!("kelpc_test_{name}"));
     p
 }
 
@@ -32,7 +32,7 @@ fn out_path(name: &str) -> PathBuf {
 fn assert_compiles_and_runs(source: &str, expected: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture(source))
         .arg("-o")
@@ -59,7 +59,7 @@ fn assert_compiles_and_runs(source: &str, expected: &str) {
 fn assert_rejected(source: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture(source))
         .arg("-o")
@@ -200,7 +200,7 @@ fn assert_fixture_runs_with_stdin(name: &str, stdin: &str, expected: &str) {
 fn run_fixture_with_stdin(tag: &str, name: &str, stdin: &str, expected: &str) {
     let source = format!("tests/fixtures/{name}.kp");
     let bin = out_path(tag);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture(&source))
         .arg("-o")
@@ -241,7 +241,7 @@ fn run_fixture_with_stdin(tag: &str, name: &str, stdin: &str, expected: &str) {
 /// `process.args()` reads back.
 fn assert_project_runs_with_args(name: &str, target: &Path, args: &[&str], expected: &str) {
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -281,7 +281,7 @@ fn project(name: &str) -> PathBuf {
 /// asserts its stdout.
 fn assert_project_runs(name: &str, target: &Path, expected: &str) {
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -312,7 +312,7 @@ fn assert_project_runs(name: &str, target: &Path, expected: &str) {
 /// reason).
 fn assert_project_rejected(name: &str, target: &Path, needle: &str) {
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -499,7 +499,7 @@ fn writing_a_pd_val_inside_a_function_is_rejected() {
 fn a_pd_var_cannot_be_borrowed_twice_in_one_call() {
     // The documented cost of M6.4's design, pinned so it reads as a rule.
     let bin = out_path("pd_var_double_borrow");
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture("tests/fixtures/pd_var_double_borrow.kp"))
         .arg("-o")
@@ -597,7 +597,7 @@ fn an_alias_cycle_across_two_files_names_both_sites() {
     // at the reference that closed the cycle and notes the definition, so
     // both files appear.
     let bin = out_path("alias_kpconf_cycle");
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(project("alias_kpconf_cycle"))
         .arg("-o")
@@ -861,10 +861,10 @@ fn an_owned_value_in_statement_position_is_rejected() {
 /// runs and is removed afterwards.
 fn caps_scratch(name: &str) -> PathBuf {
     // `/tmp` literally, not `std::env::temp_dir()`: the capability patterns in
-    // the fixtures are source text and say `/tmp/xc_caps_<name>/**`, so a
+    // the fixtures are source text and say `/tmp/kelp_caps_<name>/**`, so a
     // `TMPDIR` that points somewhere else (a sandbox, a CI runner) would leave
     // the harness writing one directory while the program reads another.
-    let dir = PathBuf::from("/tmp").join(format!("xc_caps_{name}"));
+    let dir = PathBuf::from("/tmp").join(format!("kelp_caps_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("could not create the capability scratch directory");
     dir
@@ -874,7 +874,7 @@ fn caps_scratch(name: &str) -> PathBuf {
 /// stderr — the runtime-denial path, which only a *granted* module can reach.
 fn assert_project_denied_at_runtime(name: &str, target: &Path, needle: &str) {
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -981,7 +981,7 @@ fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
 #[test]
 fn a_granted_env_reads_sets_and_unsets_only_the_granted_names() {
     // MK5-S5: the bodies are real now. `HOME` is read through the grant, and
-    // `XC_ENV_PROBE` is set, read back, unset and confirmed gone — all inside
+    // `KELP_ENV_PROBE` is set, read back, unset and confirmed gone — all inside
     // the child process, so the harness's environment is untouched.
     assert_project_runs(
         "caps_env",
@@ -1159,7 +1159,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // the same names, and racing them for one file makes the binary
         // unreadable to whichever loses.
         let bin = out_path(&format!("{name}_asan_src"));
-        let build = Command::new(xc_bin())
+        let build = Command::new(kelpc_bin())
             .arg("build")
             .arg(fixture(&source))
             .arg("-o")
@@ -1222,7 +1222,7 @@ fn a_forward_reference_between_datacs_is_rejected() {
 fn assert_fixture_panics(name: &str, needle: &str) {
     let source = format!("tests/fixtures/{name}.kp");
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture(&source))
         .arg("-o")
@@ -1458,7 +1458,7 @@ fn fs_breadth_creates_walks_stats_copies_opens_and_removes_under_one_grant() {
     assert_project_runs(
         "caps_fs_breadth",
         &project("caps_fs_breadth").join("main.kp"),
-        "2\nline one\nline two\n18\ntrue\nfalse\ntrue\nfalse\ntop\ntrue\n7\n/tmp/xc_fs_breadth_test/a/b/c/note.txt\ntrue\ntrue\nfalse\n",
+        "2\nline one\nline two\n18\ntrue\nfalse\ntrue\nfalse\ntop\ntrue\n7\n/tmp/kelp_fs_breadth_test/a/b/c/note.txt\ntrue\ntrue\nfalse\n",
     );
 }
 
@@ -1847,7 +1847,7 @@ fn assert_project_served(
 ) {
     let mut server = CannedServer::start(connections);
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -1891,7 +1891,7 @@ fn assert_project_served_denied(
 ) {
     let mut server = CannedServer::start(connections);
     let bin = out_path(name);
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -2004,7 +2004,7 @@ fn an_unknown_string_escape_is_rejected_by_name() {
     // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
     // string. It is now a diagnostic that names the supported set.
     let bin = out_path("unknown_escape");
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture("tests/fixtures/unknown_escape.kp"))
         .arg("-o")
@@ -2039,7 +2039,7 @@ fn the_download_example_writes_exactly_what_it_received() {
 
     let mut server = CannedServer::start(vec![vec![response]]);
     let bin = out_path("download_example");
-    let build = Command::new(xc_bin())
+    let build = Command::new(kelpc_bin())
         .arg("build")
         .arg(fixture("../examples/download.kp"))
         .arg("-o")

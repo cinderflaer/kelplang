@@ -1,29 +1,29 @@
 workload        language            ops        ns/op     Mops/s     vs C++
 ------------------------------------------------------------------------------
 collatz             rust        1000000       81.625       12.3       1.0x
-collatz                x        1000000       80.753       12.4       1.0x
+collatz                kelp        1000000       80.753       12.4       1.0x
 collatz              cpp        1000000       80.696       12.4       1.0x
 collatz               py        1000000     6304.849        0.2      78.1x
 float               rust      100000000        0.994     1006.1       1.0x
-float                  x      100000000        0.982     1018.4       1.0x
+float                  kelp      100000000        0.982     1018.4       1.0x
 float                cpp      100000000        0.983     1016.9       1.0x
 float                 py      100000000       85.752       11.7      87.2x
 mix                 rust       50000000        3.312      301.9       1.0x
-mix                    x       50000000        3.297      303.3       1.0x
+mix                    kelp       50000000        3.297      303.3       1.0x
 mix                  cpp       50000000        3.271      305.7       1.0x
 mix                   py       50000000       88.351       11.3      27.0x
 fib                 rust       18454929        1.257      795.2       1.0x
-fib                    x       18454929        1.248      801.3       1.0x
+fib                    kelp       18454929        1.248      801.3       1.0x
 fib                  cpp       18454929        1.250      799.7       1.0x
 fib                   py       18454929       52.848       18.9      42.3x
 
-checksum collatz  rust=131434424 x=131434424 cpp=131434424 py=131434424 (all agree)
-checksum float    rust=57735026 x=57735026 cpp=57735026 py=57735026 (all agree)
-checksum mix      rust=542344 x=542344 cpp=542344 py=542344 (all agree)
-checksum fib      rust=5702887 x=5702887 cpp=5702887 py=5702887 (all agree)
+checksum collatz  rust=131434424 kelp=131434424 cpp=131434424 py=131434424 (all agree)
+checksum float    rust=57735026 kelp=57735026 cpp=57735026 py=57735026 (all agree)
+checksum mix      rust=542344 kelp=542344 cpp=542344 py=542344 (all agree)
+checksum fib      rust=5702887 kelp=5702887 cpp=5702887 py=5702887 (all agree)
 
 compile (s) / wall per trial (s) / startup = wall - work (ms):
   rust  compile 0.143             wall  0.374   startup    3.1
-  x     compile 0.110             wall  0.370   startup    2.7
+  kelp  compile 0.110             wall  0.370   startup    2.7
   cpp   compile 0.139             wall  0.372   startup    3.3
   py    compile n/a (interpreted) wall 20.377   startup   14.2

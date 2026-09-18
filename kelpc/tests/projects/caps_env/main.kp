@@ -1,7 +1,7 @@
 // `env` is a gated namespace with real bodies (MK5-S5). `util` holds a grant
 // on exactly the two variable names it uses; the check is on the name, before
 // the call, so an ungranted name is denied (see caps_env_denied).
-impl "util" with caps(env = ["HOME", "XC_ENV_PROBE"])
+impl "util" with caps(env = ["HOME", "KELP_ENV_PROBE"])
 
 fun main() {
     print(util.has_home())

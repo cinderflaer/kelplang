@@ -158,7 +158,7 @@ Three things that were stdlib prerequisites, shipped together because `str`, `pa
 - `const` shares its module's top-level namespace with `datac`s, `pd`s and functions, so a clash is reported at the declaration. Canonical order became `impl`, `const`/`pd`, `datac`/`fun`.
 
 **Argument-type overloading, stdlib-only**
-- An overloadable name (`abs`, `min`, `max`, `clamp`) declared in a compiler-shipped module gets a *parameter-typed* signature key (`std.math.abs@f64`), so several declarations coexist; a call site probes its first argument's type and picks the single matching overload, with "no overload takes Kelp it is declared for …" otherwise.
+- An overloadable name (`abs`, `min`, `max`, `clamp`) declared in a compiler-shipped module gets a *parameter-typed* signature key (`std.math.abs@f64`), so several declarations coexist; a call site probes its first argument's type and picks the single matching overload, with "no overload of '<name>' takes '<type>' — it is declared for …" otherwise.
 - The mechanism is gated on `is_std_module`, which is what stdlib decision 4 asked for: user code cannot declare overloads, and cannot tell that the compiler has the machinery.
 - The consequence to remember: `scan_all` (passdown wiring) and the body checker need the *same* key the call sites will use, so `check_program` now computes a `decl_keys` vector once and threads it, instead of every pass re-deriving `sig_key`.
 
@@ -241,7 +241,7 @@ The plan called this "user-definable owned types, i.e. `Box<T>`-style owners bey
 - The shapes that now work: `datac Node(val value: i32, val next: Box<Node>)` (linked list `Box.empty()` terminates it), `datac Tree(val value: i32, val kids: List<Tree>)` (tree a list of a datac is pointer-indirect at C level too), and a mutually recursive `Leaf`/`Branch` pair.
 
 **One emission order instead of two**
-- MK3-S2-M1 interleaved list instantiations with the `datac`s, which cannot express a list of a `datac` that is not declared yet. MK3-S2-M2 replaces it: (1) every `datac`'s struct tag is forward-declared; (2) every container typedef is emitted, outermost last, naming a `datac` element by its tag (`struct tag_x_Foo* data`) a pointer, so the element may be incomplete; (3) the `datac`s, each with its drop function (struct typedefs are now tagged); (4) the container function sets, innermost first, because their signatures need the element's complete type. Drop prototypes come before step 3, since a `datac` that owns a container drops it. A container inside a container is ordered by nesting depth (`container_depth`).
+- MK3-S2-M1 interleaved list instantiations with the `datac`s, which cannot express a list of a `datac` that is not declared yet. MK3-S2-M2 replaces it: (1) every `datac`'s struct tag is forward-declared; (2) every container typedef is emitted, outermost last, naming a `datac` element by its tag (`struct tag_Foo* data`) a pointer, so the element may be incomplete; (3) the `datac`s, each with its drop function (struct typedefs are now tagged); (4) the container function sets, innermost first, because their signatures need the element's complete type. Drop prototypes come before step 3, since a `datac` that owns a container drops it. A container inside a container is ordered by nesting depth (`container_depth`).
 - The recursive drop is a chain of already-defined functions in the right order: `kelp_drop_Node` → `kelp_box_drop__Node` → `kelp_drop_Node` (the pointee). Two consequences worth knowing: the drop recurses on the C stack, so a very deep structure overflows it (the same limitation Rust has), and a recursive walk does too which is why an iterative cursor is worth having (open item 33).
 
 **Two latent memory bugs, found because of what `Box` made expressible**
@@ -329,7 +329,7 @@ The last piece: `List#sort`, `reverse`, `contains`, `slice`, `insert`, `remove`,
 
 *Deliverable*: `String`/`Bytes` grow in place, numbers convert both ways, formatted output exists, lists sort, and a program can fail deliberately. *Gate*: none (`str`, `fmt`, `mem` are ungated modules but note that "ungated" still means an explicit `impl`; there is no prelude, open item 35).
 
-```x
+```kelp
 impl "std/str"
 impl "std/fmt"
 
@@ -397,7 +397,7 @@ fun assert(cond: bool)                               // panics with "assertion f
 
 *Deliverable*: stdin/stdout/stderr as streams, line reading, and running programs with argv, captured output and exit codes. *Gate*: `io` ungated (open item 38); `process` gated on `process`.
 
-```x
+```kelp
 // ---- std/io.kp ungated --------------------------------------------------
 impl "std/mem"
 impl "std/str"
@@ -482,7 +482,7 @@ fun process.getpid().R: i64
 
 The code sketch below is part of the plan-of-record as well; the shipped module differs in the ways the deviations paragraph records (`Listener.close`, `send_all`'s loop living in the extern, and `std/io` + `std/str` as its imports rather than `std/mem` `resolve` splits its own newline-separated output).
 
-```x
+```kelp
 // ---- std/net.kp gated: net ----------------------------------------------
 impl "std/io"
 impl "std/mem"
@@ -538,7 +538,7 @@ fun net.resolve(host: &str).R: List<String>         // dotted-quad / v6 strings,
 - **No concurrency in MK5-S4.** Threads come first (MK6-S1-M1), then multithreaded downloading (MK6-S2-M1). Poll multiplexing is recorded as the MK5-S4c fallback that needs no language work at all if MK6-S1-M1 slips.
 - **Chunked encoding is no longer deferred.** With keep-alive, a chunked body is the one kind you cannot frame any other way, and the read-to-EOF fallback would block until the peer closed. So the chunked decoder ships *in* MK5-S4 instead of panicking a reversal of the plan's earlier "deferred, and an explicit panic", for a reason that only appeared once keep-alive was decided.
 
-```x
+```kelp
 // ---- std/http.kp ungated module that holds `net` ------------------------
 // The importer delegates: impl "std/http" with caps(net = ["api.example.com:443"])
 impl "std/mem"
@@ -618,7 +618,7 @@ fun http.default_client().R: Client
 
 *Risks*: parsing without a view type allocates a header line's *name* prefix is not expressible as a view (open item 22), so a 20-header response allocates ~40 `String`s; acceptable at v1 scale, and the reason a length-carrying view is the highest-value language item after generics (open item 44). The chunked decoder is genuinely new surface: it is the first place the client must *interpret* a body rather than accumulate it, and it needs hex parsing (`str.parse_u64` is decimal only, so the size line is decoded by hand). Redirects are where the capability model gets *good*: a redirect to another host is a request the code did not name, so it re-runs the connect path and panics unless the grant covers the new host that is the feature working, not a limitation. Still absent, deliberately: gzip/brotli, HTTP/2, cookies, proxies, `Expect: 100-continue`, idle-connection reaping (a reaper needs a clock, which would make `std/http` hold `time` as a second capability open item 56).
 
-*Deviations the language forced, all recorded because they cost real time.* A shared borrow created in a **binding initializer** stays live to the end of the block, so `val h = host.clone()` is fine but nothing may mutate the pool in the same block after reading one of its fields as a `&str`; the pool's fields are copied into locals first, and an idle count is read inside a `{ }` block (the workaround open item 30 documents). No **partial moves** means a helper cannot *return* a field of a local `datac`: the sketch's `Redirect(follow, url)` became `follow_url(...) .R: String` returning an empty string for "do not follow", and a `Next`-shaped datac could not carry the request body at all, because a parameter is a borrow and a borrow cannot be moved into a struct. A `mut` receiver needs a mutable place, so `var pool = http.pool(...)` a pooling client cannot be a `val`, which is the borrow checker saying something true. And the harness's scratch directory is now `/tmp` literally rather than `std::env::temp_dir()`: a capability pattern is *source text* (`/tmp/xc_caps_<name>/**`), so a `TMPDIR` pointing elsewhere had the harness preparing one directory while the program read another a latent fragility in the MK4-S1-M1 tests that this milestone's first full-suite run exposed.
+*Deviations the language forced, all recorded because they cost real time.* A shared borrow created in a **binding initializer** stays live to the end of the block, so `val h = host.clone()` is fine but nothing may mutate the pool in the same block after reading one of its fields as a `&str`; the pool's fields are copied into locals first, and an idle count is read inside a `{ }` block (the workaround open item 30 documents). No **partial moves** means a helper cannot *return* a field of a local `datac`: the sketch's `Redirect(follow, url)` became `follow_url(...) .R: String` returning an empty string for "do not follow", and a `Next`-shaped datac could not carry the request body at all, because a parameter is a borrow and a borrow cannot be moved into a struct. A `mut` receiver needs a mutable place, so `var pool = http.pool(...)` a pooling client cannot be a `val`, which is the borrow checker saying something true. And the harness's scratch directory is now `/tmp` literally rather than `std::env::temp_dir()`: a capability pattern is *source text* (`/tmp/kelp_caps_<name>/**`), so a `TMPDIR` pointing elsewhere had the harness preparing one directory while the program read another a latent fragility in the MK4-S1-M1 tests that this milestone's first full-suite run exposed.
 
 *The bug the example found, and why the projects could not.* Locating the end of the header block was `str.index_of(buf.as_str(), "\r\n\r\n")` and `Bytes.as_str()` **validates utf-8**. The buffer holds whatever arrived alongside the headers, so the first response with a binary body panicked before the headers had been found, with `Bytes.as_str: input is not valid utf-8`. All four projects above send ASCII bodies (`hello`, `chunk!`, `byebye`, `got:payload`), so they were green; a 200 KB image is what exposes it, and writing the example is what wrote that test. The scan is byte-level now (`find_head_end` compares four bytes through `Bytes.get`), and the header text is extracted by copying into a buffer that `String.from_bytes` validates and *adopts*, so a malformed header block is loud rather than a `String` that lies about its own invariant. The general lesson, worth applying to every future parser in this stdlib: **a framing scan is byte work, and the first non-ASCII byte that shares a read with the frame will reveal whether you knew that.**
 
@@ -651,7 +651,7 @@ Nine fs functions and four path ones, all ordinary Kelp over six new externs. `m
 
 #### Part 3 the real `env`
 
-The domain, the grant and the runtime name check were already real; only the bodies were stubs. They are now `getenv`/`setenv`/`unsetenv` behind four externs, and `env.unset` (which the sketch had and the stub module never declared) joined the surface. The point the milestone proves is the ordering: the check is on the **name**, *before* the call, so a grant on `PATH` does not let the holder ask whether `HOME` exists the denial is a property of the name, not of the answer. `env.names()` stays absent: listing is reading all of it. `caps_env` now proves the real behaviour (read `HOME`; set, read, unset and confirm-gone `XC_ENV_PROBE`), and `caps_env_denied` proves the denial names the attempted variable and the granted pattern.
+The domain, the grant and the runtime name check were already real; only the bodies were stubs. They are now `getenv`/`setenv`/`unsetenv` behind four externs, and `env.unset` (which the sketch had and the stub module never declared) joined the surface. The point the milestone proves is the ordering: the check is on the **name**, *before* the call, so a grant on `PATH` does not let the holder ask whether `HOME` exists the denial is a property of the name, not of the answer. `env.names()` stays absent: listing is reading all of it. `caps_env` now proves the real behaviour (read `HOME`; set, read, unset and confirm-gone `KELP_ENV_PROBE`), and `caps_env_denied` proves the denial names the attempted variable and the granted pattern.
 
 #### Tests
 

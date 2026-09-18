@@ -11,9 +11,9 @@ fun get_home_nonempty().R: bool {
 }
 
 fun set_read_unset().R: bool {
-    env.set("XC_ENV_PROBE", "value")
-    val v = env.get("XC_ENV_PROBE")
+    env.set("KELP_ENV_PROBE", "value")
+    val v = env.get("KELP_ENV_PROBE")
     val ok = str.eq(v.as_str(), "value")
-    env.unset("XC_ENV_PROBE")
-    return ok && !env.has("XC_ENV_PROBE")
+    env.unset("KELP_ENV_PROBE")
+    return ok && !env.has("KELP_ENV_PROBE")
 }

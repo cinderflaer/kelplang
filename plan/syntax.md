@@ -32,7 +32,7 @@ The compiler needs a C compiler on `PATH` (`cc`, or `clang` through `CC`). The C
 
 ### 1.2 Hello world
 
-```x
+```kelp
 // hello.kp
 fun main() {
     print("hello, world")
@@ -93,7 +93,7 @@ http_pool = 4
 
 There are no semicolons. A newline ends a statement, and a statement must fit on one line unless it is inside parentheses:
 
-```x
+```kelp
 val c = Circle(r = 2.0, x = 1.0)     // ok
 val area = c.area()                  // ok
 
@@ -117,7 +117,7 @@ pd  return  true  val  var  when  while
 
 ### 2.4 Literals
 
-```x
+```kelp
 val a = 42              // integer literal
 val b = 3.5             // float literal
 val c = true            // bool literal
@@ -135,7 +135,7 @@ val e = "n = $a, sum = ${a + 1}"   // string template
 
 A template is a string literal containing `$name` or `${expr}`:
 
-```x
+```kelp
 print("area = ${c.area()}")
 print("r = $c.r")            // $name names an identifier, nothing more
 ```
@@ -183,7 +183,7 @@ Rules that follow from the table:
 
 ## 4. Bindings and assignment
 
-```x
+```kelp
 val n = 10               // immutable binding, type inferred
 var total: i64 = 0       // mutable binding, explicit type
 total += n               // compound assignment: total = total + n
@@ -211,7 +211,7 @@ Precedence, loosest first:
 | 8 | `.field`, `.method(...)`, `f(...)` | postfix |
 | 9 | `=` `+=` `-=` `*=` `/=` `%=` | right |
 
-```x
+```kelp
 val m = (a + b) * 2
 val ok = n > 0 && n < 10 || force
 val neg = -n
@@ -235,7 +235,7 @@ Facts worth knowing:
 
 ### 6.1 `if` / `else`
 
-```x
+```kelp
 if n < 2 {
     return n
 }
@@ -257,7 +257,7 @@ Braces are always required. Parentheses around the condition are neither needed 
 
 `while` is the only loop. There is no `for`, `break` or `continue`.
 
-```x
+```kelp
 var i: usize = 0
 while i < xs.len() {
     print!(xs.get(i))
@@ -271,7 +271,7 @@ Walking a `List` is therefore an index and a `while`, and `str.split`, `Map.keys
 
 `when` is a chain of conditions that reads as a value:
 
-```x
+```kelp
 fun classify(n: i32).R: &str = when {
     n > 0 -> "pos"
     n < 0 -> "neg"
@@ -285,7 +285,7 @@ Each arm is `condition -> value` and `->` appears nowhere else in the language. 
 
 In a block-bodied function, `return expr` delivers the value the signature promises:
 
-```x
+```kelp
 fun sum_to(n: i32).R: i32 {
     var acc = 0
     var i = 1
@@ -303,7 +303,7 @@ fun sum_to(n: i32).R: i32 {
 
 ### 7.1 Declaration
 
-```x
+```kelp
 fun add(a: i32, b: i32).R: i32 = a + b        // expression body, requires .R
 
 fun greet(name: &str) {                       // no .R: returns Unit
@@ -325,7 +325,7 @@ fun abs_diff(a: i32, b: i32).R: i32 {         // block body
 - Parameters are `name: T`. A parameter is a shared borrow of its argument. `name: mut T` is an exclusive borrow, which is the only spelling for mutation in parameter position: `&mut T` there is a parse error.
 - Named arguments are allowed at any call site when there is more than one parameter, and are matched by name first, then positionally:
 
-```x
+```kelp
 val p = Circle(r = 2.0, x = 1.0)
 val d = math.pow(base = 2.0, exp = 8.0)
 print(str.concat("a", "b"))            // positional is fine too
@@ -342,7 +342,7 @@ A name that the function does not declare is an error; so is naming an argument 
 
 ### 7.3 `main`
 
-```x
+```kelp
 fun main() { ... }
 ```
 
@@ -352,7 +352,7 @@ fun main() { ... }
 
 A method is a function whose first parameter is a receiver, written as `Type.name`:
 
-```x
+```kelp
 datac Counter(val id: i32, var count: i32)
 
 fun Counter.total().R: i32 = id + count          // shared receiver
@@ -363,7 +363,7 @@ fun mut Counter.bump() {                          // exclusive receiver
 
 Calling is ordinary postfix syntax:
 
-```x
+```kelp
 var c = Counter(id = 1, count = 0)
 print(c.total())
 c.bump()
@@ -378,7 +378,7 @@ print(c.total())
 
 ## 9. `datac`
 
-```x
+```kelp
 datac Point(val x: i32, val y: i32)
 datac Counter(val id: i32, var count: i32)
 datac Node(val value: i32, val next: Box<Node>)
@@ -388,7 +388,7 @@ datac Node(val value: i32, val next: Box<Node>)
 - A `datac` holds owned data only. A `str` field, a reference field, or a `Unit` field is illegal, because the `datac` owns its fields and must be able to free them.
 - A field of another `datac` type is stored inline, so that type must be declared earlier in the same file. A self-referencing or forward-referencing field must be behind a `Box` or a `List`:
 
-```x
+```kelp
 datac List2(val head: i32, val tail: Box<List2>)   // recursive, finite size
 datac Tree(val kids: List<Tree>)                   // recursive, finite size
 datac Bad(val next: Bad)                           // error: infinite size
@@ -396,7 +396,7 @@ datac Bad(val next: Bad)                           // error: infinite size
 
 Construction is a call with the `datac` name, and field access is `.`:
 
-```x
+```kelp
 val p = Point(x = 3, y = 4)
 print(p.x)
 
@@ -414,7 +414,7 @@ Reading an owned field *by value* is refused, because the language has no partia
 
 An owned value has exactly one owner. Rebinding, reassigning or returning one moves it:
 
-```x
+```kelp
 val a = String.from_str("x")
 val b = a
 print(b)        // ok
@@ -423,7 +423,7 @@ print(a)        // error: use of moved value 'a'
 
 Passing an owned value to a parameter is **not** a move: parameters borrow (10.2), so this is fine:
 
-```x
+```kelp
 fun greet(s: String) { print(s) }
 
 val name = String.from_str("bob")
@@ -433,14 +433,14 @@ print(name)               // still owned here
 
 An assignment to an existing `var` moves the new value in and frees the old value, which is how a loop can rebuild a recursive structure:
 
-```x
+```kelp
 var list = Node(value = 1, next = Box.empty())
 list = Node(value = 2, next = Box.of(list))
 ```
 
 ### 10.2 Borrowing
 
-```x
+```kelp
 val r = &c            // shared borrow
 var w = &mut c        // exclusive borrow
 print((*r).count)     // dereference, then read a field
@@ -457,7 +457,7 @@ Rules the checker enforces:
 - A borrow cannot be stored: no reference fields in a `datac`, no references as `List` elements or `Map` values.
 - A call that returns a borrow of its receiver needs the receiver to be a variable or a field, not a temporary:
 
-```x
+```kelp
 val text = String.from_str("hi")
 val view = text.as_str()          // ok
 print(str.len(text.as_str()))     // ok: the temporary lives for the call
@@ -474,7 +474,7 @@ Owned values are freed at the end of the scope that owns them, on every exit pat
 
 `print` and `print!` are builtins; no import is needed.
 
-```x
+```kelp
 print("done")            // "done" and a newline
 print!("loading")        // no newline
 print(42)                // integers
@@ -496,7 +496,7 @@ print(c.area())          // the result of a call
 
 A `String` never converts to `str` implicitly. Write `.as_str()`:
 
-```x
+```kelp
 val s = String.from_str("hello")
 print(str.len(s.as_str()))          // ok
 print(str.len(s))                   // error: expected 'str', found 'String'
@@ -507,7 +507,7 @@ val b = s.as_str()                  // b borrows s and cannot outlive it
 
 ### 11.3 Building text
 
-```x
+```kelp
 var out = String.empty()
 out.push_str("wrote ")
 out.push_str(size_text.as_str())
@@ -522,7 +522,7 @@ Growing a buffer takes an exclusive borrow, so a live `str` view of it blocks th
 
 ### 11.4 Conversions and formatting
 
-```x
+```kelp
 val n: i32 = -7
 print(n.to_i64())            // widening, exact
 print(n.to_u64())            // panics: i32.to_u64: value out of range
@@ -548,7 +548,7 @@ if parsed.ok {
 
 ### 12.1 `List<T>`
 
-```x
+```kelp
 var xs: List<i32> = List.empty()      // element type from the annotation
 var ys = List.of(String.from_str("a"))   // element type from the argument
 
@@ -589,7 +589,7 @@ The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be 
 
 Keys are always `String`; values are `V`. Entries keep insertion order, which is why `keys()` and `values()` are lists and not hash order.
 
-```x
+```kelp
 var counts: Map<i64> = Map.new()
 counts.insert("one", 1)
 counts.insert("two", 2)
@@ -619,7 +619,7 @@ print(counts.keys().len())
 
 A box holds one value or nothing. It is the owning pointer, and it is what makes recursive types and moves out of a borrowed structure expressible.
 
-```x
+```kelp
 var slot: Box<i32> = Box.empty()
 print(slot.is_empty())
 slot.set(5)
@@ -638,7 +638,7 @@ list = Node(value = 2, next = Box.of(list))
 
 Every file is a module, and a module starts by importing what it uses:
 
-```x
+```kelp
 impl "shapes/circle"
 impl "std/fs" with caps(fs = ["/var/log/myapp/*"])
 impl "std/str"
@@ -654,7 +654,7 @@ impl "std/time" as t
 
 ### 13.2 Canonical file order
 
-```x
+```kelp
 impl "std/fs"          // 1. imports
 alias %*debug*% = true // 2. aliases, anywhere a statement can start
 const LIMIT: i32 = 10  // 3. constants and passdowns, in any mix
@@ -669,7 +669,7 @@ An `impl` after a declaration is a parse error, and so is a `const` or `pd` afte
 
 Alias substitution is textual and runs before parsing, so it can rewrite an import path:
 
-```x
+```kelp
 alias %*db*% = "storage/postgres"
 impl %*db*%
 ```
@@ -680,7 +680,7 @@ Aliases come from two places: an inline `alias %*name*% = <raw text to end of li
 
 ### 14.1 `const`
 
-```x
+```kelp
 const LIMIT: i32 = 10
 const NAME: str = "x"
 const PI2: f64 = math.PI * 2.0
@@ -692,7 +692,7 @@ A `const` is a top-level compile-time value. The type is mandatory, the initiali
 
 A passdown is a top-level binding that every function in the module can name without it being passed:
 
-```x
+```kelp
 pd val app_name = "shapes"
 pd var requests = 0
 
@@ -727,7 +727,7 @@ A module reaches the outside world only through a capability. The key is that th
 
 ### 15.2 Grants
 
-```x
+```kelp
 impl "std/fs"
 impl "std/http" with caps(net = ["api.example.com:443", "127.0.0.1:*"])
 impl "logger" with caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
@@ -745,7 +745,7 @@ impl "logger" with caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
 
 Each gated call site checks its resource arguments against the calling module's compiled-in allowlist:
 
-```x
+```kelp
 fs.read("/etc/passwd")     // denied unless the module holds a pattern matching it
 process.run("/bin/sh", args)
 net.connect("api.example.com", 443)
@@ -783,7 +783,7 @@ Thirteen modules ship inside the compiler binary. Import them with `impl "std/<n
 
 ### 16.1 `std/str`
 
-```x
+```kelp
 fun len(s: &str).R: usize
 fun byte(s: &str, i: usize).R: u8
 fun byte_index(s: &str, i: usize).R: usize
@@ -822,7 +822,7 @@ fun parse_f64(s: &str).R: ParseFloat
 
 ### 16.2 `std/path`
 
-```x
+```kelp
 fun is_absolute(s: &str).R: bool
 fun normalize(s: &str).R: String
 fun file_name(s: &str).R: &str
@@ -837,7 +837,7 @@ fun parent(s: &str).R: String
 
 ### 16.3 `std/math`
 
-```x
+```kelp
 const PI: f64   const E: f64   const TAU: f64
 
 fun sqrt(x: f64).R: f64        fun pow(base: f64, exp: f64).R: f64
@@ -858,7 +858,7 @@ fun clamp(x: i32, lo: i32, hi: i32).R: i32   // and the i64 and f64 forms
 
 ### 16.4 `std/fmt`
 
-```x
+```kelp
 fun int(n: i64).R: String
 fun uint(n: u64).R: String
 fun float(x: f64, decimals: i32).R: String
@@ -870,13 +870,13 @@ fun pad_right(s: &str, width: usize, fill: u8).R: String
 
 ### 16.5 `std/mem`
 
-```x
+```kelp
 fun alloc(n: usize).R: Bytes      // zero-filled buffer of n bytes; panics on failure
 ```
 
 ### 16.6 `std/io` (ungated)
 
-```x
+```kelp
 datac File(val fd: i32)
 fun File.is_open().R: bool
 fun File.read(max: usize).R: Bytes
@@ -911,7 +911,7 @@ A `File` is one descriptor: a file, a pipe, a socket and a terminal are the same
 
 ### 16.7 `std/fs` (domain `fs`)
 
-```x
+```kelp
 fun read(path: &str).R: Bytes
 fun read_text(path: &str).R: String
 fun read_lines(path: &str).R: List<String>
@@ -940,7 +940,7 @@ fun metadata(path: &str).R: Metadata
 
 ### 16.8 `std/time` (domain `time`) and `std/rand` (domain `rand`)
 
-```x
+```kelp
 fun time.now_unix().R: i64
 fun time.now_mono_ns().R: i64
 fun time.sleep_ms(ms: u64)
@@ -952,7 +952,7 @@ fun rand.bytes(n: usize).R: Bytes
 
 ### 16.9 `std/env` (domain `env`)
 
-```x
+```kelp
 fun has(name: &str).R: bool
 fun get(name: &str).R: String          // "" when unset, there is no Option yet
 fun set(name: &str, value: &str)
@@ -961,7 +961,7 @@ fun unset(name: &str)
 
 ### 16.10 `std/process` (domain `process`)
 
-```x
+```kelp
 fun args().R: List<String>
 fun arg_count().R: usize
 fun spawn(program: &str, args: List<String>).R: Child
@@ -981,7 +981,7 @@ The grant names the program path itself, so `process = ["/bin/sh"]` is one path 
 
 ### 16.11 `std/net` (domain `net`)
 
-```x
+```kelp
 fun connect(host: &str, port: u16).R: Socket
 fun listen(port: u16).R: Listener
 fun accept(l: Listener).R: Socket
@@ -1006,7 +1006,7 @@ datac Listener(val fd: i32)
 
 ### 16.12 `std/http` (ungated, holds `net`)
 
-```x
+```kelp
 fun get(url: &str).R: Response
 fun post_text(url: &str, body: &str, content_type: &str).R: Response
 fun make_get(url: &str).R: Request
@@ -1141,7 +1141,7 @@ arg          := [ ident "=" ] expr
 
 `wordcount.kp` counts how often each word appears in a file, prints the words in order with their counts, and prints the total. It compiles with `kelpc build wordcount.kp -o wordcount` and runs as `./wordcount /abs/path/input.txt`.
 
-```x
+```kelp
 // wordcount: count how often each word appears in a file.
 impl "std/fs"
 impl "std/str"
