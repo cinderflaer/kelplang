@@ -1,3 +1,8 @@
 /target
 /bench/*/build
 /.pi/
+
+# `kelpc build`/`kelpc run` write the emitted C and the binary into the
+# working directory when no `-o` is given. Build output, not source: the
+# compiler is Rust and the stdlib is `.kp`, so no tracked file ends in `.c`.
+*.c
