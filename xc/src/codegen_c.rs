@@ -249,7 +249,9 @@ fn expr_value(expr: &Expr) -> String {
             format!("({} {sym} {})", expr_value(lhs), expr_value(rhs))
         }
         ExprKind::Call { callee, args } => call_value(callee, args),
-        ExprKind::FieldAccess { base, field } => format!("({}).{}", expr_value(base), field_name(field)),
+        ExprKind::FieldAccess { base, field } => field_access(base, field),
+        ExprKind::Ref { expr: sub, .. } => format!("(&{})", expr_value(sub)),
+        ExprKind::Deref { expr: sub } => format!("(*{})", expr_value(sub)),
         ExprKind::StructLit { name, fields } => {
             let mut s = format!("(({}){{ ", Ty::Struct(name.clone()).c_type());
             for (i, (fname, fval)) in fields.iter().enumerate() {
@@ -302,13 +304,30 @@ fn expr_value(expr: &Expr) -> String {
 }
 
 /// Renders an assignment target as a C lvalue. The type checker guarantees
-/// an assignment's target is always an `Ident` or a `.field` chain rooted in
-/// one (see `infer::root_ident`).
+/// an assignment's target is always an `Ident`, a `.field` chain rooted in
+/// one, or a dereferenced borrow (`*p`, `(*p).field`) — see
+/// `infer::is_ast_place`.
 fn lvalue(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Ident(name) => c_name(name),
-        ExprKind::FieldAccess { base, field } => format!("({}).{}", lvalue(base), field_name(field)),
+        ExprKind::FieldAccess { base, field } => field_access(base, field),
+        ExprKind::Deref { expr: sub } => format!("(*{})", expr_value(sub)),
         other => unreachable!("type checker only allows places as assignment targets, got {other:?}"),
+    }
+}
+
+/// `base.field` in C: `->` when `base` is reached through a borrow
+/// (`Ty::Ref`), `.` otherwise. Each `FieldAccess` node decides this purely
+/// from its own immediate base's type — a chain like `c.inner.x` (where `c`
+/// is a `mut Counter` parameter and `inner` is a plain embedded field) gets
+/// this right node-by-node: the innermost access sees `c`'s `Ref` type and
+/// emits `->`, the outer one sees `inner`'s plain `Struct` type and emits
+/// `.`, with no extra state threaded through.
+fn field_access(base: &Expr, field: &str) -> String {
+    if matches!(base.ty, Ty::Ref { .. }) {
+        format!("({})->{}", expr_value(base), field_name(field))
+    } else {
+        format!("({}).{}", expr_value(base), field_name(field))
     }
 }
 
@@ -404,7 +423,9 @@ fn printf_piece(expr: &Expr) -> (&'static str, String) {
         Ty::Bool => ("%s", format!("({value} ? \"true\" : \"false\")")),
         Ty::Char => ("%c", value),
         Ty::Str => ("%s", value),
-        Ty::Unit | Ty::Struct(_) => unreachable!("type checker rejects printing unit/struct values"),
+        Ty::Unit | Ty::Struct(_) | Ty::Ref { .. } => {
+            unreachable!("type checker rejects printing unit/struct/reference values")
+        }
     }
 }
 

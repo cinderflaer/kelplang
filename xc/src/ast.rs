@@ -45,6 +45,10 @@ pub enum FunctionBody {
 pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
+    /// `true` when the param type was written `mut T` — requests an
+    /// exclusive borrow instead of the implicit shared borrow (for a
+    /// `datac` type) or plain by-value passing (for a Copy type).
+    pub mutable: bool,
     pub span: Span,
 }
 
@@ -164,6 +168,19 @@ pub enum Expr {
         span: Span,
     },
     Block(Block),
+    /// `&expr` (shared) / `&mut expr` (exclusive) — taking a borrow of a
+    /// local. Only legal outside signatures; parameter/receiver positions
+    /// use the bare/`mut T` forms instead (parsed via `Param.mutable`).
+    Ref {
+        mutable: bool,
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// `*expr` — dereferencing a borrow.
+    Deref {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -185,7 +202,9 @@ impl Expr {
             | Expr::Call { span: s, .. }
             | Expr::FieldAccess { span: s, .. }
             | Expr::Assign { span: s, .. }
-            | Expr::If { span: s, .. } => *s,
+            | Expr::If { span: s, .. }
+            | Expr::Ref { span: s, .. }
+            | Expr::Deref { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }
     }

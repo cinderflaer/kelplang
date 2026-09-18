@@ -6,7 +6,8 @@ fun main() {
     val p = Point(x = 1, y = 2)
     var i = 0
     while i < 3 {
-        print(consume(p))
+        val q = p
+        print(consume(q))
         i += 1
     }
 }

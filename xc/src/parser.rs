@@ -148,10 +148,21 @@ impl Parser {
         while !self.check(&TokenKind::RParen) {
             let (pname, pspan) = self.expect_ident()?;
             self.expect(TokenKind::Colon, "':'")?;
+            // `mut T` requests an exclusive borrow; this is the *only*
+            // spelling in parameter position — `&mut T` is rejected here
+            // (the leading `&` in `parse_type` expects an identifier next,
+            // not the `mut` keyword token), `&mut` stays expression-only.
+            let mutable = if self.check(&TokenKind::Mut) {
+                self.advance();
+                true
+            } else {
+                false
+            };
             let ty = self.parse_type()?;
             params.push(Param {
                 name: pname,
                 ty,
+                mutable,
                 span: pspan,
             });
             if self.check(&TokenKind::Comma) {
@@ -422,6 +433,36 @@ impl Parser {
                 let span = start.to(expr.span());
                 Ok(Expr::Unary {
                     op: UnOp::Not,
+                    expr: Box::new(expr),
+                    span,
+                })
+            }
+            TokenKind::Amp => {
+                let start = self.advance().span;
+                let mutable = if self.check(&TokenKind::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let expr = self.parse_unary()?;
+                let span = start.to(expr.span());
+                Ok(Expr::Ref {
+                    mutable,
+                    expr: Box::new(expr),
+                    span,
+                })
+            }
+            // A leading `*` at the start of a unary-parse position is
+            // unambiguously prefix-deref: multiplication's `Star` is only
+            // ever consumed by `parse_binary`'s own operator loop, which
+            // runs *after* this function returns, never by `parse_unary`
+            // itself.
+            TokenKind::Star => {
+                let start = self.advance().span;
+                let expr = self.parse_unary()?;
+                let span = start.to(expr.span());
+                Ok(Expr::Deref {
                     expr: Box::new(expr),
                     span,
                 })
@@ -913,6 +954,33 @@ mod tests {
     #[test]
     fn rejects_malformed_input() {
         parse_err("fun main( {}");
+    }
+
+    #[test]
+    fn parses_ref_deref_and_mut_param() {
+        let p = parse("fun bump(c: mut Counter) {\n    val r = &c\n    val m = &mut c\n    val v = *r\n}");
+        assert!(p.functions[0].params[0].mutable);
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        };
+        match &stmts[0] {
+            Stmt::Let { init: Expr::Ref { mutable: false, .. }, .. } => {}
+            other => panic!("expected shared ref, got {other:?}"),
+        }
+        match &stmts[1] {
+            Stmt::Let { init: Expr::Ref { mutable: true, .. }, .. } => {}
+            other => panic!("expected exclusive ref, got {other:?}"),
+        }
+        match &stmts[2] {
+            Stmt::Let { init: Expr::Deref { .. }, .. } => {}
+            other => panic!("expected deref, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ampersand_mut_is_rejected_in_param_position() {
+        parse_err("fun bump(c: &mut Counter) {}");
     }
 
     #[test]

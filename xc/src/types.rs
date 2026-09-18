@@ -12,6 +12,15 @@ pub enum Ty {
     Str,
     /// A `datac` value type, named by its declaration.
     Struct(String),
+    /// A borrow of a value of type `inner` — shared (`mutable: false`) or
+    /// exclusive (`mutable: true`). Never appears as a function's declared
+    /// return type in M4 (no surface syntax produces one there — see
+    /// `infer::resolve_type`), so a borrow can never escape the call frame
+    /// that created it; that's what makes the borrow checker's call-scoped
+    /// release sound without real lifetime tracking. A reference is always
+    /// Copy regardless of `inner` — copying a pointer doesn't move what it
+    /// points at.
+    Ref { mutable: bool, inner: Box<Ty> },
 }
 
 impl Ty {
@@ -59,6 +68,13 @@ impl Ty {
             Ty::Unit => "void".to_string(),
             Ty::Str => "const char*".to_string(),
             Ty::Struct(name) => format!("struct_{name}"),
+            Ty::Ref { mutable, inner } => {
+                if *mutable {
+                    format!("{}*", inner.c_type())
+                } else {
+                    format!("const {}*", inner.c_type())
+                }
+            }
         }
     }
 
@@ -75,6 +91,8 @@ impl Ty {
             Ty::Unit => "unit".to_string(),
             Ty::Str => "str".to_string(),
             Ty::Struct(name) => name.clone(),
+            Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
+            Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
         }
     }
 }

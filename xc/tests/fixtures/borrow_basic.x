@@ -1,0 +1,18 @@
+datac Counter(val id: i32, var count: i32)
+
+fun bump(c: mut Counter) {
+    c.count += 1
+}
+
+fun total(c: Counter).R: i32 = c.id + c.count
+
+fun main() {
+    var c = Counter(id = 1, count = 0)
+    print(total(c))
+    bump(c)
+    bump(c)
+    print(total(c))
+
+    val r = &c
+    print((*r).count)
+}

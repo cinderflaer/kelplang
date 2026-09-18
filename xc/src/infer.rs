@@ -102,8 +102,14 @@ pub fn check_program(program: &ast::Program) -> Result<tir::Program> {
         }
         let mut params = Vec::new();
         for p in &f.params {
-            params.push((p.name.clone(), resolve_type(&p.ty, &structs)?));
+            params.push((p.name.clone(), resolve_param_type(p, &structs)?));
         }
+        // `.R: T` never goes through `resolve_param_type`, so a function's
+        // return type is always a plain owned `Ty` — never `Ty::Ref`. That's
+        // what makes the borrow checker's call-scoped release sound: no
+        // surface syntax exists yet for a function to hand a borrow back to
+        // its caller, so a borrow can never escape the call frame that took
+        // it.
         let ret = match &f.return_type {
             Some(t) => resolve_type(t, &structs)?,
             None => Ty::Unit,
@@ -139,6 +145,95 @@ fn resolve_type(ty: &ast::TypeExpr, structs: &HashMap<String, StructDef>) -> Res
         message: format!("unknown type '{}'", ty.name),
         span: ty.span,
     })
+}
+
+/// Resolves a parameter's type per `syntax&shii.md` §5: a `datac` param is
+/// an implicit shared borrow unless `mut`-marked (exclusive); everything
+/// else (Copy types) stays a plain by-value type unless explicitly
+/// `mut`-marked, since borrowing a Copy scalar by default would add
+/// indirection nobody asked for. There is no move-taking parameter spelling
+/// in v1 — a `datac` value is only ever moved via local rebinding
+/// (`val q = p`), which M3 already checks.
+fn resolve_param_type(p: &ast::Param, structs: &HashMap<String, StructDef>) -> Result<Ty> {
+    let base = resolve_type(&p.ty, structs)?;
+    if p.mutable {
+        Ok(Ty::Ref { mutable: true, inner: Box::new(base) })
+    } else if matches!(base, Ty::Struct(_)) {
+        Ok(Ty::Ref { mutable: false, inner: Box::new(base) })
+    } else {
+        Ok(base)
+    }
+}
+
+/// Unwraps a (possibly borrowed) type down to the `datac` name it names, if
+/// any — used by field access/assignment so `.field` auto-derefs through a
+/// `Ref` base exactly like an owned struct.
+fn struct_name_of(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(s) => Some(s),
+        Ty::Ref { inner, .. } => struct_name_of(inner),
+        _ => None,
+    }
+}
+
+/// A "place": something with stable storage that can be borrowed or
+/// assigned into — an `Ident`, a `.field` chain rooted in one, or a
+/// dereferenced borrow (`*p`, `(*p).field`).
+fn is_tir_place(expr: &tir::Expr) -> bool {
+    matches!(
+        expr.kind,
+        tir::ExprKind::Ident(_) | tir::ExprKind::FieldAccess { .. } | tir::ExprKind::Deref { .. }
+    )
+}
+
+fn is_ast_place(expr: &ast::Expr) -> bool {
+    matches!(expr, ast::Expr::Ident(..) | ast::Expr::FieldAccess { .. } | ast::Expr::Deref { .. })
+}
+
+/// Whether a checked place-expression's storage is currently writable:
+/// either its root is a plain owned `var`-bound local, or its root (or the
+/// pointer stepped through by a `*`) is statically typed as an *exclusive*
+/// `Ty::Ref`. Used both by assignment (`p.x = ...`, `*p = ...`) and by
+/// `&mut expr` (taking an exclusive borrow requires the place already be
+/// writable).
+fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
+    match &target.kind {
+        tir::ExprKind::Ident(name) => {
+            let info = ctx.lookup(name).expect("root identifier was already type-checked");
+            match &info.ty {
+                Ty::Ref { mutable, .. } => {
+                    if *mutable {
+                        Ok(())
+                    } else {
+                        Err(TypeError {
+                            message: format!("cannot write to '{name}': it is a shared borrow, not 'mut'"),
+                            span: target.span,
+                        })
+                    }
+                }
+                _ => {
+                    if info.mutable {
+                        Ok(())
+                    } else {
+                        Err(TypeError {
+                            message: format!("cannot assign to '{name}': not declared 'var'"),
+                            span: target.span,
+                        })
+                    }
+                }
+            }
+        }
+        tir::ExprKind::FieldAccess { base, .. } => check_target_writable(base, ctx),
+        tir::ExprKind::Deref { expr: inner } => match &inner.ty {
+            Ty::Ref { mutable: true, .. } => Ok(()),
+            Ty::Ref { mutable: false, .. } => Err(TypeError {
+                message: "cannot write through a shared borrow".to_string(),
+                span: target.span,
+            }),
+            _ => unreachable!("a Deref's operand is always Ref-typed, guaranteed by check_expr"),
+        },
+        other => unreachable!("not a place expression: {other:?}"),
+    }
 }
 
 fn check_function(
@@ -378,13 +473,13 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
         ast::Expr::Call { callee, args, span } => check_call(callee, args, *span, ctx),
         ast::Expr::FieldAccess { base, field, span } => {
             let base_t = check_expr(base, ctx, None)?;
-            let Ty::Struct(sname) = &base_t.ty else {
+            let Some(sname) = struct_name_of(&base_t.ty).map(|s| s.to_string()) else {
                 return Err(TypeError {
                     message: format!("cannot access field '{field}' on non-struct type '{}'", base_t.ty.display()),
                     span: *span,
                 });
             };
-            let sdef = ctx.structs.get(sname).expect("struct types are only produced for known structs");
+            let sdef = ctx.structs.get(&sname).expect("struct types are only produced for known structs");
             let field_ty = sdef.field(field).map(|f| f.ty.clone()).ok_or_else(|| TypeError {
                 message: format!("datac '{sname}' has no field '{field}'"),
                 span: *span,
@@ -414,72 +509,73 @@ fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<
                 span: block.span,
             })
         }
+        ast::Expr::Ref { mutable, expr: sub, span } => {
+            if !is_ast_place(sub) {
+                return Err(TypeError {
+                    message: "cannot borrow a temporary value".to_string(),
+                    span: *span,
+                });
+            }
+            let sub_t = check_expr(sub, ctx, None)?;
+            if *mutable {
+                check_target_writable(&sub_t, ctx)?;
+            }
+            let ty = Ty::Ref { mutable: *mutable, inner: Box::new(sub_t.ty.clone()) };
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Ref { mutable: *mutable, expr: Box::new(sub_t) },
+                ty,
+                span: *span,
+            })
+        }
+        ast::Expr::Deref { expr: sub, span } => {
+            let sub_t = check_expr(sub, ctx, None)?;
+            let Ty::Ref { inner, .. } = &sub_t.ty else {
+                return Err(TypeError {
+                    message: format!("cannot dereference a value of type '{}'", sub_t.ty.display()),
+                    span: *span,
+                });
+            };
+            let ty = inner.as_ref().clone();
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Deref { expr: Box::new(sub_t) },
+                ty,
+                span: *span,
+            })
+        }
     }
 }
 
-/// Walks a `place` expression (an `Ident`, or a chain of `.field` accesses
-/// rooted in one) down to its root identifier.
-fn root_ident(expr: &ast::Expr) -> Option<&str> {
-    match expr {
-        ast::Expr::Ident(name, _) => Some(name),
-        ast::Expr::FieldAccess { base, .. } => root_ident(base),
-        _ => None,
-    }
-}
-
+/// Assignment targets: `Ident`, a `.field` chain rooted in one, or a
+/// dereferenced borrow (`*p`, `(*p).field`) — anything `is_ast_place`
+/// accepts.
 fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
-    if !matches!(target, ast::Expr::Ident(..) | ast::Expr::FieldAccess { .. }) {
+    if !is_ast_place(target) {
         return Err(TypeError {
             message: "invalid assignment target".to_string(),
-            span,
-        });
-    }
-    let Some(root) = root_ident(target) else {
-        return Err(TypeError {
-            message: "invalid assignment target".to_string(),
-            span,
-        });
-    };
-    let info = ctx.lookup(root).ok_or_else(|| TypeError {
-        message: format!("undefined variable '{root}'"),
-        span,
-    })?;
-    if !info.mutable {
-        return Err(TypeError {
-            message: format!("cannot assign to '{root}': not declared 'var'"),
             span,
         });
     }
 
-    // For a field target, mutating it also requires the field itself be
-    // declared `var` — a `val` field is never reassignable, regardless of
-    // the root binding's own mutability (a `var` binding of a datac with a
-    // `val` field can't reassign that field; there's no per-object
-    // mutability distinct from the binding in v1's value-type model, only
-    // per-field). Note only the *immediate* field being assigned needs to
-    // be `var`; fields merely read-through on the way there do not.
-    if let ast::Expr::FieldAccess { base, field, span: fspan } = target {
-        let base_t = check_expr(base, ctx, None)?;
-        let Ty::Struct(sname) = &base_t.ty else {
-            return Err(TypeError {
-                message: format!("cannot access field '{field}' on non-struct type '{}'", base_t.ty.display()),
-                span: *fspan,
-            });
-        };
+    let target_t = check_expr(target, ctx, None)?;
+    check_target_writable(&target_t, ctx)?;
+
+    // For a field target, writing it also requires the field itself be
+    // declared `var` in its `datac` — a `val` field is never reassignable,
+    // regardless of whether it's reached through a `var` local or an
+    // exclusive borrow. Only the *immediate* field being assigned needs to
+    // be `var`; fields merely read through on the way there do not.
+    if let tir::ExprKind::FieldAccess { base, field } = &target_t.kind {
+        let sname = struct_name_of(&base.ty).expect("field access base is always a struct type, guaranteed by check_expr");
         let sdef = ctx.structs.get(sname).expect("struct types are only produced for known structs");
-        let fdef = sdef.field(field).ok_or_else(|| TypeError {
-            message: format!("datac '{sname}' has no field '{field}'"),
-            span: *fspan,
-        })?;
+        let fdef = sdef.field(field).expect("field already resolved by check_expr");
         if !fdef.mutable {
             return Err(TypeError {
                 message: format!("cannot assign to '{field}': declared 'val'"),
-                span: *fspan,
+                span: target_t.span,
             });
         }
     }
 
-    let target_t = check_expr(target, ctx, None)?;
     let value_t = check_expr(value, ctx, Some(&target_t.ty))?;
     if value_t.ty != target_t.ty {
         return Err(TypeError {
@@ -622,18 +718,7 @@ fn match_args(
                 span,
             })?,
         };
-        let checked = check_expr(&arg.value, ctx, Some(pty))?;
-        if checked.ty != *pty {
-            return Err(TypeError {
-                message: format!(
-                    "argument '{pname}' has type '{}', expected '{}'",
-                    checked.ty.display(),
-                    pty.display()
-                ),
-                span: arg.value.span(),
-            });
-        }
-        result.push(checked);
+        result.push(check_call_arg(pname, pty, &arg.value, ctx)?);
     }
 
     if let Some((&leftover, _)) = named.iter().next() {
@@ -644,6 +729,65 @@ fn match_args(
     }
 
     Ok(result)
+}
+
+/// Checks one call-site argument against its matched parameter type. When
+/// the parameter is `Ty::Ref`, the caller never writes `&` — a plain place
+/// argument (`p`, `p.x`) is auto-borrowed here (the callee's signature is
+/// what decides shared vs exclusive), matching `syntax&shii.md`'s "shared
+/// borrow is implicit — write nothing." An argument that's already a borrow
+/// (an explicit `&expr`, or forwarding an existing `Ref`-typed parameter)
+/// type-matches directly instead of double-wrapping; a shared parameter
+/// accepts an exclusive argument (implicit downgrade), never the reverse.
+fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
+    let Ty::Ref { mutable, inner } = pty else {
+        let checked = check_expr(arg_expr, ctx, Some(pty))?;
+        if checked.ty != *pty {
+            return Err(TypeError {
+                message: format!(
+                    "argument '{pname}' has type '{}', expected '{}'",
+                    checked.ty.display(),
+                    pty.display()
+                ),
+                span: arg_expr.span(),
+            });
+        }
+        return Ok(checked);
+    };
+
+    let checked = check_expr(arg_expr, ctx, Some(inner))?;
+    match &checked.ty {
+        t if t == inner.as_ref() => {
+            if !is_tir_place(&checked) {
+                return Err(TypeError {
+                    message: format!("argument '{pname}' must be a variable or field, not a temporary value"),
+                    span: arg_expr.span(),
+                });
+            }
+            if *mutable {
+                check_target_writable(&checked, ctx)?;
+            }
+            let span = checked.span;
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Ref { mutable: *mutable, expr: Box::new(checked) },
+                ty: pty.clone(),
+                span,
+            })
+        }
+        Ty::Ref { mutable: a_mut, inner: a_inner } if a_inner == inner => {
+            if *mutable && !a_mut {
+                return Err(TypeError {
+                    message: format!("argument '{pname}' requires an exclusive borrow, found a shared one"),
+                    span: arg_expr.span(),
+                });
+            }
+            Ok(checked)
+        }
+        other => Err(TypeError {
+            message: format!("argument '{pname}' has type '{}', expected '{}'", other.display(), pty.display()),
+            span: arg_expr.span(),
+        }),
+    }
 }
 
 fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {

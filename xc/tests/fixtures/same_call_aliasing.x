@@ -1,0 +1,8 @@
+datac Counter(val id: i32, var count: i32)
+
+fun combine(a: mut Counter, b: Counter).R: i32 = a.count + b.count
+
+fun main() {
+    var c = Counter(id = 1, count = 5)
+    print(combine(c, c))
+}

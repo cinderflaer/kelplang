@@ -135,3 +135,28 @@ fn move_then_reinit_is_allowed() {
 fn field_read_does_not_move_the_container() {
     assert_compiles_and_runs("tests/fixtures/field_read_does_not_move.x", "3\n4\n7\n");
 }
+
+#[test]
+fn borrow_basic_shared_and_exclusive_work() {
+    assert_compiles_and_runs("tests/fixtures/borrow_basic.x", "1\n3\n2\n");
+}
+
+#[test]
+fn simultaneous_shared_and_exclusive_borrow_is_rejected() {
+    assert_rejected("tests/fixtures/borrow_conflict.x");
+}
+
+#[test]
+fn conflicting_borrows_in_the_same_call_are_rejected() {
+    assert_rejected("tests/fixtures/same_call_aliasing.x");
+}
+
+#[test]
+fn writing_through_a_shared_borrow_is_rejected() {
+    assert_rejected("tests/fixtures/write_through_shared_borrow.x");
+}
+
+#[test]
+fn moving_a_borrowed_value_is_rejected() {
+    assert_rejected("tests/fixtures/move_while_borrowed.x");
+}

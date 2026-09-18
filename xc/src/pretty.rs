@@ -195,5 +195,16 @@ fn print_expr(out: &mut String, expr: &Expr) {
             print_block_stmts(out, block, 1);
             out.push('}');
         }
+        Expr::Ref { mutable, expr, .. } => {
+            out.push('&');
+            if *mutable {
+                out.push_str("mut ");
+            }
+            print_expr(out, expr);
+        }
+        Expr::Deref { expr, .. } => {
+            out.push('*');
+            print_expr(out, expr);
+        }
     }
 }

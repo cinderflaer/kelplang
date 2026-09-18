@@ -97,4 +97,15 @@ pub enum ExprKind {
         else_block: Option<Block>,
     },
     Block(Block),
+    /// A borrow: either an explicit `&expr`/`&mut expr` from the surface
+    /// syntax, or one synthesized by `infer::check_call_arg` when a plain
+    /// place is passed to a `Ty::Ref`-typed parameter (call sites never
+    /// need to write `&` themselves — the callee's signature decides).
+    Ref {
+        mutable: bool,
+        expr: Box<Expr>,
+    },
+    Deref {
+        expr: Box<Expr>,
+    },
 }

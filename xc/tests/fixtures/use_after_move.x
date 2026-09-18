@@ -4,6 +4,7 @@ fun consume(p: Point).R: i32 = p.x + p.y
 
 fun main() {
     val p = Point(x = 1, y = 2)
+    val q = p
     print(consume(p))
-    print(consume(p))
+    print(consume(q))
 }
