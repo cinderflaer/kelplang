@@ -1181,9 +1181,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // per-instantiation body owns and drops like any other function.
         "generic_function_owned",
         // A-2: a generic *method* over an instantiation holding an owned
-        // payload, and a tree of instantiations built by nested inference.
+        // payload, a tree of instantiations built by nested inference, and a
+        // map keyed by a scalar while holding owned values.
         "generic_method_basic",
         "generic_nested_inference",
+        "map_key_types",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -1455,6 +1457,28 @@ fn a_map_holds_datac_values_and_can_live_in_a_datac_field() {
 fn a_map_cannot_hold_a_container_or_be_created_without_a_value_type() {
     assert_rejected("tests/fixtures/map_container_value.kp");
     assert_rejected("tests/fixtures/map_no_value_type.kp");
+}
+
+#[test]
+fn a_map_key_can_be_a_scalar_and_the_shorthand_still_means_string() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_key_types.kp",
+        "2\n99\ntrue\nfalse\n0\n2\n1\n1\n10\n2\nyes\nno\n70\n2\n6\nbb\n",
+    );
+}
+
+#[test]
+fn a_key_type_the_compiler_cannot_hash_or_compare_is_rejected() {
+    for name in [
+        // `nan != nan` would make an inserted key unfindable.
+        "map_float_key",
+        // A `datac` has no equality in v1.
+        "map_datac_key",
+        // One argument (`Map<V>`) or two (`Map<K, V>`), never three.
+        "map_arity",
+    ] {
+        assert_rejected(&format!("tests/fixtures/{name}.kp"));
+    }
 }
 
 #[test]

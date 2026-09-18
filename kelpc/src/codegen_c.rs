@@ -397,10 +397,12 @@ static void kelp_string_drop(kelp_String* s) {
 }
 
 // ---- kelp_Map helpers (MK5-S5) -----------------------------------------------
-// Shared by every `Map<V>` instantiation: FNV-1a over the key's bytes, and a
-// length-aware equality against a borrowed `str` key. `memcmp` rather than
-// `strcmp` because a `String` key may hold bytes `strlen` would stop at; the
-// borrowed side of a lookup is a `str`, so its length comes from `strlen`.
+// A map's key type decides how it is hashed and compared, and each
+// instantiation emits its own pair of static helpers from these primitives.
+// For a `String` key that is FNV-1a over the key's bytes plus a length-aware
+// equality against a borrowed `str` (`memcmp` rather than `strcmp`, because a
+// `String` key may hold bytes `strlen` would stop at); for a scalar key it is
+// a mix of the value and plain `==`.
 static uint64_t kelp_map_hash(const char* data, size_t len) {
     uint64_t h = 1469598103934665603ULL;
     for (size_t i = 0; i < len; i++) {
@@ -415,6 +417,15 @@ static bool kelp_map_key_eq(const kelp_String* key, const char* data, size_t len
         return false;
     }
     return len == 0 || memcmp(key->data, data, len) == 0;
+}
+
+/* The scalar-key hash: a 64-bit finalizer over the widened value, so keys
+   that differ in one bit land in different buckets. */
+static uint64_t kelp_map_mix(uint64_t x) {
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return x;
 }
 
 /* The allocation primitive `std/mem` wraps (M6.2): an owned, zero-filled,
@@ -885,13 +896,17 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // owns a container drops it, and that function is defined in step 4.
     let mut list_elems: HashSet<Ty> = HashSet::new();
     let mut box_elems: HashSet<Ty> = HashSet::new();
-    let mut map_values: HashSet<Ty> = HashSet::new();
+    let mut map_values: HashSet<(Ty, Ty)> = HashSet::new();
     collect_containers(program, &mut list_elems, &mut box_elems, &mut map_values);
     let mut containers: Vec<Ty> = list_elems
         .iter()
         .map(|e| Ty::List(Box::new(e.clone())))
         .chain(box_elems.iter().map(|e| Ty::Box(Box::new(e.clone()))))
-        .chain(map_values.iter().map(|e| Ty::Map(Box::new(e.clone()))))
+        .chain(
+            map_values
+                .iter()
+                .map(|(k, v)| Ty::Map(Box::new(k.clone()), Box::new(v.clone()))),
+        )
         .collect();
     containers.sort_by_key(|t| (container_depth(t), container_name(t)));
     if !containers.is_empty() {
@@ -942,7 +957,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         match ty {
             Ty::List(elem) => write_list(&mut out, elem, &owned),
             Ty::Box(elem) => write_box(&mut out, elem, &owned),
-            Ty::Map(value) => write_map(&mut out, value, &owned),
+            Ty::Map(key, value) => write_map(&mut out, key, value, &owned),
             other => unreachable!("not a container: {}", other.display()),
         }
     }
@@ -1235,12 +1250,13 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
         // the value sits behind a pointer, so this typedef can still be
         // emitted before every `datac` — a `datac` value is named by its
         // forward-declared struct tag.
-        Ty::Map(value) => {
-            let name = crate::types::map_c_type(value);
+        Ty::Map(key, value) => {
+            let name = crate::types::map_c_type(key, value);
             let entry = format!("{name}_entry");
             writeln!(
                 out,
-                "typedef struct {{\n    kelp_String key;\n    {}* value;\n    uint8_t live;\n}} {entry};",
+                "typedef struct {{\n    {} key;\n    {}* value;\n    uint8_t live;\n}} {entry};",
+                key.c_type(),
                 crate::types::container_elem_c_type(value)
             )
             .unwrap();
@@ -1274,7 +1290,7 @@ fn container_name(ty: &Ty) -> String {
     match ty {
         Ty::List(elem) => crate::types::list_c_type(elem),
         Ty::Box(elem) => crate::types::box_c_type(elem),
-        Ty::Map(value) => crate::types::map_c_type(value),
+        Ty::Map(key, value) => crate::types::map_c_type(key, value),
         other => unreachable!("not a container: {}", other.display()),
     }
 }
@@ -1287,7 +1303,7 @@ fn container_depth(ty: &Ty) -> usize {
         Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
         // A `Map<V>` value is never a container (`is_map_element` refuses
         // one), so a map is always one level deep.
-        Ty::Map(_) => 1,
+        Ty::Map(..) => 1,
         _ => 0,
     }
 }
@@ -1342,7 +1358,7 @@ fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     out.push_str("        free(self->value);\n        self->value = NULL;\n    }\n}\n\n");
 }
 
-/// One `Map<V>` instantiation's function set (MK5-S5). Entries live in
+/// One `Map<K, V>` instantiation's function set (MK5-S5). Entries live in
 /// insertion order in a dense array, so `keys()` returns insertion order
 /// rather than hash order; a separate open-addressed index of `entry index +
 /// 1` (`0` empty, `SIZE_MAX` tombstone) does the lookup. `clear()` resets
@@ -1351,14 +1367,20 @@ fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
 /// stable. The value is held through a pointer, which is what lets this
 /// typedef be emitted before every `datac` (a `datac` value is named by its
 /// forward-declared struct tag).
-fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
-    let map = crate::types::map_c_type(value);
-    let map_ty = Ty::Map(Box::new(value.clone()));
+///
+/// The key is whatever `Map<K, V>` named, and it is the one thing that
+/// changes the generated code from instantiation to instantiation: a `String`
+/// key is hashed over its bytes, copied in from the `str` view the caller
+/// passes, and compared with a length-aware `memcmp`; a scalar key is hashed
+/// by mixing its bits, passed by value, and compared with `==` (A-2).
+fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
+    let map = crate::types::map_c_type(key, value);
+    let map_ty = Ty::Map(Box::new(key.clone()), Box::new(value.clone()));
     let entry = format!("{map}_entry");
     let value_c = value.c_type();
     let value_drops = needs_drop(value, owned);
     let drop_value = value_drops.then(|| drop_fn_name(value));
-    let list_string = crate::types::list_c_type(&Ty::String);
+    let list_key = crate::types::list_c_type(key);
     let list_value = crate::types::list_c_type(value);
     let clonable = crate::types::list_clonable_elem(value);
     // Reading a value *out* of the map is a copy for a `Copy` value and a
@@ -1369,20 +1391,79 @@ fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
         Ty::Bytes => format!("kelp_Bytes__clone({ptr})"),
         _ => format!("*{ptr}"),
     };
+    // A `String` key reaches the map as a `str` view (the map copies it in);
+    // a scalar key is already the value the map stores.
+    let key_is_string = key == &Ty::String;
+    let key_arg_c = if key_is_string {
+        "const char*".to_string()
+    } else {
+        key.c_type()
+    };
+    // Hashing a key *argument* (a `str` view) and hashing a *stored* key
+    // (`kelp_String`) read the bytes differently, so they are two helpers.
+    let hash_arg = |a: &str| {
+        if key_is_string {
+            format!("kelp_map_hash({a}, strlen({a}))")
+        } else {
+            format!("kelp_map_mix((uint64_t)({a}))")
+        }
+    };
+    let hash_stored = |s: &str| {
+        if key_is_string {
+            format!("kelp_map_hash((const char*){s}.data, {s}.len)")
+        } else {
+            format!("kelp_map_mix((uint64_t)({s}))")
+        }
+    };
+    // Each of these takes a stored key as an *lvalue*, and adds the `&` a
+    // `kelp_String` needs itself — a scalar key is compared and dropped by
+    // value, and taking its address would be a different expression.
+    let eq_stored = |stored: &str, a: &str| {
+        if key_is_string {
+            format!("kelp_map_key_eq(&{stored}, {a}, strlen({a}))")
+        } else {
+            format!("({stored} == {a})")
+        }
+    };
+    let store_key = |a: &str| {
+        if key_is_string {
+            format!("kelp_String__from_str({a})")
+        } else {
+            a.to_string()
+        }
+    };
+    let clone_key = |s: &str| {
+        if key_is_string {
+            format!("kelp_String__clone(&{s})")
+        } else {
+            s.to_string()
+        }
+    };
+    // A statement, terminator included: every caller writes it as one.
+    let drop_key = |s: &str| {
+        if key_is_string {
+            format!("kelp_string_drop(&{s});")
+        } else {
+            format!("(void)({s});")
+        }
+    };
     writeln!(out, "// ---- {} (MK5-S5) {}", map, "-".repeat(30)).unwrap();
 
     writeln!(out, "static {map} {map}__new(void) {{\n    {map} m;\n    m.entries = NULL;\n    m.entry_count = 0;\n    m.entry_cap = 0;\n    m.len = 0;\n    m.index = NULL;\n    m.index_cap = 0;\n    m.index_used = 0;\n    return m;\n}}\n").unwrap();
 
     // The index probe: returns the slot holding the key (`*found`), or the
     // slot to insert at (the first tombstone seen, else the first empty one).
-    writeln!(out, "static size_t {map}__find(const {map}* self, const char* k, size_t n, bool* found) {{").unwrap();
+    writeln!(out, "static size_t {map}__find(const {map}* self, {key_arg_c} k, bool* found) {{").unwrap();
     out.push_str("    *found = false;\n    if (self->index_cap == 0) {\n        return 0;\n    }\n");
-    out.push_str("    size_t mask = self->index_cap - 1;\n    size_t i = (size_t)kelp_map_hash(k, n) & mask;\n    size_t tomb = SIZE_MAX;\n");
+    writeln!(out, "    size_t mask = self->index_cap - 1;\n    size_t i = (size_t){} & mask;\n    size_t tomb = SIZE_MAX;", hash_arg("k")).unwrap();
     out.push_str("    for (;;) {\n        size_t slot = self->index[i];\n        if (slot == 0) {\n            return tomb != SIZE_MAX ? tomb : i;\n        }\n");
     out.push_str("        if (slot == SIZE_MAX) {\n            if (tomb == SIZE_MAX) {\n                tomb = i;\n            }\n        } else {\n");
-    out.push_str("            const ");
-    out.push_str(&entry);
-    out.push_str("* e = &self->entries[slot - 1];\n            if (e->live && kelp_map_key_eq(&e->key, k, n)) {\n                *found = true;\n                return i;\n            }\n        }\n");
+    writeln!(
+        out,
+        "            const {entry}* e = &self->entries[slot - 1];\n            if (e->live && {}) {{\n                *found = true;\n                return i;\n            }}\n        }}",
+        eq_stored("e->key", "k")
+    )
+    .unwrap();
     out.push_str("        i = (i + 1) & mask;\n    }\n}\n\n");
 
     // A rebuild drops every tombstone, so it sizes the index from the live
@@ -1393,13 +1474,18 @@ fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
     out.push_str("    if (self->index == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n    memset(self->index, 0, cap * sizeof(size_t));\n");
     out.push_str("    self->index_cap = cap;\n    self->index_used = 0;\n");
     out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
-    out.push_str("        size_t i = (size_t)kelp_map_hash((const char*)self->entries[e].key.data, self->entries[e].key.len) & (cap - 1);\n");
+    writeln!(
+        out,
+        "        size_t i = (size_t){} & (cap - 1);",
+        hash_stored("self->entries[e].key")
+    )
+    .unwrap();
     out.push_str("        while (self->index[i] != 0) {\n            i = (i + 1) & (cap - 1);\n        }\n        self->index[i] = e + 1;\n        self->index_used++;\n    }\n}\n\n");
 
-    writeln!(out, "static void {map}__insert({map}* self, const char* k, {value_c} v) {{").unwrap();
+    writeln!(out, "static void {map}__insert({map}* self, {key_arg_c} k, {value_c} v) {{").unwrap();
     writeln!(out, "    if (self->index_cap == 0 || (self->index_used + 1) * 4 >= self->index_cap * 3) {{\n        {map}__rehash(self, self->len + 1);\n    }}").unwrap();
-    out.push_str("    size_t n = strlen(k);\n    bool found = false;\n");
-    writeln!(out, "    size_t slot = {map}__find(self, k, n, &found);").unwrap();
+    out.push_str("    bool found = false;\n");
+    writeln!(out, "    size_t slot = {map}__find(self, k, &found);").unwrap();
     out.push_str("    if (found) {\n        size_t e = self->index[slot] - 1;\n");
     if value_drops {
         writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
@@ -1408,25 +1494,26 @@ fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
     out.push_str("    if (self->entry_count == self->entry_cap) {\n        size_t cap = self->entry_cap == 0 ? 8 : self->entry_cap * 2;\n");
     writeln!(out, "        self->entries = ({entry}*)realloc(self->entries, cap * sizeof({entry}));").unwrap();
     out.push_str("        if (self->entries == NULL) {\n            kelp_panic(\"out of memory\");\n        }\n        self->entry_cap = cap;\n    }\n");
-    out.push_str("    size_t e = self->entry_count++;\n    self->entries[e].key = kelp_String__from_str(k);\n");
+    out.push_str("    size_t e = self->entry_count++;\n");
+    writeln!(out, "    self->entries[e].key = {};", store_key("k")).unwrap();
     writeln!(out, "    self->entries[e].value = ({value_c}*)malloc(sizeof({value_c}));").unwrap();
     out.push_str("    if (self->entries[e].value == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n");
     out.push_str("    *self->entries[e].value = v;\n    self->entries[e].live = 1;\n");
     out.push_str("    if (self->index[slot] == 0) {\n        self->index_used++;\n    }\n    self->index[slot] = e + 1;\n    self->len++;\n}\n\n");
 
-    writeln!(out, "static bool {map}__has(const {map}* self, const char* k) {{\n    bool found = false;\n    {map}__find(self, k, strlen(k), &found);\n    return found;\n}}\n").unwrap();
+    writeln!(out, "static bool {map}__has(const {map}* self, {key_arg_c} k) {{\n    bool found = false;\n    {map}__find(self, k, &found);\n    return found;\n}}\n").unwrap();
 
     if value.is_copy() {
-        writeln!(out, "static {value_c} {map}__get(const {map}* self, const char* k) {{").unwrap();
-        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return *self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
+        writeln!(out, "static {value_c} {map}__get(const {map}* self, {key_arg_c} k) {{").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return *self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
     } else {
-        writeln!(out, "static const {value_c}* {map}__get_const(const {map}* self, const char* k) {{").unwrap();
-        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
+        writeln!(out, "static const {value_c}* {map}__get_const(const {map}* self, {key_arg_c} k) {{").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
     }
 
     if clonable {
-        writeln!(out, "static {value_c} {map}__get_or(const {map}* self, const char* k, {value_c} fallback) {{").unwrap();
-        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        return fallback;\n    }}").unwrap();
+        writeln!(out, "static {value_c} {map}__get_or(const {map}* self, {key_arg_c} k, {value_c} fallback) {{").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        return fallback;\n    }}").unwrap();
         writeln!(out, "    const {value_c}* existing = self->entries[self->index[slot] - 1].value;\n    {value_c} result = {};", copy_from("existing")).unwrap();
         match value {
             Ty::String => out.push_str("    kelp_string_drop(&fallback);\n"),
@@ -1436,25 +1523,30 @@ fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
         out.push_str("    return result;\n}\n\n");
     }
 
-    writeln!(out, "static {value_c} {map}__remove({map}* self, const char* k) {{").unwrap();
-    writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        kelp_panic(\"Map.remove: key not found\");\n    }}\n    size_t e = self->index[slot] - 1;").unwrap();
+    writeln!(out, "static {value_c} {map}__remove({map}* self, {key_arg_c} k) {{").unwrap();
+    writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.remove: key not found\");\n    }}\n    size_t e = self->index[slot] - 1;").unwrap();
     out.push_str("    ");
-    writeln!(out, "{value_c} v = *self->entries[e].value;\n    free(self->entries[e].value);\n    self->entries[e].value = NULL;\n    kelp_string_drop(&self->entries[e].key);\n    self->entries[e].live = 0;\n    self->index[slot] = SIZE_MAX;\n    self->len--;\n    return v;\n}}\n").unwrap();
+    writeln!(out, "{value_c} v = *self->entries[e].value;\n    free(self->entries[e].value);\n    self->entries[e].value = NULL;\n    {}\n    self->entries[e].live = 0;\n    self->index[slot] = SIZE_MAX;\n    self->len--;\n    return v;\n}}\n", drop_key("self->entries[e].key")).unwrap();
 
     writeln!(out, "static void {map}__clear({map}* self) {{").unwrap();
     out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
     if value_drops {
         writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
     }
-    out.push_str("        free(self->entries[e].value);\n        self->entries[e].value = NULL;\n        kelp_string_drop(&self->entries[e].key);\n        self->entries[e].live = 0;\n    }\n");
+    writeln!(out, "        free(self->entries[e].value);\n        self->entries[e].value = NULL;\n        {}\n        self->entries[e].live = 0;\n    }}", drop_key("self->entries[e].key")).unwrap();
     out.push_str("    self->entry_count = 0;\n    self->len = 0;\n    self->index_used = 0;\n    if (self->index != NULL) {\n        memset(self->index, 0, self->index_cap * sizeof(size_t));\n    }\n}\n\n");
 
     writeln!(out, "static size_t {map}__len(const {map}* self) {{\n    return self->len;\n}}\n").unwrap();
     writeln!(out, "static bool {map}__is_empty(const {map}* self) {{\n    return self->len == 0;\n}}\n").unwrap();
 
-    writeln!(out, "static {list_string} {map}__keys(const {map}* self) {{").unwrap();
-    writeln!(out, "    {list_string} out = {list_string}__empty();\n    {list_string}__reserve(&out, self->len);").unwrap();
-    out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (self->entries[e].live) {\n            out.data[out.len++] = kelp_String__clone(&self->entries[e].key);\n        }\n    }\n    return out;\n}\n\n");
+    writeln!(out, "static {list_key} {map}__keys(const {map}* self) {{").unwrap();
+    writeln!(out, "    {list_key} out = {list_key}__empty();\n    {list_key}__reserve(&out, self->len);").unwrap();
+    writeln!(
+        out,
+        "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            out.data[out.len++] = {};\n        }}\n    }}\n    return out;\n}}\n",
+        clone_key("self->entries[e].key")
+    )
+    .unwrap();
 
     if clonable {
         writeln!(out, "static {list_value} {map}__values(const {map}* self) {{").unwrap();
@@ -1467,7 +1559,7 @@ fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
     if value_drops {
         writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
     }
-    out.push_str("        free(self->entries[e].value);\n        kelp_string_drop(&self->entries[e].key);\n    }\n");
+    writeln!(out, "        free(self->entries[e].value);\n        {}\n    }}", drop_key("self->entries[e].key")).unwrap();
     out.push_str("    free(self->entries);\n    free(self->index);\n    self->entries = NULL;\n    self->entry_count = 0;\n    self->entry_cap = 0;\n    self->len = 0;\n    self->index = NULL;\n    self->index_cap = 0;\n    self->index_used = 0;\n}\n\n");
 }
 
@@ -1639,9 +1731,14 @@ fn collect_containers(
     program: &Program,
     lists: &mut HashSet<Ty>,
     boxes: &mut HashSet<Ty>,
-    maps: &mut HashSet<Ty>,
+    maps: &mut HashSet<(Ty, Ty)>,
 ) {
-    fn note_ty(ty: &Ty, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>, maps: &mut HashSet<Ty>) {
+    fn note_ty(
+        ty: &Ty,
+        lists: &mut HashSet<Ty>,
+        boxes: &mut HashSet<Ty>,
+        maps: &mut HashSet<(Ty, Ty)>,
+    ) {
         match ty {
             Ty::List(elem) => {
                 lists.insert((**elem).clone());
@@ -1651,20 +1748,26 @@ fn collect_containers(
                 boxes.insert((**elem).clone());
                 note_ty(elem, lists, boxes, maps);
             }
-            Ty::Map(value) => {
-                maps.insert((**value).clone());
+            Ty::Map(key, value) => {
+                maps.insert(((**key).clone(), (**value).clone()));
                 // `keys()`/`values()` are emitted with every map and return
-                // `List<String>`/`List<V>`, so both instantiations have to
-                // exist even when the program never calls them.
-                lists.insert(Ty::String);
+                // `List<K>`/`List<V>`, so both instantiations have to exist
+                // even when the program never calls them.
+                lists.insert((**key).clone());
                 lists.insert((**value).clone());
+                note_ty(key, lists, boxes, maps);
                 note_ty(value, lists, boxes, maps);
             }
             Ty::Ref { inner, .. } => note_ty(inner, lists, boxes, maps),
             _ => {}
         }
     }
-    fn note_expr(expr: &Expr, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>, maps: &mut HashSet<Ty>) {
+    fn note_expr(
+        expr: &Expr,
+        lists: &mut HashSet<Ty>,
+        boxes: &mut HashSet<Ty>,
+        maps: &mut HashSet<(Ty, Ty)>,
+    ) {
         note_ty(&expr.ty, lists, boxes, maps);
         match &expr.kind {
             ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } | ExprKind::Deref { expr } => {
@@ -1715,7 +1818,12 @@ fn collect_containers(
             _ => {}
         }
     }
-    fn note_block(block: &Block, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>, maps: &mut HashSet<Ty>) {
+    fn note_block(
+        block: &Block,
+        lists: &mut HashSet<Ty>,
+        boxes: &mut HashSet<Ty>,
+        maps: &mut HashSet<(Ty, Ty)>,
+    ) {
         for s in &block.stmts {
             match s {
                 Stmt::Let { ty, init, .. } => {
@@ -2545,11 +2653,6 @@ impl<'a> Gen<'a> {
                 crate::types::box_c_type as fn(&Ty) -> String,
                 crate::types::box_elem_of as fn(&Ty) -> Option<&Ty>,
             ),
-            (
-                "Map#",
-                crate::types::map_c_type as fn(&Ty) -> String,
-                crate::types::map_elem_of as fn(&Ty) -> Option<&Ty>,
-            ),
         ] {
             let Some(op) = callee.strip_prefix(prefix) else {
                 continue;
@@ -2566,6 +2669,34 @@ impl<'a> Gen<'a> {
                 // `get` has two C spellings: by value for a `Copy` element,
                 // by pointer for an owned one — which one is decided by the
                 // call's own result type, never by guessing.
+                let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
+                    "get_const"
+                } else {
+                    op
+                };
+                s = format!("{base}__{suffix}({})", args_text.join(", "));
+            }
+        }
+        // A map's name carries *two* type arguments, so it is spelled out
+        // separately: its key comes from the receiver (or, for `Map.new()`,
+        // from the call's own result type) and its value from the same place.
+        if let Some(op) = callee.strip_prefix("Map#") {
+            let (from_ret, from_args) = if op == "new" {
+                (
+                    crate::types::map_elem_of(ret).cloned(),
+                    crate::types::map_key_of(ret).cloned(),
+                )
+            } else {
+                (
+                    args.first().and_then(|a| crate::types::map_elem_of(&a.ty)).cloned(),
+                    args.first().and_then(|a| crate::types::map_key_of(&a.ty)).cloned(),
+                )
+            };
+            if let (Some(value), Some(key)) = (from_ret, from_args) {
+                let base = crate::types::map_c_type(&key, &value);
+                // `get` has two C spellings: by value for a `Copy` value, by
+                // pointer for an owned one — decided by the call's own result
+                // type, never by guessing.
                 let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
                     "get_const"
                 } else {
@@ -2705,7 +2836,7 @@ impl<'a> Gen<'a> {
                 "%.*s",
                 format!("(int)({value}).len, (const char*)({value}).data"),
             ),
-            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Map(_) | Ty::Ref { .. } => {
+            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Ref { .. } => {
                 unreachable!("type checker rejects printing unit/struct/container/reference values")
             }
         }

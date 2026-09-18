@@ -175,7 +175,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 
 Everything listed above as v1 scope now exists except what is named under "Not shipped, and known" in "Current state": the `env` bodies, `fs.mkdir_all`, and the length-carrying view that a few `str`/`path` functions are waiting for. See "Current state".
 
-Deferred beyond v1 (explicitly out of scope for now, revisit later): **generic functions** (`fun f<T>`; generic *type* declarations shipped in MK8-S1-M1 part 2, so `datac Pair<A, B>` and `enum Option<T>` are expressible — what is left of user generics is type parameters on functions and receiver methods), traits/interfaces, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Pattern matching over a tagged union moved *into* v1: `enum` (roadmap's A-1 / MK8-S1-M1 part 1) shipped, so that item is off this list — and the payload's generics shipped in MK8-S1-M1 part 2, so `enum Option<T>` and `datac Pair<A, B>` are both expressible now (generic *functions* are what is still deferred). Heap collections are the other item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and a `for` loop to iterate a sequence is still open see open items 27 and 46. This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is `backlog.md`.
+Deferred beyond v1 (explicitly out of scope for now, revisit later): traits/interfaces, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Pattern matching over a tagged union moved *into* v1: `enum` (roadmap's A-1 / MK8-S1-M1 part 1) shipped, so that item is off this list — and generics shipped in MK8-S1-M1 part 2, so `enum Option<T>`, `datac Pair<A, B>`, `fun f<T>` and a `Map` with a scalar key type are all expressible now. Heap collections are the other item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and a `for` loop to iterate a sequence is still open see open items 27 and 46. This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is `backlog.md`.
 
 ## Standard library
 
@@ -196,7 +196,7 @@ These are not preferences, they are walls. Everything below is shaped by them.
 | Constraint | Consequence for stdlib |
 | --- | --- |
 | `Box<T>` exists (MK3-S2-M2): one value or empty, and the reason a `datac` can be recursive | Anything that needs *N* items and indirection both (`fs.walk` returning a tree, a graph) can be built from `List` + `Box` by hand; nothing in the language makes it cheaper. A recursive walk is written recursively, and both it and the recursive drop recurse on the C stack (open item 33). |
-| No slices, no `Vec`; `List<T>` exists (MK3-S2-M1) but is a fixed *type* per element | *N* items are expressible (`fs.list`, `str.split` return `List<String>`), but a function cannot be generic over its element type: `List<i32>` and `List<String>` are different types with different monomorphized functions. `argv` and file contents are `List<String>`/`Bytes` now (MK5-S2-M1); `for` does not exist, so a list is walked with `while i < l.len()` (open item 27). |
+| No slices, and `List<T>` is a fixed *type* per element | *N* items are expressible (`fs.list`, `str.split` return `List<String>`), and a function *can* now be generic over the element type (`fun first<T>(xs: &List<T>)`, A-2) — but `List<i32>` and `List<String>` are still different types, and a list cannot hold a borrow or another list. `argv` and file contents are `List<String>`/`Bytes` (MK5-S2-M1); `for` does not exist, so a list is walked with `while i < l.len()` (open item 27). |
 | Owned `String`/`Bytes` grow in place (MK5-S1-M1) | Text and binary data can be built incrementally with `push`/`push_str`/`append`/`reserve`; a `&str`/`&Bytes` view of a buffer cannot outlive a growth of it, because growth takes `&mut` (so the borrow checker refuses it). `mem.alloc(n)` is still fixed-size. |
 | `&str` is a borrowed view only | String functions return substrings of their input, or an owned `String`/`Bytes`. |
 | No `Option` / `Result` in the stdlib | No `?`, no null. Failure must be a panic or an error `datac`. A user `enum Option<T>` is expressible since MK8-S1-M1 part 2; the stdlib has not migrated. |
@@ -532,24 +532,24 @@ fun fmt.bytes(b: Bytes).R: String                 // "1f 8b 08" the first debugg
 
 `fmt` is MK5-S1 and has no gate: it is arithmetic and byte shuffling. Variadic formatting is explicitly not in scope it needs generics or macros, neither of which exists (open item 43 for concatenation, and the non-goals below). **Shipped in MK5-S1-M3** (`kelpc/std/fmt.kp`), on top of `std/str`; the only C in it is `snprintf("%llx")` for `hex` and the byte-dump loop for `bytes`.
 
-#### Map (a compiler builtin, `String` keys)
+#### Map (a compiler builtin, `Map<K, V>`)
 
 ```kelp
-fun Map.new().R: Map<V>
+fun Map.new().R: Map<K, V>
 fun Map.len().R: usize
 fun Map.is_empty().R: bool
-fun Map.has(key: &str).R: bool
-fun Map.get(key: &str).R: V          // a copy when V is Copy...
-fun Map.get(key: &str).R: &V         // ...a borrow when V owns memory; panics when absent
-fun Map.get_or(key: &str, fallback: V).R: V
-fun mut Map.insert(key: &str, v: V)
-fun mut Map.remove(key: &str).R: V
+fun Map.has(key: K).R: bool
+fun Map.get(key: K).R: V             // a copy when V is Copy...
+fun Map.get(key: K).R: &V            // ...a borrow when V owns memory; panics when absent
+fun Map.get_or(key: K, fallback: V).R: V
+fun mut Map.insert(key: K, v: V)
+fun mut Map.remove(key: K).R: V
 fun mut Map.clear()
-fun Map.keys().R: List<String>       // insertion order, not hash order
+fun Map.keys().R: List<K>            // insertion order, not hash order
 fun Map.values().R: List<V>
 ```
 
-**Shipped in MK5-S5**, and deliberately the cheap one: `String` keys only, monomorphized value type, FNV-1a over the key's bytes. Entries live in insertion order in a dense array with a separate open-addressed index, because `keys()` must return insertion order; `get_or` and `values` are offered only for a clonable value type, since a `datac` value cannot be copied back out. Keys are `String` because hashing needs the key's *bytes*, and a generic key needs real generics (open item 34). `Map<Map<i32>>` is as impossible as `List<List<i32>>`, and `Map.of` does not exist because a map starts empty. There is no `Set`: `Map<bool>` covers it, and a third monomorphized generic is not worth it (open item 41).
+**Shipped in MK5-S5**, with `String` keys only and a monomorphized value type: FNV-1a over the key's bytes, entries in insertion order in a dense array with a separate open-addressed index, because `keys()` must return insertion order; `get_or` and `values` are offered only for a clonable value type, since a `datac` value cannot be copied back out. `Map<Map<i32>>` is as impossible as `List<List<i32>>`, and `Map.of` does not exist because a map starts empty. There is no `Set`: `Map<bool>` covers it, and a third monomorphized generic is not worth it (open item 41). **The key type became generic in A-2** (`Map<K, V>`, with `Map<V>` kept as the `String`-key shorthand): the key's hash and its equality are generated per instantiation, and the key set is closed to `String`, the integers and `bool` because the compiler, not a trait, supplies those two operations.
 
 #### http (MK5-S4 the payoff)
 
@@ -679,7 +679,7 @@ Ranked by how much the absence hurts, with the shortest path. "Pain" is the ques
 5. **The `net` capability fix** not a feature gap but a headline-feature gap: the documented pattern form is rejected and every host would be denied. A domain that cannot be used is worse than one that does not exist. *High for credibility, zero for today's fixtures.* MK5-S3, first task.
 6. **TCP** (`net.connect`/`send`/`recv`) client networking unlocks APIs, sockets, and the HTTP client. *High, blocked on 5.* MK5-S3.
 7. ~~**HTTP client** the stated goal, and the payoff.~~ **Shipped in MK5-S4**, with keep-alive and the pool rather than the one-shot client the sketch described: parsing, all four body-length cases, redirects, and a connection pool whose leases are ownership-checked. What is left of the original gap is `https` (MK5-S4b-M1, TLS) and chunked *request* bodies.
-8. **A keyed container** (`Map<String, V>`) today a lookup is a linear scan over `List<String>`. *Moderate.* MK5-S5.
+8. **A keyed container** (`Map<K, V>`) today a lookup is a linear scan over `List<String>`. *Moderate.* MK5-S5; the key type became generic in A-2.
 9. **Being able to *see* your data** `print` rejects a `datac` and a `List` (both probed), so there is no debug printer and nothing in the stdlib substitutes; `fmt.bytes` is the first step, and a generated per-`datac` debug function the honest fix. *Moderate, and it makes debugging everything else worse.* MK5-S1 if it has room.
 10. **`fs` breadth** (`mkdir_all`, `remove_all`, `walk`, metadata, temp files) cheap now that `List` exists; mostly an afternoon of Kelp, and the first three could ship today. *Low pain, high frequency.* MK5-S5.
 11. **`env`** the shape is proven; the bodies are one extern each. *Low.* MK5-S5.
@@ -693,7 +693,7 @@ Bluntly: **real** gaps are 1, 2, 3 and 6 (and 5 as a precondition for 6) without
 - **`async`/`await`, green threads, thread pools, `Select`-style combinators.** `async` needs function values, a state-machine transform and an executor (MK7-shaped work); OS threads are MK6-S1-M1's subject, and they are a *language* milestone, not a stdlib one. Note the ordering the owner set: MK6-S1-M1 (threads) precedes MK6-S2-M1 (concurrent downloads) but threads are the *third* right answer for downloading, behind poll multiplexing and behind nothing at all. See MK6-S1-M1 and MK6-S2-M1.
 - **JSON, `regex`, `log`, `cli` parsing, a test framework, variadic `fmt`, `kelpc fmt`.** All downstream of MK5-S1–MK5-S5, and each would be rewritten once views/generics/collections land.
 - **HTTP servers beyond a minimal one, HTTP/2, WebSockets, gzip/brotli, cookies, proxies.** The minimal server exists to test the client and to prove `poll`. Connection pooling is **no longer** on this list: it is MK5-S4, and so is keep-alive.
-- **Generic containers and `Option`/`Result`.** MK3-S2-M2's neighbourhood; `Map<V>` is the deliberate stopgap.
+- **`Option`/`Result`.** The remaining language gap here; generics and tagged unions both shipped in MK8-S1-M1 (A-2, A-1), so what is left is `?`/`if let` and the stdlib migration (MK5-S6-M1).
 - **Grapheme-aware Unicode, case folding, normalization.** Tables and algorithms out of proportion to the value here; the scope is codepoint-level (`str.char_at`, `str.byte_index`), ASCII-only case ops, documented (open item 48).
 - **An arena/bump allocator, `defer`, custom allocators.** Arena without views is a copying allocator; `defer` needs syntax `syntax.md` does not have, and the drop plan already covers scope exit.
 - **Third-party dependencies, a package registry, a separately versioned stdlib.** Decision 3 stands; TLS is the one place "system library" has to be distinguished from "third-party package" (open item 37).
@@ -754,7 +754,7 @@ Details:
 | `panic(msg)` / `assert(cond)` | MK5-S1; any program with a deliberate failure | compiler builtin: the C exists (`kelp_panic`), only the names were missing | MK5-S1-M1 (done) `kelp_assert` + two bare-name `BUILTINS` entries |
 | `List#sort`/`reverse`/`slice`/`insert`/`remove` | MK5-S1, MK5-S5; deterministic output | compiler builtin, one comparator per element kind (monomorphization makes this nearly free) | small–medium MK5-S1 |
 | `main(argc, argv)` + saved argv globals | MK5-S2-M1 (`process.args`) | compiler codegen: change the emitted signature, stash the two values, one extern to read them | **done in MK5-S2-M1** `process.arg_count`/`arg_at`, `process.args` in Kelp |
-| `Map<V>` with `String` keys | MK5-S5; headers, config, counters | compiler builtin generic the second one, ≈ MK3-S2-M1's cost (`Ty::Map`, `map_sig`, `write_map`, drop) | medium MK5-S5 |
+| `Map<K, V>` | MK5-S5 (as `Map<V>`, `String` keys); a scalar key type in A-2 | compiler builtin generic the second one, ≈ MK3-S2-M1's cost (`Ty::Map`, `map_sig`, `write_map`, drop) | medium MK5-S5, extended in A-2 |
 | `net` capability vocabulary (`host[:port]`, matcher, checked args) | MK5-S3, MK5-S4 | compiler: `stdlib.rs` (`CapCheck`), `resolve.rs::validate_net_pattern`, an emitted `kelp_cap_check_hostport`/`kelp_cap_check_host`/`kelp_cap_check_port` | **done in MK5-S3** `validate_net_pattern` + `kelp_host_glob`, and the `Vec<CapCheck>` redesign the sketch did not foresee (open item 32) |
 | `poll` readiness | MK5-S3, MK5-S5 (single-threaded servers) | extern only | **done in MK5-S3** `Socket.wait_readable`/`wait_writable` reach `io`'s existing `poll` through a `File` over the socket's descriptor, so no new extern |
 | errno + `strerror` in panic messages | MK5-S5 diagnostics | runtime + builtin (`kelp_panic_errno`) | small **done in MK5-S6-M1's cheap half** `kelp_panic_at`/`kelp_panic_errno`/`kelp_panic_gai` in `codegen_c`'s runtime, and the syscall call sites in `externs.rs` that clean up before panicking capture the code first (open item 47) |

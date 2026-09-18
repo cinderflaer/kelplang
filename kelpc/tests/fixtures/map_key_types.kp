@@ -1,0 +1,44 @@
+// A-2: a `Map` whose key type is not `String`. The key's hash and equality are
+// generated per instantiation from the key type the map was declared with, and
+// `Map<V>` written with one argument keeps meaning a `String` key.
+fun main() {
+    var counts: Map<i32, i64> = Map.new()
+    counts.insert(key = 10, v = 1)
+    counts.insert(key = 20, v = 2)
+    counts.insert(key = 10, v = 99)          // overwrites, and does not grow
+    print(counts.len())
+    print(counts.get(key = 10))
+    print(counts.has(key = 20))
+    print(counts.has(key = 30))
+    print(counts.get_or(key = 30, fallback = 0))
+    print(counts.remove(key = 20))
+    print(counts.len())
+
+    // `keys()` returns the key type the map was declared with, in insertion
+    // order — not a `List<String>` borrowed from the key representation.
+    var ks: List<i32> = counts.keys()
+    print(ks.len())
+    print(ks.get(i = 0))
+
+    // A `bool` key, and an owned value behind a `get` borrow.
+    var names: Map<bool, String> = Map.empty()
+    names.insert(key = true, v = String.from_str(s = "yes"))
+    names.insert(key = false, v = String.from_str(s = "no"))
+    print(names.len())
+    print(names.get(key = true).as_str())
+    print(names.get(key = false).as_str())
+
+    // An unsigned key.
+    var sizes: Map<u64, i32> = Map.new()
+    sizes.insert(key = 7.to_u64(), v = 70)
+    print(sizes.get(key = 7.to_u64()))
+
+    // The one-argument spelling is still a `String` key.
+    var legacy: Map<i32> = Map.new()
+    legacy.insert(key = "a", v = 5)
+    legacy.insert(key = "bb", v = 6)
+    print(legacy.len())
+    print(legacy.get(key = "bb"))
+    var lk: List<String> = legacy.keys()
+    print(lk.get(i = 1).as_str())
+}
