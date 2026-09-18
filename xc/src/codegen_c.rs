@@ -372,6 +372,27 @@ static void x_string_drop(x_String* s) {
     s->len = 0;
 }
 
+// ---- x_Map helpers (MK5-S5) -----------------------------------------------
+// Shared by every `Map<V>` instantiation: FNV-1a over the key's bytes, and a
+// length-aware equality against a borrowed `str` key. `memcmp` rather than
+// `strcmp` because a `String` key may hold bytes `strlen` would stop at; the
+// borrowed side of a lookup is a `str`, so its length comes from `strlen`.
+static uint64_t x_map_hash(const char* data, size_t len) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < len; i++) {
+        h ^= (unsigned char)data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static bool x_map_key_eq(const x_String* key, const char* data, size_t len) {
+    if (key->len != len) {
+        return false;
+    }
+    return len == 0 || memcmp(key->data, data, len) == 0;
+}
+
 /* The allocation primitive `std/mem` wraps (M6.2): an owned, zero-filled,
    NUL-terminated buffer of `n` bytes. */
 static x_Bytes x_bytes_alloc_raw(size_t n) {
@@ -832,11 +853,13 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // owns a container drops it, and that function is defined in step 4.
     let mut list_elems: HashSet<Ty> = HashSet::new();
     let mut box_elems: HashSet<Ty> = HashSet::new();
-    collect_containers(program, &mut list_elems, &mut box_elems);
+    let mut map_values: HashSet<Ty> = HashSet::new();
+    collect_containers(program, &mut list_elems, &mut box_elems, &mut map_values);
     let mut containers: Vec<Ty> = list_elems
         .iter()
         .map(|e| Ty::List(Box::new(e.clone())))
         .chain(box_elems.iter().map(|e| Ty::Box(Box::new(e.clone()))))
+        .chain(map_values.iter().map(|e| Ty::Map(Box::new(e.clone()))))
         .collect();
     containers.sort_by_key(|t| (container_depth(t), container_name(t)));
     if !containers.is_empty() {
@@ -869,6 +892,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         match ty {
             Ty::List(elem) => write_list(&mut out, elem, &owned),
             Ty::Box(elem) => write_box(&mut out, elem, &owned),
+            Ty::Map(value) => write_map(&mut out, value, &owned),
             other => unreachable!("not a container: {}", other.display()),
         }
     }
@@ -1066,6 +1090,28 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
             )
             .unwrap();
         }
+        // A map stores its entries in insertion order and keeps a separate
+        // open-addressed index of `entry index + 1` (0 empty, `SIZE_MAX`
+        // tombstone), because `keys()` must return insertion order. The key
+        // sits inline (`x_String` is complete in the runtime preamble) and
+        // the value sits behind a pointer, so this typedef can still be
+        // emitted before every `datac` — a `datac` value is named by its
+        // forward-declared struct tag.
+        Ty::Map(value) => {
+            let name = crate::types::map_c_type(value);
+            let entry = format!("{name}_entry");
+            writeln!(
+                out,
+                "typedef struct {{\n    x_String key;\n    {}* value;\n    uint8_t live;\n}} {entry};",
+                crate::types::container_elem_c_type(value)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "typedef struct {{\n    {entry}* entries;\n    size_t entry_count;\n    size_t entry_cap;\n    size_t len;\n    size_t* index;\n    size_t index_cap;\n    size_t index_used;\n}} {name};"
+            )
+            .unwrap();
+        }
         other => unreachable!("not a container: {}", other.display()),
     }
 }
@@ -1084,6 +1130,7 @@ fn container_name(ty: &Ty) -> String {
     match ty {
         Ty::List(elem) => crate::types::list_c_type(elem),
         Ty::Box(elem) => crate::types::box_c_type(elem),
+        Ty::Map(value) => crate::types::map_c_type(value),
         other => unreachable!("not a container: {}", other.display()),
     }
 }
@@ -1094,6 +1141,9 @@ fn container_name(ty: &Ty) -> String {
 fn container_depth(ty: &Ty) -> usize {
     match ty {
         Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
+        // A `Map<V>` value is never a container (`is_map_element` refuses
+        // one), so a map is always one level deep.
+        Ty::Map(_) => 1,
         _ => 0,
     }
 }
@@ -1146,6 +1196,135 @@ fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
         writeln!(out, "        {d}(self->value);").unwrap();
     }
     out.push_str("        free(self->value);\n        self->value = NULL;\n    }\n}\n\n");
+}
+
+/// One `Map<V>` instantiation's function set (MK5-S5). Entries live in
+/// insertion order in a dense array, so `keys()` returns insertion order
+/// rather than hash order; a separate open-addressed index of `entry index +
+/// 1` (`0` empty, `SIZE_MAX` tombstone) does the lookup. `clear()` resets
+/// both and keeps the buffers; a removal marks the entry dead and tombstones
+/// its index slot rather than shifting anything, so insertion order is
+/// stable. The value is held through a pointer, which is what lets this
+/// typedef be emitted before every `datac` (a `datac` value is named by its
+/// forward-declared struct tag).
+fn write_map(out: &mut String, value: &Ty, owned: &HashSet<String>) {
+    let map = crate::types::map_c_type(value);
+    let map_ty = Ty::Map(Box::new(value.clone()));
+    let entry = format!("{map}_entry");
+    let value_c = value.c_type();
+    let value_drops = needs_drop(value, owned);
+    let drop_value = value_drops.then(|| drop_fn_name(value));
+    let list_string = crate::types::list_c_type(&Ty::String);
+    let list_value = crate::types::list_c_type(value);
+    let clonable = crate::types::list_clonable_elem(value);
+    // Reading a value *out* of the map is a copy for a `Copy` value and a
+    // clone for `String`/`Bytes` (a `datac` cannot be cloned, and `infer.rs`
+    // never offers `get_or`/`values` for one).
+    let copy_from = |ptr: &str| match value {
+        Ty::String => format!("x_String__clone({ptr})"),
+        Ty::Bytes => format!("x_Bytes__clone({ptr})"),
+        _ => format!("*{ptr}"),
+    };
+    writeln!(out, "// ---- {} (MK5-S5) {}", map, "-".repeat(30)).unwrap();
+
+    writeln!(out, "static {map} {map}__new(void) {{\n    {map} m;\n    m.entries = NULL;\n    m.entry_count = 0;\n    m.entry_cap = 0;\n    m.len = 0;\n    m.index = NULL;\n    m.index_cap = 0;\n    m.index_used = 0;\n    return m;\n}}\n").unwrap();
+
+    // The index probe: returns the slot holding the key (`*found`), or the
+    // slot to insert at (the first tombstone seen, else the first empty one).
+    writeln!(out, "static size_t {map}__find(const {map}* self, const char* k, size_t n, bool* found) {{").unwrap();
+    out.push_str("    *found = false;\n    if (self->index_cap == 0) {\n        return 0;\n    }\n");
+    out.push_str("    size_t mask = self->index_cap - 1;\n    size_t i = (size_t)x_map_hash(k, n) & mask;\n    size_t tomb = SIZE_MAX;\n");
+    out.push_str("    for (;;) {\n        size_t slot = self->index[i];\n        if (slot == 0) {\n            return tomb != SIZE_MAX ? tomb : i;\n        }\n");
+    out.push_str("        if (slot == SIZE_MAX) {\n            if (tomb == SIZE_MAX) {\n                tomb = i;\n            }\n        } else {\n");
+    out.push_str("            const ");
+    out.push_str(&entry);
+    out.push_str("* e = &self->entries[slot - 1];\n            if (e->live && x_map_key_eq(&e->key, k, n)) {\n                *found = true;\n                return i;\n            }\n        }\n");
+    out.push_str("        i = (i + 1) & mask;\n    }\n}\n\n");
+
+    // A rebuild drops every tombstone, so it sizes the index from the live
+    // count alone and leaves the dense entries untouched.
+    writeln!(out, "static void {map}__rehash({map}* self, size_t want) {{").unwrap();
+    out.push_str("    size_t cap = 8;\n    while (cap < want * 4) {\n        cap *= 2;\n    }\n");
+    writeln!(out, "    free(self->index);\n    self->index = (size_t*)malloc(cap * sizeof(size_t));").unwrap();
+    out.push_str("    if (self->index == NULL) {\n        x_panic(\"out of memory\");\n    }\n    memset(self->index, 0, cap * sizeof(size_t));\n");
+    out.push_str("    self->index_cap = cap;\n    self->index_used = 0;\n");
+    out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
+    out.push_str("        size_t i = (size_t)x_map_hash((const char*)self->entries[e].key.data, self->entries[e].key.len) & (cap - 1);\n");
+    out.push_str("        while (self->index[i] != 0) {\n            i = (i + 1) & (cap - 1);\n        }\n        self->index[i] = e + 1;\n        self->index_used++;\n    }\n}\n\n");
+
+    writeln!(out, "static void {map}__insert({map}* self, const char* k, {value_c} v) {{").unwrap();
+    writeln!(out, "    if (self->index_cap == 0 || (self->index_used + 1) * 4 >= self->index_cap * 3) {{\n        {map}__rehash(self, self->len + 1);\n    }}").unwrap();
+    out.push_str("    size_t n = strlen(k);\n    bool found = false;\n");
+    writeln!(out, "    size_t slot = {map}__find(self, k, n, &found);").unwrap();
+    out.push_str("    if (found) {\n        size_t e = self->index[slot] - 1;\n");
+    if value_drops {
+        writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
+    }
+    out.push_str("        *self->entries[e].value = v;\n        return;\n    }\n");
+    out.push_str("    if (self->entry_count == self->entry_cap) {\n        size_t cap = self->entry_cap == 0 ? 8 : self->entry_cap * 2;\n");
+    writeln!(out, "        self->entries = ({entry}*)realloc(self->entries, cap * sizeof({entry}));").unwrap();
+    out.push_str("        if (self->entries == NULL) {\n            x_panic(\"out of memory\");\n        }\n        self->entry_cap = cap;\n    }\n");
+    out.push_str("    size_t e = self->entry_count++;\n    self->entries[e].key = x_String__from_str(k);\n");
+    writeln!(out, "    self->entries[e].value = ({value_c}*)malloc(sizeof({value_c}));").unwrap();
+    out.push_str("    if (self->entries[e].value == NULL) {\n        x_panic(\"out of memory\");\n    }\n");
+    out.push_str("    *self->entries[e].value = v;\n    self->entries[e].live = 1;\n");
+    out.push_str("    if (self->index[slot] == 0) {\n        self->index_used++;\n    }\n    self->index[slot] = e + 1;\n    self->len++;\n}\n\n");
+
+    writeln!(out, "static bool {map}__has(const {map}* self, const char* k) {{\n    bool found = false;\n    {map}__find(self, k, strlen(k), &found);\n    return found;\n}}\n").unwrap();
+
+    if value.is_copy() {
+        writeln!(out, "static {value_c} {map}__get(const {map}* self, const char* k) {{").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        x_panic(\"Map.get: key not found\");\n    }}\n    return *self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
+    } else {
+        writeln!(out, "static const {value_c}* {map}__get_const(const {map}* self, const char* k) {{").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        x_panic(\"Map.get: key not found\");\n    }}\n    return self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
+    }
+
+    if clonable {
+        writeln!(out, "static {value_c} {map}__get_or(const {map}* self, const char* k, {value_c} fallback) {{").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        return fallback;\n    }}").unwrap();
+        writeln!(out, "    const {value_c}* existing = self->entries[self->index[slot] - 1].value;\n    {value_c} result = {};", copy_from("existing")).unwrap();
+        match value {
+            Ty::String => out.push_str("    x_string_drop(&fallback);\n"),
+            Ty::Bytes => out.push_str("    x_bytes_drop(&fallback);\n"),
+            _ => out.push_str("    (void)fallback;\n"),
+        }
+        out.push_str("    return result;\n}\n\n");
+    }
+
+    writeln!(out, "static {value_c} {map}__remove({map}* self, const char* k) {{").unwrap();
+    writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, strlen(k), &found);\n    if (!found) {{\n        x_panic(\"Map.remove: key not found\");\n    }}\n    size_t e = self->index[slot] - 1;").unwrap();
+    out.push_str("    ");
+    writeln!(out, "{value_c} v = *self->entries[e].value;\n    free(self->entries[e].value);\n    self->entries[e].value = NULL;\n    x_string_drop(&self->entries[e].key);\n    self->entries[e].live = 0;\n    self->index[slot] = SIZE_MAX;\n    self->len--;\n    return v;\n}}\n").unwrap();
+
+    writeln!(out, "static void {map}__clear({map}* self) {{").unwrap();
+    out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
+    if value_drops {
+        writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
+    }
+    out.push_str("        free(self->entries[e].value);\n        self->entries[e].value = NULL;\n        x_string_drop(&self->entries[e].key);\n        self->entries[e].live = 0;\n    }\n");
+    out.push_str("    self->entry_count = 0;\n    self->len = 0;\n    self->index_used = 0;\n    if (self->index != NULL) {\n        memset(self->index, 0, self->index_cap * sizeof(size_t));\n    }\n}\n\n");
+
+    writeln!(out, "static size_t {map}__len(const {map}* self) {{\n    return self->len;\n}}\n").unwrap();
+    writeln!(out, "static bool {map}__is_empty(const {map}* self) {{\n    return self->len == 0;\n}}\n").unwrap();
+
+    writeln!(out, "static {list_string} {map}__keys(const {map}* self) {{").unwrap();
+    writeln!(out, "    {list_string} out = {list_string}__empty();\n    {list_string}__reserve(&out, self->len);").unwrap();
+    out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (self->entries[e].live) {\n            out.data[out.len++] = x_String__clone(&self->entries[e].key);\n        }\n    }\n    return out;\n}\n\n");
+
+    if clonable {
+        writeln!(out, "static {list_value} {map}__values(const {map}* self) {{").unwrap();
+        writeln!(out, "    {list_value} out = {list_value}__empty();\n    {list_value}__reserve(&out, self->len);").unwrap();
+        writeln!(out, "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            out.data[out.len++] = {};\n        }}\n    }}\n    return out;\n}}\n", copy_from("self->entries[e].value")).unwrap();
+    }
+
+    writeln!(out, "static void {}({map}* self) {{", drop_fn_name(&map_ty)).unwrap();
+    out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
+    if value_drops {
+        writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
+    }
+    out.push_str("        free(self->entries[e].value);\n        x_string_drop(&self->entries[e].key);\n    }\n");
+    out.push_str("    free(self->entries);\n    free(self->index);\n    self->entries = NULL;\n    self->entry_count = 0;\n    self->entry_cap = 0;\n    self->len = 0;\n    self->index = NULL;\n    self->index_cap = 0;\n    self->index_used = 0;\n}\n\n");
 }
 
 /// One `List<T>` instantiation's function set: a growable buffer plus the
@@ -1312,40 +1491,54 @@ fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: 
 /// another container (`Box<List<String>>`), so the walk recurses; a borrow
 /// of a container (`&List<T>` — every `List` parameter and method receiver)
 /// is looked through.
-fn collect_containers(program: &Program, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
-    fn note_ty(ty: &Ty, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
+fn collect_containers(
+    program: &Program,
+    lists: &mut HashSet<Ty>,
+    boxes: &mut HashSet<Ty>,
+    maps: &mut HashSet<Ty>,
+) {
+    fn note_ty(ty: &Ty, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>, maps: &mut HashSet<Ty>) {
         match ty {
             Ty::List(elem) => {
                 lists.insert((**elem).clone());
-                note_ty(elem, lists, boxes);
+                note_ty(elem, lists, boxes, maps);
             }
             Ty::Box(elem) => {
                 boxes.insert((**elem).clone());
-                note_ty(elem, lists, boxes);
+                note_ty(elem, lists, boxes, maps);
             }
-            Ty::Ref { inner, .. } => note_ty(inner, lists, boxes),
+            Ty::Map(value) => {
+                maps.insert((**value).clone());
+                // `keys()`/`values()` are emitted with every map and return
+                // `List<String>`/`List<V>`, so both instantiations have to
+                // exist even when the program never calls them.
+                lists.insert(Ty::String);
+                lists.insert((**value).clone());
+                note_ty(value, lists, boxes, maps);
+            }
+            Ty::Ref { inner, .. } => note_ty(inner, lists, boxes, maps),
             _ => {}
         }
     }
-    fn note_expr(expr: &Expr, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
-        note_ty(&expr.ty, lists, boxes);
+    fn note_expr(expr: &Expr, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>, maps: &mut HashSet<Ty>) {
+        note_ty(&expr.ty, lists, boxes, maps);
         match &expr.kind {
             ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } | ExprKind::Deref { expr } => {
-                note_expr(expr, lists, boxes)
+                note_expr(expr, lists, boxes, maps)
             }
             ExprKind::Binary { lhs, rhs, .. } | ExprKind::Assign { target: lhs, value: rhs } => {
-                note_expr(lhs, lists, boxes);
-                note_expr(rhs, lists, boxes);
+                note_expr(lhs, lists, boxes, maps);
+                note_expr(rhs, lists, boxes, maps);
             }
             ExprKind::Call { args, .. } => {
                 for a in args {
-                    note_expr(a, lists, boxes);
+                    note_expr(a, lists, boxes, maps);
                 }
             }
-            ExprKind::FieldAccess { base, .. } => note_expr(base, lists, boxes),
+            ExprKind::FieldAccess { base, .. } => note_expr(base, lists, boxes, maps),
             ExprKind::StructLit { fields, .. } => {
                 for (_, v) in fields {
-                    note_expr(v, lists, boxes);
+                    note_expr(v, lists, boxes, maps);
                 }
             }
             ExprKind::If {
@@ -1353,62 +1546,62 @@ fn collect_containers(program: &Program, lists: &mut HashSet<Ty>, boxes: &mut Ha
                 then_block,
                 else_block,
             } => {
-                note_expr(cond, lists, boxes);
-                note_block(then_block, lists, boxes);
+                note_expr(cond, lists, boxes, maps);
+                note_block(then_block, lists, boxes, maps);
                 if let Some(b) = else_block {
-                    note_block(b, lists, boxes);
+                    note_block(b, lists, boxes, maps);
                 }
             }
-            ExprKind::Block(b) => note_block(b, lists, boxes),
+            ExprKind::Block(b) => note_block(b, lists, boxes, maps),
             ExprKind::Template { pieces, .. } => {
                 for p in pieces {
                     if let TemplatePiece::Value(v) = p {
-                        note_expr(v, lists, boxes);
+                        note_expr(v, lists, boxes, maps);
                     }
                 }
             }
             _ => {}
         }
     }
-    fn note_block(block: &Block, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>) {
+    fn note_block(block: &Block, lists: &mut HashSet<Ty>, boxes: &mut HashSet<Ty>, maps: &mut HashSet<Ty>) {
         for s in &block.stmts {
             match s {
                 Stmt::Let { ty, init, .. } => {
-                    note_ty(ty, lists, boxes);
-                    note_expr(init, lists, boxes);
+                    note_ty(ty, lists, boxes, maps);
+                    note_expr(init, lists, boxes, maps);
                 }
                 Stmt::While { cond, body } => {
-                    note_expr(cond, lists, boxes);
-                    note_block(body, lists, boxes);
+                    note_expr(cond, lists, boxes, maps);
+                    note_block(body, lists, boxes, maps);
                 }
                 Stmt::Return { value, .. } => {
                     if let Some(v) = value {
-                        note_expr(v, lists, boxes);
+                        note_expr(v, lists, boxes, maps);
                     }
                 }
-                Stmt::Expr(e) => note_expr(e, lists, boxes),
+                Stmt::Expr(e) => note_expr(e, lists, boxes, maps),
             }
         }
         if let Some(t) = &block.tail {
-            note_expr(t, lists, boxes);
+            note_expr(t, lists, boxes, maps);
         }
     }
 
     for s in &program.structs {
         for f in &s.fields {
-            note_ty(&f.ty, lists, boxes);
+            note_ty(&f.ty, lists, boxes, maps);
         }
     }
     for pd in &program.pds {
-        note_ty(&pd.value_ty, lists, boxes);
-        note_expr(&pd.init, lists, boxes);
+        note_ty(&pd.value_ty, lists, boxes, maps);
+        note_expr(&pd.init, lists, boxes, maps);
     }
     for f in &program.functions {
-        note_ty(&f.ret, lists, boxes);
+        note_ty(&f.ret, lists, boxes, maps);
         for (_, t) in &f.params {
-            note_ty(t, lists, boxes);
+            note_ty(t, lists, boxes, maps);
         }
-        note_block(&f.body, lists, boxes);
+        note_block(&f.body, lists, boxes, maps);
     }
 }
 
@@ -2112,7 +2305,7 @@ impl<'a> Gen<'a> {
         // Container methods are monomorphized: the C name carries the element
         // type, which comes from the receiver argument (or, for the
         // associated `List.of(v)`/`Box.of(v)`, from `v` itself, and for
-        // `empty` from the call's own result type).
+        // `empty`/`Map.new()` from the call's own result type).
         for (prefix, name_of, elem_of) in [
             (
                 "List#",
@@ -2124,13 +2317,18 @@ impl<'a> Gen<'a> {
                 crate::types::box_c_type as fn(&Ty) -> String,
                 crate::types::box_elem_of as fn(&Ty) -> Option<&Ty>,
             ),
+            (
+                "Map#",
+                crate::types::map_c_type as fn(&Ty) -> String,
+                crate::types::map_elem_of as fn(&Ty) -> Option<&Ty>,
+            ),
         ] {
             let Some(op) = callee.strip_prefix(prefix) else {
                 continue;
             };
             let elem = if op == "of" {
                 args.first().map(|a| a.ty.clone())
-            } else if op == "empty" {
+            } else if op == "empty" || op == "new" {
                 elem_of(ret).cloned()
             } else {
                 args.first().and_then(|a| elem_of(&a.ty)).cloned()
@@ -2257,8 +2455,8 @@ impl<'a> Gen<'a> {
                 "%.*s",
                 format!("(int)({value}).len, (const char*)({value}).data"),
             ),
-            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Ref { .. } => {
-                unreachable!("type checker rejects printing unit/struct/list/box/reference values")
+            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Map(_) | Ty::Ref { .. } => {
+                unreachable!("type checker rejects printing unit/struct/container/reference values")
             }
         }
     }

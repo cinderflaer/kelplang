@@ -1129,6 +1129,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "box_recursive",
         "recursive_datac",
         "box_field_take",
+        "map_basic",
+        "map_owned",
+        "map_datac",
         "io_stdio",
         "io_streams",
         "process_spawn",
@@ -1367,6 +1370,47 @@ fn reaching_into_an_empty_box_panics() {
 #[test]
 fn a_datac_can_be_a_list_element() {
     assert_compiles_and_runs("tests/fixtures/list_datac_element.x", "2\nspades\n2\nspades\n");
+}
+
+#[test]
+fn a_map_stores_keys_and_returns_insertion_order() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_basic.x",
+        "0\ntrue\n3\ntrue\nfalse\n2\n99\n22\n1\n2\ntwo three \n2\n0\ntrue\n",
+    );
+}
+
+#[test]
+fn a_map_of_owned_values_borrows_clones_and_moves() {
+    // The value is behind a pointer, the key is an owned `String`, and
+    // `get_or`/`remove`/`values` all transfer or clone it; ASAN re-runs this
+    // fixture (see `heap_fixtures_are_double_free_and_leak_clean`).
+    assert_compiles_and_runs(
+        "tests/fixtures/map_owned.x",
+        "2\ntwo\ntwo\nfallback\nTWO\none\n1\nbeta\nTWO\ntrue\n",
+    );
+}
+
+#[test]
+fn a_map_holds_datac_values_and_can_live_in_a_datac_field() {
+    assert_compiles_and_runs("tests/fixtures/map_datac.x", "30\n2\n3\n1\n");
+}
+
+#[test]
+fn a_map_cannot_hold_a_container_or_be_created_without_a_value_type() {
+    assert_rejected("tests/fixtures/map_container_value.x");
+    assert_rejected("tests/fixtures/map_no_value_type.x");
+}
+
+#[test]
+fn a_map_is_not_copy_so_assigning_one_moves_it() {
+    assert_rejected("tests/fixtures/map_move.x");
+}
+
+#[test]
+fn a_missing_map_key_panics() {
+    assert_fixture_panics("map_missing_key", "Map.get: key not found");
+    assert_fixture_panics("map_remove_missing", "Map.remove: key not found");
 }
 
 #[test]

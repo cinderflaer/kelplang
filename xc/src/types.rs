@@ -45,6 +45,15 @@ pub enum Ty {
     /// Like `List`, monomorphized: one C struct plus one function set per
     /// element type actually used.
     Box(Box<Ty>),
+    /// The builtin owned keyed container (MK5-S5): `Map<V>`, with `String`
+    /// keys and a monomorphized value type. Keys are `String` because
+    /// hashing a key needs its bytes, and a generic key needs real generics
+    /// (open item 34). Non-`Copy`; a map owns its keys and its values, and
+    /// drops both at the end of the owning scope. The value type is part of
+    /// the type, so `Map<i64>` and `Map<String>` are different C types with
+    /// different functions. `Map<Map<i32>>` is as impossible as
+    /// `List<List<i32>>`, by the same element check.
+    Map(Box<Ty>),
     /// A borrow of a value of type `inner` — shared (`mutable: false`) or
     /// exclusive (`mutable: true`). Never appears as a function's declared
     /// return type in M4 (no surface syntax produces one there — see
@@ -83,7 +92,10 @@ impl Ty {
     /// kinds of thing that own heap memory: a `datac` and the builtin
     /// `Bytes`/`String`. Reading a non-`Copy` value as a whole moves it (M3).
     pub fn is_copy(&self) -> bool {
-        !matches!(self, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_))
+        !matches!(
+            self,
+            Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(_)
+        )
     }
 
     /// Whether this type *itself* owns heap memory, ignoring whether a
@@ -91,7 +103,7 @@ impl Ty {
     /// available — a `datac` with an owned field owns memory too, and out of
     /// context `Ty::Struct(_)` cannot know that.
     pub fn owns_heap(&self) -> bool {
-        matches!(self, Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_))
+        matches!(self, Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(_))
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -141,6 +153,7 @@ impl Ty {
             Ty::String => "x_String".to_string(),
             Ty::List(elem) => list_c_type(elem),
             Ty::Box(elem) => box_c_type(elem),
+            Ty::Map(elem) => map_c_type(elem),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -178,6 +191,7 @@ impl Ty {
             Ty::Struct(name) => name.clone(),
             Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
+            Ty::Map(elem) => format!("Map<{}>", elem.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
         }
@@ -240,6 +254,7 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Struct(name) => format!("x_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("x_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("x_box_drop__{}", ty_mangle(elem)),
+        Ty::Map(elem) => format!("x_map_drop__{}", ty_mangle(elem)),
         other => unreachable!("no drop rule for type '{}'", other.display()),
     }
 }
@@ -256,9 +271,17 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
-        Ty::Ref { .. } | Ty::Str | Ty::Unit | Ty::List(_) | Ty::Box(_) => false,
+        Ty::Ref { .. } | Ty::Str | Ty::Unit | Ty::List(_) | Ty::Box(_) | Ty::Map(_) => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
+}
+
+/// Whether `ty` may be a `Map<V>` value. The same set `List<T>` accepts: a
+/// scalar, `String`, `Bytes`, or a `datac`. Keys are always `String`, and a
+/// map is neither a list element nor a map value, so `Map<Map<i32>>` and
+/// `Map<List<i32>>` stay impossible.
+pub fn is_map_element(ty: &Ty) -> bool {
+    is_list_element(ty)
 }
 
 /// Whether `ty` may be a `Box<T>` element. A box holds a *pointer*, so the
@@ -289,6 +312,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::String => "String".to_string(),
         Ty::List(elem) => format!("List__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
+        Ty::Map(elem) => format!("Map__{}", ty_mangle(elem)),
         other => other.display().replace('&', "ref"),
     }
 }
@@ -301,6 +325,11 @@ pub fn list_c_type(elem: &Ty) -> String {
 /// The generated C struct tag for `Box<T>`.
 pub fn box_c_type(elem: &Ty) -> String {
     format!("x_Box__{}", ty_mangle(elem))
+}
+
+/// The generated C struct tag for `Map<V>`.
+pub fn map_c_type(elem: &Ty) -> String {
+    format!("x_Map__{}", ty_mangle(elem))
 }
 
 /// The `List<T>` or `Box<T>` behind an expression's type, looking through a
@@ -320,6 +349,15 @@ pub fn box_elem_of(ty: &Ty) -> Option<&Ty> {
     match ty {
         Ty::Box(elem) => Some(elem),
         Ty::Ref { inner, .. } => box_elem_of(inner),
+        _ => None,
+    }
+}
+
+/// As `list_elem_of`, for `Map<V>` — the *value* type.
+pub fn map_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Map(elem) => Some(elem),
+        Ty::Ref { inner, .. } => map_elem_of(inner),
         _ => None,
     }
 }

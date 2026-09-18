@@ -1,0 +1,37 @@
+// MK5-S5: the builtin `Map<V>`. Values here are `Copy` scalars, so `get`
+// hands back a value and `get_or` needs no clone. `keys()` returns insertion
+// order (the whole reason entries are dense and the hash index is separate),
+// and `insert` of an existing key overwrites the value in place.
+impl "std/str"
+
+fun main() {
+    var m: Map<i64> = Map.new()
+    print(m.len())
+    print(m.is_empty())
+    m.insert("one", 1)
+    m.insert("two", 2)
+    m.insert("three", 3)
+    print(m.len())
+    print(m.has("two"))
+    print(m.has("nope"))
+    print(m.get("two"))
+    print(m.get_or("nope", 99))
+    m.insert("two", 22)
+    print(m.get("two"))
+    print(m.remove("one"))
+    print(m.len())
+
+    val names = m.keys()
+    var i: usize = 0
+    while i < names.len() {
+        print!(names.get(i).as_str())
+        print!(" ")
+        i += 1
+    }
+    print("")
+    print(m.values().len())
+
+    m.clear()
+    print(m.len())
+    print(m.is_empty())
+}

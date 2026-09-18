@@ -1,0 +1,7 @@
+// MK5-S5: a map value is stored inline, so a nested container is refused at
+// the type position — same rule as a `List` element.
+fun main() {
+    var m: Map<List<i32>> = Map.new()
+    m.insert("k", List.of(1))
+    print(m.len())
+}

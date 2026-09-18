@@ -318,10 +318,11 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
-        // The two generic names v1 knows (`List<T>` from C1, `Box<T>` from
-        // M8). Both are compiler builtins, not user-definable types; each
-        // checks its element against what its C representation can hold.
-        if ty.name == "List" || ty.name == "Box" {
+        // The three generic names v1 knows (`List<T>` from C1, `Box<T>` from
+        // M8, `Map<V>` from MK5-S5). All are compiler builtins, not
+        // user-definable types; each checks its element against what its C
+        // representation can hold.
+        if ty.name == "List" || ty.name == "Box" || ty.name == "Map" {
             if ty.args.len() != 1 {
                 return Err(TypeError {
                     message: format!(
@@ -335,6 +336,8 @@ impl TypeScope<'_> {
             let elem = self.resolve(&ty.args[0], true)?;
             let (ok, error) = if ty.name == "List" {
                 (crate::types::is_list_element(&elem), list_element_error(&elem))
+            } else if ty.name == "Map" {
+                (crate::types::is_map_element(&elem), map_element_error(&elem))
             } else {
                 (crate::types::is_box_element(&elem), box_element_error(&elem))
             };
@@ -346,6 +349,8 @@ impl TypeScope<'_> {
             }
             return Ok(if ty.name == "List" {
                 Ty::List(Box::new(elem))
+            } else if ty.name == "Map" {
+                Ty::Map(Box::new(elem))
             } else {
                 Ty::Box(Box::new(elem))
             });
@@ -353,7 +358,7 @@ impl TypeScope<'_> {
         if !ty.args.is_empty() {
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments — the compiler's generic types are 'List<T>' and 'Box<T>'",
+                    "'{}' does not take type arguments — the compiler's generic types are 'List<T>', 'Box<T>' and 'Map<V>'",
                     ty.name
                 ),
                 span: ty.span,
@@ -698,6 +703,7 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         Ty::String => Some("String"),
         Ty::List(_) => Some("List"),
         Ty::Box(_) => Some("Box"),
+        Ty::Map(_) => Some("Map"),
         // The integer types answer to their written names so that the
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
         Ty::I32 => Some("i32"),
@@ -744,6 +750,21 @@ fn list_element_error(ty: &Ty) -> String {
     )
 }
 
+/// Why a type cannot be a `Map<V>` value, in one place so the `Map<V>` type
+/// position and `Map.new()` share the explanation. The value set is the
+/// `List` element set, so only the wording differs.
+fn map_element_error(ty: &Ty) -> String {
+    if let Some(reason) = borrowed_element_reason(ty) {
+        return format!(
+            "{reason} — a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+        );
+    }
+    format!(
+        "'{}' cannot be a 'Map' value in v1 — a map's value is stored inline, so a nested container is not expressible; use a scalar, 'String', 'Bytes', or a 'datac' (or put the map in a 'Box')",
+        ty.display()
+    )
+}
+
 /// The same for a `Box<T>` element, which may be a container: a box holds a
 /// pointer, so `Box<List<i32>>` and `Box<Box<i32>>` are both fine.
 fn box_element_error(ty: &Ty) -> String {
@@ -771,6 +792,8 @@ fn box_element_error(ty: &Ty) -> String {
 fn container_sig(key: &str, elem: &Ty) -> Option<FnSig> {
     if key.starts_with("List#") {
         list_sig(key, elem)
+    } else if key.starts_with("Map#") {
+        map_sig(key, elem)
     } else {
         box_sig(key, elem)
     }
@@ -859,6 +882,60 @@ fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
     })
 }
 
+/// The `Map<V>` builtins (MK5-S5), instantiated for one value type. Keys are
+/// always `String` (so every key parameter is a `str`), and the value type
+/// decides the same things the `List` element type does:
+///
+/// - `get` returns a *copy* for a `Copy` value and a shared borrow for an
+///   owned one, rooted at the receiver by the elision rule (`Map#get` is in
+///   `builtin_borrow_root` for exactly this reason);
+/// - `get_or` and `values` have to copy or clone a value *out*, which a
+///   `datac` cannot do, so they are offered only for a clonable value type
+///   (`types::list_clonable_elem`) — the same gate `List.slice` uses;
+/// - `insert` moves the value in, `remove` moves it out.
+fn map_sig(key: &str, value: &Ty) -> Option<FnSig> {
+    let map = Ty::Map(Box::new(value.clone()));
+    let shared = Ty::Ref { mutable: false, inner: Box::new(map.clone()) };
+    let exclusive = Ty::Ref { mutable: true, inner: Box::new(map.clone()) };
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    let value_ref = Ty::Ref { mutable: false, inner: Box::new(value.clone()) };
+    let clonable = crate::types::list_clonable_elem(value);
+    Some(match key {
+        "Map#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Usize },
+        "Map#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
+        "Map#has" => FnSig {
+            params: vec![p("self", shared), p("key", Ty::Str)],
+            ret: Ty::Bool,
+        },
+        "Map#get" => FnSig {
+            params: vec![p("self", shared), p("key", Ty::Str)],
+            ret: if value.is_copy() { value.clone() } else { value_ref },
+        },
+        "Map#get_or" if clonable => FnSig {
+            params: vec![p("self", shared), p("key", Ty::Str), p("fallback", value.clone())],
+            ret: value.clone(),
+        },
+        "Map#insert" => FnSig {
+            params: vec![p("self", exclusive), p("key", Ty::Str), p("v", value.clone())],
+            ret: Ty::Unit,
+        },
+        "Map#remove" => FnSig {
+            params: vec![p("self", exclusive), p("key", Ty::Str)],
+            ret: value.clone(),
+        },
+        "Map#clear" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
+        "Map#keys" => FnSig {
+            params: vec![p("self", shared)],
+            ret: Ty::List(Box::new(Ty::String)),
+        },
+        "Map#values" if clonable => FnSig {
+            params: vec![p("self", shared)],
+            ret: Ty::List(Box::new(value.clone())),
+        },
+        _ => return None,
+    })
+}
+
 /// How `List.contains` takes its needle: a `Copy` element by value, an owned
 /// one by borrow. Taking a `String` by value would move it into a membership
 /// test, which is never what the caller meant.
@@ -896,11 +973,12 @@ pub fn is_ref_param(ty: &Ty) -> bool {
 
 /// The elided borrow root for a builtin method, if it returns a borrow.
 pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
-    // `List#get`/`Box#get` on an owned element type return a borrow of the
-    // container itself — the first parameter, like every builtin method's
-    // `self`. (For a `Copy` element the type checker never asks, since the
-    // call's result is not a borrow; see `borrowck::check_call`.)
-    if key == "List#get" || key == "Box#get" {
+    // `List#get`/`Box#get`/`Map#get` on an owned element type return a
+    // borrow of the container itself — the first parameter, like every
+    // builtin method's `self`. (For a `Copy` element the type checker never
+    // asks, since the call's result is not a borrow; see
+    // `borrowck::check_call`.)
+    if key == "List#get" || key == "Box#get" || key == "Map#get" {
         return Some(Some(0));
     }
     let b = BUILTINS.get(key)?;
@@ -1853,7 +1931,10 @@ fn scan_pd_uses(
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
-    } else if matches!(base, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_)) {
+    } else if matches!(
+        base,
+        Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(_)
+    ) {
         Ty::Ref { mutable: false, inner: Box::new(base) }
     } else {
         base
@@ -3176,7 +3257,7 @@ fn check_method_call(
     // through to the ordinary method path below.
     if let ast::Expr::Ident(name, _) = receiver {
         if ctx.lookup(name).is_none() && !is_module_alias(name, ctx) {
-            if name == "List" || name == "Box" {
+            if name == "List" || name == "Box" || name == "Map" {
                 return check_container_associated(name, method, args, span, ctx, expected);
             }
             let key = format!("{name}#{method}");
@@ -3210,6 +3291,7 @@ fn check_method_call(
     let key = format!("{owner}#{method}");
     let container_elem = crate::types::list_elem_of(&probe.ty)
         .or_else(|| crate::types::box_elem_of(&probe.ty))
+        .or_else(|| crate::types::map_elem_of(&probe.ty))
         .cloned();
     let sig = ctx
         .sigs
@@ -3245,6 +3327,10 @@ fn check_method_call(
                     "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear, sort, reverse, contains, slice, insert, remove",
                     e.display()
                 ),
+                (Some(e), "Map") => format!(
+                    "Map<{}> has no method '{method}' — the Map surface is len, is_empty, has, get, get_or, insert, remove, clear, keys, values",
+                    e.display()
+                ),
                 (Some(e), _) => format!(
                     "Box<{}> has no method '{method}' — the Box surface is is_empty, get, set, take",
                     e.display()
@@ -3275,11 +3361,12 @@ fn check_method_call(
     })
 }
 
-/// The associated constructors of the two builtin containers, written on
-/// the type name: `List.of(x)`/`List.empty()` and `Box.of(x)`/
-/// `Box.empty()`. Both need the element type from somewhere — `of` takes it
-/// from its argument (or from the binding's written type, which is what
-/// `expected` is for), `empty` only from the written type.
+/// The associated constructors of the three builtin containers, written on
+/// the type name: `List.of(x)`/`List.empty()`, `Box.of(x)`/`Box.empty()`,
+/// and `Map.new()`/`Map.empty()`. Each needs its element type from
+/// somewhere — `of` takes it from its argument (or from the binding's
+/// written type, which is what `expected` is for), `empty`/`new` only from
+/// the written type.
 fn check_container_associated(
     container: &str,
     method: &str,
@@ -3289,23 +3376,38 @@ fn check_container_associated(
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
     let expected_elem = expected
-        .and_then(|t| {
-            if container == "List" {
-                crate::types::list_elem_of(t)
-            } else {
-                crate::types::box_elem_of(t)
-            }
+        .and_then(|t| match container {
+            "List" => crate::types::list_elem_of(t),
+            "Map" => crate::types::map_elem_of(t),
+            _ => crate::types::box_elem_of(t),
         })
         .cloned();
-    let wrap = |elem: Ty| {
-        if container == "List" {
-            Ty::List(Box::new(elem))
-        } else {
-            Ty::Box(Box::new(elem))
-        }
+    let wrap = |elem: Ty| match container {
+        "List" => Ty::List(Box::new(elem)),
+        "Map" => Ty::Map(Box::new(elem)),
+        _ => Ty::Box(Box::new(elem)),
     };
     let key = format!("{container}#{method}");
     match method {
+        "new" if container == "Map" => {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'Map.new' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            let Some(value) = expected_elem else {
+                return Err(TypeError {
+                    message: "cannot tell what 'Map.new()' holds — write the value type on the binding ('var m: Map<String> = Map.new()'); there is no 'Map.of(x)' since a map starts empty".to_string(),
+                    span,
+                });
+            };
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call { callee: key, args: vec![] },
+                ty: wrap(value),
+                span,
+            })
+        }
         "empty" => {
             if !args.is_empty() {
                 return Err(TypeError {
@@ -3315,9 +3417,12 @@ fn check_container_associated(
             }
             let Some(elem) = expected_elem else {
                 return Err(TypeError {
-                    message: format!(
-                        "cannot tell what '{container}.empty()' holds — write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
-                    ),
+                    message: match container {
+                        "Map" => "cannot tell what 'Map.empty()' holds — write the value type on the binding ('var m: Map<String> = Map.empty()')".to_string(),
+                        _ => format!(
+                            "cannot tell what '{container}.empty()' holds — write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
+                        ),
+                    },
                     span,
                 });
             };
@@ -3327,6 +3432,10 @@ fn check_container_associated(
                 span,
             })
         }
+        "of" if container == "Map" => Err(TypeError {
+            message: "'Map.of' does not exist — a map starts empty; write 'Map.new()' with the value type on the binding, then 'insert(k, v)'".to_string(),
+            span,
+        }),
         "of" => {
             if args.len() != 1 {
                 return Err(TypeError {
@@ -3337,6 +3446,8 @@ fn check_container_associated(
             let value = check_expr(&args[0].value, ctx, expected_elem.as_ref())?;
             let allowed = if container == "List" {
                 crate::types::is_list_element(&value.ty)
+            } else if container == "Map" {
+                crate::types::is_map_element(&value.ty)
             } else {
                 crate::types::is_box_element(&value.ty)
             };
@@ -3344,6 +3455,8 @@ fn check_container_associated(
                 return Err(TypeError {
                     message: if container == "List" {
                         list_element_error(&value.ty)
+                    } else if container == "Map" {
+                        map_element_error(&value.ty)
                     } else {
                         box_element_error(&value.ty)
                     },
@@ -3359,11 +3472,13 @@ fn check_container_associated(
         }
         other => Err(TypeError {
             message: format!(
-                "'{container}.{other}' is not a {container} operation — write '{container}.of(x)' for a one-value {container}, '{container}.empty()' with the element type on the binding, or call a method on a value ({})",
+                "'{container}.{other}' is not a {container} operation — {}",
                 if container == "List" {
-                    "'xs.push(x)', 'xs.get(i)', 'xs.len()'"
+                    "write 'List.of(x)' for a one-element list, 'List.empty()' with the element type on the binding, or call a method on a value ('xs.push(x)', 'xs.get(i)', 'xs.len()')"
+                } else if container == "Map" {
+                    "a map starts empty — write 'Map.new()' with the value type on the binding ('var m: Map<String> = Map.new()'), then call a method on the value ('m.insert(k, v)', 'm.get(k)', 'm.len()')"
                 } else {
-                    "'b.get()', 'b.set(v)', 'b.take()', 'b.is_empty()'"
+                    "write 'Box.of(x)' for a one-value box, 'Box.empty()' with the element type on the binding, or call a method on a value ('b.get()', 'b.set(v)', 'b.take()', 'b.is_empty()')"
                 }
             ),
             span,
