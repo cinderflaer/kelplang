@@ -169,7 +169,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `String` | owned | UTF-8 text, validated on construction, freed at scope exit |
 | `Bytes` | owned | raw byte buffer, freed at scope exit |
 | `List<T>` | owned | growable sequence, one instantiation per element type |
-| `Map<V>` | owned | keys are always `String`, values are `V`, insertion order |
+| `Map<K, V>` | owned | keyed container, insertion order; `Map<V>` is a `String` key (12.2) |
 | `Box<T>` | owned | one heap cell that holds a `T` or nothing |
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
@@ -732,35 +732,43 @@ while !xs.is_empty() {
 
 The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice` and `Map.values` are offered only for element types that support them.
 
-### 12.2 `Map<V>`
+### 12.2 `Map<K, V>`
 
-Keys are always `String`; values are `V`. Entries keep insertion order, which is why `keys()` and `values()` are lists and not hash order.
+A keyed container: keys of type `K`, values of type `V`. Entries keep insertion order, which is why `keys()` and `values()` are lists and not hash order.
 
 ```kelp
-var counts: Map<i64> = Map.new()
-counts.insert("one", 1)
-counts.insert("two", 2)
-print(counts.has("two"))
-print(counts.get("two"))
-print(counts.get_or("nope", 0))
-counts.insert("two", 22)
-print(counts.remove("one"))
+var counts: Map<String, i64> = Map.new()
+counts.insert(key = "one", v = 1)
+counts.insert(key = "two", v = 2)
+print(counts.has(key = "two"))
+print(counts.get(key = "two"))
+print(counts.get_or(key = "nope", fallback = 0))
+counts.insert(key = "two", v = 22)
+print(counts.remove(key = "one"))
 print(counts.keys().len())
+
+var runs: Map<i32, i64> = Map.new()        // a scalar key
+runs.insert(key = 7, v = 3)
+print(runs.get(key = 7))
 ```
+
+- **`Map<V>` written with one argument means `Map<String, V>`.** That is the shorthand every program written before keys were generic uses, and the two spellings are the same type.
+- **A key must be `String`, an integer, or `bool`.** The compiler generates the key's hash and its equality from whatever `K` is, so the set is closed: a float is refused because `nan != nan` would make an inserted key unfindable, and a `datac`, container or borrow is refused because v1 has no equality for them — a key that needs a user-supplied comparison is a trait or a comparator function, and v1 has neither (17).
+- `Map<K, V>` is neither a list element nor a map value, so `Map<String, Map<i32>>` stays impossible, like `List<List<i32>>`.
 
 | Method | Takes | Returns |
 | --- | --- | --- |
-| `Map.new()` / `Map.empty()` | nothing | empty map, value type from the binding |
+| `Map.new()` / `Map.empty()` | nothing | empty map, key and value types from the binding |
 | `len()` / `is_empty()` | shared | `usize` / `bool` |
-| `has(key)` | shared, `&str` | `bool` |
-| `get(key)` | shared, `&str` | the value, or a borrow of it; panics when absent |
+| `has(key)` | shared | `bool` |
+| `get(key)` | shared | the value, or a borrow of it; panics when absent |
 | `get_or(key, fallback)` | shared | the value or the fallback, for clonable values |
-| `insert(key, v)` | exclusive | `Unit`, copies the key and moves the value in |
+| `insert(key, v)` | exclusive | `Unit`, copies a `String` key in and moves the value in |
 | `remove(key)` | exclusive | the value, moved out; panics when absent |
 | `clear()` | exclusive | `Unit` |
-| `keys()` / `values()` | shared | `List<String>` / `List<V>` |
+| `keys()` / `values()` | shared | `List<K>` / `List<V>` |
 
-`Map.of` does not exist: a map starts empty, so `Map.new()` needs the value type on the binding.
+`Map.of` does not exist: a map starts empty, so `Map.new()` needs the type on the binding.
 
 ### 12.3 `Box<T>`
 
@@ -1182,6 +1190,7 @@ These are deliberate, and each one has a workaround in this document:
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
 - No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` is now expressible as a user `enum` (9.3); the stdlib has not migrated to it.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
+- A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - No partial moves: an owned field cannot be read out of a borrowed structure (9), so move it with `Box.take` or pass a borrow.
 - No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.
@@ -1225,6 +1234,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `receiver 'Pair' must write the type's own type parameters, in order` | a method on a generic type is `fun Pair<A, B>.first()`; the receiver cannot omit or rename the parameters |
 | `'Option' is an enum — an enum carries no methods in v1` | write a free function over the instantiation instead (9.3) |
 | `'Point' does not take type arguments` | only a generic type, a generic function, or a generic `enum`'s variant takes one (9.3) |
+| `'f64' cannot be a Map key` | a key must be `String`, an integer or `bool` — the compiler generates its hash and equality (12.2) |
 | `'first_of' does not take type arguments — a method's type parameters come from its receiver` | write the parameters on the receiver: `fun Pair<A, B>.first_of()` |
 | `in 'Holder<str>': field 'x' is a borrowed type` | a type argument may not be `str` or a reference; use `String` |
 | `datac 'Bad' is defined more than once` / `field 'x' is defined more than once` | duplicate declaration |

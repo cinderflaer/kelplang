@@ -1,0 +1,7 @@
+// A-2: a `datac` has no equality in v1, so it cannot be a map key.
+datac Point(val x: i32)
+
+fun main() {
+    var m: Map<Point, i32> = Map.new()
+    m.insert(key = Point(x = 1), v = 1)
+}
