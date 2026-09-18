@@ -1,2 +1,2 @@
 /target
-/bench/write_20gb/build
+/bench/*/build
