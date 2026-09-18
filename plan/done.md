@@ -1,6 +1,8 @@
 # The "Kelp" language milestone record (shipped)
 
-The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), and the standard library program **MK5-S1 through MK5-S4**.
+The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type).
+
+Entries are append-only history, so an older entry can describe a state a later one changed; each such entry names the one that superseded it.
 
 Milestone identifiers follow the MK/S/M scheme in `roadmap.md`; the mapping from the older `M0`–`M9`/`C1`/`S1`–`S8`/`T1` identifiers is in that file's "Milestone naming" section.
 
@@ -292,7 +294,7 @@ The last piece: `List#sort`, `reverse`, `contains`, `slice`, `insert`, `remove`,
 - **Three of the six are conditional on the element type**, and the condition lives in `types.rs` (`list_sortable_elem` / `list_comparable_elem` / `list_clonable_elem`) so `infer::list_sig` and `codegen_c::write_list_s1` can never disagree: `sort`/`contains` need an order or an equality (scalars, `bool`, `String`, `Bytes`), and `slice` needs a copy (a scalar, or `String`/`Bytes` via `clone`). A `datac` element falls through to a diagnostic that says which capability is missing and why "a 'datac' element has no order, so it cannot be sorted" rather than a signature codegen would fail to emit.
 - **The comparator is length-aware for `String`/`Bytes`**, not `strcmp`: an embedded NUL would truncate a `String` comparison, and the same helper is what `contains` uses (length, then `memcmp`). `bool` sorts `false` before `true`; an owned element's shifts are moves, so reordering a `List<String>` neither copies a buffer nor frees one twice ASAN proves that on a three-word sort with an insert and a remove.
 - **`contains` borrows an owned needle** (a `Copy` element is taken by value), because taking a `String` by value would move it into a membership test.
-- **`index_of` was deliberately not shipped.** The sketch listed it with a `-1` sentinel, which is exactly the sentinel convention the plan rejected in stdlib decision 2; open item 42 recommended `contains` now and `index_of` when `Option` exists (MK5-S6-M1). That is what shipped.
+- **`index_of` was deliberately not shipped.** The sketch listed it with a `-1` sentinel, which is exactly the sentinel convention the plan rejected in stdlib decision 2; open item 42 recommended `contains` now and `index_of` once `Option` exists — which is what happened: MK5-S6-M1 added it returning `Option<usize>` rather than a sentinel.
 
 **Fixtures**: `stdlib_sort` (numbers, `bool`, an empty list, and a slice mutated to prove it is a copy), `list_slice_insert` (a `List<String>` sorted, searched, sliced, inserted into and removed from in the ASAN pass, because every shift is a move), rejected `list_unsortable_element`, and `list_slice_bounds` panicking with "List.slice: range out of bounds".
 
@@ -353,7 +355,7 @@ fun str.concat(a: &str, b: &str).R: String       // no `+` operator; see open it
 fun str.from_i64(n: i64).R: String
 fun str.from_u64(n: u64).R: String
 fun str.from_f64(x: f64, decimals: i32).R: String    // one extern: snprintf("%.*f")
-fun str.parse_i64(s: &str).R: ParseInt               // datac ParseInt(val ok: bool, val value: i64)
+fun str.parse_i64(s: &str).R: ParseInt               // superseded: `Result<i64, ParseErr>` since MK5-S6-M1
 fun str.parse_u64(s: &str).R: ParseUint
 fun str.parse_f64(s: &str).R: ParseFloat             // one extern: strtod
 fun str.replace(s: &str, from: &str, to: &str).R: String
@@ -422,7 +424,7 @@ fun io.stdin().R: File
 fun io.stdout().R: File
 fun io.stderr().R: File
 
-datac Line(val ok: bool, val text: String)         // ok = false at EOF
+datac Line(val ok: bool, val text: String)         // superseded: `Option<String>` since MK5-S6-M1
 fun io.read_line().R: Line                         // strips the trailing '\n'
 fun io.read_all().R: Bytes
 fun io.read_lines().R: List<String>
@@ -661,7 +663,7 @@ Six `Map` fixtures (scalar and owned values, a `datac` value plus a `datac` fiel
 
 ### MK5-S6-M1 cheap half the error-`datac` convention, and `errno` in a panic (DONE)
 
-MK5-S6-M1 is the `Option`/`Result` decision point, and it stays open: tagged unions, a way to take a value out without leaking, and generics for the payload are three language features, not stdlib work. What shipped is the half the milestone itself named as cheap, and the reason to do it first is that it makes the eventual migration mechanical.
+MK5-S6-M1 is the `Option`/`Result` decision point. **It stayed open when this landed, and the entry further down ("MK5-S6-M1 `Option`/`Result`, `if let`, `?`, and the stdlib migration") is what closed it** — tagged unions, a way to take a value out without leaking, and generics for the payload are three language features, not stdlib work. What shipped here is the half the milestone itself named as cheap, and the reason to do it first is that it made the migration mechanical.
 
 - **The error-`datac` convention is documented, and the audit changed no code.** `basicstructure.md`'s naming rules now state it: `ok: bool` first; the success payload named for its type (`value` for a number, `text` for a `String`, `bytes` for a `Bytes`, `at` for an index or offset); a `message: String` when the failure is textual. Every error `datac` the stdlib already ships conforms, so each one becomes a `Result` carrying the same field names inside `Ok`/`Err`, with the old name kept as a wrapper. The set is small and closed: `Line(ok, text)`, `Match(ok, at)`, `ParseInt/ParseUint/ParseFloat(ok, value)`.
 - **A failed syscall now names its cause.** `codegen_c`'s runtime gained three printers: `kelp_panic_at(msg, code)`, `kelp_panic_errno(msg)` (which is `kelp_panic_at(msg, errno)`), and `kelp_panic_gai(msg, rc)`. Each prints the unchanged `panic: <msg>` line and then a detail line `errno N: <strerror(N)>`, or `getaddrinfo: <gai_strerror(rc)>`. The prefix line is byte-identical to before, which is what keeps every existing golden assertion (all of them `needle` assertions on the message) passing untouched; the detail is additive.
@@ -689,7 +691,7 @@ Part 1 of MK8-S1-M1, which the roadmap had parked as backlog item A-1 (now `back
 
 ### MK8-S1-M1 part 2 user-declarable generic *types* (DONE)
 
-Part 2 of MK8-S1-M1, backlog item A-2, and the first half of it: `datac` and `enum` declarations may now carry type parameters, and every use site monomorphizes into a concrete type. This is the piece that makes `datac Pair<A, B>` and `enum Option<T>` expressible, which is what MK5-S6-M1's `Option`/`Result` decision was waiting for. What did **not** land, and is now the whole of the remaining work in A-2, is generic *functions* (`fun f<T>`): the syntax is refused with a message that says so, and the type-argument inference machinery it will need is already here.
+Part 2 of MK8-S1-M1, backlog item A-2, and the first half of it: `datac` and `enum` declarations may now carry type parameters, and every use site monomorphizes into a concrete type. This is the piece that makes `datac Pair<A, B>` and `enum Option<T>` expressible, which is what MK5-S6-M1's `Option`/`Result` decision was waiting for. What did **not** land here, and is the rest of A-2, is generic *functions* (`fun f<T>`): the syntax was refused with a message that said so, and the type-argument inference machinery it needed was already here. **The entry below is where they, generic methods, explicit type arguments and the generic `Map` key landed** — this entry describes the state at its own commit.
 
 - **The syntax decision came first, because `syntax.md` is the authority.** The spelling is the one `List<T>` already used, extended to declarations: `datac Pair<A, B>(...)`, `enum Option<T> { ... }`, and `Pair<i32, String>` / `Option<i32>` at a use site. `syntax.md` gained §9.3 (and the `datac`/`enum` grammar lines it had been missing since A-1); its "no generics" bullets in §7.2 and §17 now say what is actually true — generic *types* exist, generic *functions*, receiver methods on a generic type, and explicit type arguments at a construction do not.
 - **A declaration is a template, not a type.** `GenericTemplate` keeps the fields *as written* (`ast::FieldDecl`), because a type parameter has no type until an instantiation binds one; the field types are resolved for the first time inside `TypeScope::instantiate`, with a `params` map that is checked before every other name, so `datac Pair<A, B>`'s `A` is the argument and never a type that happens to share the name. `Ty::Param` does not exist — the parameter dimension never reaches the type representation, which is why `needs_drop`, `c_ident`, `Ty::is_copy` and the borrow checker needed no new case at all.
