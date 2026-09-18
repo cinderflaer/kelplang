@@ -16,10 +16,11 @@
 
 use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{DropPlan, DropTarget};
+use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::tir::*;
 use crate::types::{drop_fn_name, needs_drop, owned_structs, StructDef, Ty};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 /// The fixed C support code every generated program carries: the `Bytes`
@@ -245,12 +246,250 @@ static x_Bytes x_bytes_alloc_raw(size_t n) {
 // ---- end X runtime -------------------------------------------------------
 "#;
 
-pub fn generate(program: &Program, drops: &DropPlan) -> String {
+/// Lexical path normalization, shared by `path.normalize` (M6.3) and the
+/// capability check (M7) — the plan requires exactly one implementation,
+/// because the security-relevant normalization must not be a second,
+/// slightly different function. Returns false when the path is not absolute
+/// or escapes its own root via `..`.
+const PATH_RUNTIME: &str = r#"// ---- X path runtime -------------------------------------------------------
+static bool x_path_normalize(const char* in, char* out, size_t cap) {
+    if (in[0] != '/') {
+        return false;
+    }
+    size_t o = 0;
+    out[o++] = '/';
+    const char* p = in;
+    int depth = 0;
+    while (*p != 0) {
+        while (*p == '/') {
+            p++;
+        }
+        if (*p == 0) {
+            break;
+        }
+        const char* start = p;
+        while (*p != 0 && *p != '/') {
+            p++;
+        }
+        size_t len = (size_t)(p - start);
+        if (len == 1 && start[0] == '.') {
+            continue;
+        }
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            if (depth == 0) {
+                return false;   /* escapes the root */
+            }
+            while (o > 1 && out[o - 1] != '/') {
+                o--;
+            }
+            if (o > 1) {
+                o--;
+            }
+            depth--;
+            continue;
+        }
+        if (o > 1) {
+            if (o + 1 >= cap) {
+                return false;
+            }
+            out[o++] = '/';
+        }
+        if (o + len >= cap) {
+            return false;
+        }
+        memcpy(out + o, start, len);
+        o += len;
+        depth++;
+    }
+    out[o] = 0;
+    return true;
+}
+// ---- end X path runtime ---------------------------------------------------
+"#;
+
+/// The capability check itself (M7). Emitted only for programs that contain a
+/// gated call, since `x_path_normalize` is the only piece they share.
+const CAP_RUNTIME: &str = r#"// ---- X capability runtime (M7) --------------------------------------------
+/* `*` matches within one path segment, `**` crosses segments and is legal
+   only as a whole segment; no other metacharacters, no regex. */
+static bool x_glob_match(const char* pat, const char* path) {
+    while (*pat != 0) {
+        if (pat[0] == '*' && pat[1] == '*') {
+            const char* rest = pat + 2;
+            if (*rest == '/') {
+                rest++;
+            }
+            if (*rest == 0) {
+                return true;   /* a trailing '**' matches everything below */
+            }
+            for (const char* p = path; ; p++) {
+                if (x_glob_match(rest, p)) {
+                    return true;
+                }
+                if (*p == 0) {
+                    return false;
+                }
+            }
+        }
+        if (*pat == '*') {
+            const char* rest = pat + 1;
+            for (const char* p = path; ; p++) {
+                if (x_glob_match(rest, p)) {
+                    return true;
+                }
+                if (*p == '/' || *p == 0) {
+                    return false;
+                }
+            }
+        }
+        if (*pat != *path) {
+            return false;
+        }
+        pat++;
+        path++;
+    }
+    return *path == 0;
+}
+
+/* Symlinks are resolved *before* matching, which is the whole reason this
+   exists: a link inside the grant that points outside it must be denied.
+   `realpath` fails for a path that does not exist yet (a write or an
+   mkdir), so the deepest existing ancestor is resolved and the rest is
+   appended verbatim. */
+static bool x_resolve_path(const char* path, char* out, size_t cap) {
+    char real[PATH_MAX];
+    if (realpath(path, real) != NULL) {
+        snprintf(out, cap, "%s", real);
+        return true;
+    }
+    char buf[PATH_MAX];
+    snprintf(buf, sizeof buf, "%s", path);
+    char* slash = strrchr(buf, '/');
+    if (slash == NULL || slash == buf) {
+        return false;
+    }
+    *slash = 0;
+    char parent[PATH_MAX];
+    if (!x_resolve_path(buf, parent, sizeof parent)) {
+        return false;
+    }
+    snprintf(out, cap, "%s/%s", parent, slash + 1);
+    return true;
+}
+
+static void x_cap_deny(const char* domain, const char* path, const char* const* patterns,
+                       size_t count, const char* module, const char* at) {
+    fprintf(stderr, "%s: panic: '%s' is outside the %s capability granted to module '%s'\n",
+            at, path, domain, module);
+    fprintf(stderr, "  granted: %s\n", count == 0 ? "(nothing)" : "");
+    for (size_t i = 0; i < count; i++) {
+        fprintf(stderr, "    %s\n", patterns[i]);
+    }
+    exit(1);
+}
+
+/* A path argument: lexically normalized, then resolved through symlinks, and
+   only then matched — the order `plan.md` insists on, because a link inside
+   the grant that points outside it must be denied. */
+static void x_cap_check_path(const char* domain, const char* path, const char* const* patterns,
+                             size_t count, const char* module, const char* at) {
+    char normalized[PATH_MAX];
+    if (!x_path_normalize(path, normalized, sizeof normalized)) {
+        return x_cap_deny(domain, path, patterns, count, module, at);
+    }
+    char resolved[PATH_MAX];
+    if (!x_resolve_path(normalized, resolved, sizeof resolved)) {
+        snprintf(resolved, sizeof resolved, "%s", normalized);
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (x_glob_match(patterns[i], resolved)) {
+            return;
+        }
+    }
+    return x_cap_deny(domain, resolved, patterns, count, module, at);
+}
+
+/* A name argument (`env`'s variable names): matched as written, since a name
+   has no path structure to normalize. */
+static void x_cap_check_name(const char* domain, const char* name, const char* const* patterns,
+                             size_t count, const char* module, const char* at) {
+    for (size_t i = 0; i < count; i++) {
+        if (x_glob_match(patterns[i], name)) {
+            return;
+        }
+    }
+    return x_cap_deny(domain, name, patterns, count, module, at);
+}
+
+// ---- end X capability runtime ---------------------------------------------
+"#;
+
+/// Which function keys are gated, and each module's patterns per domain.
+/// Built once per program in `generate`; `Gen` carries a reference to it so
+/// every call site can decide whether a check is needed without threading
+/// the whole program through the emitter.
+struct CapTable {
+    gated: HashMap<String, String>,
+    patterns: HashMap<(String, String), Vec<String>>,
+}
+
+impl CapTable {
+    /// `None` means the calling module holds the domain but has no pattern
+    /// list recorded — impossible for a gated call, since the gate is what
+    /// admits the call at all.
+    fn patterns_for(&self, module: &str, domain: &str) -> Option<&Vec<String>> {
+        self.patterns.get(&(module.to_string(), domain.to_string()))
+    }
+
+    /// The name of the compiled-in pattern array for one module and domain.
+    fn symbol(module: &str, domain: &str) -> String {
+        format!(
+            "x_caps_{}_{}",
+            crate::types::c_ident(&module.replace('/', "_")),
+            domain
+        )
+    }
+}
+
+/// Whether a type is `str` or a borrow of one — the arguments a capability
+/// check treats as resource names.
+fn is_str_like_ty(ty: &Ty) -> bool {
+    match ty {
+        Ty::Str => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::Str),
+        _ => false,
+    }
+}
+
+pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> String {
     let owned = owned_structs(&program.structs);
+    let caps = CapTable {
+        gated: program.gated.clone(),
+        patterns: program
+            .caps
+            .iter()
+            .map(|g| {
+                (
+                    (g.module.clone(), g.domain.clone()),
+                    g.patterns.clone(),
+                )
+            })
+            .collect(),
+    };
+    // The path runtime is shared by `path.normalize` and the capability
+    // check, so it is emitted whenever either could use it; the capability
+    // runtime only when some call is actually gated.
+    let path_loaded = program.functions.iter().any(|f| f.module == "std/path");
+    let cap_needed = !program.gated.is_empty();
     let mut out = String::new();
     // Included unconditionally: `std/math`'s externs call the C library
     // directly, and an unused declaration costs nothing.
+    out.push_str("#include <limits.h>\n");
     out.push_str("#include <math.h>\n");
+    out.push_str("#include <sys/stat.h>\n");
+    out.push_str("#include <sys/types.h>\n");
+    out.push_str("#include <time.h>\n");
+    out.push_str("#include <unistd.h>\n");
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
     out.push_str("#include <stdio.h>\n");
@@ -258,6 +497,37 @@ pub fn generate(program: &Program, drops: &DropPlan) -> String {
     out.push_str("#include <string.h>\n\n");
     out.push_str(RUNTIME);
     out.push('\n');
+    if path_loaded || cap_needed {
+        out.push_str(PATH_RUNTIME);
+        out.push('\n');
+    }
+    if cap_needed {
+        out.push_str(CAP_RUNTIME);
+        out.push('\n');
+    }
+
+    // Each module's granted patterns, as constant data. No API can widen
+    // these at runtime, and no stdlib function accepts a capability as a
+    // value, so a grant cannot be smuggled through an argument.
+    if cap_needed {
+        out.push_str("// capability allowlists, compiled in per module\n");
+        for g in &program.caps {
+            if g.patterns.is_empty() {
+                continue;
+            }
+            writeln!(
+                out,
+                "static const char* {}[] = {{ {}NULL }};",
+                CapTable::symbol(&g.module, &g.domain),
+                g.patterns
+                    .iter()
+                    .map(|p| format!("{}, ", c_string_literal(p)))
+                    .collect::<String>()
+            )
+            .unwrap();
+        }
+        out.push('\n');
+    }
 
     for s in &program.structs {
         write_struct(&mut out, s, &owned);
@@ -266,7 +536,7 @@ pub fn generate(program: &Program, drops: &DropPlan) -> String {
         out.push('\n');
     }
 
-    write_pd_globals(&mut out, &program.pds, drops, &owned);
+    write_pd_globals(&mut out, &program.pds, drops, &owned, sources);
 
     for f in &program.functions {
         if f.name == "main" {
@@ -283,7 +553,7 @@ pub fn generate(program: &Program, drops: &DropPlan) -> String {
             out.push('\n');
             continue;
         }
-        let mut gen = Gen::new(drops, f.name.clone());
+        let mut gen = Gen::new(drops, f.name.clone(), f.module.clone(), &caps, sources);
         gen.write_function(f, !program.pds.is_empty());
         out.push_str(&gen.out);
         out.push('\n');
@@ -322,7 +592,13 @@ fn write_extern(out: &mut String, f: &Function) {
 /// inside such a function the parameter shadows its own global and both
 /// spell the same symbol in C — including inside `main`, which can take no
 /// parameters and therefore reads the globals directly.
-fn write_pd_globals(out: &mut String, pds: &[Pd], drops: &DropPlan, owned: &HashSet<String>) {
+fn write_pd_globals(
+    out: &mut String,
+    pds: &[Pd],
+    drops: &DropPlan,
+    owned: &HashSet<String>,
+    sources: &SourceMap,
+) {
     if pds.is_empty() {
         return;
     }
@@ -330,7 +606,14 @@ fn write_pd_globals(out: &mut String, pds: &[Pd], drops: &DropPlan, owned: &Hash
     // it; an owned local inside one would leak. `infer.rs` rejects owned
     // locals in initializers, so this only affects an initializer that
     // happens to build and discard one.
-    let gen = Gen::new(drops, String::new());
+    // A `pd` initializer is not a function, so it can hold no gated call
+    // either (a gated call needs the module's grants, and this emitter has
+    // no module); an empty table is the honest answer here.
+    let no_caps = CapTable {
+        gated: HashMap::new(),
+        patterns: HashMap::new(),
+    };
+    let gen = Gen::new(drops, String::new(), String::new(), &no_caps, sources);
     out.push_str("// passdowns: assigned once by x_init_pds(), read-only afterwards\n");
     for pd in pds {
         writeln!(
@@ -435,21 +718,44 @@ struct Gen<'a> {
     out: String,
     drops: &'a DropPlan,
     function: String,
+    /// The module the current function was declared in: capability checks use
+    /// *that* module's patterns, which is what makes a grant a property of
+    /// the code that made the call (M7).
+    module: String,
+    caps: &'a CapTable,
+    /// The loaded sources, used only to turn a capability denial's span into
+    /// the `file:line:col` the runtime panic names (M7).
+    sources: &'a SourceMap,
 }
 
 impl<'a> Gen<'a> {
-    fn new(drops: &'a DropPlan, function: String) -> Self {
+    fn new(
+        drops: &'a DropPlan,
+        function: String,
+        module: String,
+        caps: &'a CapTable,
+        sources: &'a SourceMap,
+    ) -> Self {
         Gen {
             out: String::new(),
             drops,
             function,
+            module,
+            caps,
+            sources,
         }
     }
 
     /// A nested emitter for a block a value-renderer has to produce: same
-    /// plan, same function, its own buffer.
+    /// plan, same function, same module, its own buffer.
     fn sub(&self) -> Gen<'a> {
-        Gen::new(self.drops, self.function.clone())
+        Gen::new(
+            self.drops,
+            self.function.clone(),
+            self.module.clone(),
+            self.caps,
+            self.sources,
+        )
     }
 
     fn drops_at_block_end(&self, span: Span) -> Vec<DropTarget> {
@@ -701,7 +1007,7 @@ impl<'a> Gen<'a> {
                 let r = self.expr_value(rhs);
                 format!("({l} {sym} {r})")
             }
-            ExprKind::Call { callee, args } => self.call_value(callee, args),
+            ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span),
             ExprKind::Template { newline, pieces } => {
                 // One `printf` with a generated format string: literal chunks
                 // are escaped into it, each interpolated value contributes
@@ -912,7 +1218,52 @@ impl<'a> Gen<'a> {
         self.out.push('}');
     }
 
-    fn call_value(&self, callee: &str, args: &[Expr]) -> String {
+    /// A gated call (M7): every resource argument is checked against the
+    /// calling module's compiled-in allowlist *before* the call runs, and the
+    /// whole thing is a statement expression so it works in value position
+    /// (`val b = fs.read(p)`) as well as statement position.
+    fn cap_checked_call(&self, callee: &str, call: String, args: &[Expr], span: Span) -> String {
+        let Some(domain) = self.caps.gated.get(callee) else {
+            return call;
+        };
+        let Some(patterns) = self.caps.patterns_for(&self.module, domain) else {
+            return call;
+        };
+        let arg_is_str: Vec<bool> = args.iter().map(|a| is_str_like_ty(&a.ty)).collect();
+        let checked = crate::stdlib::checked_args(domain, &arg_is_str);
+        if checked.is_empty() {
+            return call;
+        }
+        let symbol = CapTable::symbol(&self.module, domain);
+        // `fs`/`net`/`process` match paths (normalized, symlinks resolved);
+        // `env` matches variable names, which have no path structure.
+        let check_fn = if crate::stdlib::patterns_are_paths(domain) {
+            "x_cap_check_path"
+        } else {
+            "x_cap_check_name"
+        };
+        // The call site, as the author wrote it. The generated C carries no
+        // `#line` directives, so this is the only way a runtime denial can
+        // name a `.x` location.
+        let at = self
+            .sources
+            .locate(&self.module, span)
+            .unwrap_or_else(|| self.module.clone());
+        let mut checks = String::new();
+        for i in checked {
+            let path = self.expr_value(&args[i]);
+            write!(
+                checks,
+                "{check_fn}(\"{domain}\", {path}, {symbol}, {}, \"{}\", \"{at}\"); ",
+                patterns.len(),
+                self.module
+            )
+            .unwrap();
+        }
+        format!("({{ {checks}{call}; }})")
+    }
+
+    fn call_value(&self, callee: &str, args: &[Expr], span: Span) -> String {
         if callee == "print" || callee == "print!" {
             let arg = &args[0];
             // `print` appends a newline, `print!` doesn't — opposite of the
@@ -944,7 +1295,7 @@ impl<'a> Gen<'a> {
             s.push_str(&self.expr_value(a));
         }
         s.push(')');
-        s
+        self.cap_checked_call(callee, s, args, span)
     }
 
     /// `base.field` in C: `->` when `base` is reached through a borrow

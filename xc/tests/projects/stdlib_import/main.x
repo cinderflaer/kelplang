@@ -1,3 +1,3 @@
-impl "std/fs"
+impl "std/net"
 
 fun main() {}

@@ -1,0 +1,7 @@
+// `util` is granted /tmp/xc_caps_denied only, and reads /etc/passwd: the
+// grant is real and the call panics at runtime with the attempted path.
+impl "util" with caps(fs = ["/tmp/xc_caps_denied/**"])
+
+fun main() {
+    print(util.outside())
+}

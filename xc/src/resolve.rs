@@ -66,6 +66,15 @@ pub struct Project {
     /// Per module: alias -> the target module's symbol prefix (what
     /// `infer.rs` needs to qualify `circle.Item`).
     alias_prefixes: HashMap<String, HashMap<String, String>>,
+    /// Per module: capability domain -> the patterns it holds (M7). The entry
+    /// module holds `/**` for every domain — the plan's "main implicitly
+    /// holds the full set" — and every other module holds exactly what its
+    /// importers delegated to it, never more.
+    caps: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Per function key: the capability domain of the module that declares
+    /// it, for the gated modules only. `infer.rs` gates resolution on it and
+    /// `codegen_c.rs` inserts the runtime check because of it.
+    gated: HashMap<String, String>,
 }
 
 impl Project {
@@ -78,6 +87,23 @@ impl Project {
     /// module-qualified references inside that module's bodies.
     pub fn alias_prefixes_of(&self, module: &str) -> HashMap<String, String> {
         self.alias_prefixes.get(module).cloned().unwrap_or_default()
+    }
+
+    /// The capability domains a module holds, with their patterns. An empty
+    /// map means "no capabilities at all", which is where every module starts
+    /// (the entry module excepted).
+    pub fn caps_of(&self, module: &str) -> HashMap<String, Vec<String>> {
+        self.caps.get(module).cloned().unwrap_or_default()
+    }
+
+    /// The whole capability table: module -> domain -> patterns.
+    pub fn caps(&self) -> &HashMap<String, HashMap<String, Vec<String>>> {
+        &self.caps
+    }
+
+    /// Function key -> gated domain, for the modules that gate one.
+    pub fn gated(&self) -> &HashMap<String, String> {
+        &self.gated
     }
 }
 
@@ -180,6 +206,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         stack: Vec::new(),
         modules: Vec::new(),
         prefixes: HashMap::new(),
+        grants: Vec::new(),
     };
     loader.load_project()?;
 
@@ -237,6 +264,90 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         alias_prefixes.insert(m.id.clone(), table);
     }
 
+    // ---- M7: capability sets -------------------------------------------
+    //
+    // A module's set is *received*, never self-declared: the entry module
+    // holds everything (`/**`), and every other module holds exactly what its
+    // importers granted it. That makes the no-escalation rule checkable —
+    // a module can delegate less than it has, never more — and is what keeps
+    // an ungranted `fs.read` a resolution error instead of a runtime check.
+    let mut caps: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+    let mut entry_caps = HashMap::new();
+    for domain in crate::stdlib::DOMAINS {
+        // The entry module's implicit set has to be spelled in whatever
+        // vocabulary the domain uses: paths for `fs`, a bare name wildcard
+        // for `env`.
+        let wildcard = if crate::stdlib::patterns_are_paths(domain) {
+            "/**"
+        } else {
+            "*"
+        };
+        entry_caps.insert(domain.to_string(), vec![wildcard.to_string()]);
+    }
+    caps.insert(entry.clone(), entry_caps);
+    for g in &loader.grants {
+        let slot = caps
+            .entry(g.target.clone())
+            .or_default()
+            .entry(g.domain.clone())
+            .or_default();
+        for pattern in &g.patterns {
+            if !slot.contains(pattern) {
+                slot.push(pattern.clone());
+            }
+        }
+    }
+    for g in &loader.grants {
+        let held = caps
+            .get(&g.importer)
+            .and_then(|d| d.get(&g.domain))
+            .cloned()
+            .unwrap_or_default();
+        for pattern in &g.patterns {
+            if !held
+                .iter()
+                .any(|h| pattern_covered(h, pattern, &g.domain))
+            {
+                return Err(Diagnostic::new(
+                    format!(
+                        "module '{}' cannot grant '{}' access to '{}': it does not hold that pattern itself (held: {}) — a module can delegate less than it has, never more",
+                        g.importer,
+                        g.domain,
+                        pattern,
+                        if held.is_empty() {
+                            "none".to_string()
+                        } else {
+                            held.join(", ")
+                        }
+                    ),
+                    g.span,
+                    g.importer.clone(),
+                ));
+            }
+        }
+    }
+
+    // Which of the shipped items are gated: a module that gates a domain
+    // contributes every free function it declares. (Overloaded names only
+    // exist in `std/math`, which is ungated, so the plain key is enough.)
+    let mut gated = HashMap::new();
+    for m in &loader.modules {
+        let Some(domain) = crate::stdlib::domain_of(&m.id) else {
+            continue;
+        };
+        let parsed = &loader.parsed[&m.id];
+        for f in &parsed.functions {
+            // Externs are the *primitive*: the raw syscall inside the gated
+            // module. They are not themselves gated, or the module wrapping
+            // them would need a grant to call its own body — the check
+            // belongs at the boundary where a *user* module names the public
+            // function, which is what this table drives.
+            if f.receiver.is_none() && !f.extern_ {
+                gated.insert(format!("{}{}", m.prefix, f.name), domain.to_string());
+            }
+        }
+    }
+
     let project = Project {
         root,
         src_dir,
@@ -246,6 +357,8 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         version: source_version,
         prefixes: loader.prefixes,
         alias_prefixes,
+        caps,
+        gated,
     };
     Ok(Loaded { program, project })
 }
@@ -269,6 +382,20 @@ struct Loader<'a> {
     stack: Vec<String>,
     modules: Vec<ModuleInfo>,
     prefixes: HashMap<String, String>,
+    /// Every `with caps(...)` seen while loading, in load order (M7). Kept
+    /// until the whole graph is known, because a module's own set is the
+    /// union of the grants made *to* it by importers loaded from anywhere.
+    grants: Vec<GrantEdge>,
+}
+
+/// One `impl "target" with caps(domain = [patterns])` from `importer` (M7).
+#[derive(Debug, Clone)]
+struct GrantEdge {
+    importer: String,
+    target: String,
+    domain: String,
+    patterns: Vec<String>,
+    span: Span,
 }
 
 /// Bound on alias-driven re-expansion. Each discovery round only ever *adds*
@@ -465,6 +592,29 @@ impl Loader<'_> {
                     id,
                 ));
             }
+            for grant in &imp.caps {
+                if !crate::stdlib::is_domain(&grant.domain) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "'{}' is not a capability domain — v1 has {}",
+                            grant.domain,
+                            crate::stdlib::DOMAINS.join(", ")
+                        ),
+                        grant.span,
+                        id,
+                    ));
+                }
+                for pattern in &grant.patterns {
+                    validate_cap_pattern(&grant.domain, pattern, grant.span, id)?;
+                }
+                self.grants.push(GrantEdge {
+                    importer: id.to_string(),
+                    target: imp.path.clone(),
+                    domain: grant.domain.clone(),
+                    patterns: grant.patterns.clone(),
+                    span: grant.span,
+                });
+            }
             let target = imp.path.clone();
             aliases.insert(alias, target.clone());
             self.visit(&target, imp.span, id, strict)?;
@@ -619,6 +769,74 @@ fn module_id_of(file: &Path, src_dir: &Path) -> Result<String, Diagnostic> {
         ));
     }
     Ok(id)
+}
+
+/// Whether a pattern the *holder* has covers a pattern it wants to delegate.
+///
+/// Deliberately syntactic and conservative: either the two patterns are
+/// identical, or the held one ends in `/**` and the delegated one is inside
+/// that root. Glob-to-glob inclusion is undecidable in general, and being
+/// conservative here can only under-grant — never let a module hand out more
+/// than it holds.
+fn pattern_covered(held: &str, granted: &str, domain: &str) -> bool {
+    if held == granted {
+        return true;
+    }
+    if !crate::stdlib::patterns_are_paths(domain) {
+        // A name domain: `*` is the only pattern that covers other patterns.
+        return held == "*";
+    }
+    match held.strip_suffix("/**") {
+        Some(root) => granted == root || granted.starts_with(&format!("{root}/")),
+        None => false,
+    }
+}
+
+/// A capability pattern, validated by what the domain actually names.
+///
+/// `fs` (and `net`/`process`) name paths, so a pattern is an absolute path,
+/// glob-only: `*` inside one segment, `**` as a whole segment, and no `..`
+/// anywhere — a pattern that could name its way out of its own root is
+/// rejected at the `impl` line, at compile time. `env` names variables, so
+/// its patterns are names (`HOME`, `LANG*`, or `*` for any). `time` and
+/// `rand` have no named resource at all, so their pattern list is unused and
+/// is normally empty.
+fn validate_cap_pattern(
+    domain: &str,
+    pattern: &str,
+    span: Span,
+    module: &str,
+) -> Result<(), Diagnostic> {
+    let err = |message: String| Err(Diagnostic::new(message, span, module));
+    if pattern.is_empty() {
+        return err(format!("a '{domain}' pattern must not be empty"));
+    }
+    if !crate::stdlib::patterns_are_paths(domain) {
+        if domain == "env" && pattern.contains('/') {
+            return err(format!(
+                "'{pattern}' is not a variable name — 'env' patterns name variables ('HOME', 'LANG*', or '*' for any)"
+            ));
+        }
+        return Ok(());
+    }
+    if !pattern.starts_with('/') {
+        return err(format!(
+            "capability patterns are absolute paths — '{pattern}' must start with '/'"
+        ));
+    }
+    for seg in pattern.split('/') {
+        if seg == ".." {
+            return err(format!(
+                "capability pattern '{pattern}' contains a '..' segment — a grant must not be able to name its way out of its own root"
+            ));
+        }
+        if seg.contains("**") && seg != "**" {
+            return err(format!(
+                "'**' is only legal as a whole segment in '{pattern}' ('*' matches within one segment)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `impl` paths are `src/`-relative, identifier-only, and may not escape the

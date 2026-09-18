@@ -14,6 +14,22 @@ pub struct Program {
     /// body.
     pub pds: Vec<Pd>,
     pub functions: Vec<Function>,
+    /// Capability grants, one per (module, domain) that holds any (M7).
+    /// `codegen_c.rs` emits each as constant data and checks the arguments of
+    /// every gated call against it.
+    pub caps: Vec<CapsGrant>,
+    /// Function key -> the capability domain of the module that declares it.
+    /// Only gated modules appear, so this is also the set of calls that need
+    /// a runtime allowlist check.
+    pub gated: std::collections::HashMap<String, String>,
+}
+
+/// One module's patterns for one capability domain.
+#[derive(Debug, Clone)]
+pub struct CapsGrant {
+    pub module: String,
+    pub domain: String,
+    pub patterns: Vec<String>,
 }
 
 /// One checked passdown. `name` is the internal `pd#<qualified>` name shared

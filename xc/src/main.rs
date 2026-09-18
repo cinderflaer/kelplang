@@ -51,7 +51,7 @@ fn build(path: &str, out_path: &Path) -> bool {
         }
     };
 
-    let c_source = codegen_c::generate(&typed, &drops);
+    let c_source = codegen_c::generate(&typed, &drops, &sources);
 
     if let Err(e) = driver::compile_c(&c_source, out_path) {
         eprintln!("error: {}", e.message);

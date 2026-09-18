@@ -346,21 +346,22 @@ fn unqualified_imported_item_is_rejected() {
 
 #[test]
 fn unshipped_stdlib_module_is_rejected() {
-    // M6.2 ships `std/mem` only; `std/fs` and the rest arrive with M6.3/M7,
-    // and the error names what *is* shipped so the reservation stays useful.
+    // `std/net` is not shipped yet (M7 gates the domain but the module has no
+    // items), and the error names what *is* shipped so the reservation stays
+    // useful.
     assert_project_rejected(
         "stdlib_import",
         &project("stdlib_import").join("main.x"),
-        "stdlib module 'fs' is not implemented yet (shipped today: std/mem",
+        "stdlib module 'net' is not implemented yet (shipped today: std/mem",
     );
 }
 
 #[test]
-fn caps_clause_is_rejected_until_m7() {
+fn a_grant_pattern_that_is_not_a_path_is_rejected() {
     assert_project_rejected(
-        "caps_clause",
-        &project("caps_clause").join("main.x"),
-        "'with caps(...)' grants are not implemented yet",
+        "caps_bad_path_pattern",
+        &project("caps_bad_path_pattern").join("main.x"),
+        "capability patterns are absolute paths",
     );
 }
 
@@ -680,6 +681,158 @@ fn comparing_owned_values_is_rejected() {
 #[test]
 fn an_owned_value_in_statement_position_is_rejected() {
     assert_rejected("tests/fixtures/owned_statement.x");
+}
+
+// ---------------------------------------------------------------------------
+// M7: capability-based security. A module's grant is received from its
+// importer, never self-declared; the gate is a resolution error; the matching
+// is a compiler-inserted runtime check against the caller's compiled-in
+// allowlist.
+// ---------------------------------------------------------------------------
+
+/// A scratch directory the capability fixtures point at. Their patterns are
+/// absolute (a grant must be), so the path has to exist before the program
+/// runs and is removed afterwards.
+fn caps_scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("xc_caps_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("could not create the capability scratch directory");
+    dir
+}
+
+/// Builds a caps project, runs it, and asserts the run fails with `needle` on
+/// stderr — the runtime-denial path, which only a *granted* module can reach.
+fn assert_project_denied_at_runtime(name: &str, target: &Path, needle: &str) {
+    let bin = out_path(name);
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected project '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(
+        !run.status.success(),
+        "expected '{name}' to be denied at runtime, but it exited successfully"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains(needle),
+        "expected the denial for '{name}' to mention '{needle}', got:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_granted_module_reads_inside_its_grant() {
+    let dir = caps_scratch("granted");
+    std::fs::write(dir.join("note.txt"), "hello caps").unwrap();
+    assert_project_runs(
+        "caps_granted",
+        &project("caps_granted").join("main.x"),
+        "hello caps\ntrue\ntrue\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_ungranted_module_cannot_name_the_gated_namespace() {
+    assert_project_rejected(
+        "caps_ungranted",
+        &project("caps_ungranted").join("main.x"),
+        "needs the 'fs' capability, which module 'util' was not granted",
+    );
+}
+
+#[test]
+fn a_module_cannot_delegate_more_than_it_holds() {
+    assert_project_rejected(
+        "caps_escalation",
+        &project("caps_escalation").join("main.x"),
+        "can delegate less than it has, never more",
+    );
+}
+
+#[test]
+fn a_pattern_containing_dotdot_is_rejected() {
+    assert_project_rejected(
+        "caps_bad_pattern",
+        &project("caps_bad_pattern").join("main.x"),
+        "contains a '..' segment",
+    );
+}
+
+#[test]
+fn an_unknown_capability_domain_is_rejected() {
+    assert_project_rejected(
+        "caps_bad_domain",
+        &project("caps_bad_domain").join("main.x"),
+        "'disk' is not a capability domain",
+    );
+}
+
+#[test]
+fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
+    let dir = caps_scratch("write");
+    assert_project_runs(
+        "caps_write",
+        &project("caps_write").join("main.x"),
+        "true\n5\nfalse\nhello\nfalse\ntrue\n3\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_path_outside_the_grant_is_denied_at_runtime() {
+    assert_project_denied_at_runtime(
+        "caps_denied",
+        &project("caps_denied").join("main.x"),
+        "outside the fs capability granted to module 'util'",
+    );
+}
+
+#[test]
+fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
+    let dir = caps_scratch("symlink");
+    std::os::unix::fs::symlink("/etc/passwd", dir.join("escape")).unwrap();
+    assert_project_denied_at_runtime(
+        "caps_symlink",
+        &project("caps_symlink").join("main.x"),
+        "/etc/passwd",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_granted_env_reference_passes_the_name_check_and_reaches_the_stub() {
+    // The domain, the grant and the variable-name check are real; the body is
+    // the gated stub, which panics on its own terms.
+    assert_project_denied_at_runtime(
+        "caps_env",
+        &project("caps_env").join("main.x"),
+        "gated but not implemented yet",
+    );
+}
+
+#[test]
+fn time_and_rand_are_gated_domains_with_no_named_resource() {
+    assert_compiles_and_runs(
+        "tests/fixtures/caps_time_rand.x",
+        "true\ntrue\ntrue\n4\nslept\n",
+    );
+}
+
+#[test]
+fn path_normalize_is_the_function_the_capability_checker_uses() {
+    assert_compiles_and_runs(
+        "tests/fixtures/path_normalize.x",
+        "/a/b/c\n/a/c\n/a\n/tmp/scratch\n",
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -117,6 +117,101 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "is_finite_raw",
         "    return isfinite(x_x);\n",
     ),
+    (
+        "std/fs",
+        "read_raw",
+        "    FILE* f = fopen(x_path, \"rb\");\n    if (f == NULL) {\n        x_panic(\"fs.read: cannot open file\");\n    }\n    if (fseek(f, 0, SEEK_END) != 0) {\n        fclose(f);\n        x_panic(\"fs.read: cannot seek\");\n    }\n    long n = ftell(f);\n    if (n < 0) {\n        fclose(f);\n        x_panic(\"fs.read: cannot size file\");\n    }\n    rewind(f);\n    /* zero-filled and NUL-terminated, so Bytes.as_str works on the result */\n    x_Bytes b = x_bytes_alloc_raw((size_t)n);\n    if (n > 0 && fread(b.data, 1, (size_t)n, f) != (size_t)n) {\n        fclose(f);\n        x_panic(\"fs.read: short read\");\n    }\n    fclose(f);\n    return b;\n",
+    ),
+    (
+        "std/fs",
+        "write_raw",
+        "    FILE* f = fopen(x_path, \"wb\");\n    if (f == NULL) {\n        x_panic(\"fs.write: cannot open file\");\n    }\n    if (x_data->len > 0 && fwrite(x_data->data, 1, x_data->len, f) != x_data->len) {\n        fclose(f);\n        x_panic(\"fs.write: short write\");\n    }\n    fclose(f);\n",
+    ),
+    (
+        "std/fs",
+        "write_text_raw",
+        "    FILE* f = fopen(x_path, \"wb\");\n    if (f == NULL) {\n        x_panic(\"fs.write_text: cannot open file\");\n    }\n    if (x_text->len > 0 && fwrite(x_text->data, 1, x_text->len, f) != x_text->len) {\n        fclose(f);\n        x_panic(\"fs.write_text: short write\");\n    }\n    fclose(f);\n",
+    ),
+    (
+        "std/fs",
+        "exists_raw",
+        "    struct stat st;\n    return stat(x_path, &st) == 0;\n",
+    ),
+    (
+        "std/fs",
+        "is_file_raw",
+        "    struct stat st;\n    return stat(x_path, &st) == 0 && S_ISREG(st.st_mode);\n",
+    ),
+    (
+        "std/fs",
+        "is_dir_raw",
+        "    struct stat st;\n    return stat(x_path, &st) == 0 && S_ISDIR(st.st_mode);\n",
+    ),
+    (
+        "std/fs",
+        "size_raw",
+        "    struct stat st;\n    if (stat(x_path, &st) != 0) {\n        x_panic(\"fs.size: cannot stat file\");\n    }\n    return (uint64_t)st.st_size;\n",
+    ),
+    (
+        "std/fs",
+        "remove_raw",
+        "    if (remove(x_path) != 0) {\n        x_panic(\"fs.remove: cannot remove file\");\n    }\n",
+    ),
+    (
+        "std/fs",
+        "rename_raw",
+        "    if (rename(x_from, x_to) != 0) {\n        x_panic(\"fs.rename: cannot rename file\");\n    }\n",
+    ),
+    (
+        "std/fs",
+        "mkdir_raw",
+        "    if (mkdir(x_path, 0777) != 0) {\n        x_panic(\"fs.mkdir: cannot create directory\");\n    }\n",
+    ),
+    (
+        "std/time",
+        "now_unix_raw",
+        "    struct timespec ts;\n    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {\n        x_panic(\"time.now_unix: clock_gettime failed\");\n    }\n    return (int64_t)ts.tv_sec;\n",
+    ),
+    (
+        "std/time",
+        "now_mono_ns_raw",
+        "    struct timespec ts;\n    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {\n        x_panic(\"time.now_mono_ns: clock_gettime failed\");\n    }\n    return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;\n",
+    ),
+    (
+        "std/time",
+        "sleep_ms_raw",
+        "    struct timespec ts;\n    ts.tv_sec = (time_t)(x_ms / 1000);\n    ts.tv_nsec = (long)((x_ms % 1000) * 1000000);\n    while (nanosleep(&ts, &ts) != 0) {\n        /* interrupted: finish the remainder */\n    }\n",
+    ),
+    (
+        "std/rand",
+        "u64_raw",
+        "    uint64_t v = 0;\n    FILE* f = fopen(\"/dev/urandom\", \"rb\");\n    if (f == NULL) {\n        x_panic(\"rand.u64: no entropy source\");\n    }\n    if (fread(&v, 1, sizeof v, f) != sizeof v) {\n        fclose(f);\n        x_panic(\"rand.u64: short read from /dev/urandom\");\n    }\n    fclose(f);\n    return v;\n",
+    ),
+    (
+        "std/rand",
+        "fill_raw",
+        "    FILE* f = fopen(\"/dev/urandom\", \"rb\");\n    if (f == NULL) {\n        x_panic(\"rand.bytes: no entropy source\");\n    }\n    if (x_buf->len > 0 && fread(x_buf->data, 1, x_buf->len, f) != x_buf->len) {\n        fclose(f);\n        x_panic(\"rand.bytes: short read from /dev/urandom\");\n    }\n    fclose(f);\n",
+    ),
+    (
+        "std/path",
+        "normalize_raw",
+        "    char buf[PATH_MAX];\n    if (!x_path_normalize(x_s, buf, sizeof buf)) {\n        x_panic(\"path.normalize: path must be absolute and must not escape its own root\");\n    }\n    x_Bytes b = x_bytes_alloc_raw(strlen(buf));\n    memcpy(b.data, buf, b.len);\n    return x_String__from_bytes(b);\n",
+    ),
+    (
+        "std/env",
+        "unsupported_bool",
+        "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n    return false;\n",
+    ),
+    (
+        "std/env",
+        "unsupported_string",
+        "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n    return x_String__empty();\n",
+    ),
+    (
+        "std/env",
+        "unsupported_unit",
+        "    (void)x_what;\n    x_panic(\"env: the 'env' namespace is gated but not implemented yet\");\n",
+    ),
 ];
 
 /// The C body for an `extern fun` in `module`, or `None` when the compiler

@@ -86,6 +86,16 @@ impl SourceMap {
         );
     }
 
+    /// `file:line:col` for a span in a module, when the module's text is
+    /// known. Used by `codegen_c.rs` for capability denials, whose message has
+    /// to name the `.x` call site at runtime (M7) — the generated C has no
+    /// `#line` directives of its own.
+    pub fn locate(&self, module: &str, span: Span) -> Option<String> {
+        let f = self.files.get(module)?;
+        let (line, col) = line_col(&f.text, span.start);
+        Some(format!("{}:{line}:{col}", f.path.display()))
+    }
+
     /// Prints `error: ...` plus an `--> file:line:col` location to stderr.
     pub fn report(&self, d: &Diagnostic) {
         eprintln!("{}", self.render(d));

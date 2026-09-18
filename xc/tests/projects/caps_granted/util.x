@@ -1,0 +1,6 @@
+// `util`'s `fs` capability is whatever its importer granted — it is received,
+// never self-declared. The path below is inside the grant, so the
+// compiler-inserted check passes.
+impl "std/fs"
+
+fun read_note().R: String = fs.read_text("/tmp/xc_caps_granted/note.txt")

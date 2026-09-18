@@ -40,6 +40,15 @@ struct Ctx {
     /// (`std.math.abs`) -> each declaration's parameter types and its
     /// type-suffixed key.
     overloads: HashMap<String, Vec<(Vec<Ty>, String)>>,
+    /// The module being checked — needed by capability diagnostics, which
+    /// have to name the module that lacks the grant.
+    module: String,
+    /// Capability domains *this* module holds, with their patterns (M7). The
+    /// gate below is what makes an ungranted `fs.read` a resolution error
+    /// rather than a runtime check that happens to reject it.
+    caps: HashMap<String, Vec<String>>,
+    /// Function key -> gated domain, for the modules that gate one.
+    gated: HashMap<String, String>,
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
     /// Symbol prefix of the module being checked (`""` for the entry
@@ -186,6 +195,29 @@ impl Ctx {
     fn receiver_field_ty(&self, name: &str) -> Option<Ty> {
         let sname = self.receiver_struct.as_deref()?;
         self.structs.get(sname)?.field(name).map(|f| f.ty.clone())
+    }
+
+    /// The capability gate (M7): a gated module's item is reachable only
+    /// from a module that holds the domain. This is a *resolution* error, not
+    /// a runtime check — the point of the feature is that code without a
+    /// grant has no name to reach the resource with.
+    fn check_capability(&self, key: &str, span: Span) -> Result<()> {
+        let Some(domain) = self.gated.get(key) else {
+            return Ok(());
+        };
+        if self.caps.contains_key(domain) {
+            return Ok(());
+        }
+        Err(TypeError {
+            message: format!(
+                "'{}' needs the '{}' capability, which module '{}' was not granted — the module that imports this one must delegate it (`impl \"<this module>\" with caps({} = [\"<pattern>\"])`)",
+                display_callee(key),
+                domain,
+                self.module,
+                domain
+            ),
+            span,
+        })
     }
 
     /// `resolve.rs` stores a non-entry module's top-level names with their
@@ -1041,6 +1073,19 @@ pub fn check_program(
         .map_err(|e| e.in_module(&f.module))?;
         functions.push(checked);
     }
+    // The capability data `codegen_c.rs` compiles in: each module's
+    // patterns per domain, and which functions are gated (M7).
+    let caps: Vec<tir::CapsGrant> = project
+        .caps()
+        .iter()
+        .flat_map(|(module, domains)| {
+            domains.iter().map(|(domain, patterns)| tir::CapsGrant {
+                module: module.clone(),
+                domain: domain.clone(),
+                patterns: patterns.clone(),
+            })
+        })
+        .collect();
     Ok(tir::Program {
         structs: struct_order
             .iter()
@@ -1048,6 +1093,8 @@ pub fn check_program(
             .collect(),
         pds: checked_pds,
         functions,
+        caps,
+        gated: project.gated().clone(),
     })
 }
 
@@ -1218,6 +1265,9 @@ fn base_ctx(
         structs: structs.clone(),
         consts: consts.clone(),
         overloads: overloads.clone(),
+        module: module.to_string(),
+        caps: project.caps_of(module),
+        gated: project.gated().clone(),
         ret_ty: Ty::Unit,
         scopes: vec![HashMap::new()],
         prefix: project.prefix_of(module).to_string(),
@@ -2488,6 +2538,7 @@ fn check_call(callee: &str, args: &[ast::CallArg], span: Span, ctx: &mut Ctx) ->
             }
         },
     };
+    ctx.check_capability(&key, span)?;
     let mut checked = match_args(
         &format!("function '{}'", display_callee(&key)),
         &sig.params,

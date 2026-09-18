@@ -48,13 +48,29 @@ pub struct PdDecl {
     pub span: Span,
 }
 
-/// One `impl "shapes/circle"` / `impl "time" as t` line.
+/// One `impl "shapes/circle"` / `impl "time" as t` line, plus its optional
+/// `with caps(...)` grants (M7).
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
     /// The string literal's contents, verbatim (`shapes/circle` — no `.x`).
     pub path: String,
     /// `Some` only when written `as alias`.
     pub alias: Option<String>,
+    /// `with caps(domain = [patterns...])` grants. Empty when the clause is
+    /// absent. Two jobs in one syntax: it *delegates* the domain to the
+    /// imported module, and it is how the importing module states which
+    /// patterns it is willing to hand over.
+    pub caps: Vec<CapGrant>,
+    pub span: Span,
+}
+
+/// One `fs = ["/var/log/**"]` inside a `with caps(...)` clause.
+#[derive(Debug, Clone)]
+pub struct CapGrant {
+    pub domain: String,
+    /// Quoted patterns, verbatim. Absolute, glob-only (`*` within a segment,
+    /// `**` as a whole segment), and never containing `..`.
+    pub patterns: Vec<String>,
     pub span: Span,
 }
 

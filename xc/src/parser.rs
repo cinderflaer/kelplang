@@ -211,15 +211,71 @@ impl Parser {
         } else {
             (None, path_span)
         };
-        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
-            return Err(ParseError {
-                message: "'with caps(...)' grants are not implemented yet (milestone M7)".to_string(),
-                span: self.peek().span,
-            });
-        }
+        // `with caps(domain = ["pattern", ...], ...)` — the capability grant
+        // (M7). Domains and patterns are validated in `resolve.rs`, where the
+        // module graph (and therefore the importer's own set) is known.
+        let caps = if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
+            self.advance();
+            match self.peek_kind().clone() {
+                TokenKind::Ident(k) if k == "caps" => {
+                    self.advance();
+                }
+                other => {
+                    return Err(ParseError {
+                        message: format!("expected 'caps' after 'with', found {other:?}"),
+                        span: self.peek().span,
+                    })
+                }
+            }
+            self.expect(TokenKind::LParen, "'('")?;
+            let mut grants: Vec<CapGrant> = Vec::new();
+            while !self.check(&TokenKind::RParen) {
+                let (domain, dspan) = self.expect_ident()?;
+                self.expect(TokenKind::Eq, "'=' after the capability domain")?;
+                self.expect(TokenKind::LBracket, "'[' before the pattern list")?;
+                let mut patterns = Vec::new();
+                while !self.check(&TokenKind::RBracket) {
+                    match self.peek_kind().clone() {
+                        TokenKind::StringLit(p) => {
+                            self.advance();
+                            patterns.push(p);
+                        }
+                        other => {
+                            return Err(ParseError {
+                                message: format!(
+                                    "expected a quoted path or host pattern, found {other:?}"
+                                ),
+                                span: self.peek().span,
+                            })
+                        }
+                    }
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RBracket, "']'")?;
+                grants.push(CapGrant {
+                    domain,
+                    patterns,
+                    span: dspan,
+                });
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen, "')'")?;
+            grants
+        } else {
+            Vec::new()
+        };
         Ok(ImplDecl {
             path,
             alias,
+            caps,
             span: start.to(end),
         })
     }
@@ -1284,9 +1340,26 @@ mod tests {
     }
 
     #[test]
-    fn caps_clause_is_a_clear_not_yet_error() {
-        let e = parse_err("impl \"util\" with caps(fs = [\"/tmp/*\"])");
-        assert!(e.message.contains("M7"), "got: {}", e.message);
+    fn parses_a_caps_clause_with_several_grants() {
+        let p = parse("impl \"util\" with caps(fs = [\"/tmp/**\", \"/var/log/*\"], env = [\"HOME\"])");
+        assert_eq!(p.impls.len(), 1);
+        let caps = &p.impls[0].caps;
+        assert_eq!(caps.len(), 2);
+        assert_eq!(caps[0].domain, "fs");
+        assert_eq!(caps[0].patterns, vec!["/tmp/**", "/var/log/*"]);
+        assert_eq!(caps[1].domain, "env");
+        assert_eq!(caps[1].patterns, vec!["HOME"]);
+    }
+
+    #[test]
+    fn a_caps_clause_requires_bracketed_string_patterns() {
+        parse_err("impl \"util\" with caps(fs = [tmp])");
+    }
+
+    #[test]
+    fn an_impl_without_caps_has_no_grants() {
+        let p = parse("impl \"std/fs\"");
+        assert!(p.impls[0].caps.is_empty());
     }
 
     #[test]

@@ -5,6 +5,15 @@ impl "std/str"
 // belongs at the syscall boundary, not here (stdlib plan, `path` section).
 fun is_absolute(s: &str).R: bool = str.len(s) > 0 && str.byte(s, 0) == 47
 
+// Purely lexical normalization: `//` collapses, `.` is dropped, `..` pops a
+// segment. It is *the same C function* the capability checker uses (M7),
+// which is the plan's requirement — the security-relevant normalization must
+// exist once, not twice.
+// Panics: if the path is not absolute, or escapes its own root via `..`.
+extern fun normalize_raw(s: &str).R: String
+
+fun normalize(s: &str).R: String = normalize_raw(s)
+
 // The byte index just past the last `/`, or 0 when the path has none. A
 // path with no separator has no directory part at all, so `file_name`
 // reports the whole string — which is what every other path library does.

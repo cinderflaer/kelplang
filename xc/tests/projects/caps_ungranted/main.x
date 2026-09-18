@@ -1,0 +1,8 @@
+// No `with caps(...)`: `util` receives no capabilities at all, so its
+// reference to `fs.read_text` is a resolution error rather than a runtime
+// check that happens to reject it.
+impl "util"
+
+fun main() {
+    print(util.read_note())
+}

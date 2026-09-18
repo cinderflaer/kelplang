@@ -1,0 +1,7 @@
+// main delegates `fs` to `util`, but only under /tmp. `util` then tries to
+// hand out /etc to its own import — more than it was given.
+impl "util" with caps(fs = ["/tmp/xc_caps_esc/**"])
+
+fun main() {
+    print(util.probe())
+}
