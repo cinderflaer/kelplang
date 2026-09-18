@@ -1,0 +1,39 @@
+// `process.spawn_in`/`run_in`/`try_run`/`try_run_in` (MK5-S2-M2). The grant names the
+// program and the scratch directory the pre-checks probe: a path has to be
+// inside the grant even to be *asked about*, because the check runs at the
+// call site before any of this. The working directory is deliberately not a
+// resource — `runner.dir_outside_grant` passes `/tmp`, which no process
+// pattern admits, and still runs.
+impl "runner" with caps(process = ["/bin/**", "/nix/store/**", "/tmp/kelp_caps_process_in/**"])
+
+fun main() {
+    val dir = "/tmp/kelp_caps_process_in"
+
+    // `run_in`: the marker lands in `dir`, so the child's cwd was `dir`, and
+    // `pwd` agrees.
+    print(runner.marker_code(dir))
+    print(runner.pwd_is(dir))
+
+    // `spawn_in` is the same child, with the pipes kept; this one writes its
+    // marker and exits, so no drain loop is needed.
+    print(runner.spawn_marker_code(dir))
+
+    // A directory the child cannot enter: code 126, with the reason on the
+    // child's stderr.
+    print(runner.bad_dir_code(dir))
+    print(runner.bad_dir_message(dir))
+
+    // The working directory is not checked against the grant.
+    print(runner.dir_outside_grant())
+
+    // `process.executable` is the pre-check `try_run` uses, exposed so a tool
+    // can ask before it calls.
+    print(runner.executable_answers(dir))
+
+    // The fallible shape: one success, then one per reason.
+    print(runner.try_ok(dir))
+    print(runner.try_missing(dir))
+    print(runner.try_not_executable(dir))
+    print(runner.try_dir_missing(dir))
+    print(runner.try_plain())
+}

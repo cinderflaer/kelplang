@@ -224,6 +224,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "symlink_raw",
+        "    if (symlink(kelp_target, kelp_link) != 0) {\n        kelp_panic_errno(\"fs.symlink: cannot create symlink\");\n    }\n",
+    ),
+    (
+        "std/fs",
         "copy_raw",
         "    int in = open(kelp_from, O_RDONLY);\n    if (in < 0) {\n        kelp_panic_errno(\"fs.copy: cannot open source\");\n    }\n    struct stat st;\n    if (fstat(in, &st) != 0) {\n        int e = errno;\n        close(in);\n        kelp_panic_at(\"fs.copy: cannot stat source\", e);\n    }\n    int out = open(kelp_to, O_WRONLY | O_CREAT | O_TRUNC, 0666);\n    if (out < 0) {\n        int e = errno;\n        close(in);\n        kelp_panic_at(\"fs.copy: cannot open destination\", e);\n    }\n    off_t at = 0;\n    while (at < st.st_size) {\n        ssize_t n = sendfile(out, in, &at, (size_t)(st.st_size - at));\n        if (n < 0) {\n            int e = errno;\n            close(in);\n            close(out);\n            kelp_panic_at(\"fs.copy: copy failed\", e);\n        }\n        if (n == 0) {\n            break;\n        }\n    }\n    close(in);\n    close(out);\n",
     ),
@@ -361,8 +366,23 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/process",
+        "exists_raw",
+        "    struct stat st;\n    return stat(kelp_path, &st) == 0;\n",
+    ),
+    (
+        "std/process",
+        "executable_raw",
+        "    struct stat st;\n    if (stat(kelp_path, &st) != 0) {\n        return false;\n    }\n    /* A directory carries an execute bit too, so the regular-file test is\n       what keeps `process.executable(\"/tmp\")` false. */\n    return S_ISREG(st.st_mode) && access(kelp_path, X_OK) == 0;\n",
+    ),
+    (
+        "std/process",
+        "is_dir_raw",
+        "    struct stat st;\n    return stat(kelp_path, &st) == 0 && S_ISDIR(st.st_mode);\n",
+    ),
+    (
+        "std/process",
         "spawn_raw",
-        "    /* `kelp_List__String` is named literally here on purpose: an `extern`\n       body is C text, so it has to know the monomorphized container's name\n       and the `kelp_String` field layout (`data`/`len`). That is the cost of\n       marshalling an Kelp list into `execvp`'s `char*[]` without a generic\n       container type. */\n    int in_pipe[2];\n    int out_pipe[2];\n    int err_pipe[2];\n    if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {\n        kelp_panic_errno(\"process.spawn: cannot create a pipe\");\n    }\n    pid_t pid = fork();\n    if (pid < 0) {\n        kelp_panic_errno(\"process.spawn: fork failed\");\n    }\n    if (pid == 0) {\n        /* The child: wire the pipes to stdio, close every copy it does not\n           need, then exec. `_exit` (not `exit`) on the way out, so an\n           inherited stdio buffer is never flushed a second time. */\n        dup2(in_pipe[0], 0);\n        dup2(out_pipe[1], 1);\n        dup2(err_pipe[1], 2);\n        close(in_pipe[0]);\n        close(in_pipe[1]);\n        close(out_pipe[0]);\n        close(out_pipe[1]);\n        close(err_pipe[0]);\n        close(err_pipe[1]);\n        size_t n = kelp_args->len;\n        char** argv = (char**)malloc((n + 2) * sizeof(char*));\n        if (argv == NULL) {\n            fprintf(stderr, \"process.spawn: out of memory\\n\");\n            _exit(127);\n        }\n        argv[0] = (char*)kelp_program;\n        for (size_t i = 0; i < n; i++) {\n            argv[i + 1] = (char*)kelp_args->data[i].data;\n        }\n        argv[n + 1] = NULL;\n        execvp(kelp_program, argv);\n        fprintf(stderr, \"process.spawn: cannot exec '%s'\\n\", kelp_program);\n        _exit(127);\n    }\n    /* The parent keeps only its own ends: the child's stdin write end, and\n       the read ends of its output. */\n    close(in_pipe[0]);\n    close(out_pipe[1]);\n    close(err_pipe[1]);\n    *kelp_pid = (int32_t)pid;\n    *kelp_stdin_fd = in_pipe[1];\n    *kelp_stdout_fd = out_pipe[0];\n    *kelp_stderr_fd = err_pipe[0];\n",
+        "    /* `kelp_List__String` is named literally here on purpose: an `extern`\n       body is C text, so it has to know the monomorphized container's name\n       and the `kelp_String` field layout (`data`/`len`). That is the cost of\n       marshalling an Kelp list into `execvp`'s `char*[]` without a generic\n       container type. */\n    int in_pipe[2];\n    int out_pipe[2];\n    int err_pipe[2];\n    if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {\n        kelp_panic_errno(\"process.spawn: cannot create a pipe\");\n    }\n    pid_t pid = fork();\n    if (pid < 0) {\n        kelp_panic_errno(\"process.spawn: fork failed\");\n    }\n    if (pid == 0) {\n        /* The child: wire the pipes to stdio, close every copy it does not\n           need, then exec. `_exit` (not `exit`) on the way out, so an\n           inherited stdio buffer is never flushed a second time. */\n        dup2(in_pipe[0], 0);\n        dup2(out_pipe[1], 1);\n        dup2(err_pipe[1], 2);\n        close(in_pipe[0]);\n        close(in_pipe[1]);\n        close(out_pipe[0]);\n        close(out_pipe[1]);\n        close(err_pipe[0]);\n        close(err_pipe[1]);\n        /* The per-call working directory (MK5-S2-M2): in the *child*, between `fork`\n           and `exec`, so the parent's own directory is unchanged and no grant\n           pattern's meaning moves. An empty `dir` is \"keep the parent's\",\n           which is what `spawn`/`run` pass. 126 is reserved for this failure. */\n        if (kelp_dir[0] != 0) {\n            if (chdir(kelp_dir) != 0) {\n                fprintf(stderr, \"process.spawn_in: cannot enter '%s'\\n\", kelp_dir);\n                _exit(126);\n            }\n        }\n        size_t n = kelp_args->len;\n        char** argv = (char**)malloc((n + 2) * sizeof(char*));\n        if (argv == NULL) {\n            fprintf(stderr, \"process.spawn: out of memory\\n\");\n            _exit(127);\n        }\n        argv[0] = (char*)kelp_program;\n        for (size_t i = 0; i < n; i++) {\n            argv[i + 1] = (char*)kelp_args->data[i].data;\n        }\n        argv[n + 1] = NULL;\n        execvp(kelp_program, argv);\n        fprintf(stderr, \"process.spawn: cannot exec '%s'\\n\", kelp_program);\n        _exit(127);\n    }\n    /* The parent keeps only its own ends: the child's stdin write end, and\n       the read ends of its output. */\n    close(in_pipe[0]);\n    close(out_pipe[1]);\n    close(err_pipe[1]);\n    *kelp_pid = (int32_t)pid;\n    *kelp_stdin_fd = in_pipe[1];\n    *kelp_stdout_fd = out_pipe[0];\n    *kelp_stderr_fd = err_pipe[0];\n",
     ),
     (
         "std/process",

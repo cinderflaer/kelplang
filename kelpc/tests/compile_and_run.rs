@@ -1018,6 +1018,35 @@ fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
 }
 
 #[test]
+fn a_granted_module_creates_a_symlink_inside_its_grant() {
+    // `fs.symlink` checks *both* of its paths, so a link can only be created
+    // where the grant reaches and can only point where the grant reaches. The
+    // project proves the link is a link (removing the target dangles it), then
+    // removes it through `fs.remove`, whose check resolves the link's own path.
+    let dir = caps_scratch("link");
+    assert_project_runs(
+        "caps_link",
+        &project("caps_link").join("main.kp"),
+        "true\nhello link\nfalse\n0\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_symlink_whose_target_is_outside_the_grant_cannot_be_created() {
+    // The link's own path is inside the grant; the target is not, and the
+    // denial names the *target* — the check runs in argument order, and it is
+    // what keeps a grant closed under link creation.
+    let dir = caps_scratch("link_denied");
+    assert_project_denied_at_runtime(
+        "caps_link_denied",
+        &project("caps_link_denied").join("main.kp"),
+        "'/etc/passwd' is outside the fs capability granted to module 'util'",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_granted_env_reads_sets_and_unsets_only_the_granted_names() {
     // MK5-S5: the bodies are real now. `HOME` is read through the grant, and
     // `KELP_ENV_PROBE` is set, read back, unset and confirmed gone — all inside
@@ -1685,6 +1714,33 @@ fn a_granted_module_cannot_run_a_program_outside_its_grant() {
         &project("process_denied").join("main.kp"),
         "is outside the process capability granted to module 'runner'",
     );
+}
+
+#[test]
+fn a_child_gets_a_working_directory_and_a_fallible_run_reports_why() {
+    // The marker files are the proof that `chdir` happened in the *child*: the
+    // shell's relative redirection lands in the directory the parent named, and
+    // the parent's own directory is untouched. `/tmp` as a working directory
+    // (`dir_outside_grant`) pins the other half: a cwd is not a resource, so it
+    // is not matched against the program allowlist.
+    let dir = caps_scratch("process_in");
+    std::fs::write(dir.join("not-exec"), "x").unwrap();
+    assert_project_runs(
+        "process_in",
+        &project("process_in").join("main.kp"),
+        "0\ntrue\n0\n126\ntrue\nout-of-grant-cwd\ntrue\nthere\nnot-found\nnot-executable\ndir-not-found\nok\n",
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("marker.txt")).unwrap(),
+        "hi",
+        "`run_in` did not run the child in the directory it was given"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("spawned.txt")).unwrap(),
+        "hi2",
+        "`spawn_in` did not run the child in the directory it was given"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ---------------------------------------------------------------------------

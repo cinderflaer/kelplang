@@ -138,10 +138,12 @@ pub enum CapCheck {
 
 /// Which of a gated call's arguments are *resource names* to be matched
 /// against the module's allowlist. `fs`'s paths are every `str` argument
-/// (`rename` checks both ends); `env` checks its variable name; `process`
-/// checks the program path; `net` names its resources positionally, because
-/// its signatures mix resources with ordinary strings and numbers. `time`
-/// and `rand` have no named resource at all, so there is nothing to match.
+/// (`rename`, `copy` and `symlink` have two, and `open`'s mode is not one);
+/// `env` checks its variable name; `process` checks the program path, which is
+/// not argument 0 for every call (see `process_checked_args`); `net` names its
+/// resources positionally, because its signatures mix resources with ordinary
+/// strings and numbers. `time` and `rand` have no named resource at all, so
+/// there is nothing to match.
 ///
 /// `callee` is the bare function name as written at the call site
 /// (`connect`, not `std.net.connect`).
@@ -151,22 +153,54 @@ pub fn checked_args(domain: &str, callee: &str, arg_is_str: &[bool]) -> Vec<CapC
         "env" => first_str_arg(arg_is_str)
             .map(|i| vec![CapCheck::Name(i)])
             .unwrap_or_default(),
-        "process" => first_str_arg(arg_is_str)
-            .map(|i| vec![CapCheck::Path(i)])
-            .unwrap_or_default(),
+        "process" => process_checked_args(callee, arg_is_str),
         "net" => net_checked_args(callee, arg_is_str),
         _ => Vec::new(),
     }
 }
 
+/// The first `str`-shaped argument, or `None` when there is none — the shape
+/// a call whose resource is simply "its path" needs.
 fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
     arg_is_str.iter().position(|is_str| *is_str)
 }
 
+/// `process`'s resource argument: the *program* path, which is the only
+/// argument the grant governs. The arguments are not checked and are not part
+/// of the grant (`process = ["/bin/sh"]` lets a module run `/bin/sh`, and what
+/// it asks it to do is the module's business), and neither is the working
+/// directory an `_in` form takes: a child's `chdir` changes the meaning of its
+/// own relative paths only, and every grant pattern is absolute.
+///
+/// Which position holds the program is a property of the call, the same shape
+/// `fs.open`'s mode argument and `net`'s resources needed: the `_in` forms put
+/// the directory first. Getting this wrong is not cosmetic — checking
+/// argument 0 there would match the *directory* against a program allowlist,
+/// which denies every call whose directory is outside the granted programs.
+fn process_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
+    let program_at = match callee {
+        "spawn_in" | "run_in" | "try_run_in" => 1,
+        _ => 0,
+    };
+    match arg_is_str.get(program_at) {
+        Some(true) => vec![CapCheck::Path(program_at)],
+        _ => Vec::new(),
+    }
+}
+
 /// `fs`'s resource arguments. Nearly every `str` argument is a path
-/// (`rename` and `copy` have two), but `open`'s second argument is a mode
-/// (`"r"`/`"w"`/`"a"`/`"rw"`) and must not be normalised and matched as
+/// (`rename`, `copy` and `symlink` have two), but `open`'s second argument is a
+/// mode (`"r"`/`"w"`/`"a"`/`"rw"`) and must not be normalised and matched as
 /// one. This is the same shape `net` needed: the call's own name decides.
+///
+/// `symlink` is the one call where checking both ends is a *design* choice
+/// rather than an obvious one: the link's own path is what a caller creates,
+/// and the target could be checked alone, since every later access through the
+/// link resolves it first and is denied if it points outside. Checking the
+/// target too keeps an `fs` grant **closed under link creation** — a module
+/// can only create a link whose target it could also name — which is what
+/// stops a tree inside a grant from containing a link out of it (the case
+/// `fs.remove_all` refuses to walk, and now says so).
 fn fs_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
     if callee == "open" {
         return first_str_arg(arg_is_str)
