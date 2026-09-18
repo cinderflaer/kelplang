@@ -126,14 +126,28 @@ val a = 42              // integer literal
 val b = 3.5             // float literal
 val c = true            // bool literal
 val d = "text\n"        // string literal
-val e = "n = $a, sum = ${a + 1}"   // string template
+val e = 'x'             // character literal
+val f = "n = $a, sum = ${a + 1}"   // string template
 ```
 
 - Integer literals are decimal digits only: no suffix, no hex, no digit separators. A literal has no width of its own; it takes the integer type its context requires, and `i32` when nothing determines it.
 - Float literals are `digits.digits`, and are `f64` unless the context requires `f32`.
-- The escape set is closed: `\n`, `\t`, `\r`, `\"`, `\\`. Any other escape is a diagnostic instead of the bare character, and `\0` is refused because a `str` is NUL-terminated.
-- There is no character literal. `char` exists as a type but has no values in v1; use `u8` for a byte and `u32` for a codepoint (`str.byte`, `str.char_at`).
-- A string literal is a `str`: a borrowed, NUL-terminated byte sequence. It is not owned and is not freed.
+- A **character literal** is one Unicode scalar value written in single quotes: `'x'`, `' '`, `'"'`, `'é'`, `'中'`. A backslash is never a quote escape in a *string*, so the two literal forms never collide — `''` is not a string, and `"a"` is not a character.
+- A character literal takes the integer type its context requires, exactly as an integer literal does, and is `char` when nothing determines one. That one rule is what makes byte-level code read the way it thinks:
+
+```kelp
+val c: u8 = str.byte(text, i)
+if c == '"' { }            // not `c == 34`
+if c == '\\' { }            // not `c == 92`
+out.push(' ')               // not `out.push(32)`
+val digit: u8 = '0' + n     // not `48 + n`
+val big: i64 = 'z'          // the same literal, in a wider slot
+```
+
+- A code point that does not fit the type the context asks for is a **compile error**, not a truncation: `val c: u8 = '中'` fails with the character and its code point named.
+- A `char` is a code point, and it is *not* an integer: `'a' + 1` and `'a' == 97` are both errors. Give the literal the type you mean (`val a: u8 = 'a'`) when you are doing arithmetic on it.
+- The escape set for both literal forms is closed. In a **character** literal: `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, and `\u{...}` — `'\u{4e2d}'` is U+4E2D, braced so the escape has an unambiguous end. In a **string** literal: `\n`, `\t`, `\r`, `\"`, `\\` — a string literal is NUL-terminated, so `\0` is refused there and `\u{...}` is not an escape (write the character itself: `"中"`).
+- A string literal is a `str`: a borrowed, NUL-terminated byte sequence. It is not owned and is not freed. It is converted to an owned `String` implicitly where one is expected (see 5.1).
 
 ### 2.5 String templates
 
@@ -150,6 +164,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 
 ```
 +  -  *  /  %          arithmetic (and unary -)
+&  |  ^  <<  >>  ~    bitwise: and, or, xor, shift left, shift right, complement
 ==  !=  <  <=  >  >=   comparison
 &&  ||  !              logic
 =  +=  -=  *=  /=  %=  assignment and compound assignment
@@ -157,7 +172,10 @@ print("r = $c.r")            // $name names an identifier, nothing more
 ?                      propagate a failure (5.2)
 .  ,  :  (  )  {  }    member access, separators
 ->                     `when` arms only
+'                      character literal (2.4)
 ```
+
+`&` is both the borrow prefix and the bitwise-and operator, and position decides which: `&x` borrows, `a & b` masks. C++ reads `&` the same way. `<<` and `>>` are written as two adjacent `<`/`>` characters — the lexer does not fold them into one token, so a nested type argument list (`List<List<i32>>`) still closes.
 
 `[` and `]` are lexed but no expression uses them; they exist for capability grant lists.
 
@@ -168,8 +186,9 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `i32` `i64` `u8` `u16` `u32` `u64` `usize` `isize` | Copy | integers, all widths distinct |
 | `f32` `f64` | Copy | IEEE floats |
 | `bool` | Copy | `true` / `false` |
-| `char` | Copy | declared, but no values exist in v1 |
-| `str` | borrowed | NUL-terminated UTF-8 byte view, points into storage owned elsewhere |
+| `char` | Copy | one Unicode scalar value, written `'x'` (2.4). A code point, not a byte: it is not an integer and does not mix with one |
+| `str` | borrowed | NUL-terminated UTF-8 byte view, points into storage owned elsewhere. No length: deriving one costs a `strlen` |
+| `View` | borrowed | a **length-carrying** borrowed text view — a pointer *and* a length. Slices without allocating, scans without a `strlen` (11.5) |
 | `String` | owned | UTF-8 text, validated on construction, freed at scope exit |
 | `Bytes` | owned | raw byte buffer, freed at scope exit |
 | `List<T>` | owned | growable sequence, one instantiation per element type |
@@ -183,9 +202,9 @@ print("r = $c.r")            // $name names an identifier, nothing more
 
 Rules that follow from the table:
 
-- There is no implicit numeric conversion, not even between two integer widths. `u64 % 10` produces a `u64` and cannot be pushed into a `u8` slot without `to_u8()`.
+- There is no implicit numeric conversion, not even between two integer widths. `u64 % 10` produces a `u64` and cannot be pushed into a `u8` slot without `to_u8()`. The one widening that goes to a float is explicit too: `n.to_f64()` (5.0).
 - Owned types are not `Copy`: assigning one moves it, and every owned value is dropped at the end of the scope that owns it, including inside `datac` fields, `List` elements and `Map` values.
-- `str` is a borrow, so it cannot live in a `datac` field, a `List` element, a `Map` value or a `Box`; only owned types can.
+- `str` **and `View`** are borrows, so neither can live in a `datac` field, an `enum` payload, a `List` element, a `Map` value or a `Box`; only owned types can. A borrow in a field would outlive the value it points at, and v1 has no lifetime syntax to say otherwise (17). An owned `String` is what to store instead.
 - No `List` or `Map` may hold another `List` or `Map` directly, because elements are stored inline. Put it in a `Box`.
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
 - `Unit` is not a value and cannot be stored.
@@ -216,11 +235,15 @@ Precedence, loosest first:
 | 2 | `&&` | left |
 | 3 | `==` `!=` | left |
 | 4 | `<` `<=` `>` `>=` | left |
-| 5 | `+` `-` | left |
-| 6 | `*` `/` `%` | left |
-| 7 | unary `-` `!` `&` `&mut` `*` | prefix |
-| 8 | `.field`, `.method(...)`, `f(...)`, `expr?` | postfix |
-| 9 | `=` `+=` `-=` `*=` `/=` `%=` | right |
+| 5 | `\|` (bitwise or) | left |
+| 6 | `^` (bitwise xor) | left |
+| 7 | `&` (bitwise and) | left |
+| 8 | `<<` `>>` | left |
+| 9 | `+` `-` | left |
+| 10 | `*` `/` `%` | left |
+| 11 | unary `-` `!` `~` `&` `&mut` `*` | prefix |
+| 12 | `.field`, `.method(...)`, `f(...)`, `expr?` | postfix |
+| 13 | `=` `+=` `-=` `*=` `/=` `%=` | right |
 
 ```kelp
 val m = (a + b) * 2
@@ -229,18 +252,78 @@ val neg = -n
 val r = &c                       // shared borrow of a local
 val e = &mut c                   // exclusive borrow of a local
 val field = (*r).count           // dereference, then field access
+val masked = flags & 3           // bitwise-and, not a borrow
+val high = byte >> 4
+val low = byte & 15
+val flipped = ~byte
 ```
+
+**The bitwise operators bind tighter than the comparisons, unlike C.** That is deliberate, and it is the one place this table differs from C's:
+
+```kelp
+if flags & MASK == 0 { }        // this language: (flags & MASK) == 0
+                                // C: flags & (MASK == 0) — the classic bug
+```
+
+`|` stays looser than `^`, which stays looser than `&`, so masking expressions still read the way C programmers expect (`a | b & c` is `a | (b & c)`); only the comparison boundary moved.
 
 Facts worth knowing:
 
 - Integer `/` truncates toward zero and `%` follows the dividend's sign, as in C. Division by zero is undefined rather than checked.
 - Integer `+`, `-` and `*` overflow is not checked.
+- Bitwise `& | ^ << >> ~` require two integers **of the same type** (or one, for `~`) and produce that type. `bool` is not a bitwise domain: `a & b` on two booleans reads as a non-short-circuiting `and`, and `&&` is right there. A shift count is the same type as the value, as every other binary operator requires; a shift by ≥ the width is undefined, exactly as in C. `>>` on a signed type is arithmetic (sign-propagating), and `~x` is `0 - x - 1`, so on a `u32` it flips all 32 bits — mask it (`~x & 255`) when you wanted a byte.
 - Float arithmetic is IEEE, so `nan`, `inf` and `-0.0` behave as usual. `math.is_nan` and `math.is_finite` exist.
-- `==` and `!=` work for scalars. Comparing two `str` values is refused (it would compare addresses); use `str.eq`. Owned types have no structural equality.
+- `==` and `!=` work for scalars. Comparing two `str` values is refused (it would compare addresses); use `str.eq`. Comparing `View` values is refused too — use `view.eq(other)`, which compares the bytes and the lengths. Owned types have no structural equality.
 - `if` and `when` are expressions (see 7), so they can appear on the right of `=` and inside a call.
 - A block `{ ... }` is an expression whose value is its last expression when used where a value is expected.
-- Every integer type has `to_<type>()` for every other integer type. Widening is exact; narrowing panics when the value does not fit, naming the call: `panic: i32.to_u64: value out of range`.
+- Every integer type has `to_<type>()` for every other integer type, and `to_f64()`/`to_f32()` to the float types. Widening is exact; narrowing panics when the value does not fit, naming the call: `panic: i32.to_u64: value out of range`. `to_f32` rounds (it is the one conversion allowed to lose value without a check, because C defines it for every input). A float does **not** have `to_i64`: that conversion loses the fraction, so write `math.trunc`/`math.floor` first.
 - `print` is the one builtin call that accepts a template; see 12.
+
+#### 5.0 Numeric conversion, in full
+
+Operands must match exactly, so the language never converts a number for you — but it does give you the conversion to write:
+
+```kelp
+val n: i64 = 7
+val x: f64 = n.to_f64()        // 7.0 — exact for every i64
+val y = n.to_f64() / 2.0       // 3.5
+val z = n.to_f32()             // rounds to the nearest f32
+
+val b: u8 = 200
+val idx: usize = b.to_usize()  // a byte used as an index
+val back: u8 = idx.to_u8()     // panics if it does not fit
+```
+
+`n * 1.0` is a **type error**, not a conversion. There is exactly one way to widen an integer to a float, and it is `to_f64()`.
+
+#### 5.1 The one implicit conversion: `str`/`View` -> `String`
+
+A string literal is a borrowed `str`. An owned field, element or binding is a `String`. Where a `String` is expected, a `str` or a `View` is converted for you by copying it:
+
+```kelp
+datac Doc(val title: String, val body: String)
+
+val d = Doc(title = "a title", body = "text")   // no String.from_str
+val s: String = "a literal"                      // the written type converts it
+var acc = String.empty()
+acc = "assigned"                                 // an assignment converts it
+
+fun shout(s: String).R: String = s               // a return converts it
+var xs: List<String> = List.empty()
+xs.push("pushed")                                // an element converts it
+var m: Map<String, String> = Map.new()
+m.insert(key = "k", v = "v")                     // a key and a value convert
+
+val picked: String = if flag { "yes" } else { other_str }
+val both: String = when o { Some(x) -> x else -> "none" }
+```
+
+What *does* convert, and what does not:
+
+- It fires on an **exact `String` expectation**, and nowhere else. `str.len(s)`, `str.eq(a, b)`, `fs.write_text(path, text)` and every other `str` parameter keep taking a borrowed view with no allocation.
+- A `str` or a `View` each copy the right number of bytes: a `View` may be a *slice* with no NUL after it, so it is copied by its length (`View.to_string`), never with `strlen`.
+- **Nothing converts the other way.** `String` -> `str` is a borrow with a lifetime, so it is written out: `s.as_str()`. `str` -> `View` and `String` -> `View` are written `s.view()`.
+- A `View` is not a `str`: a slice has no NUL after it, so passing one where a `str` is expected is an error rather than a silent `strlen` past the end. Take `v.to_string()` when you need an owned `String`, or keep the `View` and use the length-aware operations (11.5).
 
 #### The `?` operator
 
@@ -883,18 +966,114 @@ print(fmt.int(n.to_i64()))          // "-7" as a String
 print(fmt.uint(1024))
 print(fmt.float(1.5, 2))            // two decimals
 print(fmt.hex(255))
-print(fmt.pad_left("7", 3, 48))     // fill byte 48 is '0'
+print(fmt.pad_left("7", 3, '0'))    // fill byte '0'
 
-val parsed = str.parse_i64("41")
-if parsed.ok {
-    print(parsed.value + 1)
+val parsed = str.parse_i64("41")    // Result<i64, str.ParseErr>
+if let Ok(v) = parsed {
+    print(v + 1)
+}
+
+val big: i64 = 3
+val x: f64 = big.to_f64()           // 3.0 — the only integer->float widening
+```
+
+- `to_<T>()` exists on every integer type for every integer type, and `to_f64()`/`to_f32()` widen to a float. Widening is exact; narrowing panics when the value does not fit. `to_f32` rounds to nearest, and is the one lossy conversion that does not panic (C defines it for every input). A float has no `to_<int>`: that would silently drop the fraction.
+- Integer conversion is the only way to change width. There is no implicit promotion, so `u8` to `usize` for an index needs `n.to_usize()`, and `n * 1.0` is a type error rather than a conversion.
+- `str.from_i64`, `str.from_u64`, `str.from_f64(x, decimals)` return `String`; `fmt.int`, `fmt.uint`, `fmt.float`, `fmt.hex`, `fmt.bytes`, `fmt.pad_left`, `fmt.pad_right` wrap them for printing.
+- `str.parse_i64`, `str.parse_u64`, `str.parse_f64` return `Result<T, str.ParseErr>` where `ParseErr` is `Empty` or `Invalid`. Unpack with `?`, `if let Ok(v) = ...`, or `result.is_ok(...)`; `str.parse_i64(x)` on `"nul"` is an `Err`, not a zero.
+- `fmt.pad_left`/`pad_right` take a *fill byte*, so write it as a character literal (`'0'`) rather than `48`.
+
+### 11.5 `View` — a slice of text that costs nothing
+
+`str` is a bare `const char*`. It has no length, which is cheap for a whole string and expensive for anything that walks one:
+
+- every scan re-derives a length with `str.len` (a `strlen`, once — but the length is then yours to thread through every function);
+- every slice allocates (`str.copy_range(s, from, to).R: String`), even when the caller only wants to look at the bytes;
+- a `datac` cannot hold a `str` at all, so text you are part-way through cannot be carried in your own type.
+
+A `View` is the same borrowed text **with its length attached**: a pointer and a count, 16 bytes, `Copy`.
+
+```kelp
+val text = "the quick brown fox"
+val v = text.view()             // one strlen, once
+
+print(v)                        // prints with its length, not with %s
+print(v.len())                  // 19
+print(v.is_empty())             // false
+print(v.get(0))                 // 116  ('t'; an index out of bounds panics)
+print(v.slice(4, 9))            // "quick" — a view, no String allocated
+print(v.slice(1, v.len()))      // "he quick brown fox"
+print(v.eq("quick".view()))     // byte-wise, length-aware
+print(v.slice(0, 3).eq("the".view()))
+
+val owned: String = v.slice(4, 9)   // a String where one is expected copies by length
+print(v.to_string().len())          // explicit, same copy
+```
+
+| Call | Returns | Notes |
+| --- | --- | --- |
+| `s.view()` | `View` | a `str` value. One `strlen` — the cost this type exists to stop paying |
+| `string.view()` | `View` | an owned `String` receiver. **No** `strlen`: the length is already there |
+| `v.len()` | `usize` | the byte count |
+| `v.is_empty()` | `bool` | `v.len() == 0` |
+| `v.get(i)` | `u8` | the byte at `i`. Panics out of range: `View.get: index out of bounds` |
+| `v.slice(from, to)` | `View` | `from` and `to` are byte offsets, `to` exclusive. Panics unless `from <= to` and `to <= v.len()` |
+| `v.eq(other)` | `bool` | byte-wise and length-aware, so `"ab"` is not `"abc"` |
+| `v.to_string()` | `String` | the length-aware copy, the safe way to make owned text of a slice |
+
+**Every operation is length-aware, and there is no implicit conversion to `str`.** That is the point, not an omission: a view is usually a *slice*, and a slice has no NUL after it, so `strlen`/`strcmp`/`%s` on one would read into whatever follows and report a different string than the program holds. `print(v)` and `%.*s` use the length; `v.to_string()` copies the length; `v.eq` compares the length. Passing a `View` where a `str` is expected is a compile error, because the language will not silently do the wrong thing.
+
+A `View` **borrows**, so it obeys `str`'s rules exactly:
+
+```kelp
+// A `View` parameter is a reference parameter, so a function may return a
+// view derived from one — the same elision rule an `&str` return follows.
+fun head(text: View, n: usize).R: View = text.slice(0, n)
+fun tail(text: View).R: View = text.slice(1, text.len())
+
+// A view pins its owner: `v` borrows `text`, so `text` cannot be moved or
+// freed while `v` lives.
+val v = head(text, 3)
+print(v)
+```
+
+What is refused, and the reason each time:
+
+- **A `View` field in a `datac` or an `enum` payload.** A view points at text somebody else owns, and the field outlives the borrow; v1 has no lifetime syntax to tie the two (17). Store an owned `String` and take a view when you need one.
+- **`List<View>` / `Box<View>` / a `Map` key.** The container owns its elements and outlives the text; same reason as the field.
+- **Returning a view of a local.** A function's declared return type borrows from its first reference parameter (the elision rule, 7.1) — `R: View` means "a view of one of my parameters", and anything else is refused by name.
+- **A view of a temporary.** `String.from_str("x").view()` is refused: the temporary is freed before the view could be used. Bind it first (`val s = String.from_str("x")`), or take a view of the literal itself (`"x".view()`, whose storage is static).
+- **Capturing a `View` in a closure.** The environment outlives the frame the borrow points into. Move an owned `String` in instead.
+- **`==` on two views.** The operator would compare pointers; `v.eq(w)` compares the bytes.
+
+Using a `View` for a scan looks like this — no `strlen`, no allocation per step, and the bounds come along:
+
+```kelp
+// Count the bytes equal to `want`, without threading a length parameter.
+fun count_byte(text: View, want: u8).R: usize {
+    var i: usize = 0
+    var n: usize = 0
+    while i < text.len() {
+        if text.get(i) == want {
+            n += 1
+        }
+        i += 1
+    }
+    return n
 }
 ```
 
-- `to_<T>()` exists on every integer type for every integer type. Widening is exact; narrowing panics when the value does not fit.
-- Integer conversion is the only way to change width. There is no implicit promotion, so `u8` to `usize` for an index needs `n.to_usize()`.
-- `str.from_i64`, `str.from_u64`, `str.from_f64(x, decimals)` return `String`; `fmt.int`, `fmt.uint`, `fmt.float`, `fmt.hex`, `fmt.bytes`, `fmt.pad_left`, `fmt.pad_right` wrap them for printing.
-- `str.parse_i64`, `str.parse_u64`, `str.parse_f64` return a `datac` with `ok` and `value`, because there is no `Option` yet.
+When a whole `str` really is what the caller has, take the `&str` at the boundary and call `.view()` once inside:
+
+```kelp
+fun parse(text: &str).R: Result<Json, ParseError> {
+    var pos: usize = 0
+    val src = text.view()           // the only strlen
+    return parse_value(text = src, pos = pos)   // `src` travels, not a copy
+}
+```
+
+`pos` is a `var` because a `mut T` parameter borrows it exclusively; the call site writes the name and nothing else (`pos = pos`, never `mut pos`).
 
 ## 12. Collections
 
@@ -1186,7 +1365,9 @@ fun parse_u64(s: &str).R: Result<u64, ParseErr>
 fun parse_f64(s: &str).R: Result<f64, ParseErr>
 ```
 
-`str.len` and `str.byte` are byte-oriented; `str.char_count` and `str.char_at` are the codepoint-oriented pair. `str.substring` returns a view into the original, so it borrows its argument.
+`str.len` and `str.byte` are byte-oriented; `str.char_count` and `str.char_at` are the codepoint-oriented pair. `str.substring` returns a view into the original, so it borrows its argument. `str.to_upper`/`to_lower`/`concat`/`trim`/`copy_range` allocate — the `View` operations (11.5) are the ones that do not.
+
+A `str` **value** has one method of its own, `s.view()`, which makes a length-carrying `View` of it; an owned `String` has `s.view()` too, and that one needs no `strlen`. See 11.5.
 
 ### 16.2 `std/path`
 
@@ -1485,9 +1666,13 @@ These are deliberate, and each one has a workaround in this document:
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - No partial moves: an owned field cannot be read out of a borrowed structure (9), and an owned `enum` payload cannot be read out of an owned one either, so move it with `Box.take` or pass a borrow. This is what makes the `Copy`-only helpers in 16.13/16.14/16.15 `Copy`-only: `option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, and `list.filter` over a `List<String>` each need a move out that does not exist yet.
-- No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.
-- No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`.
-- No character literal, and no `char` values.
+- No references -- and no `View` -- in fields, `List` elements, `Map` values or `Box` contents. `str` and `View` are borrows, so text that must be stored is a `String`; a view is taken at the point of use (11.5).
+- A `View` never becomes a `str`: a slice has no NUL after it, so `str.len`/`str.eq`/`%s` on one would read past the slice. Take `v.to_string()` when you need owned text, and keep `str` and `View` apart otherwise.
+- No `str.eq`/`==` on a `View`; `str.eq` takes a `str`, so compare two views with `view.eq(other)`.
+- No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`. The other direction *is* implicit (5.1): a `str` or a `View` becomes an owned `String` where one is expected.
+- No sized, hexadecimal or binary integer literal: integers are decimal only. Write masks and shifts in decimal (`15`, `48`) or as character literals (`'0' & 15`), and use `fmt.hex` to *print* in hex.
+- A `char` is a code point and does not mix with the integer types: `'a' + 1` and `'a' == 97` are errors. Give the literal the type the arithmetic needs (`val a: u8 = 'a'`).
+- No float-to-integer conversion: `to_i64` does not exist on `f64` (it would drop the fraction silently). Use `math.trunc`/`math.floor` and then an integer conversion.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
 - Function values (7.4) are declared functions, `fun` literals, and closures: a literal becomes a closure when it names a binding from the enclosing scope, captures are **move-only** (a `Copy` binding is copied, an owned one is moved), and a borrow cannot be captured at all. A function value cannot be called as the result of another call (`f()(x)`) — bind it first.
 - A function value cannot be a container element or the return type of a function *type*, a function that reads a passdown is not a value, and a closure cannot be a `List`/`Map` element (a `Box` or a one-field `datac` holds it).
@@ -1515,7 +1700,19 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot borrow 'c': already borrowed exclusively` | same rule, other direction |
 | `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding |
-| `argument 'b' has type 'String', expected 'str'` | add `.as_str()` |
+| `argument 'b' has type 'String', expected 'str'` | the parameter is `str` and the value is owned: `str.eq(a, b)`, `fs.write_text`, `path.join` and every other `str` parameter need a view — add `.as_str()` |
+| `argument 'c' has type 'char', expected 'u8'` — with the note about writing the type | a character literal with nothing asking for a type is a `char`, and a `char` is not an integer; write `val c: u8 = '"'` |
+| `the character '中' (U+4E2D) does not fit in 'u8'` | a character literal takes the type its context asks for, and this one does not fit; use a wider type, or the byte you meant |
+| `operator requires matching integer operands, found 'u8' and 'bool'` | `&` `\|` `^` `<<` `>>` `~` are integer-only (`bool` has `&&`/`\|\|`), and both operands must be the *same* type |
+| `cannot compare 'View' values with '=='` | use `v.eq(other)` — it compares the bytes and the lengths |
+| `argument 'x' has type 'View', expected 'str'` | a slice has no NUL after it, so a view is not a `str`; take `v.to_string()` (11.5) |
+| `field 'text' is a borrowed type ('View')` | a view cannot be stored: a field outlives the borrow, and v1 has no lifetime syntax (11.5, 17). Store a `String` |
+| `'View' is a borrowed view` (as a `List` element) | a container owns its elements; store `String`s and view them at the point of use |
+| `cannot return this value as 'View': ... only a 'str' literal can be returned` | a returned view has to be derived from a reference parameter (the elision rule). Return an owned `String`, or take the view as a parameter |
+| `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` (on `.view()`) | a view of a temporary: bind the `String` first, or view the literal itself |
+| `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
+| `unknown escape '\q' in a character literal` | the escapes are `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\u{...}` |
+| `a character literal holds exactly one character` / `cannot be empty` / `cannot span lines` | `'ab'`, `''` and a raw newline are not character literals; write `'a'` or `'\n'` |
 | `argument 's' has type '&String', but this call moves its argument in` | the callee is a `move T` parameter (or a container's `push`-shaped builtin): a borrow cannot be moved out of, so pass an owned value — `Box.take()` moves one out of a box |
 | `'move' cannot be written on the borrowed type 'str'` | a `str`/`&T` is already borrowed, so there is nothing to own: write the owned type (`move String`). A `fun` value is already `Copy` for the same reason; `move closure(...)` *is* legal, because a closure owns its environment |
 | `'mut' and 'move' cannot be combined on one parameter` | `mut T` is an exclusive borrow, `move T` takes ownership — pick the one the callee needs |
@@ -1543,6 +1740,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
 | `cannot tell what 'List.empty()' holds` | write the element type on the binding: `var xs: List<i32> = List.empty()` |
 | `'str' is a borrowed view` | an owned field, element or value is needed; use `String` |
+| `'View' is a borrowed view` | same: a `View` points at text somebody else owns, so it cannot be stored or be an element (11.5) |
 | `cannot find module 'x': expected '<path>'` | the `impl` path is wrong, or the file is missing |
 | `import cycle: a -> b -> a` | remove the cycle |
 | `coral.toml sections are not supported` / `unknown key 'x' in coral.toml` | the manifest is flat: `name`, `version`, `entry`, `http_pool` |
@@ -1606,9 +1804,14 @@ param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
 type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
-                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" ":" type ] )
+                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ] )
 fparam       := [ "mut" | "move" ] type
+```
 
+(`View` is an ordinary `ident` here — it is a builtin type name like `str` or
+`String`, not a keyword.)
+
+```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr
 val          := "val" ident [ ":" type ] "=" expr
 var          := "var" ident [ ":" type ] "=" expr
@@ -1621,17 +1824,21 @@ expr         := assign
 assign       := binary ( ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assign )?
 binary       := unary ( binop binary )?
 binop        := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
+              | "|" | "^" | "&" | "<<" | ">>"       // << and >> are two adjacent < / > characters
               | "+" | "-" | "*" | "/" | "%"
-unary        := ( "-" | "!" | "&" [ "mut" ] | "*" ) unary | postfix
+unary        := ( "-" | "!" | "~" | "&" [ "mut" ] | "*" ) unary | postfix
 postfix      := primary ( "?" | "." ident [ typeargs ] [ "(" args ")" ] )*
-primary      := int | float | string | template | "true" | "false"
-              | "fun" "(" [ param ("," param)* ] ")" [ ".R" ":" type ]
+primary      := int | float | string | char | template | "true" | "false"
+              | "fun" "(" [ param ("," param)* ] ")" [ ".R" "：" type ]
                 ( "=" expr | block )
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block [ "else" ( block | if ) ]
               | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
                 block [ "else" ( block | if ) ]
               | "when" "{" ( expr "->" expr )* "else" "->" expr "}"
+char         := "'" ( <any Unicode scalar value except ' and newline>
+                    | "\\n" | "\\t" | "\\r" | "\\0" | "\\'" | "\\"" | "\\\\"
+                    | "\\u{" hexdigit+ "}" ) "'"
 args         := [ arg ("," arg)* ]
 arg          := [ ident "=" ] expr
 ```
@@ -1689,3 +1896,255 @@ fun main() {
 ```
 
 What the program shows, in order: `impl` lines for four modules, a free function that takes an exclusive borrow of a `Map`, a capability-checked `fs` call whose argument has to be absolute, `Map` and `List` builtins walked with `for` (the element binding is `List.get`'s, hence the `.as_str()` calls), `String` ownership passed to a `mut` parameter, and a template that prints two values.
+
+## 22. Writing a program: the rules that explain most errors
+
+Sections 1–21 are a reference. This one is the part a reference leaves out: what to reach for, and why the compiler says what it says. Read it once before writing a few hundred lines.
+
+### 22.1 Every parameter of an owned type is a borrow
+
+This is the rule that explains the most diagnostics, so it comes first.
+
+```kelp
+fun show(s: String)         // `s` is a &String inside the body: the caller keeps it
+fun fill(m: mut String)     // `m` is a &mut String: the callee may write to it
+fun take(s: move String)    // `s` owns what it was given: the call site moves it in
+```
+
+So a `fun` that reads text takes `s: String` (a borrow) or `s: &str` (a borrowed view), and **neither one copies**:
+
+```kelp
+fun len_of(s: String).R: usize = s.len()          // no copy: s is a borrow
+fun len_view(s: &str).R: usize = str.len(s)       // no copy: str is already a view
+```
+
+Consequences you will meet immediately:
+
+- At the call site a `String` argument is written bare: `len_of(name)`, never `len_of(&name)`. The `&` is only for taking a borrow of a **local** on purpose (`val p = &counter`).
+- Inside the body, `s.field` and `s.method()` work directly. A scalar parameter of a **`mut`** type is the exception: it is a borrow, so a read needs `*s` and a write needs `*s = ...` (see 22.3).
+- A `mut T` argument must be a `var` (or a field of one) — an exclusive borrow of an immutable binding is refused.
+- `move T` is what a call that *stores* its argument needs. A container's `push` is the builtin example: `xs.push(s)` moves `s` in, so `s` is gone afterwards.
+
+### 22.2 An owned value moved once
+
+Assigning an owned value moves it. This is not an error to work around; it is how the language knows when to free things.
+
+```kelp
+val a = String.from_str("hi")
+val b = a                     // `a` is moved into `b`
+print(a.as_str())             // error: use of moved value 'a'
+```
+
+Three ways out, in the order to try them:
+
+1. **Borrow instead of move.** `use_it(a)` where the parameter is `String` borrows it, so `a` is still yours afterwards.
+2. **Copy the text.** `val b = a.clone()`? — there is no `clone` for `String`; use `String.from_str(a.as_str())` to make a second owned copy.
+3. **Reorder.** Do the last use last.
+
+The related rule is **no partial moves**: you cannot read an owned field out of a borrowed structure, because that would hand out a second owner of the same buffer.
+
+```kelp
+datac Line(val text: String, val n: usize)
+
+fun use_line(l: Line) {
+    print(l.text)             // error: cannot read the owned field 'text' by value
+    print(l.text.as_str())    // fine: a view of the field
+    print(l.n)                // fine: `usize` is Copy
+}
+```
+
+To *take* an owned field, hold it in a `Box` and `take()` it, or make the parameter `move Line` and read the field out of the value you now own.
+
+### 22.3 Scanning text: `View` plus a cursor
+
+A hand-written parser needs two pieces of state: the text and a position. Neither belongs in a `datac` — a `View` is a borrow, and a borrow cannot be a field (11.5). Pass them:
+
+```kelp
+fun scan_word(text: View, pos: mut usize).R: result.Result<String, ScanError> {
+    val start = *pos                        // `pos` is a `mut usize`: read with `*`
+    while *pos < text.len() && is_alpha(text.get(*pos)) {
+        *pos += 1                           // and write with `*`
+    }
+    if *pos == start {
+        return result.Result.Err(error = ScanError(message = "expected a word", at = *pos))
+    }
+    return result.Result.Ok(value = text.slice(start, *pos))   // `View` -> `String`
+}
+```
+
+Facts that make this pattern work, and the traps in it:
+
+- **`*pos`, not `pos`.** A `mut T` parameter is a borrow. A local `var pos` is not, so the same loop written with a local uses `pos` with no `*`. Mixing the two up gives `cannot compare 'mut usize' with 'usize'`, which is the diagnostic telling you which one you have.
+- **`text.get(i)` is a `u8`, and a character literal takes that type**, so the comparisons read as characters: `c == '"'`, `c == '\\'`, `c >= '0' && c <= '9'`.
+- **`View.slice` never allocates.** Slicing is what a scanner does most; the owned `String` is made once, at the point the token becomes data (`text.slice(a, b)` into a `String` parameter or return, which copies by length).
+- **The text is borrowed, not copied.** `fun parse(text: &str)` takes the caller's view and calls `text.view()` once inside. Nothing is copied before the scan starts.
+- **No `break` and no `continue`.** Write the loop condition so it covers every exit: `while pos < text.len() { ... if pos < text.len() { ... } }` is the shape a "skip blanks, then maybe stop" loop needs.
+- **`List.get(i)` gives a copy for a `Copy` element and a shared borrow otherwise**, which is why `xs.get(i).as_str()` has the `.as_str()` — `xs.get(0)` is a `&String`, not a `String`.
+- **Byte-indexed, not character-indexed.** `View.get`, `str.byte` and `str.len` are bytes; `str.char_count`/`str.char_at` are the codepoint pair. A UTF-8 continuation byte is a byte like any other, so scan to a delimiter or to the end rather than counting characters.
+
+### 22.4 Text in, text out
+
+```kelp
+// Reading
+fun parse_all(text: &str).R: result.Result<Thing, ParseError> {
+    var pos: usize = 0
+    val src = text.view()            // the only strlen in the program
+    return parse_value(text = src, pos = pos)
+}
+```
+
+- A literal is a `str`. Where a `String` is expected it becomes one **by itself** (5.1): `datac Tok(val text: String)` accepts `Tok(text = "abc")`. Do not write `String.from_str` at a `String` position.
+- A `str` position needs a view: `.as_str()` on a `String`/`&String`, and a `View` is *not* a `str` (11.5) — take `v.to_string()` when you need owned text of a slice.
+- Building owned text: `String.empty()`, then `push(c: u8)`, `push_str(s: &str)`, `concat`, or `fmt.*` for a number. `str.concat(a, b)` allocates a new `String`.
+- Formatting a number: `fmt.int(n)`, `fmt.uint(n)`, `fmt.float(x, decimals)`, `fmt.hex(n)`. All return `String`.
+- `print(x)` handles every scalar, `str`, `String`, `Bytes` and `View`; a template (`"$x"`) is the only way to print a mixture, and a template is not a value.
+- **`.as_str()` on a temporary is refused** (`String.from_str("x").as_str()`): bind the `String` first. The same applies to `.view()`.
+- UTF-8 by hand is expressible directly now — `(0xE0 | (cp >> 12))`, `(0x80 | ((cp >> 6) & 63))`, `(0x80 | (cp & 63))` — and `%`/`/` are no longer the only arithmetic available for it (5).
+
+### 22.5 Records and tags
+
+```kelp
+datac Point(val x: i32, val y: i32)          // every field `val`: read-only
+datac Counter(var n: i64, val name: String)  // `n` is writable through a `var` binding
+
+enum Shape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+```
+
+- Construction names every field: `Point(x = 1, y = 2)`, `Shape.Circle(r = 1.0)`, `Shape.Empty`. The order does not matter, and the names are checked.
+- `val`/`var` on a **field** is independent of `val`/`var` on the **binding**: writing `c.n = 5` needs the field to be `var` *and* the path to `c` to be mutable, and the two failures have different messages.
+- Passing the same value twice to one call is refused (aliasing), and so is writing through a `&` borrow.
+- Reading a variant requires a pattern:
+
+```kelp
+fun area(s: &Shape).R: f64 = when s {
+    Circle(r) -> 3.141592653589793 * r * r
+    Rect(w, h) -> w * h
+    Empty -> 0.0
+}
+```
+
+- `when` is exhaustive: leave a variant out and the message names it. `else ->` is the catch-all and must come last.
+- A payload is bound **by copy for a `Copy` type and by shared borrow otherwise**, so an owned payload is a `&T` in the arm — that is why the stdlib helpers take `closure(&T)`. Do not try to move a payload out of an arm; wrap the value where it is built instead.
+- `if let Some(x) = opt { }` is the one-arm form, and `?` is the propagate form. Both need the enum to be `Ok`/`Err`- or `Some`/`None`-shaped, and `?` needs the enclosing function to return the *same* shape with the *same* failure type.
+- A function that can fail more than one way returns your own error `datac`; a `datac` with a `message: String` and a position is the convention (see `str.ParseErr`).
+
+### 22.6 Collections
+
+```kelp
+var xs: List<i64> = List.empty()      // the element type is written on the binding
+xs.push(3)                            // moves the argument in
+val first = xs.get(0)                 // a copy: i64 is Copy
+xs.sort()
+
+var counts: Map<i64> = Map.new()      // `Map<V>` is a String key; `Map<K, V>` names both
+counts.insert("a", 1)
+if counts.has("a") { print(counts.get("a")) }
+```
+
+- `List.empty()` and `Map.new()` need the element type from somewhere: write it on the binding.
+- `Map` keys are `String`, an integer or `bool`, and only those.
+- Both keep insertion order; `Map` has no `Map<String, Map<i32>>` or `List<List<i32>>` — elements are inline, so wrap a nested container in a `Box`.
+- `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index.
+
+### 22.7 Capabilities are declared where you import
+
+```kelp
+impl "std/fs" with caps(fs = ["/project/out/**", "/project/data/**"])
+```
+
+- A module gets nothing it did not `impl`, and the checker knows each module's authority statically.
+- Every path passed to a gated call is matched against the patterns, so it must be absolute and must not contain `..`.
+- `main` in the entry module holds the whole resource for its domain, which is why the interesting module sits behind one level of delegation when the point is to *test* a restriction.
+- The grant is the ceiling for the whole module, so a helper that reads a file needs the module holding the `impl` to have been granted it.
+
+### 22.8 A complete scanner
+
+Everything above, in one program. It scans `count = _a1 + 42` into tokens, each an owned `String`, and reports a failure the way a real parser does.
+
+```kelp
+// A tiny scanner: the shape every hand-written parser has.
+impl "std/str"
+impl "std/fmt"
+impl "std/result"
+
+datac ScanError(val message: String, val at: usize)
+
+fun is_blank(c: u8).R: bool = c == ' ' || c == '\t' || c == '\n' || c == '\r'
+
+fun is_digit(c: u8).R: bool = c >= '0' && c <= '9'
+
+fun is_alpha(c: u8).R: bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+fun skip_blanks(text: View, pos: mut usize) {
+    while *pos < text.len() && is_blank(text.get(*pos)) {
+        *pos += 1
+    }
+}
+
+fun scan_word(text: View, pos: mut usize).R: result.Result<String, ScanError> {
+    skip_blanks(text, pos)
+    val start = *pos
+    while *pos < text.len() && is_alpha(text.get(*pos)) {
+        *pos += 1
+    }
+    if *pos == start {
+        return result.Result.Err(error = ScanError(message = "expected a word", at = *pos))
+    }
+    return result.Result.Ok(value = text.slice(start, *pos))
+}
+
+fun scan_number(text: View, pos: mut usize).R: result.Result<i64, ScanError> {
+    skip_blanks(text, pos)
+    val start = *pos
+    var n: i64 = 0
+    while *pos < text.len() && is_digit(text.get(*pos)) {
+        n = n * 10 + (text.get(*pos) - '0').to_i64()
+        *pos += 1
+    }
+    if *pos == start {
+        return result.Result.Err(error = ScanError(message = "expected a number", at = *pos))
+    }
+    return result.Result.Ok(value = n)
+}
+
+fun tokenize(text: View).R: result.Result<List<String>, ScanError> {
+    var out: List<String> = List.empty()
+    var pos: usize = 0
+    while pos < text.len() {
+        skip_blanks(text, pos)
+        if pos < text.len() {
+            val c = text.get(pos)
+            if is_alpha(c) {
+                val word = scan_word(text, pos)?
+                out.push(word)
+            } else if is_digit(c) {
+                val n = scan_number(text, pos)?
+                out.push(fmt.int(n))
+            } else {
+                out.push(text.slice(pos, pos + 1))
+                pos += 1
+            }
+        }
+    }
+    return result.Result.Ok(value = out)
+}
+
+fun main() {
+    val r = tokenize("count = _a1 + 42".view())
+    if let Ok(tokens) = r {
+        for t in tokens {
+            print(t.as_str())
+        }
+    } else {
+        print("scan failed")
+    }
+}
+```
+
+It prints `count`, `=`, `_a`, `1`, `+`, `42`, one per line. Worth noticing: `tokenize` passes `pos` (a local `var`) with no `*` while the helpers take `*pos`; `scan_word` returns an owned `String` even though it only ever sliced a view; `is_alpha(c)` receives the `u8` from `text.get` and compares it to character literals; and `if let Ok(tokens) = r` binds the payload as a borrow, so `t` in the loop is a `&String` and `t.as_str()` is what `print` needs.

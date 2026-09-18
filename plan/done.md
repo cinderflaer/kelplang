@@ -1094,3 +1094,133 @@ unit tests and 214 end-to-end tests**, all green.
 expressiveness: provenance, partial moves, field-granular drop), which is what
 the `Copy`-only stdlib helpers wait on; the language's unstarted work is MK6-S1
 (threads) and MK9-MK11. `for` closes the last of A-1 to A-5.
+
+### MK8-S2-M1 the five gaps a real program hit: `to_f64`, char literals, bitwise operators, `str` -> `String`, `View` (DONE)
+
+A concrete program found these, not a roadmap. `jsonlibary` is a JSON reader
+and writer written in Kelp as a *test of the language* — written by someone
+with no access to `kelpc`'s source, against `syntax.md` alone — and reading it
+back gave five gaps that were not ergonomics-in-the-abstract but workarounds
+paid at every use site. It is also the milestone that showed what
+documentation is for: a language whose reference is a list of features and not
+a description of how to write a program cannot be used without the compiler as
+a map. §22 of `syntax.md` is the answer to that.
+
+**1. `to_f64`/`to_f32`, and the absurdity of the workaround.** Operands must
+match exactly, so an `i64` and an `f64` never meet by themselves and `n * 1.0`
+is a type error. Before this the only widening the language had was to format
+the integer and parse it back — `str.parse_f64(fmt.int(n).as_str())`, which
+allocates a `String` to add zero to a number. `to_f64` is the exact cast;
+`to_f32` rounds and is the one conversion allowed to lose value unchecked,
+because C defines it for every input. `integer_conversion` became
+`numeric_conversion` and leaves a float target a plain cast, since `int_bounds`
+has no bounds for one. The float -> integer direction stays absent on purpose:
+it loses the fraction and there is no `Option` for it to report the loss with.
+
+**2. Character literals, and why they are integer literals with a character in
+them.** `char` was a type with no values, so every byte-level algorithm was
+written in decimal: `if c == 34`, `out.push(32)`, `hex_digit` returning
+`n + 48`/`n + 87`. A literal now holds one Unicode scalar value and **takes the
+integer type its context asks for**, exactly as a numeric literal does — that
+single rule is what makes `c == '"'` work when `c` is a `u8` — and is `char`
+when nothing constrains it. A code point that does not fit the requested type
+is refused rather than truncated, and a `char` meeting an integer explains
+itself rather than reporting a bare mismatch. `char` is a code point rather
+than a C byte, so its C type is `uint32_t` and `'\u{4e2d}'` fits. Escapes:
+`\n \t \r \0 \' \" \\` and `\u{...}`.
+
+**3. The bit surface.** The language had no bitwise operators at all — the
+plan's own note was that `str.char_at` decoded UTF-8 by subtraction — and the
+JSON reader's encoder wrote `192 + cp / 64` for `0xC0 | (cp >> 6)`. `&` `|` `^`
+are infix, `~` is prefix, and `<<`/`>>` are two *adjacent* `<`/`>`
+characters: the lexer deliberately does not fold them, so `List<List<i32>>`
+still closes a nested type-argument list. `&` is bitwise-and in infix position
+and the borrow prefix in prefix position, told apart by position exactly as C++
+reads it. Precedence is C's except that the bitwise operators bind *tighter*
+than the comparisons — Rust's reading, and the one deliberate divergence,
+because C's makes `flags & MASK == 0` mean `flags & (MASK == 0)`. `bool` is not
+a bitwise domain: `a & b` on two booleans reads as a non-short-circuiting
+`and` when `&&` is right there.
+
+**4. `str` -> `String`, implicitly.** The most expensive gap in bytes:
+`String.from_str("...")` appeared about twenty times in the JSON library, once
+per parser error message and once per accessor arm. The conversion is applied
+at the end of `check_expr`, so every site that already knows an expected type
+gets it — a call argument, a `let` with a written type, an assignment, a
+`return`, a `datac` field, a `List<String>` element, a `Map` key or value, an
+`if` branch, a `when` arm, a block tail. Doing it in the wrapper rather than at
+each site is the whole design: the behaviour is the same either way and this
+way there is no list of sites to keep in sync as the language grows. Only an
+*exact* `String` expectation fires it, so `str.len`/`str.eq` still take views
+with no allocation. Nothing implicit the other way: `String` -> `str` is a
+borrow with a lifetime, not a copy.
+
+**5. `View`, the only one that needed a new type.** `str` is a bare
+`const char*`: no length, so every scan re-derives one with a `strlen`, every
+slice allocates, and a `datac` cannot hold one at all — which is why the JSON
+reader copied its whole input before parsing. A `View` carries the length with
+the pointer.
+
+**Soundness was the design, and it cost the one thing the recommendation had
+promised.** The obvious shape — a `View` field in the parser's own `datac`, so
+the parser keeps its input — is not expressible soundly without lifetime
+syntax (A-11): v1 has no way to tie a field to the text it borrows, so
+`fun bad().R: Parser { val s = String.from_str("x") return Parser(text = s.view()) }`
+would compile and hand back a dangling pointer. The operator chose the sound
+version, which means `View` follows `str`'s rules exactly rather than getting
+an exception: **not** a `datac` field, **not** an enum payload, **not** a
+`List`/`Box` element, **not** a `Map` key, and **no implicit conversion to
+`str`** — a slice has no NUL after it, so `strlen`/`strcmp`/`%s` on one would
+read past the slice and report a different string than the program holds.
+`print` emits `%.*s` from the pair, `v.eq` compares the bytes and the lengths,
+and `v.to_string()` is the one safe way to make owned text of a slice.
+
+The rule that took real work is the elision rule, because a `View` is two words
+of `Copy` data passed **by value** and so is not a `Ty::Ref` in the type
+system, while it points into somebody else's text exactly as `&str` does.
+`is_borrowed_value` now stands in for `matches!(ty, Ty::Ref { .. })` at every
+place the borrow checker asks "does this result borrow?", and `is_ref_param`
+gained `View` beside `str`. So `val v = s.view()` pins `s`,
+`String.from_str("x").view()` is refused (a view of a temporary),
+`fun bad().R: View { val s = String.from_str("x") return s.view() }` is refused
+by name at the return, and `fun head(t: View, n: usize).R: View = t.slice(0, n)`
+works because a `View` parameter is a reference parameter. Four rejection
+fixtures pin those four rules.
+
+**A fifth of this milestone is a defect the type found in the compiler.** The
+"a borrowed type cannot be stored" check existed at **four** sites — the
+struct-table pass and the generic instantiation path, each for `datac` fields
+and for `enum` payloads — and `View` was missed at two of them on the first
+attempt, so `datac P(val text: View)` compiled until a probe caught it. All
+four now call `types::is_borrowed_field_ty`, which is also what `is_ref_param`
+is, so a sixth borrowed type cannot be half-added.
+
+**`syntax.md` came first, and grew a section that is not a reference.** §2.4
+(char literals and the two escape sets), §2.6, §3 (the `char` and `View`
+rows), §5 (precedence with the deliberate divergence spelled out, plus new
+§5.0 numeric conversion and §5.1 the implicit conversion), §11.4 (the
+conversion surface, and the stale claim that `parse_i64` returns a `datac`), a
+new §11.5 for `View`, §16.1, §17 and the §18 error table, and §20's grammar.
+Then §22: **"Writing a program: the rules that explain most errors"** — the
+eight rules that explain most diagnostics (every owned parameter is a borrow;
+a `mut` scalar is dereferenced with `*`; no partial moves; no `break`; the
+`List.get` borrow; no implicit numeric conversion; `char` is not an integer;
+what `?` requires), and a complete scanner as the worked example. The finding
+that prompted it: a model writing Kelp without the compiler source produced a
+program that worked and was six hundred lines longer than it needed to be, and
+most of the length was the five gaps above *plus* idioms a reference had never
+stated.
+
+**Tests**: `float_conversions.kp`, `char_literals.kp`, `bitwise.kp`,
+`str_to_string_coercion.kp` and `view.kp`, with
+`char_literal_does_not_fit.kp`, `bitwise_bool.kp`, `view_field.kp`,
+`view_element.kp`, `view_returned_from_local.kp` and `view_of_temporary.kp` as
+the rejections, so both halves of every rule are pinned. The suite is **227
+end-to-end tests**, all green.
+
+*What is next from here*: MK8-S2's remainder is A-6 (`Set`, non-`String` map
+keys), A-7 (arenas, shared immutable data), A-10 (loosened element rules),
+A-11 (checker expressiveness — now the blocker for a `View` field as well as
+for the `Copy`-only stdlib helpers), A-12 (traits) and A-13 (privacy). The
+part of A-8/A-9 that shipped is recorded against them in `roadmap.md`'s open
+items 21, 22, 29, 30, 44 and 53.
