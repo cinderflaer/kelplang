@@ -1940,3 +1940,69 @@ fn an_unknown_string_escape_is_rejected_by_name() {
         "expected the diagnostic to name the escape, got:\n{stderr}"
     );
 }
+
+#[test]
+fn the_download_example_writes_exactly_what_it_received() {
+    // `examples/download.x` is a program, not a snippet: it is compiled and run
+    // against a canned server, and the file it writes is compared byte for
+    // byte. The body deliberately holds a NUL and invalid utf-8, which is the
+    // case a `String` could not carry — `fs.write` takes `Bytes` for exactly
+    // this, and a download that went through text would corrupt it.
+    let body: Vec<u8> = b"line\r\nnul:\0 hi:\xff\xfe".to_vec();
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(&body);
+
+    let mut server = CannedServer::start(vec![vec![response]]);
+    let bin = out_path("download_example");
+    let build = Command::new(xc_bin())
+        .arg("build")
+        .arg(fixture("../examples/download.x"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn xc");
+    assert!(
+        build.status.success(),
+        "expected examples/download.x to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let out = out_path("download_example_out");
+    let part = PathBuf::from(format!("{}.part", out.display()));
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&part);
+    let url = format!("http://127.0.0.1:{}/payload.bin", server.port);
+    let run = Command::new(&bin)
+        .arg(&url)
+        .arg(&out)
+        .output()
+        .expect("failed to run the compiled binary");
+    server.finish();
+
+    assert!(
+        run.status.success(),
+        "expected the download to succeed, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&out).expect("the output file exists"),
+        body,
+        "the file on disk is not what the server sent"
+    );
+    assert!(
+        !part.exists(),
+        "the `.part` file should have been renamed into place"
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let expected_size = format!("{}", body.len());
+    assert!(
+        stdout.starts_with(&format!("Content-Length: {expected_size}\n"))
+            && stdout.ends_with(&format!(" bytes to {}\n", out.display())),
+        "unexpected stdout:\n{stdout}"
+    );
+    let _ = std::fs::remove_file(&out);
+}

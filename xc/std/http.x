@@ -472,12 +472,39 @@ fun mut Cursor.read_chunked().R: Bytes {
 // The offset just past the blank line that ends the header block, or 0 when it
 // has not arrived yet. 0 is a usable sentinel because a header block can never
 // end at offset 0 — the terminator alone is four bytes.
+//
+// This scans **bytes**, and that is not an optimization. `Bytes.as_str()`
+// validates utf-8, and the buffer holds whatever arrived alongside the
+// headers — so the first response with a binary body would panic right here,
+// before the headers had even been located. Every synthetic test had an
+// all-ASCII body, which is why it took `examples/download.x` (a 200 KB image)
+// to find this.
 fun find_head_end(b: Bytes).R: usize {
-    val m = str.index_of(b.as_str(), "\r\n\r\n")
-    if m.ok {
-        return m.at + 4
+    val n = b.len()
+    var i: usize = 0
+    while i + 4 <= n {
+        if b.get(i) == 13 && b.get(i + 1) == 10 && b.get(i + 2) == 13 && b.get(i + 3) == 10 {
+            return i + 4
+        }
+        i = i + 1
     }
     return 0
+}
+
+// The header block as text: the bytes before the terminator, copied and
+// validated in one step, since `String.from_bytes` *adopts* the buffer instead
+// of copying it. A header block that is not valid utf-8 is a malformed
+// response, and this is where that becomes loud rather than producing a
+// `String` that lies about its own invariant.
+fun head_text(b: Bytes, end: usize).R: String {
+    val n = end - 4
+    var raw = mem.alloc(n)
+    var i: usize = 0
+    while i < n {
+        raw.set(i, b.get(i))
+        i = i + 1
+    }
+    return String.from_bytes(raw)
 }
 
 // The status line: `HTTP/1.1 200 OK`. Only the code matters here; the reason
@@ -599,8 +626,7 @@ fun read_response(s: net.Socket).R: Response {
     var status: i32 = 0
     var hs: List<Header> = List.empty()
     {
-        val view = buf.as_str()
-        val head_only = str.copy_range(view, 0, end - 4)
+        val head_only = head_text(buf, end)
         val lines = str.split(head_only.as_str(), "\r\n")
         status = parse_status_line(lines.get(0).as_str())
         hs = parse_headers(lines)
