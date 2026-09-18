@@ -20,14 +20,17 @@ This file is the language reference. It is written to be read start to finish by
 cargo build --release -p kelpc  # produces target/release/kelpc
 ```
 
-`kelpc` takes two commands:
+`kelpc` takes three commands:
 
 ```sh
 kelpc build <file.kp|project-dir> [-o <output>]   # default output: the file stem
 kelpc run   <file.kp|project-dir>                 # build, then run
+kelpc version                                     # the compiler's version
 ```
 
 `kelpc run` does not forward arguments to the program. Build first and run the binary directly when the program needs `argv`.
+
+The version `kelpc version` prints is the crate's `[package] version`, read at compile time, so it always names the release the binary was built from.
 
 The compiler needs a C compiler on `PATH` (`cc`, or `clang` through `CC`). The C stage is how a binary is produced today.
 

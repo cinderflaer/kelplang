@@ -182,7 +182,7 @@ coral clean
 
 **What Coral needs from elsewhere.**
 
-- **From the compiler**: machine-readable diagnostics, a module dependency list, separate compile and link steps, and a stable CLI contract (MK13-S1-M3). Today `kelpc build`/`kelpc run` and prose diagnostics are all a build tool has to work with.
+- **From the compiler**: machine-readable diagnostics, a module dependency list, separate compile and link steps, and a stable CLI contract (MK13-S1-M3). Today `kelpc build`/`kelpc run`, `kelpc version` (added with the 0.1.1 release) and prose diagnostics are all a build tool has to work with.
 - **From MK5-S2-M1 (done)**: `process.spawn`, argv, captured output and exit codes, which Coral and every non-trivial task need.
 - **From MK8-S1/S2, only if Coral is written in Kelp**: generics, `Option`/`Result`, function values and containers — **all four shipped** (A-2 as MK8-S1-M1 part 2, `Option`/`Result` as MK5-S6-M1, containers as MK3, function values and closures as MK8-S1-M2 phases A-F), so the language half of open item 67 is met. Until Coral is ported it is a Rust program that drives `kelpc`.
 - **From MK9-S4-M2**: cross-compilation and library output, which MK13-S4-M2/M3 extend rather than invent.

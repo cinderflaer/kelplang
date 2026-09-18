@@ -35,7 +35,7 @@ x/
   Cargo.toml                # workspace
   kelpc/                        # the compiler binary crate
     src/
-      main.rs                # CLI: `kelpc build <file.kp | project-dir>`, `kelpc run <same>`, later `kelpc fmt`
+      main.rs                # CLI: `kelpc build <file.kp | project-dir>`, `kelpc run <same>`, `kelpc version`, later `kelpc fmt`
       lexer.rs                # source -> tokens (span-carrying, newline-sensitive, utf-8 aware in literals)
       ast.rs                  # parsed syntax tree types
       parser.rs               # tokens -> AST (recursive descent + Pratt for expressions)
