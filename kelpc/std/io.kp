@@ -1,5 +1,6 @@
 impl "std/mem"
 impl "std/str"
+impl "std/option"
 
 // std/io — streams, line reading, and the standard descriptors (S2).
 //
@@ -145,12 +146,11 @@ fun stdin().R: File = File(fd = 0)
 fun stdout().R: File = File(fd = 1)
 fun stderr().R: File = File(fd = 2)
 
-// One line of text: `ok` is false at end of file, where `text` is empty.
-//
-// v1 has no partial moves, so `text` cannot be taken *out* of a `Line` by
-// value — read it through `line.text.as_str()`, or use
-// `BufReader.read_line_into` when the line has to be owned.
-datac Line(val ok: bool, val text: String)
+// One owned line of text, or `None` at end of file. The `Line(ok, text)`
+// datac this module used to return is gone (MK5-S6-M1): end of file carries
+// no reason, so the line readers return an `Option` and the caller writes
+// `if let Some(line) = io.read_line()`. `BufReader.read_line_into` remains the
+// form that reuses one buffer.
 
 // An owned read buffer over one `File`: the "no generics" answer to buffered
 // input (open item 49). Unbuffered `read_line` over a pipe is one syscall per
@@ -207,15 +207,19 @@ fun mut BufReader.read_line_into(out: mut String).R: bool {
     return got
 }
 
-// As `read_line_into`, wrapped in a `Line`. This allocates one `String` per
-// line, because `read_line_into` needs a buffer it can overwrite and a `Line`
-// has to own its text.
+// As `read_line_into`, wrapped in an owned `String` — `None` at end of file,
+// and no allocation in that case. This allocates one `String` per line,
+// because `read_line_into` needs a buffer it can overwrite and the returned
+// line has to own its text.
 //
 // Panics: if the read fails.
-fun mut BufReader.read_line().R: Line {
+fun mut BufReader.read_line().R: option.Option<String> {
     var text = String.empty()
-    val ok = self.read_line_into(text)
-    return Line(ok = ok, text = text)
+    val got = self.read_line_into(text)
+    if !got {
+        return option.Option.None
+    }
+    return option.Option.Some(value = text)
 }
 
 // Everything until end of file: whatever the line buffer already holds,
@@ -245,10 +249,10 @@ fun mut BufReader.read_all().R: Bytes {
     return out
 }
 
-// One line from stdin, `ok = false` at end of file.
+// One line from stdin, `None` at end of file.
 //
 // Panics: if the read fails.
-fun read_line().R: Line = stdin_reader.read_line()
+fun read_line().R: option.Option<String> = stdin_reader.read_line()
 
 // Every line from stdin, to end of file.
 //

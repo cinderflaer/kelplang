@@ -6,6 +6,7 @@
 // explicit `.as_str()` (there is no deref coercion in v1), which is why the
 // calls below go through it.
 impl "std/str"
+impl "std/option"
 
 fun main() {
     val s = String.from_str("  hello  ")
@@ -26,8 +27,10 @@ fun main() {
     print(str.eq(t.as_str(), b = "hello"))
     print(str.eq(t.as_str(), b = "hellO"))
     val m = str.index_of(t.as_str(), needle = "l")
-    print(m.ok)
-    print(m.at)
+    if let Some(at) = m {
+        print(at)
+    }
+    print(option.is_none(o = str.index_of(t.as_str(), needle = "z")))
 
     val b = Bytes.from_str("raw")
     print(b.as_str())

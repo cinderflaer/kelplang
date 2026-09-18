@@ -2,6 +2,7 @@
 // 40), replacement is a loop over `starts_with_at`, and number formatting is
 // a digit loop over the growable buffer. Only the float format is C.
 impl "std/str"
+impl "std/result"
 
 fun main() {
     print(str.concat("foo", "bar"))
@@ -14,8 +15,8 @@ fun main() {
     // `i64`'s minimum (negating it would overflow), both round-tripped
     // through the parsers instead.
     val big = str.parse_u64("18446744073709551615")
-    print(str.from_u64(big.value))
+    print(str.from_u64(result.unwrap(r = big)))
     val min = str.parse_i64("-9223372036854775808")
-    print(str.from_i64(min.value))
+    print(str.from_i64(result.unwrap(r = min)))
     print(str.from_u64(9))
 }

@@ -761,9 +761,11 @@ fn stdlib_text_builds_numbers_replaces_and_parses() {
 
 #[test]
 fn stdlib_parsing_rejects_anything_but_a_whole_number() {
+    // `Result<T, ParseErr>` since MK5-S6-M1: `is_ok`/`is_err`/`unwrap` are the
+    // helpers, and `Empty` is a distinguishable reason from `Invalid`.
     assert_compiles_and_runs(
         "tests/fixtures/stdlib_parse.kp",
-        "true\n123\ntrue\n-9223372036854775808\nfalse\nfalse\nfalse\nfalse\ntrue\n18446744073709551615\nfalse\nfalse\ntrue\n250.000000\nfalse\n104\n233\n3\n0\n5\n",
+        "true\n123\ntrue\n-9223372036854775808\ntrue\ntrue\ntrue\ntrue\n1\n2\n0\ntrue\n18446744073709551615\ntrue\ntrue\ntrue\n250.000000\ntrue\n104\n233\n3\n0\n5\n",
     );
 }
 
@@ -1057,7 +1059,7 @@ fn std_math_overloads_resolve_on_argument_type() {
 fn str_views_borrow_and_owned_truncations_allocate() {
     assert_compiles_and_runs(
         "tests/fixtures/string_views.kp",
-        "hello\n5\nhello  \n7\nello\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\n2\nraw\n5\nown\n",
+        "hello\n5\nhello  \n7\nello\ntrue\ntrue\ntrue\ntrue\nfalse\n2\ntrue\nraw\n5\nown\n",
     );
 }
 

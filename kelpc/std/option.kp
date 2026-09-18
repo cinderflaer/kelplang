@@ -50,3 +50,13 @@ fun unwrap<T>(o: &Option<T>).R: T {
     }
     panic("Option.unwrap: value is None")
 }
+
+// The payload, or a panic carrying `message` — the form the stdlib uses, where
+// the message names the operation that failed rather than the accessor.
+// `T` must be `Copy`.
+fun expect<T>(o: &Option<T>, message: &str).R: T {
+    if let Some(v) = o {
+        return v
+    }
+    panic(message)
+}

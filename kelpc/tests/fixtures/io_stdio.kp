@@ -4,8 +4,8 @@ impl "std/io"
 // stdin, which the test harness pipes in.
 fun main() {
     val header = io.read_line()
-    if header.ok {
-        print(header.text.as_str())
+    if let Some(text) = header {
+        print(text.as_str())
     } else {
         print("(no header)")
     }

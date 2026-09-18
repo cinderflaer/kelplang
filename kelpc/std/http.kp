@@ -2,6 +2,8 @@ impl "std/mem"
 impl "std/net"
 impl "std/str"
 impl "std/fmt"
+impl "std/option"
+impl "std/result"
 
 // std/http — an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
 // the grant that governs its connections is the one its importer wrote
@@ -100,18 +102,18 @@ datac Cursor(val fd: i32, var buf: Bytes, var start: usize)
 // here either — the same rule `net`'s capability patterns follow, for the same
 // reason: a host that contains the port separator would be ambiguous.
 fun parse_url(s: &str).R: Url {
-    val sep = str.index_of(s, "://")
-    if !sep.ok {
-        panic("http.parse_url: URL must start with 'http://' (no scheme found)")
-    }
-    val scheme = str.prefix(s, sep.at)
+    val sep = option.expect(
+        o = str.index_of(s, "://"),
+        message = "http.parse_url: URL must start with 'http://' (no scheme found)",
+    )
+    val scheme = str.prefix(s, sep)
     if !str.eq(scheme.as_str(), "http") {
         if str.eq(scheme.as_str(), "https") {
             panic("http.parse_url: 'https' is not supported yet (TLS is S4b) — use 'http://'")
         }
         panic("http.parse_url: only 'http' is supported")
     }
-    val rest = str.substring(s, sep.at + 3)
+    val rest = str.substring(s, sep + 3)
     return split_authority(rest)
 }
 
@@ -123,9 +125,9 @@ fun split_authority(rest: &str).R: Url {
         panic("http.parse_url: URL has no host")
     }
     val slash = str.index_of(rest, "/")
-    if slash.ok {
-        val authority = str.prefix(rest, slash.at)
-        val path = str.substring(rest, slash.at)
+    if let Some(at) = slash {
+        val authority = str.prefix(rest, at)
+        val path = str.substring(rest, at)
         return make_url(authority, path)
     }
     val whole = str.prefix(rest, str.len(rest))
@@ -137,13 +139,13 @@ fun make_url(authority: String, path: &str).R: Url {
         panic("http.parse_url: URL has no host")
     }
     val colon = str.index_of(authority.as_str(), ":")
-    if colon.ok {
+    if let Some(at) = colon {
         // Bound to a place first: `str.substring` hands back a borrow of its
         // argument, and a borrow-returning call needs a variable or a field,
         // not a call result.
         val text = authority.as_str()
-        val host = str.prefix(text, colon.at)
-        val port_text = str.substring(text, colon.at + 1)
+        val host = str.prefix(text, at)
+        val port_text = str.substring(text, at + 1)
         return Url(
             scheme = String.from_str(DEFAULT_SCHEME),
             host = host,
@@ -163,14 +165,14 @@ fun parse_port(text: &str).R: u16 {
     if str.is_empty(text) {
         panic("http.parse_url: URL has an empty port")
     }
-    val p = str.parse_u64(text)
-    if !p.ok {
-        panic("http.parse_url: URL port is not a number")
-    }
-    if p.value > 65535 {
+    val p = result.expect(
+        r = str.parse_u64(text),
+        message = "http.parse_url: URL port is not a number",
+    )
+    if p > 65535 {
         panic("http.parse_url: URL port is out of range")
     }
-    return p.value.to_u16()
+    return p.to_u16()
 }
 
 // ----- headers -----
@@ -512,28 +514,28 @@ fun head_text(b: Bytes, end: usize).R: String {
 //
 // Panics: if the line has no code, or the code is not a number.
 fun parse_status_line(line: &str).R: i32 {
-    val sp = str.index_of(line, " ")
-    if !sp.ok {
-        panic("http: malformed status line (no status code)")
-    }
-    val rest = str.substring(line, sp.at + 1)
+    val sp = option.expect(
+        o = str.index_of(line, " "),
+        message = "http: malformed status line (no status code)",
+    )
+    val rest = str.substring(line, sp + 1)
     val sp2 = str.index_of(rest, " ")
-    if sp2.ok {
-        val code_text = str.prefix(rest, sp2.at)
+    if let Some(at) = sp2 {
+        val code_text = str.prefix(rest, at)
         return status_code(code_text.as_str())
     }
     return status_code(rest)
 }
 
 fun status_code(text: &str).R: i32 {
-    val p = str.parse_u64(text)
-    if !p.ok {
-        panic("http: the status code is not a number")
-    }
-    if p.value > 999 {
+    val p = result.expect(
+        r = str.parse_u64(text),
+        message = "http: the status code is not a number",
+    )
+    if p > 999 {
         panic("http: the status code is out of range")
     }
-    return p.value.to_i32()
+    return p.to_i32()
 }
 
 // Every header line after the status line, name and value split at the first
@@ -546,9 +548,9 @@ fun parse_headers(lines: List<String>).R: List<Header> {
         val text = lines.get(i).as_str()
         if !str.is_empty(text) {
             val colon = str.index_of(text, ":")
-            if colon.ok {
-                val name = str.prefix(text, colon.at)
-                val value = str.trim(str.substring(text, colon.at + 1))
+            if let Some(at) = colon {
+                val name = str.prefix(text, at)
+                val value = str.trim(str.substring(text, at + 1))
                 hs.push(Header(name = name, value = value))
             }
         }
@@ -568,9 +570,9 @@ fun header_value(hs: List<Header>, name: &str).R: String {
     return String.empty()
 }
 
-// `-1` for absent, which is not a legal `Content-Length` — the same
-// ok-flag-free convention `str.Match` avoids by carrying a flag, kept here
-// because the value is a count and every non-negative count is meaningful.
+// `-1` for absent, which is not a legal `Content-Length` — an absent header is
+// not a parse failure, and the value is a count whose every non-negative value
+// is meaningful, so there is nothing for an `Option` to add here.
 //
 // Panics: if the header is present and not a number.
 fun content_length_of(hs: List<Header>).R: i64 {
@@ -578,11 +580,11 @@ fun content_length_of(hs: List<Header>).R: i64 {
     if str.is_empty(text.as_str()) {
         return -1
     }
-    val p = str.parse_u64(text.as_str())
-    if !p.ok {
-        panic("http: Content-Length is not a number")
-    }
-    return p.value.to_i64()
+    val p = result.expect(
+        r = str.parse_u64(text.as_str()),
+        message = "http: Content-Length is not a number",
+    )
+    return p.to_i64()
 }
 
 fun is_chunked(hs: List<Header>).R: bool {
