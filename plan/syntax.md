@@ -356,7 +356,7 @@ A name that the function does not declare is an error; so is naming an argument 
 - A user program cannot overload a name. Two `fun pick(a: i32)` and `fun pick(a: f64)` collide: `function 'pick' is defined more than once for the same parameter types`. Overloading exists only inside the shipped standard library, and only for `abs`, `min`, `max` and `clamp`, which is how `math.min` accepts `i32`, `i64` and `f64`.
 - Recursion is unrestricted, including mutual recursion.
 - There are no closures and no function values: a function name is not a value, and a function cannot be passed to another function.
-- A function may take type parameters: `fun first<T>(xs: List<T>).R: T`, or `fun Pair<A, B>.first().R: A` on a method. Each call site is instantiated for the types it uses (9.3).
+- A function may take type parameters: `fun first<T>(xs: List<T>).R: T`. A receiver method on a generic type takes the *type's* parameters instead: `fun Pair<A, B>.first().R: A`. Each call site is instantiated for the types it uses (9.3).
 
 ### 7.3 `main`
 
@@ -504,7 +504,21 @@ val b: Option<i32> = Option.None            // T from the expected type — the 
 ```
 
 - The expected type is consulted first, then each argument. A parameter that neither determines is an error that names it, with the fix (`val x: Option<i32> = ...`). It also means an integer literal takes its type from the expected type or from the other argument, not from the default (`Option<i32>`).
-- A generic type has no methods. Read a `datac`'s fields with `.`; read an `enum`'s payload with `when`.
+#### Generic methods
+
+A receiver method on a generic type writes the type's own parameters, in order, so the body can name them:
+
+```kelp
+datac Pair<A, B>(val first: A, var second: B)
+
+fun Pair<A, B>.first_of().R: A = first
+fun mut Pair<A, B>.replace_second(v: B) { second = v }
+```
+
+- The parameters must be exactly the type's, in order — a rename would make the body's `T` mean something the declaration does not say, and is refused with the spelling to write.
+- The type arguments are the receiver's own instantiation, so `p.first_of()` on a `Pair<i32, String>` is instantiated once for `A = i32, B = String`. There is no inference to do, and no way to call a method on the template itself.
+- A method on an `enum` is still refused: an `enum` carries no methods in v1. Write a free function over the instantiation instead (`fun is_some<T>(o: &Option<T>).R: bool`).
+- A method's declared parameters are its own declared list; a receiver method cannot add type parameters of its own beyond the type's.
 
 #### Generic functions
 
@@ -1153,7 +1167,7 @@ These are deliberate, and each one has a workaround in this document:
 
 - No `for`, `break` or `continue`. Iteration is `while` plus an index (6.2).
 - No `Option` or `Result`, so there is no `?` and no `if let`. Fallible stdlib calls return a `datac` with an `ok` flag, or panic. `Option<T>` is now expressible as a user `enum` (9.3); the stdlib has not migrated to it.
-- No method may be declared on a generic type yet: a receiver has no way to name the instantiation it belongs to. Read a `datac`'s fields with `.`, or write a free function over the instantiation (`fun sum_of<T>(p: &Pair<T, T>).R: T`, 9.3).
+- A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - No partial moves: an owned field cannot be read out of a borrowed structure (9), so move it with `Box.take` or pass a borrow.
 - No references in fields, `List` elements, `Map` values or `Box` contents. `str` is a borrow, so text that must be stored is a `String`.
@@ -1194,6 +1208,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'Pair' is a generic type — it needs 2 type argument(s)` | write the arguments where the type is used: `Pair<i32, String>` (9.3) |
 | `cannot infer type parameter 'T' of 'Option' here` | neither the arguments nor the expected type determines `T`; annotate the binding (`val x: Option<i32> = ...`, or `val xs: List<String> = empty_of()`) |
 | `'main' cannot take type parameters` | the entry point is not called, so nothing can instantiate it |
+| `receiver 'Pair' must write the type's own type parameters, in order` | a method on a generic type is `fun Pair<A, B>.first()`; the receiver cannot omit or rename the parameters |
+| `'Option' is an enum — an enum carries no methods in v1` | write a free function over the instantiation instead (9.3) |
 | `in 'Holder<str>': field 'x' is a borrowed type` | a type argument may not be `str` or a reference; use `String` |
 | `datac 'Bad' is defined more than once` / `field 'x' is defined more than once` | duplicate declaration |
 

@@ -340,7 +340,7 @@ impl Ctx {
     /// this function has one.
     fn receiver_field_ty(&self, name: &str) -> Option<Ty> {
         let sname = self.receiver_struct.as_deref()?;
-        self.structs.get(sname)?.field(name).map(|f| f.ty.clone())
+        self.struct_def(sname)?.field(name).map(|f| f.ty.clone())
     }
 
     /// The capability gate (M7): a gated module's item is reachable only
@@ -868,8 +868,14 @@ impl TypeScope<'_> {
         {
             return Err(TypeError {
                 message: format!(
-                    "'{}' is a generic type — a receiver method on a generic type is not implemented yet (the receiver has no way to say which instantiation it belongs to)",
-                    r.type_name
+                    "'{}' is a generic type — the receiver has to name its type parameters, and they have to be the type's own, in order ('fun {}<{}>.method(...)')",
+                    r.type_name,
+                    r.type_name,
+                    self.env
+                        .generics
+                        .get(&r.type_name)
+                        .map(|t| t.params.join(", "))
+                        .unwrap_or_default()
                 ),
                 span: r.span,
             });
@@ -1861,14 +1867,44 @@ fn collect_func_templates(
             }
         }
         if let Some(r) = &f.receiver {
-            return Err(Diagnostic::new(
-                format!(
-                    "'{}' is a generic type — a receiver method on a generic type is not implemented yet",
-                    r.type_name
-                ),
-                f.span,
-                f.module.clone(),
-            ));
+            // A method on a generic type: the receiver writes the type's own
+            // parameters, in order, and they are the method's type parameters
+            // (A-2). A receiver that names a non-generic type has nothing to
+            // parameterize, and one that writes the wrong names or order
+            // would make the body's `T` mean something the type does not.
+            let Some(type_tmpl) = generics.get(&r.type_name) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is not a generic type — only a receiver on a generic type may declare type parameters",
+                        r.type_name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            };
+            if matches!(type_tmpl.kind, GenericKind::Sum(_)) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}' is an enum — an enum carries no methods in v1; write a free function over the instantiation instead",
+                        r.type_name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
+            if type_tmpl.params != params {
+                return Err(Diagnostic::new(
+                    format!(
+                        "receiver '{}' must write the type's own type parameters, in order: 'fun {}<{}>.{}(...)'",
+                        r.type_name,
+                        r.type_name,
+                        type_tmpl.params.join(", "),
+                        f.name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
         }
         if out.contains_key(&key)
             || program.functions.iter().enumerate().any(|(j, other)| {
@@ -1884,13 +1920,15 @@ fn collect_func_templates(
                 f.module.clone(),
             ));
         }
-        let _ = generics;
         out.insert(
             key.clone(),
             FuncTemplate {
                 key,
                 params,
-                receiver: None,
+                receiver: f
+                    .receiver
+                    .as_ref()
+                    .map(|r| (r.type_name.clone(), r.mutable)),
                 declared: f.params.clone(),
                 ret: f.return_type.clone(),
                 body: f.body.clone(),
@@ -5050,6 +5088,21 @@ fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
         .then(|| owned.to_string())
 }
 
+/// The template key of a method declared on a generic type (A-2): `owner` is
+/// the receiver's *instance* key (`Pair<i32, String>`), and the template is
+/// declared under the type template's own name (`Pair#first`).
+fn method_template_key(ctx: &Ctx, owner: &str, method: &str) -> Option<String> {
+    let type_tmpl = ctx
+        .env
+        .instances
+        .borrow()
+        .origin
+        .get(owner)
+        .map(|(t, _)| t.clone())?;
+    let key = format!("{type_tmpl}#{method}");
+    ctx.fns.templates.contains_key(&key).then_some(key)
+}
+
 /// Instantiates a generic function for one call site (A-2), returning the
 /// instance's key and its concrete signature. The type arguments come from
 /// three places, in this order: the receiver's own instantiation (a method),
@@ -5404,14 +5457,23 @@ fn check_method_call(
         .or_else(|| crate::types::box_elem_of(&probe.ty))
         .or_else(|| crate::types::map_elem_of(&probe.ty))
         .cloned();
-    let sig = ctx
-        .sigs
-        .get(&key)
-        .cloned()
-        .or_else(|| container_elem.as_ref().and_then(|e| container_sig(&key, e)))
-        .or_else(|| builtin_sig(&key))
-        .ok_or_else(|| TypeError {
-            message: match (&container_elem, owner.as_str()) {
+    let (key, sig) = match ctx.sig_of(&key) {
+        Some(s) => (key, s),
+        // A-2: a method declared on a generic type (`fun Pair<A, B>.first()`).
+        // Its type arguments are the receiver's own instantiation, which the
+        // probe already resolved, so the template key is the *type template*
+        // plus the method name — and the instance's key is what the call names.
+        None => match method_template_key(ctx, &owner, method) {
+            Some(tmpl_key) => {
+                instantiate_function(ctx, &tmpl_key, args, span, expected, Some(&probe.ty))?
+            }
+            None => match container_elem.as_ref().and_then(|e| container_sig(&key, e)) {
+                Some(s) => (key, s),
+                None => match builtin_sig(&key) {
+                    Some(s) => (key, s),
+                    None => {
+                        return Err(TypeError {
+                            message: match (&container_elem, owner.as_str()) {
                 // Three List methods are defined only for an element type that
                 // can be ordered, compared, or copied, so the generic "no
                 // method" text would be misleading for exactly these three.
@@ -5451,9 +5513,14 @@ fn check_method_call(
                     probe.ty.display()
                 ),
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
+                            },
+                            span,
+                        });
+                    }
+                },
             },
-            span,
-        })?;
+        },
+    };
 
     let mut checked_args = Vec::with_capacity(sig.params.len());
     checked_args.push(check_call_arg("self", &sig.params[0].1, receiver, ctx)?);
