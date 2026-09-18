@@ -48,6 +48,30 @@ static void kelp_panic(const char* msg) {
     exit(1);
 }
 
+/* A syscall failure names its cause on a second line: `errno` and the text
+   `strerror` gives it. The `panic: <msg>` line stays exactly as it was, so a
+   golden assertion on a message prefix is unaffected. `p` takes the code as
+   an argument because the callers that clean up (a `close`, an `fclose`)
+   between the failing call and the panic would otherwise let that cleanup
+   overwrite the `errno` being reported. */
+static void kelp_panic_at(const char* msg, int p) {
+    fprintf(stderr, "panic: %s\n", msg);
+    fprintf(stderr, "  errno %d: %s\n", p, strerror(p));
+    exit(1);
+}
+
+static void kelp_panic_errno(const char* msg) {
+    kelp_panic_at(msg, errno);
+}
+
+/* `getaddrinfo` reports through its own return code, not `errno`, so a DNS
+   failure gets `gai_strerror` instead of a misleading `errno 0: Success`. */
+static void kelp_panic_gai(const char* msg, int rc) {
+    fprintf(stderr, "panic: %s\n", msg);
+    fprintf(stderr, "  getaddrinfo: %s\n", gai_strerror(rc));
+    exit(1);
+}
+
 /* The process's own argv, saved by the emitted `main` (S2). Both live for
    the whole process, so a `&str` view of `kelp_argv[i]` stays valid for as long
    as any Kelp value can hold it — which is what `process.arg_at` hands out. */

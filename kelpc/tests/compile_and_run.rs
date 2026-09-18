@@ -787,6 +787,20 @@ fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
 }
 
 #[test]
+fn a_failed_syscall_reports_errno_and_strerror() {
+    // `ENOENT` is 2 on Linux, and glibc and musl both spell it this way; the
+    // message line is asserted separately so a stable prefix is what a
+    // golden test would pin, and the errno line is the new detail.
+    assert_fixture_panics_all(
+        "fs_errno",
+        &[
+            "fs.read: cannot open file",
+            "errno 2: No such file or directory",
+        ],
+    );
+}
+
+#[test]
 fn owned_datac_fields_are_dropped_with_the_struct() {
     assert_compiles_and_runs(
         "tests/fixtures/string_field.kp",
@@ -1220,6 +1234,13 @@ fn a_forward_reference_between_datacs_is_rejected() {
 /// Builds a fixture, runs it, and asserts the run fails with `needle` on
 /// stderr — the runtime-panic path (`List.pop` on an empty list).
 fn assert_fixture_panics(name: &str, needle: &str) {
+    assert_fixture_panics_all(name, &[needle]);
+}
+
+/// The same, for a panic whose diagnostic is more than its first line: every
+/// needle must appear, in any order. The syscall-failure panics use this,
+/// because `errno` and `strerror` are reported below the stable message.
+fn assert_fixture_panics_all(name: &str, needles: &[&str]) {
     let source = format!("tests/fixtures/{name}.kp");
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
@@ -1240,10 +1261,12 @@ fn assert_fixture_panics(name: &str, needle: &str) {
         "expected '{name}' to panic at runtime, but it exited successfully"
     );
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        stderr.contains(needle),
-        "expected the panic for '{name}' to mention '{needle}', got:\n{stderr}"
-    );
+    for needle in needles {
+        assert!(
+            stderr.contains(needle),
+            "expected the panic for '{name}' to mention '{needle}', got:\n{stderr}"
+        );
+    }
 }
 
 #[test]

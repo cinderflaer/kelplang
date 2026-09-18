@@ -1,0 +1,7 @@
+// A syscall failure names its cause: the `panic: <msg>` line is unchanged,
+// and `errno` plus `strerror` follow on a second line (open item 47).
+impl "std/fs"
+
+fun main() {
+    fs.read("/kelp-no-such-path/probe")
+}
