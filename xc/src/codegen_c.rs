@@ -381,9 +381,13 @@ static void x_cap_deny(const char* domain, const char* path, const char* const* 
                        size_t count, const char* module, const char* at) {
     fprintf(stderr, "%s: panic: '%s' is outside the %s capability granted to module '%s'\n",
             at, path, domain, module);
-    fprintf(stderr, "  granted: %s\n", count == 0 ? "(nothing)" : "");
-    for (size_t i = 0; i < count; i++) {
-        fprintf(stderr, "    %s\n", patterns[i]);
+    if (count == 0) {
+        fprintf(stderr, "  granted: (nothing)\n");
+    } else {
+        fprintf(stderr, "  granted:\n");
+        for (size_t i = 0; i < count; i++) {
+            fprintf(stderr, "    %s\n", patterns[i]);
+        }
     }
     exit(1);
 }

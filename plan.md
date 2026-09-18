@@ -9,8 +9,8 @@ Merged document: language plan + compiler milestones + standard library. The std
 The compiler exists and runs. `xc/` implements the new syntax end-to-end (lexer → preprocess → parser → type check → move/borrow check → C codegen), `cargo test` is green (65 unit tests + 118 end-to-end fixture/project tests, of which the heap ones are also re-run under AddressSanitizer), and the milestone record below reflects commits, not hopes. This file is now the sole living status doc (`PASSDOWN.md` was deleted once this file absorbed it — do not recreate it).
 
 - **Done**: M0 (scaffold + parser for the full new syntax), M1 (types + C codegen + first running binary), M2 (`datac`, per-field `val`/`var`, while loops), M3 (move checking), M4 (borrowing — free-function parameters and local `&`/`&mut`/`*`), M4.5 (receiver-form methods, the piece M4 cut out — see below), M5.1 (multi-file `impl` imports, `x.toml`, strict module-qualified names), M5.2 (`pd` passdowns and string templates), M5.3 (`%*alias*%` substitution — `alias.xconf` + inline `alias` declarations), M6.1 (the builtin owned `Bytes`), M6.2 (owned `String`, `extern fun`, the first stdlib modules in `xc/std/`, owned `datac` fields, owned passdowns), M6.3 (`const`, stdlib-only argument-type overloading, `&str` return elision, the rest of the `str`/`path` surface), M6.4 (a `pd var` is writable from any function), M7 (**capability-based security** — `with caps(...)`, a real `fs`, real `time`/`rand`, and `env` as the gated stub), C1 (**collections** — the builtin `List<T>`, `str.split`/`str.join`, `fs.list`), M8 (**`Box<T>` and recursive `datac`s** — the owning pointer, self- and mutually-recursive types, one container emission order that makes them work, and two latent memory bugs it flushed out).
-- **Next: the stdlib, so the language is useful for real programs.** `stdlib-roadmap.md` (written after M8, 709 lines) is the plan for that: **S1** growable `String`/`Bytes` + `str.concat`/`from_i64`/`parse_*` + a `std/fmt` + `List` sort/slice, and `panic`/`assert`, which this file calls prelude builtins and which are not shipped at all; **S2** `io` + `process` (stdin, `read_line`, argv, spawn, capture — the first real programs); **S3** `net` for real, whose *first* task is a compiler fix, because this file's own `net` grant vocabulary (`api.example.com:443`) cannot even be written today (open item 32); **S4** the HTTP client, which adds no compiler work once S1 and S3 have landed. The language-feature gaps the roadmap runs into (a `for` loop, a length-carrying borrowed view, `Option`/`Result`) are its own open questions and are summarized in open items 27 and 36.
-- **Still blocked on a *growable* buffer**, which is S1's job: `String.push`/`String.concat`/`Bytes.append` in memory (appending to a *file* shipped in M7), `fmt`-style formatting, and number formatting/parsing. `env.args`/`process.run(argv)` are not blocked on a sequence type any more — they are unwritten (`env` is the gated stub, `process` is unshipped), which is S2's job.
+- **Next: the stdlib program, S1–S7** (recorded below `M8`). The shortest path to a program a shell script cannot write is **S1 → S2 → S3 → S4**: text you can build and numbers you can format; `io` + `process` (stdin, argv, spawn, capture — the first end-to-end payoff, "run a command and read its output"); `net` for real, whose first task is a compiler fix because this file's own `net` grant vocabulary cannot be written (open item 32); and then the HTTP client, which adds **no compiler work at all** once S1 and S3 have landed ("fetch a URL and print the body", the headline payoff). S5 is maps + filesystem breadth + real `env` bodies, S6 is the `Option`/`Result` decision point, S7 is the concurrency analysis (processes + `poll`, no threads — the reasons are language-shaped and are recorded there).
+- **Still blocked on a *growable* buffer**, which is S1's job: `String.push`/`String.concat`/`Bytes.append` in memory (appending to a *file* shipped in M7), `fmt`-style formatting, and number formatting/parsing. `env.args`/`process.run(argv)` are not blocked on a sequence type any more — they are unwritten (`env` is the gated stub, `process` and `io` are unshipped), which is S2's job. Two more verified walls worth knowing before reading the sketches: **stdin is unreadable today** (`fs.read("/dev/stdin")` panics with `cannot seek` on a pipe, so `io` has to be a streaming API, not a wrapper over `fs`), and the emitted `main` is `int main(void)` with `main` uncallable from `.x`, so argv needs a codegen change (S2).
 - **Far future, and wanted**: M9 — the language's **own backend**, so `xc` emits machine code instead of C. The measured case for it is compile time (~95% of `xc build` is the C toolchain's fixed overhead, not X's compiler) and the measured cost is runtime (`-O0` vs `-O2`, 1.2–5.4x on the `bench/speed` workloads). It is on the list because "my own language, not C with a mask" is a project goal in its own right, not because it would make X faster.
 - **Deferred despite being in `syntax&shii.md`'s deltas**: `caps(...)` is the last one. Those deltas were aspirational scheduling and lost to implementation order; the milestone list below records where each one is now targeted (`impl` imports shipped as M5.1, `pd` and templates as M5.2, `alias` substitution as M5.3, `caps(...)` at M7).
 - **The heap exists, and ownership is checkable at runtime.** `Bytes` and `String` are non-`Copy`, so assigning or returning one moves it; it is freed at the end of the block that owns it, and a `datac` with an owned field drops its fields recursively. A passdown of an owned type is freed by an `atexit` handler, which is v1's only drop point at process exit. The suite proves all of that rather than asserting it: every heap fixture is rebuilt with `-fsanitize=address` and run, so a double free, a use-after-free, or a leak fails `cargo test`. That caught two real bugs during M6.1 (a branch merge that dropped the drop candidates, and a reassignment that leaked) — which is the point of the milestone.
@@ -374,6 +374,8 @@ Each domain has a corresponding bare built-in namespace (`fs`, `net`, `process`,
 - At each gated call site: (1) lexically normalize the argument, (2) reject if it escapes the pattern root via `..`, (3) resolve symlinks (`realpath`), (4) match the resolved absolute path against the module's compiled-in allowlist, (5) only then perform the syscall. Steps 3 and 4 must not be reordered — resolving symlinks first is the reason a link pointing outside the grant is denied.
 - Denied calls panic with the call-site span, the attempted path, and the module's allowlist.
 
+**A library module does not re-grant, and the check uses the patterns it *received*** (verified while planning S4, and the mechanism the HTTP client relies on): a module with a plain `impl "std/net"` and no clause of its own is governed entirely by whatever its importer wrote on the `impl` line that reached it, and the runtime check uses *those* patterns. So `std/http` carries no policy of its own, and the no-escalation rule only constrains clauses a module actually writes. One consequence for tests: a denial prints the *resolved* path (`/etc/hosts` → `/nix/store/...`), so a fixture must assert on the module name or the granted pattern, never on the path as written.
+
 **Delegation/no-escalation rule**: a module's capability set is *received* from whoever imports it, never self-declared. When module A does `impl "B" with caps(net = [...])`, the resolver requires that grant to be a subset of A's own capability set — a module can delegate less than it has, never more. The root/entry module (`main`) implicitly holds the full set granted by `x.toml` (or by default, everything, until a later milestone adds a way to restrict `main` itself).
 
 **Scope note**: `fs` is the domain with a real implementation first (path/glob allowlist checked against actual file operations); `net`/`process`/`env` are structurally gated (resolution enforcement works) with stub bodies until there's a reason to flesh them out. `time` and `rand` are small enough to implement for real when they land.
@@ -415,7 +417,7 @@ Deferred beyond v1 (explicitly out of scope for now, revisit later): **user-decl
 
 ## Compiler pipeline (per milestone)
 
-This section is the record of what actually happened, and it overrides `syntax&shii.md`'s own milestone deltas wherever those said a feature would land earlier. Milestone numbers here match the commits in `PASSDOWN.md`. Done: M0–M8 and C1 (M9 is a wanted far-future project; `stdlib-roadmap.md` schedules the next work).
+This section is the record of what actually happened, and it overrides `syntax&shii.md`'s own milestone deltas wherever those said a feature would land earlier. Milestone numbers here match the commits in `PASSDOWN.md`. Done: M0–M8 and C1. Next: S1–S7, the stdlib program recorded below. M9 is a wanted far-future project.
 
 **M0 — Scaffold + lexer/parser for the full syntax surface (DONE, `1b616c5`)**
 - Shipped: workspace + `xc build <file.x>` CLI; span-carrying lexer; newline-terminated statements (paren-depth aware, one `Newline` per blank-line run at depth 0 — so a continued expression *must* be wrapped in parens; no trailing-operator continuation was attempted); `val`/`var`; `fun` + `.R: T` + expression bodies; `datac Name(val/var field: T, ...)` with per-field mutability; construction via call syntax `Point(x = 1, y = 2)` (no separate literal grammar, so no struct-literal-vs-block ambiguity exists); named + positional arguments in one call; `print`/`print!` where `print` adds the newline; compound assignment desugared at parse time; `when` desugared to an `if`/`else if`/`else` chain so no later pass ever sees it; `&str` accepted and lowered to plain `str`; AST pretty-printer plus unit tests.
@@ -664,6 +666,305 @@ The plan called this "user-definable owned types, i.e. `Box<T>`-style owners bey
 
 **Fixtures**: `box_basic` (empty/of/get/set/take, a box of a `String`, a nested box, a box of a list, and the pointer-rebind rule), `box_recursive` (a 200-node list: build by prepending, recursive sum and depth, drop, `take`/`set`), `recursive_datac` (a tree through `List<Tree>`, plus a mutually recursive pair), `box_field_take`, and rejected `box_borrow_element`, `datac_self_value`, `list_container_element`, `owned_field_read`; `box_empty_panic` panics at runtime with "Box.get: the box is empty". All four accepted ones are in the AddressSanitizer pass.
 
+**The S-milestones — the stdlib program (S1–S7)**
+
+A second, parallel line, added after M8; M0–M9 and C1 are not renumbered. Everything below is `.x` source in `xc/std/`, an `extern` body in `externs.rs`, and small local compiler changes — a field on two builtin types, entries in the builtins table, one emitted function — which is the shape M6.2/M6.3/M7 already had, and what makes it cheap. Ordering is by dependency, not interest: text you can build is a prerequisite for building an HTTP request, and the `net` vocabulary fix is a prerequisite for any `net` call succeeding at all.
+
+| # | Milestone | Depends on | Payoff |
+| --- | --- | --- | --- |
+| S1 | Text you can build, numbers you can format | — | Programs that *produce* output: format a number, concatenate, sort a list |
+| S2 | `io` + `process` | — (S1 for `read_line`'s buffer path) | **Run a command, read its output** — build scripts, task runners |
+| S3 | `net` for real: gate fix, sockets, DNS, `poll` | — (the gate fix is compiler-side) | Send and receive bytes over TCP on loopback |
+| S4 | HTTP client | S1, S3 | **Fetch a URL and print the body** — the headline payoff |
+| S5 | Maps, fs/OS breadth, real `env` bodies | S1 (join/sort), S2 (`File`) | Config, headers, directories, metadata, temp files |
+| S6 | `Option`/`Result` (language-gated) | M8's neighbourhood | Branchable failures instead of panicking natives |
+| S7 | Concurrency | language features that do not exist | Nothing yet — an analysis plus `poll` |
+
+S2 is the first end-to-end payoff; S4 is the one that was asked for. `S1 → S2 → S3 → S4` is the whole golden path.
+
+**S1 — text you can build, numbers you can format**
+
+*Deliverable*: `String`/`Bytes` grow in place, numbers convert both ways, formatted output exists, lists sort, and a program can fail deliberately. *Gate*: none (`str`, `fmt`, `mem` are ungated modules — but note that "ungated" still means an explicit `impl`; there is no prelude, open item 35).
+
+```x
+impl "std/str"
+impl "std/fmt"
+
+// --- growable buffers: *builtin* methods (compiler work; user code cannot
+// declare a method on a builtin type — probed) ---
+fun mut String.push(ch: char)                    // appends one byte
+fun mut String.push_str(s: &str)                 // appends a borrowed view
+fun mut String.reserve(n: usize)
+fun String.with_capacity(n: usize).R: String     // associated constructor
+fun mut Bytes.append(other: &Bytes)
+fun mut Bytes.push(b: u8)
+fun mut String.clear()
+fun mut Bytes.clear()
+
+// --- concatenation is ordinary X (std/str.x), not a builtin ---
+fun str.concat(a: &str, b: &str).R: String       // no `+` operator; see open item 40
+
+// --- number <-> text ---
+fun str.from_i64(n: i64).R: String
+fun str.from_u64(n: u64).R: String
+fun str.from_f64(x: f64, decimals: i32).R: String    // one extern: snprintf("%.*f")
+fun str.parse_i64(s: &str).R: ParseInt               // datac ParseInt(val ok: bool, val value: i64)
+fun str.parse_u64(s: &str).R: ParseUint
+fun str.parse_f64(s: &str).R: ParseFloat             // one extern: strtod
+fun str.replace(s: &str, from: &str, to: &str).R: String
+fun str.char_at(s: &str, i: usize).R: u32            // codepoint at char index i, 0 past the end
+fun str.byte_index(s: &str, i: usize).R: usize       // byte offset of char i
+
+// --- std/fmt.x (ungated, pure) ---
+fun fmt.int(n: i64).R: String
+fun fmt.uint(n: u64).R: String
+fun fmt.float(x: f64, decimals: i32).R: String
+fun fmt.hex(n: u64).R: String                        // lowercase, no prefix
+fun fmt.pad_left(s: &str, width: usize, fill: char).R: String
+fun fmt.pad_right(s: &str, width: usize, fill: char).R: String
+fun fmt.bytes(b: Bytes).R: String                    // "1f 8b 08", for debugging binary
+
+// --- List additions (builtin methods, monomorphized) ---
+fun mut List.sort()                                  // numeric/bool: value order; String: byte order
+fun mut List.reverse()
+fun List.contains(v: T).R: bool                      // String elements use str.eq, not `==`
+fun List.index_of(v: T).R: i64                       // -1 when absent (a datac would be nicer; open item 42)
+fun List.slice(from: usize, to: usize).R: List<T>    // an owned copy
+fun mut List.insert(i: usize, v: T)
+fun List.remove(i: usize).R: T                       // moves the element out; panics out of range
+
+// --- failing deliberately (`x_panic` already exists in the runtime) ---
+fun panic(msg: &str)                                 // "panic: <msg>" to stderr, exit 1
+fun assert(cond: bool)                               // panics with "assertion failed"
+```
+
+*Compiler work*: a `cap` field on `x_Bytes`/`x_String` plus growth (and the three extern bodies that build those structs field-by-field — `fs/read_raw`, `fs/list_raw`, `path/normalize_raw` — must set it, or a grown buffer silently under-reports capacity); ~8 new builtins; `panic`/`assert` as builtins (the C exists, only the names are missing); `List#sort`/`slice`/`insert`/`remove` in `list_sig` + `write_list`, where monomorphization gives a per-element-kind comparator for free. A new stdlib module needs three plumbing entries (`stdlib.rs::source`, `shipped`, and the file) — `fmt` is ungated by default because it is in no `domain_of` row. No new syntax: `syntax&shii.md` §5 already sketches `push(s: mut String, ch: char)`.
+
+*Risk*: the growth invariant. Every constructor NUL-terminates (`data[len] = 0`) because `String.as_str()` hands that pointer out, so `push` is a `realloc` + re-terminate; miss it once and `as_str()` hands out an unterminated buffer, invisible until a `printf("%s")`. Safety against live views is free from the existing borrow rules (`val v = s.as_str(); s.push('x')` is a conflict) but still deserves its own fixture, because it is the property that makes growing sound here at all. `List<String>.sort`'s comparator must be length-aware, not `strcmp`.
+
+*Tests*: one fixture per area (`stdlib_build`, `stdlib_fmt`, `stdlib_parse`, `stdlib_sort`, `list_slice_insert`), `panic_msg` and `assert_fail` through `assert_fixture_panics` with golden text, rejected `grow_while_borrowed` and `push_to_val_string`, and every allocating one in the ASAN pass — growth is exactly where a leak hides.
+
+**S2 — `io` and `process`: the first real programs**
+
+*Deliverable*: stdin/stdout/stderr as streams, line reading, and running programs with argv, captured output and exit codes. *Gate*: `io` ungated (open item 38); `process` gated on `process`.
+
+```x
+// ---- std/io.x — ungated --------------------------------------------------
+impl "std/mem"
+impl "std/str"
+
+// One concrete type over a file descriptor: the honest answer to "what does a
+// reader/writer abstraction cost without traits and generics". Files, pipes,
+// sockets and stdio are the same thing at POSIX level, so there is one type.
+datac File(val fd: i32)
+
+fun File.is_open().R: bool
+fun File.read(max: usize).R: Bytes                 // one read; empty Bytes at EOF (no Option)
+fun File.read_into(buf: mut Bytes, at: usize).R: usize   // fills buf[at..], returns bytes read, 0 at EOF
+fun File.write(data: Bytes).R: usize
+fun File.write_text(text: String).R: usize
+fun File.flush()
+fun File.close()
+fun mut File.set_nonblocking(on: bool)
+fun File.wait_readable(timeout_ms: u64).R: bool    // poll(2); the event-loop primitive
+fun File.wait_writable(timeout_ms: u64).R: bool
+
+fun io.stdin().R: File
+fun io.stdout().R: File
+fun io.stderr().R: File
+
+datac Line(val ok: bool, val text: String)         // ok = false at EOF
+fun io.read_line().R: Line                         // strips the trailing '\n'
+fun io.read_all().R: Bytes
+fun io.read_lines().R: List<String>
+fun io.eprint(s: &str)
+fun io.eprint_bare(s: &str)
+fun io.print(s: &str)
+fun io.print_bare(s: &str)                         // `print`/`print!` already do these
+
+// Buffered IO is an owned datac, which is also the "no generics" answer.
+datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
+fun io.buf_reader(f: File).R: BufReader
+fun mut BufReader.read_line().R: Line
+fun mut BufReader.read_all().R: Bytes
+
+// ---- std/process.x — gated: process --------------------------------------
+// `program` is a separate argument, not `argv[0]`, because that is what makes
+// the capability check possible: the grant matches one absolute path.
+// Panics: if program is not absolute, or outside the granted capability.
+fun process.run(program: &str, args: List<String>).R: RunResult
+datac RunResult(val code: i32, val out: Bytes, val err: Bytes)
+
+fun process.spawn(program: &str, args: List<String>).R: Child
+datac Child(val pid: i32, val stdin: File, val stdout: File, val stderr: File)
+fun mut Child.wait().R: i32                        // exit code, or 128+signal
+fun Child.kill(signal: i32)
+fun Child.is_running().R: bool
+
+fun process.args().R: List<String>                 // from the runtime's saved argv
+fun process.arg_count().R: usize
+fun process.exit(code: i32)                        // your own process: not a capability
+fun process.getpid().R: i64
+```
+
+*Compiler work*: `int main(int argc, char** argv)` plus two generated globals holding them, and one extern to read them (open item 50). *Risks*: marshalling `List<String>` into a `char* const[]` for `execvp` (the array is `malloc`ed and freed before `exec`, so an ASAN spawn fixture is worth having) — and that extern has to name `x_List__String` explicitly, which is worth a comment next to it; `process.run`'s two-output capture must `poll` both pipes or it deadlocks on a chatty child (document the memory cost: both streams are buffered whole); a process-wide `chdir` is deliberately absent (it makes every grant pattern's meaning depend on mutable global state) — a `spawn_in(dir, …)` later, if a real program needs it. **NixOS note**: `/bin/echo`, `/bin/cat` and `/bin/true` do not exist on this machine, so process tests use `/bin/sh` with argv or a helper binary the harness builds.
+
+*Tests*: a new harness helper `assert_fixture_runs_with_stdin(name, stdin, expected)` (`Stdio::piped()`) — the only way to test `io`, ~25 lines; `process` as a project with the call inside a granted *library* module (`/bin/sh -c "printf hi"`, `-c "exit 3"`, `-c "printf e >&2"`, a spawn+stdin case), plus the first *process* denial pair (a module granted `process = ["/bin/sh"]` calling it, and one granted `["/bin/true"]` calling it) through `assert_project_denied_at_runtime`; a non-shell argv case using a helper `.x` fixture whose path the program reads from a scratch file.
+
+**S3 — `net` for real: the gate fix, sockets, DNS, `poll`**
+
+*Deliverable*: `net.connect`/`send`/`recv`/`close`, a listener, DNS, and a **working `net` capability vocabulary**. Open item 32 is the first task, and it is compiler work rather than stdlib work.
+
+| Layer | Today | Required |
+| --- | --- | --- |
+| Pattern vocabulary | `patterns_are_paths("net") == true`, so patterns must be absolute paths and `api.example.com:443` is rejected | `host`, `host:port`, `*.host`, `*:port`, `*`; the port numeric or `*`; no `/` |
+| Validation | path rules (`..`, `**` legality) | a `net` validator: split on the last `:`, validate the host glob and the port |
+| Runtime matcher | `x_cap_check_path` → `x_path_normalize` denies every non-absolute input, so every host is denied | a new `x_cap_check_hostport` that formats `host:port` and glob-matches it, with `*` not crossing `.` or `:` |
+| Checked arguments | the first `str` argument only | the host *and* the port, so `checked_args` needs the port index for `net` |
+| Entry module wildcard | `/**` | `*` (name vocabulary), or the entry module's own `net` calls are denied |
+| `pattern_covered` | `/**`-prefix rule | identical, or a held `*`; under-granting is fine |
+
+```x
+// ---- std/net.x — gated: net ----------------------------------------------
+impl "std/io"
+impl "std/mem"
+
+datac Socket(val fd: i32)
+
+// Panics: if the host does not resolve, the connect fails, or host:port is
+// outside the granted capability.
+fun net.connect(host: &str, port: u16).R: Socket
+// Panics: if the bind fails, or the port is outside the granted capability.
+fun net.listen(port: u16).R: Listener
+datac Listener(val fd: i32)
+
+fun net.accept(l: Listener).R: Socket
+fun net.close(s: Socket)
+fun net.shutdown_write(s: Socket)
+
+fun net.send(s: Socket, data: Bytes).R: usize       // may be short; send_all is the common case
+fun net.send_all(s: Socket, data: Bytes)
+fun net.send_text(s: Socket, text: &str)
+fun net.recv(s: Socket, max: usize).R: Bytes        // one read, empty at EOF
+fun net.recv_into(s: Socket, buf: mut Bytes, at: usize).R: usize
+
+fun Socket.wait_readable(timeout_ms: u64).R: bool   // one thread can serve many sockets
+fun Socket.wait_writable(timeout_ms: u64).R: bool
+fun mut Socket.set_timeout(ms: u64)                 // SO_RCVTIMEO/SO_SNDTIMEO
+
+fun Listener.port().R: u16                          // getsockname: bind 0, learn the port
+fun Socket.peer_addr().R: String
+fun net.resolve(host: &str).R: List<String>         // dotted-quad / v6 strings, not a getaddrinfo blob
+```
+
+*Design rule to keep*: **the check matches the host as the code wrote it** — no DNS before matching (`getaddrinfo` happens inside the call, after the check), so a grant for `example.com` does not cover `net.connect("93.184.216.34", 80)`. That is the same rule `fs` follows, for the opposite reason: `fs` resolves *symlinks* before matching because a link is not a name the author chose.
+
+*Risks*: `recv` returning fresh fixed-size `Bytes` cannot express "read exactly `Content-Length`" without growth, which is why `recv_into` sits next to it (chunked encoding has no such bound and is deferred); a readiness *set* the user mutates while iterating is the classic borrow fight (no `for`, and `val s = list.get(i)` borrows the list for the block) — expect the first event loop to be ugly, and that is open item 41; `getaddrinfo`'s result list has to be freed inside the extern, DNS timeouts are uncontrollable (blocking) and documented; `connect` should try the address list in order so both `::1` and `127.0.0.1` work.
+
+*Ordering inside S3*: (1) the vocabulary fix, with a test that fails before it (grant `net = ["127.0.0.1:*"]`, call `net.connect("127.0.0.1", p)`); (2) connect/send/recv/close + a loopback self-test; (3) listen/accept/port; (4) `poll` readiness; (5) resolve and timeouts. One commit each.
+
+*Tests*: one process, loopback only, no fixed ports: `net.listen(0)` → `Listener.port()` → `connect("127.0.0.1", port)` → `accept` → exchange bytes. The grant shape (`net = ["127.0.0.1:*"]`) is only expressible *after* the fix, so that fixture doubles as the vocabulary regression test; a denial case connects to `localhost` under a grant for `127.0.0.1:*` (denied, because the checked string is the host *as written*). Never the internet, never a fixed port.
+
+**S4 — HTTP client (the payoff)**
+
+*Deliverable*: `http.get("http://host/path")` returns a parsed response; redirects, timeouts and header lookup work; the body is `Bytes`. *Gate*: `net` (the module holds it, delegated by the importer — see the capability section for how a library module is governed by the patterns it received).
+
+```x
+// ---- std/http.x — ungated module that holds `net` ------------------------
+// The importer delegates: impl "std/http" with caps(net = ["api.example.com:443"])
+impl "std/net"
+impl "std/str"
+impl "std/fmt"
+
+datac Url(val scheme: String, val host: String, val port: u16, val path: String)
+// Panics: if the URL has no scheme or host, or the scheme is not supported.
+fun http.parse_url(s: &str).R: Url
+
+datac Header(val name: String, val value: String)
+datac Response(val status: i32, val headers: List<Header>, val body: Bytes)
+fun Response.header(name: &str).R: &str            // "" when absent (no Option)
+fun Response.has_header(name: &str).R: bool
+fun Response.is_ok().R: bool                       // 200..299
+fun Response.text().R: String                      // panics on invalid utf-8
+
+datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
+datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
+// Panics: if the connection fails, the capability denies the host, or the
+// response is malformed. Follows up to `max_redirects` redirects.
+fun Client.send(req: Request).R: Response
+fun http.get(url: &str).R: Response                // the one-liner, default client
+fun http.post_text(url: &str, body: &str, content_type: &str).R: Response
+fun http.default_client().R: Client
+```
+
+*Compiler work*: none. That is the point of doing S1 and S3 first.
+
+*Risks*: parsing without a view type allocates — a header line's *name* prefix is not expressible as a view (open item 22), so a 20-header response allocates ~40 `String`s; acceptable at v1 scale, and the reason a length-carrying view is the highest-value language item after generics (open item 44). Body reading has three cases: `Content-Length` (`recv_into` into a pre-sized buffer), `Connection: close` (read to EOF, appending — needs S1's growth), and `Transfer-Encoding: chunked` (deferred, and it must be an explicit panic naming chunked as unsupported, not a silent empty body). Redirects are where the capability model gets *good*: a redirect to another host is a request the code did not name, so it re-runs the connect path and panics unless the grant covers the new host — that is the feature working. No keep-alive, no pooling: one request, one socket, closed after.
+
+*Tests*: the canned loopback server in the same program (server writes a fixed `HTTP/1.1 200 OK` with `Content-Length: 5` and `hello`), asserting status, header lookup present/absent, `text()` and `body.len()`; a 301 to a second loopback port the grant does *not* cover → `assert_project_denied_at_runtime`; a `404` → `is_ok()` false but a normal return; a timeout case with a peer that never writes, through `Socket.set_timeout(100)`, bounded by `time.sleep_ms`. Loopback only, always.
+
+**S5 — maps, fs/OS breadth, and the real `env`**
+
+*Deliverable*: a keyed container, the filesystem functions that are cheap now that `List` exists, and `env` bodies that are not stubs. *Gate*: none for `Map`; `fs`; `env`.
+
+```x
+// ---- Map: a compiler builtin, `Ty::Map(Box<Ty>)`, String keys -------------
+// Same monomorphization as List: one C struct plus one function set per value
+// type. Keys are String because hashing a key needs its bytes, and a generic
+// key needs real generics.
+fun Map.new().R: Map<V>                       // value type from the binding: var m: Map<i64> = Map.new()
+fun Map.len().R: usize
+fun Map.is_empty().R: bool
+fun Map.has(key: &str).R: bool
+fun Map.get(key: &str).R: V                   // a copy when V is Copy...
+fun Map.get(key: &str).R: &V                  // ...a borrow when V owns memory; panics when absent
+fun Map.get_or(key: &str, fallback: V).R: V
+fun mut Map.insert(key: &str, v: V)           // copies the key, moves the value in
+fun mut Map.remove(key: &str).R: V            // moves the value out; panics when absent
+fun mut Map.clear()
+fun Map.keys().R: List<String>                // insertion order, not hash order
+fun Map.values().R: List<V>
+
+// ---- fs breadth (X over one new extern each) -----------------------------
+impl "std/io"
+impl "std/fs" with caps(fs = ["/var/lib/app/**"])
+
+fun fs.mkdir_all(path: &str)                   // split on '/', mkdir each prefix
+fun fs.remove_all(path: &str)                  // recursive (`caps_list`'s clear, once join exists)
+fun fs.walk(path: &str).R: List<String>        // recursive names, joined with path.join
+fun fs.copy(from: &str, to: &str)              // one extern: sendfile(2)
+fun fs.touch(path: &str)
+fun fs.open(path: &str, mode: &str).R: File     // "r", "w", "a", "rw"; std/io's File
+fun fs.read_lines(path: &str).R: List<String>   // split of read_text; no extern
+fun fs.temp_path(prefix: &str).R: String        // mkstemp; the file is created
+datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, val is_file: bool)
+fun fs.metadata(path: &str).R: Metadata
+
+// ---- path polish ---------------------------------------------------------
+fun path.stem(s: &str).R: &str
+fun path.has_extension(s: &str, ext: &str).R: bool
+fun path.join_all(parts: List<String>).R: String
+fun path.split(s: &str).R: List<String>
+
+// ---- env, real bodies (gated: env, variable-name allowlist) --------------
+fun env.has(name: &str).R: bool
+fun env.get(name: &str).R: String               // "" when unset (no Option)
+fun env.set(name: &str, value: &str)
+fun env.unset(name: &str)
+```
+
+*Cost and notes*: `Map` is the second builtin generic and deliberately the cheap one — `String` keys, monomorphized value type, FNV-1a over the key's bytes in the runtime, open addressing with tombstones: a `Ty::Map`, a `map_sig` next to `list_sig`, a `write_map` next to `write_list`, a `Map#` arm in the call-naming switch, and a drop that frees each key, then each value if it needs it, then the table. `Map<Map<i32>>`/`Map<List<i32>>` are as impossible as `List<List<i32>>`, by the same element check. `env.names()` is deliberately absent: listing the environment is reading *all* of it, which a grant of `["PATH"]` should not permit (if it ever ships, it is the one function whose check is "must hold `*`"). `fs.copy` is the only place `sendfile` is genuinely better than a read/write loop — a 20 GiB copy would double the memory, and the repo already benchmarks a 20 GiB write. `fs.walk` needs `path.join` per entry (20 lines of X, inheriting `fs.list`'s sorted order, which is what keeps the test deterministic). `fs.remove_all` is already proven in the repo: `caps_list`'s recursive `clear` does it in ~15 X lines, and after S1 it is 8.
+
+*Tests*: `Map` fixtures with scalar (`Map<i64>`) and owned (`Map<String>`) values, asserting insert/get/overwrite/remove/`keys()` order/len plus a missing-key panic, with the `Map<String>` case in the ASAN pass; an fs project with a grant on a scratch directory that `mkdir_all`s three deep, writes, `walk`s, checks `metadata`, copies, `remove_all`s and asserts the directory is gone (the `caps_list` pattern, extended, with a harness-side cleanup as belt and braces); an `env` project granted `env = ["PATH"]` asserting `has`/`get` are non-empty, plus a denial for `HOME` — the first real `env` behaviour test, since `caps_env` today only proves the stub panics.
+
+**S6 — `Option`/`Result`, when tagged unions exist**
+
+Not stdlib work, and pretending otherwise would repeat the mistake decision 2 already warns about. What it needs concretely: a tagged-union representation (`datac` cannot express one — every field exists, there is no tag), a way to destroy a value and take another out without leaking (so patterns on constructors, not just booleans), and generics for the payload; three language features, each with parser/type/borrowck/codegen surface. What is painful today is composition, not correctness: no `?`, no `if let`, no `map`, so nested fallible calls become nested `if`s — ergonomics, not soundness. **The cheap thing to do now, and the reason to record it**: standardize the error-`datac` convention (`ok` first; a value field named for its type — `value`, `text`, `bytes`, `at`; a `message: String` when the failure is textual), document it in the naming section, and add errno + `strerror` to panicking syscall paths (open item 47) so the eventual migration to `Result<T, E>` is mechanical: each error datac becomes a `Result` with the same field names inside `Ok`/`Err`, old name kept as a wrapper.
+
+**S7 — concurrency: what is possible now, and what is not**
+
+Deliverable: an answer, plus `poll`. What works without new language features — **multi-process** (`process.spawn` is real parallelism and real isolation, and it is the honest v1 answer), **single-threaded event loops** (`poll` readiness on `File`/`Socket` + `time.sleep_ms` is enough for a server at this scale), and the existing cleanup points (`atexit` + scope drops; there is no `defer`, no cancellation, and a panic takes the process since `x_panic` calls `exit(1)`). What a thread would need, and why each piece is missing: a *function value* to run (no first-class functions anywhere in the parser), owned data to hand to it (open item 1: there is no move-taking parameter spelling, so a spawned thread could only borrow something whose lifetime the checker cannot relate to it), a rule about `&mut` crossing the boundary (lexical, function-local lifetimes), and a per-thread frame/cleanup story (drops are keyed to lexical blocks in one function). Conclusion: **no threads until function values *and* move-taking parameters exist** — a language milestone, not a stdlib one — and `async`/`await` needs those plus a state-machine transform in codegen. S7 is therefore written down as "processes + `poll`" and revisited when a real program demands more.
+
 **M9 (far future) — own backend: compile X to machine code, not to C**
 
 Stated as a goal in its own right: *X should stop being C with a mask*. Nothing about the language's identity lives in the backend — the differentiators are the capability system and the move/borrow model — so this is not about making X faster. It is about X not depending on a C compiler to exist, and about fixing the one thing that is actually bad today: **compile time is ~95% somebody else's fixed overhead.**
@@ -745,7 +1046,10 @@ Two tiers:
 impl "std/fs" with caps(fs = ["/var/log/myapp/**"])
 impl "std/rand"
 impl "std/fs"          // legal but useless: fs.* will not resolve
+impl "std/fs" with caps(fs = ["/tmp/**"], env = ["*"])   // several clauses: legal, verified
 ```
+
+Two things this sketch used to imply that are not true. **"Prelude" means ungated, not in scope**: every namespace — including `std/str` — needs an explicit `impl` (the repo's own `caps_list` project needed `impl "std/str"` before `str.join` resolved), and `panic`/`assert` are not builtins at all (open item 35). And **`impl "std/rand"` with no clause resolves only because it is written in the entry module**, which holds every domain; the same line in a library module would fail unless its importer delegated `rand` to it (open item 18). The usable distinction is *ungated* vs *gated*.
 
 Reading a clock and reading entropy are **capabilities**, not ambient services — the same classification WASI uses (`wasi:clocks`, `wasi:random`). A program that cannot observe time or randomness gets reproducibility for free.
 
@@ -849,9 +1153,15 @@ Blocks that stayed blocked on these two types, and no longer are: returning *N* 
 | 1 | `Bytes` + `String` + `mem` (**shipped in M6.1/M6.2**); allocation-returning `path` and `str` functions (**M6.2** for `str.to_upper`/`to_lower`/`repeat` and `path.join`) | M6 |
 | 2 | `fs` **shipped** (M7); `env` gated with stub bodies (M7); `io` line reads and `process`/`net` not shipped | M7 |
 | 3 | `time`, `rand` (both gated, both real) — **shipped** (M7) | M7 |
-| 4 | ~~collections~~ (**shipped as C1**: `List<T>`, `str.split`, `str.join`, `fs.list`), `fmt`-style formatting, `process.run(argv)`, `env.args`, growable strings, `String.concat` | post-v1 (C1 done) |
+| 4 | ~~collections~~ (**shipped as C1**: `List<T>`, `str.split`, `str.join`, `fs.list`) | C1 (done) |
+| 5 (S1) | growable `String`/`Bytes` + `str.concat`/`from_i64`/`from_f64`/`parse_*` + `replace`/`char_at`; `std/fmt`; `List` sort/reverse/slice/insert/remove/contains; `panic`/`assert` | **S1** |
+| 6 (S2) | `io` (`File`, `Line`, `BufReader`, streams, `read_line`/`read_all`/`read_lines`); `process` (`run`/`spawn`/`args`/`exit`/`getpid`) | **S2** |
+| 7 (S3) | `net` for real (sockets, listener, DNS, `poll` readiness, timeouts) + the capability vocabulary fix | **S3** |
+| 8 (S4) | `http` (client, redirects, timeouts, header lookup); `https` is S4b | **S4** |
+| 9 (S5) | `Map<V>`; `fs` breadth (`mkdir_all`/`remove_all`/`walk`/`copy`/`open`/`metadata`/`temp_path`/`read_lines`); `path` polish; real `env` bodies | **S5** |
+| 10 (S6+) | `Option`/`Result` (language-gated), generic containers, TLS, a length-carrying view, `for`, threads | blocked on language work |
 
-Tier 1 strictly precedes tier 2. A compiler that can `fs.read` must already have working move-and-drop for `Bytes` — which it now does.
+Tier 1 strictly precedes tier 2. A compiler that can `fs.read` must already have working move-and-drop for `Bytes` — which it now does. In the S tiers, S1 → S2 → S3 → S4 is a strict chain (text you can build, then streams and programs, then sockets, then HTTP); S5's `Map` is independent of all of them, and the fs half of S5 only wants S1 and S2 for convenience.
 
 ### Failure model
 
@@ -1003,49 +1313,178 @@ No `try_` variants — the out-param family was rejected in decision 2. A recove
 
 Glob metacharacters inside a granted path *argument* are literal — `fs.read("*.txt")` reads a file named `*.txt`.
 
-#### io / env / process / net / time / rand
+#### io (ungated; the full sketch is S2's)
 
 ```x
-// io — ungated
 fun io.print(s: &str)
-fun io.print_bare(s: &str)
+fun io.print_bare(s: &str)               // `print`/`print!` already do these two
 fun io.eprint(s: &str)
-fun io.read_line().R: String        // needs String
-fun io.flush()
+fun io.eprint_bare(s: &str)
+fun io.stdin().R: File                   // one stream type over an fd; see S2
+fun io.stdout().R: File
+fun io.stderr().R: File
+datac Line(val ok: bool, val text: String)   // ok = false at EOF
+fun io.read_line().R: Line                 // needs String, and a buffer: S2
+fun io.read_all().R: Bytes
+fun io.read_lines().R: List<String>
+datac BufReader(val file: File, var buf: Bytes, var start: usize, var end: usize)
+```
 
-// env — gated: env, variable-name allowlist
-fun env.has(name: &str).R: bool
-fun env.get(name: &str).R: String          // needs String
-fun env.set(name: &str, value: &str)
-fun env.arg_count().R: usize               // escape hatch, no slices needed
-fun env.arg(i: usize).R: String
+`io` is ungated on purpose (open item 38): writing to your own stdout, sleeping and exiting are not authority over anything shared, and the WASI-flavoured alternative — gating stdin — can arrive with `x.toml [caps]` when `main` itself becomes restrictable (open item 18). Today `stdin` is **unreadable**: `fs.read("/dev/stdin")` panics with `cannot seek` on a pipe, so `io` has to be a streaming API rather than wrappers over `fs`.
 
-// process — gated: process
-fun process.exit(code: i32).R: Unit        // ungated in spirit; keep ungated
+#### fmt (ungated, pure)
+
+```x
+fun fmt.int(n: i64).R: String
+fun fmt.uint(n: u64).R: String
+fun fmt.float(x: f64, decimals: i32).R: String    // one extern: snprintf("%.*f")
+fun fmt.hex(n: u64).R: String                     // lowercase, no prefix
+fun fmt.pad_left(s: &str, width: usize, fill: char).R: String
+fun fmt.pad_right(s: &str, width: usize, fill: char).R: String
+fun fmt.bytes(b: Bytes).R: String                 // "1f 8b 08" — the first debugging printer
+```
+
+`fmt` is S1 and has no gate: it is arithmetic and byte shuffling. Variadic formatting is explicitly not in scope — it needs generics or macros, neither of which exists (open item 43 for concatenation, and the non-goals below).
+
+#### Map (a compiler builtin, `String` keys)
+
+```x
+fun Map.new().R: Map<V>
+fun Map.len().R: usize
+fun Map.is_empty().R: bool
+fun Map.has(key: &str).R: bool
+fun Map.get(key: &str).R: V          // a copy when V is Copy...
+fun Map.get(key: &str).R: &V         // ...a borrow when V owns memory; panics when absent
+fun Map.get_or(key: &str, fallback: V).R: V
+fun mut Map.insert(key: &str, v: V)
+fun mut Map.remove(key: &str).R: V
+fun mut Map.clear()
+fun Map.keys().R: List<String>       // insertion order, not hash order
+fun Map.values().R: List<V>
+```
+
+S5's container, and deliberately the cheap one: `String` keys only, monomorphized value type, FNV-1a over the key's bytes, open addressing with tombstones. Keys are `String` because hashing needs the key's *bytes*, and a generic key needs real generics (open item 34). `Map<Map<i32>>` is as impossible as `List<List<i32>>`. There is no `Set`: `Map<bool>` covers it, and a third monomorphized generic is not worth it (open item 41).
+
+#### http (S4 — the payoff)
+
+```x
+// ungated module that holds `net`; the importer's grant governs it
+datac Url(val scheme: String, val host: String, val port: u16, val path: String)
+fun http.parse_url(s: &str).R: Url               // Panics: no scheme/host, or unsupported scheme
+datac Header(val name: String, val value: String)
+datac Response(val status: i32, val headers: List<Header>, val body: Bytes)
+fun Response.header(name: &str).R: &str          // "" when absent (no Option)
+fun Response.has_header(name: &str).R: bool
+fun Response.is_ok().R: bool                     // 200..299
+fun Response.text().R: String                    // Panics: invalid utf-8
+datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
+datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
+fun Client.send(req: Request).R: Response
+fun http.get(url: &str).R: Response
+fun http.post_text(url: &str, body: &str, content_type: &str).R: Response
+fun http.default_client().R: Client
+```
+
+Three body-length cases: `Content-Length` (a pre-sized buffer + `recv_into`), `Connection: close` (read to EOF, appending), and `Transfer-Encoding: chunked` (**deferred, and an explicit panic** — a silent empty body would be the worst outcome). Redirects re-run the connect path, so a redirect to an ungranted host is denied: the capability model working, not a limitation. No keep-alive, no pooling, no gzip, no HTTP/2, no cookies, no proxy. `https` is S4b and is a dependency decision (open item 37).
+
+#### process (gated: process)
+
+```x
+// `program` is separate from `args` because that is what makes the grant
+// matchable: one absolute path, and argv stays a list.
+fun process.run(program: &str, args: List<String>).R: RunResult
+datac RunResult(val code: i32, val out: Bytes, val err: Bytes)
+fun process.spawn(program: &str, args: List<String>).R: Child
+datac Child(val pid: i32, val stdin: File, val stdout: File, val stderr: File)
+fun mut Child.wait().R: i32                  // exit code, or 128+signal
+fun Child.kill(signal: i32)
+fun Child.is_running().R: bool
+fun process.args().R: List<String>           // ungated: your own invocation (open item 39)
+fun process.arg_count().R: usize
+fun process.exit(code: i32)
 fun process.getpid().R: i64
-fun process.run_shell(cmd: &str).R: i32    // gated; shell string, documented as injection-prone
-// process.run(argv) blocked until slices exist
+```
 
-// net — gated: net, host:port allowlist
-fun net.connect(host: &str, port: u16).R: Socket
-fun net.close(s: mut Socket)
-fun net.send(s: Socket, data: Bytes).R: usize
-fun net.recv(s: Socket, max: usize).R: Bytes
-fun net.listen(port: u16).R: Listener      // needs an accept loop -> deferred
-// TLS variants deferred
+There is **no `run_shell`**: the string-handed-to-a-shell form the earlier sketch pencilled in is gone, because a shell string cannot be checked against a pattern and is injection-prone by construction. `run`/`spawn` take the program and its argv separately. No `chdir` either — a process-wide cwd makes every grant pattern's meaning depend on mutable global state; a `spawn_in(dir, …)` can come later, since a child's cwd affects only the child. `process.args()` reads argv the runtime stashed at the top of `main` (open item 50); `env.args`/`env.arg` are dropped from the sketch — argv is your own invocation, not the environment's authority.
 
-// time — gated: time for clocks, ungated for sleeping
+#### net (gated: net, `host[:port]` allowlist)
+
+```x
+datac Socket(val fd: i32)
+fun net.connect(host: &str, port: u16).R: Socket   // Panics: resolution, connect, or the grant
+fun net.listen(port: u16).R: Listener
+datac Listener(val fd: i32)
+fun net.accept(l: Listener).R: Socket
+fun net.close(s: Socket)
+fun net.shutdown_write(s: Socket)
+fun net.send(s: Socket, data: Bytes).R: usize      // may be short; send_all is the common case
+fun net.send_all(s: Socket, data: Bytes)
+fun net.send_text(s: Socket, text: &str)
+fun net.recv(s: Socket, max: usize).R: Bytes       // one read, empty at EOF
+fun net.recv_into(s: Socket, buf: mut Bytes, at: usize).R: usize
+fun Socket.wait_readable(timeout_ms: u64).R: bool  // one thread can serve many sockets
+fun Socket.wait_writable(timeout_ms: u64).R: bool
+fun mut Socket.set_timeout(ms: u64)
+fun Listener.port().R: u16                         // bind 0, learn the port (testability)
+fun Socket.peer_addr().R: String
+fun net.resolve(host: &str).R: List<String>
+```
+
+The pattern vocabulary is `host`, `host:port`, `*.host`, `*:port`, `*` — **not** the absolute-path form this file used to print, which the compiler rejects outright (open item 32). The check matches the host **exactly as the code wrote it**, with no DNS before matching, so a grant for `example.com` does not cover `net.connect("93.184.216.34", 80)`. `recv` returning fresh `Bytes` cannot express "read exactly N bytes" without growth, which is why `recv_into` is right next to it. TLS variants are deferred with `https` (open item 37).
+
+#### time / rand (gated: time, rand)
+
+```x
 fun time.now_unix().R: i64
 fun time.now_mono_ns().R: i64
-fun time.sleep_ms(ms: u64)
-
-// rand — gated: rand
+fun time.sleep_ms(ms: u64)          // lives in gated std/time today, so sleeping needs a grant (item 45)
 fun rand.u64().R: u64
 fun rand.below(n: u64).R: u64
 fun rand.bytes(n: usize).R: Bytes
 ```
 
-`process.run_shell` is the only v1 path to running a program and it is a string handed to a shell. It is gated, it is documented as injection-prone, and it is replaced by the argv form the moment slices exist. Do not add `exec`-style variants that bypass the `process` grant.
+Both are real and both are gated; sleeping is ungated "in spirit" per this file's classification (sleeping is not authority over anything shared) but it lives in `std/time`, so a *library* module needs the grant to reach it — recorded as open item 45 rather than silently fixed, since moving it means a new module boundary.
+
+#### env (gated: env, variable-name allowlist)
+
+```x
+fun env.has(name: &str).R: bool
+fun env.get(name: &str).R: String      // "" when unset (no Option)
+fun env.set(name: &str, value: &str)
+fun env.unset(name: &str)
+```
+
+S5 gives these real bodies; today they are the worked example of a structurally gated stub (the domain, the grant and the name check are real, the bodies panic). `env.names()` is deliberately not in the sketch: listing the environment reads *all* of it, which a grant of `["PATH"]` should not permit.
+
+### What would make X genuinely useful for real programs
+
+Ranked by how much the absence hurts, with the shortest path. "Pain" is the question "could I write a program I would actually want to run?"
+
+1. **Text you can build** (`String.push`/`concat`, `str.from_i64`, `fmt.float`) — every program that produces output hits it, and the only workaround is a byte loop (`str.to_upper` is one). *High, constant.* S1.
+2. **stdin/stdout/stderr as streams** (`io`) — reading input is impossible today; a language without stdin cannot be a filter or an interactive tool. *High, structural.* S2.
+3. **Running programs** (`process.run`/`spawn` + argv) — automating anything real means calling other tools, and it is the only concurrency available. *High.* S2.
+4. **`panic`/`assert`** — a program that cannot fail deliberately cannot be tested or guard an invariant. *Moderate, embarrassing.* S1, an afternoon.
+5. **The `net` capability fix** — not a feature gap but a headline-feature gap: the documented pattern form is rejected and every host would be denied. A domain that cannot be used is worse than one that does not exist. *High for credibility, zero for today's fixtures.* S3, first task.
+6. **TCP** (`net.connect`/`send`/`recv`) — client networking unlocks APIs, sockets, and the HTTP client. *High, blocked on 5.* S3.
+7. **HTTP client** — the stated goal, and the payoff. *High in intent.* S4, most of the work being parsing and the three body-length cases.
+8. **A keyed container** (`Map<String, V>`) — today a lookup is a linear scan over `List<String>`. *Moderate.* S5.
+9. **Being able to *see* your data** — `print` rejects a `datac` and a `List` (both probed), so there is no debug printer and nothing in the stdlib substitutes; `fmt.bytes` is the first step, and a generated per-`datac` debug function the honest fix. *Moderate, and it makes debugging everything else worse.* S1 if it has room.
+10. **`fs` breadth** (`mkdir_all`, `remove_all`, `walk`, metadata, temp files) — cheap now that `List` exists; mostly an afternoon of X, and the first three could ship today. *Low pain, high frequency.* S5.
+11. **`env`** — the shape is proven; the bodies are one extern each. *Low.* S5.
+12. **`Option`/`Result`, views, threads** — real, deferred, not blocking anything. *Low today, rising.* S6/S7 and open items 44/46.
+
+Bluntly: **real** gaps are 1, 2, 3 and 6 (and 5 as a precondition for 6) — without them X cannot replace a shell script, which is the lowest bar there is. **Real but not blocking**: 8, 9, 10, 11. **Tolerable**: 12 — the error-`datac` convention genuinely works, and the `for`-loop gap is ugly (`while` + index), not impossible. **Toy gaps left alone on purpose**: a big stdlib — `json`, `regex`, `log`, `cli`, a test framework are all downstream of views/generics/collections and would each be rewritten once those land. Write them after S5, not before.
+
+### Non-goals for the S-milestones
+
+- **TLS/`https` inside S4.** S4b, because the dependency decision is the owner's (open item 37). Hand-rolled TLS is never in scope.
+- **`async`/`await`, green threads, thread pools.** Blocked on function values and move-taking parameters (S7); the C backend would also need a state-machine transform, which is M9-shaped work.
+- **JSON, `regex`, `log`, `cli` parsing, a test framework, variadic `fmt`, `xc fmt`.** All downstream of S1–S5, and each would be rewritten once views/generics/collections land.
+- **HTTP servers beyond a minimal one, HTTP/2, WebSockets, gzip/brotli, cookies, proxies, connection pooling.** The minimal server exists to test the client and to prove `poll`.
+- **Generic containers and `Option`/`Result`.** M8's neighbourhood; `Map<V>` is the deliberate stopgap.
+- **Grapheme-aware Unicode, case folding, normalization.** Tables and algorithms out of proportion to the value here; the scope is codepoint-level (`str.char_at`, `str.byte_index`), ASCII-only case ops, documented (open item 48).
+- **An arena/bump allocator, `defer`, custom allocators.** Arena without views is a copying allocator; `defer` needs syntax the authority file does not have, and the drop plan already covers scope exit.
+- **Third-party dependencies, a package registry, a separately versioned stdlib.** Decision 3 stands; TLS is the one place "system library" has to be distinguished from "third-party package" (open item 37).
 
 ### Distribution and implementation strategy
 
@@ -1095,6 +1534,18 @@ Details:
 | `extern` declarations with compiler-supplied bodies | stdlib written in X | Small parser surface, new codegen path | M6.2 (done) |
 | Argument-type overloading, stdlib-only | `math.abs/min/max/clamp` across numeric types | Medium: overload resolution in `infer.rs`; kept stdlib-only to avoid user-facing complexity | M6.3 (done) |
 | `u8`, `u16`, `usize`, `isize` | byte buffers, indices, `Bytes.len` | Small; `usize`/`isize` needed regardless for indexing | M6.1 (done) |
+| Growable `Bytes`/`String` (`cap` + `push`/`append`/`reserve`) | S1, S4, S5; every program that builds text | compiler builtin: a `cap` field in `RUNTIME` (and the 3 extern bodies that build those structs field-by-field), ~8 new builtins | small–medium — S1 (`codegen_c::RUNTIME`, `infer::BUILTINS`) |
+| `panic(msg)` / `assert(cond)` | S1; any program with a deliberate failure | compiler builtin: the C exists (`x_panic`), only the names are missing | small — S1 |
+| `List#sort`/`reverse`/`slice`/`insert`/`remove` | S1, S5; deterministic output | compiler builtin, one comparator per element kind (monomorphization makes this nearly free) | small–medium — S1 |
+| `main(argc, argv)` + saved argv globals | S2 (`process.args`) | compiler codegen: change the emitted signature, stash the two values, one extern to read them | small — S2 |
+| `Map<V>` with `String` keys | S5; headers, config, counters | compiler builtin generic — the second one, ≈ C1's cost (`Ty::Map`, `map_sig`, `write_map`, drop) | medium — S5 |
+| `net` capability vocabulary (`host[:port]`, matcher, checked args) | S3, S4 | compiler: `stdlib.rs`, `resolve.rs::validate_cap_pattern`/`pattern_covered`, a new emitted `x_cap_check_hostport` | medium — S3, and a *bug fix* (open item 32) |
+| `poll` readiness | S3, S5 (single-threaded servers) | extern only | small — S3 |
+| errno + `strerror` in panic messages | S2/S5 diagnostics | runtime + builtin (`x_panic_errno`) | small — S6's cheap part (open item 47) |
+| TLS for `https` | S4b | a dependency decision *then* externs (`-lssl`/`-lcrypto`, or the system's `libtls`) | large-ish: the first real link dependency — open item 37 |
+| A length-carrying borrowed view (`&[u8]`-shaped) | zero-copy parsing (S4/S5), `String.slice`, arena allocation; collapses open items 22 and 29 | language + *syntax*: a new type with pointer+length, allowed as a field/param/return; needs a spelling agreed with `syntax&shii.md` §1/§13 | large — open item 44 |
+| `for` loop / iteration | every list walk in S1–S5 | syntax + a parser desugar to `while` (the pattern `when` and compound assignment already use) | small, but the authority file must gain it (§10) — open item 27 |
+| Function values + move-taking parameters | S7 (threads) | language: parser/types/borrowck/codegen | large — S7 records why threads wait for exactly these |
 | Type parameters (a function over any `List<T>`) | `process.run(argv)`, `env.args`, generic containers, `List` *of* `List` | Large — the whole generics dimension | M8's neighbourhood, post-v1 |
 | `Option`/`Result` + generics | replaces error `datac`s | Large | post-v1 |
 
@@ -1105,6 +1556,8 @@ Details:
 - Capability tests are the ones that matter, and **as shipped (M7)** every one of them exists: a granted path reads a file (`caps_granted`); an ungranted reference is a resolution error (`caps_ungranted`); an in-grant path writes, renames, sizes and removes (`caps_write`); an out-of-grant path panics at runtime (`caps_denied`); a symlink inside the grant pointing outside it is denied after resolution (`caps_symlink`); a narrower grant cannot be over-delegated to a sub-import (`caps_escalation`); a `..` pattern is rejected at the `impl` line (`caps_bad_pattern`). Still missing: a table of *which* of `fs.rename`'s two paths is checked — the code checks both by construction (`checked_args` returns every `str` argument for `fs`), but nothing exercises the negative case with only one path granted.
 - Glob table-driven test: patterns × paths × expected verdict, as data, so the matcher is tested without touching a filesystem.
 - Golden files for every `Panics:` message, so error text does not drift.
+- **Harness additions the S-milestones need, in order of cost**: (1) `assert_fixture_runs_with_stdin(name, stdin_bytes, expected)` — `stdin(Stdio::piped())`, ~25 lines, and the only way to test `io`; (2) reuse of `assert_project_denied_at_runtime` for `process`/`net`/`env` denials — the helper exists, the work is writing the two-module projects; (3) a background-server helper (spawn the compiled binary, poll with bounded retry, kill on drop) — only for a server test, not for S4's client tests, which can listen, connect to themselves, serve a canned response and be the client in one process; (4) golden panic text as `needle` assertions (already the shape of `assert_fixture_panics`), done as messages are written rather than later.
+- **Determinism rules per domain**, so no test flakes: `str`/`fmt`/`List` — pure fixtures with exact stdout and ASAN for the allocating ones, never locale-dependent float text; `io` — harness-fed stdin, including a last line with no trailing newline, never the real terminal; `process` — `/bin/sh` with argv (and a helper binary the harness builds for the no-shell argv case), never `/bin/echo`/`/usr/bin/*` (absent on NixOS, verified); `net`/`http` — one-process loopback, `listen(0)` + `Listener.port()`, never a fixed port, never the internet, the redirect denial asserted through the module name or granted pattern (**not** the path as written: a denial prints the resolved path); `fs` — a scratch directory created and removed by the harness and by the program; `env` — assert non-empty on a granted name and deny another, never mutate what the harness needs; `Map` — assert insertion order of `keys()`, never hash order.
 
 ## Key implementation notes
 
@@ -1188,7 +1641,7 @@ Details:
 
 31. **`env.args`/`process.run(argv)` are now just unwritten.** C1 removed the reason they were blocked (no sequence type), so both are ordinary work: `env.args() -> List<String>` is a gated-domain question and a `main`-argument question (the generated `int main(void)` would have to become `int main(int argc, char** argv)`), and `process.run` wants a `List<String>` in, an exit code out. Neither needs new compiler machinery; they need somebody to decide whether `main` may take arguments at all, which interacts with open item 18 (the entry module's unrestricted capabilities).
 
-32. **`net`'s capability vocabulary cannot be written, and would deny every host if it could.** Found while writing `stdlib-roadmap.md` (its §13), and it is a bug in the headline feature rather than a missing module: `stdlib::patterns_are_paths` counts `net` as a path domain, so `validate_cap_pattern` rejects the `api.example.com:443` patterns this file's own examples use (not absolute, no `/`), and `codegen_c` therefore emits `x_cap_check_path` for `net` — which lexical-normalizes a hostname, fails, and denies everything. `checked_args("net", …)` also only ever hands over the first argument, so the port is never matched against the pattern at all. The fix is compiler work, not stdlib work, and it is the first task of the roadmap's **S3**: give `net` a name-style vocabulary (`host[:port]` globs, a name matcher, host+port in `checked_args`, and `*` accepted for the entry module). Recorded here because the plan's capability section reads as if this already worked.
+32. **`net`'s capability vocabulary cannot be written, and would deny every host if it could.** Found while planning the stdlib program below, and it is a bug in the headline feature rather than a missing module: `stdlib::patterns_are_paths` counts `net` as a path domain, so `validate_cap_pattern` rejects the `api.example.com:443` patterns this file's own examples use (not absolute, no `/`), and `codegen_c` therefore emits `x_cap_check_path` for `net` — which lexical-normalizes a hostname, fails, and denies everything. `checked_args("net", …)` also only ever hands over the first argument, so the port is never matched against the pattern at all. The fix is compiler work, not stdlib work, and it is the first task of the roadmap's **S3**: give `net` a name-style vocabulary (`host[:port]` globs, a name matcher, host+port in `checked_args`, and `*` accepted for the entry module). Recorded here because the plan's capability section reads as if this already worked.
 
 33. **A borrow does not remember what it was borrowed from, so a pointer local cannot be used as a cursor.** `var cur = list` binds the borrow; `cur = cur.next.get()` is refused ("cannot assign to 'cur' while it is borrowed") because the borrow of `cur.next` is registered against **`cur`** — the pointer — rather than against `list`, its owner. Rebinding the *pointer* does not invalidate a borrow of the pointee, so this is over-strict rather than unsound, but it means a recursive structure is walked with a recursive function (`box_recursive.x` does) instead of a loop, and both that walk and the recursive drop recurse on the C stack (a very deep list overflows it, as in Rust). The fix is to track provenance: a `VarState` for a reference-typed binding remembers the root its value came from, `borrow_root` follows it through `Ident`, and assignment updates it. Worth doing when a real program walks a long list iteratively; not built, because nothing needs it yet and the change touches the borrow checker's roots everywhere.
 
@@ -1197,3 +1650,35 @@ Details:
 35. **`panic` and `assert` do not exist, the "prelude" is not prelude, and `print` cannot show a `datac` or a `List`.** This file's namespace section lists `print`, `print!`, `panic`, `assert` as always-in-scope builtins and `math`/`str`/`path`/`mem`/`io` as in-scope ungated namespaces; only `print`/`print!` exist, and every namespace — including `std/str` — needs an `impl` (the repo's own `caps_list` project shows it). Two consequences that cost real time: a program cannot deliberately fail (`panic("…")` is an undefined function, so a fixture has to reach a panic through a stdlib precondition), and a `datac` or a `List` cannot be printed at all, so every manual check of M8's types goes through fields and `.get(i)`. The roadmap's S1 adds `panic`/`assert`; printing a `datac` needs either a derived `Debug` story or an explicit `fmt` (S1's `std/fmt` is the thin end of it).
 
 36. **The three language features the stdlib roadmap runs into, in its own words.** (a) A **`for` loop**: every list walk in S1–S5 is `while` + index today, and the roadmap recommends the small parser desugar (like `when`'s) once the first list-heavy programs show whether a loop is enough; `syntax&shii.md` §10 would have to gain it, which makes it a syntax-authority decision, not a compiler one. (b) A **length-carrying borrowed view** (`&[u8]`-shaped): the difference between a parser that copies every token and one that does not, and it also unblocks open items 22 and 29; needs a spelling agreed with the authority file. (c) **`Option<T>`/`Result<T, E>`**: the roadmap's S6 is the decision point, and the cheap preparatory work is to standardize error-`datac` field names and add `errno` to panic messages now so the migration is mechanical.
+
+37. **TLS for `https`: link the system library, or ship `http`-only?** Almost every real URL is `https`, and there is no TLS in X. Linking the system library (`-lssl -lcrypto`, or a `libtls`) makes `std/tls`'s externs the only OpenSSL-touching code — exactly the shape `std/math` has with libm — at the cost of `driver.rs` gaining a link flag and the "no third-party deps in v1" rule becoming "none except the system's TLS". Shipping `http`-only is honest and free, and rejects `https` with a message naming the other options. Shelling out to a `curl`-shaped tool works today but moves the network capability to the *tool's* ambient authority, which quietly defeats the headline feature. **Recommendation**: ship S4 as `http`-only, treat TLS as S4b, and start S4b with option 1 as the default — never shell out as `http.get`'s implementation.
+
+38. **Does `io` stay ungated?** (Item 6 asks the same question from the purity side; S2 has to answer it.) WASI gates stdin as an input capability; this file's classification says writing your own stdout and sleeping are not authority over anything shared. Gating stdin would make a filter need `impl "std/io" with caps(io = ["stdin"])`; not gating keeps the common case free. **Recommendation**: ungated, and add an `io` domain to `stdlib::DOMAINS` only when `x.toml [caps]` can restrict `main` itself (item 18), so the option exists without the ceremony.
+
+39. **Is argv `process.args()` (ungated) or `env.args()` (gated)?** This file's sketch put it under `env`; argv is your own invocation, like `getpid`, which this file explicitly calls not-a-capability, and putting it under `env` forces an environment grant to read your own arguments — two unrelated authorities conflated. **Recommendation**: `process.args()`/`process.arg_count()`, ungated, and drop `env.args`/`env.arg`. Verified bonus: `main` is `int main(void)` and `main` cannot be called from `.x` at all, so argv needs the codegen change either way.
+
+40. **Is string concatenation an operator (`+`/`+=`) or a function (`str.concat`)?** `+` reads better and hides an allocation; a function makes the allocation visible and needs no syntax change. `syntax&shii.md` §10 has no such operator, so an operator means editing the authority file. **Recommendation**: `str.concat(a, b)` plus `String.push_str` in S1; revisit `+` as a deliberate syntax decision later, and never make `+=` on a `String` implicit — it would be the only operator that allocates.
+
+41. **`Set`, and `Map.get` on a missing key.** A `Set` as its own builtin is a third monomorphized generic for what `Map<bool>` already covers, and generic keys need item 34; **recommendation**: no `Set` in S5, document `Map<bool>`, revisit with generics. For a missing key: panicking keeps `Map<String, Header>` lookups one line and matches `List.get`; a `has` check before every lookup is verbose, and an error datac per lookup is unusable inside an expression. **Recommendation**: `get` panics, `has` exists, `get_or(key, fallback)` covers the common case — the same shape as `List.pop`.
+
+42. **`List.index_of`/'contains' return shapes.** `contains` is a bool; `index_of` returning `i64` with `-1` for absent is the sentinel convention this file *rejected* in decision 2, but the alternative is an error datac for a one-line check. **Recommendation**: `contains` for the common case (S1), and leave `index_of` out until `Option` exists (S6) rather than reintroducing the sentinel the failure model bans. `str.index_of`'s `Match` datac stays as the worked example of doing it properly.
+
+43. **Multiple `with caps(...)` clauses on one `impl` line.** Verified to parse: `impl "std/fs" with caps(fs = ["/tmp/**"], env = ["*"])`. **Recommendation**: document it in the capability section as legal (it is currently undocumented), since a `process.which`-shaped API and `std/http` holding `net` both want more than one domain and the alternative is a fake module boundary.
+
+44. **A length-carrying borrowed view (`&[u8]`-shaped): v1.1 or later?** It is the difference between a parser that copies every token and one that does not (HTTP headers, `str.split` into views, `String.slice`, `path.stem`), and item 22 already lists the allocations it would collapse. The cost is a new type with a pointer+length representation, a borrow rule that lets it appear as a field/param/return, and a *syntax* decision — `syntax&shii.md` §1 says a `datac` holds owned data only and §13 says references do not appear in field types. **Recommendation**: the first language feature after S5, spelled as a builtin `View` type beside `Bytes` (`View.of(b, from, to)`, functions taking/returning it) so no `&` enters the grammar, with the authority file's §1/§13 wording agreed first.
+
+45. **`time.sleep_ms` needs a `time` grant in a library module.** The classification says sleeping is not a capability, but it lives in gated `std/time`, so a library module must hold `time` to sleep. **Recommendation**: leave it for now (it is a module-boundary question, not a semantics one) and move `sleep_ms`/`now_*` into an ungated module only when a real program complains — the same treatment item 17 gave `pd var`'s cost.
+
+46. **Is a `for` loop worth its own milestone?** Every list walk in S1–S5 is a four-line `while` with a `usize` index; `for x in list { }` would remove the index and the type in most loops. The cost is lexer + parser + a desugar to `while` (the pattern `when` already uses) **plus** `syntax&shii.md` §10, which lists the control-flow forms and does not include `for` — so it is a syntax-authority decision, not a compiler one. **Recommendation**: yes, but *tiny* — one single-purpose commit, desugared in the parser, with the desugar pinned by a fixture; and after S1, so the first list-heavy programs show whether a loop is enough or iteration needs a real protocol (`iter`/`next`), which would be far more expensive.
+
+47. **Do panics carry errno and `strerror`?** Adding `errno` to `fs`/`net`/`process` panic messages makes every syscall failure diagnosable, at the cost of making panic text less stable for golden assertions. **Recommendation**: yes, as a two-line addition (`x_panic_errno(const char* msg)` used by the syscall externs), keeping the message prefix stable and the errno detail on a second line. This is also the cheap preparatory half of S6.
+
+48. **Unicode scope.** Real case mapping and grapheme clusters need megabyte tables and a segmentation algorithm; codepoint-level handling is a table-free decode of the UTF-8 rules `x_utf8_valid` already implements. **Recommendation**: codepoint-level (`str.char_at`, `str.byte_index`, validated `String`), ASCII-only case operations, documented as such, no grapheme awareness and no case folding. `String.char_count` stays "non-UTF-8-continuation bytes" and the doc comment says so.
+
+49. **Buffered IO: a `BufReader` datac, or unbuffered reads only?** Unbuffered `read_line` over a pipe is one syscall per byte (unusable); buffering needs a buffer, which is an owned `Bytes` field in a `datac` — legal since M6.2, but it is state the user must hold and thread through. **Recommendation**: yes, `datac BufReader` as sketched in S2, with `io.read_lines()` as the convenience that hides it.
+
+50. **`main(argc, argv)` versus a `pd` global for the arguments.** A generated `pd val argv: List<String>` would avoid changing `main`'s signature, but `.x` `main` cannot take hidden passdown parameters (M5.2's restriction: it is emitted as `int main(void)`), so the runtime has to stash `argc`/`argv` either way. **Recommendation**: change the emitted signature to `int main(int argc, char** argv)`, store both in generated globals, and expose them only through `process.args()` — one codegen change, no new surface.
+
+51. **Should the streaming reads be primary, with the allocating form as sugar?** `net.recv(s, max)` is what people write first and cannot express "read exactly `Content-Length`" without growth; `recv_into(buf, at)` is the correct choice for a known-length body but needs a buffer the caller sized. **Recommendation**: both, with the difference spelled out in `std/net.x`'s doc comment, and **no** `read_to_end()` until S1's growable `Bytes` exists — that is precisely its use case.
+
+52. **`process.run`'s capture model.** Whole-output capture is what people want and can deadlock on a chatty child if implemented naively (the err pipe fills while the parent blocks reading out); `poll`-based capture fixes it at the cost of a more complex extern; `spawn`-only pushes the model onto the caller. **Recommendation**: `process.run` with `poll`-based capture plus a documented "buffers both streams" memory cost, and `spawn` for the streaming case.
