@@ -1190,6 +1190,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // moved through `?`.
         "if_let_basic",
         "try_operator",
+        "stdlib_option_result",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -2251,6 +2252,21 @@ fn try_propagates_a_failure_out_of_the_enclosing_function() {
         "tests/fixtures/try_operator.kp",
         "2\n1\n-3\n4\n-1\n3\n-3\n",
     );
+}
+
+#[test]
+fn option_and_result_ship_as_stdlib_modules() {
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_option_result.kp",
+        "true\nfalse\n2\nfalse\n-1\ntrue\n1\n1\ntrue\n-1\n0\n2\nodd\ntrue\ntrue\n",
+    );
+}
+
+#[test]
+fn a_panicking_tail_satisfies_any_return_type() {
+    // The body diverges, so no `return` is needed after the `panic` — and the
+    // panic still fires when that path is taken.
+    assert_fixture_panics("panic_tail", "always_fails: non-positive");
 }
 
 #[test]
