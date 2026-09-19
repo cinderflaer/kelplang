@@ -47,13 +47,15 @@ fun main() {
         print(0)
     }
     // A condition that reads through an owned temporary: dropped on every
-    // pass of the loop, not once after it.
-    var i = 0
-    while mkName().r.len() > 0 {
-        i += 1
-        if i > 2 {
-            i = 0
-        }
+    // pass of the loop, not once after it. The bound comes first and the
+    // temporary second, and `&&` short-circuits, so the loop terminates after
+    // three passes and the temporary is still evaluated — and dropped — on
+    // every one of them. (`n` is printed, so `n` is the fixture's own control:
+    // this fixture was committed with the temporary as its *only* condition
+    // and no test over it, so the loop never terminated and nothing noticed.)
+    var n = 0
+    while n < 3 && mkName().r.len() > 0 {
+        n = n + 1
     }
-    print(i)
+    print(n)
 }

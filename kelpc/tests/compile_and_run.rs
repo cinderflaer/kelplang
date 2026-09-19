@@ -1834,6 +1834,29 @@ fn a_float_field_is_written_through_the_xmm_file() {
     );
 }
 
+/// A field read of an *owned* temporary, whose temporary has to be dropped
+/// once per read.
+///
+/// This is the one fixture in the corpus the C backend rejects —
+/// `codegen_c.rs` emits `&(rvalue).field` and `cc` refuses that — so the test
+/// is written the way its fixture is: under the asm backend it builds, runs
+/// and its stdout is compared, and under any other backend it asserts the
+/// refusal, which is the property that makes this fixture asm-only. Without a
+/// test here under *either* backend, the loop in this fixture was committed
+/// non-terminating and nothing said so: the only thing that noticed was
+/// `memory_gate`'s 60 s timeout, which reads as a valgrind finding.
+#[test]
+fn a_field_of_an_owned_temporary_is_dropped_per_read() {
+    if backend() != "asm" {
+        assert_rejected("tests/fixtures/heap_field_of_owned_temporary.kp");
+        return;
+    }
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_field_of_owned_temporary.kp",
+        "aa\nbb\n2\naa\n4\n3\n",
+    );
+}
+
 /// The text of one labelled function's body in an emitted `.s` — from
 /// `name:` to its `.size` directive.
 fn function_body_in_asm(s: &str, name: &str) -> String {
