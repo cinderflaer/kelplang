@@ -1738,8 +1738,10 @@ const ENUM_TAG_WIDTH: Width = Width::W4;
 ///   after a four-byte tag, so its offset is `align_up(4, union_align)`. That
 ///   is **eight**, not four, for every enum whose widest payload holds an
 ///   eight-byte scalar, which is most of them. `tests/fixtures/enum_layout.kp`
-///   pins the resulting sizes and offsets against `offsetof` on the C typedefs
-///   this mirrors.
+///   pins the resulting sizes and offsets *observably*, by reading a payload of
+///   each variant and passing each size class by value, since a Kelp program
+///   cannot call `offsetof`; the numbers themselves were checked against
+///   `offsetof` on the C typedefs clang produces for the same declarations.
 /// - **The union's size** is the largest member's own size rounded up to the
 ///   union's alignment; a member's size is its own field run rounded up to
 ///   *its* own alignment, exactly what `try_build_layout` computes for a
