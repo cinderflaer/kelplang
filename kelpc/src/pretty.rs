@@ -186,7 +186,7 @@ fn print_expr(out: &mut String, expr: &Expr) {
         }
         Expr::IntLit(v, _) => write!(out, "{v}").unwrap(),
         Expr::CharLit(v, _) => write!(out, "{}", char_literal(*v)).unwrap(),
-        Expr::FloatLit(v, _) => write!(out, "{v}").unwrap(),
+        Expr::FloatLit(v, _) => out.push_str(&float_literal(*v)),
         Expr::StringLit(s, _) => write!(out, "{s:?}").unwrap(),
         Expr::BoolLit(b, _) => write!(out, "{b}").unwrap(),
         Expr::Ident(name, _) => out.push_str(name),
@@ -349,6 +349,33 @@ fn print_expr(out: &mut String, expr: &Expr) {
             }
             out.push('}');
         }
+    }
+}
+
+/// A float literal rendered back as the literal it was written as.
+///
+/// The lexer accepts `digits.digits` and nothing else — no exponent — so the
+/// C spelling (`1e20`) is not a legal Kelp literal and `Display`'s positional
+/// form is what has to be used. `Display` drops the fractional part of an
+/// integral value (`-0.0` prints as `-0`, which re-lexes as the *integer*
+/// zero), so a `.0` is appended when the text carries neither a `.` nor an
+/// exponent, and the value round-trips exactly because `Display` is already
+/// the shortest decimal that parses back to the same `f64`.
+fn float_literal(v: f64) -> String {
+    // No Kelp literal spells a non-finite value: the grammar is
+    // `digits.digits`, so `1.0e400` does not lex and there is nothing that
+    // reparses to this value. Emitting the spelling anyway (rather than a
+    // well-formed but wrong integer) keeps the formatter from changing the
+    // value silently; such a literal can only reach this point by overflowing
+    // at lex time.
+    if !v.is_finite() {
+        return format!("{v}");
+    }
+    let text = format!("{v}");
+    if text.contains('.') {
+        text
+    } else {
+        format!("{text}.0")
     }
 }
 

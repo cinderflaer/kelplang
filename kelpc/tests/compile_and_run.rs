@@ -533,6 +533,19 @@ fn a_local_can_shadow_a_passdown() {
 }
 
 #[test]
+fn a_passdown_is_forwarded_through_a_caller_that_does_not_name_it() {
+    // The call site's hidden argument is a borrow of the storage in scope:
+    // the caller's own hidden parameter when it has one (so the forwarded
+    // value stays a pointer, not a pointer to a pointer), the global's
+    // address when it does not — `main`, or a function that only calls a
+    // function reading the passdown.
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_argument_forwarding.kp",
+        "ok\nforwarded\nbc\nforwarded\nbc\ndirect\nFAIL\n2\n2\n",
+    );
+}
+
+#[test]
 fn a_pd_var_is_writable_from_a_function_and_from_main() {
     // M6.4 replaced M5.2's "read-only inside a function": a `pd var` is
     // reached through an exclusive borrow, so writes work and stay checked.
@@ -1244,6 +1257,29 @@ fn integer_to_float_conversions_widen_and_round() {
 }
 
 #[test]
+fn an_integral_float_literal_stays_a_float() {
+    // A wide literal used to make `cc` reject the file (it was emitted as an
+    // integer constant), and `-0.0` used to reach C as the *integer* zero, so
+    // the sign was gone and an expression of two such literals was evaluated
+    // in integer arithmetic.
+    assert_compiles_and_runs(
+        "tests/fixtures/float_integral_literal.kp",
+        "100000000000000000000\n2.0\nnegative zero\nnegative product\n4.500000\n",
+    );
+}
+
+#[test]
+fn a_non_finite_float_literal_emits_a_math_h_constant() {
+    // An overflowing literal is infinity and a folded `0.0 / 0.0` is a NaN;
+    // neither has a literal spelling, and emitting `Display`'s `inf`/`NaN`
+    // does not compile.
+    assert_compiles_and_runs(
+        "tests/fixtures/float_nonfinite_literal.kp",
+        "infinite\nnan\n",
+    );
+}
+
+#[test]
 fn returning_a_borrow_of_the_wrong_parameter_is_rejected() {
     assert_rejected("tests/fixtures/elision_wrong_param.kp");
 }
@@ -1327,6 +1363,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_fmt",
         "string_field",
         "pd_owned",
+        // A passdown forwarded through a caller that does not name it: the
+        // hidden argument is the global's address there, while an owned
+        // passdown still has to be freed at exit by exactly one handler.
+        "pd_argument_forwarding",
         "stdlib_mem",
         "stdlib_str",
         "stdlib_path",
@@ -1377,10 +1417,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "generic_method_basic",
         "generic_nested_inference",
         "map_key_types",
-        // MK5-S6-M1: an owned payload bound by `if let`, and owned payloads
-        // moved through `?`.
+        // MK5-S6-M1: an owned payload bound by `if let`, owned payloads
+        // moved through `?`, and a frame that owns a local it propagates a
+        // failure past (`?`'s early return must free the frame).
         "if_let_basic",
         "try_operator",
+        "try_drops_frame",
         "stdlib_option_result",
         // A-4: a `move T` parameter owns what it is handed, so each buffer is
         // freed exactly once by whichever function owns it at scope exit.
@@ -2533,6 +2575,19 @@ fn a_panicking_tail_satisfies_any_return_type() {
     // The body diverges, so no `return` is needed after the `panic` — and the
     // panic still fires when that path is taken.
     assert_fixture_panics("panic_tail", "always_fails: non-positive");
+}
+
+#[test]
+fn try_frees_the_frame_it_returns_from() {
+    // `?`'s early return is a `return`: a frame that owns something and
+    // propagates a failure has to free what it owns first. The output pins the
+    // success paths (freed exactly once) and the failure paths (freed at the
+    // `?`); the AddressSanitizer gate below is what proves the second half,
+    // because a leak prints nothing.
+    assert_compiles_and_runs(
+        "tests/fixtures/try_drops_frame.kp",
+        "9\n-2\n6\n-2\n14\n-2\n4\n-1\n-2\n7\n9\n-2\n",
+    );
 }
 
 #[test]

@@ -1,0 +1,38 @@
+// A float literal that happens to be integral is still a float literal
+// (`syntax.md` §2.4: "Float literals are `digits.digits`"). Emitting it with
+// `Display` dropped the fractional part, which had two faces: a wide literal
+// made `cc` reject the generated C ("integer literal is too large to be
+// represented in any integer type"), and `-0.0` reached C as `-0` — the
+// *integer* zero, so the sign was gone and any expression built only from
+// such literals was evaluated in integer arithmetic.
+impl "std/fmt"
+
+fun main() {
+    val wide: f64 = 100000000000000000000.0
+    print(fmt.float(wide, 0))
+
+    val integral: f64 = 2.0
+    print(fmt.float(integral, 1))
+
+    val z: f64 = -0.0
+    if 1.0 / z < 0.0 {
+        print("negative zero")
+    } else {
+        print("positive zero")
+    }
+
+    // `0.0 * -1.0` was emitted as `0 * (-1)`: integer arithmetic, so the
+    // result was the integer zero instead of `-0.0`.
+    val product = 0.0 * -1.0
+    if 1.0 / product < 0.0 {
+        print("negative product")
+    } else {
+        print("positive product")
+    }
+
+    // The narrow type goes through the same emission, then C narrows.
+    val small: f32 = 0.5
+    val big: f32 = 4.0
+    val sum = small + big
+    print(sum)
+}

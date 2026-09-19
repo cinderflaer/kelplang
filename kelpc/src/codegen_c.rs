@@ -2201,6 +2201,10 @@ impl<'a> Gen<'a> {
         self.drops.at_return(&self.function, span).to_vec()
     }
 
+    fn drops_at_try(&self, span: Span) -> Vec<DropTarget> {
+        self.drops.at_try(&self.function, span).to_vec()
+    }
+
     /// Frees owned locals in the order `borrowck.rs` decided (reverse
     /// declaration order — a later binding is freed before an earlier one it
     /// may have taken its value from).
@@ -2439,7 +2443,7 @@ impl<'a> Gen<'a> {
             // and `char` is a code point rather than a C `char`, so the cast
             // is what makes both fit.
             ExprKind::CharLit(v) => format!("(({})({}))", expr.ty.c_type(), v),
-            ExprKind::FloatLit(v) => format!("{v}"),
+            ExprKind::FloatLit(v) => c_float_literal(*v),
             ExprKind::StringLit(s) => c_string_literal(s),
             ExprKind::BoolLit(b) => b.to_string(),
             ExprKind::Ident(name) => c_name(name),
@@ -2736,6 +2740,16 @@ impl<'a> Gen<'a> {
                         ret, dst_member, dst_field, tmp, err_member, src_field
                     )
                     .unwrap();
+                }
+                // `?`'s failure arm returns from the function just as a
+                // written `return` does, so it frees whatever the frame still
+                // owns (borrowck's `DropPlan::at_try`) *after* the failure
+                // payload has been moved into `ret`, which is the order
+                // `Stmt::Return` uses. Skipping these drops leaked the frame
+                // on every propagated failure.
+                let drops = self.drops_at_try(expr.span);
+                for t in &drops {
+                    writeln!(out, "    {}", drop_call(t)).unwrap();
                 }
                 writeln!(out, "    return {};", ret).unwrap();
                 writeln!(out, "}}").unwrap();
@@ -3370,6 +3384,36 @@ fn printf_text(s: &str) -> String {
         }
     }
     out
+}
+
+/// A float literal, spelled so C reads it as a floating-point constant of the
+/// same value.
+///
+/// `Display` for `f64` writes the shortest decimal that round-trips, but it
+/// writes it in positional form and drops the fractional part of an integral
+/// value: `100000000000000000000.0` becomes `100000000000000000000` and `-0.0`
+/// becomes `-0`. Emitted as-is, the first makes `cc` reject the file ("integer
+/// literal is too large to be represented in any integer type") and the second
+/// silently changes the value — C reads `-0` as the integer zero, so a sign
+/// test or an integer-arithmetic rewrite of both operands loses the sign and
+/// the float-ness. `Debug` is the shortest form that keeps the type: it always
+/// emits a `.` or an exponent (`1e20`, `-0.0`, `0.1`, `1.7976931348623157e308`),
+/// and every one of those is a valid C `double` literal. An `f32` context is
+/// safe too: the `f64` value came from an `f32` originally (or from a fold),
+/// the shortest `f64` round-trip is exact, and the narrowing conversion C then
+/// applies returns the same `float`.
+///
+/// The two non-finite values have no literal spelling and need the `<math.h>`
+/// macros: a decimal literal long enough to overflow `f64` parses to infinity
+/// in the lexer, and constant folding (`0.0 / 0.0`) can produce a NaN.
+fn c_float_literal(v: f64) -> String {
+    if v.is_nan() {
+        return "NAN".to_string();
+    }
+    if v.is_infinite() {
+        return if v < 0.0 { "(-INFINITY)" } else { "INFINITY" }.to_string();
+    }
+    format!("{v:?}")
 }
 
 fn c_string_literal(s: &str) -> String {

@@ -1224,3 +1224,94 @@ A-11 (checker expressiveness — now the blocker for a `View` field as well as
 for the `Copy`-only stdlib helpers), A-12 (traits) and A-13 (privacy). The
 part of A-8/A-9 that shipped is recorded against them in `roadmap.md`'s open
 items 21, 22, 29, 30, 44 and 53.
+
+## The third pass of a real program: the `jsonlibary` bug report (DONE)
+
+The same JSON library, now written against `syntax.md` *after* MK8-S2-M1, was
+compiled again and the defects it hit were minimised by the author into three
+codegen bugs and one doc inconsistency. Two of the three were memory-visible
+rather than cosmetic — a leak on every propagated failure, and a build failure
+in `cc` — which is what made them worth a pass of their own rather than a
+workaround note. All three are fixed, the fourth turned out to be a
+mis-attribution, and DOC-1 is a `syntax.md` fix.
+
+**1. `?`'s early return skipped the drops of the frame it sat in.** `?`
+desugars to a `return` of the failure value, and `codegen_c.rs` renders that
+return *inside a C statement-expression* — so the only drop lookup on the path
+was the one keyed to a `Stmt::Return`, and there was no such node. Every owned
+local live in the frame leaked on every failure, which for a recursive-descent
+parser means every rejected document: `jsonlibary`'s `parse_array`/
+`parse_object`/`parse_string_raw` own a partially built subtree exactly where
+they recurse, and 20 000 rejected 8 000-element arrays leaked about 9 GB.
+`syntax.md` §10.3 already promised the opposite ("on every exit path including
+`return`"), so this was the code failing its own reference, not a design gap.
+
+The fix is a third drop point in the same side table as the other two:
+`DropPlan::at_try`, keyed by the `?` expression's span. `borrowck.rs` records
+the frame's live owned locals *after* the operand is checked — so a local the
+operand moved (`val r = f()?`) is not freed twice — and `codegen_c.rs` emits
+those drops inside the failure arm, after the payload is moved into the
+return value and before the `return`, which is the order `Stmt::Return` uses.
+Measured, not argued: the report's shape (a 64 KiB local, 40 000 iterations,
+2.5 GB if leaked) dies with `panic: out of memory` under `ulimit -v 1048576` on
+`v0.2.2` and prints `done` now.
+
+**2. A passdown was not forwarded by a caller that only *calls* a function
+reading it.** The generated hidden parameter and the generated global share one
+name (`kelp_pd__failures`), so a bare identifier in a body means whichever is
+in scope. Inside a function that received the parameter, passing it on is the
+pointer itself; inside one that received nothing — `main`, or any function that
+only *calls* a passdown reader — the identifier named the global, whose type is
+the passdown's *value*, so the call passed an `i32` where the signature wanted
+`int32_t*` and `cc` refused the file. The call-site logic asked
+`pd_global_borrow`, which is true only for `main` and a `pd` initializer, and
+so took the address in exactly the two cases that never needed it. `codegen_c.rs`
+now decides per passdown: `Ctx::own_hidden` lists the hidden parameters the
+current function actually received, and a call passes the parameter when it is
+on that list and the global's address otherwise. Two lines, because the two
+cases are genuinely different and the old flag conflated them with a third.
+
+*The report recorded this as fixed on `main`; it is not.* The repro fails
+identically at `d5be7f5`, at `cacd434` and on `v0.2.2`, and `hidden_args` has
+carried `pd_global_borrow` unchanged since MK2-S2-M2. The fixture below is the
+shape from the report plus the two callers it does not cover — a chain
+(`deep -> relay -> bump`) and a function that both reads the passdown itself
+*and* forwards it, where taking the parameter's address would be a pointer to
+a pointer.
+
+**3. An integral float literal was emitted as an integer literal.** `Display`
+for `f64` writes the shortest decimal that round-trips but drops the
+fractional part of an integral value, so `100000000000000000000.0` emitted
+`100000000000000000000` and `-0.0` emitted `-0`. The first makes `cc` reject
+the file ("integer literal is too large to be represented in any integer
+type"); the second changes the value, because C reads `-0` as the integer
+zero — losing the sign, and evaluating an expression whose operands are both
+rewritten that way in integer arithmetic (`0.0 * -1.0` became `0 * (-1)` and
+produced `0` instead of `-0.0`). `Debug` is the shortest form that *keeps the
+type*: it always emits a `.` or an exponent. `c_float_literal` uses it, and
+adds the two cases no literal can spell — an overflowing literal parses to
+infinity at lex time and a folded `0.0 / 0.0` is a NaN, so those emit
+`INFINITY`/`(-INFINITY)`/`NAN` from `<math.h>` instead of `Display`'s
+non-lexing `inf`/`NaN`. `pretty.rs` had the same `Display` bug and gets the
+same treatment (it is currently unreachable from the CLI, and its non-finite
+case is documented as having no Kelp spelling rather than being papered over).
+
+**DOC-1. `syntax.md` §22.4's UTF-8 snippet used hex literals §2.4 forbids.**
+§2.4 is the lexical authority ("Integer literals are decimal digits only: no
+suffix, no hex") and the lexer agrees with it, so the worked example was the
+thing that was wrong. It is now written in decimal — `(224 | (cp >> 12))` and
+so on, with the hex spellings named in the sentence — which is what
+`jsonlibary` had already done by hand. A hex literal remains open work in
+`backlog.md` A-9's "still open" list, which is the right place for it: the
+snippet was wrong, not the lexer.
+
+**Tests**: `try_drops_frame.kp` (an owned local at two `?` sites in one `if`,
+a named operand, two live scopes, an `Option` failure, a loop body, and a
+`fun` literal body) joined the AddressSanitizer list, so a regression is a
+leak failure rather than a silent one; `float_integral_literal.kp` pins both
+faces of the literal emission plus the narrow type; `float_nonfinite_literal.kp`
+pins infinity (an overflowing literal) and NaN (a folded `0.0 / 0.0`); and
+`pd_argument_forwarding.kp` pins the passdown forwarding for a `Copy` `pd var`,
+an owned `pd val` and a `datac` passdown, through `main`, a bare forwarder, a
+chain, and a function that reads and forwards. The suite is **88 unit tests and
+239 end-to-end tests**, all green.

@@ -2073,7 +2073,7 @@ fun parse_all(text: &str).R: result.Result<Thing, ParseError> {
 - Formatting a number: `fmt.int(n)`, `fmt.uint(n)`, `fmt.float(x, decimals)`, `fmt.hex(n)`. All return `String`.
 - `print(x)` handles every scalar, `str`, `String`, `Bytes` and `View`; a template (`"$x"`) is the only way to print a mixture, and a template is not a value.
 - **`.as_str()` on a temporary is refused** (`String.from_str("x").as_str()`): bind the `String` first. The same applies to `.view()`.
-- UTF-8 by hand is expressible directly now — `(0xE0 | (cp >> 12))`, `(0x80 | ((cp >> 6) & 63))`, `(0x80 | (cp & 63))` — and `%`/`/` are no longer the only arithmetic available for it (5).
+- UTF-8 by hand is expressible directly now — `(224 | (cp >> 12))`, `(128 | ((cp >> 6) & 63))`, `(128 | (cp & 63))` — and `%`/`/` are no longer the only arithmetic available for it (5). Integer literals are decimal only (2.4), so these are the decimal spellings of `0xE0` and `0x80`.
 
 ### 22.5 Records and tags
 

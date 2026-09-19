@@ -1,0 +1,69 @@
+// A call site has to hand a callee a *borrow* of the passdown's storage: the
+// hidden parameter the caller itself received, or — when it received none,
+// because it only *calls* a function that reads the passdown — the address of
+// the generated global. Emitting the bare identifier named the global by value
+// in that second case, so the call passed an `i32` where the callee's
+// signature wanted an `int32_t*` and `cc` refused the file. Every kind of
+// caller is here: `main` (which receives no hidden parameters at all), a
+// function that only forwards, and a function that both reads the passdown
+// itself and forwards it (where taking the parameter's address would be a
+// pointer to a pointer).
+pd var failures = 0
+pd val banner = String.from_str(s = "bc")
+pd var tally = Tally(n = 0)
+
+datac Tally(var n: i64)
+
+fun bump(ok: bool, name: &str) {
+    if ok {
+        print(name)
+    } else {
+        failures += 1
+        print("FAIL")
+    }
+}
+
+fun bump_tally() {
+    tally.n += 1
+}
+
+fun show_banner() {
+    print(banner.as_str())
+}
+
+// Reads `failures` itself, so it receives the hidden parameter — and forwards
+// it, which is the parameter itself and not its address.
+fun forwarding(ok: bool) {
+    if ok {
+        print("ok")
+    } else {
+        failures += 1
+    }
+    bump(true, "forwarded")
+}
+
+// Receives nothing and passes the global's address.
+fun caller(ok: bool) {
+    forwarding(ok)
+    bump_tally()
+    show_banner()
+}
+
+// A chain: neither of these receives a hidden parameter, so each one hands the
+// next the global's address rather than a value it does not have.
+fun relay() {
+    bump(false, "relay")
+}
+
+fun deep() {
+    relay()
+}
+
+fun main() {
+    caller(true)
+    caller(false)
+    bump(true, "direct")
+    deep()
+    print(failures)
+    print(tally.n)
+}

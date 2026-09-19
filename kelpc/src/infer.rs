@@ -243,6 +243,15 @@ struct Ctx {
     /// of naming a parameter. Every other function that references a
     /// passdown is wired and uses its parameter.
     pd_global_borrow: bool,
+    /// The hidden passdown parameters *this* function received, by their
+    /// internal name (`pd#<qualified>`). The generated parameter and the
+    /// generated global share that name, so an identifier in the body means
+    /// the parameter when it is listed here and the file-scope global when it
+    /// is not — a distinction `hidden_args` has to make when it hands a
+    /// passdown on: a parameter is already the borrow, while the global needs
+    /// its address taken. Empty for `main`, a `pd` initializer, and a `fun`
+    /// literal, none of which can receive one.
+    own_hidden: Vec<String>,
     /// True while checking the body of a `fun` literal (A-4). A literal is
     /// its own function, so two diagnostics need to know: a name it does not
     /// bind itself is a *capture*, and a passdown is a hidden argument it
@@ -3548,6 +3557,7 @@ fn base_ctx(
         wired: wired.clone(),
         init_state: None,
         pd_global_borrow: false,
+        own_hidden: Vec::new(),
         in_fn_literal: false,
         outer_bindings: HashMap::new(),
         captures: Vec::new(),
@@ -4020,6 +4030,7 @@ fn check_function(
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main";
+    ctx.own_hidden = hidden.iter().map(|pd| pd.hidden.clone()).collect();
     let mut params = Vec::new();
     // Parameters (and the receiver, if any) are immutable bindings, like
     // `val`; v1 has no syntax to declare a mutable *binding* for one (the
@@ -7037,11 +7048,16 @@ fn overload_options(callee: &str, owned_key: &str, ctx: &Ctx) -> String {
 }
 
 /// The hidden passdown arguments a call to `callee` has to pass, in the
-/// order the callee's signature declares them (M5.2). Each one is the
-/// generated global for that passdown — a call site never receives its
-/// callees' passdowns itself, so the value always comes from the global
-/// here; the callee's parameter is what makes the dependency visible in its
-/// own signature.
+/// order the callee's signature declares them (M5.2). Each one is a borrow of
+/// the passdown's storage: the generated global's address, or — inside a
+/// function that received that passdown as a hidden parameter — the parameter
+/// itself, which *is* that same borrow. A caller that only calls a function
+/// reading a passdown never receives one of its own (the wiring is per
+/// function's own references), which is why the global's address is the
+/// general case rather than the `main`-only case it used to be: emitting the
+/// bare identifier there named the global whose type is the passdown's value,
+/// so the call passed an integer where the callee's signature wanted a
+/// pointer and `cc` refused the file.
 fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
     let Some(pds) = ctx.wired_for(callee) else {
         return Ok(Vec::new());
@@ -7057,7 +7073,8 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
                 span,
             });
         }
-        out.push(pd.arg(span, ctx.pd_global_borrow));
+        let own_parameter = ctx.own_hidden.iter().any(|h| h == &pd.hidden);
+        out.push(pd.arg(span, !own_parameter));
     }
     Ok(out)
 }
