@@ -860,7 +860,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             out.push('\n');
             continue;
         }
-        let mut gen = Gen::new(
+        let mut g = Gen::new(
             drops,
             &owned,
             &program.enums,
@@ -869,8 +869,8 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             &caps,
             sources,
         );
-        gen.write_function(f, !program.pds.is_empty());
-        out.push_str(&gen.out);
+        g.write_function(f, !program.pds.is_empty());
+        out.push_str(&g.out);
         out.push('\n');
     }
 
@@ -929,7 +929,7 @@ fn write_pd_globals(
         gated: HashMap::new(),
         patterns: HashMap::new(),
     };
-    let gen = Gen::new(
+    let g = Gen::new(
         drops,
         owned,
         enums,
@@ -977,7 +977,7 @@ fn write_pd_globals(
             out,
             "    {} = {}; // pd {}",
             c_name(&pd.name),
-            gen.expr_value(&pd.init),
+            g.expr_value(&pd.init),
             pd.qualified
         )
         .unwrap();
@@ -2847,9 +2847,9 @@ impl<'a> Gen<'a> {
                 format!("({{\n{out}}})")
             }
             ExprKind::Block(block) => {
-                let mut gen = self.sub();
-                gen.write_block_value(block, 1);
-                format!("({{\n{}}})", gen.out)
+                let mut g = self.sub();
+                g.write_block_value(block, 1);
+                format!("({{\n{}}})", g.out)
             }
             ExprKind::If {
                 cond,
@@ -2862,25 +2862,25 @@ impl<'a> Gen<'a> {
                 // here (e.g. the RHS of a `let`) is lowered via a temporary
                 // that each branch assigns into, with the temporary itself as
                 // the trailing value.
-                let mut gen = self.sub();
+                let mut g = self.sub();
                 let cond = self.expr_value(cond);
                 if expr.ty == Ty::Unit {
-                    writeln!(gen.out, "if ({cond}) {{").unwrap();
-                    gen.write_block_body(then_block, 1);
-                    gen.out.push('}');
-                    gen.write_else(else_block.as_ref(), 0);
-                    gen.out.push('\n');
+                    writeln!(g.out, "if ({cond}) {{").unwrap();
+                    g.write_block_body(then_block, 1);
+                    g.out.push('}');
+                    g.write_else(else_block.as_ref(), 0);
+                    g.out.push('\n');
                 } else {
                     let tmp = fresh_temp();
-                    writeln!(gen.out, "{};", expr.ty.c_decl(&tmp)).unwrap();
-                    writeln!(gen.out, "if ({cond}) {{").unwrap();
-                    gen.write_block_assign(then_block, &tmp, 1);
-                    gen.out.push('}');
-                    gen.write_else_assign(else_block.as_ref(), &tmp, 0);
-                    gen.out.push('\n');
-                    writeln!(gen.out, "{tmp};").unwrap();
+                    writeln!(g.out, "{};", expr.ty.c_decl(&tmp)).unwrap();
+                    writeln!(g.out, "if ({cond}) {{").unwrap();
+                    g.write_block_assign(then_block, &tmp, 1);
+                    g.out.push('}');
+                    g.write_else_assign(else_block.as_ref(), &tmp, 0);
+                    g.out.push('\n');
+                    writeln!(g.out, "{tmp};").unwrap();
                 }
-                format!("({{\n{}}})", gen.out)
+                format!("({{\n{}}})", g.out)
             }
         }
     }
