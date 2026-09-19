@@ -1,0 +1,39 @@
+// MK7 §5 item 4, the float-in-aggregate slice: an `enum`'s payload eightbytes
+// are classified *through the union*, so a variant with no payload — or one
+// with a non-float field — in the same eightbyte merges it back to `INTEGER`.
+//
+// The two enums below are both sixteen bytes and differ only in the register
+// file their payload eightbyte lands in. `Pure { D(f64) }` has a four-byte tag
+// in the first eightbyte and one `f64` payload in the second, so it is
+// `INTEGER` + `SSE` and travels in `rdi` + `xmm0`. `Merge { C(f64), Empty }`
+// has the same `f64` in the same eightbyte, but `Empty`'s payload-less `char`
+// is `INTEGER` there too, so the union merges that eightbyte to `INTEGER` and
+// the value travels in `rdi` + `rsi`. Classifying the `f64` field's own type
+// without the union is the mistake this fixture exists to catch.
+enum Merge {
+    C(val r: f64)
+    Empty
+}
+
+enum Pure {
+    D(val r: f64)
+}
+
+fun takeMerge(v: move Merge).R: f64 = when v {
+    C(r) -> r
+    Empty -> 0.0
+}
+
+fun takePure(v: move Pure).R: f64 = when v {
+    D(r) -> r
+}
+
+fun mkMerge().R: Merge = Merge.Empty
+fun mkPure().R: Pure = Pure.D(r = 2.5)
+
+fun main() {
+    print(takeMerge(Merge.C(r = 1.5)))
+    print(takePure(Pure.D(r = 2.5)))
+    print(takeMerge(mkMerge()))
+    print(takePure(mkPure()))
+}

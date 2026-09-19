@@ -1768,6 +1768,201 @@ fn a_forward_reference_between_datacs_is_rejected() {
     assert_rejected("tests/fixtures/datac_forward_reference.kp");
 }
 
+// MK7 §5 item 4, the float-in-aggregate slice: a `datac` or `enum` payload
+// holding an `f32`/`f64`, classified per eightbyte. stdout covers the values;
+// the `.s` assertion below covers the registers, because both ends of a
+// generated call are this backend and a consistently *wrong* register file is
+// invisible to a differential stdout diff.
+
+#[test]
+fn a_float_field_datac_travels_in_the_vector_register_file() {
+    assert_compiles_and_runs(
+        "tests/fixtures/float_datac_boundary.kp",
+        "3.000000\n4.500000\n4.000000\n3.750000\n2.500000\n7.500000\n2.500000\n7.500000\n\
+         7.000000\n6.000000\n10.000000\n7.000000\n2.500000\n",
+    );
+}
+
+#[test]
+fn a_float_field_datac_over_sixteen_bytes_is_memory_class() {
+    assert_compiles_and_runs(
+        "tests/fixtures/float_datac_memory.kp",
+        "6.500000\n5.000000\n2.500000\nkelp\n2.500000\n",
+    );
+}
+
+#[test]
+fn an_enum_payload_eightbyte_is_classified_through_the_union() {
+    assert_compiles_and_runs(
+        "tests/fixtures/float_enum_register_file.kp",
+        "1.500000\n2.500000\n0.000000\n2.500000\n",
+    );
+}
+
+#[test]
+fn a_float_field_datac_crosses_the_hand_written_container_boundary() {
+    assert_compiles_and_runs(
+        "tests/fixtures/float_datac_containers.kp",
+        "1.500000\n2.500000\n2.500000\n3.500000\n4.500000\n4.500000\n3.500000\n5.500000\n",
+    );
+}
+
+#[test]
+fn a_float_field_is_written_through_the_xmm_file() {
+    assert_compiles_and_runs(
+        "tests/fixtures/float_field_write.kp",
+        "3\n2.000000\n3\n4.000000\n9\n4.250000\n",
+    );
+}
+
+/// The text of one labelled function's body in an emitted `.s` — from
+/// `name:` to its `.size` directive.
+fn function_body_in_asm(s: &str, name: &str) -> String {
+    let start = s
+        .find(&format!("\n{name}:\n"))
+        .unwrap_or_else(|| panic!("no `{name}` in the emitted assembly"))
+        + 1;
+    let end = s[start..]
+        .find(&format!("\n    .size {name},"))
+        .unwrap_or_else(|| panic!("no `.size` for `{name}`"))
+        + start;
+    s[start..end].to_string()
+}
+
+/// A function's epilogue in an emitted `.s` — from its `.Lret` label to the
+/// end of the body. The literal-building stores appear before the label, so
+/// this is how a return's own register loads are told from them.
+fn epilogue_in_asm(body: &str) -> &str {
+    let at = body.rfind(".Lret").expect("a function has a return label");
+    &body[at..]
+}
+
+/// A function's parameter stores — everything before the first use of the
+/// parameter slot (`lea r11`), which is where the body proper starts. The
+/// arithmetic after it legitimately uses `xmm` for a float, so "no vector
+/// register in the prologue" is the claim, not "none in the function".
+fn prologue_in_asm(body: &str) -> &str {
+    match body.find("    lea r11") {
+        Some(i) => &body[..i],
+        None => body,
+    }
+}
+
+/// MK7 §5 item 4's authority test: the SysV class each aggregate eightbyte
+/// travels in, read straight out of the emitted assembly.
+///
+/// This is the only kind of check that can catch the failure the differential
+/// sweep cannot: both the caller and the callee are this backend, so putting a
+/// value in the wrong register *at every call* still prints the right answer.
+/// The expectations are the registers the C backend's own binary uses for the
+/// same declarations, read with `objdump`. The test is asm-only — there is no
+/// `.s` under the C backend — and reports that and passes, the way the
+/// AddressSanitizer gate reports itself as C-only.
+#[test]
+fn the_classifier_puts_each_aggregate_eightbyte_in_its_own_register_file() {
+    if backend() != "asm" {
+        eprintln!(
+            "note: the register-level ABI assertions read the emitted assembly, so they are \
+             asm-backend-only; backend '{}' is not checked by them",
+            backend()
+        );
+        return;
+    }
+    let bin = out_path("float_datac_abi_registers");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/float_datac_boundary.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the boundary fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let s = std::fs::read_to_string(bin.with_extension("s"))
+        .expect("assemble_and_link keeps <out>.s beside the binary");
+
+    // Parameters: one eightbyte per register, in each file, in eightbyte order.
+    let sum2 = function_body_in_asm(&s, "kelp_sum2");
+    assert!(sum2.contains("movsd [rbp-40], xmm0"), "{sum2}");
+    assert!(!sum2.contains(", rdi"), "{sum2}");
+
+    let sum1 = function_body_in_asm(&s, "kelp_sum1");
+    assert!(sum1.contains("movss [rbp-40], xmm0"), "{sum1}");
+
+    let addmix = function_body_in_asm(&s, "kelp_addmix");
+    let int_at = addmix.find("mov QWORD PTR [rbp-48], rdi").expect("integer first eightbyte");
+    let sse_at = addmix.find("movsd [rbp-40], xmm0").expect("SSE second eightbyte");
+    assert!(int_at < sse_at, "{addmix}");
+
+    let addmix2 = function_body_in_asm(&s, "kelp_addmix2");
+    let sse_at = addmix2.find("movsd [rbp-48], xmm0").expect("SSE first eightbyte");
+    let int_at = addmix2.find("mov QWORD PTR [rbp-40], rdi").expect("integer second eightbyte");
+    assert!(sse_at < int_at, "{addmix2}");
+
+    let sumf = function_body_in_asm(&s, "kelp_sumf");
+    assert!(sumf.contains("movsd [rbp-48], xmm0"), "{sumf}");
+    assert!(sumf.contains("movsd [rbp-40], xmm1"), "{sumf}");
+
+    let sum3 = function_body_in_asm(&s, "kelp_sum3");
+    assert!(sum3.contains("movsd [rbp-48], xmm0"), "{sum3}");
+    assert!(sum3.contains("movss [rbp-40], xmm1"), "{sum3}");
+
+    // MEMORY class: the value is copied out of the caller's outgoing area at
+    // `[rbp+16]`, and no register at all is involved.
+    let sumbig = function_body_in_asm(&s, "kelp_sumbig");
+    assert!(sumbig.contains("mov rax, QWORD PTR [rbp+16]"), "{sumbig}");
+    assert!(!prologue_in_asm(&sumbig).contains("xmm"), "{sumbig}");
+
+    // Returns: the same rows, from the return label's register loads.
+    let mk2 = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mk2")).to_string();
+    assert!(mk2.contains("movsd xmm0, QWORD PTR [rbp"), "{mk2}");
+    assert!(!mk2.contains("mov rax, QWORD PTR [rbp"), "{mk2}");
+
+    let mkf = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkf")).to_string();
+    assert!(mkf.contains("movsd xmm0, QWORD PTR [rbp"), "{mkf}");
+    assert!(mkf.contains("movsd xmm1, QWORD PTR [rbp"), "{mkf}");
+
+    let mkmix = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkmix")).to_string();
+    let rax_at = mkmix.find("mov rax, QWORD PTR [rbp").expect("integer first");
+    let xmm_at = mkmix.find("movsd xmm0, QWORD PTR [rbp").expect("SSE second");
+    assert!(rax_at < xmm_at, "{mkmix}");
+
+    let mkmix2 = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkmix2")).to_string();
+    let xmm_at = mkmix2.find("movsd xmm0, QWORD PTR [rbp").expect("SSE first");
+    let rax_at = mkmix2.find("mov rax, QWORD PTR [rbp").expect("integer second");
+    assert!(xmm_at < rax_at, "{mkmix2}");
+
+    // MEMORY return: the hidden pointer comes back in `rax`, no register.
+    let mkbig = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkbig")).to_string();
+    assert!(mkbig.contains("mov rax, QWORD PTR [rbp-32]"), "{mkbig}");
+    assert!(!mkbig.contains("xmm"), "{mkbig}");
+
+    // The union merge: two sixteen-byte enums that differ only in whether a
+    // non-float variant shares the payload's eightbyte. `Merge` must be
+    // INTEGER/INTEGER (`rdi` + `rsi`); `Pure` INTEGER/SSE (`rdi` + `xmm0`).
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/float_enum_register_file.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    let s = std::fs::read_to_string(bin.with_extension("s")).expect("the emitted `.s`");
+
+    let take_merge = function_body_in_asm(&s, "kelp_takeMerge");
+    assert!(take_merge.contains("mov QWORD PTR [rbp-48], rdi"), "{take_merge}");
+    assert!(take_merge.contains("mov QWORD PTR [rbp-40], rsi"), "{take_merge}");
+    assert!(!prologue_in_asm(&take_merge).contains("xmm"), "{take_merge}");
+
+    let take_pure = function_body_in_asm(&s, "kelp_takePure");
+    assert!(take_pure.contains("mov QWORD PTR [rbp-48], rdi"), "{take_pure}");
+    assert!(take_pure.contains("movsd [rbp-40], xmm0"), "{take_pure}");
+}
+
 // ---------------------------------------------------------------------------
 // Collections: the builtin `List<T>`.
 // ---------------------------------------------------------------------------

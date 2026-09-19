@@ -1,0 +1,30 @@
+// MK7 §5 item 4, the float-in-aggregate slice: a value over sixteen bytes is
+// `MEMORY` class whatever its fields, so a `{f64, String}` travels in the
+// caller's outgoing argument area and back through the hidden return pointer —
+// the same two conventions the fourth slice built for all-integer `MEMORY`
+// shapes, now with an `SSE`-classified field inside.
+//
+// The value owns a `String`, so this is also the shape the memory gate needs:
+// the callee drops its own copy (a moved parameter is an ordinary owned local),
+// and the temporary a call returns is never double-freed.
+//
+// Note: a field read of an *owned temporary* (`mkName().r`) is deliberately
+// not here. That shape leaks the temporary in this backend for an integer
+// field too, a pre-existing bug this slice recorded rather than fixed (see the
+// slice's blockquote in `plan/mk7-own-backend.md`); every temporary below is
+// bound, moved or passed instead.
+datac Named(val r: f64, val name: String)
+
+fun area(n: move Named).R: f64 = n.r + n.name.len().to_f64()
+fun label(n: move Named).R: f64 = n.r
+fun mkName().R: Named = Named(r = 2.5, name = String.from_str("kelp"))
+
+fun main() {
+    print(area(mkName()))
+    var a = Named(r = 1.0, name = String.from_str("abcd"))
+    print(area(a))
+    print(label(mkName()))
+    var b = mkName()
+    print(b.name)
+    print(b.r)
+}

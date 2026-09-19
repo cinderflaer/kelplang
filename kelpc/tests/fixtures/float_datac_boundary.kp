@@ -1,0 +1,53 @@
+// MK7 §5 item 4, the float-in-aggregate slice: a `datac` whose fields are all
+// floats, passed and returned by value.
+//
+// SysV classifies each eightbyte of a value of at most sixteen bytes: an
+// eightbyte is `SSE` when every field overlapping it is a float or a double,
+// and `INTEGER` otherwise, and the two register files are numbered
+// independently. So `Vec2`/`TwoF` travel in `xmm` registers, `Mix` splits into
+// `rdi` + `xmm0`, `Mix2` into `xmm0` + `rdi`, and a three-`f64` `Big` is over
+// sixteen bytes and therefore `MEMORY` — it goes in the outgoing argument area
+// and comes back through the hidden pointer, exactly as its all-integer
+// counterpart already did.
+//
+// Every value printed here has crossed a call boundary first: a literal
+// evaluated in the frame does not exercise the classification at all.
+datac Vec2(val a: f64)
+datac TwoF(val x: f64, val y: f64)
+datac Mix(val i: i64, val d: f64)
+datac Mix2(val d: f64, val i: i64)
+datac Big(val a: f64, val b: f64, val c: f64)
+datac FourF(val w: f32, val x: f32, val y: f32, val z: f32)
+datac ThreeF(val x: f32, val y: f32, val z: f32)
+datac F1(val a: f32)
+
+fun sum2(v: move Vec2).R: f64 = v.a
+fun addmix(m: move Mix).R: f64 = m.d + m.i.to_f64()
+fun addmix2(m: move Mix2).R: f64 = m.d + m.i.to_f64()
+fun sumf(t: move TwoF).R: f64 = t.x + t.y
+fun sumbig(b: move Big).R: f64 = b.a + b.b + b.c
+fun sum4(t: move FourF).R: f32 = t.w + t.x + t.y + t.z
+fun sum3(t: move ThreeF).R: f32 = t.x + t.y + t.z
+fun sum1(t: move F1).R: f32 = t.a
+
+fun mk2().R: Vec2 = Vec2(a = 4.5)
+fun mkf().R: TwoF = TwoF(x = 1.25, y = 2.5)
+fun mkmix().R: Mix = Mix(i = 7, d = 0.5)
+fun mkmix2().R: Mix2 = Mix2(d = 0.5, i = 7)
+fun mkbig().R: Big = Big(a = 1.0, b = 2.0, c = 3.0)
+
+fun main() {
+    print(sum2(Vec2(a = 3.0)))
+    print(sum2(mk2()))
+    print(sumf(TwoF(x = 1.5, y = 2.5)))
+    print(sumf(mkf()))
+    print(addmix(Mix(i = 2, d = 0.5)))
+    print(addmix(mkmix()))
+    print(addmix2(Mix2(d = 0.5, i = 2)))
+    print(addmix2(mkmix2()))
+    print(sumbig(Big(a = 1.0, b = 2.0, c = 4.0)))
+    print(sumbig(mkbig()))
+    print(sum4(FourF(w = 1.0, x = 2.0, y = 3.0, z = 4.0)))
+    print(sum3(ThreeF(x = 1.0, y = 2.0, z = 4.0)))
+    print(sum1(F1(a = 2.5)))
+}

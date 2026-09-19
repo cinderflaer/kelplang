@@ -1,0 +1,27 @@
+// MK7 §5 item 4, the float-in-aggregate slice: writing a float field, which is
+// the `xmm` counterpart of an integer field's store — through a `mut` method's
+// receiver and through a plain `c.r = v` alike, on a `datac` whose other field
+// is an integer so the value is the mixed `INTEGER`/`SSE` class.
+//
+// `receiver_methods` already pins `Circle.a = r + by` on an all-float `datac`;
+// this adds the mixed class and the direct field assignment, so both
+// `field_assign`'s two paths and `field_read` on a mixed value are covered.
+datac Bar(val id: i64, var r: f64)
+
+fun mut Bar.bump(by: f64) {
+    r = r + by
+}
+
+fun main() {
+    var b = Bar(id = 3, r = 1.5)
+    b.r = b.r + 0.5
+    print(b.id)
+    print(b.r)
+    b.bump(by = 2.0)
+    print(b.id)
+    print(b.r)
+
+    var c = Bar(id = 9, r = 4.25)
+    print(c.id)
+    print(c.r)
+}
