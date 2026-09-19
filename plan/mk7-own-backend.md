@@ -26,14 +26,14 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **156 of 251** integration tests pass under `--backend=asm`; all 58 fixtures the asm backend builds print byte-identical stdout to the C backend, and the newest slice is the first heap type: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), verified leak- and double-free-clean under `valgrind` on the ten heap fixtures plus a 48-fixture sweep — which is also the memory gate §5's definition of done had been missing, since the AddressSanitizer gate instruments generated C and cannot see this backend at all |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **158 of 253** integration tests pass under `--backend=asm`; all 60 fixtures the asm backend builds print byte-identical stdout to the C backend, and the newest slice is the first heap type: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), verified leak- and double-free-clean under `valgrind` on the ten heap fixtures plus a 48-fixture sweep — which is also the memory gate §5's definition of done had been missing, since the AddressSanitizer gate instruments generated C and cannot see this backend at all |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **156 of 251 tests pass on the asm backend, and the C backend passes all
-251.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **158 of 253 tests pass on the asm backend, and the C backend passes all
+253.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -78,7 +78,8 @@ fixtures in §5's heap blockquote, plus a new `int_mod_narrow.kp` that only exis
 probe found `%` unassemblable below sixty-four bits. Its other two measurements are the ones worth keeping: 48
 fixtures now build (was 37), the refused set is 80 (was 90), and every one of the 48 is `valgrind`-clean, which
 is the first memory gate this backend has had. The String/`View` slice (below) then moved it by ten more at the
-fixture level and eleven at the test level — 58 fixtures build, 71 are refused, the asm suite is 156 of 251 —
+fixture level and eleven at the test level — 58 fixtures build, 71 are refused, the asm suite is 156 of 251; the two bug fixes that followed took both
+counts up by two more, to 60 and 158 —
 with valgrind clean over all 129 C-backend and 58 asm-backend binaries, and with two things worth carrying
 forward: `View` was the first heap type to use the `AggClass::Two` register pair and needed no new ABI code at
 all, and a latent dispatch bug (`View#to_string` matching the `#to_` numeric-conversion prefix) was found by a
@@ -94,12 +95,12 @@ landed, not a percentage that would imply more precision than the plan has:**
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
   `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
   backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
-  compiled. That is where the 156/251 fixture number comes from. The remaining part of item 4 (`enum`, plus a
+  compiled. That is where the 158/253 fixture number comes from. The remaining part of item 4 (`enum`, plus a
   `datac` holding a float or heap field — see the fourth slice's blockquote for what "by value" now covers end
   to end), the rest of item 8 (printing an owned buffer for the remaining heap types, plus a `Bytes` in a
   template), the rest of items 5 and 10 (every other owning type's drop, and the externs whose bodies are the
   heap and the syscall layer), plus items 6-7 (closures, capabilities), are what stands between here and Stage
-  1's own definition of done: all 251 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for
+  1's own definition of done: all 253 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for
   the asm backend — which the heap slice supplied, in the form of a `valgrind` sweep over every fixture this
   backend builds, and which is documented rather than wired into the suite (see that blockquote for why).
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
@@ -280,8 +281,8 @@ with the backend as the only variable.
 > after the fact, because each was a blanket refusal at the top of `generate`
 > that kept the feature out of codegen entirely).**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **156 of 251 end-to-end
-> tests pass**, and the C backend passes all 251 — so the differential gate is
+> and `ld`, with no C compiler in the chain. Measured: **158 of 253 end-to-end
+> tests pass**, and the C backend passes all 253 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
 > can only rise from here. Every fixture the asm backend builds was also compared
 > against the C backend's own binary for this re-measurement (37 fixtures, 37
@@ -866,19 +867,41 @@ with the backend as the only variable.
 > different number; it is in the differential gate. That is also why the test
 > count moved by eleven rather than ten.
 >
-> **A finding this slice did not fix, because it is in the oracle.** Inline
-> literals wider than their own inferred type are folded at 64 bits by the *C*
-> backend while this one truncates them to the expression's width first, so
-> `print(1000000000007 % 1000000007)` prints `999993014` under `--backend=c` and
-> `-727379961` under `--backend=asm`. The expression is `i32` on both sides (the
-> C backend prints it with `%d`), so this one is right and the C backend is
-> computing in a width its own emitted format string contradicts — a `val x: i32
-> = 1000000000007;` local truncates identically in both backends, so the trigger
-> is a literal used *inline* as an operand. It is recorded here rather than
-> fixed because the C backend is §1.1's oracle: changing it can change what an
-> existing fixture is asserting, which is a decision about the corpus rather than
-> a one-line cast. `int_mod_narrow.kp` deliberately uses named locals for its
-> wide cases so it pins neither answer.
+> **A finding this slice left in the oracle, and the fix that came out of it.**
+> Inline literals wider than their own inferred type were folded at 64 bits by
+> the *C* backend while this one truncated them to the expression's width first,
+> so `print(1000000000007 % 1000000007)` printed `999993014` under
+> `--backend=c` and `-727379961` under `--backend=asm`. The expression is `i32`
+> on both sides (the C backend printed it with `%d`), so this backend was right
+> and the C backend was computing in a width its own emitted format string
+> contradicted; a `val x: i32 = 1000000000007;` local truncated identically in
+> both, so the trigger was a literal used *inline* as an operand.
+>
+> It was recorded rather than fixed at the time, because the C backend is §1.1's
+> oracle and changing it can move what an existing fixture asserts. The decision
+> then taken was to fix it: `ExprKind::IntLit` now emits a cast to the literal's
+> own type (the same narrowing the declaration path always did, and the same one
+> `codegen_asm.rs` does), so both backends narrow a literal before the operation.
+> **The corpus did not move at all** — 251 fixtures still pass, none of them had
+> ever written a literal that did not fit its own type, which is exactly why the
+> disagreement survived. `int_literal_width.kp` is the fixture that writes one.
+>
+> The footgun that fix does not remove, recorded so it is a decision rather than
+> an oversight: a literal that does not fit its inferred type is narrowed
+> *silently* — `print(1000000000007)` prints `-727379961`, by the same rule that
+> always applied to `val x: i32 = 1000000000007`. Rejecting it instead would be a
+> language decision (a diagnostic, or widening the literal's type when nothing
+> constrains it), not a backend one.
+
+> **The other bug this slice's spec listed is fixed too.** `plan/heap-runtime.md`
+> (§12 here) flagged `String.with_capacity(0)` as its first uncertainty: the
+> capacity reserve has nothing to do at zero, so `data` stayed NULL while `len`
+> and `cap` were 0 — an empty `String` that crashes the first thing treating it
+> as a C string. The spec called it "an edge, not a proven bug"; it was a bug,
+> and a five-line one: both backends now allocate the single NUL byte that
+> `String.empty()` allocates. `string_with_capacity_zero.kp` segfaults under the
+> pre-fix C runtime and passes under both now, which is the check that makes it
+> a fixture rather than an assertion.
 
 > **The String/`View` slice — the text types, and the containers' prerequisite —
 > is done (2026-09-19).** `$String` (24 bytes, `MEMORY` class like `Bytes`) and
@@ -944,7 +967,7 @@ with the backend as the only variable.
 > every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
 > a ratchet on the set the asm backend builds, and prints this exact table under
 > `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
-> count is 71 of the 129 fixtures the C backend builds (58 built, all agreeing
+> count is 71 of the 131 fixtures the C backend builds (60 built, all agreeing
 > byte for byte). The categories are the *feature* in the way, read off each
 > fixture's first refusal message:
 >
@@ -1107,7 +1130,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
     of a row rather than a finished one.
 
-Definition of done: all 251 integration tests pass under `--backend=asm` with byte-identical stdout to
+Definition of done: all 253 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
@@ -1736,12 +1759,16 @@ literally — `externs.rs:390`).
 
 ### Uncertainties
 
-1. **`String.with_capacity(0)`.** `kelp_String__with_capacity` (`:429`) starts
+1. **`String.with_capacity(0)`.** ~~`kelp_String__with_capacity` (`:429`) starts
    with `data=NULL` and `reserve` early-returns when `len+extra <= cap`, so a
    zero capacity leaves `data==NULL` — breaking the "an empty value never
    points at NULL" invariant the other constructors keep. I could not find a
    call site that passes 0, and no fixture pins it. Treat as an edge to decide,
-   not a guaranteed difference.
+   not a guaranteed difference.~~ **Resolved, and it was a bug rather than an
+   edge**: both backends now allocate the one NUL byte `String.empty()`
+   allocates, and `kelpc/tests/fixtures/string_with_capacity_zero.kp` — which
+   segfaulted under the pre-fix runtime, at `str.len(s.as_str())` — pins it.
+   See §5's note beside the heap-slice blockquote.
 2. **`cap` after a drop.** `kelp_bytes_drop`/`kelp_string_drop` reset `data`
    and `len` but **not** `cap` (`:306-310`, `:489-493`). Harmless (the pointer
    is NULL) but the struct is not fully re-initialized; a backend that re-reads

@@ -877,6 +877,36 @@ fn string_and_view_construct_measure_slice_and_convert() {
     );
 }
 
+/// The bug the spec's own uncertainty list found, and the reason it mattered:
+/// `String.with_capacity(0)` left `data == NULL` while claiming to be an empty
+/// string, so the first thing that treated it as a C string — `as_str` through
+/// `strlen` — segfaulted. This fixture crashed the C backend before the fix and
+/// now passes on both, which is what makes it worth keeping: the hole was in a
+/// constructor nothing in the corpus called with zero.
+#[test]
+fn a_string_with_zero_capacity_is_a_valid_empty_string() {
+    assert_compiles_and_runs(
+        "tests/fixtures/string_with_capacity_zero.kp",
+        "0\ntrue\n0\ntrue\n\n0\n3\nabc\nabcd\n4\ntrue\n0\ntrue\n0\n",
+    );
+}
+
+/// A literal that does not fit the type its context gave it is narrowed to that
+/// type by both backends, in the same place in the pipeline.
+///
+/// This is the fixture that would have caught the C backend emitting such a
+/// literal at its full width and letting C's arithmetic conversions decide: the
+/// two backends disagreed on `1000000000007 % 1000000007` by exactly the
+/// difference between a 64-bit and a 32-bit remainder, and no existing fixture
+/// had a literal wider than its own type in it.
+#[test]
+fn an_out_of_range_literal_narrows_to_its_inferred_type() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_literal_width.kp",
+        "-727379961\n727379961\n-727379961\n-727379960\n-1454759922\n-242459987\n-727379968\n-727379961\n-727379961\ntrue\n1\n0\n255\n65535\n999993014\n",
+    );
+}
+
 #[test]
 fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
     assert_compiles_and_runs(
@@ -3359,6 +3389,12 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // register is the one place a hand-written `idiv`/`div` can read the
         // wrong half of the dividend and print a plausible wrong number.
         "int_mod_narrow",
+        // ...and the two the *same* probe found in the other direction: a
+        // literal wider than its inferred type, and a zero-capacity `String`
+        // whose `data` was NULL. Both were invisible to a fixture literal
+        // because no fixture had ever written either shape.
+        "int_literal_width",
+        "string_with_capacity_zero",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();

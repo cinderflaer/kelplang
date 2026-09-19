@@ -14,11 +14,12 @@
 // type in v1 — only `u8` and `u16` are that narrow — so the two narrow widths
 // are exercised unsigned, which is also the only way they can be reached.)
 //
-// The wide cases use named locals rather than inline literals on purpose: a
-// literal wider than its own inferred type is folded differently by the two
-// backends today, which is a C-backend finding recorded in
-// `plan/mk7-own-backend.md` §5 rather than something this fixture should pin
-// either way. Every literal written below is exactly representable at its type.
+// The wide cases use named locals rather than inline literals: at the time this
+// fixture was written the two backends folded a too-wide inline literal
+// differently, so the choice kept this fixture off that disagreement. That is
+// fixed now (see `int_literal_width.kp`, which pins the agreed rule), and these
+// locals still read better than four wide literals in a row would. Every literal
+// written below is exactly representable at its type.
 fun main() {
     // i32: positive, both orders of negative, and a dividend whose remainder is
     // wider than a byte.

@@ -64,9 +64,9 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 129 fixtures the C backend
-/// builds, 58 of them also built by the asm backend, 71 refused — which is the
-/// 156-of-251 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 131 fixtures the C backend
+/// builds, 60 of them also built by the asm backend, 71 refused — which is the
+/// 158-of-253 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
 /// Re-recorded three times so far, and the *reason* each time is worth keeping:
@@ -79,7 +79,10 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `stdlib_path`, `path_parts`, `stdlib_fmt`, `literal_operand_typing`,
 /// `float_integral_literal` and `view_released_at_scope_end` — nine fixtures
 /// that were refused for a `String` type they no longer mention, plus the one
-/// fixture the slice added to pin `View`'s register-pair ABI.
+/// fixture the slice added to pin `View`'s register-pair ABI; and two more that
+/// close the two bugs the heap spec's uncertainty list and the `%` probe turned
+/// up — `int_literal_width` and `string_with_capacity_zero`, both fixed in the
+/// C backend and in this one in the same commit that recorded them here.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -113,6 +116,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "if_expr",
     "int_conversion_overflow",
     "int_conversions",
+    "int_literal_width",
     "int_mod_narrow",
     "literal_operand_typing",
     "move_then_reinit",
@@ -135,6 +139,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "string_basic",
     "string_build",
     "string_view_basic",
+    "string_with_capacity_zero",
     "view_released_at_scope_end",
     "when_expr",
     "when_in_args",

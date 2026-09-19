@@ -432,6 +432,19 @@ static kelp_String kelp_String__with_capacity(size_t n) {
     s.len = 0;
     s.cap = 0;
     kelp_buf_reserve(&s.data, 0, &s.cap, n);
+    if (s.data == NULL) {
+        /* `n == 0` leaves the reserve above with nothing to do, and an empty
+           `String` must still point at a NUL byte rather than at NULL — the
+           same rule `kelp_String__empty` and `kelp_Bytes__empty` follow, and
+           the reason `strlen`, `%s` and `as_str` are never handed NULL. `cap`
+           stays 0, which is what an empty string's capacity is. */
+        unsigned char* p = (unsigned char*)malloc(1);
+        if (p == NULL) {
+            kelp_panic("out of memory");
+        }
+        p[0] = 0;
+        s.data = p;
+    }
     return s;
 }
 
@@ -2436,7 +2449,23 @@ impl<'a> Gen<'a> {
     /// statement-expressions here.
     fn expr_value(&self, expr: &Expr) -> String {
         match &expr.kind {
-            ExprKind::IntLit(v) => v.to_string(),
+            ExprKind::IntLit(v) => {
+                // Cast to the literal's own type, which is the type `infer.rs`
+                // resolved for it from its context. Without the cast a literal
+                // wider than that type was emitted at its full 64-bit value and
+                // the operation was then performed at that width by C's usual
+                // arithmetic conversions — so `print(1000000000007 %
+                // 1000000007)`, whose expression type is `i32`, printed the
+                // 64-bit remainder (999993014) here while the asm backend, which
+                // cuts every literal to its own width, printed the 32-bit one
+                // (-727379961). Both halves of that disagreement were
+                // unobservable until a fixture was written for it, because a
+                // literal that fits its type is unaffected either way. This is
+                // the same narrowing the declaration path (`val x: i32 =
+                // 1000000000007`) already performed, and the same one
+                // `codegen_asm.rs`'s `IntLit` does.
+                format!("(({})({}))", expr.ty.c_type(), v)
+            }
             // A character literal is an integer constant with the code point
             // as its value and the type its context asked for, so it emits a
             // cast and nothing else. `u8` is the common case (`c == '"'`),

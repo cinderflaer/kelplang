@@ -1,0 +1,49 @@
+// A literal wider than its own inferred type is narrowed to that type *before*
+// the operation, and both backends do it the same way.
+//
+// They did not. Nothing in the corpus wrote a literal that did not fit the type
+// its context gave it, so the two backends had never been compared on one: the
+// C backend emitted the full 64-bit constant and let C's usual arithmetic
+// conversions do the work, while the asm backend cuts every literal to the
+// expression's width first. `1000000000007 % 1000000007` is the two-line
+// difference — 999993014 from one backend, -727379961 from the other, for an
+// expression both agree is `i32`.
+//
+// The rule the corpus already followed is that a literal takes the integer type
+// its context asks for and `i32` when nothing asks, so the values below are the
+// narrowed ones. Each is written out beside a hand-check where the arithmetic is
+// not obvious.
+fun main() {
+    // The two expressions that disagreed.
+    print(1000000000007 % 1000000007)          // -727379961 % 1000000007
+    print(0 - 1000000000007 % 1000000007)      // -(-727379961)
+
+    // Arithmetic at the narrowed width, including the literal alone.
+    print(1000000000007)
+    print(1000000000007 + 1)
+    print(1000000000007 * 2)
+    print(1000000000007 / 3)
+    print(1000000000007 - 7)
+
+    // The same value through a local, which always narrowed — the declaration
+    // path is the behaviour the inline path was made to match.
+    val x: i32 = 1000000000007
+    print(x)
+    print(x % 1000000007)
+
+    // Comparisons and bitwise operators, where a wide literal narrows to
+    // something a reader would not guess: 2^32 is 0 as an `i32`, so `+ 1` is 1.
+    print(4294967296 == 0)
+    print(4294967297 & 255)
+    print(4294967297 >> 1)
+
+    // Narrow declared types, where a literal narrows hardest.
+    val b: u8 = 255
+    val w: u16 = 65535
+    print(b)
+    print(w)
+
+    // The control case: an `i64` context narrows nothing.
+    val big: i64 = 1000000000007
+    print(big % 1000000007)
+}

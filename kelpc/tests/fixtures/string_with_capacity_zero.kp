@@ -1,0 +1,37 @@
+// `String.with_capacity(n = 0)` must produce the same empty string
+// `String.empty()` does: pointing at a NUL byte, never at NULL.
+//
+// It did not. The capacity reserve has nothing to do when the requested
+// capacity is zero, so `data` stayed NULL while `len` and `cap` were 0 — and
+// every path that treats a `String` as a C string then handed NULL to
+// `strlen`/`%s`/`as_str`. Nothing in the corpus called it with zero, so the
+// hole survived until the heap-runtime spec listed it as an uncertainty; this
+// fixture is what closes it. The non-zero case is here beside it so a fix for
+// zero cannot quietly change what a real capacity reserves.
+impl "std/str"
+fun main() {
+    val empty = String.with_capacity(n = 0)
+    print(empty.len())
+    print(empty.is_empty())
+    print(str.len(empty.as_str()))
+    print(str.is_empty(empty.as_str()))
+    print(empty)
+
+    // A real capacity still reserves, still starts empty, and still grows.
+    var grown = String.with_capacity(n = 4)
+    print(grown.len())
+    grown.push_str(s = "abc")
+    print(grown.len())
+    print(grown)
+    grown.push(b = 'd')
+    print(grown)
+    print(grown.len())
+    print(str.eq(a = grown.as_str(), b = "abcd"))
+
+    // The same value through `view()`, which needs the NUL for a whole-string
+    // view to be a valid `str` afterwards.
+    val v = empty.view()
+    print(v.len())
+    print(v.is_empty())
+    print(v.to_string().len())
+}

@@ -2671,9 +2671,19 @@ impl Gen {
             Routine::BytesPush
             | Routine::BytesAppend
             | Routine::StringPush
-            | Routine::StringPushStr
-            | Routine::StringWithCapacity => {
+            | Routine::StringPushStr => {
                 self.routines.insert(Routine::BufReserve);
+            }
+            // `with_capacity` needs the reserve for a real capacity, and
+            // `with_capacity(0)` fills its empty `String` by calling
+            // `BytesEmpty`, which builds the same `{malloc(1), 0, 0}` value.
+            // This is the only place that dependency can be declared: doing it
+            // from inside `emit_routine` was too late, because the set of
+            // routines to emit is snapshotted before the first one is written,
+            // so the call linked against a symbol nothing emitted.
+            Routine::StringWithCapacity => {
+                self.routines.insert(Routine::BufReserve);
+                self.routines.insert(Routine::BytesEmpty);
             }
             Routine::BytesAsStr | Routine::StringFromBytes => {
                 self.routines.insert(Routine::Utf8Valid);
@@ -4702,13 +4712,23 @@ impl Gen {
             Routine::StringWithCapacity => {
                 // kelp_String__with_capacity(n): `{NULL, 0, 0}` then a reserve
                 // of `n`, built in a 24-byte stack temporary and copied out.
-                // `n == 0` leaves `data == NULL`, exactly as the C body does
-                // (see plan/heap-runtime.md's first uncertainty) — a faithful
-                // transliteration rather than a corrected one.
+                // `n == 0` leaves the reserve nothing to do, so the temporary's
+                // `data` is still NULL and an empty `String` would point at it —
+                // the C body had the same hole, and both fill it the same way:
+                // by allocating the one NUL byte `kelp_String__empty` allocates.
+                // `BytesEmpty` already builds exactly that value (`{malloc(1),
+                // 0, 0}` with the byte zeroed), so it is called rather than the
+                // four instructions being written out a second time. Both
+                // routines it calls are declared in `require_routine`, not
+                // here — see that function for why.
                 self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 24\n");
                 self.out.push_str("    mov rbx, rdi\n    mov QWORD PTR [rsp], 0\n    mov QWORD PTR [rsp+8], 0\n    mov QWORD PTR [rsp+16], 0\n");
                 self.out.push_str("    mov rdi, rsp\n");
                 let _ = writeln!(self.out, "    call {}", Routine::BufReserve.label());
+                self.out.push_str("    cmp QWORD PTR [rsp], 0\n    jne .Lstr_cap_have\n");
+                self.out.push_str("    mov rdi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesEmpty.label());
+                self.out.push_str(".Lstr_cap_have:\n");
                 self.out.push_str("    mov rax, QWORD PTR [rsp]\n    mov QWORD PTR [rbx], rax\n");
                 self.out.push_str("    mov rax, QWORD PTR [rsp+8]\n    mov QWORD PTR [rbx+8], rax\n");
                 self.out.push_str("    mov rax, QWORD PTR [rsp+16]\n    mov QWORD PTR [rbx+16], rax\n");
