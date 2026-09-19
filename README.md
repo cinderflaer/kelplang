@@ -115,7 +115,7 @@ yet is refused by name rather than silently miscompiled.
 | --- | --- |
 | `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_c`, `codegen_asm`, `driver` |
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
-| `kelpc/runtime/` | the C the compiler still emits as its runtime, kept as reviewed files |
+| `kelpc/runtime/` | the reviewed C that is still C: the capability glue `codegen_c.rs` emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, and `run-all-backends.sh` |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |

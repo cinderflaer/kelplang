@@ -1,41 +1,52 @@
-//! Lowers the typed IR (`tir`) to x86-64 assembly text (MK7 tier 1).
+//! Lowers the typed IR (`tir`) to x86-64 assembly text (MK7 tier 1, in
+//! progress). `kelpc build --backend=asm` writes this module's output to a `.s`
+//! file and finishes it with `as` and `ld`; no C compiler is in that chain.
 //!
-//! This is the **first slice** of the own backend, and it is deliberately the
-//! simplest thing that can be correct rather than the fastest thing that can
-//! run. Three decisions are worth naming, because each one is a thing this
-//! module will grow out of:
+//! Three decisions are worth naming, because each one is a thing this module
+//! grew out of and each is still load-bearing:
 //!
-//! 1. **A stack machine, not an allocator.** Every expression evaluates into
-//!    `rax`, and a binary operator spills the left operand to the stack so the
-//!    right one can be computed. There is no register allocator, no liveness
-//!    analysis, and no attempt to keep a value in a register across statements;
-//!    locals live in frame slots. This is *at or below* the `-O0` column the
-//!    plan gates on, which is exactly why it is the right first step:
-//!    correctness is checkable against the C backend before any performance
-//!    claim has to be made. `plan/mk7-own-backend.md` §5 item 3 is where a real
-//!    allocator replaces this.
+//! 1. **A stack machine, with a register allocator on top.** Every expression
+//!    evaluates into `rax`, and a binary operator spills the left operand to the
+//!    stack so the right one can be computed. On top of that, a local whose live
+//!    range fits is pinned to one of five callee-saved registers for the whole
+//!    function (`allocate_registers`), so a read or write of it is a
+//!    register-to-register `mov` with no memory traffic and no reloading across a
+//!    call. `f32`/`f64` locals are deliberately excluded — xmm live-range
+//!    allocation is separate work — and expression evaluation itself is
+//!    untouched, which is why this is *at or below* the `-O0` column the plan
+//!    gates on: correctness is checkable against the C backend before any
+//!    performance claim has to be made.
 //!
 //! 2. **Assembly text, not machine code.** The output goes to `as` and `ld`, so
 //!    instruction encoding and relocation stay somebody else's problem for now;
 //!    tier 2 removes both. What that buys here is that a wrong instruction is a
 //!    readable diff rather than a byte offset.
 //!
-//! 3. **A refusal is a feature.** Anything this slice cannot lower — a heap
-//!    type, an aggregate, a closure, an `extern` call — is reported as
-//!    `unsupported` with the type or node named, rather than emitted wrongly.
-//!    The fixture suite then measures exactly how much of the language is
-//!    covered, and that number rises by removing named gaps instead of by
-//!    hunting silent miscompiles.
+//! 3. **A refusal is a feature.** Anything this slice cannot lower — `Map`, an
+//!    `enum`, a closure, a capability-gated call, a `List` method whose element
+//!    would need a comparison or a clone, an owning `pd` — is reported as
+//!    `unsupported` with the type, method or node named, rather than emitted
+//!    wrongly. A capability-gated call is refused rather than emitted unchecked,
+//!    because that is the one gap that would be a security hole instead of a
+//!    wrong number. The fixture suite then measures exactly how much of the
+//!    language is covered, and that number rises by removing named gaps instead
+//!    of by hunting silent miscompiles. The C backend is the oracle: every
+//!    fixture is built by both and their stdout is compared
+//!    (`kelpc/tests/backend_coverage.rs`), and the current ranking of what is
+//!    still refused is in `plan/mk7-own-backend.md` §5.
 //!
 //! Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 //! comparisons (including the unordered/NaN case), all unary and binary
 //! operators including short-circuiting `&&`/`||`, `if`/`else` in statement and
 //! value position, `while`, assignment, calls with up to six integer and eight
-//! float arguments classified independently per SysV, recursion, and
-//! `print`/`print!` of integers and characters through a single `printf`.
-//! Printing a float itself is not covered — that is `fmt`'s `Display`
-//! machinery, a separate gap from this item's ABI/arithmetic scope
-//! (`plan/mk7-own-backend.md` §5 item 2).
+//! float arguments classified independently per SysV, recursion, `print`/`print!`
+//! of integers, characters, booleans, `str`, floats and an owned buffer, `datac`
+//! aggregates by value at any size (including a `MEMORY`-class one as an
+//! argument), `Bytes`, `String`, `View`, `Box<T>` and `List<T>` with their own
+//! free at every drop point, a `pd`'s generated storage, and calls to the
+//! `extern fun`s whose bodies this backend owns or can forward to libc through
+//! the PLT. Printing through `fmt`'s `Display` machinery is not covered, and
+//! neither is anything in the refusal list above.
 //!
 //! # Calling convention
 //!
