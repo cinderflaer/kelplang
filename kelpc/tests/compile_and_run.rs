@@ -1999,6 +1999,62 @@ fn a_missing_map_key_panics() {
 }
 
 #[test]
+fn a_map_grows_by_rehashing_and_keeps_insertion_order() {
+    // Twenty-three inserts cross two index capacities, and the six removes
+    // before the twenty-fourth insert leave tombstones the rebuild has to
+    // skip; `keys()` must still be insertion order with the removed keys gone.
+    assert_compiles_and_runs(
+        "tests/fixtures/map_growth_and_rehash.kp",
+        "23\n220\n50\n60\n70\n80\n90\n100\n17\nfalse\n18\ntrue\n1000\n18\n0\n1\n2\n3\n4\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n100\n",
+    );
+}
+
+#[test]
+fn a_map_probe_steps_over_a_tombstone_and_still_finds_the_live_key() {
+    // "k0", "k8" and "k13" share one probe chain, so the tombstone `remove`
+    // leaves at the chain's head is what a probe has to step past.
+    assert_compiles_and_runs(
+        "tests/fixtures/map_tombstones_and_reuse.kp",
+        "2\n1\n1\nfalse\ntrue\n2\n2\ntrue\n3\n2\n3\ntrue\n9\n2\n3\n",
+    );
+}
+
+#[test]
+fn a_map_entry_moves_the_value_pointer_with_the_key_width() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_key_widths.kp",
+        "2\n1000000007\n1000000009\n2\n2000000011\n2000000013\n2\n3000000017\n3000000019\n2\n4000000023\n4000000029\n2\n5000000031\n5000000037\n",
+    );
+}
+
+#[test]
+fn replacing_a_map_value_drops_the_old_one() {
+    // The stdout is the same whether or not the old value is dropped; the
+    // replacement path is a valgrind check (`memory_gate.rs` sweeps every
+    // fixture), and this run only makes each replacement observable.
+    assert_compiles_and_runs(
+        "tests/fixtures/map_replace_drops_old_value.kp",
+        "2\n2\nONE\n2\n1\nTWO\n2\nTWO\ntwo again\n2\n2\n1\ntwo again\n",
+    );
+}
+
+#[test]
+fn map_string_values_survive_the_whole_ownership_path() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_owned_round_trip.kp",
+        "3\ntwo\nthree\nfallback\none\n2\n2\nbeta\ngamma\n2\ntwo\nthree\n0\ntrue\n",
+    );
+}
+
+#[test]
+fn a_cleared_map_is_empty_and_reusable() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_clear_then_reuse.kp",
+        "10\n81\n0\ntrue\nfalse\n2\n33\n44\ntrue\n44\n1\nfalse\n1\n3\n",
+    );
+}
+
+#[test]
 fn a_shared_borrow_of_a_temporary_is_allowed_for_a_call() {
     assert_compiles_and_runs("tests/fixtures/borrow_temp_arg.kp", "3\n18\n");
 }

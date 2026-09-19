@@ -1,0 +1,56 @@
+// Inserting a key the map already holds replaces the value in place: the old
+// value is dropped and the new one takes its slot. For a `String` value that
+// drop is the whole point, and it is a check no stdout comparison can make —
+// the value printed after a replace is the new one whether or not the old
+// buffer was ever freed. The check is valgrind (`kelpc/tests/memory_gate.rs`
+// sweeps every fixture): a replacement that leaked the old value is a leak,
+// and one that freed the new value instead is a use-after-free on the next
+// read. This fixture still prints, so a run is observable: the count at every
+// step and every replaced value.
+//
+// One key is replaced twice (two values dropped for one entry) and another is
+// removed and re-added, so the entry's key is dropped and re-stored exactly
+// once as well.
+impl "std/str"
+
+fun main() {
+    var m: Map<String> = Map.new()
+    m.insert("alpha", String.from_str("one"))
+    m.insert("beta", String.from_str("two"))
+    print(m.len())
+
+    m.insert("alpha", String.from_str("ONE"))
+    print(m.len())
+    {
+        val v = m.get("alpha")
+        print(v.as_str())
+    }
+
+    m.insert("alpha", String.from_str("1"))
+    print(m.len())
+    {
+        val v = m.get("alpha")
+        print(v.as_str())
+    }
+
+    m.insert("beta", String.from_str("TWO"))
+    {
+        val v = m.get("beta")
+        print(v.as_str())
+    }
+    print(m.len())
+
+    val removed = m.remove("beta")
+    print(removed.as_str())
+    m.insert("beta", String.from_str("two again"))
+    {
+        val v = m.get("beta")
+        print(v.as_str())
+    }
+    print(m.len())
+
+    val vs = m.values()
+    print(vs.len())
+    print(vs.get(0).as_str())
+    print(vs.get(1).as_str())
+}

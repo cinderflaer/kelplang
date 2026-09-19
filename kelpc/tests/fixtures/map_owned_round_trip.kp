@@ -1,0 +1,48 @@
+// The whole ownership path for `String` values, in one map and in the order a
+// caller would walk it: an insert that stores a value, a `get` that borrows
+// it, a `get_or` on a present key (a clone, plus the fallback it no longer
+// needs, dropped), a `get_or` on an absent key (the fallback itself), a
+// `remove` that moves the value out, a `keys()` and a `values()` that clone
+// into `List`s, and a `clear()` that drops every live value and keeps the
+// buffers. `map_owned` reaches the same methods over a two-entry map; this
+// one runs three entries through them, so the states between the calls — a
+// value borrowed, then cloned, then moved out, then dropped — are all
+// observable and all valgrind-checked.
+impl "std/str"
+
+fun main() {
+    var m: Map<String> = Map.new()
+    m.insert("alpha", String.from_str("one"))
+    m.insert("beta", String.from_str("two"))
+    m.insert("gamma", String.from_str("three"))
+    print(m.len())
+
+    {
+        val borrowed = m.get("beta")
+        print(borrowed.as_str())
+    }
+
+    val present = m.get_or("gamma", String.from_str("absent"))
+    print(present.as_str())
+    val absent = m.get_or("delta", String.from_str("fallback"))
+    print(absent.as_str())
+
+    val moved = m.remove("alpha")
+    print(moved.as_str())
+    print(m.len())
+
+    {
+        val keys = m.keys()
+        print(keys.len())
+        print(keys.get(0).as_str())
+        print(keys.get(1).as_str())
+    }
+    val values = m.values()
+    print(values.len())
+    print(values.get(0).as_str())
+    print(values.get(1).as_str())
+
+    m.clear()
+    print(m.len())
+    print(m.is_empty())
+}

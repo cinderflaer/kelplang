@@ -64,12 +64,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 139 fixtures the C backend
-/// builds, 85 of them also built by the asm backend, 54 refused — which is the
-/// 182-of-260 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 145 fixtures the C backend
+/// builds, 97 of them also built by the asm backend, 48 refused — which is the
+/// 193-of-266 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// Re-recorded six times so far, and the *reason* each time is worth keeping:
+/// Re-recorded seven times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
 /// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
@@ -103,7 +103,20 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `list_remove_bounds`). What the list row still refuses is `sort`/`contains`/
 /// `slice` (`list_slice_bounds`, `list_slice_insert`, `stdlib_sort`), an owning
 /// passdown (`list_field`, `pd_owned`), and the `List<String>` a `str` coercion
-/// feeds (`str_to_string_coercion`).
+/// feeds (`str_to_string_coercion`); and the map slice added twelve — five of
+/// the six fixtures the heap row had been carrying for `Map` (`map_basic`,
+/// `map_key_types`, `map_missing_key`, `map_owned`, `map_remove_missing`, but
+/// **not** `str_to_string_coercion`, which is still refused for an `if` in value
+/// position producing a `MEMORY`-class value and for an `enum`, neither of them
+/// a `Map`), plus `map_datac` from the `datac` row — the slice resolved a `Map`
+/// field through `struct_layout`, so the `FieldEntry::Aggregate` path placed it
+/// with no new ABI code — plus the six fixtures the slice wrote for the growth
+/// and rehash policy, tombstones and their reuse, the entry key widths, a
+/// replace that must drop the old value, the whole owned round trip, and a clear
+/// that is followed by reuse (`map_clear_then_reuse`, `map_growth_and_rehash`,
+/// `map_key_widths`, `map_owned_round_trip`, `map_replace_drops_old_value`,
+/// `map_tombstones_and_reuse`). That is also why the C denominator moved from
+/// 139 to 145 rather than staying fixed.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -159,6 +172,18 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "list_pop_empty",
     "list_remove_bounds",
     "literal_operand_typing",
+    "map_basic",
+    "map_clear_then_reuse",
+    "map_datac",
+    "map_growth_and_rehash",
+    "map_key_types",
+    "map_key_widths",
+    "map_missing_key",
+    "map_owned",
+    "map_owned_round_trip",
+    "map_remove_missing",
+    "map_replace_drops_old_value",
+    "map_tombstones_and_reuse",
     "move_param",
     "move_then_reinit",
     "named_args",

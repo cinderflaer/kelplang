@@ -1,0 +1,51 @@
+// An entry is `{ key; value*; live }`: the value pointer sits at
+// `align_up(sizeof(K), 8)`, the live byte just after it, and the stride
+// between entries is the padded size. A one- or two-byte key and a
+// twenty-four-byte `String` key move both offsets, so a layout that assumed
+// the wrong key width would read a value from the wrong bytes — the value
+// pointer would be the key's trailing bytes, or the live byte would be the
+// low byte of the pointer. `map_key_types` holds one entry per key type and
+// small values, so a wrong offset could still land on a byte that happens to
+// read as the same number.
+//
+// Every map gets two entries, so the value offsets are checked at the base
+// offset *and* one stride in, and each value is a distinct nine- or ten-digit
+// number so a misread cannot coincide with the intended one. A `char` key is
+// deliberately absent: `is_map_key` admits only `String`, the integers and
+// `bool`, because a `char` is a code point rather than an integer.
+fun main() {
+    var one: Map<u8, i64> = Map.new()
+    one.insert(key = 1.to_u8(), v = 1000000007)
+    one.insert(key = 255.to_u8(), v = 1000000009)
+    print(one.len())
+    print(one.get(key = 1.to_u8()))
+    print(one.get(key = 255.to_u8()))
+
+    var two: Map<u16, i64> = Map.new()
+    two.insert(key = 1.to_u16(), v = 2000000011)
+    two.insert(key = 60000.to_u16(), v = 2000000013)
+    print(two.len())
+    print(two.get(key = 1.to_u16()))
+    print(two.get(key = 60000.to_u16()))
+
+    var eight: Map<i64, i64> = Map.new()
+    eight.insert(key = 7, v = 3000000017)
+    eight.insert(key = 5000000000, v = 3000000019)
+    print(eight.len())
+    print(eight.get(key = 7))
+    print(eight.get(key = 5000000000))
+
+    var flags: Map<bool, i64> = Map.new()
+    flags.insert(key = false, v = 4000000023)
+    flags.insert(key = true, v = 4000000029)
+    print(flags.len())
+    print(flags.get(key = false))
+    print(flags.get(key = true))
+
+    var text: Map<String, i64> = Map.new()
+    text.insert(key = "one", v = 5000000031)
+    text.insert(key = "a longer key", v = 5000000037)
+    print(text.len())
+    print(text.get(key = "one"))
+    print(text.get(key = "a longer key"))
+}

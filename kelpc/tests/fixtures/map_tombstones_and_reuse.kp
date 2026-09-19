@@ -1,0 +1,40 @@
+// A removal leaves the index slot as a tombstone (`SIZE_MAX`) rather than an
+// empty slot (`0`), and the probe has to tell the two apart: it must step
+// past a tombstone to keep looking for a key, yet remember the first
+// tombstone as the place a new key may be stored. Read a tombstone as empty
+// and a key inserted into the same probe chain becomes unfindable; read an
+// empty slot as a tombstone and a probe has nowhere to stop. `map_basic`
+// removes a key whose probe chain holds nothing else, so neither case is
+// reached there.
+//
+// "k0", "k8" and "k13" hash to index slot 0 of the initial eight-slot
+// capacity, so they share one chain. `k0` is inserted, then `k8` beside it;
+// removing `k0` tombstones the chain's head, and `k8` must stay findable
+// through it. `k13` is then inserted into that tombstone, and reinserting
+// `k0` must land a fresh entry rather than resurrect the dead one — the
+// failure here is a wrong number or a missing key, not a crash.
+fun main() {
+    var m: Map<i64> = Map.new()
+    m.insert("k0", 1)
+    m.insert("k8", 2)
+    print(m.len())
+
+    print(m.remove("k0"))
+    print(m.len())
+    print(m.has("k0"))
+    print(m.has("k8"))
+    print(m.get("k8"))
+
+    m.insert("k13", 3)
+    print(m.len())
+    print(m.has("k13"))
+    print(m.get("k13"))
+    print(m.get("k8"))
+
+    m.insert("k0", 9)
+    print(m.len())
+    print(m.has("k0"))
+    print(m.get("k0"))
+    print(m.get("k8"))
+    print(m.get("k13"))
+}

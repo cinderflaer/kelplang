@@ -1,0 +1,46 @@
+// A `Map`'s index is open-addressed with a power-of-two capacity and a 3/4
+// load factor, so the insert that would cross it rebuilds the index from the
+// live entries. That rebuild is where insertion order would be lost if the
+// order were read from the index instead of from the dense entry array:
+// entries stay in insertion order, the index is re-derived, and a rebuild
+// drops every tombstone. `map_basic` never holds more than three keys, so
+// nothing in the corpus reaches a rebuild or a tombstone.
+//
+// Twenty-three inserts fire the first rebuild (at the sixth insert) and fill
+// the index to just under the next threshold; the six removes that follow
+// leave tombstones, and the twenty-fourth insert fires the rebuild again with
+// those tombstones present, so the rebuild has to skip them. `keys()` must
+// still be insertion order — the removed keys gone, the late key last — and
+// `len()` must agree.
+fun main() {
+    var m: Map<i32, i32> = Map.new()
+    var i: i32 = 0
+    while i < 23 {
+        m.insert(i, i * 10)
+        i += 1
+    }
+    print(m.len())
+    print(m.get(22))
+
+    print(m.remove(5))
+    print(m.remove(6))
+    print(m.remove(7))
+    print(m.remove(8))
+    print(m.remove(9))
+    print(m.remove(10))
+    print(m.len())
+    print(m.has(5))
+
+    m.insert(100, 1000)
+    print(m.len())
+    print(m.has(100))
+    print(m.get(100))
+
+    val ks = m.keys()
+    print(ks.len())
+    var j: usize = 0
+    while j < ks.len() {
+        print(ks.get(j))
+        j += 1
+    }
+}

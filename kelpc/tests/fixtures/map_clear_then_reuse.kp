@@ -1,0 +1,35 @@
+// `clear()` drops every live value and every owned key but keeps the entry
+// and index buffers, so the map is empty and immediately usable again without
+// reallocating. `map_basic` clears once and prints the count; this fixture
+// fills the map again after the clear and then removes one of the new keys,
+// so a clear that left a stale index slot behind would answer `has` from a
+// key that no longer exists, or a second insert would find a phantom entry.
+fun main() {
+    var m: Map<i32, i32> = Map.new()
+    var i: i32 = 0
+    while i < 10 {
+        m.insert(i, i * i)
+        i += 1
+    }
+    print(m.len())
+    print(m.get(9))
+
+    m.clear()
+    print(m.len())
+    print(m.is_empty())
+    print(m.has(3))
+
+    m.insert(3, 33)
+    m.insert(4, 44)
+    print(m.len())
+    print(m.get(3))
+    print(m.get(4))
+    print(m.has(3))
+    print(m.remove(4))
+    print(m.len())
+    print(m.has(4))
+
+    val ks = m.keys()
+    print(ks.len())
+    print(ks.get(0))
+}
