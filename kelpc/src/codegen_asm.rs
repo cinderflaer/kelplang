@@ -458,6 +458,29 @@ const STRING_LAYOUT_KEY: &str = "$String";
 /// The key `struct_layout` looks `Ty::View` up under.
 const VIEW_LAYOUT_KEY: &str = "$View";
 
+/// The key `struct_layout` looks every `Ty::Box<T>` up under. **One key for
+/// every element type**, unlike the routines: a box is one pointer whatever it
+/// points at, so `types::box_c_type`'s per-instantiation name is needed for the
+/// *functions* (`kelp_Box__<mangle>__of`) and not for the layout. Keeping one
+/// key is what lets `layout_key` answer for a `Box` field without knowing
+/// anything about the element, and it is why a recursive `datac`
+/// (`datac Node(val next: Box<Node>)`) resolves at all: the box's own layout is
+/// available before `Node`'s is.
+const BOX_LAYOUT_KEY: &str = "$Box";
+
+/// The C layout of `kelp_Box__*` (`codegen_c.rs:1106-1111`): one `value`
+/// pointer at offset 0, size 8, align 8 — one INTEGER eightbyte, so a box
+/// travels in `rax`/`rdi` like a scalar and needs no new ABI code anywhere,
+/// exactly as the third and fourth item-4 slices promised a heap type would.
+/// `NULL` means empty, which is the whole of the type's representation.
+fn box_layout() -> StructLayout {
+    StructLayout {
+        entries: vec![FieldEntry::Scalar("value".to_string(), 0, Width::W8, false)],
+        size: 8,
+        align: 8,
+    }
+}
+
 /// The C layout of `kelp_String` (`codegen_c.rs:316-321`): the same
 /// `{data, len, cap}` the `Bytes` layout is, so a `String` local, parameter,
 /// argument and return travel exactly the way a `Bytes` one does.
@@ -1031,7 +1054,77 @@ fn layout_key(ty: &Ty) -> Option<String> {
         Ty::Bytes => Some(BYTES_LAYOUT_KEY.to_string()),
         Ty::String => Some(STRING_LAYOUT_KEY.to_string()),
         Ty::View => Some(VIEW_LAYOUT_KEY.to_string()),
+        Ty::Box(_) => Some(BOX_LAYOUT_KEY.to_string()),
         _ => None,
+    }
+}
+
+/// How many bytes a value of `ty` occupies in the C layout — `sizeof(T)` for a
+/// `Box<T>` element. `None` for a type this backend cannot lay out at all
+/// (`List`/`Map`/`Enum`/a closure), which is the same answer `struct_layout`
+/// gives and what makes `Box<List<i32>>` a refusal rather than an allocation of
+/// the wrong size.
+fn elem_size(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<i32> {
+    if let Some(layout) = struct_layout(ty, layouts) {
+        return Some(layout.size);
+    }
+    int_ty(ty).map(|(width, _)| width.bytes())
+}
+
+/// The symbol one `Box<T>` routine is emitted (and called) under. Kept
+/// identical to `codegen_c.rs::write_box`'s generated names —
+/// `types::box_c_type` plus the operation — so `nm` and a differential run
+/// agree, and `drop_fn_name`'s own spelling is used for the drop rather than a
+/// second convention being invented here.
+#[derive(Clone, PartialEq, Eq)]
+enum BoxFn {
+    Empty(Ty),
+    Of(Ty),
+    IsEmpty(Ty),
+    /// `__get` when the element comes back by value (in `rax`) and
+    /// `__get_const` when a pointer to it does. The flag is decided at the
+    /// call site from the call's own result type — a `&T` result is the
+    /// borrowing form — which is exactly how `codegen_c.rs` decides it
+    /// (`matches!(ret, Ty::Ref { .. })`), so the two backends cannot pick
+    /// different spellings for the same instantiation.
+    Get(Ty, bool),
+    Set(Ty),
+    Take(Ty),
+    Drop(Ty),
+}
+
+impl BoxFn {
+    fn elem(&self) -> &Ty {
+        match self {
+            BoxFn::Empty(e)
+            | BoxFn::Of(e)
+            | BoxFn::IsEmpty(e)
+            | BoxFn::Get(e, _)
+            | BoxFn::Set(e)
+            | BoxFn::Take(e)
+            | BoxFn::Drop(e) => e,
+        }
+    }
+
+    fn label(&self) -> String {
+        let base = format!("kelp_Box__{}", crate::types::ty_mangle(self.elem()));
+        match self {
+            BoxFn::Empty(_) => format!("{base}__empty"),
+            BoxFn::Of(_) => format!("{base}__of"),
+            BoxFn::IsEmpty(_) => format!("{base}__is_empty"),
+            BoxFn::Get(_, by_value) => {
+                if *by_value {
+                    format!("{base}__get")
+                } else {
+                    format!("{base}__get_const")
+                }
+            }
+            BoxFn::Set(_) => format!("{base}__set"),
+            BoxFn::Take(_) => format!("{base}__take"),
+            // `types::drop_fn_name`'s spelling, which is not the
+            // `kelp_Box__*__<op>` shape the rest of the set uses.
+            BoxFn::Drop(e) => format!("kelp_box_drop__{}", crate::types::ty_mangle(e)),
+        }
     }
 }
 
@@ -1047,7 +1140,7 @@ fn align_up(cursor: i32, align: i32) -> i32 {
 /// process exit.
 fn ty_owns(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> bool {
     match ty {
-        Ty::Bytes | Ty::String => true,
+        Ty::Bytes | Ty::String | Ty::Box(_) => true,
         Ty::Struct(name) => datac_owns_in(name, layouts, &mut std::collections::HashSet::new()),
         _ => false,
     }
@@ -1066,7 +1159,7 @@ fn datac_owns_in(
     };
     layout.entries.iter().any(|e| match e {
         FieldEntry::Aggregate(_, _, _, ty) => match ty {
-            Ty::Bytes | Ty::String => true,
+            Ty::Bytes | Ty::String | Ty::Box(_) => true,
             Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
             _ => false,
         },
@@ -1180,6 +1273,16 @@ fn try_build_layout(
             // of the synthesized ones. The field's key is what its own layout
             // is looked up by later, which is why it is recorded rather than
             // the type alone.
+            //
+            // A `Box` field (the box slice) is placed the same way, and the
+            // element's own layout is deliberately *not* required here: a box
+            // is eight bytes whatever it points at, and requiring the element
+            // is exactly what would make `datac Node(val next: Box<Node>)`
+            // unresolvable, since `Node` has no layout while its own fields
+            // are being placed. A `Box<List<i32>>` field is therefore accepted
+            // here and refused where it matters — by `Gen::call`'s `Box#`
+            // dispatch for a value this program builds, and by
+            // `emit_datac_drop` for one it only drops, both by name.
             let key = layout_key(&f.ty).expect("a field with a layout has a layout key");
             let align = inner.align;
             cursor = align_up(cursor, align);
@@ -1217,6 +1320,9 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
     out.insert(BYTES_LAYOUT_KEY.to_string(), bytes_layout());
     out.insert(STRING_LAYOUT_KEY.to_string(), string_layout());
     out.insert(VIEW_LAYOUT_KEY.to_string(), view_layout());
+    // MK7 §5's box slice: one entry covers every `Box<T>` (see
+    // `BOX_LAYOUT_KEY`).
+    out.insert(BOX_LAYOUT_KEY.to_string(), box_layout());
     for _ in 0..=structs.len() {
         let mut changed = false;
         for s in structs {
@@ -1246,6 +1352,7 @@ fn struct_layout<'a>(
         Ty::Bytes => layouts.get(BYTES_LAYOUT_KEY),
         Ty::String => layouts.get(STRING_LAYOUT_KEY),
         Ty::View => layouts.get(VIEW_LAYOUT_KEY),
+        Ty::Box(_) => layouts.get(BOX_LAYOUT_KEY),
         _ => None,
     }
 }
@@ -1622,8 +1729,24 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
             .find(|n| !emitted.contains(n))
             .cloned();
         let Some(name) = next else { break };
-        g.emit_datac_drop(&name);
+        g.emit_datac_drop(&name)?;
         emitted.push(name);
+    }
+    // MK7 §5's box slice: one routine set per `Box<T>` instantiation this
+    // program needs. Emitted after the `datac` drops (a `datac` drop can call
+    // a box's drop), and read to a fixpoint for the same reason the `datac`
+    // loop is: a box's drop calls the drop of its element, which may be
+    // another box (`Box<Box<Node>>`).
+    let mut emitted_boxes: Vec<String> = Vec::new();
+    loop {
+        let next = g
+            .box_fns
+            .iter()
+            .find(|f| !emitted_boxes.contains(&f.label()))
+            .cloned();
+        let Some(f) = next else { break };
+        emitted_boxes.push(f.label());
+        g.emit_box_routine(&f);
     }
     // MK7 §5 item 8: the panic routine, after every function and before the
     // data section `finish` writes. One copy per program, and only for a
@@ -1755,9 +1878,14 @@ impl LiveAnalysis {
         // A `Bytes` local is 24 bytes and is only ever addressed through
         // `eval_struct_into`/`emit_copy`, so it must be stack-only for the
         // same reason a `datac` is — the register allocator must not hand it
-        // one of its five registers.
-        self.is_agg
-            .push(matches!(ty, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::View));
+        // one of its five registers. `Box` joined the list with the box slice:
+        // it is eight bytes and *could* live in a register, but `&b`/`&mut b`
+        // is how every method on it is called, and a borrowed local has to
+        // have an address.
+        self.is_agg.push(matches!(
+            ty,
+            Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::View | Ty::Box(_)
+        ));
         self.scopes
             .last_mut()
             .expect("a scope always exists")
@@ -2267,6 +2395,12 @@ struct Gen {
     /// why this is closed over nested fields at the point a drop is first
     /// needed (`require_datac_drop`) rather than being a single name.
     drop_datacs: std::collections::BTreeSet<String>,
+    /// MK7 §5's box slice: the `Box<T>` routines this program needs, labelled
+    /// by `BoxFn::label` and emitted after the fixed routines are. A `Vec`
+    /// rather than a set because `BoxFn` holds a `Ty` and the label is what
+    /// dedupes; the count is bounded by the instantiation count, and `emit`
+    /// re-reads it to a fixpoint (`Box<Box<T>>`'s drop calls another box's).
+    box_fns: Vec<BoxFn>,
 }
 
 /// One owned type's drop, as a symbol this module can `call`.
@@ -2280,6 +2414,11 @@ enum DropSite {
     /// gives the C backend (`kelp_drop_<c_ident>`), so a stack trace and a
     /// differential test name the same thing.
     Datac(String),
+    /// A per-instantiation `Box<T>` drop, `kelp_box_drop__<mangle>` —
+    /// `types::drop_fn_name`'s spelling for `Ty::Box`, emitted by
+    /// `Gen::emit_box_routine` like the rest of the box set. Carries the
+    /// element so the generator knows which instantiation to write.
+    Box(Ty),
 }
 
 impl DropSite {
@@ -2287,6 +2426,7 @@ impl DropSite {
         match self {
             DropSite::Routine(r) => r.label().to_string(),
             DropSite::Datac(name) => format!("kelp_drop_{}", crate::types::c_ident(name)),
+            DropSite::Box(elem) => BoxFn::Drop(elem.clone()).label(),
         }
     }
 }
@@ -2768,6 +2908,18 @@ impl Gen {
         match ty {
             Ty::Bytes => Some(DropSite::Routine(Routine::BytesDrop)),
             Ty::String => Some(DropSite::Routine(Routine::StringDrop)),
+            // A `Box<T>` owns exactly when its element does: `Box.empty()` is
+            // `NULL` and frees nothing, and the box's generated drop tests for
+            // that itself. `Box::<List<i32>>::drop` has no element size this
+            // backend can allocate, so it is `None` here — and every path that
+            // creates one refuses the element first (`Gen::call`'s `Box#`
+            // dispatch, and `try_build_layout` for a `Box` field), so a `None`
+            // here cannot turn into a silently skipped free.
+            Ty::Box(elem) => {
+                elem_size(elem, &self.layouts)?;
+                self.require_box_fn(BoxFn::Drop((**elem).clone()));
+                Some(DropSite::Box((**elem).clone()))
+            }
             Ty::Struct(name) => {
                 if !self.datac_owns(name) {
                     return None;
@@ -2777,6 +2929,31 @@ impl Gen {
             }
             _ => None,
         }
+    }
+
+    /// Records that one `Box<T>` routine is needed, along with everything its
+    /// body calls. The element's own drop routine has to be registered *here*
+    /// rather than where the body is written, because the routine set is
+    /// snapshotted before any body is emitted — the trap the
+    /// `String.with_capacity(0)` fix documented. `Drop` is the only box routine
+    /// that frees the element (`Set` frees the value it replaces), so both of
+    /// those declare the dependency; `Of`/`Take`/`Get` never drop anything.
+    fn require_box_fn(&mut self, f: BoxFn) {
+        if self.box_fns.iter().any(|x| x.label() == f.label()) {
+            return;
+        }
+        match &f {
+            BoxFn::Set(elem) | BoxFn::Drop(elem) => {
+                let elem = elem.clone();
+                // Registering the element's own drop is the whole point of this
+                // arm: `drop_site_for` records whatever that site needs
+                // (a `Bytes`/`String` routine, a `datac`'s generated drop, or
+                // another box's) before the routine snapshot is taken.
+                self.drop_site_for(&elem);
+            }
+            _ => {}
+        }
+        self.box_fns.push(f);
     }
 
     /// Whether a `datac` owns anything, read off the layouts: a `String` or
@@ -2815,6 +2992,18 @@ impl Gen {
                     Ty::String => {
                         self.require_routine(Routine::StringDrop);
                     }
+                    // MK7 §5's box slice: a `datac` holding a `Box` field is
+                    // dropped by calling the box's generated drop, so that one
+                    // (and everything it calls) has to be registered here —
+                    // the same before-the-snapshot rule as the two routines
+                    // above. `try_build_layout` only accepted the field after
+                    // `elem_size` answered for its element, so this cannot
+                    // require a box this backend cannot write.
+                    Ty::Box(elem) => {
+                        if elem_size(elem, &self.layouts).is_some() {
+                            self.require_box_fn(BoxFn::Drop((**elem).clone()));
+                        }
+                    }
                     Ty::Struct(inner) => {
                         if self.datac_owns(inner) {
                             stack.push(inner.clone());
@@ -2849,9 +3038,9 @@ impl Gen {
     /// caller-saved one. The `sub rsp, 8` is alignment: at entry `rsp` is eight
     /// bytes off sixteen, `push rbp` and `push rbx` leave it eight off again,
     /// and a `call` must see it aligned.
-    fn emit_datac_drop(&mut self, name: &str) {
+    fn emit_datac_drop(&mut self, name: &str) -> Result<(), String> {
         let Some(layout) = self.layouts.get(name).cloned() else {
-            return;
+            return Ok(());
         };
         let label = format!("kelp_drop_{}", crate::types::c_ident(name));
         let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
@@ -2862,6 +3051,19 @@ impl Gen {
             let FieldEntry::Aggregate(_, offset, _, ty) = entry else {
                 continue;
             };
+            // `drop_site_for` returning `None` means "this field owns
+            // nothing" — a scalar, a `View`, a `datac` of scalars — *except*
+            // for a `Box` whose element this backend cannot size, and that one
+            // is a refusal: skipping it would be the silently-leaked free this
+            // module's refusals exist to prevent.
+            if let Ty::Box(elem) = ty {
+                if elem_size(elem, &self.layouts).is_none() {
+                    return Err(unsupported(&format!(
+                        "the `Box<{}>` field of `{name}`",
+                        elem.display()
+                    )));
+                }
+            }
             let Some(site) = self.drop_site_for(ty) else {
                 continue;
             };
@@ -2870,6 +3072,235 @@ impl Gen {
         }
         self.out
             .push_str("    add rsp, 8\n    pop rbx\n    pop rbp\n    ret\n");
+        Ok(())
+    }
+
+    /// One `Box<T>` instantiation's function set, transliterated from
+    /// `codegen_c.rs::write_box`. The box is one pointer; `NULL` is the empty
+    /// box, which is what makes a recursive `datac` expressible without an
+    /// `Option`.
+    ///
+    /// The frame is fixed for every routine here: two eight-byte slots at
+    /// `rbp-8`/`rbp-16` (the value's address, and the hidden return pointer for
+    /// a `MEMORY`-class element) and a buffer at `rbp-K` big enough for the
+    /// element, with `K = align_up(size + 16, 16)` so `rsp` stays sixteen-byte
+    /// aligned at every `call`. Nothing is kept in a callee-saved register: the
+    /// register allocator pins this program's locals to `rbx`/`r12`-`r15`, so a
+    /// routine of the runtime must leave them alone, and `malloc`/`free` are
+    /// exactly the calls a caller-saved register cannot survive.
+    ///
+    /// Everything the body calls was registered by `require_box_fn` before the
+    /// routine set was snapshotted (see that function), so nothing here has to
+    /// remember a dependency at emission time.
+    fn emit_box_routine(&mut self, f: &BoxFn) {
+        let elem = f.elem().clone();
+        let size = elem_size(&elem, &self.layouts)
+            .expect("require_box_fn refuses an element with no size");
+        // A scalar element is not an aggregate, but its transport is exactly
+        // `AggClass::One`'s: one integer register in, `rax` out.
+        let class = struct_layout(&elem, &self.layouts)
+            .map(|l| l.class())
+            .unwrap_or(AggClass::One);
+        let label = f.label();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        let k = align_up(size + 16, 16);
+        let buf = -k;
+        let slot_self = -8;
+        let slot_ret = -16;
+        let prologue = format!("    push rbp\n    mov rbp, rsp\n    sub rsp, {k}\n");
+        let epilogue = "    mov rsp, rbp\n    pop rbp\n    ret\n";
+
+        match f {
+            // `Box<T> b; b.value = NULL; return b;` — the value is one
+            // eightbyte in `rax`, which is also how this backend returns any
+            // `One`-class aggregate.
+            BoxFn::Empty(_) => self.out.push_str("    xor eax, eax\n    ret\n"),
+            // `return self->value == NULL;`
+            BoxFn::IsEmpty(_) => self.out.push_str(
+                "    cmp QWORD PTR [rdi], 0\n    sete al\n    movzx eax, al\n    ret\n",
+            ),
+            // The `Copy`-element form: the value itself comes back in `rax`.
+            // `is_copy` is only ever true for a scalar here, so the width and
+            // the extension are the ones an ordinary scalar read uses — an
+            // eight-byte load out of a four-byte allocation would be a real
+            // out-of-bounds read, which the memory gate would find. The two
+            // `get` forms are told apart by `is_copy`, the same predicate
+            // `codegen_c.rs::write_box` splits on and `BoxFn`'s label uses.
+            BoxFn::Get(_, by_value) if *by_value => {
+                let (width, signed) = int_ty(&elem)
+                    .expect("the copying `get` form is only emitted for a Copy element");
+                let empty = self.label("box_get_empty");
+                let msg = self.bytes_label(b"Box.get: the box is empty");
+                self.out.push_str("    mov r11, QWORD PTR [rdi]\n    test r11, r11\n");
+                let _ = writeln!(self.out, "    je {empty}");
+                let _ = writeln!(
+                    self.out,
+                    "    mov {}, {} [r11]",
+                    width.rax(),
+                    width.mem()
+                );
+                self.out.push_str(&width.extend(signed));
+                self.out.push_str("    ret\n");
+                let _ = writeln!(self.out, "{empty}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // The borrowing form, for an element that is not `Copy`: a pointer
+            // to the value in the box.
+            BoxFn::Get(_, _) => {
+                let empty = self.label("box_get_empty");
+                let msg = self.bytes_label(b"Box.get: the box is empty");
+                self.out.push_str("    mov rax, QWORD PTR [rdi]\n");
+                self.out.push_str("    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {empty}");
+                self.out.push_str("    ret\n");
+                let _ = writeln!(self.out, "{empty}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            BoxFn::Of(_) => {
+                let oom = self.label("box_of_oom");
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str(&prologue);
+                self.marshal_elem(class, size, buf, "rdi", "rsi");
+                let _ = writeln!(self.out, "    mov edi, {size}");
+                self.out.push_str("    call malloc@PLT\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {oom}");
+                self.out.push_str("    mov r11, rax\n");
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                self.out.push_str("    mov rax, r11\n");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{oom}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            BoxFn::Set(_) => {
+                let oom = self.label("box_set_oom");
+                let alloc = self.label("box_set_alloc");
+                let store = self.label("box_set_store");
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                self.marshal_elem(class, size, buf, "rsi", "rdx");
+                self.out.push_str("    mov r11, QWORD PTR [rdi]\n    test r11, r11\n");
+                let _ = writeln!(self.out, "    je {alloc}");
+                // The slot is reused: the value it held is freed, the box is
+                // not. `self->value` is re-read afterwards rather than kept in
+                // a register, because the drop call is free to clobber
+                // everything caller-saved.
+                if let Some(site) = self.drop_site_for(&elem) {
+                    let _ = writeln!(self.out, "    mov rdi, r11");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                }
+                let _ = writeln!(self.out, "    jmp {store}");
+                let _ = writeln!(self.out, "{alloc}:");
+                let _ = writeln!(self.out, "    mov edi, {size}");
+                self.out.push_str("    call malloc@PLT\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {oom}");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [r11], rax\n");
+                let _ = writeln!(self.out, "{store}:");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov r11, QWORD PTR [r11]\n");
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{oom}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            BoxFn::Take(_) => {
+                let empty = self.label("box_take_empty");
+                let msg = self.bytes_label(b"Box.take: the box is empty");
+                self.out.push_str(&prologue);
+                // A `MEMORY`-class return takes `rdi` for the hidden pointer
+                // *before* the first real argument, so the box comes in `rsi`
+                // there and in `rdi` everywhere else.
+                let self_reg = if class == AggClass::Mem { "rsi" } else { "rdi" };
+                if class == AggClass::Mem {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                }
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], {self_reg}");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [{self_reg}]");
+                self.out.push_str("    test r11, r11\n");
+                let _ = writeln!(self.out, "    je {empty}");
+                // Park the value in the frame before freeing the slot, because
+                // `free` is entitled to clobber `rax`/`rdx`/`r11`.
+                emit_copy(&mut self.out, "rbp", buf, "r11", 0, size);
+                self.out.push_str("    mov rdi, r11\n    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [r11], 0\n");
+                match class {
+                    AggClass::One => {
+                        if let Some((width, signed)) = int_ty(&elem) {
+                            let _ = writeln!(
+                                self.out,
+                                "    mov {}, {} [rbp{buf}]",
+                                width.rax(),
+                                width.mem()
+                            );
+                            self.out.push_str(&width.extend(signed));
+                        } else {
+                            let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{buf}]");
+                        }
+                    }
+                    AggClass::Two => {
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{buf}]");
+                        let buf2 = buf + 8;
+                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{buf2}]");
+                    }
+                    AggClass::Mem => {
+                        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_ret}]");
+                        emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                        self.out.push_str("    mov rax, r11\n");
+                    }
+                }
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{empty}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            BoxFn::Drop(_) => {
+                let done = self.label("box_drop_done");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                self.out.push_str("    mov r11, QWORD PTR [rdi]\n    test r11, r11\n");
+                let _ = writeln!(self.out, "    je {done}");
+                if let Some(site) = self.drop_site_for(&elem) {
+                    let _ = writeln!(self.out, "    mov rdi, r11");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                }
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdi, QWORD PTR [r11]\n    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [r11], 0\n");
+                let _ = writeln!(self.out, "{done}:");
+                self.out.push_str(epilogue);
+            }
+        }
+    }
+
+    /// The element argument of `__of`/`__set` into the routine's own buffer, by
+    /// SysV class: `rdi` (or `rdi`/`rsi`) for a register-classed element, and
+    /// the caller's outgoing argument area — whose first byte is `[rbp+16]` at
+    /// a callee's entry — for a `MEMORY`-class one. The `QWORD` store for the
+    /// register case is deliberately wider than some elements; the buffer is
+    /// `size + 16` bytes rounded up to sixteen, so it cannot reach either slot
+    /// or the caller's frame, and the *allocation* copy below uses the exact
+    /// size.
+    fn marshal_elem(&mut self, class: AggClass, size: i32, buf: i32, first: &str, second: &str) {
+        match class {
+            AggClass::One => {
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{buf}], {first}");
+            }
+            AggClass::Two => {
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{buf}], {first}");
+                let buf2 = buf + 8;
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{buf2}], {second}");
+            }
+            AggClass::Mem => {
+                emit_copy(&mut self.out, "rbp", buf, "rbp", 16, size);
+            }
+        }
     }
 
     /// Records that a routine, and everything it calls, has to be emitted.
@@ -2968,6 +3399,21 @@ impl Gen {
                 self.require_datac_drop(name);
                 DropSite::Datac(name.clone())
             }
+            // A `Box` temporary is the same shape one pointer wide: `f(Box.of(1))`
+            // where `f` takes the box by borrow has to free the box — and the
+            // element with it — after the call. An element this backend cannot
+            // allocate is refused by name rather than staged without a drop,
+            // which is the same refusal `Gen::call`'s `Box#` dispatch makes.
+            Ty::Box(elem) => {
+                if elem_size(elem, &self.layouts).is_none() {
+                    return Err(unsupported(&format!(
+                        "a borrow of the temporary `Box<{}>`",
+                        elem.display()
+                    )));
+                }
+                self.require_box_fn(BoxFn::Drop((**elem).clone()));
+                DropSite::Box((**elem).clone())
+            }
             _ => return Ok(None),
         };
         if is_place(inner) {
@@ -2994,9 +3440,21 @@ impl Gen {
                 // of time.
                 if let Some(layout) = struct_layout(ty, &self.layouts) {
                     if layout.class() != AggClass::One {
+                        // Staged in a scratch slot and copied home *after* the
+                        // name is declared, not written straight into the
+                        // local's own slot: an initializer that names the
+                        // binding being declared — which only a shadowing
+                        // declaration can do, since a local is not in scope in
+                        // its own initializer — would otherwise read the
+                        // not-yet-initialized slot. The scalar path below
+                        // evaluates first for the same reason.
+                        let size = layout.size;
+                        let slot = frame.scratch(align_up(size, 8));
+                        self.eval_struct_into(init, frame, Dest::Direct(slot))?;
                         let loc = frame.declare(name, ty, &self.layouts)?;
                         let off = loc.stack_offset().expect("agg locals are stack-only");
-                        return self.eval_struct_into(init, frame, Dest::Direct(off));
+                        emit_copy(&mut self.out, "rbp", off, "rbp", slot, size);
+                        return Ok(());
                     }
                 }
                 self.expr(init, frame)?;
@@ -3311,10 +3769,17 @@ impl Gen {
                         // first because reading it is allowed to read the old
                         // one (`b = b.clone()`), and the old one is gone by the
                         // time it is copied home.
+                        //
+                        // "Staged first" is not only about drops. The
+                        // initializer can read the very binding being assigned
+                        // — `list = Node(value = 2, next = Box.of(list))` is how
+                        // `box_recursive.kp` grows its chain — and writing each
+                        // field straight into the target's own slot would
+                        // overwrite the old value *before* the field expression
+                        // that reads it ran. The C backend gets this for free
+                        // from C's compound-literal-then-assign evaluation
+                        // order; here it has to be explicit.
                         let drops = self.drops.at_assign(&self.function, e.span).to_vec();
-                        if drops.is_empty() {
-                            return self.eval_struct_into(value, frame, Dest::Direct(off));
-                        }
                         let slot = frame.scratch(align_up(size, 8));
                         self.eval_struct_into(value, frame, Dest::Direct(slot))?;
                         for t in &drops {
@@ -4075,7 +4540,23 @@ impl Gen {
                 self.expr(expr, frame)?;
                 self.out.push_str("    mov r11, rax\n");
             }
-            _ => return Err(unsupported("a field access on anything but a local or `*local`")),
+            // MK7 §5's box slice: a base whose own value *is* the address —
+            // `list.next.get().value`, where `Box#get` returned a `&Node`. Any
+            // `Ref`-typed expression evaluates to the pointer in `rax`, so the
+            // address is already there; everything else (a `datac` temporary
+            // used by value, which would need a slot of its own) stays refused.
+            _ => {
+                let Ty::Ref { inner, .. } = &base.ty else {
+                    return Err(unsupported(
+                        "a field access on anything but a local or `*local`",
+                    ));
+                };
+                if struct_layout(inner, &self.layouts).is_none() {
+                    return Err(unsupported(&format!("the type `{}`", base.ty.display())));
+                }
+                self.expr(base, frame)?;
+                self.out.push_str("    mov r11, rax\n");
+            }
         }
         // Re-derive the layout from `base.ty` (stripping one `Ref`, the way
         // `infer.rs::struct_name_of` does) rather than threading the borrow
@@ -4420,6 +4901,49 @@ impl Gen {
             // `extern_target` maps.
             self.require_routine(r);
             r.label().to_string()
+        } else if let Some(op) = callee.strip_prefix("Box#") {
+            // MK7 §5's box slice: the whole `Box<T>` surface, monomorphized the
+            // way `codegen_c.rs` does it. The element type comes from whichever
+            // of the three places it can: the argument itself for the
+            // associated `Box.of(v)`, the call's own result type for
+            // `Box.empty()`, and the receiver for the four methods (through
+            // `types::box_elem_of`, which looks through the `&Box<T>` a method
+            // receiver is). Nothing else about the call is special — the
+            // routines are written against the SysV signature
+            // `infer.rs::box_sig` declares, so the argument marshalling below
+            // is the ordinary one.
+            let elem = match op {
+                "of" => args.first().map(|a| a.ty.clone()),
+                "empty" => crate::types::box_elem_of(ret_ty).cloned(),
+                _ => args.first().and_then(|a| crate::types::box_elem_of(&a.ty)).cloned(),
+            }
+            .ok_or_else(|| {
+                unsupported(&format!("the method `{}`", callee.replace('#', ".")))
+            })?;
+            if elem_size(&elem, &self.layouts).is_none() {
+                return Err(unsupported(&format!(
+                    "the `Box<{}>` ahead of `{}" ,
+                    elem.display(),
+                    callee.replace('#', ".")
+                )));
+            }
+            let f = match op {
+                "empty" => BoxFn::Empty(elem),
+                "of" => BoxFn::Of(elem),
+                "is_empty" => BoxFn::IsEmpty(elem),
+                "get" => BoxFn::Get(elem, !matches!(ret_ty, Ty::Ref { .. })),
+                "set" => BoxFn::Set(elem),
+                "take" => BoxFn::Take(elem),
+                _ => {
+                    return Err(unsupported(&format!(
+                        "the method `{}` on a `Box`",
+                        callee.replace('#', ".")
+                    )))
+                }
+            };
+            let label = f.label();
+            self.require_box_fn(f);
+            label
         } else if callee.starts_with("Bytes#")
             || callee.starts_with("String#")
             || callee.starts_with("View#")
