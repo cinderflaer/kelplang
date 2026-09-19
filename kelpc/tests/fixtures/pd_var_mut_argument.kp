@@ -1,0 +1,27 @@
+// Roadmap item 17: handing the passdown to a `mut` parameter is a write as far
+// as the borrow is concerned, so `step` holds `st` exclusively — and `relay`,
+// which holds the passdown itself and calls `step`, is upgraded with it. This
+// is the trigger the closure cannot see from a callee's own references: `add`
+// names no passdown at all.
+pd var st = State(n = 0)
+
+datac State(var n: i32)
+
+fun add(s: mut State, d: i32) {
+    s.n += d
+}
+
+fun step() {
+    add(st, 1)
+}
+
+fun relay() {
+    step()
+    print(st.n)
+}
+
+fun main() {
+    step()
+    relay()
+    print(st.n)
+}

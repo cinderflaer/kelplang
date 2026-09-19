@@ -1,0 +1,26 @@
+// A `pd var` of a two-word `datac` is writable from any function that
+// references it, and the write goes through the passdown's exclusive borrow:
+// for a value wider than one eightbyte that is a staged copy plus a
+// `memcpy` rather than a register move. Two things this pins that nothing else
+// did. The operand of the write's `*` is a *use* of the passdown's hidden
+// parameter — the asm backend's live-range analysis used to miss it, which gave
+// the parameter a one-instruction live range and let the allocator hand its
+// register to `a` or `b`, so the write landed in the wrong storage instead of
+// being refused. And an aggregate store through a borrow was a refusal on that
+// backend until the passdown drop slice needed it.
+pd var pair = Pair(a = 1, b = 2)
+pd val scale: i64 = 3
+
+datac Pair(var a: i64, var b: i64)
+
+fun rescale(a: i64, b: i64) {
+    pair = Pair(a = a * scale, b = b * scale)
+}
+
+fun main() {
+    print("${pair.a},${pair.b}")
+    val a = pair.a
+    val b = pair.b
+    rescale(a, b)
+    print("${pair.a},${pair.b}")
+}

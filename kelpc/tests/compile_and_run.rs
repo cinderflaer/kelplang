@@ -561,6 +561,51 @@ fn a_pd_var_is_writable_from_a_function_and_from_main() {
 }
 
 #[test]
+fn a_pd_var_no_function_writes_is_a_shared_borrow() {
+    // Roadmap item 17: the borrow a function holds is computed from whether
+    // it writes the passdown, so a read-only `pd var` is shared and can be
+    // both an argument and a hidden parameter of the same call.
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_var_read_only_shared.kp",
+        "shapes\nshapes\nshapes\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_var_read_only_datac.kp",
+        "api\n3\napi\n",
+    );
+}
+
+#[test]
+fn a_pd_var_write_reaches_the_callers_that_hold_it() {
+    // The upgrade follows the call graph, and the edge is followed even when
+    // the callee does not name the passdown (a pure forwarder takes the
+    // global's address itself) — a shared borrow held across that write is
+    // the hazard the mode exists to prevent.
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_write_reaches_callers.kp",
+        "0\n2\n2\n",
+    );
+    // The other trigger a callee's own references cannot show: the passdown is
+    // handed to a `mut` parameter, so the caller writes it without `add` ever
+    // naming a passdown.
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_var_mut_argument.kp",
+        "2\n2\n",
+    );
+}
+
+#[test]
+fn a_pd_var_of_a_two_word_datac_is_writable_through_its_borrow() {
+    // The write is `*p = v` on the passdown's hidden borrow, and the operand is
+    // a use: the asm backend's live-range analysis missing it put the write in
+    // another parameter's storage instead of refusing it.
+    assert_compiles_and_runs(
+        "tests/fixtures/pd_var_datac_reassign.kp",
+        "1,2\n3,6\n",
+    );
+}
+
+#[test]
 fn passdown_storage_is_a_global_that_main_initializes() {
     // MK7 §5: what the asm backend has to do instead of the C backend's
     // hidden-argument plumbing — one `.bss` object per `pd`, assigned by a

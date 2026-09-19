@@ -2006,23 +2006,43 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         }
         // An *owned* passdown has no scope to die at, so the C backend frees it
         // from an `atexit` handler at process exit (see
-        // `codegen_c.rs::write_pds`). This backend has no such handler yet, so
-        // an owning passdown is refused by name rather than leaked silently —
-        // the same refusal-over-silence rule the rest of this module follows.
-        // The test is `ty_owns` rather than a `Bytes`/`String` match because
-        // the heap-field slice made a `datac` that holds a `String` an owning
-        // type too, and one of those as a passdown would leak in exactly the
-        // same way.
-        if ty_owns(&pd.value_ty, &g.layouts) {
-            return Err(unsupported(&format!(
-                "the passdown `pd {}` (its type is `{}`, and the asm backend does not yet \
-                 free a passdown at process exit — see plan/mk7-own-backend.md §5)",
-                pd.qualified,
-                pd.value_ty.display()
-            )));
-        }
+        // `codegen_c.rs::write_pd_globals`). This backend does the same thing
+        // with a generated `kelp_drop_pds` — the same symbol, the same
+        // declaration order, registered from `main` — so the two backends
+        // free a passdown at the same moment. The test is `ty_owns` rather
+        // than a `Bytes`/`String` match because a `datac` that holds a
+        // `String` owns memory too, and one of those as a passdown frees in
+        // exactly the same way.
+        let drop = if ty_owns(&pd.value_ty, &g.layouts) {
+            // `drop_site_for` is what registers the routines the drop body
+            // calls, so it has to run here, before `generate` snapshots that
+            // set. `None` from it means the type owns memory the backend has
+            // no routine for — a `List<Shape>` over an `enum`, say — which is
+            // refused by name rather than left unfreed, the rule this module
+            // follows everywhere a skipped free could hide.
+            let site = g.drop_site_for(&pd.value_ty).ok_or_else(|| {
+                unsupported(&format!(
+                    "the passdown `pd {}` (its type is `{}`, and the asm backend has no drop \
+                     routine for it — see plan/mk7-own-backend.md §5)",
+                    pd.qualified,
+                    pd.value_ty.display()
+                ))
+            })?;
+            // A fixed routine (`Bytes`/`String`) is only *named* by
+            // `drop_site_for` — a drop site registers it when the site is
+            // emitted, which is too late here, so name it while the routine set
+            // is still open (`require_datac_drop`/`require_list_fn` already do
+            // this for their own dependencies).
+            if let DropSite::Routine(r) = &site {
+                g.require_routine(*r);
+            }
+            Some(site)
+        } else {
+            None
+        };
         g.pds.push(PdGlobal { hidden: pd.name.clone(), label, value_ty: pd.value_ty.clone() });
         g.pd_inits.push(pd.init.clone());
+        g.pd_drops.push(drop);
     }
     // The gated-call table, so a call that the C backend would wrap in a
     // runtime capability check is refused rather than emitted unchecked. This
@@ -2135,6 +2155,13 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         let Some(f) = next else { break };
         emitted_maps.push(f.label());
         g.emit_map_routine(&f)?;
+    }
+    // MK7 §5: one `kelp_drop_pds` for the passdowns that own memory, emitted
+    // after every drop routine it can call (`datac`, `Box`, `List`, `Map`) and
+    // before the panic routine, for the same reason those are ordered the way
+    // they are: no body is written in the middle of another.
+    if g.pd_drops.iter().any(|site| site.is_some()) {
+        g.emit_pd_drop_routine();
     }
     // MK7 §5 item 8: the panic routine, after every function and before the
     // data section `finish` writes. One copy per program, and only for a
@@ -2390,7 +2417,21 @@ impl LiveAnalysis {
                 // only covers a bare `Ty::Struct`).
                 match &target.kind {
                     ExprKind::Ident(name) => self.touch(name),
-                    ExprKind::FieldAccess { .. } => self.expr(target),
+                    // A `FieldAccess` target is a write *through* its base, so
+                    // the base is as live at this point as it would be for a
+                    // read — which matters for a `&datac`/`&mut datac`
+                    // parameter, since a reference to a `datac` is a register
+                    // candidate (`is_agg` only covers a bare `Ty::Struct`). A
+                    // `Deref` target is the same thing one level down: the
+                    // operand *is* the borrow being written through, so
+                    // `*p = v` has to touch `p`. Missing that touch gave the
+                    // operand a one-instruction live range — declaration to
+                    // nothing — and the allocator handed its register to
+                    // another parameter, which is a silent miscompile rather
+                    // than a refusal; two aggregate parameters with one of them
+                    // written through are what exposed it, and `pd_owned_reassign.kp`
+                    // is the fixture for it.
+                    ExprKind::FieldAccess { .. } | ExprKind::Deref { .. } => self.expr(target),
                     _ => {
                         self.tick();
                     }
@@ -2767,6 +2808,14 @@ struct Gen {
     /// inside `PdGlobal` so that `PdGlobal` stays a plain description of
     /// storage, which is all `Dest::Global` needs.
     pd_inits: Vec<Expr>,
+    /// MK7 §5: the drop site of every passdown that owns memory, in the same
+    /// order as `pds` — `None` for one that owns nothing. Resolved once, before
+    /// any function body is emitted, because `drop_site_for` is what records
+    /// the `Bytes`/`String`/`datac`/`List`/`Map` routines that drop calls, and
+    /// that set is snapshotted after the last function. `kelp_drop_pds` calls
+    /// these in declaration order from an `atexit` handler registered by
+    /// `main`, exactly as the C backend's `kelp_init_pds` does.
+    pd_drops: Vec<Option<DropSite>>,
     /// MK7 §5 item 1: the lowering for each `extern fun` this program calls and
     /// this backend can supply a body for, keyed by the extern's canonical key
     /// (`std.math.sqrt_raw`). Empty for a program that calls no extern, which
@@ -3193,6 +3242,16 @@ impl Gen {
         if f.name == "main" {
             for index in 0..self.pds.len() {
                 self.pd_init(index, frame)?;
+            }
+            if self.pd_drops.iter().any(|site| site.is_some()) {
+                // An owned passdown has no scope to die at, so its drop point
+                // is process exit: `atexit` here, as in the C backend's
+                // generated `kelp_init_pds`. Both a `return` from `main` and
+                // `exit` run the handler, which is what makes `std/process.exit`
+                // free the passdowns too.
+                call_align_begin(&mut self.out, frame.sp_slot);
+                self.out.push_str("    lea rdi, [rip+kelp_drop_pds]\n    call atexit@PLT\n");
+                call_align_end(&mut self.out, frame.sp_slot);
             }
         }
         for stmt in &f.body.stmts {
@@ -3670,6 +3729,40 @@ impl Gen {
         let _ = writeln!(self.out, "    call {}", site.label());
         call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
+    }
+
+    /// MK7 §5: `kelp_drop_pds`, the routine `main` hands to `atexit`. One
+    /// `lea`/`call` per owning passdown in declaration order — the same order
+    /// and the same symbol the C backend generates, so a differential test and
+    /// a stack trace name the same thing. `rdi` is the passdown's own storage,
+    /// which is why this needs no frame: `rsp` is sixteen-byte aligned at the
+    /// calls because `push rbp` lands it there (entry is eight off).
+    fn emit_pd_drop_routine(&mut self) {
+        let drops: Vec<(String, DropSite)> = self
+            .pds
+            .iter()
+            .zip(self.pd_drops.iter())
+            .filter_map(|(pd, site)| site.clone().map(|site| (pd.label.clone(), site)))
+            .collect();
+        self.out
+            .push_str("    .type kelp_drop_pds, @function\nkelp_drop_pds:\n");
+        self.out.push_str("    push rbp\n    mov rbp, rsp\n");
+        for (label, site) in drops {
+            let _ = writeln!(self.out, "    lea rdi, [rip+{label}]");
+            let _ = writeln!(self.out, "    call {}", site.label());
+        }
+        self.out.push_str("    pop rbp\n    ret\n");
+        // `atexit` in this glibc is `__cxa_atexit(fn, NULL, __dso_handle)`,
+        // living in `libc_nonshared.a`, and `__dso_handle` is normally defined
+        // by `crtbegin.o` — which the driver's `ld` line deliberately does not
+        // carry (it links `crt1.o`/`crti.o`/`crtn.o` and `-lc` only, with no C
+        // compiler in the chain). The value is a *label a handler belongs to*;
+        // glibc's `exit` runs every registered handler regardless of it, so a
+        // definition here is what `crtbegin.o` would have supplied.
+        self.out.push_str(
+            "    .section .data\n    .globl __dso_handle\n    .hidden __dso_handle\n\
+             __dso_handle:\n    .quad 0\n",
+        );
     }
 
     /// One `datac`'s generated drop function: each owned field in declaration
@@ -5807,6 +5900,30 @@ impl Gen {
                 // and `addr_of_struct` would claim `r11` for its own address
                 // arithmetic on the way — a stack slot cannot be clobbered.
                 if let ExprKind::Deref { expr } = &target.kind {
+                    // A value wider than one eightbyte cannot travel through
+                    // `rax`, so an assignment through the borrow stages the new
+                    // value in a scratch slot and copies it through the pointer
+                    // — the same two-step `Stmt::Let` and an aggregate local
+                    // assignment use. One `push` of the pointer, because
+                    // evaluating the value can call and `r11` is the register
+                    // `addr_of_struct` claims for its own arithmetic. The value
+                    // being replaced is *not* freed, which is the C backend's
+                    // behavior for this shape too (the deliberate leaks in
+                    // `plan/done.md`): the drop plan records none for a
+                    // `*p = v`, so freeing here would be the two backends
+                    // disagreeing about a program's output.
+                    if let Some(layout) = struct_layout(&target.ty, &self.layouts) {
+                        if layout.class() != AggClass::One {
+                            let size = layout.size;
+                            self.expr(expr, frame)?;
+                            self.out.push_str("    push rax\n");
+                            let slot = frame.scratch(align_up(size, 8));
+                            self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+                            self.out.push_str("    pop r11\n");
+                            emit_copy(&mut self.out, "r11", 0, "rbp", slot, size);
+                            return Ok(());
+                        }
+                    }
                     let (width, _) = int_ty(&target.ty).ok_or_else(|| {
                         unsupported(&format!(
                             "assignment through a reference to `{}`",

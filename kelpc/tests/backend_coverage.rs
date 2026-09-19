@@ -64,9 +64,9 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 145 fixtures the C backend
-/// builds, 97 of them also built by the asm backend, 48 refused — which is the
-/// 193-of-266 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 153 fixtures the C backend
+/// builds, 106 of them also built by the asm backend, 47 refused — which is the
+/// 200-of-273 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
 /// Re-recorded seven times so far, and the *reason* each time is worth keeping:
@@ -116,13 +116,27 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// that is followed by reuse (`map_clear_then_reuse`, `map_growth_and_rehash`,
 /// `map_key_widths`, `map_owned_round_trip`, `map_replace_drops_old_value`,
 /// `map_tombstones_and_reuse`). That is also why the C denominator moved from
-/// 139 to 145 rather than staying fixed.
+/// 139 to 145 rather than staying fixed; and the passdown borrow-mode slice
+/// added one, `pd_write_reaches_callers` — a `pd var` write reached through a
+/// chain, which this backend builds — and two it refuses for the owned-passdown
+/// `atexit` handler `pd_owned` is already waiting on
+/// (`pd_var_read_only_shared`, `pd_var_read_only_datac`), which is why the C
+/// denominator moved to 152 and the refusal count to 52; `pd_var_mut_argument`
+/// is that slice's third fixture, a passdown handed to a `mut` parameter, and
+/// this backend builds it too. The passdown *drop* slice then built the rest of
+/// the passdown row — `pd_owned`, `list_field` and `pd_argument_forwarding`,
+/// which were waiting on the `atexit` handler, plus the two read-only fixtures
+/// above — so the baseline gained five (and `block_comments`, from the block
+/// comment slice), the built count moved to 105 and the refusal count to 47;
+/// `pd_var_datac_reassign` is that slice's own fixture for an aggregate write
+/// through a borrow, which took the built count to 106.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
     "asm_float_scalars",
     "assert_fail",
     "bitwise",
+    "block_comments",
     "borrow_basic",
     "borrow_temp_arg",
     "borrow_temp_slots",
@@ -164,6 +178,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "list_basic",
     "list_datac_element",
     "list_element_widths",
+    "list_field",
     "list_growth_and_rebuild",
     "list_insert_bounds",
     "list_insert_remove_shifts",
@@ -195,9 +210,16 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "passdowns",
     "path_parts",
     "path_polish",
+    "pd_argument_forwarding",
+    "pd_owned",
     "pd_shadowed",
     "pd_var_copy_read_twice",
+    "pd_var_datac_reassign",
+    "pd_var_mut_argument",
+    "pd_var_read_only_datac",
+    "pd_var_read_only_shared",
     "pd_var_write",
+    "pd_write_reaches_callers",
     "recursive_datac",
     "stdlib_fmt",
     "stdlib_list",

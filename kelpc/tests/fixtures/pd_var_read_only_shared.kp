@@ -1,0 +1,16 @@
+// Roadmap item 17: a `pd var` that no function writes is a *shared* borrow
+// everywhere. `show` takes the passdown as an argument *and* reads it, so the
+// call hands out two shared borrows of the same storage — fine, because
+// neither writes. Before the borrow mode was computed, every reference to a
+// `pd var` was exclusive and this was refused with a borrow conflict.
+pd var app: String = String.from_str(s = "shapes")
+
+fun show(s: &String) {
+    print(s.as_str())
+    print(app.as_str())
+}
+
+fun main() {
+    show(app)
+    print(app.as_str())
+}

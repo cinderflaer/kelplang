@@ -26,13 +26,13 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, eight slices of item 4's aggregates (the last four being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — and `Map<K, V>`, which closed the container set), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **193 of 266** integration tests pass under `--backend=asm`; all 97 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), and then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 145 C and 97 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, eight slices of item 4's aggregates (the last four being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — and `Map<K, V>`, which closed the container set), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **200 of 273** integration tests pass under `--backend=asm`; all 106 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), and then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 153 C and 106 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **193 of 266 tests pass on the asm backend, and the C backend passes all
+The one number that matters most: **195 of 272 tests pass on the asm backend, and the C backend passes all
 266.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
@@ -65,8 +65,9 @@ The passdown slice moved it by six: one new fixture (`passdown_storage_is_a_glob
 over `passdown_globals.kp`, which pins an initializer that reads an earlier passdown and a caller that has no
 hidden parameter and so passes the global's own address) and five fixtures it unblocked — `passdowns`,
 `passdown_datac`, `pd_shadowed`, `pd_var_copy_read_twice` and `pd_var_write`. The three passdown fixtures it
-did **not** unblock (`pd_owned`, `list_field`, `pd_argument_forwarding`) are refused for their passdown's
-type, which is `String` or `List<i32>`: the mechanism is there, the heap is not, and the refusal now says so.
+did **not** unblock (`pd_owned`, `list_field`, `pd_argument_forwarding`) were refused for their passdown's
+type, which is `String` or `List<i32>` — the mechanism was there, the heap was not — and the passdown-drop
+slice below built all three.
 The extern slice (below) moved it by three, and its number is the least interesting thing about it: `escapes`,
 `char_literals` and `stdlib_math` now build and agree with the C backend, while the *ranking* moved much
 further — the blanket `extern fun` refusal is gone, and with it the mask that made 40 fixtures report an
@@ -132,9 +133,11 @@ landed, not a percentage that would imply more precision than the plan has:**
   heap field, `Box<T>`, `List<T>`, and `Map<K, V>`), the first
   half of item 8 (`print`/`print!` of `str` and the floats), passdowns (§5's ninth item, added after the fact:
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
-  `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
+  `datac` work), the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
   backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
-  compiled. That is where the 193/266 fixture number comes from. The remaining part of item 4 is `enum` alone,
+  compiled, and the owned-passdown drop (§5's eleventh item): an owning `pd` is freed from a generated
+  `kelp_drop_pds` that `main` registers with `atexit`, which is what closes the passdown row. That is where the
+  200/273 fixture number comes from. The remaining part of item 4 is `enum` alone,
   plus a `datac` holding a float field — `String`/`Bytes`/`List`/`Map` fields and `Box<T>` itself are now covered
   (see the heap-field, box, list and map slices' blockquotes, and the fourth slice's, which covers what "by
   value" means end to end) — the rest of item 8 (an owned `String`/`View` interpolated into a template, which is
@@ -142,7 +145,7 @@ landed, not a percentage that would imply more precision than the plan has:**
   (the externs whose bodies are the heap and the syscall layer, and the `List` S1 methods that need
   an element comparison or clone), plus items 6-7
   (closures, capabilities), are what stands between here and Stage
-  1's own definition of done: all 260 integration tests passing, `bench/speed` no worse than `-O0`, and a memory gate for
+  1's own definition of done: all 272 integration tests passing, `bench/speed` no worse than `-O0`, and a memory gate for
   the asm backend — which the heap slice supplied, in the form of a `valgrind` sweep over every fixture this
   backend builds, and which is documented rather than wired into the suite (see that blockquote for why).
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
@@ -155,24 +158,25 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (193/266) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (200/273) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
 
-1. **The heap row, with the container question now settled** — 20 fixtures. `Map` landed, so what is left is no
+1. **The heap row, with the container question now settled** — 17 fixtures. `Map` landed, so what is left is no
    longer a row about a container, and no longer a row about `extern fun` declarations (the blanket refusal is
    gone; what remains names an extern only because the extern's own body needs the heap). Measured by building
    each one: **the `fs`/`io`/`net`/`path` extern bodies** (`fs_errno`, `io_stdio`, `io_streams`, `net_loopback`,
-   `net_poll`, `net_resolve`, `net_timeout`, `path_normalize`, `process_spawn`) — 9; **an owning passdown**,
-   which needs the `atexit` handler the C backend gets for free (`list_field`, `pd_owned`,
-   `pd_argument_forwarding`) — 3; **the three `List` S1 methods this backend refused by name** (`stdlib_sort`
+   `net_poll`, `net_resolve`, `net_timeout`, `path_normalize`, `process_spawn`) — 9; **the three `List` S1
+   methods this backend refused by name** (`stdlib_sort`
    needs `sort`, `list_slice_insert` needs both, `list_slice_bounds` needs `slice`) — 3; **the `str` parsers**,
    whose `mut i64`/`f64` out-parameter needs a scalar borrow the backend cannot address yet (`stdlib_build`,
    `stdlib_parse`, `borrow_provenance_and_arms`) — 3; and **an owned `String` interpolated into a template**
-   (`heap_temporary_print`) — 1. See §5's table.
+   (`heap_temporary_print`) — 1, and **a `str` that has to become a `String`** (`str_to_string_coercion`) — 1.
+   The three fixtures this row used to carry for an owning passdown are gone from it: the passdown-drop slice
+   below built them. See §5's table.
 2. **`enum`** — now the largest single row at **18**, and the largest single mechanism left. The eight slices of
    item 4 have landed every aggregate shape this backend admits except two: `enum` (`tagged unions, not attempted
    at all`), and a `datac` holding a float field, which is 2 fixtures. The brief in `plan/mk7-next-slice.md`
@@ -180,9 +184,9 @@ builds, and detailed in §5):
    four it cannot are blocked on the float-payload aggregate slice and one on closures — and it names them. The
    ABI work the risk register calls the place silent miscompiles live is complete for every shape this backend
    admits at all, and the extern, heap-field, box, list and map slices touched none of it.
-3. **A passdown (`pd`)** — **done**, except for the three fixtures whose passdown *owns* something: those are
-   refused for the type it holds (`String`, `List<i32>`), which is the `atexit` row above rather than a passdown
-   one. See §5's passdown blockquote.
+3. **A passdown (`pd`)** — **done**, including the owned ones: an owning passdown is freed from the generated
+   `kelp_drop_pds` that `main` registers with `atexit`, the same handler the C backend gets for free, so
+   `pd_owned`, `list_field` and `pd_argument_forwarding` build. See §5's passdown blockquotes.
 4. **`List`'s own leftovers** — `sort`, `contains` and `slice`, which need an element-level comparison or clone
    (and, for `slice`, a clone) this backend has no way to express; three fixtures.
 5. **`Map`** — **done** (the map slice below). Its measurement worth keeping is that the ABI needed nothing:
@@ -330,11 +334,12 @@ with the backend as the only variable.
 > `List<T>` — the first container whose element can itself own — and `Map<K, V>`,
 > which closes the container set),
 > then the first half of item 8,
-> then passdowns, then the extern path (the ninth and tenth items — both added
-> after the fact, because each was a blanket refusal at the top of `generate`
-> that kept the feature out of codegen entirely).**
+> then passdowns, then the extern path, then an owned passdown's `atexit` drop
+> (the ninth, tenth and eleventh items — the first two added after the fact,
+> because each was a blanket refusal at the top of `generate` that kept the
+> feature out of codegen entirely).**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **193 of 266 end-to-end
+> and `ld`, with no C compiler in the chain. Measured: **200 of 273 end-to-end
 > tests pass**, and the C backend passes all 266 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
 > can only rise from here. Every fixture the asm backend builds is compared
@@ -723,20 +728,24 @@ with the backend as the only variable.
 > `infer::PdInfo` gives every passdown one internal name, `pd#<qualified>`, and
 > two spellings of it. Inside a function that references it, the name is a
 > *hidden parameter* appended after the real parameters, and its type is always
-> a borrow (`&T`, `&mut T` for a `pd var`) — the parameter's value is already
-> the pointer to the storage. In `main` and in a `pd` initializer, there is no
-> such parameter, so the name is wrapped in a `Ref` and means the *global*.
-> A read is `Deref` of that borrow in both cases, and a write is an assignment to
-> the same `Deref`. So there are exactly three things to implement: a global to
-> point at, a `Deref` that reads and writes through a pointer, and a name that
-> resolves to whichever of the two is in scope.
+> a borrow — the parameter's value is already the pointer to the storage — but
+> which borrow follows the body, not just the declaration: `&T` when the
+> function only reads the passdown, `&mut T` when it writes it, directly or
+> through a function it calls (roadmap item 17). In `main` and in a `pd`
+> initializer there is no such parameter, so the name is wrapped in a `Ref` and
+> means the *global*. A read is `Deref` of that borrow in both cases, and a
+> write is an assignment to the same `Deref`. So there are exactly three things
+> to implement: a global to point at, a `Deref` that reads and writes through a
+> pointer, and a name that resolves to whichever of the two is in scope.
 >
 > **The storage** is one object per passdown in `.bss`, emitted in
 > initialization order under the same symbol the C backend uses
 > (`kelp_pd__origin`), sized by `pd_storage_size` — rounded up to eight bytes
-> the way a local's slot is, and `None` for a type with no storage (which is how
-> a `String` or `List` passdown is still refused, now by name with its own type
-> instead of by the blanket program-level refusal the earlier slices had).
+> the way a local's slot is, and `None` for a type with no storage at all (which
+> is how a type the backend cannot lay out is still refused, now by name with
+> its own type instead of by the blanket program-level refusal the earlier
+> slices had). An *owned* passdown is stored here the same way and freed at
+> process exit — see the drop blockquote below.
 > `main` assigns them before its own body runs (`pd_init`, in the same order
 > `program.pds` is in), which is the job the C backend's generated
 > `kelp_init_pds()` does, and for the same reason: `main` is the one function
@@ -776,9 +785,8 @@ with the backend as the only variable.
 > its callee the generated global's own address, which is the one shape where
 > the two spellings of the same name are both live in one program. The three
 > remaining passdown fixtures (`pd_owned`, `list_field`, `pd_argument_forwarding`)
-> are refused for their passdown's *type* — `String`, `List<i32>` — so they are
-> heap fixtures now, not passdown ones, and the re-measured table below counts
-> them there.
+> were refused for their passdown's *type* — `String`, `List<i32>` — and the
+> drop blockquote below is what built them.
 >
 > Two narrowings this slice leaves, both named rather than silent. A `datac`
 > passdown read *by value* (`val p = origin`) is refused: reading a struct out
@@ -1541,7 +1549,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    global per passdown plus a hidden pointer parameter on every function that references it, and the asm
    backend's is the same object assigned from `main` with the parameter kept (it costs nothing: an `&T`-typed
    local is a local). See the passdown blockquote above for the three things that had to exist, and for the two
-   narrowings it leaves.
+   narrowings it leaves; the owned case is item 11 below.
 10. **`extern fun`, and the dead code around it. First slice done** (2026-09-19), and the second item this list
     never had — for the same reason as the ninth: the blanket refusal at the top of `generate` meant no extern
     ever reached codegen, so nothing here was ever *built*. Calls to the externs this backend can lower now
@@ -1554,13 +1562,42 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
     of a row rather than a finished one.
 
-Definition of done: all 260 integration tests pass under `--backend=asm` with byte-identical stdout to
+11. **An owned passdown, and the drop handler. Done** (2026-09-19), and it is the last thing the passdown row
+    was carrying: `pd_owned`, `list_field` and `pd_argument_forwarding` needed exactly what the C backend gets
+    from its C runtime, a drop point at process exit. `generate` now resolves a **drop site** for every passdown
+    whose type owns memory, in a pass that still runs before the routine set is snapshotted — `drop_site_for` is
+    what registers the `Bytes`/`String`/`datac`/`Box`/`List`/`Map` routines the drop body calls, and for the two
+    fixed routines it only *names* the site, so `require_routine` is called there as well. The body is
+    `kelp_drop_pds`: one `lea`/`call` per owning passdown, in declaration order, under the same symbol the C
+    backend's `kelp_init_pds` generates, and emitted after every routine it can call. `main` registers it with
+    `atexit` right after the passdown initializers, so a `return` from `main`, `std/process.exit` and
+    `kelp_panic`'s own `exit(1)` all free the passdowns, which is the C backend's behavior exactly. One detail
+    is glibc's rather than ours, and it is the whole of what this took beyond the body: `atexit` lives in
+    `libc_nonshared.a` and calls `__cxa_atexit(fn, NULL, __dso_handle)`, and `__dso_handle` is normally defined
+    by `crtbegin.o` — which this backend's `ld` line deliberately does not carry (crt1/crti/crtn and `-lc` only).
+    The generated object defines it itself (hidden, zero), which is what `crtbegin.o` would have supplied, and
+    `exit` runs every registered handler regardless of the value. The three fixtures this moved, plus the two the
+    borrow-mode slice moved, `block_comments`, and the fixture this slice wrote for the aggregate store itself
+    (`pd_var_datac_reassign.kp`) put the baseline at 106 built of 153. The refusal a program met before the store
+    existed was honest; what it took to make the store *correct* was not one thing but two, and only one of them
+    announced itself. The codegen half is a staged copy through the pointer, as `Stmt::Let` does for an
+    aggregate — a refusal until now, so the silence was not there. The other half is that the
+    operand of the `*` is a **use**: `LiveAnalysis`'s `Assign` arm touched an `Ident` target and a
+    `FieldAccess` target's base, and for a `Deref` target it only ticked a position, so the operand's live range
+    was its declaration and nothing else. The allocator was then free to hand that register to another local —
+    in `pd_var_datac_reassign.kp`, to `a` or `b` — so `pair = Pair(...)` wrote through the wrong pointer and the
+    program printed `1,2` where the C backend printed `3,6`. That is the failure mode the architecture's risk
+    register is about, caught by an A/B build (fix reverted: `3,6` becomes `1,2`) rather than by a refusal, and
+    the fixture is the regression test. The valgrind gate covers both: 259 runs, zero findings, and the owned
+    passdowns free clean.
+
+Definition of done: all 273 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
 memory gate this list has always asked for is `cargo test --test memory_gate -- --ignored`
 (`kelpc/tests/memory_gate.rs`, `0747195`): a `valgrind --leak-check=full` sweep over every fixture the C backend
-builds and every one the asm backend accepts — 139 and 85 today, zero findings — run when the heap or drop
+builds and every one the asm backend accepts — 153 and 106 today, zero findings — run when the heap or drop
 machinery changes. ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker

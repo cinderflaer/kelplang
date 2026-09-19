@@ -1,0 +1,26 @@
+// Roadmap item 17: the upgrade to an exclusive borrow follows the call graph.
+// `bump` writes `hits`, so `caller` — which only *reads* the passdown and
+// calls `relay` — is upgraded too, because holding a shared borrow across a
+// write to the same storage is the hazard. `relay` receives no hidden
+// parameter (it only calls), so it takes the global's own address.
+pd var hits = 0
+
+fun bump() {
+    hits += 1
+}
+
+fun relay() {
+    bump()
+    bump()
+}
+
+fun caller() {
+    print(hits)
+    relay()
+    print(hits)
+}
+
+fun main() {
+    caller()
+    print(hits)
+}

@@ -252,6 +252,19 @@ struct Ctx {
     /// its address taken. Empty for `main`, a `pd` initializer, and a `fun`
     /// literal, none of which can receive one.
     own_hidden: Vec<String>,
+    /// The wiring key this body is checked under — `main`, a declaration key,
+    /// or the template an instantiation came from. The borrow modes and the
+    /// probe's collected uses are both filed under it.
+    fn_key: String,
+    /// The passdown borrow modes this body check runs under (roadmap item
+    /// 17). Empty in the probe pass, where every passdown is shared and a
+    /// write is recorded instead of refused; `pd_global_borrow` bodies
+    /// (`main`, a `pd` initializer) are filed under their own key, so a
+    /// `main` that only reads a `pd var` takes a shared borrow of it too.
+    pd_modes: std::rc::Rc<HashMap<(String, String), bool>>,
+    /// Set only in the probe pass: where an exclusive use is recorded and the
+    /// call edges are collected (see `PdProbe`).
+    pd_probe: Option<std::rc::Rc<std::cell::RefCell<PdProbe>>>,
     /// True while checking the body of a `fun` literal (A-4). A literal is
     /// its own function, so two diagnostics need to know: a name it does not
     /// bind itself is a *capture*, and a passdown is a hidden argument it
@@ -300,14 +313,10 @@ struct PdInfo {
     hidden: String,
     /// The passdown's own type.
     value_ty: Ty,
-    /// Whether it was declared `pd var` — used only for the wording of the
-    /// "read-only inside a function" diagnostic.
+    /// Whether it was declared `pd var` — used for the wording of the
+    /// "read-only inside a function" diagnostic, and to tell a write that
+    /// can be given an exclusive borrow from one that can never be allowed.
     mutable: bool,
-    /// The type it is handed over as: a shared borrow for non-`Copy` values
-    /// (reading a `datac` passdown out of the global by value would "move"
-    /// it on first use), the plain type otherwise. Always shared, never
-    /// exclusive — a passdown is read-only inside a function.
-    param_ty: Ty,
     module: String,
     /// Global initialization order (position in the merged program), used to
     /// keep hidden-parameter order and the generated init function stable.
@@ -318,12 +327,26 @@ impl PdInfo {
     /// The *borrow* of the passdown's storage: what a call site passes for
     /// this passdown's hidden parameter, and what a read dereferences.
     ///
+    /// `exclusive` is the referencing function's mode (roadmap item 17): a
+    /// function that *writes* the passdown — directly or through a callee —
+    /// holds it as an exclusive borrow, and one that only reads it holds a
+    /// shared one. A `pd var` that no function writes is therefore a shared
+    /// borrow everywhere, so `show(cfg)` does not collide with the
+    /// passdown's own hidden argument.
+    fn borrow_ty(&self, exclusive: bool) -> Ty {
+        Ty::Ref {
+            mutable: exclusive,
+            inner: Box::new(self.value_ty.clone()),
+        }
+    }
+
     /// Two shapes, because the two contexts reach the storage differently:
     /// inside a function the hidden name is already the borrow (`&*hidden`
     /// would be a pointer to a pointer), while `main` and a `pd` initializer
     /// have no hidden parameter and name the generated global directly, so
     /// the borrow is explicit.
-    fn arg(&self, span: Span, global: bool) -> tir::Expr {
+    fn arg(&self, span: Span, global: bool, exclusive: bool) -> tir::Expr {
+        let ty = self.borrow_ty(exclusive);
         if global {
             let global = tir::Expr {
                 kind: tir::ExprKind::Ident(self.hidden.clone()),
@@ -332,31 +355,69 @@ impl PdInfo {
             };
             return tir::Expr {
                 kind: tir::ExprKind::Ref {
-                    mutable: self.mutable,
+                    mutable: exclusive,
                     expr: Box::new(global),
                 },
-                ty: self.param_ty.clone(),
+                ty,
                 span,
             };
         }
         tir::Expr {
             kind: tir::ExprKind::Ident(self.hidden.clone()),
-            ty: self.param_ty.clone(),
+            ty,
             span,
         }
     }
 
     /// A read of the passdown (M6.4): `*` of the borrow, so reads and writes
-    /// go through the same pointer and a `pd var` is assignable from any
-    /// function that references it.
-    fn value(&self, span: Span, global: bool) -> tir::Expr {
+    /// go through the same pointer, and the borrow's mutability is what
+    /// decides whether a write through it is allowed.
+    fn value(&self, span: Span, global: bool, exclusive: bool) -> tir::Expr {
         tir::Expr {
             kind: tir::ExprKind::Deref {
-                expr: Box::new(self.arg(span, global)),
+                expr: Box::new(self.arg(span, global, exclusive)),
             },
             ty: self.value_ty.clone(),
             span,
         }
+    }
+}
+
+/// What one pass of body checking discovers about passdown writes, so the
+/// next pass can hand the passdowns over with the right borrow (roadmap item
+/// 17). The probe pass runs with every passdown shared, records the uses that
+/// need an exclusive borrow instead of refusing them, and records the call
+/// edges; `close_pd_modes` then walks the edges to a fixpoint, and the pass
+/// that emits the program runs with the result.
+#[derive(Debug, Default)]
+struct PdProbe {
+    /// `(caller's wiring key, hidden name)` — the caller uses the passdown
+    /// exclusively, so it must hold an exclusive borrow of it.
+    exclusive_uses: std::collections::HashSet<(String, String)>,
+    /// `(caller's wiring key, callee's wiring key)` — the call graph the
+    /// closure walks: a function that calls a writer holds the passdown
+    /// exclusively too, or it could hand a shared borrow to a callee that
+    /// writes through it.
+    edges: std::collections::HashSet<(String, String)>,
+}
+
+/// The passdown borrow modes a body check runs under.
+#[derive(Clone, Default)]
+struct PdWiring {
+    /// `(wiring key, hidden name) -> the function writes the passdown`. A
+    /// missing entry means the shared borrow, which is the common case.
+    modes: std::rc::Rc<HashMap<(String, String), bool>>,
+    /// `Some` only in the probe pass (see `PdProbe`).
+    probe: Option<std::rc::Rc<std::cell::RefCell<PdProbe>>>,
+}
+
+impl PdWiring {
+    /// Whether the function filed under `key` holds `pd` exclusively.
+    fn exclusive(&self, key: &str, pd: &PdInfo) -> bool {
+        self.modes
+            .get(&(key.to_string(), pd.hidden.clone()))
+            .copied()
+            .unwrap_or(false)
     }
 }
 
@@ -491,6 +552,54 @@ impl Ctx {
         }
         let tmpl = self.fns.instances.borrow().origin.get(key).cloned()?;
         self.wired.get(&tmpl).cloned()
+    }
+
+    /// The key the passdown wiring table is filed under: an instantiation's
+    /// wiring is its template's (A-2), and so is its borrow mode — every use
+    /// site of one instance is `wired_for`-ed through the same entry.
+    fn wiring_key_of(&self, key: &str) -> String {
+        if self.wired.contains_key(key) {
+            return key.to_string();
+        }
+        self.fns
+            .instances
+            .borrow()
+            .origin
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.to_string())
+    }
+
+    /// Whether the body filed under `key` holds `pd` exclusively (roadmap
+    /// item 17).
+    fn pd_exclusive_for(&self, key: &str, pd: &PdInfo) -> bool {
+        self.pd_modes
+            .get(&(key.to_string(), pd.hidden.clone()))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Whether this body holds `pd` exclusively: it writes it, or it calls a
+    /// function that does (roadmap item 17). Everything else is a shared
+    /// borrow, so a read-only reference never blocks another one.
+    fn pd_exclusive(&self, pd: &PdInfo) -> bool {
+        self.pd_exclusive_for(&self.fn_key, pd)
+    }
+
+    /// A use that needs an exclusive borrow. In the probe pass it is what the
+    /// next pass is computed from, so it is recorded and allowed; in the pass
+    /// that emits the program the modes already say the answer, and reaching
+    /// here means the closure missed the use — say so instead of emitting an
+    /// unchecked write.
+    fn note_pd_exclusive_use(&self, pd: &PdInfo) -> bool {
+        let Some(probe) = &self.pd_probe else {
+            return false;
+        };
+        probe
+            .borrow_mut()
+            .exclusive_uses
+            .insert((self.fn_key.clone(), pd.hidden.clone()));
+        true
     }
 
     /// The definition of a user type, whether it was declared by hand or is
@@ -1300,7 +1409,10 @@ fn indirect_callee(
                 span,
             });
         }
-        return Ok(Some((pd.value(span, ctx.pd_global_borrow), ty)));
+        return Ok(Some((
+            pd.value(span, ctx.pd_global_borrow, ctx.pd_exclusive(&pd)),
+            ty,
+        )));
     }
     Ok(None)
 }
@@ -2717,9 +2829,88 @@ fn collect_func_templates(
     Ok(out)
 }
 
+/// Walk the probe's call edges to a fixpoint: a function that calls a writer
+/// holds the passdown exclusively too. Holding a *shared* borrow while a
+/// callee writes through the same storage is the hazard — and the callee need
+/// not name the passdown to do it, since a function that only forwards takes
+/// the global's address itself — so the edge is followed whatever the callee
+/// names. A promotion for a passdown a function never references is inert
+/// (nothing reads the entry), which is what keeps a read-only reference
+/// shared and the ergonomics this exists for. Monotone — modes are only ever
+/// added — so this terminates.
+fn close_pd_modes(
+    exclusive_uses: &std::collections::HashSet<(String, String)>,
+    edges: &std::collections::HashSet<(String, String)>,
+) -> HashMap<(String, String), bool> {
+    let mut modes: HashMap<(String, String), bool> =
+        exclusive_uses.iter().map(|k| (k.clone(), true)).collect();
+    loop {
+        let mut changed = false;
+        for (caller, callee) in edges {
+            let inherited: Vec<String> = modes
+                .iter()
+                .filter(|((writer, _), held)| **held && writer == callee)
+                .map(|((_, pd), _)| pd.clone())
+                .collect();
+            for pd in inherited {
+                let key = (caller.clone(), pd);
+                if !modes.get(&key).copied().unwrap_or(false) {
+                    modes.insert(key, true);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return modes;
+        }
+    }
+}
+
+/// The passdown borrow modes (roadmap item 17). Every `pd var` used to be
+/// handed to every referencing function as an exclusive borrow, so a function
+/// that takes the passdown as an argument *and* reads it — `fun show(s: &str)
+/// { print(cfg) }` called as `show(cfg)` — was refused with a borrow
+/// conflict, and a read-only `pd var` was as good as unusable.
+///
+/// The upgrade set is discovered rather than guessed at. A first *probe* pass
+/// runs with every passdown shared: a use that needs an exclusive borrow is
+/// recorded instead of refused, and every call site records an edge. The probe
+/// is a real body check whose `tir` is thrown away — which is what lets the
+/// answer come from the checker itself, including generic instances,
+/// overloads and `mut` receivers, instead of from a re-implementation of
+/// resolution that could disagree with it. `close_pd_modes` then walks the
+/// edges to a fixpoint, and the pass that emits the program runs again with
+/// the result. A program with no passdown writes at all keeps the probe's
+/// result and is compiled once.
 pub fn check_program(
     program: &ast::Program,
     project: &Project,
+) -> std::result::Result<tir::Program, Diagnostic> {
+    let probe = std::rc::Rc::new(std::cell::RefCell::new(PdProbe::default()));
+    let probe_wiring = PdWiring {
+        modes: std::rc::Rc::new(HashMap::new()),
+        probe: Some(probe.clone()),
+    };
+    let checked = check_program_pass(program, project, &probe_wiring)?;
+    let exclusive_uses = probe.borrow().exclusive_uses.clone();
+    if exclusive_uses.is_empty() {
+        return Ok(checked);
+    }
+    let edges = probe.borrow().edges.clone();
+    let final_wiring = PdWiring {
+        modes: std::rc::Rc::new(close_pd_modes(&exclusive_uses, &edges)),
+        probe: None,
+    };
+    Ok(check_program_pass(program, project, &final_wiring)?)
+}
+
+/// One full body-checking pass, under the passdown borrow modes `wiring`
+/// carries. Called twice at most: once as the probe, and once with the modes
+/// the probe's findings produced.
+fn check_program_pass(
+    program: &ast::Program,
+    project: &Project,
+    wiring: &PdWiring,
 ) -> std::result::Result<tir::Program, Diagnostic> {
     // A-2: the generic templates are collected before anything is resolved,
     // because a concrete declaration's field may name an instantiation
@@ -3157,6 +3348,7 @@ pub fn check_program(
             project,
             &all_pds,
             &wired,
+            wiring,
             &initialized,
             &env,
             &fns,
@@ -3194,6 +3386,7 @@ pub fn check_program(
             project,
             &all_pds,
             &wired,
+            wiring,
             &env,
             &fns,
         )
@@ -3241,6 +3434,7 @@ pub fn check_program(
             project,
             &all_pds,
             &wired,
+            wiring,
             &env,
             &fns,
         )
@@ -3477,14 +3671,6 @@ fn collect_pds(
             qualified: decl.name.clone(),
             name: bare,
             hidden: format!("pd#{}", decl.name),
-            // Always a borrow, never a by-value copy: a `pd` has one storage
-            // location, so a function that reads or writes it must reach that
-            // storage. `pd var` is therefore an *exclusive* borrow (writes go
-            // through it), `pd val` a shared one (many readers, no writer).
-            param_ty: Ty::Ref {
-                mutable: decl.mutable,
-                inner: Box::new(value_ty.clone()),
-            },
             value_ty,
             mutable: decl.mutable,
             module: decl.module.clone(),
@@ -3507,6 +3693,7 @@ fn check_pd_initializer(
     project: &Project,
     all: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
+    wiring: &PdWiring,
     initialized: &std::collections::HashSet<String>,
     env: &TypeEnv,
     fns: &FuncEnv,
@@ -3529,6 +3716,9 @@ fn check_pd_initializer(
     // globals that earlier initializers already assigned.
     ctx.pd_global_borrow = true;
     ctx.init_state = Some(initialized.clone());
+    ctx.fn_key = format!("pd#{}", pd.name);
+    ctx.pd_modes = wiring.modes.clone();
+    ctx.pd_probe = wiring.probe.clone();
     check_expr(init, &mut ctx, Some(&pd.value_ty))
 }
 
@@ -3579,6 +3769,9 @@ fn base_ctx(
         init_state: None,
         pd_global_borrow: false,
         own_hidden: Vec::new(),
+        fn_key: String::new(),
+        pd_modes: std::rc::Rc::new(HashMap::new()),
+        pd_probe: None,
         in_fn_literal: false,
         outer_bindings: HashMap::new(),
         captures: Vec::new(),
@@ -3959,12 +4152,29 @@ fn check_target_writable(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
             Ty::Ref { mutable: false, .. } => {
                 // A `pd val` read is a Deref of a shared borrow, so it lands
                 // here — worth the passdown's own wording, since "shared
-                // borrow" is not what the author wrote (M6.4).
-                if let tir::ExprKind::Ident(name) = &inner.kind {
-                    if let Some(pd) = ctx.pds.values().find(|p| &p.hidden == name) {
+                // borrow" is not what the author wrote (M6.4). A `pd var`
+                // holds an exclusive borrow exactly when its body writes it,
+                // so a write that arrives through a shared borrow is either
+                // the probe pass learning that this function must be upgraded
+                // (recorded, allowed, and discarded) or a closure that missed
+                // a use (roadmap item 17).
+                if let Some(name) = pd_place_hidden(inner) {
+                    if let Some(pd) = ctx.pds.values().find(|p| p.hidden == name).cloned() {
+                        if !pd.mutable {
+                            return Err(TypeError {
+                                message: format!(
+                                    "cannot assign to passdown '{}': it is declared 'pd val' (only a 'pd var' can be assigned inside a function)",
+                                    pd.qualified
+                                ),
+                                span: target.span,
+                            });
+                        }
+                        if ctx.note_pd_exclusive_use(&pd) {
+                            return Ok(());
+                        }
                         return Err(TypeError {
                             message: format!(
-                                "cannot assign to passdown '{}': it is declared 'pd val' (only a 'pd var' can be assigned inside a function)",
+                                "cannot write to passdown '{}' through a shared borrow",
                                 pd.qualified
                             ),
                             span: target.span,
@@ -4005,6 +4215,7 @@ fn check_function(
     project: &Project,
     all_pds: &[PdInfo],
     wired: &HashMap<String, Vec<PdInfo>>,
+    wiring: &PdWiring,
     env: &TypeEnv,
     fns: &FuncEnv,
 ) -> Result<tir::Function> {
@@ -4023,18 +4234,19 @@ fn check_function(
     } else {
         // An instantiation's passdown wiring is the template's: the scan runs
         // over declarations, and which passdowns a body names does not depend
-        // on its type arguments (A-2).
-        wired
-            .get(key)
-            .cloned()
-            .or_else(|| {
-                fns.instances
-                    .borrow()
-                    .origin
-                    .get(key)
-                    .and_then(|t| wired.get(t).cloned())
-            })
-            .unwrap_or_default()
+        // on its type arguments (A-2). The borrow *mode* is the template's for
+        // the same reason.
+        let wiring_key = if wired.contains_key(key) {
+            key.to_string()
+        } else {
+            fns.instances
+                .borrow()
+                .origin
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| key.to_string())
+        };
+        wired.get(&wiring_key).cloned().unwrap_or_default()
     };
     let mut ctx = base_ctx(
         &f.module,
@@ -4055,6 +4267,10 @@ fn check_function(
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main";
     ctx.own_hidden = hidden.iter().map(|pd| pd.hidden.clone()).collect();
+    let wiring_key = ctx.wiring_key_of(key);
+    ctx.fn_key = wiring_key;
+    ctx.pd_modes = wiring.modes.clone();
+    ctx.pd_probe = wiring.probe.clone();
     let mut params = Vec::new();
     // Parameters (and the receiver, if any) are immutable bindings, like
     // `val`; v1 has no syntax to declare a mutable *binding* for one (the
@@ -4136,7 +4352,12 @@ fn check_function(
     Ok(tir::Function {
         name: key.to_string(),
         params: {
-            params.extend(hidden.iter().map(|pd| (pd.hidden.clone(), pd.param_ty.clone())));
+            params.extend(hidden.iter().map(|pd| {
+                (
+                    pd.hidden.clone(),
+                    pd.borrow_ty(wiring.exclusive(&ctx.fn_key, pd)),
+                )
+            }));
             params
         },
         ret: sig.ret.clone(),
@@ -4693,7 +4914,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         span: *span,
                     });
                 }
-                return Ok(pd.value(*span, ctx.pd_global_borrow));
+                return Ok(pd.value(*span, ctx.pd_global_borrow, ctx.pd_exclusive(&pd)));
             }
             // Not a local, receiver field, or passdown — a declared `fun`
             // named as a *value* (A-4): `val f = double`. A function
@@ -6092,6 +6313,20 @@ fn is_module_alias(name: &str, ctx: &Ctx) -> bool {
         && ctx.aliases.contains_key(name)
 }
 
+/// The passdown whose storage a place expression is, if it is one: the hidden
+/// parameter (`pd#<name>`, already a borrow) directly, or behind the explicit
+/// `&` that a `main` or `pd` initializer takes of the generated global. Any
+/// other place — a local, a field of one, a dereferenced borrow — is `None`.
+/// The two shapes are why this looks through a `Ref` rather than matching the
+/// identifier alone (M6.4).
+fn pd_place_hidden(expr: &tir::Expr) -> Option<&str> {
+    match &expr.kind {
+        tir::ExprKind::Ident(name) if name.starts_with("pd#") => Some(name),
+        tir::ExprKind::Ref { expr, .. } => pd_place_hidden(expr),
+        _ => None,
+    }
+}
+
 /// Assignment targets: `Ident`, a `.field` chain rooted in one, or a
 /// dereferenced borrow (`*p`, `(*p).field`) — anything `is_ast_place`
 /// accepts.
@@ -6809,6 +7044,17 @@ fn check_call(
         },
     };
     ctx.check_capability(&key, span)?;
+    if let Some(probe) = &ctx.pd_probe {
+        // The call graph the borrow-mode closure walks (roadmap item 17):
+        // whoever calls a writer writes too, when it holds the passdown
+        // itself. Both ends are filed under their wiring key, so an
+        // instantiation's edges are its template's.
+        let callee_key = ctx.wiring_key_of(&key);
+        probe
+            .borrow_mut()
+            .edges
+            .insert((ctx.fn_key.clone(), callee_key));
+    }
     let mut checked = match_args(
         &format!("function '{}'", display_callee(&key)),
         &sig.params,
@@ -7091,7 +7337,18 @@ fn hidden_args(callee: &str, span: Span, ctx: &Ctx) -> Result<Vec<tir::Expr>> {
             });
         }
         let own_parameter = ctx.own_hidden.iter().any(|h| h == &pd.hidden);
-        out.push(pd.arg(span, !own_parameter));
+        // The borrow handed over is the callee's (`PdWiring::exclusive`), not
+        // the caller's: a caller that only forwards a read-only callee's
+        // parameter never needed an exclusive borrow of its own, and one that
+        // does hold the parameter exclusively can pass it on either way
+        // (the closure in `close_pd_modes` is what makes the two agree).
+        let exclusive = if own_parameter {
+            ctx.pd_exclusive(&pd)
+        } else {
+            let callee_key = ctx.wiring_key_of(callee);
+            ctx.pd_exclusive_for(&callee_key, &pd)
+        };
+        out.push(pd.arg(span, !own_parameter, exclusive));
     }
     Ok(out)
 }

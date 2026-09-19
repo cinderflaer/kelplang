@@ -1494,3 +1494,135 @@ numbers.
 
 **Suite at this record**: 107 unit, 266 end-to-end, 52 formatter, 2 capability-matcher, 1 path-normalizer and
 1 memory gate. `mk7-own-backend.md` §0 is current as of this date.
+
+## A `pd var` borrow is shared unless it is written: roadmap item 17 (DONE)
+
+The `pd` feature worked and nobody used it. The reason was written down in three
+places and was false: `wiki/docs/meta/known-issues.md` said a module-scope
+`pd var` "does not thread through a call chain", `wiki/docs/language/modules.md`
+carried it as a warning (the "`pd var` foot-gun"), and `testkit`'s source and
+docs justified their explicit `mut Report` with it. On 0.2.2 a chain
+(`main -> relay -> bump`) prints what it should, on both backends: what those
+notes were describing was the argument-forwarding codegen bug fixed earlier —
+a caller holding no hidden parameter passed the global by value, so the call
+failed to compile rather than reading a stale value. Docs that say a feature is
+broken are as expensive as a broken feature, and these outlived the bug.
+
+What was left was real, though, and it is what roadmap item 17 named: every
+reference to a `pd var` was an exclusive borrow, so a function that *took* the
+passdown as an argument and *read* it — `fun show(s: &String) { print(s.as_str());
+print(cfg.as_str()) }` called as `show(cfg)` — was refused with "cannot borrow
+passdown 'cfg' as exclusive: already borrowed as shared". Only a writer needs an
+exclusive borrow, and only a caller of a writer needs to hold one.
+
+**The borrow mode is computed from the program, not guessed at.** The mutability
+of a passdown's hidden parameter is now decided by what the function does with
+it, over the call graph induced by the `wired` scan: a *probe* pass runs with
+every passdown shared, `check_target_writable` records a use that needs an
+exclusive borrow instead of refusing it, and every resolved call site records an
+edge. `close_pd_modes` walks the edges to a fixpoint — a caller of a writer is a
+writer — and `check_program_pass` runs again with the result. The probe is a
+real body check whose `tir` is thrown away, which is the point: the answer comes
+from the checker, so generic instances, overloads, `mut` receivers and implicit
+borrowing are all handled by the code that already handles them, with no second
+resolver to disagree with the first. A program with no passdown writes at all
+keeps the probe's result, so the second pass costs nothing where there is
+nothing to compute (measured on an `std/io` + `std/http` program: 0.32s before,
+0.30s after build wall-clock, and the probe pass runs twice there because
+`std/io` writes its `stdin_reader`).
+
+**Two details the closure has to get right.** The edge is followed even when the
+callee never names the passdown — a function that only *forwards* takes the
+global's own address itself, so a caller holding a shared borrow across that
+call would be holding one across a write — and a promotion for a passdown a
+function never references is inert, which is what keeps a read-only reference
+shared and is why the fix helps at all. `main` and a `pd` initializer are filed
+under their own keys, so a `main` that only reads a `pd var` takes a shared
+borrow of it like any other reader. A write that arrives through a shared borrow
+in the pass that emits the program is a diagnostic ("cannot write to passdown
+'x' through a shared borrow") rather than an unchecked write, so a closure that
+missed a use fails loudly.
+
+**Diagnostics and refusals are unchanged where they should be.** `combine(tally,
+tally)` on a `pd var` is still refused with the wording
+`pd_var_double_borrow.kp` pins ("already borrowed exclusively"), a `pd val` write
+keeps its own message, and reading a `Copy` passdown by value twice is still
+fine. What changed is only what a *read* costs.
+
+**Tests**: `pd_var_read_only_shared.kp` (an owned `String` passdown taken as an
+argument by a function that also reads it — the shape that was refused),
+`pd_var_read_only_datac.kp` (the same through a `datac`'s field),
+`pd_write_reaches_callers.kp` (`caller` reads the passdown and calls `relay`,
+which forwards to the writer — the transitive edge, and the case where the edge
+is a function that takes no hidden parameter at all), and
+`pd_var_mut_argument.kp` (the trigger a callee's own references cannot show: the
+passdown is handed to a `mut` parameter, so the caller writes it while the callee
+names no passdown). The two owned-passdown fixtures built on the C backend only
+until the asm backend's own passdown-drop slice (below) landed; both build and
+compare byte-for-byte now.
+
+**Docs corrected, not just added to**: the stale claim is gone from
+`wiki/meta/known-issues.md`, `wiki/language/modules.md` (where the foot-gun
+warning became a note about why a *library* still takes a `mut` parameter:
+module scope, not borrows), `wiki/libraries/testkit.md`,
+`wiki/examples/tests_and_bench.md`, `fpl/testkit/lib.kp` and
+`fpl/docs/testkit.md`; `plan/syntax.md` §14.2 states the rule the compiler now
+implements; `plan/roadmap.md` item 17 is closed; and the asm coverage ratchet
+gained `pd_write_reaches_callers` and `pd_var_mut_argument` (152 fixtures built
+by the C backend, 100 by the asm backend, 52 refused) — the direction the ratchet
+tolerates, with the two new refusals recorded rather than hidden.
+
+**Suite at this record** (before the passdown-drop slice below, which adds one
+fixture): 112 unit, 272 end-to-end, 57 formatter, 2 capability-matcher, 1
+path-normalizer and 1 memory gate, plus the three `--ignored` backend_coverage
+tests (the differential sweep agrees on all 100 fixtures both backends build).
+
+## An owned passdown frees itself at exit, and the silent miscompile that flushed out (DONE)
+
+MK7 §5's eleventh item, and the last thing the asm backend's passdown row was carrying.
+`pd_owned`, `list_field` and `pd_argument_forwarding` were refused for their passdown's *type*
+(`String`, `List<i32>`), not for the passdown machinery: an owned passdown has no scope to die at, so the
+C backend frees it from an `atexit` handler, and this backend had no handler. The own backend's whole point
+is that a construct it cannot lower is refused by name rather than silently miscompiled, which is why those
+three were refusals instead of leaks — and why closing the row meant building the handler rather than
+deleting the check.
+
+**The handler.** `generate` resolves a *drop site* for every passdown whose type owns memory, in a pass that
+still runs before the routine set is snapshotted: `drop_site_for` is what registers the `Bytes`/`String`/
+`datac`/`Box`/`List`/`Map` routines the drop body calls, and for the two fixed routines it only *names* the
+site, so they are registered there too. The body is `kelp_drop_pds` — one `lea`/`call` per owning passdown, in
+declaration order, under the same symbol and the same order the C backend's `kelp_init_pds` generates, so a
+differential test and a stack trace name the same thing. `main` registers it with `atexit` immediately after
+the passdown initializers, which is where the C backend registers its handler, so a `return` from `main`,
+`std/process.exit` and `kelp_panic`'s own `exit(1)` all free the passdowns. The one thing that is glibc's
+rather than ours: `atexit` lives in `libc_nonshared.a` and calls `__cxa_atexit(fn, NULL, __dso_handle)`, and
+`__dso_handle` is normally defined by `crtbegin.o`, which this backend's `ld` line deliberately does not carry
+(crt1/crti/crtn and `-lc` only). The generated object defines it itself — hidden, zero — which is what
+`crtbegin.o` would have supplied, and `exit` runs every registered handler regardless of the value.
+
+**What the store found, which is the part worth keeping.** An owned `pd var` is *writable*, not just
+initializable, and writing an aggregate through a borrow (`*p = v` where the value is wider than one eightbyte)
+was a refusal on this backend. It is now a staged copy through the pointer, as an aggregate local assignment
+already was. Doing that exposed a **silent miscompile** in the register allocator, not a refusal:
+`LiveAnalysis`'s `Assign` arm touched an `Ident` target and the base of a `FieldAccess` target, and for a
+`Deref` target it only ticked a position — so the operand of the `*`, which *is* the borrow being written
+through, was never recorded as used. Its live range was therefore its declaration and nothing else, and the
+allocator was free to hand that register to another local: in `pd_var_datac_reassign.kp` it went to `a` or
+`b`, so `pair = Pair(a = ..., b = ...)` wrote through the wrong pointer and the asm binary printed `1,2` where
+the C binary printed `3,6`. The fix is one arm of a `match`; the evidence is an A/B build (revert the arm and
+`3,6` becomes `1,2` again), because a miscompile that prints a plausible number is not something a refusal log
+or a differential sweep can catch on its own — nothing else in the suite wrote an aggregate through a borrow,
+which is exactly why the fixture exists.
+
+**Tests**: `pd_var_datac_reassign.kp` (a `pd var` two-word `datac`, written from a function that also takes
+ordinary parameters — the shape that put the write in the wrong storage), plus the three fixtures this slice
+built (`pd_owned`, `list_field`, `pd_argument_forwarding`) and the two the borrow-mode slice built, all
+compared byte-for-byte against the C backend. The ratchet gained five entries,
+`pd_var_datac_reassign` among them.
+
+**Measured**: the asm suite goes 195 → **200 of 273**; the fixture baseline is **106 built of 153 with 47
+refused**; the memory gate (`cargo test --test memory_gate -- --ignored`) runs `valgrind --leak-check=full`
+over 259 binaries — 153 C and 106 asm — with **zero findings** and zero lost bytes, which is the check that
+says the new `atexit` handler frees the passdown rather than merely not crashing. Suite at this record: 112
+unit, 273 end-to-end, 57 formatter, 2 capability-matcher, 1 path-normalizer, 1 memory gate, plus the three
+`--ignored` backend_coverage tests.
