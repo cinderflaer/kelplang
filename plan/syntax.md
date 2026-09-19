@@ -7,9 +7,9 @@ This file is the language reference. It is written to be read start to finish by
 | File | Contents |
 | --- | --- |
 | `plan/syntax.md` | this file: syntax, types, semantics, standard library |
-| `plan/basicstructure.md` | compiler layout, capability model, non-syntax decisions |
+| `plan/architecture.md` | compiler layout, capability model, non-syntax decisions |
 | `plan/roadmap.md` | status, critical path, milestone scheme, open items |
-| `plan/backlog.md` | named-but-unscheduled backlog: the `A`-`F` item lists, Coral, regulated domains |
+| `plan/roadmap.md` | the plan: marks, open items, and its Backlog part for what is named but unscheduled |
 | `plan/done.md` | record of what has shipped |
 
 ## 1. Getting started

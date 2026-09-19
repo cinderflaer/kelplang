@@ -176,7 +176,7 @@ These hold for every stage. Breaking one is how this becomes a rewrite instead o
    with no test of its own — so "the fixtures pass" is measured as **248 integration tests**, which is the
    number the stage gates below use.
 3. **One target.** `x86-64`, SysV ABI, Linux. Nothing else is attempted until Tier 3 is done. Cross-compilation
-   (`backlog.md` MK13-S4-M3) and a portable encoder are explicitly out of scope on this branch.
+   (the Backlog part of `roadmap.md` MK13-S4-M3) and a portable encoder are explicitly out of scope on this branch.
 4. **Tiered, not simultaneous.** Tier 2 does not start before Tier 1 passes the full suite; Tier 3 does not
    start before Tier 2 does. Each tier is a working compiler.
 5. **The cheap oracle stays cheap.** `cargo test` must keep passing on `main` at every commit. Nothing on
@@ -1073,7 +1073,7 @@ an ELF written by `kelpc` with no assembler and no linker invoked, and `bench/sp
 
 ## 7. Stage 3 — freestanding
 
-Removes libc. This is `backlog.md` B-6 (freestanding/no-runtime) plus B-7 (own allocator) plus `roadmap.md`
+Removes libc. This is the Backlog part of `roadmap.md` B-6 (freestanding/no-runtime) plus B-7 (own allocator) plus `roadmap.md`
 MK9-S4, and it is larger than Stages 1 and 2 combined. It is also not a detour: those three items are
 prerequisites for kernel, driver, firmware and embedded targets, so the work is bought once for two goals.
 
@@ -1108,7 +1108,7 @@ parallel track.
    equivalent, `kelp_panic` → `exit(1)`, and a static ELF with no interpreter.
 8. **Losses to accept and record.** ASAN goes away with the C toolchain, so every memory-safety claim in the
    verification section must be re-argued against Kelp's own semantics rather than demonstrated by clang
-   (`backlog.md`'s cross-cutting note). glibc's hand-tuned SIMD `memcpy`/`strlen`/`memmove` are gone until B-9
+   (the Backlog part of `roadmap.md`'s cross-cutting note). glibc's hand-tuned SIMD `memcpy`/`strlen`/`memmove` are gone until B-9
    SIMD work exists, so text-heavy code will be slower. Debug info (DWARF, open item A-16) is absent unless
    built, which means `gdb` against a generated binary is not useful until then.
 
@@ -1251,7 +1251,7 @@ tracks must touch (`main.rs`, `Cargo.toml`). After that the tracks barely inters
 **Merge order**, once parallel work exists: Stage 0 → A's stdlib-only work (no new `Ty`) → B's Stage 1 →
 A's type-adding syntax → B's Stage 2 → B's Stage 3.
 
-**Docs.** One writer per file, always. `roadmap.md` and `backlog.md` belong to B on this branch; A writes
+**Docs.** One writer per file, always. `roadmap.md` and the Backlog part of `roadmap.md` belong to B on this branch; A writes
 `syntax.md` and new files only. Long single-line bullets in these files conflict on every rebase otherwise.
 
 ## 10. Risk register
@@ -1275,7 +1275,7 @@ Recorded so the branch stays honest about its own size.
   x86-64 backend; that is the whole cost of the "no LLVM no nothing" reading.
 - An optimizer: inlining, CSE, LICM, strength reduction. Between `-O0` and `-O2` is the target.
 - Any target other than x86-64 Linux, and any cross-compilation.
-- DWARF and source mapping (`backlog.md` A-16), though the `#line` gap this branch inherits stops being
+- DWARF and source mapping (the Backlog part of `roadmap.md` A-16), though the `#line` gap this branch inherits stops being
   unfixable the moment a real backend exists.
 - `unsafe`, raw pointers, user FFI, `repr(C)` (B-1/B-2/B-3), and threads (MK6-S1-M1). All are systems work
   that a real backend *enables*; none of them are on the path to a real backend.

@@ -1,11 +1,17 @@
-# The "Kelp" language basic structure
+# Kelp architecture
 
-Part 1 of 5 of the Kelp language plan. The other files:
+The design behind the language: why it exists, how the compiler is laid out, the
+capability model, the v1 feature set and standard library, and the decisions
+(naming, failure, verification) that are not syntax. This file is the authority
+for everything here that is not surface syntax.
+
+The other documents:
 
 - `syntax.md` the syntax and style authority.
+- `roadmap.md` the plan: the critical path, current state, the MK/S/M naming scheme, the open items, and its Backlog part for what is named but unscheduled.
 - `done.md` the milestone record of what has shipped, milestone by milestone.
-- `roadmap.md` the critical path, current state, the MK/S/M naming scheme, and the open items.
-- `backlog.md` everything named and not scheduled: the `A`-`F` item lists, Coral, regulated domains.
+- `mk7-own-backend.md` the working plan for the compiler's own backend.
+- `../README.md` what the project is, and how to build, run and test it.
 
 **Precedence rule: `syntax.md` wins on syntax and style.** Where any file here and `syntax.md` disagree about syntax or style including where another file restates that syntax `syntax.md` is correct and the other file is wrong. Syntax restated outside `syntax.md` is a copy kept for reading convenience, not a second authority. The rest of the plan is the authority for everything else: the language's non-syntax decisions, the milestone record, capabilities, and the standard library.
 
@@ -175,7 +181,7 @@ This depends on the multi-file `impl` import system and on the heap (`fs.read` c
 
 Everything listed above as v1 scope now exists except what is named under "Not shipped, and known" in "Current state": the `env` bodies, `fs.mkdir_all`, and the length-carrying view that a few `str`/`path` functions are waiting for. See "Current state".
 
-Deferred beyond v1 (explicitly out of scope for now, revisit later): traits/interfaces, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Pattern matching over a tagged union moved *into* v1: `enum` (roadmap's A-1 / MK8-S1-M1 part 1) shipped, so that item is off this list — and generics shipped in MK8-S1-M1 part 2, so `enum Option<T>`, `datac Pair<A, B>`, `fun f<T>` and a `Map` with a scalar key type are all expressible now. Heap collections are the other item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and the `for` loop over a sequence shipped as MK8-S1-M3 (open items 27 and 46 are resolved; the `iter`/`next` protocol is not scheduled). This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is `backlog.md`.
+Deferred beyond v1 (explicitly out of scope for now, revisit later): traits/interfaces, closures, explicit lifetime annotation syntax (`'a`), non-lexical lifetimes, async, unsafe blocks, exceptions, external/third-party dependencies (local-file `impl` imports are in scope see Imports & Capabilities sections), and the language's own machine-code backend (MK7). Pattern matching over a tagged union moved *into* v1: `enum` (roadmap's A-1 / MK8-S1-M1 part 1) shipped, so that item is off this list — and generics shipped in MK8-S1-M1 part 2, so `enum Option<T>`, `datac Pair<A, B>`, `fun f<T>` and a `Map` with a scalar key type are all expressible now. Heap collections are the other item that moved: `List<T>` shipped as MK3-S2-M1, growing an owned buffer in place (`String.push`, `Bytes.append` in memory) shipped as MK5-S1-M1, and the `for` loop over a sequence shipped as MK8-S1-M3 (open items 27 and 46 are resolved; the `iter`/`next` protocol is not scheduled). This paragraph lists what v1 deliberately leaves out; the full post-v1 backlog, including everything a *self-hosted* `kelpc` and a *deep-systems* Kelp would each still need, is the Backlog part of `roadmap.md`.
 
 ## Standard library
 
