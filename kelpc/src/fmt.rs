@@ -65,7 +65,7 @@
 //! - **trailing-whitespace-outside-comments** — Trailing whitespace is removed from a line of code, while whitespace inside a comment is the comment's own text and is kept.
 //! - **crlf-line-endings-become-lf** — A CRLF line ending is written as LF, because the `\r` before a newline is whitespace to the lexer and never reaches the output.
 //! - **single-trailing-newline** — The output ends with exactly one newline, and a source whose bytes are all whitespace is emitted empty.
-//! - **comments-verbatim-bytes** — Comment text is copied byte-for-byte, a `///` doc comment included, so no byte inside a comment is rewritten or dropped.
+//! - **comments-verbatim-bytes** — Comment text is copied byte-for-byte, a `///` doc comment and a `/* … */` block comment included, so no byte inside a comment is rewritten or dropped — a block comment's own newlines and inner indentation among them.
 //! - **comment-keeps-its-line** — A comment stays on the line the author wrote it on, with the gap around it normalised like any other gap.
 //! - **one-space-around-binary-and-assignment** — One space goes before and after a binary operator and an `=`.
 //! - **one-space-after-comma** — One space goes after a `,` and none goes before it.
@@ -296,9 +296,11 @@ const RULES: &[Rule] = &[
     },
     Rule {
         name: "comments-verbatim-bytes",
-        statement: "Comment text is copied byte-for-byte, a `///` doc comment included, so \
-                    no byte inside a comment is rewritten or dropped.",
-        pins: &["doc_comment"],
+        statement: "Comment text is copied byte-for-byte, a `///` doc comment and a \
+                    `/* … */` block comment included, so no byte inside a comment is \
+                    rewritten or dropped — a block comment's own newlines and inner \
+                    indentation among them.",
+        pins: &["doc_comment", "block_comment"],
     },
     Rule {
         name: "comment-keeps-its-line",

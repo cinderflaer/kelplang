@@ -564,7 +564,18 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // types — which is the point: one is a pointer, the other owns an
         // environment.
         Ty::Closure { params, ret } => closure_mangle(params, ret),
-        other => other.display().replace('&', "ref"),
+        // Everything else is a scalar, `View`/`unit`, or a borrow. A scalar's
+        // written form is already an identifier; a borrow's is `&T` or
+        // `mut T`, and `&T` is spelled `refT` here. What that spelling could
+        // *not* survive is a module-qualified inner type: `&json.Item` came
+        // out `refjson.Item`, a name with a `.` in it, so the closure typedef
+        // for `closure(&Item)` declared inside the `json` module itself was
+        // `kelp_Closure__refjson.Item__unit` — not a C identifier at all, and
+        // every generated use of it failed to compile. That is the shape a
+        // library hits when it offers a callback over its own type, which is
+        // why the fallback goes through `c_ident`, the one mangling every
+        // other generated symbol uses, instead of replacing `&` by hand.
+        other => c_ident(&other.display().replace('&', "ref")),
     }
 }
 
@@ -628,9 +639,26 @@ pub fn map_key_of(ty: &Ty) -> Option<&Ty> {
 /// A container is emitted before the `datac`s (its buffer is a pointer), so
 /// a `datac` element is named by its forward-declared struct tag rather than
 /// by its typedef name; every other element is named as usual.
+///
+/// A borrow of a `datac` has to name the tag too, and for the same reason: a
+/// closure typedef is emitted before the `datac`s as well (a `datac` field may
+/// hold a closure, so the closure type has to exist first), and a callback
+/// parameter of a module's own type — `closure(&Item)` — is exactly a `datac`
+/// behind a pointer. Falling back to `c_type()` there spelled it
+/// `const struct_Item*`, a typedef name that is not declared until after the
+/// closure typedef that uses it (BUG-2). `&str` keeps its own spelling, since
+/// `c_type()` already collapses it to `const char*`.
 pub fn container_elem_c_type(elem: &Ty) -> String {
     match elem {
         Ty::Struct(name) => format!("struct tag_{}", c_ident(name)),
+        Ty::Ref { mutable, inner } if !matches!(**inner, Ty::Str) => {
+            let pointee = container_elem_c_type(inner);
+            if *mutable {
+                format!("{pointee}*")
+            } else {
+                format!("const {pointee}*")
+            }
+        }
         other => other.c_type(),
     }
 }

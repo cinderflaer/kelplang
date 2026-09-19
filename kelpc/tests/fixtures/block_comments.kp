@@ -1,0 +1,13 @@
+// Multi-line source, two ways, in one fixture: a `/* ... */` comment and a
+// `\n` inside a string literal. The escape set is pinned byte-by-byte by
+// `escapes.kp`; what this one pins is that one `print` writes several lines
+// and that a block comment may span lines, nest, and sit inline.
+/* a block comment before the function,
+   spanning two lines */
+fun main() {
+    /* one line */
+    print("first\nsecond")
+    /* outer /* inner */ still the outer comment */
+    print!("no newline here")
+    print("\ndone")
+}

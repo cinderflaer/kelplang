@@ -153,7 +153,30 @@ Coral resolves the compiler in this order: `$KELPC`, then the project's pin, the
 
 ### 2.1 Comments
 
-`//` starts a line comment. There are no block comments.
+`//` starts a line comment, and `/* ... */` a block comment:
+
+```kelp
+// a line comment, ending at the newline
+
+/* a block comment: one line, or several
+   lines of prose */
+
+val limit = 10   // a trailing comment is the same kind of thing
+```
+
+A block comment ends at its own `*/`, and block comments **nest**: an inner `/*`
+needs its own `*/`, so a region that already contains a block comment can be
+commented out as a unit. C's rule — the first `*/` wins — is what turns that case
+into a parse error somewhere further down the file, which is the failure mode
+this rule exists to remove; nested comments are also what Rust and Kotlin do. The
+cost of nesting is that an extra `*/` no longer "closes twice" silently: an
+unbalanced `/*` is an unterminated block comment, reported at the opening
+delimiter.
+
+Neither form is a token. Both are trivia, so a comment may sit wherever
+whitespace may, and `kelpc fmt` copies it verbatim (19). A `//` inside a block
+comment is text, and delimiters inside a string or character literal are text
+too (`"a/*b*/c"` is the bytes `a/*b*/c`).
 
 ### 2.2 Statements and whitespace
 
@@ -1330,7 +1353,7 @@ fun log_area(c: Circle) {
 
 - `pd val name = expr`, `pd var name = expr`, or with an explicit type: `pd val name: T = expr`.
 - A function that mentions a passdown gets it wired in as a hidden parameter. A function that never mentions one pays nothing.
-- The reference is a borrow: `pd var` is an exclusive borrow and therefore writable from inside functions, while `pd val` is shared. Two functions cannot hold the same `pd var` exclusively at once, and all the ordinary borrow rules apply.
+- The reference is a borrow, and the borrow's mutability is what the function does with the passdown: a function that writes it — directly, or through a function it calls — holds an exclusive borrow, and one that only reads it holds a shared one. `pd var` is therefore writable from inside functions, two functions cannot hold the same `pd var` exclusively at once, and a `pd var` no function writes is a shared borrow everywhere, so passing it to a function that also reads it is allowed.
 - A passdown is module-scoped. A local `val`/`var` of the same name shadows it inside that scope, and there is no spelling for reaching another module's passdown.
 - An owned passdown is freed once, at process exit.
 
@@ -1864,7 +1887,7 @@ panic: String.from_bytes: input is not valid utf-8
 - Standard library modules, functions and datac fields are `snake_case` (`fs.read_text`, `str.is_empty`, `Line.text`), and types are `PascalCase` (`String`, `Bytes`, `Box`, `Metadata`, `Url`).
 - User code case is not enforced. The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
-- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line.
+- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code — which nests, so a region that already contains a block comment still works.
 
 `kelpc fmt` enforces the indentation, spacing, trailing-whitespace, newline and
 comment rules of this section and nothing else: it caps a run of blank lines

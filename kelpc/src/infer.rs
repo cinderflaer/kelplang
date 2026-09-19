@@ -4078,7 +4078,6 @@ fn check_function(
             tir::Block {
                 stmts: vec![],
                 tail: Some(Box::new(checked)),
-                span: e.span(),
             }
         }
         ast::FunctionBody::Extern => {
@@ -4099,7 +4098,6 @@ fn check_function(
             tir::Block {
                 stmts: vec![],
                 tail: None,
-                span: f.span,
             }
         }
     };
@@ -4172,11 +4170,7 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
     }
 
     ctx.pop_scope();
-    Ok(tir::Block {
-        stmts,
-        tail,
-        span: block.span,
-    })
+    Ok(tir::Block { stmts, tail })
 }
 
 fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
@@ -4377,7 +4371,6 @@ fn check_fn_literal(
             tir::Block {
                 stmts: vec![],
                 tail: Some(Box::new(value)),
-                span: e.span(),
             }
         }
         ast::FunctionBody::Extern => unreachable!("the parser requires a literal body"),
@@ -6010,7 +6003,6 @@ fn check_when(
             tir::Block {
                 stmts: bind_stmts,
                 tail: Some(Box::new(body)),
-                span: arm.span,
             },
         ));
     }
@@ -6067,7 +6059,6 @@ fn check_when(
         acc = tir::Block {
             stmts: Vec::new(),
             tail: Some(Box::new(if_expr)),
-            span,
         };
     }
     let ty = acc.ty();
@@ -7617,7 +7608,6 @@ fn check_if(
                 tir::ExprKind::If { .. } => Some(tir::Block {
                     stmts: vec![],
                     tail: Some(Box::new(checked)),
-                    span: e.span(),
                 }),
                 _ => unreachable!("parser guarantees else-if parses to Expr::If"),
             }

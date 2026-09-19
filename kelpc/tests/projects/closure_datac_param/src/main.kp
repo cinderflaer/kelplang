@@ -1,0 +1,9 @@
+impl "items"
+
+fun main() {
+    var xs: List<items.Item> = List.empty()
+    xs.push(items.Item(n = 1))
+    xs.push(items.Item(n = 4))
+    items.each(xs, fun(x: &items.Item) = print(x.n))
+    print(items.any_big(xs, fun(x: &items.Item).R: bool = x.n > 3))
+}

@@ -42,12 +42,22 @@
 //! ## Drops (M6)
 //!
 //! The same walk decides where owned heap values (`Bytes`) are freed, and
-//! returns that as a `DropPlan` — a side table keyed by *span*, so
+//! returns that as a `DropPlan` — a side table keyed by *node identity*, so
 //! `codegen_c.rs` can look up "which locals die here" as it writes each
 //! block and each `return` without the two passes having to walk in
-//! lockstep. Keying on spans also sidesteps the one place the two walks
+//! lockstep. Keying on identity also sidesteps the one place the two walks
 //! genuinely differ: `while` bodies are checked twice (M3's double-move
 //! trick) but emitted once.
+//!
+//! Identity rather than source span is what makes the key unique. Parse-time
+//! desugaring deliberately gives several *distinct* blocks one user span
+//! (`if let`'s empty `else` block carries the `then` block's span; a `for`
+//! loop's element block and its `while` body both carry the loop body's span),
+//! and a span-keyed plan then handed one block's drops to another block that
+//! merely shared its span — which is how an owned local declared in an `if
+//! let` arm or a `for` body got a second, out-of-frame drop emitted on the
+//! path where its name is not even declared (BUG-1). Both passes walk the very
+//! same `tir::Program`, so the node's address is a stable and exact key.
 //!
 //! A local is dropped at the end of the block that declared it, if it is
 //! still live there — moved out, and its new owner is responsible for it.
@@ -83,31 +93,44 @@ pub struct DropTarget {
 
 /// Where every owned local is freed, per function.
 ///
-/// Keyed by span rather than by position because `codegen_c.rs` walks the
-/// same tree independently: a block's span identifies its end-of-scope
-/// drops, and a `return` statement's span identifies the drops that run
-/// before it returns.
+/// Keyed by node identity rather than by position because `codegen_c.rs` walks
+/// the same tree independently: a block identifies its own end-of-scope drops,
+/// and a `return` statement identifies the drops that run before it returns.
+/// See the module doc for why a source span cannot serve as that key.
 #[derive(Debug, Default, Clone)]
 pub struct DropPlan {
     functions: HashMap<String, FnDrops>,
 }
 
+/// The identity of one `tir` node, for the plan's key.
+///
+/// `borrowck.rs` and `codegen_c.rs` walk the same `tir::Program`, so the same
+/// node is reached by both, and its address is a stable key for as long as the
+/// plan outlives the walk: nothing moves or copies the tree between the two
+/// passes, and every block is reached through a `Box` or a `Vec` buffer, so the
+/// address does not change under it either.
+type NodeId = usize;
+
+fn block_id(block: &tir::Block) -> NodeId {
+    block as *const tir::Block as NodeId
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FnDrops {
-    at_block_end: HashMap<Span, Vec<DropTarget>>,
+    at_block_end: HashMap<NodeId, Vec<DropTarget>>,
     at_return: HashMap<Span, Vec<DropTarget>>,
     at_assign: HashMap<Span, Vec<DropTarget>>,
     at_try: HashMap<Span, Vec<DropTarget>>,
 }
 
 impl DropPlan {
-    /// Owned locals freed when `span`'s block ends, in drop order (reverse
+    /// Owned locals freed when `block` ends, in drop order (reverse
     /// declaration order, so a later binding is freed before an earlier one
     /// it may have taken its value from).
-    pub fn at_block_end(&self, function: &str, span: Span) -> &[DropTarget] {
+    pub fn at_block_end(&self, function: &str, block: &tir::Block) -> &[DropTarget] {
         self.functions
             .get(function)
-            .and_then(|f| f.at_block_end.get(&span))
+            .and_then(|f| f.at_block_end.get(&block_id(block)))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
@@ -265,7 +288,7 @@ impl Ctx {
 
     /// Ends a block: releases its scope-durable borrows and records the drops
     /// for the owned locals it declared that are still live here.
-    fn pop_scope(&mut self, block_span: Span, unreachable_end: bool) {
+    fn pop_scope(&mut self, block: &tir::Block, unreachable_end: bool) {
         let popped = self.scopes.pop().expect("pop_scope without a matching push_scope");
         for root in popped.scope_borrows {
             self.end_borrow(&root);
@@ -277,7 +300,7 @@ impl Ctx {
         }
         let drops = live_drops(popped.owned.iter());
         if !drops.is_empty() {
-            self.plan.at_block_end.insert(block_span, drops);
+            self.plan.at_block_end.insert(block_id(block), drops);
         }
     }
 
@@ -846,7 +869,7 @@ fn check_function(
     // body's own block (parameters live as long as the body does).
     let leftover = ctx.live_drops_in_frame();
     if !leftover.is_empty() {
-        ctx.plan.at_block_end.insert(f.body.span, leftover);
+        ctx.plan.at_block_end.insert(block_id(&f.body), leftover);
     }
     Ok(ctx.plan)
 }
@@ -862,7 +885,7 @@ fn check_block(block: &tir::Block, ctx: &mut Ctx) -> Result<()> {
         }
         Ok(())
     })();
-    ctx.pop_scope(block.span, diverges(block));
+    ctx.pop_scope(block, diverges(block));
     result
 }
 

@@ -3199,12 +3199,13 @@ impl Gen {
             self.stmt(stmt, frame)?;
         }
         // MK7 §5 item 5: the function body's own end-of-scope drops, keyed by
-        // the body block's span exactly as `codegen_c.rs::write_function_body`
-        // looks them up. A present non-`unit` tail is a `return` (`infer.rs`
+        // the body block's identity exactly as
+        // `codegen_c.rs::write_function_body` looks them up. A present
+        // non-`unit` tail is a `return` (`infer.rs`
         // treats a tail expression the same as `return <tail>`), so a value it
         // leaves in a register is parked while the drops run — the same
         // ordering `write_temp_then_drops` gives a written `return`.
-        let drops = self.drops.at_block_end(&self.function, f.body.span).to_vec();
+        let drops = self.drops.at_block_end(&self.function, &f.body).to_vec();
         if let Some(tail) = &f.body.tail {
             // MK7 §5 item 4, third slice: a tail expression is a `return`,
             // which `infer.rs` treats the same as `return <tail>` — so a
@@ -5615,10 +5616,11 @@ impl Gen {
     /// A block in statement position. Its tail, if any, is computed for its
     /// effects and discarded — only a function body's tail is a return — and
     /// then the block's own owned locals are freed (MK7 §5 item 5): the
-    /// points `borrowck.rs` keyed by this block's span, in reverse declaration
-    /// order. A block in *value* position is the same code — the tail it
-    /// leaves in `rax`/`xmm0` is parked across the drops, exactly as the C
-    /// backend's `write_temp_then_drops` evaluates into a temporary first.
+    /// points `borrowck.rs` keyed by this block's identity, in reverse
+    /// declaration order. A block in *value* position is the same code — the
+    /// tail it leaves in `rax`/`xmm0` is parked across the drops, exactly as
+    /// the C backend's `write_temp_then_drops` evaluates into a temporary
+    /// first.
     fn block(&mut self, block: &Block, frame: &mut Frame) -> Result<(), String> {
         frame.push_scope();
         for stmt in &block.stmts {
@@ -5628,7 +5630,7 @@ impl Gen {
         if let Some(tail) = &block.tail {
             self.expr(tail, frame)?;
         }
-        let drops = self.drops.at_block_end(&self.function, block.span).to_vec();
+        let drops = self.drops.at_block_end(&self.function, block).to_vec();
         if !drops.is_empty() {
             let parked = tail_ty.as_ref().map(|ty| self.park(float_ty(ty), frame));
             for t in &drops {

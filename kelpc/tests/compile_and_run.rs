@@ -744,6 +744,20 @@ fn drops_follow_control_flow() {
 }
 
 #[test]
+fn an_owned_local_in_a_desugared_block_is_dropped_once_and_in_its_own_block() {
+    // BUG-1: `if let` desugars to a `when` whose synthesized `else` block
+    // carried the `then` block's span, and `for` builds an element block
+    // inside a `while` body that carries the loop body's span too. A drop
+    // plan keyed by span then emitted the arm's `xs` on the `else` path (where
+    // the name is not declared, so `cc` refused the program) and `inner`
+    // twice. The fixture declares an owned local in each position.
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_drops_in_desugared_blocks.kp",
+        "1\n1\n",
+    );
+}
+
+#[test]
 fn reassigning_an_owned_binding_frees_the_old_value() {
     assert_compiles_and_runs("tests/fixtures/heap_reassign.kp", "three\nagain\n");
 }
@@ -1476,6 +1490,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "heap_returned",
         "heap_scope_drop",
         "heap_drops_in_control_flow",
+        "heap_drops_in_desugared_blocks",
         "heap_reassign",
         "heap_branches",
         "heap_param_borrow",
@@ -1506,6 +1521,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_list",
         "borrow_temp_arg",
         "list_datac_element",
+        "closure_datac_borrow_param",
         "stdlib_sort",
         "list_slice_insert",
         // MK7: the list paths a shift or a replacement could get wrong —
@@ -2667,6 +2683,18 @@ fn carriage_return_is_an_escape_like_any_other() {
 }
 
 #[test]
+fn a_block_comment_spans_and_nests_and_an_escape_writes_several_lines() {
+    // `/* ... */` is new syntax (`plan/syntax.md` §2.1): it may span lines, it
+    // nests, and it may sit inline before a statement. The fixture also pins
+    // one `print` writing two lines through `\n`, and `print!` with no
+    // terminating newline.
+    assert_compiles_and_runs(
+        "tests/fixtures/block_comments.kp",
+        "first\nsecond\nno newline here\ndone\n",
+    );
+}
+
+#[test]
 fn an_unknown_string_escape_is_rejected_by_name() {
     // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
     // string. It is now a diagnostic that names the supported set.
@@ -3289,6 +3317,34 @@ fn a_closure_carries_its_environment() {
     assert_compiles_and_runs(
         "tests/fixtures/closure_basic.kp",
         "11\n10\n3\n30\n-6\n14\n15\n42\n13\n5\n11\ntrue\n",
+    );
+}
+
+#[test]
+fn a_closure_parameter_may_borrow_a_module_declared_type() {
+    // BUG-2: the closure typedef and its coercion environment are emitted
+    // before the `datac`s, so a `&Item` parameter has to be spelled with the
+    // forward-declared struct tag there rather than with `Item`'s typedef
+    // name. Naming the typedef name made `cc` reject any callback API over a
+    // module's own type.
+    assert_compiles_and_runs(
+        "tests/fixtures/closure_datac_borrow_param.kp",
+        "1\n",
+    );
+}
+
+#[test]
+fn a_library_may_take_a_closure_over_its_own_type() {
+    // The other half of BUG-2, and the shape that motivated it: inside a
+    // non-entry module the parameter type is module-qualified (`&items.Item`),
+    // so the generated closure type is named after it. That name used to come
+    // out of the mangling as `refitems.Item` — a dot in a C identifier — and
+    // every generated use of the closure type failed to compile. Needs a
+    // project because the module prefix is what makes the name qualified.
+    assert_project_runs(
+        "closure_datac_param",
+        &project("closure_datac_param"),
+        "1\n4\ntrue\n",
     );
 }
 

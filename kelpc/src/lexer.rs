@@ -34,11 +34,13 @@ pub enum TokenKind {
     /// makes `c == '"'` work when `c` is a `u8` byte.
     CharLit(u32),
     Ident(String),
-    /// `// ...`, up to (not including) the line terminator. Produced only by
+    /// `// ...` up to (not including) the line terminator, or `/* ... */`,
+    /// both with their delimiters. Produced only by
     /// [`Lexer::tokenize_with_trivia`]: [`Lexer::tokenize`] skips comments, so
     /// the parser, the preprocess pass and every existing diagnostic never see
     /// one. The variant exists for the formatter, which has to reproduce every
     /// comment verbatim and cannot do that from an AST with no comment node.
+    /// A block comment's text is stored exactly as written, newlines included.
     Comment(String),
 
     // string-template pieces (`"a$b${c}"`), all emitted in one flat run:
@@ -244,17 +246,73 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Consumes a `/* ... */` comment, delimiters included.
+    ///
+    /// **Block comments nest**, like Kotlin's and Rust's rather than like C's:
+    /// an inner `/*` needs its own `*/`, so commenting out a region that
+    /// already contains a block comment works. The alternative — C's rule —
+    /// ends the comment at the *first* `*/`, so the rest of the region becomes
+    /// code and the failure is a parse error somewhere else entirely. The cost
+    /// of nesting is that an extra `*/` no longer "closes twice" silently: an
+    /// unbalanced `/*` is an unterminated comment, reported at its own start.
+    ///
+    /// A `//` inside a block comment is just text, and a `/*` inside a line
+    /// comment is too — the caller decides which delimiters apply.
+    fn consume_block_comment(&mut self) -> Result<(), LexError> {
+        let start = self.pos;
+        self.pos += 2; // the opening `/*`, already checked by the caller
+        let mut depth = 1usize;
+        while let Some(b) = self.peek() {
+            if b == b'/' && self.peek_at(1) == Some(b'*') {
+                depth += 1;
+                self.pos += 2;
+            } else if b == b'*' && self.peek_at(1) == Some(b'/') {
+                depth -= 1;
+                self.pos += 2;
+                if depth == 0 {
+                    return Ok(());
+                }
+            } else {
+                self.pos += 1;
+            }
+        }
+        Err(LexError {
+            message: "unterminated block comment: this '/*' has no matching '*/' ".to_string()
+                + "(block comments nest, so every inner '/*' needs its own '*/')",
+            span: Span::new(start, self.pos),
+        })
+    }
+
+    /// Consumes a comment in whichever form starts here, or does nothing when
+    /// none does. Returns `true` when one was consumed.
+    fn consume_any_comment(&mut self) -> Result<bool, LexError> {
+        if self.peek() != Some(b'/') {
+            return Ok(false);
+        }
+        match self.peek_at(1) {
+            Some(b'/') => {
+                self.consume_comment();
+                Ok(true)
+            }
+            Some(b'*') => {
+                self.consume_block_comment()?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     /// Skips spaces/tabs/CRs and comments (never newlines — those are handled
     /// by the caller, since whether they're significant depends on
     /// `paren_depth`).
-    fn skip_trivia(&mut self) {
+    fn skip_trivia(&mut self) -> Result<(), LexError> {
         loop {
             self.skip_ws();
-            match self.peek() {
-                Some(b'/') if self.peek_at(1) == Some(b'/') => self.consume_comment(),
-                _ => break,
+            if !self.consume_any_comment()? {
+                break;
             }
         }
+        Ok(())
     }
 
     /// Lexes the whole source. Comments are skipped, exactly as they always
@@ -305,16 +363,22 @@ impl<'a> Lexer<'a> {
             }
             if self.keep_comments {
                 self.skip_ws();
-                if self.peek() == Some(b'/') && self.peek_at(1) == Some(b'/') {
+                // One comment token per comment, delimiters included, so the
+                // formatter can copy the text verbatim. A block comment's
+                // newlines are part of that text, which is why the newline run
+                // below cannot see them.
+                let opens_comment = self.peek() == Some(b'/')
+                    && matches!(self.peek_at(1), Some(b'/') | Some(b'*'));
+                if opens_comment {
                     let start = self.pos;
-                    self.consume_comment();
+                    self.consume_any_comment()?;
                     return Ok(Some(Token {
                         kind: TokenKind::Comment(self.src[start..self.pos].to_string()),
                         span: Span::new(start, self.pos),
                     }));
                 }
             } else {
-                self.skip_trivia();
+                self.skip_trivia()?;
             }
             let start = self.pos;
 
@@ -325,7 +389,7 @@ impl<'a> Lexer<'a> {
                     if self.keep_comments {
                         self.skip_ws();
                     } else {
-                        self.skip_trivia();
+                        self.skip_trivia()?;
                     }
                 }
                 // Significant at the top level, and inside a block whose own
@@ -1066,6 +1130,80 @@ mod tests {
         let tokens = Lexer::new("// x\r\ny").tokenize_with_trivia().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Comment("// x".to_string()));
         assert_eq!(tokens[0].span, Span::new(0, 4));
+    }
+
+    #[test]
+    fn skips_block_comments_without_changing_the_tokens_around_them() {
+        assert_eq!(
+            kinds("1 /* two\nlines */ 2"),
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    /// Nesting, not C's first-`*/`-wins: commenting out a region that already
+    /// contains a block comment is the case that decides it, and it is the case
+    /// a reader hits first in a real file.
+    #[test]
+    fn block_comments_nest() {
+        assert_eq!(
+            kinds("1 /* /* inner */ still */ 2"),
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unterminated_block_comment_is_an_error_at_its_own_start() {
+        let err = Lexer::new("1 /* open").tokenize().unwrap_err();
+        assert!(
+            err.message.contains("unterminated block comment"),
+            "unexpected message: {}",
+            err.message
+        );
+        assert_eq!(err.span, Span::new(2, 9));
+    }
+
+    /// The delimiters are text inside a string, and a `//` or a `/*` inside a
+    /// block comment is text too — only the caller's own delimiters apply.
+    #[test]
+    fn comment_delimiters_inside_a_string_or_a_comment_are_text() {
+        assert_eq!(
+            kinds("\"a/*b*/c\" /* // */ 1"),
+            vec![
+                TokenKind::StringLit("a/*b*/c".to_string()),
+                TokenKind::IntLit(1),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    /// The formatter copies a block comment verbatim, so the token has to hold
+    /// the delimiters and the newlines exactly as written.
+    #[test]
+    fn trivia_retention_keeps_a_block_comment_whole() {
+        let src = "1 /* a\nb */ 2";
+        let trivia: Vec<TokenKind> = Lexer::new(src)
+            .tokenize_with_trivia()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect();
+        assert_eq!(
+            trivia,
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Comment("/* a\nb */".to_string()),
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
     }
 
     #[test]

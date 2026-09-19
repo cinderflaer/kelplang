@@ -1,0 +1,28 @@
+// BUG-1: an owned local declared in a block that parse-time desugaring built
+// out of another block's span. `if let` wraps the arm in a `when`, whose
+// synthesized `else` block carried the `then` block's span; `for` builds an
+// element block inside a `while` body, and both carry the loop body's span.
+// A drop plan keyed by span then handed the arm's `xs` to the `else` path,
+// where the name is not even declared, and emitted it twice for `inner`.
+enum Maybe {
+    Yes(val value: i64)
+    No
+}
+
+fun main() {
+    val m = Maybe.Yes(value = 1)
+    if let Yes(v) = m {
+        var xs: List<i32> = List.empty()
+        xs.push(v.to_i32())
+        print(xs.len())
+    } else {
+        print("no")
+    }
+    var more: List<i32> = List.empty()
+    more.push(2)
+    for x in more {
+        var inner: List<i32> = List.empty()
+        inner.push(x)
+        print(inner.len())
+    }
+}

@@ -2206,8 +2206,25 @@ impl<'a> Gen<'a> {
         )
     }
 
-    fn drops_at_block_end(&self, span: Span) -> Vec<DropTarget> {
-        self.drops.at_block_end(&self.function, span).to_vec()
+    fn drops_at_block_end(&self, block: &Block) -> Vec<DropTarget> {
+        self.drops.at_block_end(&self.function, block).to_vec()
+    }
+
+    /// A condition rendered as a parenthesized C expression, with no second
+    /// pair of parentheses when `cond` already renders as one group. Every
+    /// binary expression is emitted `(a op b)` — including the `tag == n` a
+    /// `when` arm tests — so wrapping it in `if (…)` produced `if ((a == b))`,
+    /// which clang flags as an extraneous parenthesis. On the most common
+    /// conditions in the language (`if a == b`, `while i < n`, every `when`
+    /// arm) that is a warning per occurrence, enough of it on a fresh build to
+    /// bury the real diagnostic (BUG-3).
+    fn cond_text(&self, cond: &Expr) -> String {
+        let rendered = self.expr_value(cond);
+        if matches!(&cond.kind, ExprKind::Binary { .. } | ExprKind::EnumTag { .. }) {
+            rendered
+        } else {
+            format!("({rendered})")
+        }
     }
 
     fn drops_at_return(&self, span: Span) -> Vec<DropTarget> {
@@ -2285,7 +2302,7 @@ impl<'a> Gen<'a> {
         for stmt in &block.stmts {
             self.write_stmt(stmt, depth);
         }
-        let drops = self.drops_at_block_end(block.span);
+        let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
             // A body whose tail is a `panic` diverges: `infer.rs` accepts it
             // against any declared return type, and here it is a plain
@@ -2322,7 +2339,7 @@ impl<'a> Gen<'a> {
         if let Some(tail) = &block.tail {
             self.write_stmt_like_expr(tail, depth);
         }
-        let drops = self.drops_at_block_end(block.span);
+        let drops = self.drops_at_block_end(block);
         self.write_drops(&drops, depth);
     }
 
@@ -2354,9 +2371,9 @@ impl<'a> Gen<'a> {
                 }
             }
             Stmt::While { cond, body } => {
-                let cond = self.expr_value(cond);
+                let cond = self.cond_text(cond);
                 indent(&mut self.out, depth);
-                writeln!(self.out, "while ({cond}) {{").unwrap();
+                writeln!(self.out, "while {cond} {{").unwrap();
                 self.write_block_body(body, depth + 1);
                 indent(&mut self.out, depth);
                 self.out.push_str("}\n");
@@ -2375,9 +2392,9 @@ impl<'a> Gen<'a> {
                 then_block,
                 else_block,
             } => {
-                let cond = self.expr_value(cond);
+                let cond = self.cond_text(cond);
                 indent(&mut self.out, depth);
-                writeln!(self.out, "if ({cond}) {{").unwrap();
+                writeln!(self.out, "if {cond} {{").unwrap();
                 self.write_block_body(then_block, depth + 1);
                 indent(&mut self.out, depth);
                 self.out.push('}');
@@ -2863,9 +2880,9 @@ impl<'a> Gen<'a> {
                 // that each branch assigns into, with the temporary itself as
                 // the trailing value.
                 let mut g = self.sub();
-                let cond = self.expr_value(cond);
+                let cond = self.cond_text(cond);
                 if expr.ty == Ty::Unit {
-                    writeln!(g.out, "if ({cond}) {{").unwrap();
+                    writeln!(g.out, "if {cond} {{").unwrap();
                     g.write_block_body(then_block, 1);
                     g.out.push('}');
                     g.write_else(else_block.as_ref(), 0);
@@ -2873,7 +2890,7 @@ impl<'a> Gen<'a> {
                 } else {
                     let tmp = fresh_temp();
                     writeln!(g.out, "{};", expr.ty.c_decl(&tmp)).unwrap();
-                    writeln!(g.out, "if ({cond}) {{").unwrap();
+                    writeln!(g.out, "if {cond} {{").unwrap();
                     g.write_block_assign(then_block, &tmp, 1);
                     g.out.push('}');
                     g.write_else_assign(else_block.as_ref(), &tmp, 0);
@@ -2894,7 +2911,7 @@ impl<'a> Gen<'a> {
         for stmt in &block.stmts {
             self.write_stmt(stmt, depth);
         }
-        let drops = self.drops_at_block_end(block.span);
+        let drops = self.drops_at_block_end(block);
         match (&block.tail, drops.is_empty()) {
             (Some(tail), true) => {
                 let value = self.expr_value(tail);
@@ -2922,7 +2939,7 @@ impl<'a> Gen<'a> {
             indent(&mut self.out, depth);
             writeln!(self.out, "{tmp} = {value};").unwrap();
         }
-        let drops = self.drops_at_block_end(block.span);
+        let drops = self.drops_at_block_end(block);
         self.write_drops(&drops, depth);
     }
 
@@ -3529,15 +3546,23 @@ fn numeric_conversion(callee: &str, from: &Ty, to: &Ty, value: &str) -> String {
         return format!("(({target})({value}))");
     }
     let tmp = fresh_temp();
-    let max = unsigned_lit(t_max);
-    let cond = if s_min < 0 {
-        // The source can be negative, so the target's own floor matters:
-        // `0` for an unsigned target, the signed type's real minimum
-        // otherwise (a signed target accepts negatives).
-        format!("{tmp} < {} || {tmp} > {max}", signed_lit(t_min))
-    } else {
-        format!("{tmp} > {max}")
-    };
+    // Only the bounds the source's own range cannot rule out. The upper
+    // comparison used to be emitted unconditionally, so `i32.to_u32` checked
+    // `tmp > 4294967295LL` against an `int32_t` — a comparison clang reports
+    // as always false, which is the second half of BUG-3's warning noise. A
+    // bound that is unreachable by construction is dropped, not emitted as a
+    // tautology.
+    let mut checks: Vec<String> = Vec::new();
+    if s_min < t_min {
+        // The source can go below the target's floor: `0` for an unsigned
+        // target, the signed type's real minimum otherwise.
+        checks.push(format!("{tmp} < {}", signed_lit(t_min)));
+    }
+    if s_max > t_max {
+        checks.push(format!("{tmp} > {}", unsigned_lit(t_max)));
+    }
+    // The widening case returned above, so at least one bound is missing.
+    let cond = checks.join(" || ");
     let message = callee.replace('#', ".");
     format!(
         "({{ {} {tmp} = {value}; if ({cond}) {{ kelp_panic(\"{message}: value out of range\"); }} ({target}){tmp}; }})",

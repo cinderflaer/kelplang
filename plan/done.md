@@ -1370,11 +1370,11 @@ the choice the report itself offered — relax the rule, or name the workaround 
 message now says to bind the value to a local first, rather than only naming the parameter that cannot be a
 temporary.
 
-**4 (open). A closure parameter typed as a borrow of a module type breaks codegen.** `closure(&Json).R: bool`
+**4 (fixed by the `fpl` pass below). A closure parameter typed as a borrow of a module type breaks codegen.** `closure(&Json).R: bool`
 mangles into a symbol codegen cannot forward-declare through (`kelp_Closure__refjson.Json__bool`, a name
 containing a module-qualified dot codegen did not expect a monomorphized closure name to carry) — a real gap
 in how closure monomorphization and cross-module borrow types combine, not something the diagnostic-hint
-treatment above fits. Left open. The report's own workaround — the whole closure-based traversal API
+treatment above fits. The report's own workaround — the whole closure-based traversal API
 (`each_value`/`each_field`/`map_array`/`filter_array`/`count_where`/`index_where`) rewritten as named
 accessor functions (`count_nodes`/`depth_of`/`count_of_kind`/`collect_strings`/`filter_array_by_kind`) — is
 recorded here so a future pass at this gap starts from a known-working call shape instead of guessing at one.
@@ -1383,6 +1383,76 @@ recorded here so a future pass at this gap starts from a known-working call shap
 non-`Copy` payload so the fix is not only correct for scalars, and reading the scrutinee again after the
 chain ends to prove it is still owned by the caller. It is in the AddressSanitizer list (the non-`Copy`
 payload is a `String`). The suite is **88 unit tests and 242 end-to-end tests**, all green.
+
+## The `fpl` documentation pass: three defects out of real usage, and block comments
+
+Every example in the twenty-five `fpl` libraries' usage documents was compiled *and run*, and the failures
+that valid programs hit were minimised into the report in `KelpLANG/bugreports.md`. Three were real defects
+in the compiler, none of them a language question; the same session added `/* ... */`, the one piece of
+syntax the documents kept wanting (they were written with a `//` on every line of a multi-line note).
+
+**1. A drop was emitted into the wrong block when two blocks shared one span.** `borrowck::DropPlan` keyed
+every drop point by *source span* — which was the right idea (the two passes walk the tree independently and
+must not have to stay in lockstep on positions) and the wrong key. Parse-time desugaring deliberately gives
+several distinct blocks one span: `if let` synthesizes a `when` whose `else` block is an empty block carrying
+the `then` block's span, and `for` builds an element block inside a `while` body, both carrying the loop
+body's span. So an owned local declared in an `if let` arm had its end-of-scope drop looked up by the *else*
+branch, where the name is not declared at all — `cc` rejected the file — and one declared in a `for` body was
+dropped there and again at the loop's exit. The naming error was the symptom; the placement was the bug, and
+with a name declared in the enclosing scope the same lookup would have been a use-before-init and a double
+free rather than a build failure.
+
+The fix is the key, not the placement logic: `DropPlan` now keys a block's drops by the block's *identity*
+(its address — both passes walk the same `tir::Program`, and nothing moves or copies the tree between them),
+and `tir::Block` no longer carries a span at all, so nothing can key on one again. Keying on identity also
+keeps the property the span key was chosen for: a `while` body is still checked twice (M3's double-move
+trick) and emitted once, because the second check writes the same key. `codegen_c.rs` and `codegen_asm.rs`
+both pass the block itself where they used to pass its span.
+
+**2. A closure parameter that borrows a module-declared type named the type before it existed.** A closure
+typedef is emitted before every `datac` — a `datac` field may hold a closure, so the closure type has to exist
+first — and it spelled a `datac` parameter with `container_elem_c_type`, which named the forward-declared
+struct tag. That function did not look through a borrow, so `closure(&Item)` came out as
+`const struct_Item*`, `Item`'s *typedef* name, which is not declared until after the typedef that uses it.
+It now walks through a borrow, and the coercion environment beside it inherits the fix.
+
+The same report's own repro found the other half, one mangling later: inside a non-entry module the parameter
+type is module-qualified, and `closure_mangle` builds the C name from `ty_mangle`, whose borrow arm spelled
+`&items.Item` as `refitems.Item` — a dot in a C identifier, so the generated closure type was
+`kelp_Closure__refitems.Item__unit` and every use of it failed to parse. The fallback now goes through
+`c_ident`, the one mangling every other generated symbol uses, which is what turns the fourth pass's open item
+4 (above) into a fixed one: its own repro, `closure(&json.Json).R: bool` in a module named `json`, now builds
+and runs with the closure type `kelp_Closure__refjson__Json__bool`. Two fixtures, because the two halves are
+reached by different files: `closure_datac_borrow_param.kp` (one file) and the project
+`tests/projects/closure_datac_param` (the module-qualified shape, with `unit` and `bool` returns).
+
+**3. The generated C warned on every fresh build.** Both kinds came from `codegen_c.rs`, and both were
+cheap once named: a condition that already renders as one parenthesized group (every binary expression, and
+`when`'s tag test) was wrapped a second time by `if (…)`, which clang flags as an extraneous parenthesis —
+on the most common conditions in the language; and the conversion bound check compared an `int32_t` against
+`u32`'s ceiling, a comparison clang reports as always false. Conditions are now parenthesized exactly once,
+and a bound the source's own range cannot reach is dropped rather than emitted as a tautology (`i32.to_u32`
+keeps the `< 0` half and loses the `> 4294967295` one). Measured: a fresh build of the `json` example that
+emitted about 47 warnings emits none.
+
+**`/* ... */`, and it nests.** The documents needed a note that spans lines, and the authority said there
+were no block comments, so this is a language change: `syntax.md` §2.1 defines them, the lexer consumes them
+as trivia (both forms through one entry point, so `keep_comments`-mode trivia retention and the formatter's
+byte-for-byte copy of a comment's own text — newlines and inner indentation included — work for a block
+comment unchanged; `fmt.rs`'s `comments-verbatim-bytes` rule gained `block_comment` as a second pin and a
+`/* … */` in its statement, and the header bullet it is read back from). Nesting, not C's first-`*/`-wins:
+commenting out a region that already contains a block comment is the case that decides it, and the cost is
+only that an unbalanced `/*` is an unterminated comment named at its own delimiter instead of silently
+closing twice.
+
+**Tests**: `heap_drops_in_desugared_blocks.kp` (an owned local in an `if let` arm and in a `for` body) joined
+the AddressSanitizer list, so a regression is a double free or a leak rather than the C error that happened
+to surface first; `closure_datac_borrow_param.kp` joined it too (a `List<Item>` plus a closure value);
+`block_comments.kp` pins the block comment that spans and nests, one `print` writing two lines through `\n`,
+and `print!` with no newline; `tests/fmt_corpus/block_comment.kp` pins the formatter's byte-for-byte copy; and
+`closure_datac_param` is an end-to-end project. Six lexer unit tests cover the trivia stream, nesting and the
+unterminated case. The suite is **112 unit tests, 270 end-to-end tests and 57 formatter tests**, all green (of
+which the heap fixtures are also re-run under AddressSanitizer).
 
 ## The formatter, the 2024 edition, and the own backend's `Map` slice
 
