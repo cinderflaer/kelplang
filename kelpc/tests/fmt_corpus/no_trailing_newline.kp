@@ -1,0 +1,4 @@
+// pins single-trailing-newline: the file ends with exactly one newline.
+fun main() {
+    print("x")
+}

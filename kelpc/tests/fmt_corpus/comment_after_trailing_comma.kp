@@ -1,0 +1,7 @@
+// pins comment-keeps-its-line: a comment after a trailing comma in a wrapped call keeps its line.
+fun main() {
+    print(sum(
+        1,
+        2, // comment after the trailing comma
+    ))
+}

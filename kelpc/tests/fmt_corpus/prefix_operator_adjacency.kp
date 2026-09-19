@@ -1,0 +1,8 @@
+// pins space-suppression-never-relexes: a prefix operator never merges with the token after it, because `& &` is two tokens and `&&` is one.
+fun main() {
+    val x = 5
+    val a = & x
+    val b = & & x
+    print(* a)
+    print(* * b)
+}

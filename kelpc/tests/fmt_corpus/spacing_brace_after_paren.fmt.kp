@@ -1,0 +1,4 @@
+// pins no-space-after-open-paren: a `{` that directly follows `(` stays attached to it, because `(` never has a space after it.
+fun main() {
+    print(foo({ 1 }))
+}

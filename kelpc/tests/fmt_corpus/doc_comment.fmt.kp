@@ -1,0 +1,8 @@
+// pins comments-verbatim-bytes: a doc comment is not rewritten into a line comment.
+/// Doubles a number.
+fun twice(n: i32).R: i32 = n * 2
+
+/// Prints the result.
+fun main() {
+    print(twice(21))
+}

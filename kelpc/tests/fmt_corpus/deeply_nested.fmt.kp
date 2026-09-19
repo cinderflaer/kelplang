@@ -1,0 +1,12 @@
+// pins indent-four-spaces: indentation is four spaces per block level, however deep.
+fun main() {
+    if true {
+        while true {
+            for x in xs {
+                if x > 0 {
+                    print("deep")
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,7 @@
+// pins continuation-line-keeps-author-indent: a line inside an open '(' keeps the author's own leading whitespace, spaces as written and each tab as four spaces.
+fun main() {
+    print(sum(
+    1,
+        2,
+    ))
+}

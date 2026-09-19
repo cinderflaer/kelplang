@@ -1,0 +1,5 @@
+// pins trailing-whitespace-outside-comments: a code line loses it, and a comment keeps its own bytes.
+fun main() {
+    // a comment-only line keeps the spaces written after it   
+    print("x")
+}

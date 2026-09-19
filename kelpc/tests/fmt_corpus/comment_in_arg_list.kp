@@ -1,0 +1,8 @@
+// pins comment-keeps-its-line: a comment on its own line inside a wrapped argument list.
+fun main() {
+    print(sum(
+        1,
+        // the middle argument's comment
+        2,
+    ))
+}

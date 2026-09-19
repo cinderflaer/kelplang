@@ -1,0 +1,7 @@
+// pins no-tabs-in-emitted-indentation: no tabs; indentation is four spaces per level.
+fun main() {
+	print("a")
+	if true {
+		print("b")
+	}
+}

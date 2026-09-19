@@ -1,0 +1,11 @@
+// pins blank-lines-at-most-one: blank lines between declarations collapse to one.
+
+fun a() {
+    print("a")
+}
+
+
+
+fun b() {
+    print("b")
+}

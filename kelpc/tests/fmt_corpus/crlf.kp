@@ -1,0 +1,4 @@
+// pins crlf-line-endings-become-lf: the lexer reads CR as trivia, so CRLF becomes LF.
+fun main() {
+    print("x")
+}

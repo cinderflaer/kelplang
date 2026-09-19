@@ -1,0 +1,5 @@
+// pins template-run-atomic: a string template is copied as one atomic run.
+fun main() {
+    val n = 1
+    print("sum=${n+1}")
+}

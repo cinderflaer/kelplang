@@ -1,0 +1,6 @@
+// pins prefix-operator-binds: a prefix operator binds to its operand.
+fun main() {
+    val x = 1
+    val y = - x
+    print(! (x == y))
+}

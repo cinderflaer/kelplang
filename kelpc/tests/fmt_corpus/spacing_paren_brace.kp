@@ -1,0 +1,6 @@
+// pins brace-spacing: '(' and ')' attach, '{' has one space before it.
+fun main(){
+    if true{
+        print( "x" )
+    }
+}

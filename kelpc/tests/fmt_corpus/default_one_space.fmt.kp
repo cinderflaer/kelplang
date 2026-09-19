@@ -1,0 +1,5 @@
+// pins default-one-space-between-atoms: two atoms that share a line get one space between them, so a pair the table does not name is never run together.
+fun main() {
+    val x = 1
+    print(x)
+}

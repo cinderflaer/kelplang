@@ -1,0 +1,4 @@
+// pins no-space-before-suffix-token: no space around '.' or in the '.R:' return type.
+datac Circle(val r: f64)
+
+fun Circle.area().R: f64 = 3.14159 * r * r

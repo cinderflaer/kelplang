@@ -1,0 +1,8 @@
+// pins angle-brackets-keep-author-spacing: '<' and '>' keep the author's spacing, attached in a type and spaced in a comparison, because a token-level formatter cannot tell the two apart.
+fun main() {
+    val attached: List<String> = List.empty()
+    val spaced: List < String > = List.empty()
+    if 1>2 {
+        print("no")
+    }
+}

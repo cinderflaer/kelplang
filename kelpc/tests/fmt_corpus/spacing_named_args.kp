@@ -1,0 +1,4 @@
+// pins one-space-after-comma: one space after a comma and around '=' in a named argument.
+fun main() {
+    val c = Circle(r=2.0,x=1.0)
+}

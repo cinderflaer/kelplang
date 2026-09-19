@@ -1,0 +1,6 @@
+// pins comment-keeps-its-line: a comment between two statements keeps its own line.
+fun main() {
+    print("a")
+    // between the two prints
+    print("b")
+}

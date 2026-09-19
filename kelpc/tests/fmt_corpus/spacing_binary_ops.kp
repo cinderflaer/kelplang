@@ -1,0 +1,5 @@
+// pins one-space-around-binary-and-assignment: one space around a binary operator and an assignment.
+fun main() {
+    val n=1+2*3
+    print(n-1)
+}

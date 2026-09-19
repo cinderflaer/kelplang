@@ -1,0 +1,7 @@
+// pins alias-declaration-and-reference-atomic: an inline alias line is copied verbatim and a %*name*% reference is one atomic run.
+alias %*answer*% = 40 + 2
+alias %*doubled*% = %*answer*% * 2
+
+fun main() {
+    print( %*doubled*% )
+}

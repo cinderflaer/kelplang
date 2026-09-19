@@ -1,0 +1,5 @@
+// pins comment-keeps-its-line: a comment on the file's last line survives.
+fun main() {
+    print("x")
+}
+// end of file comment

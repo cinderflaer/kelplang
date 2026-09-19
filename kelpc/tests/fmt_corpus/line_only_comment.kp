@@ -1,0 +1,5 @@
+// pins comment-keeps-its-line: a line that is only a comment.
+fun main() {
+    // only a comment on this line
+    print("x")
+}

@@ -1,0 +1,7 @@
+// pins indent-four-spaces: one block level is four spaces.
+fun main() {
+  val x = 1
+  if x > 0 {
+        val y = 2
+  }
+}

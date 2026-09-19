@@ -1,0 +1,12 @@
+# The fmt corpus is byte-exact test data, not source.
+#
+# A fixture's line endings are part of what it tests: `crlf.kp` exists to pin that
+# the lexer reads CR as trivia and the formatter emits LF-only output, and the
+# pair stops testing anything at all if git normalises its carriage returns away.
+# `core.autocrlf=input` does exactly that on commit, which is how the fixture was
+# first recorded with zero CR lines in the blob while the working copy had four.
+#
+# `-text` turns off every end-of-line and text conversion for these paths, so the
+# bytes that reach a clone are the bytes the test was written against, whatever
+# the cloner's `core.autocrlf` or `core.eol` happens to be.
+kelpc/tests/fmt_corpus/** -text

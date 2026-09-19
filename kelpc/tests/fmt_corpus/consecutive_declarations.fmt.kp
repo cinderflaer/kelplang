@@ -1,0 +1,7 @@
+// pins blank-lines-at-most-one: a blank line the author did not write is never inserted between two top-level declarations.
+fun a() {
+    print("a")
+}
+fun b() {
+    print("b")
+}

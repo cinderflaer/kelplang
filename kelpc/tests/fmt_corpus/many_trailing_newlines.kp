@@ -1,0 +1,6 @@
+// pins single-trailing-newline: several trailing newlines collapse to one.
+fun main() {
+    print("x")
+}
+
+
