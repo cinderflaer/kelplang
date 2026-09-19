@@ -69,7 +69,7 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// 200-of-273 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// Re-recorded seven times so far, and the *reason* each time is worth keeping:
+/// Re-recorded eight times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
 /// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
@@ -129,7 +129,17 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// above — so the baseline gained five (and `block_comments`, from the block
 /// comment slice), the built count moved to 105 and the refusal count to 47;
 /// `pd_var_datac_reassign` is that slice's own fixture for an aggregate write
-/// through a borrow, which took the built count to 106.
+/// through a borrow, which took the built count to 106. The scalar-borrow slice
+/// added `borrow_provenance_and_arms` and `stdlib_build` — two of the three
+/// fixtures the plan had credited it with, and both reachable now because the
+/// enum slice already landed behind their first refusal and the `str` parsers'
+/// `mut` out-parameter is what this slice supplies — plus the two fixtures the
+/// slice wrote for the mechanism itself (`scalar_borrow`, an integer out-parameter
+/// with a pointer held across a call, and `scalar_borrow_f64`, the same borrow
+/// with a float pointee). `stdlib_parse` is the third of the credited three and
+/// is **not** here: with the parsers lowerable its first refusal is
+/// `Result<f64, ParseErr>`, an `enum` whose payload is a float, which is the
+/// float-aggregate row rather than this one.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -138,6 +148,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "bitwise",
     "block_comments",
     "borrow_basic",
+    "borrow_provenance_and_arms",
     "borrow_temp_arg",
     "borrow_temp_slots",
     "box_basic",
@@ -235,6 +246,9 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "pd_var_write",
     "pd_write_reaches_callers",
     "recursive_datac",
+    "scalar_borrow",
+    "scalar_borrow_f64",
+    "stdlib_build",
     "stdlib_fmt",
     "stdlib_list",
     "stdlib_math",

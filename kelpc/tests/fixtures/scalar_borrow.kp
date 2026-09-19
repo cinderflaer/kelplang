@@ -1,0 +1,58 @@
+// A borrow of a *scalar* local, and the read and the store through the pointer
+// it produces. Three things this pins that nothing did before.
+//
+// A `mut i64` parameter is a plain pointer in this convention, so the caller's
+// half of `add(x, 3)` is `&mut x` — the address of `x`'s own frame slot, taken
+// with a `lea` and with nothing copied. `infer.rs` inserts exactly that borrow
+// for any scalar local handed to a `mut` parameter, which is the shape the
+// `str` parsers' `out = v` has, and the reason they could not be lowered until
+// a scalar local could be addressed.
+//
+// The store is the genuinely new primitive. A `*p = v` whose pointee is an
+// integer already existed for a `datac` passdown; a scalar one is the same
+// width-specific store, and it is what lets a callee write through the
+// out-parameter it was handed. To have the address to store through, the local
+// has to keep a frame slot: a pool register has no address, so the live-range
+// pass marks every local whose address is taken and the allocator leaves it
+// alone.
+//
+// And the operand of a borrow or of a `*p` store is a *use*. If the live-range
+// pass misses it, the pointer looks dead after its own declaration, the
+// allocator hands that register to the next local, and a store writes through
+// whatever the next local happens to hold. `accumulate` is the two-live-locals
+// probe for that: `keep` is live across the second store, and a shared
+// register there is a wild pointer rather than a wrong number.
+fun add(p: mut i64, d: i64) {
+    *p = *p + d
+}
+
+fun accumulate(p: mut i64, a: i64, b: i64).R: i64 {
+    *p = *p + a
+    val keep = a * b
+    *p = *p + keep
+    return keep
+}
+
+// A pointer held *across a call* and used after it: a `&mut i64` binding is one
+// register's worth of address, so it has to survive `add` the way any
+// callee-saved local does.
+fun doubled_then_bumped(p: mut i64, d: i64) {
+    val q = p
+    *p = *p * 2
+    add(q, d)
+}
+
+fun main() {
+    var x: i64 = 10
+    add(x, 3)
+    print(x)
+
+    val p = &mut x
+    doubled_then_bumped(p, 4)
+    print(*p)
+    print(x)
+
+    var y: i64 = 5
+    print(accumulate(y, 3, 4))
+    print(y)
+}

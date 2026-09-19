@@ -606,6 +606,30 @@ fn a_pd_var_of_a_two_word_datac_is_writable_through_its_borrow() {
 }
 
 #[test]
+fn a_scalar_local_can_be_borrowed_and_written_through_the_pointer() {
+    // MK7 §5: the caller's half of a `mut` out-parameter — `&mut x` on a scalar
+    // local — plus `*p` and `*p = v` through the pointer it produces, a pointer
+    // binding held across a call, and two live locals around the store (the
+    // live-range probe: a missed touch hands the pointer's register to `keep`
+    // and the store writes through it).
+    assert_compiles_and_runs(
+        "tests/fixtures/scalar_borrow.kp",
+        "13\n30\n30\n12\n20\n",
+    );
+}
+
+#[test]
+fn a_float_scalar_can_be_borrowed_and_written_through_the_pointer() {
+    // The same borrow with an `f64` pointee: only the load and the store change
+    // register file, so a wrong mnemonic prints a plausible wrong number rather
+    // than failing to build.
+    assert_compiles_and_runs(
+        "tests/fixtures/scalar_borrow_f64.kp",
+        "3.000000\n3.250000\n3.250000\n",
+    );
+}
+
+#[test]
 fn passdown_storage_is_a_global_that_main_initializes() {
     // MK7 §5: what the asm backend has to do instead of the C backend's
     // hidden-argument plumbing — one `.bss` object per `pd`, assigned by a
@@ -3719,6 +3743,11 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // because no fixture had ever written either shape.
         "int_literal_width",
         "string_with_capacity_zero",
+        // MK7 §5's next slice: a scalar borrow and the store through it. A
+        // wrong pointer is a wrong number or a wild write, not a build
+        // failure, which is exactly what comparing the two backends catches.
+        "scalar_borrow",
+        "scalar_borrow_f64",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();
