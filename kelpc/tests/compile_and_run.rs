@@ -1652,6 +1652,14 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // MK7 §5's enum slice: the same `?`-frees-the-frame shape as the line
         // above, without the `fun` literal that this backend refuses.
         "try_frame_drops",
+        // MK7 §5's enum slice, fixed after: the two wrong-width aggregate
+        // loads (a one-eightbyte field out of a `Box` block, a one-eightbyte
+        // element out of a `List` buffer) and the `?` whose success payload is
+        // a one-eightbyte `datac`. Each one owns a buffer, so each is
+        // leak-checked here as well as under valgrind.
+        "heap_narrow_fields",
+        "list_narrow_element_pop",
+        "try_narrow_payload",
         "stdlib_option_result",
         // A-4: a `move T` parameter owns what it is handed, so each buffer is
         // freed exactly once by whichever function owns it at scope exit.
@@ -1908,6 +1916,38 @@ fn a_list_copies_elements_at_their_own_width() {
     assert_compiles_and_runs(
         "tests/fixtures/list_element_widths.kp",
         "3\n5000000002\n15000000003\n7\n3\n2\nfalse\n3\n4\n9\n10\n7\n5\n2\n9\n0\n",
+    );
+}
+
+#[test]
+fn a_narrow_aggregate_field_is_read_at_its_own_width() {
+    // The regression fixture for a wrong-width load in `codegen_asm.rs`'s
+    // `field_read` (MK7 §5's enum slice, fixed after): the aggregate arm
+    // loaded a whole `QWORD` whatever the field's own width was. A padded
+    // stack slot absorbs the extra bytes, so both backends printed the same
+    // number and the differential sweep could not see it — but a field read
+    // out of a `Box` block, which is `sizeof(Outer)` bytes and nothing more,
+    // made the load cross the allocation, which the valgrind sweep reports.
+    // Field widths 1, 2, 3, 4, 5 and 7 are here (the ones the machine cannot
+    // move in one instruction are 3, 5 and 7), each read whole and byte by
+    // byte, plus an 8-byte field, for which the single load is right.
+    assert_compiles_and_runs(
+        "tests/fixtures/heap_narrow_fields.kp",
+        "2\n2\n302\n23\n40302\n432\n5040302\n5\n605040302\n6\n8070605040302\n8\n42\n42\n80706\n8\n",
+    );
+}
+
+#[test]
+fn a_list_returns_a_narrow_element_at_its_own_width() {
+    // The same defect in the second place a heap element's own address reaches
+    // a one-eightbyte load: `List#pop`/`List#remove` hand the element address
+    // to `emit_elem_return`, whose `One` arm loaded eight bytes — and whose
+    // `Two` arm loaded a full second eightbyte — out of a buffer sized to the
+    // element. The four pushes fill the initial capacity so both pops come off
+    // the buffer's end, where the crossing load is a heap overread.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_narrow_element_pop.kp",
+        "4\n111\n987\n321\n1\n4\n98\n76\n2\n4\n10101\n90807\n30201\n1\n",
     );
 }
 
@@ -2916,11 +2956,14 @@ fn the_enum_node_kinds_keep_two_live_locals_in_different_registers() {
     // The register allocator's liveness pass has twice handed two live locals
     // the same register because a node kind it never walked made one of them
     // look dead on declaration. This fixture keeps two scalars alive across
-    // each of this slice's four node kinds, so a repeat of that mistake is a
-    // wrong sum rather than a silent one.
+    // each of this slice's four node kinds — and, added with the slice's own
+    // defect fix, across `if let` and across a call with an enum-typed local
+    // live on the far side, the two shapes the slice's report claimed were
+    // probed when the fixture held neither. A repeat of the mistake is a wrong
+    // sum rather than a silent one.
     assert_compiles_and_runs(
         "tests/fixtures/enum_liveness.kp",
-        "21\n143\n-13\n141\n42\n-1\n185\n86\n",
+        "21\n143\n-13\n141\n42\n-1\n185\n86\n297\n-3\n226\n136\n",
     );
 }
 
@@ -3056,6 +3099,17 @@ fn a_propagated_failure_frees_the_frame_it_leaves() {
         "tests/fixtures/try_frame_drops.kp",
         "9\n-1\n6\n-1\n14\n-1\n-1\n7\n6\n-1\n",
     );
+}
+
+#[test]
+fn a_one_eightbyte_try_payload_builds_without_a_destination() {
+    // A `?` evaluated in a position that can hold one eightbyte (`expr`, which
+    // is what a `let` of a one-eightbyte `datac` uses) refused *every*
+    // aggregate payload for want of a destination, and said "over eight bytes"
+    // about a three-byte `datac`. `Result<D3, u8>` is eight bytes in total, so
+    // its success payload fits `rax` and the program must build — while a
+    // genuinely wider payload keeps the refusal.
+    assert_compiles_and_runs("tests/fixtures/try_narrow_payload.kp", "6\n9\n");
 }
 
 #[test]

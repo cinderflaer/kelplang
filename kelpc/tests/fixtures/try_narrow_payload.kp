@@ -1,0 +1,35 @@
+// The regression fixture for a false refusal (MK7 §5's enum slice, fixed
+// after): `?`'s success payload at the `One` class. A `?` evaluated where
+// only one eightbyte can be held (`expr`, which is what a `let` of a
+// one-eightbyte `datac` uses) had no destination, and `payload_out` refused
+// *every* aggregate payload for want of one — with a message that said "over
+// eight bytes" about a three-byte `datac`. The class is the question, not the
+// kind: `Result<D3, u8>` is eight bytes in total, `AggClass::One`, and its
+// success payload fits `rax`, so it must build.
+//
+// Both the success and the failure path print, so the payload's bytes and the
+// tag test are both pinned; `d` is read back field by field, which is where a
+// wrongly zeroed or wrongly ordered payload would show.
+datac D3(val a: u8, val b: u8, val c: u8)
+
+enum Result<T, E> {
+    Ok(val value: T)
+    Err(val error: E)
+}
+
+fun g(n: i64).R: Result<D3, u8> {
+    if n > 0 { return Result.Ok(value = D3(a = n.to_u8(), b = 2, c = 3)) }
+    return Result.Err(error = 9.to_u8())
+}
+
+fun h(n: i64).R: Result<D3, u8> {
+    val d = g(n = n)?
+    return Result.Ok(value = d)
+}
+
+fun main() {
+    val ok = h(n = 1)
+    if let Ok(v) = &ok { print(v.a.to_i32() + v.b.to_i32() + v.c.to_i32()) }
+    val err = h(n = 0)
+    if let Err(e) = &err { print(e.to_i32()) }
+}

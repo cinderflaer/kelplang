@@ -64,10 +64,15 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 153 fixtures the C backend
-/// builds, 106 of them also built by the asm backend, 47 refused — which is the
-/// 200-of-273 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 163 fixtures the C backend
+/// builds, 132 of them also built by the asm backend, 31 refused — which is the
+/// 226-of-283 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
+///
+/// (This paragraph said 153/106/47 while the list beneath it had grown to 129
+/// entries, which the plan's §5 blockquotes had already recorded as 160/129/31;
+/// corrected here, at 163/132/31, in the commit that added `heap_narrow_fields`,
+/// `list_narrow_element_pop` and `try_narrow_payload`.)
 ///
 /// Re-recorded eight times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
@@ -139,7 +144,13 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// with a float pointee). `stdlib_parse` is the third of the credited three and
 /// is **not** here: with the parsers lowerable its first refusal is
 /// `Result<f64, ParseErr>`, an `enum` whose payload is a float, which is the
-/// float-aggregate row rather than this one.
+/// float-aggregate row rather than this one. The enum slice's own defect fix
+/// (a one-eightbyte aggregate field or element loaded as a whole `QWORD`, and a
+/// `?` with a one-eightbyte `datac` payload in a one-eightbyte position) added
+/// the three fixtures that pin it — `heap_narrow_fields`,
+/// `list_narrow_element_pop` and `try_narrow_payload` — none of which any
+/// existing fixture covered, which is why the denominator moved to 163 and the
+/// refused count stayed at 31.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -189,6 +200,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "heap_drops_in_control_flow",
     "heap_drops_in_desugared_blocks",
     "heap_move_then_rebind",
+    "heap_narrow_fields",
     "heap_param_borrow",
     "heap_reassign",
     "heap_returned",
@@ -205,6 +217,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "list_growth_and_rebuild",
     "list_insert_bounds",
     "list_insert_remove_shifts",
+    "list_narrow_element_pop",
     "list_owned",
     "list_owned_replacement",
     "list_pop_empty",
@@ -264,6 +277,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "string_views",
     "string_with_capacity_zero",
     "try_frame_drops",
+    "try_narrow_payload",
     "try_operator",
     "view",
     "view_released_at_scope_end",

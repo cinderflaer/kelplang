@@ -2026,6 +2026,56 @@ fn off_str(n: i32) -> String {
     }
 }
 
+/// Loads exactly `size` bytes (one to eight) at `[base + off]` into `names`'s
+/// 64-bit register, zero-extending across it, and reads no byte past the
+/// `size` the load names. `names` is a register's four-width name table
+/// (`RAX`, `RDX`), the same shape `Width::extend_named` takes.
+///
+/// This exists because a one-eightbyte aggregate field or element may sit in
+/// a heap block *sized to the value* — `Box.of(Outer(...))` allocates
+/// `sizeof(Outer)` bytes, and a `List<T>` element is `sizeof(T)` bytes — so a
+/// plain eight-byte load of a three-byte field reads past the allocation,
+/// which the memory gate reports as an invalid read. The one-instruction
+/// forms are the four widths the machine moves directly, each of which
+/// already zeroes the rest of the destination register (`movzx` for the byte
+/// and word loads, a 32-bit `mov` for the dword); the remaining widths — 3,
+/// 5, 6 and 7, what a `datac` of several narrow fields leaves — are assembled
+/// byte by byte from the high byte down, which is six instructions on a path
+/// nothing hot reaches and the point is that it is exact. Every consumer
+/// treats a `One`-class aggregate as an opaque zero-extended eightbyte, so
+/// leaving the high bytes zero is the same value the old padded stack slot
+/// happened to supply.
+fn load_agg_bytes(out: &mut String, names: [&'static str; 4], base: &str, off: i32, size: i32) {
+    match size {
+        8 => {
+            let _ = writeln!(out, "    mov {}, QWORD PTR [{base}{}]", names[3], off_str(off));
+        }
+        4 => {
+            let _ = writeln!(out, "    mov {}, DWORD PTR [{base}{}]", names[2], off_str(off));
+        }
+        2 => {
+            let _ = writeln!(out, "    movzx {}, WORD PTR [{base}{}]", names[3], off_str(off));
+        }
+        1 => {
+            let _ = writeln!(out, "    movzx {}, BYTE PTR [{base}{}]", names[3], off_str(off));
+        }
+        _ => {
+            let _ = writeln!(out, "    xor {}, {}", names[2], names[2]);
+            for b in (0..size).rev() {
+                if b != size - 1 {
+                    let _ = writeln!(out, "    shl {}, 8", names[3]);
+                }
+                let _ = writeln!(
+                    out,
+                    "    mov {}, BYTE PTR [{base}{}]",
+                    names[0],
+                    off_str(off + b)
+                );
+            }
+        }
+    }
+}
+
 /// Copies exactly `size` bytes from `[src_reg+src_off]` to `[dst_reg+dst_off]`
 /// through `rax`, in falling chunk widths (8, then 4, then 2, then 1 — enough
 /// to cover any byte count with no alignment assumption on `size` itself,
@@ -3433,10 +3483,10 @@ impl Gen {
         let _ = writeln!(self.out, "{symbol}:");
         self.out.push_str("    push rbp\n    mov rbp, rsp\n");
         // Every pool register this function actually uses is saved here and
-        // restored in the epilogue, in exact reverse — see the epilogue's
-        // comment for why plain `add`/`pop`, rather than `mov rsp, rbp`, is
-        // what makes that pairing correct regardless of how many locals
-        // spilled.
+        // restored in the epilogue from the offset `push` wrote it at — see
+        // the epilogue's comment for why it rebuilds `rsp` from `rbp` rather
+        // than adding the frame size back, and why that makes the pairing
+        // correct however the return was reached.
         for &reg in &used_regs {
             let _ = writeln!(self.out, "    push {}", CALLEE_SAVED64[reg]);
         }
@@ -4523,12 +4573,21 @@ impl Gen {
                     let _ = writeln!(self.out, "    mov {}, {} [{addr}]", width.rax(), width.mem());
                     self.out.push_str(&width.extend(signed));
                 } else {
-                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [{addr}]");
+                    // An aggregate element at this class is `size` bytes wide
+                    // and the address is a heap element's own address, so the
+                    // load has to be exactly that wide — see
+                    // `load_agg_bytes`. A scalar element took the branch above.
+                    load_agg_bytes(&mut self.out, RAX, addr, 0, size);
                 }
             }
             AggClass::Two => {
+                // The first eightbyte is a full eight bytes (this class starts
+                // at nine), but the second is only `size - 8` wide, and reading
+                // eight there crosses a heap element narrower than sixteen
+                // bytes — the same defect as the `One` arm above, one eightbyte
+                // up.
                 let _ = writeln!(self.out, "    mov rax, QWORD PTR [{addr}]");
-                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [{addr}+8]");
+                load_agg_bytes(&mut self.out, RDX, addr, 8, size - 8);
             }
             AggClass::Mem => {
                 // The destination is the caller's slot, reached through the
@@ -7306,18 +7365,30 @@ impl Gen {
                 Ok(())
             }
             FieldEntry::Aggregate(_, offset, key, _) => {
+                let (size, one_class) = match self.layouts.get(key) {
+                    Some(l) => (l.size, l.class() == AggClass::One),
+                    None => return Err(unsupported("the type a payload of this enum holds")),
+                };
+                let src = src_slot + offset;
                 let Some(dest) = dest else {
+                    // A one-eightbyte payload *is* a value `rax` can hold, so
+                    // "wider than eight bytes" is the question, not the
+                    // field's kind: a `One`-class payload loads into `rax` at
+                    // its own width, the same opaque zero-extended eightbyte
+                    // `field_read` produces, and only an actually-wider payload
+                    // is refused for want of a destination. (The refusal used
+                    // to fire on the field kind alone and said "over eight
+                    // bytes" about a three-byte `datac`, which was both a
+                    // false statement and a real program refused.)
+                    if one_class {
+                        load_agg_bytes(&mut self.out, RAX, "rbp", src, size);
+                        return Ok(());
+                    }
                     return Err(unsupported(&format!(
-                        "the enum `{enum_name}` (a `?` whose success payload is over eight \
-                         bytes, in a position that can only hold one eightbyte)"
+                        "the enum `{enum_name}` (a `?` whose success payload is wider than \
+                         eight bytes, in a position that can only hold one eightbyte)"
                     )));
                 };
-                let size = self
-                    .layouts
-                    .get(key)
-                    .map(|l| l.size)
-                    .ok_or_else(|| unsupported("the type a payload of this enum holds"))?;
-                let src = src_slot + offset;
                 match dest {
                     Dest::Direct(off) => emit_copy(&mut self.out, "rbp", off, "rbp", src, size),
                     Dest::Indirect(slot) => {
@@ -7724,8 +7795,14 @@ impl Gen {
             // refusal, because a `Two`/`Mem`-class field cannot travel through
             // `rax`.
             if let Some((offset, key, _)) = layout.aggregate_field(field) {
-                if self.layouts.get(key).is_some_and(|l| l.class() == AggClass::One) {
-                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [r11+{offset}]");
+                // The field's own size, not eight bytes of it: `r11` may be a
+                // heap block sized to the enclosing value (`Box.of(Outer(..))`
+                // allocates `sizeof(Outer)`), so a plain `mov rax, QWORD PTR`
+                // of a three-byte field reads past the allocation — the
+                // defect `load_agg_bytes` exists to close.
+                let inner = self.layouts.get(key).filter(|l| l.class() == AggClass::One);
+                if let Some(size) = inner.map(|l| l.size) {
+                    load_agg_bytes(&mut self.out, RAX, "r11", offset, size);
                     return Ok(());
                 }
                 return Err(unsupported(&format!(

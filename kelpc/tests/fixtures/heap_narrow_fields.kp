@@ -1,0 +1,85 @@
+// The regression fixture for a wrong-width aggregate load (MK7 §5's enum
+// slice, fixed after): a one-eightbyte aggregate field read out of a base
+// that is a heap block *sized to the value*. `field_read`'s aggregate arm
+// loaded a whole `QWORD` whatever the field's own width was, which a padded
+// stack slot absorbs but a `Box.of(Outer(...))` block — `sizeof(Outer)`
+// bytes, no padding — does not: the read crossed the allocation, which is a
+// valgrind finding even though both backends printed the same number.
+//
+// Each size 1, 2, 3, 4, 5 and 7 gets an inner `datac` of exactly that width
+// and an outer one holding it, boxed, and the field is read both ways: whole
+// (through `field_read`, the load that was wrong) and byte by byte (through
+// `addr_of_struct`'s recursion and a scalar leaf, which was always
+// width-correct and is the control). `I8` is the width the single eight-byte
+// load is right for, and `Z3` puts the field at offset zero, the other offset
+// `field_read` computes.
+datac I1(val a: u8)
+datac I2(val a: u8, val b: u8)
+datac I3(val a: u8, val b: u8, val c: u8)
+datac I4(val a: u8, val b: u8, val c: u8, val d: u8)
+datac I5(val a: u8, val b: u8, val c: u8, val d: u8, val e: u8)
+datac I7(val a: u8, val b: u8, val c: u8, val d: u8, val e: u8, val f: u8, val g: u8)
+datac I8(val a: u64)
+
+datac O1(val pad: u8, val n: I1)
+datac O2(val pad: u8, val n: I2)
+datac O3(val pad: u8, val n: I3)
+datac O4(val pad: u8, val n: I4)
+datac O5(val pad: u8, val n: I5)
+datac O7(val pad: u8, val n: I7)
+datac O8(val pad: u8, val n: I8)
+datac Z3(val n: I3)
+
+fun whole1(v: move I1).R: i64 = v.a.to_i64()
+fun whole2(v: move I2).R: i64 = v.a.to_i64() + v.b.to_i64() * 100
+fun whole3(v: move I3).R: i64 = v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000
+fun whole4(v: move I4).R: i64 {
+    return v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000 + v.d.to_i64() * 1000000
+}
+fun whole5(v: move I5).R: i64 {
+    return v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000 + v.d.to_i64() * 1000000 + v.e.to_i64() * 100000000
+}
+fun whole7(v: move I7).R: i64 {
+    return v.a.to_i64() + v.b.to_i64() * 100 + v.c.to_i64() * 10000 + v.d.to_i64() * 1000000 + v.e.to_i64() * 100000000 + v.f.to_i64() * 10000000000 + v.g.to_i64() * 1000000000000
+}
+fun whole8(v: move I8).R: i64 = v.a.to_i64()
+
+fun main() {
+    // Offset 1, six sizes: the whole-value read is the defective load, and the
+    // per-byte read is the control that the address arithmetic still lands on
+    // the field.
+    val b1 = Box.of(O1(pad = 9, n = I1(a = 2)))
+    print(whole1(v = b1.get().n))
+    print(b1.get().n.a.to_i64())
+
+    val b2 = Box.of(O2(pad = 9, n = I2(a = 2, b = 3)))
+    print(whole2(v = b2.get().n))
+    print(b2.get().n.a.to_i64() * 10 + b2.get().n.b.to_i64())
+
+    val b3 = Box.of(O3(pad = 9, n = I3(a = 2, b = 3, c = 4)))
+    print(whole3(v = b3.get().n))
+    print(b3.get().n.a.to_i64() + b3.get().n.b.to_i64() * 10 + b3.get().n.c.to_i64() * 100)
+
+    val b4 = Box.of(O4(pad = 8, n = I4(a = 2, b = 3, c = 4, d = 5)))
+    print(whole4(v = b4.get().n))
+    print(b4.get().n.d.to_i64())
+
+    val b5 = Box.of(O5(pad = 7, n = I5(a = 2, b = 3, c = 4, d = 5, e = 6)))
+    print(whole5(v = b5.get().n))
+    print(b5.get().n.e.to_i64())
+
+    val b7 = Box.of(O7(pad = 6, n = I7(a = 2, b = 3, c = 4, d = 5, e = 6, f = 7, g = 8)))
+    print(whole7(v = b7.get().n))
+    print(b7.get().n.g.to_i64())
+
+    // Eight bytes: the single eight-byte load is exactly the field's own
+    // width, so this one must not change behaviour.
+    val b8 = Box.of(O8(pad = 5, n = I8(a = 42)))
+    print(whole8(v = b8.get().n))
+    print(b8.get().n.a.to_i64())
+
+    // Offset zero, three bytes.
+    val z3 = Box.of(Z3(n = I3(a = 6, b = 7, c = 8)))
+    print(whole3(v = z3.get().n))
+    print(z3.get().n.c.to_i64())
+}

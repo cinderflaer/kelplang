@@ -13,8 +13,19 @@
 //                  read out of the union.
 //   * `propagated` — `Try`: the `?` sits inside a binary operator, so `a` and
 //                  `b` are live across the early return's own branch.
+//   * `if_let`   — MK5-S6-M1's `if let`, which desugars to a `when` inside an
+//                  `if`: the condition is evaluated with `a` and `b` live and
+//                  the binding is read inside the arm.
+//   * `held`     — an enum-typed *local* live across a call: `hold` is built
+//                  before `tagged` is called and read after it returns, so an
+//                  enum local the call's own walk left out of the liveness
+//                  pass would be handed to the next scalar.
 //
-// A register collision shows up as one of the sums being wrong, and the four
+// `if let` and an enum local live across a call were the two shapes this
+// fixture did not reach, so both are here now: the pass is exercised on them,
+// not only argued about.
+//
+// A register collision shows up as one of the sums being wrong, and the six
 // functions between them cover the arithmetic both ways round so a swapped pair
 // cannot cancel out.
 enum Slot {
@@ -60,6 +71,24 @@ fun nested(a: i64, b: i64, s: &Slot).R: i64 {
     return tagged(a = a, b = b, s = outer)
 }
 
+fun if_let(a: i64, b: i64, s: &Slot).R: i64 {
+    var acc = a * 2 + b
+    if let Full(v) = s {
+        acc = acc + v * 3
+    }
+    return acc + a * 5 - b * 7
+}
+
+fun held(a: i64, b: i64, s: &Slot).R: i64 {
+    val hold = Slot.Full(n = b)
+    val extra = tagged(a = a, b = b, s = s)
+    val back = when hold {
+        Full(v) -> v * 11
+        Empty -> 0
+    }
+    return extra + back + a * 13
+}
+
 fun main() {
     val full = Slot.Full(n = 100)
     val empty = Slot.Empty
@@ -73,4 +102,10 @@ fun main() {
 
     print(nested(a = 6, b = 7, s = full))
     print(nested(a = 6, b = 7, s = empty))
+
+    print(if_let(a = 3, b = 4, s = full))
+    print(if_let(a = 3, b = 4, s = empty))
+
+    print(held(a = 3, b = 4, s = full))
+    print(held(a = 6, b = 7, s = empty))
 }

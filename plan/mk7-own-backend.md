@@ -26,15 +26,15 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **223 of 280** integration tests pass under `--backend=asm`; all 129 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 160 C and 129 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **226 of 283** integration tests pass under `--backend=asm`; all 132 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 163 C and 132 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
 The one number that matters most, and corrected here because this sentence had gone stale at 195/272 while the
-ratchet beside it moved: **223 of 280 tests pass on the asm backend, and the C backend passes all
-280.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+ratchet beside it moved: **226 of 283 tests pass on the asm backend, and the C backend passes all
+283.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -126,9 +126,13 @@ offsets — which is the fifth time a heap type has slotted into the aggregate w
 
 The enum slice (below) then moved it by nineteen at the test level and nineteen at the fixture level: the asm
 suite went 200 of 273 → 219 of 278 and the ratchet 106 built of 153 → 125 of 158, with 33 refused. The
-scalar-borrow slice (also below) has now moved it by four more — the asm suite is **223 of 280**, the fixture
-ratchet is **129 built of 160, 31 refused**, and valgrind is clean over all 160 C-backend and 129 asm-backend
-binaries. Two of those four are fixtures the plan had credited *this* slice with and it can finally reach
+scalar-borrow slice (also below) then moved it by four more — the asm suite 223 of 280, the fixture
+ratchet 129 built of 160, 31 refused — and the enum slice's own defect fix (also below) has now moved the
+denominators by three more without unblocking a refusal: the asm suite is **226 of 283**, the fixture
+ratchet is **132 built of 163, 31 refused**, and valgrind is clean over all 163 C-backend and 132 asm-backend
+binaries. The fix's three fixtures are new (`heap_narrow_fields`, `list_narrow_element_pop`,
+`try_narrow_payload`), so they move the denominator rather than the ratio, and two of the scalar-borrow
+slice's four are fixtures the plan had credited *that* slice with and it could finally reach
 (`stdlib_build`, `borrow_provenance_and_arms`, both refused first on `std.str.parse_i64_raw` and both reachable
 only because the enum slice had already landed behind it), and two are the fixtures the slice wrote
 (`scalar_borrow`, `scalar_borrow_f64`). `stdlib_parse`, the third fixture the plan credited it with, is
@@ -369,14 +373,14 @@ with the backend as the only variable.
 > then a scalar borrow with the read and store through it, and the three `str`
 > parsers it was the last prerequisite for.**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **223 of 280 end-to-end
-> tests pass**, and the C backend passes all 280 — so the differential gate is
+> and `ld`, with no C compiler in the chain. Measured: **226 of 283 end-to-end
+> tests pass**, and the C backend passes all 283 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
 > can only rise from here. Every fixture the asm backend builds is compared
 > against the C backend's own binary — by the differential sweep in
 > `kelpc/tests/backend_coverage.rs` since §1.1's sweep landed, and by hand for the
 > first slice that had any fixture to compare — which is the check the fixture
-> literals cannot make: 129 fixtures, 129 identical stdout at this measurement.
+> literals cannot make: 132 fixtures, 132 identical stdout at this measurement.
 >
 > Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 > comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
@@ -1510,8 +1514,10 @@ with the backend as the only variable.
 > every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
 > a ratchet on the set the asm backend builds, and prints this exact table under
 > `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
-> count is 31 of the 160 fixtures the C backend builds (129 built, all agreeing
-> byte for byte). The categories are the *feature* in the way, read off each
+> count is 31 of the 163 fixtures the C backend builds (132 built, all agreeing
+> byte for byte; the three fixtures the enum slice's defect fix added are all
+> built, so they moved the denominator and left the refusal count alone). The
+> categories are the *feature* in the way, read off each
 > fixture's first refusal message:
 >
 > | blocker (the backend's first refusal) | fixture files |
@@ -1724,6 +1730,87 @@ with the backend as the only variable.
 > suite caught as a segfault: the call-site stack save used `r11`, which is
 > caller-saved, so `printf` clobbered it — invisible in a function that printed
 > once, because the epilogue reloads `rsp` from `rbp`.
+>
+> **The enum slice's third defect — a wrong-width aggregate load — is fixed, and
+> it is a defect fix *in* that slice rather than a new one (2026-09-19).**
+> `field_read`'s `AggClass::One` arm — the one the slice added so an `enum` at
+> that class could be read out of a `datac` field by value — loaded a whole
+> eightbyte (`mov rax, QWORD PTR [base+offset]`) whatever the field's own width
+> was. The trigger is a `One`-class aggregate **field** whose width is not 8,
+> read out of a base that may be a heap block sized to the enclosing value:
+> `Box.of(Outer(...))` allocates `sizeof(Outer)` bytes, `Box#get` returns a
+> borrow, and `b.get().field` reaches `field_read` — so two bytes of `Inner`
+> behind a three-byte `Outer` read eight bytes starting one byte into a
+> three-byte block.
+>
+> **The differential sweep could not see it; the valgrind gate now can.** Both
+> backends printed the same number, because the load's extra bytes lie past the
+> field and no consumer reads past the field's own width — a wrong result needs
+> a wrong byte *inside* the value, which this defect never produces, so a
+> C-vs-asm stdout comparison is blind to it by construction. `valgrind` on the
+> asm binary reports `Invalid read of size 8 … 1 bytes inside a block of
+> size 3`, and `kelpc/tests/memory_gate.rs` sweeps both backends, so this defect
+> is a failing test rather than a hand-read log. The fix is `load_agg_bytes` in
+> `codegen_asm.rs`: exactly the field's own width, one `movzx`/`mov` for 1/2/4/8
+> and a byte-wise assembly for 3/5/6/7 — the widths no single instruction moves,
+> on a path nothing hot reaches, because correctness beats speed here. Every
+> consumer treats a `One`-class aggregate as an opaque zero-extended eightbyte,
+> so zeroing the high bytes reproduces what the padded slot supplied for free,
+> and no construction or transport code changed.
+>
+> **The same load in three sibling sites, and one that was already right.**
+> `emit_elem_return`'s `One` arm — what `List#pop`/`List#remove` hand a by-value
+> element — had the identical eight-byte load, and its `Two` arm loaded a full
+> second eightbyte out of a nine-to-fifteen-byte element; four pushes to fill a
+> list's initial capacity put both pops at the buffer's end, the sharpest shape
+> (the probe measured invalid reads for element sizes 1, 2, 4, 5 and 6 — 7 and 8
+> round up and are clean — and for a 12-byte `Two`-class element).
+> `payload_out`'s `FieldEntry::Aggregate` arm refused *every* aggregate payload
+> of a `?` with no destination and called a three-byte `datac` "over eight
+> bytes"; the class is the question, so a `One`-class payload now loads into
+> `rax` at its own width and only an actually-wider one keeps the refusal, whose
+> message now says "wider than eight bytes". Audited and **cleared**:
+> `eval_struct_into`'s `FieldAccess` arm and `emit_copy` itself copy an exact
+> byte count taken from the layout, so a three-byte field reads three bytes;
+> `marshal_elem`'s deliberately wide stores land in a frame buffer `size + 16`
+> bytes wide, and `BoxFn::Take` reloads from the same buffer; `emit_map_value_out`'s
+> `One` arm already staged the value in a frame slot for exactly this reason,
+> and its `Two` arm (and `MapFn::Remove`'s) reads its second eightbyte out of a
+> `malloc(sizeof(V))` block, whose usable size is at least sixteen for every
+> nine-to-sixteen-byte value — valgrind-clean and left unchanged;
+> `List#insert`/`remove` shift through `emit_copy`; and the `List`/`Map` buffers
+> are `cap * size` and `malloc(size)`, so no other load is wider than its own
+> storage.
+>
+> **Fixtures, three, none covered by an existing one.** `heap_narrow_fields`
+> (field widths 1, 2, 3, 4, 5, 7 and 8, each read whole through `field_read` and
+> byte by byte through the recursion that was always correct, plus the
+> offset-zero field), `list_narrow_element_pop` (`List<A3>` and `List<S12>`
+> popped and removed off the buffer's end), and `try_narrow_payload` (`?` on a
+> `Result<D3, u8>` in a `let`, on both paths). All three agree with the C
+> backend byte for byte, are `valgrind`-clean, and are in the AddressSanitizer
+> list. The A/B: the pre-fix compiler builds all three with the same stdout, and
+> only valgrind separates it — six invalid reads for `heap_narrow_fields` and
+> five for `list_narrow_element_pop`, against zero each after — while
+> `try_narrow_payload` was refused outright with the false message. Measured:
+> the asm suite is **226 of 283** (was 223 of 280), the fixture ratchet **132
+> built of 163, 31 refused** (was 129/160/31), and valgrind is clean over all 163
+> C-backend and 132 asm-backend binaries — zero findings, zero leak bytes.
+>
+> Three smaller corrections landed with it, all review findings rather than new
+> work. The register-save comment in the prologue still argued for `add`/`pop`
+> after the epilogue had become `mov rsp, rbp`, and now points at the epilogue's
+> own reason. `kelpc/tests/backend_coverage.rs`'s recorded counts said 153/106/47
+> beside a 129-entry list; they now say what the sweep prints (163/132/31), and
+> the three new fixtures are recorded in `ASM_BUILT_BASELINE`. And
+> `enum_liveness` did not reach `if let` or an enum-typed local live across a
+> call, though the enum slice's coverage note named both shapes; the fixture now
+> holds them (`if_let`, `held`) with the expected stdout extended, so the
+> liveness pass is exercised on them rather than argued about. One behaviour recorded
+> while measuring, so that no fixture claims the opposite later: an owning `enum`
+> is not dropped when a panic unwinds — `kelp_panic` prints and calls `exit(1)`
+> in both backends, so no local drop runs and the process exit reclaims the
+> memory (valgrind counts it as still-reachable glibc memory, not a finding).
 
 The first working own backend. Emits **x86-64 assembly text** and shells out to `as` and `ld` instead of `cc`.
 This drops the C compiler from the dependency chain while keeping libc, and it is deliberately the tier with
@@ -1873,7 +1960,7 @@ Definition of done: all 280 integration tests pass under `--backend=asm` with by
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
 memory gate this list has always asked for is `cargo test --test memory_gate -- --ignored`
 (`kelpc/tests/memory_gate.rs`, `0747195`): a `valgrind --leak-check=full` sweep over every fixture the C backend
-builds and every one the asm backend accepts — 160 and 129 today, zero findings — run when the heap or drop
+builds and every one the asm backend accepts — 163 and 132 today, zero findings — run when the heap or drop
 machinery changes. ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker
