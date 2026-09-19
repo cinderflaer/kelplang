@@ -460,6 +460,7 @@ fn bytes_layout() -> StructLayout {
         ],
         size: 24,
         align: 8,
+        variants: None,
     }
 }
 
@@ -490,6 +491,7 @@ fn box_layout() -> StructLayout {
         entries: vec![FieldEntry::Scalar("value".to_string(), 0, Width::W8, false)],
         size: 8,
         align: 8,
+        variants: None,
     }
 }
 
@@ -522,6 +524,7 @@ fn list_layout() -> StructLayout {
         ],
         size: 24,
         align: 8,
+        variants: None,
     }
 }
 
@@ -557,6 +560,7 @@ fn map_layout() -> StructLayout {
         ],
         size: 56,
         align: 8,
+        variants: None,
     }
 }
 
@@ -597,6 +601,7 @@ fn string_layout() -> StructLayout {
         ],
         size: 24,
         align: 8,
+        variants: None,
     }
 }
 
@@ -613,6 +618,7 @@ fn view_layout() -> StructLayout {
         ],
         size: 16,
         align: 8,
+        variants: None,
     }
 }
 
@@ -1124,13 +1130,39 @@ struct StructLayout {
     /// One entry per field, in declaration order, preserved because
     /// `struct_lit` must evaluate field-initializer expressions in the order
     /// they were written for side-effect correctness even though scalar and
-    /// aggregate fields are looked up through different lists below.
+    /// aggregate fields are looked up through different lists below. Empty for
+    /// an `enum` (see `variants`): a tagged union has no flat field list, and
+    /// every site that reads a field of one goes through `variants`.
     entries: Vec<FieldEntry>,
     /// This struct's own size and alignment, in bytes — needed when this
     /// struct is itself nested inside another one, to place it and to know
     /// how many bytes to copy out of it.
     size: i32,
     align: i32,
+    /// `Some` for an `enum` (MK7 §5's enum slice), one entry per variant in
+    /// declaration order; `None` for a `datac` and for the synthesized heap
+    /// layouts. `size`/`align` above describe the *enum* — tag at offset 0,
+    /// union at `payload_offset`, total size `codegen_c.rs::write_enum`'s
+    /// `typedef` gets from clang — so every ABI and frame site that already
+    /// asked `struct_layout` for a class or a size answers for an `enum`
+    /// unchanged. What is enum-specific is only ever a *field*: which
+    /// variant's payload is live, and where inside it a payload field sits.
+    variants: Option<Vec<EnumVariantLayout>>,
+}
+
+/// One variant's payload inside an `enum`'s union (MK7 §5's enum slice).
+///
+/// `entries` is one entry per payload field, in declaration order — the order
+/// `ExprKind::EnumField`'s `field` index numbers them — and each entry's byte
+/// offset is **from the enum's own base**, with the union's own offset already
+/// folded in. That is deliberate: every reader of a payload field already
+/// holds the enum value's address in `r11` (`addr_of_struct`), so a payload
+/// field is reached by exactly the arithmetic a `datac` field is, and the one
+/// extra number the union costs is added once, here, rather than at every
+/// read.
+#[derive(Clone)]
+struct EnumVariantLayout {
+    entries: Vec<FieldEntry>,
 }
 
 #[derive(Clone)]
@@ -1152,6 +1184,13 @@ enum FieldEntry {
 }
 
 impl StructLayout {
+    /// `Some` for an `enum` — which is also the test every enum-specific path
+    /// uses to tell an `enum` from a `datac`, since both are keyed here by
+    /// name and both are `Ty::Struct`.
+    fn variant_layout(&self, variant: usize) -> Option<&EnumVariantLayout> {
+        self.variants.as_ref()?.get(variant)
+    }
+
     fn scalar_field(&self, name: &str) -> Option<(i32, Width, bool)> {
         self.entries.iter().find_map(|e| match e {
             FieldEntry::Scalar(n, o, w, s) if n == name => Some((*o, *w, *s)),
@@ -1504,14 +1543,34 @@ fn datac_owns_in(
     let Some(layout) = layouts.get(name) else {
         return false;
     };
-    layout.entries.iter().any(|e| match e {
-        FieldEntry::Aggregate(_, _, _, ty) => match ty {
-            Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) | Ty::Map(..) => true,
-            Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
-            _ => false,
-        },
+    // MK7 §5's enum slice: an `enum` owns memory when *any* variant does,
+    // which is the predicate `types.rs::owned_types` uses ("`Shape` is owned
+    // if any variant owns"). `Ty::Struct` recursion below covers an enum
+    // payload for free, because both kinds are keyed by name in one map —
+    // which is also what `drop_site_for` relies on to tell the two apart only
+    // once, where the drop *body* is chosen.
+    let mut owns = |ty: &Ty| match ty {
+        Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) | Ty::Map(..) => true,
+        Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
+        _ => false,
+    };
+    if layout.entries.iter().any(|e| match e {
+        FieldEntry::Aggregate(_, _, _, ty) => owns(ty),
         FieldEntry::Scalar(..) => false,
-    })
+    }) {
+        return true;
+    }
+    layout
+        .variants
+        .as_ref()
+        .is_some_and(|variants| {
+            variants.iter().any(|v| {
+                v.entries.iter().any(|e| match e {
+                    FieldEntry::Aggregate(_, _, _, ty) => owns(ty),
+                    FieldEntry::Scalar(..) => false,
+                })
+            })
+        })
 }
 
 /// MK7 §5 item 4, third slice: a top-level `datac`'s own SysV eightbyte class,
@@ -1645,18 +1704,116 @@ fn try_build_layout(
     // gets a layout, and `AggClass` (derived from `size` wherever a value is
     // actually moved) is what decides whether it needs eightbyte-pair or
     // hidden-pointer handling. Only a *nested* field (above) is still capped.
-    Some(StructLayout { entries, size, align: max_align })
+    Some(StructLayout { entries, size, align: max_align, variants: None })
 }
 
-/// Computes `StructLayout` for every `datac` that qualifies (see
+/// The width of an `enum`'s tag, which is also the width of the variant index
+/// written into it: `codegen_c.rs::write_enum` emits `int32_t kelp_tag;` at
+/// offset 0 of every tagged union, and the tag's *value* is the variant's index
+/// in the declaration — the same number `ExprKind::EnumTag` compares against and
+/// `ExprKind::EnumLit` stores, everywhere, with no separate encoding.
+const ENUM_TAG_WIDTH: Width = Width::W4;
+
+/// One `enum`'s layout (MK7 §5's enum slice), mirroring
+/// `codegen_c.rs::write_enum`'s emitted `typedef` field for field: an
+/// `int32_t` tag at offset 0, then a union of one payload struct per variant,
+/// sized to the largest of them. `None` for an enum this backend cannot lower
+/// — the same answer `try_build_layout` gives a `datac`, and for the same
+/// reason: a payload field of a type with no layout (a float above all) makes
+/// the whole declaration unusable, and `struct_layout` then refuses by name
+/// wherever a value of it is moved rather than misplacing a field.
+///
+/// The three numbers clang derives and this has to reproduce:
+///
+/// - **The union's alignment** is the largest alignment among its members, and
+///   it is *not* necessarily the payload's own offset — the union is laid out
+///   after a four-byte tag, so its offset is `align_up(4, union_align)`. That
+///   is **eight**, not four, for every enum whose widest payload holds an
+///   eight-byte scalar, which is most of them. `tests/fixtures/enum_layout.kp`
+///   pins the resulting sizes and offsets against `offsetof` on the C typedefs
+///   this mirrors.
+/// - **The union's size** is the largest member's own size rounded up to the
+///   union's alignment; a member's size is its own field run rounded up to
+///   *its* own alignment, exactly what `try_build_layout` computes for a
+///   `datac`. A payload-less variant is one `char` in C (an empty struct is not
+///   valid), so it contributes size 1.
+/// - **The enum's size** is the union's offset plus the union's size, rounded
+///   up to the enum's own alignment — the tag's four bytes and the union's
+///   alignment, whichever is larger.
+fn try_build_enum_layout(
+    e: &crate::types::EnumDef,
+    out: &std::collections::HashMap<String, StructLayout>,
+) -> Option<StructLayout> {
+    let mut variants = Vec::with_capacity(e.variants.len());
+    let mut union_align: i32 = 1;
+    let mut union_size: i32 = 0;
+    for v in &e.variants {
+        let mut cursor: i32 = 0;
+        let mut max_align: i32 = 1;
+        let mut entries = Vec::with_capacity(v.fields.len());
+        // The same field rule `try_build_layout` applies to a `datac` — every
+        // accepted field is `int_ty`-representable or an aggregate whose own
+        // layout exists — and the same refusal when one is neither. A float
+        // payload lands here, which is exactly what keeps the four
+        // float-payload fixtures reading "this enum" rather than a wrong
+        // number.
+        for f in &v.fields {
+            if let Some((width, signed)) = int_ty(&f.ty) {
+                let align = width.bytes();
+                cursor = align_up(cursor, align);
+                entries.push(FieldEntry::Scalar(f.name.clone(), cursor, width, signed));
+                cursor += width.bytes();
+                max_align = max_align.max(align);
+            } else if let Some(inner) = struct_layout(&f.ty, out) {
+                let key = layout_key(&f.ty).expect("a field with a layout has a layout key");
+                let align = inner.align;
+                cursor = align_up(cursor, align);
+                entries.push(FieldEntry::Aggregate(f.name.clone(), cursor, key, f.ty.clone()));
+                cursor += inner.size;
+                max_align = max_align.max(align);
+            } else {
+                return None;
+            }
+        }
+        // This variant's own member struct, at its own alignment; at least one
+        // byte even when it carries nothing (C writes a `char kelp_none`).
+        let member_size = align_up(cursor, max_align).max(1);
+        union_align = union_align.max(max_align);
+        union_size = union_size.max(member_size);
+        variants.push(EnumVariantLayout { entries });
+    }
+    let union_size = align_up(union_size.max(1), union_align);
+    let payload_offset = align_up(4, union_align);
+    let align = union_align.max(4);
+    let size = align_up(payload_offset + union_size, align);
+    // Every payload entry's offset is rebased onto the enum's own base, so a
+    // reader that already has the enum's address in `r11` needs no second
+    // offset for the union.
+    for v in &mut variants {
+        for entry in &mut v.entries {
+            match entry {
+                FieldEntry::Scalar(_, offset, ..) | FieldEntry::Aggregate(_, offset, ..) => {
+                    *offset += payload_offset;
+                }
+            }
+        }
+    }
+    Some(StructLayout { entries: Vec::new(), size, align, variants: Some(variants) })
+}
+
+/// Computes `StructLayout` for every `datac` and `enum` that qualifies (see
 /// `StructLayout`'s doc), by simulating the same sequential, naturally-aligned
-/// layout a C compiler gives the equivalent typedef. A struct that does not
-/// qualify is simply absent from the returned map. Nested structs mean a
-/// struct's own qualification can depend on another one's, in either textual
-/// order, so this runs to a fixed point rather than in one pass — bounded by
-/// `structs.len()` passes, which is enough to resolve any nesting depth since
-/// a by-value `datac` cannot nest itself (rejected earlier, in `infer.rs`).
-fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashMap<String, StructLayout> {
+/// layout a C compiler gives the equivalent typedef. A declaration that does not
+/// qualify is simply absent from the returned map. Nesting means one
+/// declaration's own qualification can depend on another's, in either textual
+/// order, so this runs to a fixed point rather than in one pass — bounded by the
+/// number of declarations, which is enough to resolve any nesting depth since a
+/// by-value `datac` or enum payload cannot contain itself (rejected earlier, in
+/// `infer.rs`).
+fn build_layouts(
+    structs: &[crate::types::StructDef],
+    enums: &[crate::types::EnumDef],
+) -> std::collections::HashMap<String, StructLayout> {
     let mut out = std::collections::HashMap::new();
     // MK7 §5's heap slice: `Bytes` is not a `datac` the program declared, but
     // it *is* an aggregate on the ABI and in the frame, so it gets a layout
@@ -1676,7 +1833,7 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
     // MK7 §5's map slice: one entry covers every `Map<K, V>` (see
     // `MAP_LAYOUT_KEY`).
     out.insert(MAP_LAYOUT_KEY.to_string(), map_layout());
-    for _ in 0..=structs.len() {
+    for _ in 0..=(structs.len() + enums.len()) {
         let mut changed = false;
         for s in structs {
             if out.contains_key(&s.name) {
@@ -1684,6 +1841,18 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
             }
             if let Some(layout) = try_build_layout(s, &out) {
                 out.insert(s.name.clone(), layout);
+                changed = true;
+            }
+        }
+        // MK7 §5's enum slice: an `enum` is placed by the same fixed point, so
+        // a payload that is a `datac` (or another `enum`) declared either
+        // before or after it resolves the same way.
+        for e in enums {
+            if out.contains_key(&e.name) {
+                continue;
+            }
+            if let Some(layout) = try_build_enum_layout(e, &out) {
+                out.insert(e.name.clone(), layout);
                 changed = true;
             }
         }
@@ -1986,8 +2155,11 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // one `build_layouts` accepted (see `StructLayout`'s doc). A `datac` that
     // does not qualify is not rejected here either: it is rejected wherever a
     // program tries to move a value of that type, which names the offending
-    // type instead of the mere presence of an unrelated declaration.
-    g.layouts = build_layouts(&program.structs);
+    // type instead of the mere presence of an unrelated declaration. An
+    // `enum` is placed by the same pass (MK7 §5's enum slice) and refused by
+    // the same rule; `program.enums` is the table `tir.rs` carries so that a
+    // `Ty::Struct` can be told apart from a `datac`.
+    g.layouts = build_layouts(&program.structs, &program.enums);
     // MK7 §5: one file-scope storage location per passdown, in initialization
     // order, plus the type each one holds — see `PdGlobal`. Every passdown is
     // named by the same internal `pd#<qualified>` identifier its hidden
@@ -2031,7 +2203,7 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
             // A fixed routine (`Bytes`/`String`) is only *named* by
             // `drop_site_for` — a drop site registers it when the site is
             // emitted, which is too late here, so name it while the routine set
-            // is still open (`require_datac_drop`/`require_list_fn` already do
+            // is still open (`require_aggregate_drop`/`require_list_fn` already do
             // this for their own dependencies).
             if let DropSite::Routine(r) = &site {
                 g.require_routine(*r);
@@ -2091,13 +2263,21 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     }
     // MK7 §5's heap-field slice: one drop function per `datac` that owns
     // memory, for the ones this program actually drops. Emitted after the
-    // fixed routines (`require_datac_drop` recorded every `Bytes`/`String`
+    // fixed routines (`require_aggregate_drop` recorded every `Bytes`/`String`
     // routine a body calls into that set) and before the panic routine, so no
     // function body is ever written in the middle of another. The loop re-reads
     // the set each time rather than iterating a snapshot, so a drop function
     // that turns out to need another one (a `datac` held by value in a `datac`
     // dropped later in the program) is emitted too instead of linking against
     // a symbol nothing wrote.
+    //
+    // MK7 §5's enum slice: one generated drop per `enum` that owns memory too,
+    // in the *same* loop — the two kinds call each other (a `datac` field that
+    // is an `enum`, an `enum` payload that is a `datac`), and a `datac` drop
+    // emitted after the enum loop had stopped would leave the enum's body
+    // unwritten. One `emitted` list and two sets is what makes that a fixpoint
+    // rather than an ordering assumption; `emit_*` is what re-reads the sets,
+    // since writing one body can register the next one.
     let mut emitted: Vec<String> = Vec::new();
     loop {
         let next = g
@@ -2105,8 +2285,18 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
             .iter()
             .find(|n| !emitted.contains(n))
             .cloned();
+        if let Some(name) = next {
+            g.emit_datac_drop(&name)?;
+            emitted.push(name);
+            continue;
+        }
+        let next = g
+            .drop_enums
+            .iter()
+            .find(|n| !emitted.contains(n))
+            .cloned();
         let Some(name) = next else { break };
-        g.emit_datac_drop(&name)?;
+        g.emit_enum_drop(&name)?;
         emitted.push(name);
     }
     // MK7 §5's box slice: one routine set per `Box<T>` instantiation this
@@ -2490,6 +2680,27 @@ impl LiveAnalysis {
             // `tests/fixtures/borrow_temp_slots.kp`'s two-reference
             // `pair_sum`, whose two parameters both landed in `r15`.
             ExprKind::FieldAccess { base, .. } => self.expr(base),
+            // MK7 §5's enum slice: the four node kinds a tagged union adds, and
+            // every one of them has to be walked here for the same reason the
+            // `StructLit`/`FieldAccess` arms above exist — a kind left to the
+            // catch-all ticks a position and touches nothing, so a live local
+            // named inside it looks dead on declaration and the linear scan
+            // hands its register to somebody else. That is exactly how
+            // `StructLit` and then `FieldAccess`/`Ref`/`Deref` were each caught
+            // (by a fixture, as wrong output rather than as a refusal), so the
+            // four arms below are written before that can happen a third time,
+            // and `tests/fixtures/enum_liveness.kp` is the two-live-locals
+            // regression test for them.
+            ExprKind::EnumLit { fields, .. } => {
+                for v in fields {
+                    self.expr(v);
+                }
+            }
+            ExprKind::EnumTag { expr, .. } => self.expr(expr),
+            ExprKind::EnumField { base, .. } => self.expr(base),
+            // `?` evaluates its operand (which is the only expression the node
+            // holds — the rebuilt failure is codegen's own construction).
+            ExprKind::Try { expr, .. } => self.expr(expr),
             ExprKind::Ref { expr, .. } => self.expr(expr),
             ExprKind::Deref { expr } => self.expr(expr),
             _ => {
@@ -2840,8 +3051,16 @@ struct Gen {
     /// this program calls, transitively. A `datac` that owns a `String` field
     /// needs one; so does a `datac` holding *that* `datac` by value, which is
     /// why this is closed over nested fields at the point a drop is first
-    /// needed (`require_datac_drop`) rather than being a single name.
+    /// needed (`require_aggregate_drop`) rather than being a single name.
     drop_datacs: std::collections::BTreeSet<String>,
+    /// MK7 §5's enum slice: the `enum`s whose generated drop function this
+    /// program calls, transitively, under the same rule `drop_datacs` follows.
+    /// A separate set rather than one more name in that one because the two
+    /// emit *different bodies* from the same layout (`emit_datac_drop` walks
+    /// `entries`, `emit_enum_drop` switches on the tag and walks one variant),
+    /// and a name is only ever in one of them: a layout has `variants` or it
+    /// does not.
+    drop_enums: std::collections::BTreeSet<String>,
     /// MK7 §5's box slice: the `Box<T>` routines this program needs, labelled
     /// by `BoxFn::label` and emitted after the fixed routines are. A `Vec`
     /// rather than a set because `BoxFn` holds a `Ty` and the label is what
@@ -2871,6 +3090,13 @@ enum DropSite {
     /// gives the C backend (`kelp_drop_<c_ident>`), so a stack trace and a
     /// differential test name the same thing.
     Datac(String),
+    /// A per-`enum` drop function (MK7 §5's enum slice), generated by
+    /// `Gen::emit_enum_drop` under the same symbol `types::drop_fn_name` gives
+    /// the C backend — `kelp_drop_<c_ident>`, exactly as for a `datac`, which
+    /// is why the two are distinguished here by *which* generator runs and not
+    /// by a different name. The body is the one thing the two share nothing
+    /// of: an `enum`'s has to switch on the runtime tag.
+    Enum(String),
     /// A per-instantiation `Box<T>` drop, `kelp_box_drop__<mangle>` —
     /// `types::drop_fn_name`'s spelling for `Ty::Box`, emitted by
     /// `Gen::emit_box_routine` like the rest of the box set. Carries the
@@ -2893,7 +3119,9 @@ impl DropSite {
     fn label(&self) -> String {
         match self {
             DropSite::Routine(r) => r.label().to_string(),
-            DropSite::Datac(name) => format!("kelp_drop_{}", crate::types::c_ident(name)),
+            DropSite::Datac(name) | DropSite::Enum(name) => {
+                format!("kelp_drop_{}", crate::types::c_ident(name))
+            }
             DropSite::Box(elem) => BoxFn::Drop(elem.clone()).label(),
             DropSite::List(elem) => ListFn::Drop(elem.clone()).label(),
             DropSite::Map(key, value) => MapFn::Drop(key.clone(), value.clone()).label(),
@@ -3209,20 +3437,31 @@ impl Gen {
                 }
             }
         }
-        // The inverse of the prologue, in exact reverse order: `add rsp` puts
-        // `rsp` back where it sat right after the pushes below (this is
-        // correct regardless of alignment or spill count, because it is the
-        // exact arithmetic inverse of the `sub` above — nothing between here
-        // and there can have left `rsp` anywhere else, since every
-        // stack-machine push within the body is popped before the statement
-        // it belongs to ends, and `call_align_begin`/`call_align_end` restore
-        // `rsp` from a memory slot rather than leaving it moved), then each
-        // saved register is popped back into place before `rbp`/`ret`. A
-        // `mov rsp, rbp` here, as before this item, would skip straight past
-        // the pushed registers and never restore them.
-        let _ = writeln!(self.out, "    add rsp, {frame_size}");
-        for &reg in used_regs.iter().rev() {
-            let _ = writeln!(self.out, "    pop {}", CALLEE_SAVED64[reg]);
+        // The inverse of the prologue: each saved register is loaded back
+        // from where `push` put it — `[rbp-8]` for the first, `[rbp-16]` for
+        // the next, and so on — and then `rsp` is rebuilt from `rbp` itself.
+        //
+        // The obvious form is `add rsp, frame_size` followed by the pops, and
+        // that is what this was until MK7 §5's enum slice. It is a *return
+        // instruction* of a stack machine, so it only works if `rsp` is
+        // exactly at the frame's bottom when the jump to `return_label`
+        // happens — true for a `return` statement, because a statement is
+        // never in the middle of evaluating an expression, and false for the
+        // first mid-expression early return this backend has: `?`'s failure
+        // arm, which runs while the left operand of a binary operator is
+        // still pushed (`1 + half(n)?`) and turned `ret` into a jump to a
+        // stack address. Rebuilding `rsp` from `rbp` makes the epilogue
+        // independent of how the return was reached, which is what any later
+        // mid-expression exit will also need. The offsets are the same ones
+        // `push` wrote, so the values restored are identical either way.
+        self.out.push_str("    mov rsp, rbp\n");
+        for (i, &reg) in used_regs.iter().enumerate() {
+            let offset = -8 * (i as i32 + 1);
+            let _ = writeln!(
+                self.out,
+                "    mov {}, QWORD PTR [rbp{offset}]",
+                CALLEE_SAVED64[reg]
+            );
         }
         self.out.push_str("    pop rbp\n    ret\n");
         let _ = writeln!(self.out, "    .size {symbol}, .-{symbol}");
@@ -3405,8 +3644,19 @@ impl Gen {
                 if !self.datac_owns(name) {
                     return None;
                 }
-                self.require_datac_drop(name);
-                Some(DropSite::Datac(name.clone()))
+                // MK7 §5's enum slice: both kinds are `Ty::Struct` and both are
+                // keyed in `layouts` by name, so the layout is what tells them
+                // apart — and the two need different *bodies* from the same
+                // symbol, a flat field walk versus a switch on the tag. The
+                // dependency walk is the same for either, which is why one
+                // `require_aggregate_drop` registers the closure and only the
+                // site it returns differs.
+                self.require_aggregate_drop(name);
+                if self.layouts.get(name).is_some_and(|l| l.variants.is_some()) {
+                    Some(DropSite::Enum(name.clone()))
+                } else {
+                    Some(DropSite::Datac(name.clone()))
+                }
             }
             // A `List<T>` owns its buffer unconditionally, so this arm is
             // reached for every list a program drops. The element's own size
@@ -3457,7 +3707,7 @@ impl Gen {
                 // another box's) before the routine snapshot is taken — and
                 // for the two fixed routines it only *names* the site, so
                 // naming it here is what puts it in the snapshot, exactly as
-                // `require_datac_drop` does.
+                // `require_aggregate_drop` does.
                 if let Some(site) = self.drop_site_for(&elem) {
                     if let DropSite::Routine(r) = site {
                         self.require_routine(r);
@@ -3506,7 +3756,7 @@ impl Gen {
             // answers with one of the fixed `Bytes`/`String` routines, this is
             // also what puts that routine in the snapshot (`drop_site_for`
             // itself only names it; registering it is the caller's job, exactly
-            // as `require_datac_drop` does for the same two routines).
+            // as `require_aggregate_drop` does for the same two routines).
             if let Some(site) = self.drop_site_for(f.elem()) {
                 if let DropSite::Routine(r) = site {
                     self.require_routine(r);
@@ -3597,7 +3847,7 @@ impl Gen {
         // `datac`), which is exactly `needs_drop`'s answer in the C backend. Its
         // one fixed-routine answer still has to be *registered* here, because
         // `drop_site_for` only names a `Bytes`/`String` routine — registering it
-        // is the caller's job, exactly as `require_datac_drop`'s callers do.
+        // is the caller's job, exactly as `require_aggregate_drop`'s callers do.
         if matches!(f, MapFn::Insert(..) | MapFn::Clear(..) | MapFn::Drop(..)) {
             if let Some(site) = self.drop_site_for(&value) {
                 if let DropSite::Routine(r) = site {
@@ -3638,25 +3888,49 @@ impl Gen {
     }
 
     /// Records that `name`'s generated drop function is needed, and every
-    /// `datac` drop it calls — so `generate` can emit the whole closure after
+    /// generated drop it calls — so `generate` can emit the whole closure after
     /// the routine set has been snapshotted. The fixed `Bytes`/`String`
-    /// routines a datac's drop calls are registered here too, for the same
-    /// reason: `require_routine` is what puts a routine in that snapshot, and
-    /// a call registered after the snapshot links against a symbol nothing
-    /// emitted.
-    fn require_datac_drop(&mut self, name: &str) {
+    /// routines a drop body calls are registered here too, for the same reason:
+    /// `require_routine` is what puts a routine in that snapshot, and a call
+    /// registered after the snapshot links against a symbol nothing emitted.
+    ///
+    /// MK7 §5's enum slice: one walk serves a `datac` and an `enum`, because
+    /// the dependencies are the same in both directions — a `datac` holding an
+    /// `enum` calls the enum's generated drop, an `enum` variant holding a
+    /// `datac` calls the datac's, and either can hold the other's kind. Which
+    /// *set* a name lands in (`drop_datacs` or `drop_enums`) is what decides
+    /// which generator writes its body; the fields it depends on are the same
+    /// question either way, so they are flattened out of whichever shape the
+    /// layout has.
+    fn require_aggregate_drop(&mut self, name: &str) {
         let mut stack = vec![name.to_string()];
         while let Some(n) = stack.pop() {
-            if !self.drop_datacs.insert(n.clone()) {
-                continue;
-            }
             let Some(layout) = self.layouts.get(&n).cloned() else {
                 continue;
             };
+            let is_enum = layout.variants.is_some();
+            let fresh = if is_enum {
+                self.drop_enums.insert(n.clone())
+            } else {
+                self.drop_datacs.insert(n.clone())
+            };
+            if !fresh {
+                continue;
+            }
+            let mut fields: Vec<Ty> = Vec::new();
             for entry in &layout.entries {
-                let FieldEntry::Aggregate(_, _, _, ty) = entry else {
-                    continue;
-                };
+                if let FieldEntry::Aggregate(_, _, _, ty) = entry {
+                    fields.push(ty.clone());
+                }
+            }
+            for variant in layout.variants.iter().flatten() {
+                for entry in &variant.entries {
+                    if let FieldEntry::Aggregate(_, _, _, ty) = entry {
+                        fields.push(ty.clone());
+                    }
+                }
+            }
+            for ty in &fields {
                 match ty {
                     Ty::Bytes => {
                         self.require_routine(Routine::BytesDrop);
@@ -3787,35 +4061,11 @@ impl Gen {
             };
             // `drop_site_for` returning `None` means "this field owns
             // nothing" — a scalar, a `View`, a `datac` of scalars — *except*
-            // for a `Box` whose element this backend cannot size, and that one
-            // is a refusal: skipping it would be the silently-leaked free this
-            // module's refusals exist to prevent.
-            if let Ty::Box(elem) = ty {
-                if elem_size(elem, &self.layouts).is_none() {
-                    return Err(unsupported(&format!(
-                        "the `Box<{}>` field of `{name}`",
-                        elem.display()
-                    )));
-                }
-            }
-            if let Ty::List(elem) = ty {
-                if elem_size(elem, &self.layouts).is_none() {
-                    return Err(unsupported(&format!(
-                        "the `List<{}>` field of `{name}`",
-                        elem.display()
-                    )));
-                }
-            }
-            if let Ty::Map(key, value) = ty {
-                if elem_size(key, &self.layouts).is_none()
-                    || elem_size(value, &self.layouts).is_none()
-                {
-                    return Err(unsupported(&format!(
-                        "the `Map<{}, {}>` field of `{name}`",
-                        key.display(),
-                        value.display()
-                    )));
-                }
+            // for the one case `field_drop_refusal` names, which is a refusal:
+            // skipping that would be the silently-leaked free this module's
+            // refusals exist to prevent.
+            if let Some(what) = self.field_drop_refusal(ty, name) {
+                return Err(unsupported(&what));
             }
             let Some(site) = self.drop_site_for(ty) else {
                 continue;
@@ -3823,6 +4073,107 @@ impl Gen {
             let _ = writeln!(self.out, "    lea rdi, [rbx{}]", off_str(*offset));
             let _ = writeln!(self.out, "    call {}", site.label());
         }
+        self.out
+            .push_str("    add rsp, 8\n    pop rbx\n    pop rbp\n    ret\n");
+        Ok(())
+    }
+
+    /// The refusal for an owning field this backend cannot free, or `None` for
+    /// every field `drop_site_for` can answer for. `drop_site_for` returns
+    /// `None` both for a field that owns nothing and for one whose *own* size
+    /// it cannot work out, and those two must not be conflated: the first is a
+    /// `continue`, the second is a named refusal, because a skipped free is a
+    /// leak the differential suite cannot see (it prints nothing). Shared by
+    /// the `datac` and `enum` generated drops, the two bodies that walk owning
+    /// fields.
+    fn field_drop_refusal(&self, ty: &Ty, owner: &str) -> Option<String> {
+        match ty {
+            Ty::Box(elem) if elem_size(elem, &self.layouts).is_none() => {
+                Some(format!("the `Box<{}>` field of `{owner}`", elem.display()))
+            }
+            Ty::List(elem) if elem_size(elem, &self.layouts).is_none() => {
+                Some(format!("the `List<{}>` field of `{owner}`", elem.display()))
+            }
+            Ty::Map(key, value)
+                if elem_size(key, &self.layouts).is_none()
+                    || elem_size(value, &self.layouts).is_none() =>
+            {
+                Some(format!(
+                    "the `Map<{}, {}>` field of `{owner}`",
+                    key.display(),
+                    value.display()
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// One `enum`'s generated drop (MK7 §5's enum slice), transliterated from
+    /// `codegen_c.rs::write_enum`'s `switch`: `switch (v->kelp_tag)` with one
+    /// `case i` per variant that owns, dropping each of that variant's owning
+    /// payload fields in declaration order, and **no `default` arm** — an
+    /// unknown tag is a compiler-visible hole, and every tag this program can
+    /// produce is one of the cases. The comparison chain replaces the jump
+    /// table clang picks for the C `switch`; the set of tags it can see is the
+    /// same, so the two bodies free the same things in the same order.
+    ///
+    /// Only the live variant's fields are dropped, which is the whole reason
+    /// this body has to exist at all: for a `datac` the compiler knows which
+    /// fields own, and for an `enum` it does not until the tag is read at
+    /// runtime.
+    fn emit_enum_drop(&mut self, name: &str) -> Result<(), String> {
+        let Some(layout) = self.layouts.get(name).cloned() else {
+            return Ok(());
+        };
+        let Some(variants) = layout.variants.clone() else {
+            return Ok(());
+        };
+        // Resolve every case's sites before writing a single instruction, so a
+        // refusal leaves no half-written function behind — and so
+        // `drop_site_for`'s registration of the routines a case calls happens
+        // in one place. `variants` is cloned, so mutating `self` here is fine.
+        let mut cases: Vec<(usize, Vec<(i32, String)>)> = Vec::new();
+        for (i, variant) in variants.iter().enumerate() {
+            let mut sites: Vec<(i32, String)> = Vec::new();
+            for entry in &variant.entries {
+                let FieldEntry::Aggregate(_, offset, _, ty) = entry else {
+                    continue;
+                };
+                if let Some(what) = self.field_drop_refusal(ty, name) {
+                    return Err(unsupported(&what));
+                }
+                if let Some(site) = self.drop_site_for(ty) {
+                    sites.push((*offset, site.label()));
+                }
+            }
+            if !sites.is_empty() {
+                cases.push((i, sites));
+            }
+        }
+        let label = format!("kelp_drop_{}", crate::types::c_ident(name));
+        let done = self.label("enum_drop_done");
+        let case_labels: Vec<String> = cases.iter().map(|_| self.label("enum_drop_case")).collect();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        self.out
+            .push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 8\n");
+        // The value's own address, in the one register a nested drop call
+        // cannot clobber — every other register belongs to the caller.
+        self.out.push_str("    mov rbx, rdi\n");
+        self.out.push_str("    mov eax, DWORD PTR [rbx]\n");
+        for ((variant, _), case) in cases.iter().zip(case_labels.iter()) {
+            let _ = writeln!(self.out, "    cmp eax, {variant}");
+            let _ = writeln!(self.out, "    je {case}");
+        }
+        let _ = writeln!(self.out, "    jmp {done}");
+        for ((_, sites), case) in cases.iter().zip(case_labels.iter()) {
+            let _ = writeln!(self.out, "{case}:");
+            for (offset, site) in sites {
+                let _ = writeln!(self.out, "    lea rdi, [rbx{}]", off_str(*offset));
+                let _ = writeln!(self.out, "    call {site}");
+            }
+            let _ = writeln!(self.out, "    jmp {done}");
+        }
+        let _ = writeln!(self.out, "{done}:");
         self.out
             .push_str("    add rsp, 8\n    pop rbx\n    pop rbp\n    ret\n");
         Ok(())
@@ -5516,10 +5867,17 @@ impl Gen {
             // an owning one has to be freed after the call, and a non-owning
             // one is what `expr`'s `Ref` arm already stages with no drop
             // (`is_place` below never sees it, so the two paths cannot
-            // disagree about who stages it).
+            // disagree about who stages it). MK7 §5's enum slice reaches this
+            // arm too, and the site is picked from the layout for the same
+            // reason `drop_site_for` picks its own: the symbol is identical,
+            // the body is not.
             Ty::Struct(name) if self.datac_owns(name) => {
-                self.require_datac_drop(name);
-                DropSite::Datac(name.clone())
+                self.require_aggregate_drop(name);
+                if self.layouts.get(name).is_some_and(|l| l.variants.is_some()) {
+                    DropSite::Enum(name.clone())
+                } else {
+                    DropSite::Datac(name.clone())
+                }
             }
             // A `Box` temporary is the same shape one pointer wide: `f(Box.of(1))`
             // where `f` takes the box by borrow has to free the box — and the
@@ -5732,6 +6090,30 @@ impl Gen {
             if let Some(p) = parked {
                 self.unpark(p);
             }
+        }
+        frame.pop_scope();
+        Ok(())
+    }
+
+    /// A block in *value* position whose value is wider than one eightbyte
+    /// (MK7 §5's enum slice): the same walk `block` does, except that the tail is
+    /// written straight to `dest` through `eval_struct_into` and the block's own
+    /// drops still run afterwards — the ordering the C backend's
+    /// statement-expression gives the same shape. A value that leaves in a
+    /// register has to be parked across the drops (what `block` does); one that
+    /// leaves in caller-owned memory does not, which is the whole reason this is
+    /// a second function rather than a flag on the first.
+    fn block_into(&mut self, block: &Block, frame: &mut Frame, dest: Dest) -> Result<(), String> {
+        frame.push_scope();
+        for stmt in &block.stmts {
+            self.stmt(stmt, frame)?;
+        }
+        if let Some(tail) = &block.tail {
+            self.eval_struct_into(tail, frame, dest)?;
+        }
+        let drops = self.drops.at_block_end(&self.function, block).to_vec();
+        for t in &drops {
+            self.emit_drop(t, frame)?;
         }
         frame.pop_scope();
         Ok(())
@@ -6052,20 +6434,28 @@ impl Gen {
             }
             ExprKind::FieldAccess { base, field } => self.field_read(base, field, frame),
             ExprKind::StructLit { name, fields } => self.struct_lit(name, fields, frame),
-            ExprKind::EnumLit { enum_name, .. } => {
-                Err(unsupported(&format!("the enum `{enum_name}`")))
+            ExprKind::EnumLit { enum_name, variant, fields } => {
+                self.enum_lit(enum_name, *variant, fields, frame)
             }
-            ExprKind::EnumTag { expr, .. } => Err(unsupported(&format!(
-                "the enum `{}`",
-                enum_name_of(&expr.ty)
-            ))),
-            ExprKind::EnumField { base, .. } => Err(unsupported(&format!(
-                "the enum `{}`",
-                enum_name_of(&base.ty)
-            ))),
-            ExprKind::Try { source, .. } => {
-                Err(unsupported(&format!("the enum `{source}` (the `?` operator)")))
+            ExprKind::EnumTag { expr, variant } => {
+                let layout = self.addr_of_struct(expr, frame)?;
+                self.require_enum_layout(&layout, &expr.ty)?;
+                // The tag is the `int32_t` at offset 0 of every enum
+                // `write_enum` writes, so the test is one compare against the
+                // word the address already points at.
+                let _ = writeln!(self.out, "    cmp DWORD PTR [r11], {variant}");
+                self.out.push_str("    sete al\n    movzx rax, al\n");
+                Ok(())
             }
+            ExprKind::EnumField { base, variant, field } => {
+                self.enum_field_read(base, *variant, *field, frame)
+            }
+            // MK5-S6-M1: `expr?`. The generic `expr` path can only carry the
+            // success payload in `rax`, so a payload wider than eight bytes is
+            // refused here by name; the contexts that can hold one (`let`, an
+            // assignment, a `return`, a call argument) reach `try_expr`
+            // through `eval_struct_into` with a destination instead.
+            ExprKind::Try { .. } => self.try_expr(e, None, frame),
             ExprKind::Ref { expr, .. } => {
                 // MK7 §5 item 8: a `&str` is the pointer itself — there is
                 // nothing to take the address of, and `codegen_c.rs` makes the
@@ -6121,6 +6511,31 @@ impl Gen {
                 if let ExprKind::FieldAccess { base, field } = &expr.kind {
                     if let Ok(layout) = self.addr_of_struct(base, frame) {
                         if let Some((offset, _, _)) = layout.aggregate_field(field) {
+                            if offset != 0 {
+                                let _ = writeln!(self.out, "    add r11, {offset}");
+                            }
+                            self.out.push_str("    mov rax, r11\n");
+                            return Ok(());
+                        }
+                    }
+                }
+                // MK7 §5's enum slice: `&` of one payload field of one variant of
+                // an `enum` — the shape an owned payload binding is, since
+                // `infer.rs` binds a non-`Copy` payload as a shared borrow
+                // (`Word(text) -> text.len()` is `&v.kelp_v.kelp_v_Word.kelp_text`
+                // in C). Same arithmetic as the aggregate-field case above, with
+                // the field's offset coming from the variant's own payload entry
+                // rather than from a `datac` field list.
+                if let ExprKind::EnumField { base, variant, field } = &expr.kind {
+                    if let Ok(layout) = self.addr_of_struct(base, frame) {
+                        if let Some(entry) = layout
+                            .variant_layout(*variant)
+                            .and_then(|v| v.entries.get(*field))
+                        {
+                            let offset = match entry {
+                                FieldEntry::Scalar(_, offset, ..)
+                                | FieldEntry::Aggregate(_, offset, ..) => *offset,
+                            };
                             if offset != 0 {
                                 let _ = writeln!(self.out, "    add r11, {offset}");
                             }
@@ -6450,9 +6865,16 @@ impl Gen {
                  `let`, an assignment, a `return`, or a call argument may hold one directly)"
             )));
         }
-        let agg_slot = frame.agg_slot;
-        self.struct_lit_at(name, fields, frame, Dest::Direct(agg_slot))?;
-        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{agg_slot}]");
+        // A slot of this literal's own, not the shared `agg_slot`: a field
+        // initializer can evaluate another literal of its own (`Pair(a =
+        // f(Pair(x = 1, y = 2)), b = 2)`), and one shared slot would let the
+        // inner one overwrite the tag/fields the outer one had already
+        // written. See `Gen::call`'s argument staging for the same correction
+        // and `tests/fixtures/nested_literal_staging.kp` for the fixture that
+        // pins it.
+        let slot = frame.scratch(align_up(layout.size, 8));
+        self.struct_lit_at(name, fields, frame, Dest::Direct(slot))?;
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot}]");
         Ok(())
     }
 
@@ -6576,6 +6998,335 @@ impl Gen {
         }
     }
 
+    /// MK7 §5's enum slice: the layout of the `enum` `name`, or a refusal that
+    /// names it. The second half is what keeps a float-payload `enum` reading
+    /// as "this enum" rather than as the wrong kind of type: such an `enum`
+    /// simply has no layout (see `try_build_enum_layout`), so every site that
+    /// wanted to move a value of it says so by name.
+    fn enum_layout(&self, name: &str) -> Result<StructLayout, String> {
+        match self.layouts.get(name) {
+            Some(layout) if layout.variants.is_some() => Ok(layout.clone()),
+            _ => Err(unsupported(&format!("the enum `{name}`"))),
+        }
+    }
+
+    /// The same refusal as `enum_layout`, for a site that already holds a
+    /// layout (one `addr_of_struct` computed while resolving an address) and
+    /// needs to know it really is an `enum`'s.
+    fn require_enum_layout(&self, layout: &StructLayout, ty: &Ty) -> Result<(), String> {
+        if layout.variants.is_some() {
+            Ok(())
+        } else {
+            Err(unsupported(&format!("the enum `{}`", enum_name_of(ty))))
+        }
+    }
+
+    /// `Shape.Circle(r = 1.0)`, as a plain value in `rax` — the `One`-class
+    /// counterpart of `enum_lit_at`, with the same narrowing `struct_lit` has
+    /// and for the same reason (see `eval_struct_into`'s doc).
+    fn enum_lit(
+        &mut self,
+        enum_name: &str,
+        variant: usize,
+        fields: &[Expr],
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        let layout = self.enum_layout(enum_name)?;
+        if layout.class() != AggClass::One {
+            return Err(unsupported(&format!(
+                "the enum `{enum_name}` used as a plain value (it is over eight bytes; only a \
+                 `let`, an assignment, a `return`, or a call argument may hold one)"
+            )));
+        }
+        // A slot of its own, for the reason `struct_lit`'s doc gives: a
+        // payload expression can itself evaluate a literal, and the shared
+        // `agg_slot` would let that one overwrite the tag written below.
+        let slot = frame.scratch(align_up(layout.size, 8));
+        self.enum_lit_at(enum_name, variant, fields, frame, Dest::Direct(slot))?;
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot}]");
+        Ok(())
+    }
+
+    /// The class-agnostic core of `enum_lit`: writes the variant's tag at
+    /// offset 0 and its payload — the value of `fields[i]` at the `i`th payload
+    /// field's own offset — straight to `dest`, mirroring `codegen_c.rs`'s
+    /// compound literal `{ .kelp_tag = v, .kelp_v = { .<member> = { ... } } }`.
+    /// The field order is positional because the TIR node carries one value per
+    /// payload field in declaration order (`infer.rs::enum_lit`), which is also
+    /// why there is no name matching here the way `struct_lit_at` has.
+    ///
+    /// Nothing writes the *other* variants' payloads, exactly as C's designated
+    /// initializer does not: they are not live, nothing reads them, and the only
+    /// thing that could observe them is a whole-value copy.
+    fn enum_lit_at(
+        &mut self,
+        enum_name: &str,
+        variant: usize,
+        fields: &[Expr],
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        let layout = self.enum_layout(enum_name)?;
+        let entries = layout
+            .variant_layout(variant)
+            .ok_or_else(|| {
+                unsupported(&format!("the variant #{variant} of `{enum_name}`"))
+            })?
+            .entries
+            .clone();
+        if entries.len() != fields.len() {
+            return Err(unsupported(&format!(
+                "a `{enum_name}` literal whose payload does not match its variant"
+            )));
+        }
+        let _ = writeln!(self.out, "    mov eax, {variant}");
+        self.store_value(dest, 0, ENUM_TAG_WIDTH);
+        for (entry, value) in entries.iter().zip(fields.iter()) {
+            match entry {
+                FieldEntry::Scalar(_, offset, width, _) => {
+                    self.expr(value, frame)?;
+                    self.store_value(dest, *offset, *width);
+                }
+                // The same staging `struct_lit_at` uses for an aggregate field:
+                // a scratch slot of the field's own size, built through
+                // `eval_struct_into`, then copied into place. A shared slot
+                // would not do — a payload expression can itself contain a
+                // literal that reuses it.
+                FieldEntry::Aggregate(_, offset, key, _) => {
+                    let inner = self.layouts.get(key).cloned().ok_or_else(|| {
+                        unsupported(&format!("the type a payload field of `{enum_name}` holds"))
+                    })?;
+                    let slot = frame.scratch(align_up(inner.size, 8));
+                    self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+                    self.copy_into_dest(dest, *offset, slot, inner.size);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One payload field of one variant as a plain value in `rax` — what a
+    /// `Copy` payload binds to inside a `when` arm (`Digits(n) -> n`), reached
+    /// through the same address `addr_of_struct` computes for the scrutinee.
+    ///
+    /// An *aggregate* payload field is refused here rather than truncated: a
+    /// non-`Copy` payload binds as a shared borrow (`&String`), which goes
+    /// through `expr`'s `Ref` arm and never reaches this function, so reaching
+    /// it means something asked for the field itself as one register's worth.
+    fn enum_field_read(
+        &mut self,
+        base: &Expr,
+        variant: usize,
+        field: usize,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        let layout = self.addr_of_struct(base, frame)?;
+        self.require_enum_layout(&layout, &base.ty)?;
+        let entry = layout
+            .variant_layout(variant)
+            .and_then(|v| v.entries.get(field))
+            .cloned()
+            .ok_or_else(|| {
+                unsupported(&format!(
+                    "the payload field #{field} of variant #{variant} of the enum `{}`",
+                    enum_name_of(&base.ty)
+                ))
+            })?;
+        match entry {
+            FieldEntry::Scalar(_, offset, width, signed) => {
+                let _ = writeln!(self.out, "    mov {}, {} [r11+{offset}]", width.rax(), width.mem());
+                self.out.push_str(&width.extend(signed));
+                Ok(())
+            }
+            FieldEntry::Aggregate(..) => Err(unsupported(&format!(
+                "reading an aggregate payload of the enum `{}` as a plain value (bind it as a \
+                 borrow, or pass it on)",
+                enum_name_of(&base.ty)
+            ))),
+        }
+    }
+
+    /// The success payload of a `?` (or of one variant of any match) moved out
+    /// of the temporary it was evaluated into, at `src_slot + offset` — into
+    /// `dest` when the value is wider than one eightbyte, and into `rax`
+    /// otherwise. One copy and no drop: the payload is *moved*, exactly as C's
+    /// assignment of the same member is, and the temporary it came from is
+    /// never dropped.
+    fn payload_out(
+        &mut self,
+        entry: &FieldEntry,
+        src_slot: i32,
+        dest: Option<Dest>,
+        enum_name: &str,
+    ) -> Result<(), String> {
+        match entry {
+            FieldEntry::Scalar(_, offset, width, signed) => {
+                let addr = src_slot + offset;
+                let _ = writeln!(self.out, "    mov {}, {} [rbp{addr}]", width.rax(), width.mem());
+                self.out.push_str(&width.extend(*signed));
+                if let Some(dest) = dest {
+                    self.store_value(dest, 0, *width);
+                }
+                Ok(())
+            }
+            FieldEntry::Aggregate(_, offset, key, _) => {
+                let Some(dest) = dest else {
+                    return Err(unsupported(&format!(
+                        "the enum `{enum_name}` (a `?` whose success payload is over eight \
+                         bytes, in a position that can only hold one eightbyte)"
+                    )));
+                };
+                let size = self
+                    .layouts
+                    .get(key)
+                    .map(|l| l.size)
+                    .ok_or_else(|| unsupported("the type a payload of this enum holds"))?;
+                let src = src_slot + offset;
+                match dest {
+                    Dest::Direct(off) => emit_copy(&mut self.out, "rbp", off, "rbp", src, size),
+                    Dest::Indirect(slot) => {
+                        let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot}]");
+                        emit_copy(&mut self.out, "r10", 0, "rbp", src, size);
+                    }
+                    Dest::Global(index) => {
+                        let label = self.pds[index].label.clone();
+                        emit_copy_to_global(&mut self.out, &label, 0, "rbp", src, size);
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// MK5-S6-M1's `?`, transliterated from `codegen_c.rs`'s
+    /// statement-expression: evaluate the operand once into a slot of its own,
+    /// and if it carries the failure tag rebuild that failure in the enclosing
+    /// function's return type and return it — running the frame's own drops
+    /// first, exactly as a written `return` does — otherwise the value is the
+    /// live success payload, moved out of the temporary. The temporary is
+    /// deliberately never dropped, which is the C backend's rule too: exactly
+    /// one variant's payload is moved out of it on either path, and dropping the
+    /// rest would free what was moved.
+    ///
+    /// `dest` is `Some` for the contexts that can hold a value wider than `rax`
+    /// (a `let`, an assignment, a `return`, a call argument — the same four
+    /// `eval_struct_into` serves). With `None`, a success payload wider than one
+    /// eightbyte is refused by name rather than truncated.
+    fn try_expr(&mut self, e: &Expr, dest: Option<Dest>, frame: &mut Frame) -> Result<(), String> {
+        let ExprKind::Try {
+            expr: operand,
+            source,
+            target,
+            ok_variant,
+            err_variant,
+            target_err_variant,
+            err_has_payload,
+            ..
+        } = &e.kind
+        else {
+            return Err(unsupported("a `?` outside an expression"));
+        };
+        let src_layout = self.enum_layout(source)?;
+        let tmp = frame.scratch(align_up(src_layout.size, 8));
+        self.eval_struct_into(operand, frame, Dest::Direct(tmp))?;
+        let ok = self.label("try_ok");
+        let _ = writeln!(self.out, "    mov eax, DWORD PTR [rbp{tmp}]");
+        let _ = writeln!(self.out, "    cmp eax, {err_variant}");
+        let _ = writeln!(self.out, "    jne {ok}");
+        // The failure arm: the source's error payload rebuilt in the target
+        // enum (`target` is the enclosing function's own return type, which is
+        // why the destination is the same place `Stmt::Return` writes a value of
+        // that class — the hidden return pointer for a `MEMORY`-class one, the
+        // shared aggregate slot for a register-pair one, and `rax` otherwise).
+        let target_layout = self.enum_layout(target)?;
+        let ret_dst = match frame.ret_class {
+            RetClass::AggMem => Dest::Indirect(frame.ret_ptr_slot),
+            RetClass::AggTwo => Dest::Direct(frame.agg_slot),
+            _ => {
+                let slot = frame.scratch(align_up(target_layout.size, 8));
+                Dest::Direct(slot)
+            }
+        };
+        let _ = writeln!(self.out, "    mov eax, {target_err_variant}");
+        self.store_value(ret_dst, 0, ENUM_TAG_WIDTH);
+        if *err_has_payload {
+            let src_entry = src_layout
+                .variant_layout(*err_variant)
+                .and_then(|v| v.entries.first())
+                .cloned()
+                .ok_or_else(|| unsupported(&format!("the error payload of the enum `{source}`")))?;
+            let dst_entry = target_layout
+                .variant_layout(*target_err_variant)
+                .and_then(|v| v.entries.first())
+                .cloned()
+                .ok_or_else(|| unsupported(&format!("the error payload of the enum `{target}`")))?;
+            self.move_payload(&src_entry, tmp, &dst_entry, ret_dst, source)?;
+        }
+        for t in self.drops.at_try(&self.function, e.span).to_vec() {
+            self.emit_drop(&t, frame)?;
+        }
+        // The two wider classes are read by the epilogue itself, so only a
+        // one-eightbyte target has to be finished here — and `AggTwo` is *not*
+        // one of those: its value lives in `agg_slot`, which is where
+        // `ret_dst` already put it.
+        if let Dest::Direct(slot) = ret_dst {
+            if frame.ret_class != RetClass::AggTwo {
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot}]");
+            }
+        }
+        let label = self.return_label.clone();
+        let _ = writeln!(self.out, "    jmp {label}");
+        let _ = writeln!(self.out, "{ok}:");
+        let ok_entry = src_layout
+            .variant_layout(*ok_variant)
+            .and_then(|v| v.entries.first())
+            .cloned()
+            .ok_or_else(|| unsupported(&format!("the success payload of the enum `{source}`")))?;
+        self.payload_out(&ok_entry, tmp, dest, source)
+    }
+
+    /// Moves one payload field from `src_slot` to the same position of the same
+    /// field in `dst`, whose own layout is `dst_entry` — the shape
+    /// `codegen_c.rs` writes as
+    /// `ret.kelp_v.<member>.<field> = tmp.kelp_v.<member>.<field>;`.
+    fn move_payload(
+        &mut self,
+        src_entry: &FieldEntry,
+        src_slot: i32,
+        dst_entry: &FieldEntry,
+        dst: Dest,
+        enum_name: &str,
+    ) -> Result<(), String> {
+        let src_offset = match src_entry {
+            FieldEntry::Scalar(_, o, ..) | FieldEntry::Aggregate(_, o, ..) => *o,
+        };
+        match (src_entry, dst_entry) {
+            (FieldEntry::Scalar(_, _, width, signed), FieldEntry::Scalar(_, doff, _, _)) => {
+                let addr = src_slot + src_offset;
+                let _ = writeln!(self.out, "    mov {}, {} [rbp{addr}]", width.rax(), width.mem());
+                self.out.push_str(&width.extend(*signed));
+                self.store_value(dst, *doff, *width);
+                Ok(())
+            }
+            (FieldEntry::Aggregate(_, _, key, _), FieldEntry::Aggregate(_, doff, _, _)) => {
+                let size = self
+                    .layouts
+                    .get(key)
+                    .map(|l| l.size)
+                    .ok_or_else(|| unsupported("the type an error payload holds"))?;
+                self.copy_into_dest(dst, *doff, src_slot + src_offset, size);
+                Ok(())
+            }
+            // Unreachable by construction — the two variants' payload types are
+            // the same type, so their layout entries are the same kind — and a
+            // refusal rather than a panic because "unreachable" in a compiler is
+            // a claim, and this one costs one arm to not have to trust.
+            _ => Err(unsupported(&format!(
+                "propagating the failure of the enum `{enum_name}`"
+            ))),
+        }
+    }
+
     /// MK7 §5 item 4, third slice: evaluates a `Two`/`Mem`-class `datac`
     /// expression directly into `dest`, for the handful of contexts that can
     /// hold one — a `let` initializer, an ident-targeted assignment, a
@@ -6594,6 +7345,50 @@ impl Gen {
     fn eval_struct_into(&mut self, expr: &Expr, frame: &mut Frame, dest: Dest) -> Result<(), String> {
         match &expr.kind {
             ExprKind::StructLit { name, fields } => self.struct_lit_at(name, fields, frame, dest),
+            // MK7 §5's enum slice: a one-variant construction is the same shape
+            // `struct_lit_at` is, so it writes the tag and then its payload into
+            // `dest` directly.
+            ExprKind::EnumLit { enum_name, variant, fields } => {
+                self.enum_lit_at(enum_name, *variant, fields, frame, dest)
+            }
+            // MK5-S6-M1: `expr?` in one of the four positions that can hold a
+            // value wider than `rax` — the success payload is moved straight
+            // into `dest`, so an owned payload (`Option<String>`'s) travels
+            // without ever being truncated to a register.
+            ExprKind::Try { .. } => self.try_expr(expr, Some(dest), frame),
+            // A block in value position — which is what a `when` with a
+            // scrutinee is (`infer.rs` wraps the folded arm chain in one, and
+            // `if let` too), so a `when` that produces a wide value at all
+            // arrives here. `block_into` is the same walk `Gen::block` does,
+            // with the tail written to `dest` instead of parked in a register.
+            ExprKind::Block(block) => self.block_into(block, frame, dest),
+            // MK7 §5's enum slice: an `if` in *value* position producing a
+            // value wider than one eightbyte. The C backend gets this from a
+            // statement-expression with a temporary in it; here each arm writes
+            // its value into the caller's own destination instead, which is the
+            // same thing with no second copy — and it is not enum-specific, it
+            // is the missing half of "a wide value has a destination", which
+            // `str_to_string_coercion` had been waiting on as its first
+            // refusal.
+            ExprKind::If { cond, then_block, else_block } => {
+                let alt = self.label("else");
+                let end = self.label("endif");
+                self.expr(cond, frame)?;
+                self.out.push_str("    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {alt}");
+                self.block_into(then_block, frame, dest)?;
+                let _ = writeln!(self.out, "    jmp {end}");
+                let _ = writeln!(self.out, "{alt}:");
+                match else_block {
+                    Some(block) => self.block_into(block, frame, dest)?,
+                    // An `if` without an `else` has type `Unit`, so a wide
+                    // value can never arrive through this arm — and writing
+                    // nothing is the honest lowering of "there is no value".
+                    None => {}
+                }
+                let _ = writeln!(self.out, "{end}:");
+                Ok(())
+            }
             // MK7 §5's heap-field slice: an *aggregate field* read by value —
             // `print(h.name)`, `val s = h.name`, an owned field handed to a
             // callee. `addr_of_struct` already computes the base object's
@@ -6774,7 +7569,7 @@ impl Gen {
     /// the address `addr_of_struct` computes into `r11`.
     fn field_read(&mut self, base: &Expr, field: &str, frame: &mut Frame) -> Result<(), String> {
         let layout = self.addr_of_struct(base, frame)?;
-        let (foffset, width, signed) = layout.scalar_field(field).ok_or_else(|| {
+        let Some((foffset, width, signed)) = layout.scalar_field(field) else {
             // MK7 §5's heap-field slice: an *aggregate* field (`h.name`) is a
             // value wider than `rax`, so `expr` cannot leave one there. The
             // contexts that can hold one — `print`, a `let`, a call argument —
@@ -6782,16 +7577,32 @@ impl Gen {
             // access arm lives; reaching here means something asked for the
             // field as a plain one-register value, and that is refused by name
             // rather than truncated to the field's first eight bytes.
-            if layout.aggregate_field(field).is_some() {
-                unsupported(&format!(
+            //
+            // MK7 §5's enum slice: a **one-eightbyte** aggregate field is the
+            // exception, because one eightbyte *is* a value `rax` can hold —
+            // the same opaque "whole eightbyte" rule `struct_lit` uses for a
+            // `One`-class literal. Without it an `enum` at that class could not
+            // be read out of a `datac` field by value at all (`narrow(a =
+            // h.small)`), which is the "an enum as a `datac` field at every
+            // size class" half of that slice. Anything wider keeps the
+            // refusal, because a `Two`/`Mem`-class field cannot travel through
+            // `rax`.
+            if let Some((offset, key, _)) = layout.aggregate_field(field) {
+                if self.layouts.get(key).is_some_and(|l| l.class() == AggClass::One) {
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [r11+{offset}]");
+                    return Ok(());
+                }
+                return Err(unsupported(&format!(
                     "reading the aggregate field `{field}` of `{}` as a plain value (bind \
                      it, pass it, or print it whole)",
                     base.ty.display()
-                ))
-            } else {
-                unsupported(&format!("the field `{field}` of `{}`", base.ty.display()))
+                )));
             }
-        })?;
+            return Err(unsupported(&format!(
+                "the field `{field}` of `{}`",
+                base.ty.display()
+            )));
+        };
         let _ = writeln!(self.out, "    mov {}, {} [r11+{foffset}]", width.rax(), width.mem());
         self.out.push_str(&width.extend(signed));
         Ok(())
@@ -7025,7 +7836,19 @@ impl Gen {
                 self.out.push_str("    sub rsp, 8\n");
                 let _ = writeln!(self.out, "    {} [rsp], xmm0", width.mov());
             } else if int_regs_for(&arg.ty, &self.layouts) == Some(2) {
-                let agg = frame.agg_slot;
+                // A slot of the argument's own — **not** the shared
+                // `agg_slot` this used to stage into. A `Two`-class argument
+                // is built field by field, and a field initializer can itself
+                // be an argument-bearing expression (`Box.of(Node(value = 2,
+                // next = Box.of(...)))`), whose own `Two`-class argument would
+                // then land in the same shared slot *while the outer value was
+                // half-written* — `generic_recursive`'s three-node chain read
+                // the middle node's `value` as the innermost node's (7 instead
+                // of 6) before this was a fresh slot per argument.
+                let size = struct_layout(&arg.ty, &self.layouts)
+                    .expect("a two-register argument is a struct with a layout")
+                    .size;
+                let agg = frame.scratch(align_up(size, 8));
                 self.eval_struct_into(arg, frame, Dest::Direct(agg))?;
                 let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg}]");
                 let agg2 = agg + 8;
