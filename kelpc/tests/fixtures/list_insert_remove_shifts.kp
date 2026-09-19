@@ -1,0 +1,57 @@
+// The two operations that shift elements around, on a list of *owned*
+// elements: `insert` opens a hole by moving everything above it up, `remove`
+// closes one by moving the tail down and handing the element back. Both are
+// element-struct moves, so a shift that copies the wrong number of bytes
+// leaks a buffer or double-frees one — this fixture is for the
+// AddressSanitizer pass. `list_slice_insert.kp` reaches these two only
+// alongside `sort`/`contains`/`slice`, so nothing pinned them on their own,
+// and every index here is exercised against a three-element tail rather than
+// a one-element one.
+fun main() {
+    var words: List<String> = List.empty()
+    words.push(String.from_str("a"))
+    words.push(String.from_str("c"))
+    words.insert(1, String.from_str("b"))
+    print(words.len())
+    print(words.get(0))
+    print(words.get(1))
+    print(words.get(2))
+    // The end of the list is a legal insertion point (`i == len`), so the
+    // four-element case is reached by one insert rather than by four pushes.
+    words.insert(3, String.from_str("d"))
+    print(words.get(3))
+    // From the middle: "b" comes out and "c"/"d" shift down over it.
+    val middle = words.remove(1)
+    print(middle)
+    print(words.len())
+    print(words.get(0))
+    print(words.get(1))
+    print(words.get(2))
+    // From the end: nothing shifts.
+    val n = words.len()
+    val last = words.remove(n - 1)
+    print(last)
+    print(words.len())
+    // From the front: everything shifts.
+    val first = words.remove(0)
+    print(first)
+    print(words.len())
+    words.insert(0, String.from_str("e"))
+    print(words.get(0))
+    print(words.get(1))
+    // `reverse` twists a two-element list into the odd-length and empty cases,
+    // which are the two the swap loop has to get right without moving a byte.
+    words.push(String.from_str("f"))
+    words.push(String.from_str("g"))
+    words.reverse()
+    print(words.get(0))
+    print(words.get(1))
+    print(words.get(2))
+    words.reverse()
+    words.reverse()
+    print(words.get(0))
+    print(words.get(2))
+    words.clear()
+    words.reverse()
+    print(words.len())
+}

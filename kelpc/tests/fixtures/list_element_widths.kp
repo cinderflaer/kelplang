@@ -1,0 +1,59 @@
+// The element's own size decides the copy width inside the buffer, and the
+// three widths here are the ones no fixture reaches: a `bool` is one byte, an
+// `i64` is eight, and `Trio` is twelve — not a power of two, so a copy of it
+// is two instructions rather than one (8 bytes then 4). `list_basic.kp` is
+// four-byte `i32` elements throughout and `list_datac_element.kp` is
+// thirty-two-byte ones, so every element this corpus had was one of those two
+// widths before this file.
+datac Trio(val a: i32, val b: i32, val c: i32)
+
+fun main() {
+    var ns: List<i64> = List.empty()
+    ns.push(5000000000)
+    ns.push(5000000001)
+    ns.push(5000000002)
+    print(ns.len())
+    print(ns.get(2))
+    var sum: i64 = 0
+    var i: usize = 0
+    while i < ns.len() {
+        sum += ns.get(i)
+        i += 1
+    }
+    print(sum)
+    ns.set(0, 7)
+    print(ns.get(0))
+
+    var flags: List<bool> = List.empty()
+    flags.push(true)
+    flags.push(false)
+    flags.push(true)
+    var trues: i32 = 0
+    i = 0
+    while i < flags.len() {
+        if flags.get(i) {
+            trues += 1
+        }
+        i += 1
+    }
+    print(flags.len())
+    print(trues)
+    print(flags.get(1))
+
+    var trios: List<Trio> = List.empty()
+    trios.push(Trio(a = 1, b = 2, c = 3))
+    trios.push(Trio(a = 4, b = 5, c = 6))
+    print(trios.get(0).c)
+    print(trios.get(1).a)
+    trios.set(0, Trio(a = 7, b = 8, c = 9))
+    print(trios.get(0).c)
+    trios.insert(0, Trio(a = 10, b = 11, c = 12))
+    print(trios.get(0).a)
+    print(trios.get(1).a)
+    print(trios.remove(2).b)
+    print(trios.len())
+    trios.reverse()
+    print(trios.get(0).c)
+    trios.clear()
+    print(trios.len())
+}

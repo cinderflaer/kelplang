@@ -64,12 +64,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 133 fixtures the C backend
-/// builds, 66 of them also built by the asm backend, 67 refused — which is the
-/// 164-of-255 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 139 fixtures the C backend
+/// builds, 85 of them also built by the asm backend, 54 refused — which is the
+/// 182-of-260 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// Re-recorded five times so far, and the *reason* each time is worth keeping:
+/// Re-recorded six times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
 /// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
@@ -90,7 +90,20 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `String`, a `Bytes` and a nested owning `datac` at once; and the box slice
 /// added `box_recursive` and `box_empty_panic`, the two fixtures the builtin
 /// owning pointer had been keeping out, plus `box_owned_elements`, that slice's
-/// own fixture for replacing and taking an owned element.
+/// own fixture for replacing and taking an owned element; and the list slice
+/// added nineteen — the fourteen `List` fixtures the heap row had been carrying
+/// (`box_basic` and `box_field_take`, held out by a boxed `List`; `for_loop`,
+/// `generic_function_basic`, `move_param`, `path_polish`, `recursive_datac`,
+/// `stdlib_list` and `view`, each refused for a `List` type inside its own
+/// shape; and `list_basic`, `list_datac_element`, `list_owned`,
+/// `list_pop_empty` and `list_owned_replacement`) plus the five that slice wrote
+/// for the element widths, the growth policy, the shifting operations and the
+/// two panic messages nothing else reached (`list_element_widths`,
+/// `list_growth_and_rebuild`, `list_insert_remove_shifts`, `list_insert_bounds`,
+/// `list_remove_bounds`). What the list row still refuses is `sort`/`contains`/
+/// `slice` (`list_slice_bounds`, `list_slice_insert`, `stdlib_sort`), an owning
+/// passdown (`list_field`, `pd_owned`), and the `List<String>` a `str` coercion
+/// feeds (`str_to_string_coercion`).
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -100,7 +113,9 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "borrow_basic",
     "borrow_temp_arg",
     "borrow_temp_slots",
+    "box_basic",
     "box_empty_panic",
+    "box_field_take",
     "box_owned_elements",
     "box_recursive",
     "bytes_build",
@@ -117,6 +132,8 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "float_conversions",
     "float_integral_literal",
     "float_nonfinite_literal",
+    "for_loop",
+    "generic_function_basic",
     "generic_method_basic",
     "heap_branches",
     "heap_bytes",
@@ -131,7 +148,18 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "int_conversions",
     "int_literal_width",
     "int_mod_narrow",
+    "list_basic",
+    "list_datac_element",
+    "list_element_widths",
+    "list_growth_and_rebuild",
+    "list_insert_bounds",
+    "list_insert_remove_shifts",
+    "list_owned",
+    "list_owned_replacement",
+    "list_pop_empty",
+    "list_remove_bounds",
     "literal_operand_typing",
+    "move_param",
     "move_then_reinit",
     "named_args",
     "nested_while_registers",
@@ -141,10 +169,13 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "passdown_globals",
     "passdowns",
     "path_parts",
+    "path_polish",
     "pd_shadowed",
     "pd_var_copy_read_twice",
     "pd_var_write",
+    "recursive_datac",
     "stdlib_fmt",
+    "stdlib_list",
     "stdlib_math",
     "stdlib_mem",
     "stdlib_path",
@@ -154,6 +185,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "string_field",
     "string_view_basic",
     "string_with_capacity_zero",
+    "view",
     "view_released_at_scope_end",
     "when_expr",
     "when_in_args",

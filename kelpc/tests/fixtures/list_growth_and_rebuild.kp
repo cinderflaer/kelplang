@@ -1,0 +1,57 @@
+// The buffer's growth policy, which nothing else pins: `List.reserve` starts
+// at four elements and doubles, so 300 pushes have been `realloc`'d six times
+// and every element has moved — and a list cleared and refilled reuses the
+// buffer it already has rather than allocating a second one. The second half
+// grows a `List<String>` the same way, where each move carries a pointer the
+// list still owns afterwards, then drains it one element at a time: a byte
+// count that is wrong by an element stops the buffer being owned exactly
+// once, which only the memory gate can see. `list_basic.kp` never grows past
+// four elements.
+fun total_of(xs: List<i32>).R: i32 {
+    var total = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += xs.get(i)
+        i += 1
+    }
+    return total
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    var i: i32 = 0
+    while i < 300 {
+        xs.push(i)
+        i += 1
+    }
+    print(xs.len())
+    print(total_of(xs))
+    xs.clear()
+    print(xs.len())
+    i = 0
+    while i < 300 {
+        xs.push(i * 2)
+        i += 1
+    }
+    print(xs.len())
+    print(total_of(xs))
+
+    var names: List<String> = List.empty()
+    var n: i32 = 0
+    while n < 300 {
+        names.push(String.from_str("element"))
+        n += 1
+    }
+    print(names.len())
+    print(names.get(299))
+    // Popping returns the element by value, so the binding is the one owner
+    // and each iteration drops what it takes out.
+    while !names.is_empty() {
+        val gone = names.pop()
+        if gone.len() != 7 {
+            print("bad element")
+        }
+    }
+    print(names.len())
+    print(xs.get(299))
+}

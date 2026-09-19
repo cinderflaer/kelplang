@@ -1,0 +1,12 @@
+// `List.insert` panics past the end, but one past the end is a legal
+// insertion point (`i == len` opens a new last slot), so the boundary this
+// pins is the one the check is written against: `i > len`. `list_slice_bounds.kp`
+// pins the slice range and `list_pop_empty.kp` the empty pop; neither reaches
+// this message.
+fun main() {
+    var xs: List<i32> = List.of(1)
+    xs.insert(1, 2)
+    print(xs.len())
+    xs.insert(3, 4)
+    print("unreachable")
+}

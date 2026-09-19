@@ -1508,6 +1508,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "list_datac_element",
         "stdlib_sort",
         "list_slice_insert",
+        // MK7: the list paths a shift or a replacement could get wrong —
+        // `insert`/`remove`/`reverse` over owned elements, six `realloc`s
+        // that move every element, and `set` freeing the element it replaces.
+        "list_insert_remove_shifts",
+        "list_growth_and_rebuild",
+        "list_owned_replacement",
         "path_polish",
         "box_basic",
         "box_recursive",
@@ -1771,6 +1777,59 @@ fn a_list_of_owned_and_datac_elements_moves_them() {
 #[test]
 fn a_list_works_as_a_datac_field_and_as_an_owned_passdown() {
     assert_compiles_and_runs("tests/fixtures/list_field.kp", "bag\n7\n2\n2\n2\n");
+}
+
+#[test]
+fn a_list_inserts_and_removes_by_shifting_owned_elements() {
+    // The shifts are moves of a twenty-four-byte `String`, so this fixture
+    // runs under AddressSanitizer: a shift that copied the wrong number of
+    // bytes would leak a buffer or double-free one. It is kept apart from
+    // `list_slice_insert.kp` because that one reaches `insert`/`remove` only
+    // alongside `sort`/`contains`/`slice`.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_insert_remove_shifts.kp",
+        "3\na\nb\nc\nd\nb\n3\na\nc\nd\nd\n2\na\n1\ne\nc\ng\nf\nc\ng\nc\n0\n",
+    );
+}
+
+#[test]
+fn a_list_grows_past_several_doublings_and_reuses_its_buffer() {
+    // Three hundred pushes is six `realloc`s, each one moving every element;
+    // clearing a list keeps its buffer, so the refilled list lands twice the
+    // checksum from the capacity it already had.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_growth_and_rebuild.kp",
+        "300\n44850\n0\n300\n89700\n300\nelement\n0\n598\n",
+    );
+}
+
+#[test]
+fn a_list_copies_elements_at_their_own_width() {
+    // A one-byte `bool`, an eight-byte `i64` and a twelve-byte `Trio` — the
+    // last is not a power of two, so copying it is two instructions rather
+    // than one, and every element this corpus had before was four or
+    // thirty-two bytes wide.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_element_widths.kp",
+        "3\n5000000002\n15000000003\n7\n3\n2\nfalse\n3\n4\n9\n10\n7\n5\n2\n9\n0\n",
+    );
+}
+
+#[test]
+fn setting_an_owned_element_frees_the_one_it_replaces() {
+    assert_compiles_and_runs(
+        "tests/fixtures/list_owned_replacement.kp",
+        "1\nsolo\nreplacement\nreplacement\nother\nb\n2\n0\n2\n0\n",
+    );
+}
+
+#[test]
+fn inserting_or_removing_out_of_bounds_panics() {
+    // One past the end is a legal insertion point and index 0 is out of
+    // bounds once the list is empty, so both messages are pinned from the
+    // side the check is actually written against.
+    assert_fixture_panics("list_insert_bounds", "List.insert: index out of bounds");
+    assert_fixture_panics("list_remove_bounds", "List.remove: index out of bounds");
 }
 
 #[test]
