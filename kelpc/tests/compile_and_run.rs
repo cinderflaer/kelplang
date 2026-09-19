@@ -15,6 +15,31 @@ fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
 }
 
+/// The backend this run of the suite is validating.
+///
+/// The suite is backend-agnostic by construction: it compiles a fixture, runs
+/// the result, and compares stdout, so it never names a code generator. Which
+/// one runs is therefore a property of the *invocation*, not of the test, and
+/// `KELPC_BACKEND` is the only input that varies it. Reading the default from
+/// the environment rather than hard-coding `c` is what lets a second backend
+/// be validated by this whole suite with no edits here — see
+/// `plan/mk7-own-backend.md` stage 1.
+fn backend() -> String {
+    std::env::var("KELPC_BACKEND").unwrap_or_else(|_| "c".to_string())
+}
+
+/// A `kelpc` invocation pinned to the backend under test.
+///
+/// The variable is passed explicitly rather than inherited so that the suite's
+/// child processes cannot disagree with `backend()` about which backend is
+/// being exercised — an inherited value that differs from this one would make
+/// a failure impossible to attribute.
+fn kelpc() -> Command {
+    let mut cmd = Command::new(kelpc_bin());
+    cmd.env("KELPC_BACKEND", backend());
+    cmd
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(name)
 }
@@ -23,7 +48,11 @@ fn out_path(name: &str) -> PathBuf {
     let mut p = PathBuf::from(std::env::var("CARGO_TARGET_TMPDIR").unwrap_or_else(|_| {
         std::env::temp_dir().to_string_lossy().to_string()
     }));
-    p.push(format!("kelpc_test_{name}"));
+    // The backend is part of the path because a second backend produces a
+    // different binary from the same fixture. Without it, two backends running
+    // concurrently (or one leaving an artifact behind) would race for the same
+    // file, and the loser's binary would be executed in the winner's place.
+    p.push(format!("kelpc_test_{}_{name}", backend()));
     p
 }
 
@@ -32,7 +61,7 @@ fn out_path(name: &str) -> PathBuf {
 fn assert_compiles_and_runs(source: &str, expected: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture(source))
         .arg("-o")
@@ -59,7 +88,7 @@ fn assert_compiles_and_runs(source: &str, expected: &str) {
 fn assert_rejected(source: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture(source))
         .arg("-o")
@@ -77,7 +106,7 @@ fn assert_rejected(source: &str) {
 fn assert_rejected_with(source: &str, needle: &str) {
     let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
     let bin = out_path(&name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture(source))
         .arg("-o")
@@ -223,7 +252,7 @@ fn assert_fixture_runs_with_stdin(name: &str, stdin: &str, expected: &str) {
 fn run_fixture_with_stdin(tag: &str, name: &str, stdin: &str, expected: &str) {
     let source = format!("tests/fixtures/{name}.kp");
     let bin = out_path(tag);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture(&source))
         .arg("-o")
@@ -264,7 +293,7 @@ fn run_fixture_with_stdin(tag: &str, name: &str, stdin: &str, expected: &str) {
 /// `process.args()` reads back.
 fn assert_project_runs_with_args(name: &str, target: &Path, args: &[&str], expected: &str) {
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -304,7 +333,7 @@ fn project(name: &str) -> PathBuf {
 /// asserts its stdout.
 fn assert_project_runs(name: &str, target: &Path, expected: &str) {
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -335,7 +364,7 @@ fn assert_project_runs(name: &str, target: &Path, expected: &str) {
 /// reason).
 fn assert_project_rejected(name: &str, target: &Path, needle: &str) {
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -522,7 +551,7 @@ fn writing_a_pd_val_inside_a_function_is_rejected() {
 fn a_pd_var_cannot_be_borrowed_twice_in_one_call() {
     // The documented cost of M6.4's design, pinned so it reads as a rule.
     let bin = out_path("pd_var_double_borrow");
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture("tests/fixtures/pd_var_double_borrow.kp"))
         .arg("-o")
@@ -620,7 +649,7 @@ fn an_alias_cycle_across_two_files_names_both_sites() {
     // at the reference that closed the cycle and notes the definition, so
     // both files appear.
     let bin = out_path("alias_kpconf_cycle");
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(project("alias_kpconf_cycle"))
         .arg("-o")
@@ -913,7 +942,7 @@ fn caps_scratch(name: &str) -> PathBuf {
 /// stderr — the runtime-denial path, which only a *granted* module can reach.
 fn assert_project_denied_at_runtime(name: &str, target: &Path, needle: &str) {
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -1262,8 +1291,25 @@ fn a_modules_own_items_are_reachable_bare_inside_it() {
 /// AddressSanitizer and executed, so a double free, a use-after-free, or a
 /// leak fails the suite. If `cc` has no AddressSanitizer the check is skipped
 /// — the one place in this suite that depends on a toolchain feature.
+///
+/// It is therefore also the one test that is **C-backend-only**: it recompiles
+/// `kelpc`'s generated `.c` with `cc -fsanitize=address`, so under another
+/// backend there is no such file and nothing to instrument. That is not a gap
+/// this test can close by being cleverer — an own backend cannot borrow C's
+/// sanitizer to verify its own code, which is exactly why `plan/mk7-own-backend.md`
+/// records the transfer of the memory-safety argument as Tier 3's obligation
+/// rather than this suite's. Under a second backend the test reports that and
+/// passes, so the suite stays green while the obligation stays visible.
 #[test]
 fn heap_fixtures_are_double_free_and_leak_clean() {
+    if backend() != "c" {
+        eprintln!(
+            "note: the AddressSanitizer gate instruments the generated C, so it is \
+             C-backend-only; backend '{}' is not checked by it",
+            backend()
+        );
+        return;
+    }
     let fixtures = [
         "heap_bytes",
         "heap_move_then_rebind",
@@ -1365,7 +1411,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // the same names, and racing them for one file makes the binary
         // unreadable to whichever loses.
         let bin = out_path(&format!("{name}_asan_src"));
-        let build = Command::new(kelpc_bin())
+        let build = kelpc()
             .arg("build")
             .arg(fixture(&source))
             .arg("-o")
@@ -1435,7 +1481,7 @@ fn assert_fixture_panics(name: &str, needle: &str) {
 fn assert_fixture_panics_all(name: &str, needles: &[&str]) {
     let source = format!("tests/fixtures/{name}.kp");
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture(&source))
         .arg("-o")
@@ -2137,7 +2183,7 @@ fn assert_project_served(
 ) {
     let mut server = CannedServer::start(connections);
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -2181,7 +2227,7 @@ fn assert_project_served_denied(
 ) {
     let mut server = CannedServer::start(connections);
     let bin = out_path(name);
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(target)
         .arg("-o")
@@ -2294,7 +2340,7 @@ fn an_unknown_string_escape_is_rejected_by_name() {
     // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
     // string. It is now a diagnostic that names the supported set.
     let bin = out_path("unknown_escape");
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture("tests/fixtures/unknown_escape.kp"))
         .arg("-o")
@@ -2329,7 +2375,7 @@ fn the_download_example_writes_exactly_what_it_received() {
 
     let mut server = CannedServer::start(vec![vec![response]]);
     let bin = out_path("download_example");
-    let build = Command::new(kelpc_bin())
+    let build = kelpc()
         .arg("build")
         .arg(fixture("../examples/download.kp"))
         .arg("-o")
@@ -2987,7 +3033,7 @@ fn the_cli_reports_its_version() {
     // `env!("CARGO_PKG_VERSION")` here is the same `[package] version` the
     // compiler takes its own string from, so this cannot pass by the two
     // drifting apart.
-    let out = Command::new(kelpc_bin())
+    let out = kelpc()
         .arg("version")
         .output()
         .expect("failed to spawn kelpc");
@@ -3008,7 +3054,7 @@ fn an_unknown_command_prints_the_usage_and_fails() {
     // Including `kelpc` with no arguments at all, which is the case a new user
     // hits first — and the usage line has to name every command that exists.
     for args in [vec![], vec!["bogus"], vec!["build"]] {
-        let out = Command::new(kelpc_bin())
+        let out = kelpc()
             .args(&args)
             .output()
             .expect("failed to spawn kelpc");
@@ -3024,4 +3070,123 @@ fn an_unknown_command_prints_the_usage_and_fails() {
             args.join(" ")
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The backend seam (MK7 stage 1). `plan/mk7-own-backend.md` makes the selector
+// the precondition for every later stage, so it is asserted end-to-end here
+// rather than only in `backend.rs`'s unit tests: what matters is that the flag
+// and the environment variable reach the compiler, not that a parser works.
+// ---------------------------------------------------------------------------
+
+/// The C backend is what every other test in this file is written against, so
+/// it has to be reachable by the flag, by the environment, and by default.
+/// Each case strips the other input, so a case passing because *both* were set
+/// is not possible.
+#[test]
+fn the_c_backend_is_selectable_by_flag_environment_and_default() {
+    let bin = out_path("backend_selectable");
+    for case in ["default", "flag", "environment"] {
+        let mut cmd = Command::new(kelpc_bin());
+        cmd.env_remove("KELPC_BACKEND");
+        cmd.arg("build");
+        match case {
+            "flag" => {
+                cmd.arg("--backend=c");
+            }
+            "environment" => {
+                cmd.env("KELPC_BACKEND", "c");
+            }
+            _ => {}
+        }
+        let out = cmd
+            .arg(fixture("tests/fixtures/while_accumulator.kp"))
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            out.status.success(),
+            "the backend should be selectable by {case}, got:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = Command::new(&bin).output().expect("failed to run the binary");
+        assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
+    }
+}
+
+/// An explicit `--backend` must win, or a one-off override of a run whose
+/// environment already names another backend would be impossible.
+#[test]
+fn an_explicit_backend_flag_wins_over_the_environment() {
+    let out = kelpc()
+        .args(["build", "--backend=c"])
+        .arg(fixture("tests/fixtures/while_accumulator.kp"))
+        .arg("-o")
+        .arg(out_path("backend_flag_wins"))
+        // A value that is not selectable yet: if the environment won, this
+        // build would fail, so success is the assertion.
+        .env("KELPC_BACKEND", "own")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        out.status.success(),
+        "the flag should have won over KELPC_BACKEND=own, got:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A typo and a planned-but-unbuilt backend are different mistakes, and the
+/// messages must not be interchangeable: one is the caller's error, the other
+/// is the roadmap's.
+#[test]
+fn an_unknown_backend_is_rejected_and_a_planned_one_says_so() {
+    let build_with = |value: &str| {
+        kelpc()
+            .args(["build", "--backend", value])
+            .arg(fixture("tests/fixtures/while_accumulator.kp"))
+            .arg("-o")
+            .arg(out_path("backend_rejected"))
+            .output()
+            .expect("failed to spawn kelpc")
+    };
+
+    let unknown = build_with("llvm");
+    assert!(!unknown.status.success(), "an unknown backend must be rejected");
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("unknown backend 'llvm'"), "{stderr}");
+    // The suggestion must not name a backend that cannot be selected. The names
+    // are quoted so that "unknown" cannot satisfy the check by containing
+    // "own".
+    assert!(stderr.contains("expected one of: c"), "{stderr}");
+    assert!(!stderr.contains("'asm'") && !stderr.contains("'own'"), "{stderr}");
+
+    for planned in ["asm", "own"] {
+        let out = build_with(planned);
+        assert!(!out.status.success(), "'{planned}' is not implemented yet");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("backend '{planned}'"))
+                && stderr.contains("planned but not implemented"),
+            "'{planned}' should be reported as planned, got:\n{stderr}"
+        );
+    }
+}
+
+/// An empty value is a mistake, not an instruction to use the default: a
+/// script that computes the backend name and produces an empty string must
+/// fail rather than silently build with the wrong one.
+#[test]
+fn an_empty_backend_value_is_reported_rather_than_defaulted() {
+    let out = kelpc()
+        .args(["build"])
+        .arg(fixture("tests/fixtures/while_accumulator.kp"))
+        .arg("-o")
+        .arg(out_path("backend_empty"))
+        .env("KELPC_BACKEND", "")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(!out.status.success(), "an empty backend must be reported");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("KELPC_BACKEND is set but empty"), "{stderr}");
 }
