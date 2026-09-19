@@ -26,7 +26,7 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **158 of 253** integration tests pass under `--backend=asm`; all 60 fixtures the asm backend builds print byte-identical stdout to the C backend, and the newest slice is the first heap type: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), verified leak- and double-free-clean under `valgrind` on the ten heap fixtures plus a 48-fixture sweep — which is also the memory gate §5's definition of done had been missing, since the AddressSanitizer gate instruments generated C and cannot see this backend at all |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **158 of 253** integration tests pass under `--backend=asm`; all 60 fixtures the asm backend builds print byte-identical stdout to the C backend, and three heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 131 C and 60 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
@@ -80,7 +80,7 @@ fixtures now build (was 37), the refused set is 80 (was 90), and every one of th
 is the first memory gate this backend has had. The String/`View` slice (below) then moved it by ten more at the
 fixture level and eleven at the test level — 58 fixtures build, 71 are refused, the asm suite is 156 of 251; the two bug fixes that followed took both
 counts up by two more, to 60 and 158 —
-with valgrind clean over all 129 C-backend and 58 asm-backend binaries, and with two things worth carrying
+with valgrind clean over all 131 C-backend and 60 asm-backend binaries, and with two things worth carrying
 forward: `View` was the first heap type to use the `AggClass::Two` register pair and needed no new ABI code at
 all, and a latent dispatch bug (`View#to_string` matching the `#to_` numeric-conversion prefix) was found by a
 heap type whose method name happens to contain that spelling.
@@ -845,15 +845,25 @@ with the backend as the only variable.
 > that the claim would have to be argued from Kelp's semantics instead. That is
 > true of ASAN and false of the question: `valgrind --leak-check=full` runs on an
 > asm-generated binary like any other, and it reports the ten heap fixtures clean
-> — no leak, no double free, no invalid access — as it does for all 58 fixtures
+> — no leak, no double free, no invalid access — as it does for all 60 fixtures
 > this backend now builds. The four fixtures whose valgrind output is not empty
 > are the panic fixtures, whose *programs* print `panic: ...` to stderr; valgrind
 > itself says nothing. That is a real gate of the kind the definition of done
-> asks for, and it cost a script rather than a week. It is not yet wired into the
-> suite as a test (valgrind is not a declared dependency of this repository, and
-> §1.5 forbids making the default `cargo test` slower or needier), so today it is
-> a documented manual gate — see `plan/heap-runtime.md` for the layouts it
-> checks and §5's ranking table for the fixture list to run it over.
+> asks for, and it cost a script rather than a week.
+>
+> It is a test now: `kelpc/tests/memory_gate.rs` (commit `0747195`) sweeps every
+> fixture the C backend builds and, where the asm backend accepts it, the asm
+> binary too, parses valgrind's log per pid, and asserts on every pid including
+> fork children — with the program's own `panic: ...` stderr kept structurally
+> separate from valgrind's findings, which is the trap the first hand-run fell
+> into. It is `#[ignore]`d, because §1.5 forbids making the default `cargo test`
+> slower or needier and valgrind is not a declared dependency of this repository;
+> `cargo test --test memory_gate -- --ignored` is the gate, and it skips with a
+> printed note when valgrind is absent. It earned its keep before it was
+> committed: it found a real leak in the *C* backend's `process.spawn_raw` (the
+> forked child's `argv`, never freed on the `execvp` failure path, which ASAN
+> cannot see because `_exit` bypasses LeakSanitizer), fixed in `dbaabc2` and
+> pinned by a deliberate pre-fix rerun. The layouts it checks are §12.
 >
 > **`%` did not work below sixty-four bits, and no fixture had ever noticed.**
 > A division's remainder lands in the *high* half of the dividend — `ah`, `dx`,
@@ -879,7 +889,7 @@ with the backend as the only variable.
 >
 > It was recorded rather than fixed at the time, because the C backend is §1.1's
 > oracle and changing it can move what an existing fixture asserts. The decision
-> then taken was to fix it: `ExprKind::IntLit` now emits a cast to the literal's
+> then taken was to fix it (commit `53ec30d`): `ExprKind::IntLit` now emits a cast to the literal's
 > own type (the same narrowing the declaration path always did, and the same one
 > `codegen_asm.rs` does), so both backends narrow a literal before the operation.
 > **The corpus did not move at all** — 251 fixtures still pass, none of them had
@@ -931,10 +941,11 @@ with the backend as the only variable.
 > or float types, which is the same test `codegen_c.rs` makes. Nothing had hit it
 > before because no earlier heap type had a method spelled that way.
 >
-> **Measured**: the asm suite goes 146 → **156** (the C denominator 249 → 251: one
+> **Measured** (`046cb14`): the asm suite goes 146 → **156** (the C denominator 249 → 251: one
 > test from the `%` fix, one for this slice's new fixture), the fixture-level
 > build set 48 → **58**, the refused set 80 → **71**, and valgrind reports nothing
-> over all 129 C-backend and 58 asm-backend binaries. Ten fixtures moved: nine
+> over all 129 C-backend and 58 asm-backend binaries (131 and 60 once the two
+> bug fixes below landed). Ten fixtures moved: nine
 > that were refused for a `String` type they no longer mention (`string_basic`,
 > `string_build`, `stdlib_str`, `stdlib_path`, `path_parts`, `stdlib_fmt`,
 > `literal_operand_typing`, `float_integral_literal`, `view_released_at_scope_end`)
@@ -1134,9 +1145,10 @@ Definition of done: all 253 integration tests pass under `--backend=asm` with by
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
-memory gate this list has always asked for is a `valgrind --leak-check=full` sweep over the fixtures the asm
-backend builds (the ten heap ones at minimum; all 48 today), run when the heap or drop machinery changes —
-ASAN cannot serve, because it instruments generated C.
+memory gate this list has always asked for is `cargo test --test memory_gate -- --ignored`
+(`kelpc/tests/memory_gate.rs`, `0747195`): a `valgrind --leak-check=full` sweep over every fixture the C backend
+builds and every one the asm backend accepts — 131 and 60 today, zero findings — run when the heap or drop
+machinery changes. ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker
 
@@ -1315,9 +1327,24 @@ runtime" and becomes "the runtime is already libc-free by the time the backend c
 
 ## 9. Two-agent split
 
-> **Status: not started, and no longer blocked.** Stage 0 has landed, which was the one commit both tracks
-> had to touch, so this is now a decision to make rather than a prerequisite to satisfy. Everything in this
-> section is unexecuted detail — treat it as a proposal, not as a record.
+> **Status: the worktree half is still not started; the fan-out half has been used, and it is worth reading
+> before the next one.** Stage 0 landed, so the prerequisite below is gone. What has actually happened since is
+> a series of *short-lived* fan-outs in one shared tree rather than the two long-lived worktrees this section
+> proposes: three children at a time, a fresh context each (`context: "fresh"` — an agent created with `fork`
+> inherits the whole conversation, which is the expensive default to override), and an edit boundary per child,
+> so the single-owner rule holds by construction. The backend still has exactly one writer per round — every
+> remaining Stage 1 item is `codegen_asm.rs`, so the parallelism is one writer plus measurement and
+> specification lanes, not two writers on the backend. Two process errors, recorded because both cost a
+> rejected acceptance verdict rather than a bad commit:
+>
+> 1. **An acceptance criterion may only name what that slice's own scope can reach.** A brief listing six
+>    must-pass fixtures when three of them need `List`/`enum`/`datac` guarantees a rejection, and the agent
+>    that honestly reported *not satisfied* was right while the criterion was wrong.
+> 2. **Commit the parent's work before fanning out, or isolate the lanes.** The checked-writer gate rejects
+>    staged files repo-wide, so a parent that stages its own rename while children run can fail a child's
+>    acceptance for something the child never touched.
+>
+> The rest of this section is still unexecuted detail — a proposal for the long-lived form.
 
 Two agents work on this in parallel, in **separate git worktrees**. Same working tree is not an option: both
 would edit `main.rs`, `Cargo.toml` and `infer.rs` inside the first hour, and Rust's exhaustiveness checks make
