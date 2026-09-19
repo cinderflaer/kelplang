@@ -1,0 +1,107 @@
+// M8: a `Box<T>` that owns an element which itself owns memory. The box is
+// the slot's single owner: `set` on a full box frees the value the slot held,
+// `take` moves the value back out and leaves the box empty, and `get` only
+// borrows — so every buffer below is freed exactly once, which is what the
+// AddressSanitizer pass checks.
+//
+// `box_basic` pins the scalar and `box_recursive` the chain. This fixture
+// pins the ownership paths: an owned `String`/`Bytes` element replaced in
+// place, a `datac` element that is copied into the slot, and a `take`/`set`
+// round trip through a recursive `Box` field.
+datac Node(val value: i32, val next: Box<Node>)
+
+datac Pair(val a: i32, val b: i32)
+
+fun depth(list: Node).R: i32 {
+    if list.next.is_empty() {
+        return 1
+    }
+    return 1 + depth(list.next.get())
+}
+
+fun sum_list(list: Node).R: i32 {
+    if list.next.is_empty() {
+        return list.value
+    }
+    return list.value + sum_list(list.next.get())
+}
+
+fun main() {
+    // `Box<String>`: build with `Box.of`, print through the borrow `get`
+    // returns, replace the value with `set` (the old `String` is freed, not
+    // leaked), then move it out with `take`.
+    var held = Box.of(String.from_str("hello"))
+    print(held.is_empty())
+    print(held.get())
+    held.set(String.from_str("world"))
+    print(held.get())
+    val text = held.take()
+    print(held.is_empty())
+    print(text)
+
+    // The same starting from `Box.empty()`, so `is_empty` is checked on both
+    // sides of `set`.
+    var name: Box<String> = Box.empty()
+    print(name.is_empty())
+    name.set(String.from_str("alpha"))
+    print(name.is_empty())
+    print(name.get())
+    name.set(String.from_str("beta"))
+    print(name.get())
+    val owned = name.take()
+    print(owned)
+    print(name.is_empty())
+
+    // An owned `Bytes` the same way: the second `set` frees the buffer the
+    // slot held rather than the slot.
+    var payload = Box.of(Bytes.from_str("abc"))
+    print(payload.get().len())
+    payload.set(Bytes.from_str("defgh"))
+    print(payload.get().len())
+    print(payload.get())
+    val blob = payload.take()
+    print(payload.is_empty())
+    print(blob)
+    print(blob.get(4))
+
+    // An element that is a `datac` owns nothing of its own, so the value is
+    // copied into the box's slot and `take` hands the value back out.
+    var boxed = Box.of(Pair(a = 4, b = 5))
+    print(boxed.get().a)
+    print(boxed.get().b)
+    val pair = boxed.take()
+    print(pair.a + pair.b)
+    print(boxed.is_empty())
+    boxed.set(pair)
+    print(boxed.get().b)
+
+    // A recursive `datac` through a `Box` field: `Box.empty()` terminates the
+    // chain, `Box.of` prepends, and the drop walks the whole chain.
+    var list = Node(value = 1, next = Box.empty())
+    list = Node(value = 2, next = Box.of(list))
+    list = Node(value = 3, next = Box.of(list))
+    print(depth(list))
+    print(sum_list(list))
+    print(list.next.get().value)
+
+    // A longer chain, so the recursive drop does real work.
+    var i: i32 = 0
+    while i < 100 {
+        list = Node(value = i, next = Box.of(list))
+        i = i + 1
+    }
+    print(depth(list))
+    print(sum_list(list))
+
+    // `take` moves the head node out to a second owner and `set` moves it
+    // back; a double free would show up here, and under AddressSanitizer.
+    var head = list.next.take()
+    print(head.value)
+    print(head.value + head.next.get().value)
+    print(list.next.is_empty())
+    list.next.set(head)
+    print(list.next.is_empty())
+    print(list.next.get().value)
+    print(depth(list))
+    print(sum_list(list))
+}

@@ -1513,6 +1513,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "box_recursive",
         "recursive_datac",
         "box_field_take",
+        "box_owned_elements",
         "map_basic",
         "map_owned",
         "map_datac",
@@ -1838,6 +1839,16 @@ fn an_owned_field_cannot_be_read_by_value() {
 #[test]
 fn an_owned_field_in_a_box_can_be_taken_and_set() {
     assert_compiles_and_runs("tests/fixtures/box_field_take.kp", "1\ntrue\n1\n2\n");
+}
+
+#[test]
+fn box_owned_elements_are_freed_once_when_replaced_or_taken() {
+    // A `set` on a full box frees the `String`/`Bytes` the slot held, and a
+    // `take` moves the value out to a second owner without a second free.
+    assert_compiles_and_runs(
+        "tests/fixtures/box_owned_elements.kp",
+        "false\nhello\nworld\ntrue\nworld\ntrue\nfalse\nalpha\nbeta\nbeta\ntrue\n3\n5\ndefgh\ntrue\ndefgh\n104\n4\n5\n9\ntrue\n5\n3\n6\n2\n103\n4956\n98\n195\ntrue\nfalse\n98\n103\n4956\n",
+    );
 }
 
 #[test]

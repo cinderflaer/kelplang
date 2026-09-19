@@ -64,12 +64,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 132 fixtures the C backend
-/// builds, 63 of them also built by the asm backend, 69 refused — which is the
-/// 161-of-254 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 133 fixtures the C backend
+/// builds, 66 of them also built by the asm backend, 67 refused — which is the
+/// 164-of-255 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// Re-recorded four times so far, and the *reason* each time is worth keeping:
+/// Re-recorded five times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
 /// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
@@ -87,7 +87,10 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// refused only for the `String`-instantiated `Pair` it declares, so a generic
 /// `datac` over owned fields moved with it for free — and
 /// `datac_owned_fields`, the fixture that slice wrote to pin a `datac` holding a
-/// `String`, a `Bytes` and a nested owning `datac` at once.
+/// `String`, a `Bytes` and a nested owning `datac` at once; and the box slice
+/// added `box_recursive` and `box_empty_panic`, the two fixtures the builtin
+/// owning pointer had been keeping out, plus `box_owned_elements`, that slice's
+/// own fixture for replacing and taking an owned element.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -97,6 +100,9 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "borrow_basic",
     "borrow_temp_arg",
     "borrow_temp_slots",
+    "box_empty_panic",
+    "box_owned_elements",
+    "box_recursive",
     "bytes_build",
     "char_literals",
     "consts",
