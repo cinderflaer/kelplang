@@ -19,12 +19,16 @@
 //!   3. **comment survival** — the comments, in order, verbatim;
 //!   4. **still lexes, and a refusal is honest** — `F(x)` lexes; a file the
 //!      formatter declines is reported and left byte-for-byte unchanged. The
-//!      reasons `fmt` declines a file are a closed set, one variant of
-//!      `RefusalKind` each and one entry of `REFUSALS` each in
-//!      `kelpc/src/fmt.rs`, and this paragraph names every one of them (a test
-//!      below checks that it does). What that check proves is that the names
-//!      agree; it does not prove any condition is worded correctly, and nothing
-//!      here constrains prose outside this list.
+//!      names `kelpc/src/fmt.rs` enumerates, one `- **`name`** — …` bullet each
+//!      under its *Reasons a file is refused* heading, are read back out of that
+//!      header by `enumerated_refusal_names`, and
+//!      `the_file_header_names_every_refusal_reason_the_formatter_enumerates`
+//!      checks that this paragraph names each one. That check reads the header's
+//!      bullets, not the `REFUSALS` data, and it proves only that each name
+//!      appears here; it does not prove any condition is worded correctly, that
+//!      a variant is on the `next` chain `all` walks, or that no refusal is
+//!      raised as a raw string, and nothing here constrains prose outside this
+//!      list.
 //!
 //!      Six are paths with no program behind them, and `kelpc build` rejects
 //!      each: `path-names-nothing` and `dangling-symlink` are a path that cannot

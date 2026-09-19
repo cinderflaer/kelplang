@@ -1878,7 +1878,10 @@ nothing), **token-faithful** (no token's text is ever rewritten, so the formatte
 file is the same program), **comment-preserving** (every comment survives
 verbatim), and it **never writes a file it refuses** (a file that does not parse
 is reported, not reformatted). `kelpc/src/fmt.rs` lists, as data, every rule it
-enforces and every reason it refuses a file.
+enforces and the file-refusal reasons it names through `RefusalKind`. The
+command's argument checks — an unknown flag, `-w` with `--check`, `fmt` with no
+mode — and the `no '.kp' files found` case and an unreadable path inside a
+directory walk are printed as raw strings and are not in that data.
 
 ## 20. Grammar summary
 

@@ -24,19 +24,26 @@
 //! *Rules* is the rule list's own statements verbatim, the bullet list under
 //! *Reasons a file is refused* is the refusal list's own conditions verbatim,
 //! and every rule names the `tests/fmt_corpus/<name>.kp` pair whose own first
-//! line names that rule back. Every refusal is a variant of [`RefusalKind`], a
-//! closed enumeration: the code declines a file by naming a variant, and a unit
-//! test compares the enumeration against [`REFUSALS`] — same names, same order,
-//! same count — so a reason the data does not carry fails a test. A rule with no
+//! line names that rule back. The formatter declines a file by naming a variant
+//! of [`RefusalKind`], and a unit test
+//! (`the_refusal_enumeration_and_the_refusal_data_agree`) compares
+//! [`RefusalKind::all`] — the chain `next()` walks from the first variant —
+//! against [`REFUSALS`], same names, same order, same count. A variant `next()`
+//! leaves off that chain is in neither list, and the comparison reads only the
+//! variants it reaches. A rule with no
 //! bullet, a bullet with no rule, a rule with no declared corpus pair, a pair
 //! claimed by two rules, and a corpus pin whose first line names a rule that
 //! does not claim it are all test failures.
 //!
 //! What that does *not* cover, and no test here can close: prose outside the two
 //! enumerated sections is unconstrained, so a paragraph may claim anything the
-//! lists do not contradict; and a rule whose statement is wrong in the same way
-//! as its pinning pair survives, because the tests compare the data to the prose
-//! and to the corpus and never to what the emitter does with a pair.
+//! lists do not contradict; a rule whose statement is wrong in the same way as
+//! its pinning pair survives, because the tests compare the data to the prose
+//! and to the corpus and never to what the emitter does with a pair; and a
+//! refusal raised with a raw message, or a variant `next` leaves off the chain
+//! `all` walks, is covered by no check, because the comparison reads only the
+//! variants on that chain and the command's own argument errors print strings
+//! that name no variant.
 //!
 //! ## Rules this formatter enforces
 //!
@@ -108,14 +115,14 @@
 //!
 //! ## Reasons a file is refused
 //!
-//! [`REFUSALS`] is the complete list of reasons `fmt` declines a file: the
-//! condition that fires, and whether `kelpc build` accepts the same file. The
-//! bullet list below is its conditions verbatim, in its order, and a unit test
-//! compares the two, so a bullet cannot say anything the data does not. Every
-//! reason is a variant of [`RefusalKind`], the closed enumeration the code names
-//! when it declines a file; a unit test checks the enumeration against
-//! [`REFUSALS`] — same names, same order, same count — so a reason the data does
-//! not carry cannot enter the code.
+//! [`REFUSALS`] is the list of reasons `fmt` declines a file by naming a
+//! variant: the condition that fires, and whether `kelpc build` accepts the same
+//! file. The bullet list below is its conditions verbatim, in its order, and a
+//! unit test compares the two, so a bullet cannot say anything the data does not.
+//! The formatter names a variant of [`RefusalKind`] when it declines a file, and
+//! the same unit test checks [`RefusalKind::all`] against [`REFUSALS`] — same
+//! names, same order, same count — over the variants that chain reaches; a
+//! refusal raised outside it, or a variant the chain omits, is not compared.
 //!
 //! Only `lone-carriage-return` declines a file whose *program* `kelpc build`
 //! accepts. The other four that `kelpc build` does not fail on are each a verdict
@@ -390,9 +397,11 @@ struct Refusal {
     raised_by: &'static str,
 }
 
-/// Every reason `fmt` declines a file, one entry per [`RefusalKind`] variant and
-/// in the enumeration's order. A unit test checks the two agree, so a variant the
-/// data does not carry, or an entry for no variant, is a test failure.
+/// The reasons `fmt` declines a file by naming a variant, one entry per
+/// [`RefusalKind`] variant on the `next` chain [`RefusalKind::all`] walks, in the
+/// enumeration's order. A unit test compares [`RefusalKind::all`] against this
+/// list, so a variant on that chain the data omits, or an entry for no chained
+/// variant, is a test failure; a variant off the chain is in neither.
 #[allow(dead_code)]
 const REFUSALS: &[Refusal] = &[
     Refusal {
@@ -469,14 +478,16 @@ const REFUSALS: &[Refusal] = &[
     },
 ];
 
-/// One reason `fmt` declines a file, as a closed enumeration.
+/// One reason `fmt` declines a file, as an enumeration.
 ///
-/// Every refusal the formatter or the command prints names one of these
-/// variants, and [`REFUSALS`] carries one entry per variant, in this order. The
-/// matches below have no wildcard, so adding a reason stops the compiler until
-/// the variant is named; a unit test then checks the enumeration against
-/// [`REFUSALS`], so a reason the data does not carry is a test failure rather
-/// than a claim that silently survives.
+/// The formatter names one of these variants when it declines a file, and
+/// [`REFUSALS`] carries one entry per variant, in this order. The matches below
+/// have no wildcard, so a new variant stops the compiler until `name` and `next`
+/// name it; the unit test `the_refusal_enumeration_and_the_refusal_data_agree`
+/// compares [`RefusalKind::all`] — the chain `next` walks — against [`REFUSALS`],
+/// so an entry `REFUSALS` omits for a variant on that chain, or an entry for no
+/// such variant, is a test failure. A variant `next` leaves off the chain is not
+/// compared, and a refusal the command prints as a raw string names no variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefusalKind {
     NotARegularFile,
@@ -512,8 +523,10 @@ impl RefusalKind {
 
     /// The variant after this one in `REFUSALS` order, or `None` for the last.
     /// The match has no wildcard, so a new variant is a compile error here until
-    /// it is placed in the chain — which is what lets [`RefusalKind::all`] build
-    /// the complete list without a second hand-written copy.
+    /// it is placed in the chain. This match is the chain [`RefusalKind::all`]
+    /// walks, written out by hand: a variant whose `next` returns `None` and
+    /// that no other arm points to is absent from `all` and from the comparison
+    /// against `REFUSALS`.
     #[allow(dead_code)]
     fn next(self) -> Option<RefusalKind> {
         match self {
