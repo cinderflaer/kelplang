@@ -1270,6 +1270,22 @@ fn integer_to_float_conversions_widen_and_round() {
 }
 
 #[test]
+fn printing_a_string_or_a_float_uses_the_right_register_file() {
+    // MK7 §5 item 8: `%s` reads a pointer out of the *integer* register file
+    // and `%f` reads a value out of `xmm`, a variadic call says how many vector
+    // registers it used in `al`, and the two files are numbered independently —
+    // so a template interpolating one of each is where getting that wrong is
+    // silent rather than a crash. The u64 cases are the other half: bit 63 set
+    // is the one integer-to-float conversion `cvtsi2sd` alone gets wrong.
+    assert_compiles_and_runs(
+        "tests/fixtures/asm_float_print.kp",
+        "2.500000\n0.250000\n0.125000\nn=7 half=2.500000 ok=false s=kelp\n2.500000 0.250000\n\
+         18446744073709551616.000000\n9223372036854775808.000000\n9223372036854775808.000000\n\
+         kelp\nw=kelp\n",
+    );
+}
+
+#[test]
 fn an_integral_float_literal_stays_a_float() {
     // A wide literal used to make `cc` reject the file (it was emitted as an
     // integer constant), and `-0.0` used to reach C as the *integer* zero, so
@@ -3259,6 +3275,11 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // catches and a `assert_compiles_and_runs` on its own cannot.
         "borrow_temp_slots",
         "datac_memory_class_by_value",
+        // MK7 §5 item 8's print gaps are the other place a wrong register is
+        // silent: `%f` reads `xmm`, `%s` reads an integer register, and `al`
+        // counts vector registers. A literal that looks right in both backends
+        // is exactly what this test exists to rule out.
+        "asm_float_print",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();

@@ -1,0 +1,46 @@
+// MK7 §5 item 8: printing the values this backend used to refuse — a `str`, an
+// `f32`/`f64` — and the register discipline each one needs.
+//
+// SysV numbers the vector and integer argument registers independently, so a
+// float argument goes in `xmm` while the integers around it keep `rsi`, `rdx`
+// and so on; `al` has to say how many vector registers a variadic call used.
+// The C backend gets all of that from the C compiler, and this fixture is what
+// pins that this backend gets it right rather than merely plausible: every
+// float below is printed directly, interpolated, or both, and the expected
+// bytes were taken from the C backend's own output.
+fun word().R: str = "kelp"
+
+fun main() {
+    val half: f64 = 2.5
+    val quarter: f32 = 0.25
+    val n: i32 = 7
+    val ok: bool = false
+
+    print(half)
+    print(quarter)
+    print(1.0 / 8.0)
+
+    // One interpolation of each kind in a single template: an integer in the
+    // first integer register, the float in `xmm0`, the bool as a `%s` pointer.
+    print("n=$n half=$half ok=$ok s=${word()}")
+
+    // Two floats: `xmm0` and `xmm1`, and `al` must be two rather than zero.
+    print("$half $quarter")
+
+    // An unsigned value with bit 63 set is the one integer-to-float conversion
+    // `cvtsi2sd` alone gets wrong, and both edges of the shift trick matter:
+    // exactly 2^63, one below it, and the maximum. No literal can spell the
+    // last two, so they are built — see `stdlib_build.kp`'s note.
+    val below: u64 = 9223372036854775807
+    val top: u64 = below + 1
+    val biggest: u64 = top * 2 - 1
+    print(biggest.to_f64())
+    print(top.to_f64())
+    print(below.to_f64())
+
+    // A `str` through a parameter, printed and interpolated — the value is a
+    // pointer either way, and the template path must not try to put it in a
+    // float register.
+    print(word())
+    print("w=${word()}")
+}

@@ -292,6 +292,24 @@ fn float_ty(ty: &Ty) -> Option<FWidth> {
     })
 }
 
+/// The full range of an integer type as `(min, max)` — `min` signed so a
+/// signed type can express its own floor, `max` unsigned so `u64`/`usize` can
+/// express theirs. `codegen_c.rs::int_bounds`'s table, repeated here because
+/// the two backends have to agree on exactly which conversions can lose a
+/// value: the C backend emits a conversion as a bare cast when
+/// `s_min >= t_min && s_max <= t_max`, and that has to be a bare move here.
+fn int_bounds(ty: &Ty) -> Option<(i128, u128)> {
+    Some(match ty {
+        Ty::I32 => (i32::MIN as i128, i32::MAX as u128),
+        Ty::I64 | Ty::Isize => (i64::MIN as i128, i64::MAX as u128),
+        Ty::U8 => (0, u8::MAX as u128),
+        Ty::U16 => (0, u16::MAX as u128),
+        Ty::U32 => (0, u32::MAX as u128),
+        Ty::U64 | Ty::Usize => (0, u64::MAX as u128),
+        _ => return None,
+    })
+}
+
 /// A type this slice can lower, as `(width, signed)`.
 ///
 /// `None` is the coverage boundary: every use site turns it into an
@@ -321,7 +339,16 @@ fn int_ty(ty: &Ty) -> Option<(Width, bool)> {
 /// print it. `bool` prints as the text `true`/`false`, which the C backend
 /// spells `%s` over a conditional — so the specifier alone is not enough for it
 /// and `Gen::bool_str` supplies the pointer.
+///
+/// MK7 §5 item 8's remaining gaps are `str` and the floats: the C backend
+/// prints both through one specifier each (`printf_piece_with`), and so does
+/// this — `%f` takes its value in the `xmm` file rather than an integer
+/// register, which is the one thing a call site has to get right beyond the
+/// specifier itself (see `Gen::builtin_print` and `Gen::template`).
 fn printable_ty(ty: &Ty) -> Option<&'static str> {
+    if str_ty(ty) {
+        return Some("%s");
+    }
     Some(match ty {
         Ty::I32 => "%d",
         Ty::I64 | Ty::Isize => "%lld",
@@ -331,8 +358,18 @@ fn printable_ty(ty: &Ty) -> Option<&'static str> {
         Ty::Usize => "%zu",
         Ty::Char => "%c",
         Ty::Bool => "%s",
+        Ty::F32 | Ty::F64 => "%f",
         _ => return None,
     })
+}
+
+/// `str` and `&str` — the same value at the ABI level (`const char*`: a
+/// reference to an already-borrowed view is not a pointer to a pointer, which
+/// is also `types.rs`'s `c_type` rule), so everything that moves, passes,
+/// returns or prints one treats both spellings identically.
+fn str_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Str)
+        || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
 }
 
 /// Every uncovered construct reports through this, so the message shape — and
@@ -617,6 +654,11 @@ fn value_kind(
             }
             _ => None,
         })
+        // MK7 §5 item 8: a `str`/`&str` is a pointer, so it is a value this
+        // module already knows how to move whole (`Width::W8`), read from a
+        // slot, pass as an argument and return — the only thing missing was
+        // saying so. Both spellings, since they are the same C value.
+        .or_else(|| if str_ty(ty) { Some((Width::W8, false)) } else { None })
 }
 
 /// How many consecutive *integer* argument/parameter registers a value of
@@ -644,6 +686,9 @@ fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayou
         };
     }
     if int_ty(ty).is_some() {
+        return Some(1);
+    }
+    if str_ty(ty) {
         return Some(1);
     }
     if let Ty::Ref { inner, .. } = ty {
@@ -796,6 +841,12 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
             continue;
         }
         g.function(f)?;
+    }
+    // MK7 §5 item 8: the panic routine, after every function and before the
+    // data section `finish` writes. One copy per program, and only for a
+    // program that can reach it.
+    if g.needs_panic {
+        g.emit_panic_routine();
     }
     Ok(g.finish())
 }
@@ -1373,6 +1424,11 @@ struct Gen {
     gated: std::collections::HashMap<String, String>,
     /// MK7 §5 item 4: every `datac` `build_layouts` accepted, keyed by name.
     layouts: std::collections::HashMap<String, StructLayout>,
+    /// MK7 §5 item 8: whether anything in this program can panic (`panic`,
+    /// `assert`, or a narrowing conversion), which is what decides whether the
+    /// hand-written `kelp_panic` routine is emitted at all — see
+    /// `Gen::emit_panic_routine`.
+    needs_panic: bool,
 }
 
 impl Gen {
@@ -1453,6 +1509,11 @@ impl Gen {
                 AggClass::Mem => RetClass::AggMem,
             }
         } else if int_ty(&f.ret).is_some() {
+            RetClass::Scalar
+        } else if str_ty(&f.ret) {
+            // MK7 §5 item 8: a returned `str` is a pointer in `rax`, which is
+            // the same place a scalar returns — `Scalar` is about the
+            // transport, not about the type being an integer.
             RetClass::Scalar
         } else {
             return Err(unsupported(&format!(
@@ -1846,6 +1907,16 @@ impl Gen {
                 let _ = writeln!(self.out, "    mov eax, {}", u8::from(*b));
                 Ok(())
             }
+            // MK7 §5 item 8: a `str` is a pointer to NUL-terminated bytes, and
+            // the literal's own bytes are already interned as one — the same
+            // `.byte` run `Gen::bytes_label` gives a format string, so a
+            // literal still never goes through a C string escape a second
+            // time.
+            ExprKind::StringLit(s) => {
+                let label = self.bytes_label(s.as_bytes());
+                let _ = writeln!(self.out, "    lea rax, [rip+{label}]");
+                Ok(())
+            }
             ExprKind::CharLit(cp) => {
                 let _ = writeln!(self.out, "    mov eax, {cp}");
                 Ok(())
@@ -2040,6 +2111,13 @@ impl Gen {
             ExprKind::EnumField { .. } => Err(unsupported("an enum payload read")),
             ExprKind::Try { .. } => Err(unsupported("the `?` operator")),
             ExprKind::Ref { expr, .. } => {
+                // MK7 §5 item 8: a `&str` is the pointer itself — there is
+                // nothing to take the address of, and `codegen_c.rs` makes the
+                // same exception (it passes a `str` view through rather than
+                // hoisting it the way it hoists a borrowed temporary).
+                if str_ty(&expr.ty) {
+                    return self.expr(expr, frame);
+                }
                 // MK7 §5 item 4, first slice: a borrow of a named `datac`
                 // local, which is what most of this item's gaps actually need
                 // — a `datac`-typed call argument that is not marked `move`
@@ -2591,16 +2669,44 @@ impl Gen {
         }
         // `n.to_u8()` and friends arrive as `<src>#to_<dst>` and are emitted
         // inline by the C backend as a cast plus a range check that panics.
-        // Refusing here rather than falling through is deliberate: the symbol
-        // does not exist, so letting it reach the linker would report a missing
-        // `kelp_i32#to_u8` as a link error, which is a much worse diagnostic
-        // than naming the feature.
+        // MK7 §5 item 8 emits the same shape here — see `Gen::conversion` —
+        // including the panic message, which is the callee's own dotted name.
         if callee.contains("#to_") {
-            return Err(unsupported(&format!(
-                "the numeric conversion `{}` (it needs the panic path, which is part of the \
-                 runtime this slice does not have)",
-                callee.replace('#', ".")
-            )));
+            let [arg] = args else {
+                return Err(unsupported(&format!(
+                    "the numeric conversion `{}`",
+                    callee.replace('#', ".")
+                )));
+            };
+            return self.conversion(callee, arg, frame);
+        }
+        // `panic` and `assert` are builtins (`infer.rs`'s `BUILTINS`), not
+        // functions, and the C backend lowers them to its own runtime routines
+        // `kelp_panic`/`kelp_assert`. This backend owns the one routine they
+        // both need — see `Gen::emit_panic_routine` — and inlines `assert`'s
+        // single branch, which is all the runtime's one-line body does.
+        if callee == "panic" {
+            let [arg] = args else {
+                return Err(unsupported("a panic that is not given exactly one value"));
+            };
+            self.expr(arg, frame)?;
+            self.out.push_str("    mov rdi, rax\n");
+            self.call_panic();
+            return Ok(());
+        }
+        if callee == "assert" {
+            let [cond] = args else {
+                return Err(unsupported("an assert that is not given exactly one value"));
+            };
+            self.expr(cond, frame)?;
+            let ok = self.label("assert");
+            self.out.push_str("    test rax, rax\n");
+            let _ = writeln!(self.out, "    jne {ok}");
+            let msg = self.bytes_label(b"assertion failed");
+            let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+            self.call_panic();
+            let _ = writeln!(self.out, "{ok}:");
+            return Ok(());
         }
         // A call into the compiler's runtime module (`std/rt`, MK7 §8). Its
         // definitions are skipped above, so this cannot be left to the linker:
@@ -2848,6 +2954,153 @@ impl Gen {
         Ok(())
     }
 
+    /// MK7 §5 item 8: a numeric conversion, which `infer.rs` hands over as the
+    /// synthetic callee `<src>#to_<dst>` (the same dotted name the C backend
+    /// splits on). The C backend emits one inline as a cast — plus a range
+    /// check that panics, whenever the source's range is not contained in the
+    /// target's — so the two backends agree on which conversions can lose a
+    /// value and on the message a losing one dies with.
+    fn conversion(&mut self, callee: &str, arg: &Expr, frame: &mut Frame) -> Result<(), String> {
+        let display = callee.replace('#', ".");
+        let bad = || unsupported(&format!("the numeric conversion `{display}`"));
+        let (src, dst) = callee
+            .split_once("#to_")
+            .expect("the caller matched `#to_` before calling this");
+        let from = Ty::from_name(src).ok_or_else(bad)?;
+        // A float target has no integer bounds, which is exactly how the C
+        // backend decides there is nothing to check: `int_bounds(to)` is
+        // `None`, so every integer-to-float conversion is a bare cast.
+        if let Some(to_f) = Ty::from_name(dst).and_then(|t| float_ty(&t)) {
+            let (from_w, from_signed) = int_ty(&from).ok_or_else(bad)?;
+            self.expr(arg, frame)?;
+            let mnem = if to_f == FWidth::F4 { "cvtsi2ss" } else { "cvtsi2sd" };
+            if from_signed || from_w != Width::W8 {
+                // Signed (at any width) or unsigned but narrower than 64 bits:
+                // `rax` holds the value non-negative and fully extended — that
+                // is the stack machine's own invariant — so the signed form is
+                // the exact one.
+                let _ = writeln!(self.out, "    {mnem} xmm0, rax");
+            } else {
+                // An unsigned 64-bit source can have bit 63 set, which
+                // `cvtsi2sd` would read as a negative number. The sequence is
+                // the classic `(x >> 1) | (x & 1)`, then a doubling — what
+                // clang emits for `(double)(uint64_t)x` — and it is exact
+                // because `x >> 1` loses one bit that is restored in the low
+                // position before the conversion.
+                let big = self.label("u64tof");
+                let done = self.label("u64tof");
+                self.out.push_str("    test rax, rax\n");
+                let _ = writeln!(self.out, "    js {big}");
+                let _ = writeln!(self.out, "    {mnem} xmm0, rax");
+                let _ = writeln!(self.out, "    jmp {done}");
+                let _ = writeln!(self.out, "{big}:");
+                self.out.push_str(
+                    "    mov rcx, rax\n    shr rcx, 1\n    and eax, 1\n    or rcx, rax\n",
+                );
+                let _ = writeln!(self.out, "    {mnem} xmm0, rcx");
+                let double = if to_f == FWidth::F4 { "addss" } else { "addsd" };
+                let _ = writeln!(self.out, "    {double} xmm0, xmm0");
+                let _ = writeln!(self.out, "{done}:");
+            }
+            return Ok(());
+        }
+        let from_signed = int_ty(&from).ok_or_else(bad)?.1;
+        let to = Ty::from_name(dst).ok_or_else(bad)?;
+        let (to_w, to_signed) = int_ty(&to).ok_or_else(bad)?;
+        self.expr(arg, frame)?;
+        // `codegen_c.rs::numeric_conversion` falls back to a bare cast whenever
+        // either side has no integer bounds. Today only the eight integer types
+        // have a conversion at all (`infer.rs`'s `INT_TYPES`), so both are
+        // always `Some` here — but a `char`/`bool` conversion added later should
+        // come through as that same plain `(T)x` rather than as a compiler
+        // panic, which is what an `expect` would have made it.
+        if let (Some((s_min, s_max)), Some((t_min, t_max))) =
+            (int_bounds(&from), int_bounds(&to))
+        {
+            if !(s_min >= t_min && s_max <= t_max) {
+                // A value the target cannot represent panics rather than being
+                // truncated. Every comparison is made at 64 bits, which is sound
+                // because `rax` already holds the source value sign- or
+                // zero-extended at its own width, and the *signedness of the
+                // source* is what decides the comparison family: the `l`/`g` pair
+                // for a signed source, `a`/`b` for an unsigned one (`u64` -> `u32`
+                // with a huge value must not read as a negative number). Bounds go
+                // through `r11` because an immediate like `u32::MAX` does not fit a
+                // 32-bit encoding without being sign-extended, which would compare
+                // against `-1`. `r11` is this module's `addr_of_struct` scratch and
+                // is never live across an expression, which is exactly the position
+                // this sequence is emitted in.
+                let fails = self.label("conv");
+                let ok = self.label("conv");
+                if from_signed {
+                    if t_min == 0 {
+                        self.out.push_str("    test rax, rax\n");
+                        let _ = writeln!(self.out, "    js {fails}");
+                    } else if t_min > s_min {
+                        let _ = writeln!(self.out, "    mov r11, {t_min}");
+                        self.out.push_str("    cmp rax, r11\n");
+                        let _ = writeln!(self.out, "    jl {fails}");
+                    }
+                    if t_max < s_max {
+                        let _ = writeln!(self.out, "    mov r11, {t_max}");
+                        self.out.push_str("    cmp rax, r11\n");
+                        let _ = writeln!(self.out, "    jg {fails}");
+                    }
+                } else if t_max < s_max {
+                    let _ = writeln!(self.out, "    mov r11, {t_max}");
+                    self.out.push_str("    cmp rax, r11\n");
+                    let _ = writeln!(self.out, "    ja {fails}");
+                }
+                let _ = writeln!(self.out, "    jmp {ok}");
+                let _ = writeln!(self.out, "{fails}:");
+                let msg = self.bytes_label(format!("{display}: value out of range").as_bytes());
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+                let _ = writeln!(self.out, "{ok}:");
+            }
+        }
+        // The target's own invariant, always — not just after a check. A
+        // same-width signedness change (`i32` -> `u32`) is a re-interpretation
+        // that genuinely changes the 64-bit extension, and a narrower target
+        // needs truncating to its width first, which is what `extend` does
+        // (and what the C cast does when the result is read back).
+        self.out.push_str(&to_w.extend(to_signed));
+        Ok(())
+    }
+
+    /// A call to the hand-written `kelp_panic` routine, whose only argument is
+    /// already in `rdi`. Never returns, so nothing after it needs `rax`.
+    fn call_panic(&mut self) {
+        self.needs_panic = true;
+        self.out.push_str("    call kelp_panic\n");
+    }
+
+    /// The one piece of runtime this backend owns so far: the C backend's
+    /// `_Noreturn static void kelp_panic(const char* msg)`, written out as
+    /// instructions rather than C text. Its *observable* behaviour is what the
+    /// fixtures assert on, so it has to match exactly — `panic: <msg>` on
+    /// stderr, then `exit(1)` — and `stderr` is reached through its GOT entry
+    /// because a dynamically linked program has no fixed address for a libc
+    /// data symbol. `and rsp, -16` is not optional: this is called from
+    /// mid-expression, where the stack machine's spills may have left `rsp`
+    /// eight bytes off, and `fprintf` is entitled to assume the SysV alignment.
+    /// Emitted only for a program that can panic at all, so this costs a
+    /// program that cannot panic nothing.
+    fn emit_panic_routine(&mut self) {
+        let fmt = self.bytes_label(b"panic: %s\n");
+        self.out.push_str("    .type kelp_panic, @function\nkelp_panic:\n");
+        self.out.push_str("    push rbp\n    mov rbp, rsp\n    and rsp, -16\n");
+        // `rdi` holds the message; `fprintf(FILE*, fmt, msg)` wants it in `rdx`.
+        self.out.push_str("    mov rdx, rdi\n");
+        let _ = writeln!(self.out, "    lea rsi, [rip+{fmt}]");
+        self.out.push_str("    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n");
+        self.out.push_str("    mov rdi, QWORD PTR [rdi]\n");
+        self.out.push_str("    xor eax, eax\n");
+        self.out.push_str("    call fprintf@PLT\n");
+        self.out.push_str("    mov edi, 1\n    call exit@PLT\n");
+        self.out.push_str("    .size kelp_panic, .-kelp_panic\n");
+    }
+
     /// Turns the 0/1 in `reg` into a pointer to `"true"` or `"false"`.
     ///
     /// The order matters: `test` sets the flags from the *value*, and the `lea`
@@ -2867,6 +3120,12 @@ impl Gen {
 
     /// `print(v)` / `print!(v)`: one `printf` with one specifier, matching the
     /// C backend's shape so a fixture's bytes are identical across backends.
+    ///
+    /// MK7 §5 item 8: a float argument travels in `xmm0` rather than `rsi`, and
+    /// a variadic call has to say how many *vector* registers it used in `al`
+    /// — zero for everything else, one here. `f32` is promoted to `double`,
+    /// which is the `(double)` cast the C backend writes into the argument, and
+    /// what `%f` reads.
     fn builtin_print(
         &mut self,
         newline: bool,
@@ -2883,15 +3142,25 @@ impl Gen {
             fmt.push(b'\n');
         }
         self.expr(arg, frame)?;
-        // The value is moved straight into the argument register: there is
-        // nothing else to evaluate afterwards, so the stack is not needed.
-        self.out.push_str("    mov rsi, rax\n");
-        if arg.ty == Ty::Bool {
-            self.bool_str("rsi");
-        }
+        // A float is already where `printf` reads it (`xmm0`), promoted to
+        // `double`, and counts as one vector register; everything else moves
+        // from `rax` to `rsi`, with `bool` turned into a `%s` pointer on the
+        // way.
+        let vector_args = if let Some(width) = float_ty(&arg.ty) {
+            if width == FWidth::F4 {
+                self.out.push_str("    cvtss2sd xmm0, xmm0\n");
+            }
+            1
+        } else {
+            self.out.push_str("    mov rsi, rax\n");
+            if arg.ty == Ty::Bool {
+                self.bool_str("rsi");
+            }
+            0
+        };
         let label = self.bytes_label(&fmt);
         let _ = writeln!(self.out, "    lea rdi, [rip+{label}]");
-        self.out.push_str("    xor eax, eax\n");
+        let _ = writeln!(self.out, "    mov eax, {vector_args}");
         call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
         call_align_end(&mut self.out, frame.sp_slot);
@@ -2936,28 +3205,61 @@ impl Gen {
         if newline {
             fmt.push(b'\n');
         }
+        // MK7 §5 item 8: the vector and integer argument files are numbered
+        // independently, so each interpolation's destination depends only on
+        // how many *of its own class* came before it — the same split a call's
+        // argument marshalling makes. `al` is set to the number of vector
+        // registers used, which is what a variadic call requires.
         let value_regs = ["rsi", "rdx", "rcx", "r8", "r9"];
-        if values.len() > value_regs.len() {
-            return Err(unsupported("a print with more than five interpolations"));
+        let mut dests: Vec<usize> = Vec::with_capacity(values.len());
+        let mut int_slot = 0usize;
+        let mut float_slot = 0usize;
+        for value in &values {
+            if float_ty(&value.ty).is_some() {
+                dests.push(float_slot);
+                float_slot += 1;
+            } else {
+                dests.push(int_slot);
+                int_slot += 1;
+            }
+        }
+        if int_slot > value_regs.len() {
+            return Err(unsupported("a print with more than five non-float interpolations"));
+        }
+        if float_slot > FARG.len() {
+            return Err(unsupported("a print with more than eight float interpolations"));
         }
 
         for value in &values {
             self.expr(value, frame)?;
+            // A float's bits are what travels on the stack: `xmm0` is the
+            // stack machine's working register and a later interpolation's
+            // evaluation is free to overwrite it. Promoting `f32` to `double`
+            // *before* the push is what lets the pop be one `movq`.
+            if let Some(width) = float_ty(&value.ty) {
+                if width == FWidth::F4 {
+                    self.out.push_str("    cvtss2sd xmm0, xmm0\n");
+                }
+                self.out.push_str("    movq rax, xmm0\n");
+            }
             self.out.push_str("    push rax\n");
         }
         let fmt_label = self.bytes_label(&fmt);
-        for i in (0..values.len()).rev() {
-            let _ = writeln!(self.out, "    pop {}", value_regs[i]);
+        for (i, dest) in dests.iter().enumerate().rev() {
+            if float_ty(&values[i].ty).is_some() {
+                self.out.push_str("    pop rax\n");
+                let _ = writeln!(self.out, "    movq {}, rax", FARG[*dest]);
+                continue;
+            }
+            let _ = writeln!(self.out, "    pop {}", value_regs[*dest]);
             // A `bool` interpolated into a template needs its pointer built
             // after the pop, in the register it landed in.
             if values[i].ty == Ty::Bool {
-                self.bool_str(value_regs[i]);
+                self.bool_str(value_regs[*dest]);
             }
         }
         let _ = writeln!(self.out, "    lea rdi, [rip+{fmt_label}]");
-        // `%al` holds the number of vector registers used, which is zero:
-        // nothing here passes a float.
-        self.out.push_str("    xor eax, eax\n");
+        let _ = writeln!(self.out, "    mov eax, {float_slot}");
         call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
         call_align_end(&mut self.out, frame.sp_slot);
