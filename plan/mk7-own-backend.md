@@ -29,7 +29,7 @@ projected.*
 | **1. x86-64, assembly text, `as`+`ld`** | **in progress — first slice landed** | `codegen_asm.rs`, 977 lines; **100 of 235** integration tests pass under `--backend=asm`; commit `1cd4d42` |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
-| **8. Runtime decoupling (parallel)** | not started | it is the top item of §5's ranking; see below |
+| **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is next |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
 The one number that matters most: **100 of 235 tests pass on the asm backend, and the C backend passes all
@@ -41,7 +41,9 @@ source (§1.1).
 builds, and detailed in §5):
 
 1. **The runtime** — 36 fixtures are blocked by `extern fun std.mem.alloc_raw` alone. This is the §8 track
-   arriving on schedule: the biggest single unlock is not the code generator.
+   arriving on schedule: the biggest single unlock is not the code generator. Its first two pieces — the
+   capability matcher and the path normalizer — landed in `1071ead` and unblock no fixture by themselves;
+   the allocator is the one that does, and it is the next item in §8's order.
 2. **Aggregates** — `datac`/`enum` by value, 24 fixtures, and the ABI work the risk register calls the place
    silent miscompiles live.
 3. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
@@ -322,8 +324,47 @@ nothing or is not needed; `bench/speed/` checksums match and the runtime is no w
 
 ## 8. Parallel track: runtime decoupling
 
-> **Status: not started.** It is the top row of §5's ranking (36 fixtures blocked by `std.mem.alloc_raw`), so
-> it is the next thing to start, and it needs no new tooling.
+> **Status: in progress.** The first two pieces §8 puts first — the capability
+> matcher and the path normalizer — are Kelp as of `1071ead`, with the C kept as
+> the reference each one is differentially tested against. The allocator is next,
+> and it is also the top row of §5's ranking above (36 fixtures blocked by
+> `std.mem.alloc_raw`).
+>
+> What landed: `kelpc/std/rt.kp`, a shipped module the resolver injects for any
+> program that imports a gated module or `std/path` — the same conditions that
+> make generated C call into it. `glob_match`, `host_glob`, `host_match` and
+> `path_normalize` are there; the C that remains in `kelpc/runtime/cap_glue.c` is
+> the deny path, the allowlist loops, the buffered plumbing, and
+> `kelp_resolve_path` (symlink resolution, which moves with the filesystem half of
+> the runtime). The reference implementations are files — `cap_matcher_ref.c`,
+> `path_normalize_ref.c` — and are no longer emitted into programs; only
+> `tests/cap_matcher.rs` and `tests/path_normalize.rs` compile them, which is what
+> a `const &str` in `codegen_c.rs` could not have allowed.
+>
+> Two interfaces were decided here, and both are worth re-reading before the
+> allocator moves. The matcher is `&str` in, `bool` out, so the C glue needed only
+> generated prototypes for the Kelp symbols. The normalizer writes through a
+> `mut Bytes` the *caller* owns and uses `out.len()` as its capacity, so it
+> allocates nothing and keeps the C rule (`o + len >= cap`) exactly — the buffers
+> are declared one byte past `PATH_MAX` because `Bytes` keeps its NUL in the slot
+> at `len`, and the two C callers construct that borrowed view and deliberately
+> never drop it.
+>
+> The corpora are the proof, not the fixtures: ~5000 matcher cases and ~250
+> normalizer paths, the latter compared byte by byte in the buffer as well as by
+> verdict. Both were mutation-tested — dropping the port vocabulary from
+> `host_match`, removing the `PATH_MAX` bound, accepting a leading `..`, loosening
+> the capacity rule — and each mutation is caught with the exact case named.
+>
+> The asm backend skips emitting the runtime module and refuses calls into it by
+> name; its pass count and refusal ranking are unchanged by this, because it
+> refuses every gated call rather than emitting one unchecked.
+>
+> Remaining in §8's order: **the allocator** (next, and the biggest single
+> unlock), then the formatter with float last, then DNS. Each lands the same way —
+> Kelp first, the C kept as the reference, a corpus that compares them — and the
+> pieces that stay C longest by design are the ones that are I/O (`kelp_cap_deny`,
+> `printf`), because §7 owns that boundary.
 
 The important structural observation of this plan: **most of Tier 3 is backend-independent.** The allocator,
 the formatter, the error table, the path normalizer, the capability matcher and the DNS resolver are the same
