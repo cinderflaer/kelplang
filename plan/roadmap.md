@@ -245,6 +245,11 @@ Deliverable: an answer, plus `poll`. What works without new language features **
 
 ### MK7 (far future) own backend: compile Kelp to machine code, not to C
 
+*Execution plan: `mk7-own-backend.md`. The Mark below says why and what it costs; that file owns the stage
+order, the two-agent split, the gates and the risk register. A branch `mk7/own-backend` exists for it. Two
+numbers in the text below are stale and corrected there: the integration suite is 230 tests, not 118, and the
+stdlib declares 90 `extern fun`s, not ~20.*
+
 Stated as a goal in its own right: *Kelp should stop being C with a mask*. Nothing about the language's identity lives in the backend the differentiators are the capability system and the move/borrow model so this is not about making Kelp faster. It is about Kelp not depending on a C compiler to exist, and about fixing the one thing that is actually bad today: **compile time is ~95% somebody else's fixed overhead.**
 
 #### Why (measured 2026-09-18 on this machine, best-of-5, using the C that `kelpc build` already keeps next to the binary):
