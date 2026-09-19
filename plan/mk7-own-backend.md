@@ -26,7 +26,7 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, five slices of aggregates, `datac`s that own a heap field, `Box<T>`, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **164 of 255** integration tests pass under `--backend=asm`; all 66 fixtures the asm backend builds print byte-identical stdout to the C backend, and three heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 133 C and 66 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, six slices of item 4's aggregates (the last two being `datac`s that own a heap field and `Box<T>`), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **164 of 255** integration tests pass under `--backend=asm`; all 66 fixtures the asm backend builds print byte-identical stdout to the C backend, and four heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 133 C and 66 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
@@ -107,7 +107,9 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 - **Stage 0** (backend boundary): done.
 - **Stage 1** (x86-64 assembly): 3 of its original 8 build-order items (§5) are done outright — scalars,
-  `f32`/`f64`, the register allocator — plus a 4th (aggregates) with its first four slices landed, the first
+  `f32`/`f64`, the register allocator — plus a 4th (aggregates) with six of its slices landed (a `datac` by
+  value, a nested `datac`, the wider SysV classes, a `MEMORY`-class argument and a borrowed temporary, an owned
+  heap field, and `Box<T>`), the first
   half of item 8 (`print`/`print!` of `str` and the floats), passdowns (§5's ninth item, added after the fact:
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
   `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
@@ -147,16 +149,18 @@ builds, and detailed in §5):
    answer and the same one the plan's earlier correction reached from the other direction: the allocator does
    not unblock these on its own, because a program that allocates a `Bytes` also has to be able to lower one.
    See §8's note for why the allocator itself is still blocked, and §5's table for what the 25 are.
-2. **Aggregates, the rest of them** — the four slices of item 4 have landed eleven fixtures (six from the
+2. **Aggregates, the rest of them** — the six slices of item 4 have landed seventeen fixtures (six from the
    first slice, one from the second — a `datac` nested by value inside another qualifying `datac` — two new
-   fixtures the third slice added and unblocked itself, and two more the fourth did). The rest are refused
+   fixtures the third slice added and unblocked itself, two more the fourth did, three the heap-field slice
+   moved, and three the box slice did). The rest are refused
    either for `enum` (16 of them when this row was first written; **9** after the extern slice removed the mask
-   that was hiding the heap row in front of it — tagged unions, not attempted at all) or for a `datac` holding
-   a float or `List`/`Map`/`Box` field anywhere in its fields — refused regardless of size, since the third
+   that was hiding the heap row in front of it — **18** now, see §5's table — tagged unions, not attempted at
+   all) or for a `datac` holding
+   a float, `List` or `Map` field anywhere in its fields — refused regardless of size, since the third
    slice's eightbyte/`MEMORY` classification covers *size*, not a float-classified eightbyte or a container
    pointer's field. **A `datac` holding an owned `String`/`Bytes` field is no longer in this row**: the
    heap-field slice (below) covers it, and the three fixtures it moved had been refused for the field's type
-   rather than for the aggregate machinery. The two gaps the third slice named as its own deliberate
+   rather than for the aggregate machinery; **nor is `Box<T>`**, which the box slice covers the same way. The two gaps the third slice named as its own deliberate
    narrowings — a `Mem`-class `datac` passed or received *by value*, and a borrow of a temporary — are both
    closed; see the fourth slice's blockquote. The
    ABI work the risk register calls the place silent miscompiles live is now complete for every shape this
@@ -301,7 +305,9 @@ with the backend as the only variable.
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
 > **Status: first slice landed, then f32/f64, then a register allocator (item
-> 3), then four slices of item 4's aggregates, then the first half of item 8,
+> 3), then six slices of item 4's aggregates (a `datac` by value, nesting, the
+> wider SysV classes, a `MEMORY`-class argument, owned heap fields, `Box<T>`),
+> then the first half of item 8,
 > then passdowns, then the extern path (the ninth and tenth items — both added
 > after the fact, because each was a blanket refusal at the top of `generate`
 > that kept the feature out of codegen entirely).**
@@ -1128,8 +1134,8 @@ with the backend as the only variable.
 > unchecked: that is the one place an unimplemented feature would be a
 > security hole rather than a wrong number.
 >
-> **Where the next 95 failures rank**, re-measured after the String/`View` slice, and
-> now reproducible instead of hand-run: `kelpc/tests/backend_coverage.rs` sweeps
+> **Where the remaining refusals rank**, re-measured after the box slice, and
+> reproducible instead of hand-run: `kelpc/tests/backend_coverage.rs` sweeps
 > every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
 > a ratchet on the set the asm backend builds, and prints this exact table under
 > `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
@@ -1181,14 +1187,17 @@ with the backend as the only variable.
 > coupling of the two was wrong in the same direction the plan's ranking has been
 > wrong before: it credited a slice with the fixtures its successor reaches.
 >
-> What is left in that row is therefore the containers — `List`, `Map`, `Box` —
+> What is left in that row is therefore the containers — `List` and `Map`, since
+> `Box` landed with the box slice (below) —
 > plus **an `enum` that holds a heap type**, which is the other half of the
 > `enum` row too, since `Result<i64, String>` and `Option<String>` are enums whose
 > payloads own.
 >
-> Behind that, in the order the refusals rank themselves: `List`/`Map`/`Box`
-> themselves (their layouts are in the annex; `Box` is one pointer and should be
-> the cheap one); the `str` parsers and `from_f64_raw` as routines, which now
+> Behind that, in the order the refusals rank themselves: `List`/`Map`
+> themselves (their layouts are in the annex; they are the first per-instantiation
+> routine set over an element that can itself own, and `List<String>` is now the
+> first refusal of `str_to_string_coercion`, `stdlib_list`, `list_owned` and
+> `move_param` alike); the `str` parsers and `from_f64_raw` as routines, which now
 > need only a `mut` scalar borrow out-parameter to be expressible at all
 > (`stdlib_build`, `stdlib_parse`); `enum`'s 17 fixtures; and the two things
 > `bench/speed` needs before §3's gate can be measured at all — the `std/time`
@@ -1333,7 +1342,7 @@ Definition of done: all 255 integration tests pass under `--backend=asm` with by
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
 memory gate this list has always asked for is `cargo test --test memory_gate -- --ignored`
 (`kelpc/tests/memory_gate.rs`, `0747195`): a `valgrind --leak-check=full` sweep over every fixture the C backend
-builds and every one the asm backend accepts — 131 and 60 today, zero findings — run when the heap or drop
+builds and every one the asm backend accepts — 133 and 66 today, zero findings — run when the heap or drop
 machinery changes. ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker
