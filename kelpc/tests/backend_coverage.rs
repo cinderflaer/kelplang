@@ -64,15 +64,19 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 163 fixtures the C backend
-/// builds, 132 of them also built by the asm backend, 31 refused — which is the
-/// 226-of-283 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 170 fixtures the C backend
+/// builds, 146 of them also built by the asm backend, 24 refused — which is the
+/// 241-of-290 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
 /// (This paragraph said 153/106/47 while the list beneath it had grown to 129
 /// entries, which the plan's §5 blockquotes had already recorded as 160/129/31;
 /// corrected here, at 163/132/31, in the commit that added `heap_narrow_fields`,
-/// `list_narrow_element_pop` and `try_narrow_payload`.)
+/// `list_narrow_element_pop` and `try_narrow_payload`. It then said 163/132/31
+/// while the list had grown to 146 entries and the real measurement was
+/// 170/146/24 — the float-aggregate slice and the temporary-drop slice each
+/// added fixtures — corrected here, in the commit that recorded
+/// `heap_field_of_temporary`.)
 ///
 /// Re-recorded eight times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
@@ -206,6 +210,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "heap_bytes",
     "heap_drops_in_control_flow",
     "heap_drops_in_desugared_blocks",
+    "heap_field_of_temporary",
     "heap_move_then_rebind",
     "heap_narrow_fields",
     "heap_param_borrow",
@@ -271,6 +276,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "recursive_datac",
     "scalar_borrow",
     "scalar_borrow_f64",
+    "std_str_order",
     "stdlib_build",
     "stdlib_fmt",
     "stdlib_list",
@@ -281,7 +287,6 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "stdlib_path",
     "stdlib_str",
     "str_to_string_coercion",
-    "std_str_order",
     "string_basic",
     "string_build",
     "string_field",

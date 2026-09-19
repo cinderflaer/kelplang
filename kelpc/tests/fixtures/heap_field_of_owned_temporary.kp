@@ -1,0 +1,59 @@
+// MK7 §5: the *owned*-field half of `heap_field_of_temporary.kp`, and the
+// shape the previous slice recorded rather than fixed. `mkName()` returns a
+// `datac` that owns two `String`s, and every read below borrows one field of
+// the temporary — so the whole temporary owns memory that nothing else can
+// free, and freeing only the field that was read would leak the other one.
+// The fix stages the temporary itself and drops *it*, which is why a
+// two-owned-field `datac` is the interesting case and not a one-field one.
+//
+// This fixture is asm-backend-only, and reports itself so under the C backend:
+// the same shape is invalid C there. `codegen_c.rs::field_access` emits
+// `(&(kelp_mkName()).kelp_r)` — the address of a field of an rvalue — and
+// `cc` rejects it (`heap_field_of_owned_temporary.kp`'s own probe in the
+// slice's blockquote). So this is the one fixture in the corpus the C backend
+// rejects and the asm backend builds, which is also why `memory_gate.rs` had
+// to grow a check for exactly that case: without it, the leak this fixture
+// exists to pin would have no valgrind gate at all.
+datac Named(val r: String, val name: String)
+
+enum Token {
+    Word(val text: String)
+    Blank
+}
+
+fun mkName().R: Named = Named(r = String.from_str("aa"), name = String.from_str("bb"))
+
+fun pass(n: move Named).R: Named = n
+
+fun take(s: String) {
+    print(s)
+}
+
+fun main() {
+    // One field of a call temporary, in `print` position: the temporary is
+    // dropped, so *both* `String`s are freed (`aa` and `bb`, six bytes).
+    print(mkName().r)
+    // The other field, as a call argument rather than a `print`.
+    take(mkName().name)
+    // A method receiver on an owned field of a temporary.
+    print(mkName().name.len())
+    // A `move` parameter in between: the temporary is already owned by the
+    // time its field is read.
+    print(pass(mkName()).r)
+    // An owned payload of a temporary `enum` scrutinee, bound as a borrow.
+    if let Word(t) = Token.Word(text = String.from_str("four")) {
+        print(t.len())
+    } else {
+        print(0)
+    }
+    // A condition that reads through an owned temporary: dropped on every
+    // pass of the loop, not once after it.
+    var i = 0
+    while mkName().r.len() > 0 {
+        i += 1
+        if i > 2 {
+            i = 0
+        }
+    }
+    print(i)
+}

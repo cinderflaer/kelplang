@@ -3441,6 +3441,18 @@ struct Gen {
     /// `(function, span)`, so the drop lookups need it. Set at the top of
     /// `Gen::function` and reset for each one.
     function: String,
+    /// Owned temporaries this backend staged into a `Frame::scratch` slot
+    /// because a borrow was taken of the temporary itself or of a field of it
+    /// (`addr_of_struct` staging a call result so a field of it can be read,
+    /// and the `Ref` arm staging a whole one). Nothing else owns such a
+    /// temporary, so the slot has to be freed once the expression that reads
+    /// through it is done — which this backend cannot express as a statement
+    /// expression the way `codegen_c.rs` does, so the site is recorded here and
+    /// flushed at the end of the enclosing statement/block instead. A `Ref`
+    /// to a *place* — a named local or a field of one — stages nothing and so
+    /// records nothing, which is what keeps a borrow that owns nothing from
+    /// being freed twice.
+    borrowed_temporaries: Vec<(i32, DropSite)>,
     /// MK7 §5's heap-field slice: the `datac`s whose generated drop function
     /// this program calls, transitively. A `datac` that owns a `String` field
     /// needs one; so does a `datac` holding *that* `datac` by value, which is
@@ -3938,6 +3950,7 @@ impl Gen {
         // leaves in a register is parked while the drops run — the same
         // ordering `write_temp_then_drops` gives a written `return`.
         let drops = self.drops.at_block_end(&self.function, &f.body).to_vec();
+        let base = self.borrowed_temporaries.len();
         if let Some(tail) = &f.body.tail {
             // MK7 §5 item 4, third slice: a tail expression is a `return`,
             // which `infer.rs` treats the same as `return <tail>` — so a
@@ -3957,7 +3970,7 @@ impl Gen {
                 }
                 _ => {
                     self.expr(tail, frame)?;
-                    if drops.is_empty() {
+                    if drops.is_empty() && self.borrowed_temporaries.len() == base {
                         None
                     } else {
                         Some(self.park(float_ty(&tail.ty), frame))
@@ -3967,6 +3980,10 @@ impl Gen {
             for t in &drops {
                 self.emit_drop(t, frame)?;
             }
+            // A tail that reads through an owned temporary frees it here, the
+            // same place the C backend's statement expression would — after
+            // the value is parked, so the drop cannot reach it.
+            self.flush_borrowed_temporaries(frame, base)?;
             if let Some(p) = parked {
                 self.unpark(p);
             }
@@ -3979,6 +3996,7 @@ impl Gen {
         for t in &drops {
             self.emit_drop(t, frame)?;
         }
+        self.flush_borrowed_temporaries(frame, base)?;
         Ok(())
     }
 
@@ -4049,6 +4067,44 @@ impl Gen {
             None => return Err(unsupported(&format!("a drop of the name `{}`", target.name))),
         };
         self.emit_drop_slot(&site, off, frame)
+    }
+
+    /// Records that the owned temporary staged at `slot` has to be freed once
+    /// the statement that borrowed it is done — see `Gen::borrowed_temporaries`.
+    /// Nothing owns it but the borrow, so it is a leak if it is not freed, and
+    /// exactly one drop site per staging keeps it from being freed twice.
+    ///
+    /// A type that owns nothing records nothing (there is no free to run), and
+    /// a type that owns but has no drop site is *refused by name* rather than
+    /// skipped — the same distinction `emit_datac_drop` draws for an owning
+    /// field, and for the same reason: a silently skipped free prints the same
+    /// bytes, so the differential suite cannot see it.
+    fn register_borrowed_temporary(&mut self, ty: &Ty, slot: i32) -> Result<(), String> {
+        if !ty_owns(ty, &self.layouts) {
+            return Ok(());
+        }
+        let site = self.drop_site_for(ty).ok_or_else(|| {
+            unsupported(&format!(
+                "a borrow of the owned temporary `{}` (this backend has no drop routine for it)",
+                ty.display()
+            ))
+        })?;
+        self.borrowed_temporaries.push((slot, site));
+        Ok(())
+    }
+
+    /// Emits the drops recorded since index `from` (LIFO, so a later staging is
+    /// freed before an earlier one it may read through) and pops them. `from`
+    /// is how a branch keeps its own stagings separate from one the enclosing
+    /// condition recorded: a `block`/`block_into` flushes only what was added
+    /// inside it, so an `if`/`while` condition's temporary survives to the
+    /// statement's own flush instead of being freed on one arm's path alone.
+    fn flush_borrowed_temporaries(&mut self, frame: &mut Frame, from: usize) -> Result<(), String> {
+        while self.borrowed_temporaries.len() > from {
+            let (slot, site) = self.borrowed_temporaries.pop().expect("checked above");
+            self.emit_drop_slot(&site, slot, frame)?;
+        }
+        Ok(())
     }
 
     /// The drop call for `ty`, if a value of `ty` owns anything: a fixed
@@ -6389,7 +6445,20 @@ impl Gen {
         Ok(Some((slot, site)))
     }
 
+    /// One statement, with the owned temporaries a borrow inside it staged
+    /// (`Gen::register_borrowed_temporary`) flushed at its end — the point the
+    /// C backend's statement expression ends, which is the last moment the
+    /// borrow is still valid. `base` is the marker `flush_borrowed_temporaries`
+    /// counts from, so a nesting statement neither frees a temporary its
+    /// enclosing statement staged before it nor one a branch staged on a path
+    /// this statement did not take.
     fn stmt(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
+        let base = self.borrowed_temporaries.len();
+        self.stmt_inner(stmt, frame)?;
+        self.flush_borrowed_temporaries(frame, base)
+    }
+
+    fn stmt_inner(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
         match stmt {
             Stmt::Let { name, ty, init } => {
                 // MK7 §5 item 4, third slice: a `Two`/`Mem`-class `datac`
@@ -6454,7 +6523,21 @@ impl Gen {
                 let top = self.label("while");
                 let end = self.label("wend");
                 let _ = writeln!(self.out, "{top}:");
+                let base = self.borrowed_temporaries.len();
                 self.expr(cond, frame)?;
+                // A condition that reads through an owned temporary stages one
+                // on every pass, so its drop is emitted inside the loop rather
+                // than after it. `rax` holds the condition, which a drop call
+                // would clobber, so it is parked across the flush.
+                let parked = if self.borrowed_temporaries.len() > base {
+                    Some(self.park(None, frame))
+                } else {
+                    None
+                };
+                self.flush_borrowed_temporaries(frame, base)?;
+                if let Some(p) = parked {
+                    self.unpark(p);
+                }
                 self.out.push_str("    test rax, rax\n");
                 let _ = writeln!(self.out, "    je {end}");
                 self.block(body, frame)?;
@@ -6469,6 +6552,7 @@ impl Gen {
                 // this path — the shape `codegen_c.rs` writes as
                 // `tmp = value; drops; return tmp;`.
                 let drops = self.drops.at_return(&self.function, *span).to_vec();
+                let base = self.borrowed_temporaries.len();
                 let parked = match value {
                     Some(v) => match frame.ret_class {
                         RetClass::Agg(class) if !class.is_mem() => {
@@ -6483,7 +6567,10 @@ impl Gen {
                         }
                         _ => {
                             self.expr(v, frame)?;
-                            if drops.is_empty() {
+                            // The value is parked across the drops *and* across
+                            // the borrowed-temporary flush below, either of
+                            // which is a call that clobbers `rax`/`xmm0`.
+                            if drops.is_empty() && self.borrowed_temporaries.len() == base {
                                 None
                             } else {
                                 Some(self.park(float_ty(&v.ty), frame))
@@ -6498,6 +6585,7 @@ impl Gen {
                 for t in &drops {
                     self.emit_drop(t, frame)?;
                 }
+                self.flush_borrowed_temporaries(frame, base)?;
                 if let Some(p) = parked {
                     self.unpark(p);
                 }
@@ -6518,6 +6606,13 @@ impl Gen {
     /// the C backend's `write_temp_then_drops` evaluates into a temporary
     /// first.
     fn block(&mut self, block: &Block, frame: &mut Frame) -> Result<(), String> {
+        // A block is a branch body as often as it is a statement, so its
+        // borrowed-temporary flush is scoped: it frees only what was staged
+        // *inside* the block, never one an `if`/`while` condition staged before
+        // the block was entered. The condition's own staging is flushed by
+        // whoever owns the whole statement, which is the point both arms
+        // share.
+        let base = self.borrowed_temporaries.len();
         frame.push_scope();
         for stmt in &block.stmts {
             self.stmt(stmt, frame)?;
@@ -6527,11 +6622,12 @@ impl Gen {
             self.expr(tail, frame)?;
         }
         let drops = self.drops.at_block_end(&self.function, block).to_vec();
-        if !drops.is_empty() {
+        if !drops.is_empty() || self.borrowed_temporaries.len() > base {
             let parked = tail_ty.as_ref().map(|ty| self.park(float_ty(ty), frame));
             for t in &drops {
                 self.emit_drop(t, frame)?;
             }
+            self.flush_borrowed_temporaries(frame, base)?;
             if let Some(p) = parked {
                 self.unpark(p);
             }
@@ -6549,6 +6645,7 @@ impl Gen {
     /// leaves in caller-owned memory does not, which is the whole reason this is
     /// a second function rather than a flag on the first.
     fn block_into(&mut self, block: &Block, frame: &mut Frame, dest: Dest) -> Result<(), String> {
+        let base = self.borrowed_temporaries.len();
         frame.push_scope();
         for stmt in &block.stmts {
             self.stmt(stmt, frame)?;
@@ -6560,6 +6657,9 @@ impl Gen {
         for t in &drops {
             self.emit_drop(t, frame)?;
         }
+        // The value lives in caller-owned memory (`dest`), so the drops and
+        // the flush below cannot reach it and need no park.
+        self.flush_borrowed_temporaries(frame, base)?;
         frame.pop_scope();
         Ok(())
     }
@@ -7038,6 +7138,10 @@ impl Gen {
                 if let Some(layout) = struct_layout(&expr.ty, &self.layouts) {
                     let slot = frame.scratch(align_up(layout.size, 8));
                     self.eval_struct_into(expr, frame, Dest::Direct(slot))?;
+                    // Owned and nothing else owns it: freed at the end of the
+                    // statement/block that took the borrow, like the
+                    // field-of-a-temporary staging in `addr_of_struct`.
+                    self.register_borrowed_temporary(&expr.ty, slot)?;
                     let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
                     return Ok(());
                 }
@@ -8107,6 +8211,14 @@ impl Gen {
             // reused because it is the same problem. The layout comes from the
             // tail of this function either way, since a by-value base's own
             // type *is* the struct type.
+            //
+            // The temporary is a *borrowed* one — a field read is the only
+            // reason this staging exists — so nothing else owns it and its
+            // slot has to be freed once the statement that read through it is
+            // done (`register_borrowed_temporary`, flushed at the statement/
+            // block boundary). This is the shape `print(mkName().r)` leaked:
+            // the `Named` a call returned was staged so `.r` had an address,
+            // and its `String` was never freed.
             _ => {
                 if let Ty::Ref { inner, .. } = &base.ty {
                     if struct_layout(inner, &self.layouts).is_none() {
@@ -8117,6 +8229,7 @@ impl Gen {
                 } else if let Some(size) = struct_layout(&base.ty, &self.layouts).map(|l| l.size) {
                     let slot = frame.scratch(align_up(size, 8));
                     self.eval_struct_into(base, frame, Dest::Direct(slot))?;
+                    self.register_borrowed_temporary(&base.ty, slot)?;
                     let _ = writeln!(self.out, "    lea r11, [rbp{slot}]");
                 } else {
                     return Err(unsupported(

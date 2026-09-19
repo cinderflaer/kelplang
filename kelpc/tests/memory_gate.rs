@@ -418,6 +418,11 @@ struct Sweep {
     c_checked: Vec<Check>,
     /// Fixtures both backends build, each run under valgrind.
     asm_checked: Vec<Check>,
+    /// How many of `asm_checked` belong to a fixture the C backend itself
+    /// rejects. Without them a leak in a shape only the asm backend accepts
+    /// would have no gate at all — `heap_field_of_owned_temporary` is that
+    /// shape: the C backend emits `&(rvalue).field`, which `cc` refuses.
+    asm_only: usize,
     /// Fixtures the C backend builds and the asm backend refuses, sorted.
     asm_refused: Vec<String>,
     /// Fixtures the C backend itself rejects: there is no binary to check.
@@ -436,6 +441,7 @@ fn run_sweep() -> Sweep {
 
     let mut c_checked = Vec::new();
     let mut asm_checked = Vec::new();
+    let mut asm_only = 0;
     let mut asm_refused = Vec::new();
     let mut c_rejected = 0;
 
@@ -443,9 +449,16 @@ fn run_sweep() -> Sweep {
         let c_bin = dir.join(format!("c_{name}"));
         if !build("c", name, &c_bin) {
             // The C backend is the oracle and the compile-error fixtures are
-            // rejected by design; a fixture it does not build is not the asm
-            // backend's to check either, and there is no binary to run.
+            // rejected by design, so there is no C binary to run — but the asm
+            // backend may still build one, and a binary no sweep runs is a leak
+            // nothing would catch. `heap_field_of_owned_temporary` is exactly
+            // that shape, so build and check it instead of skipping it.
             c_rejected += 1;
+            let asm_bin = dir.join(format!("asm_{name}"));
+            if build("asm", name, &asm_bin) {
+                asm_checked.push(run_under_valgrind("asm", name, &asm_bin, &dir));
+                asm_only += 1;
+            }
             continue;
         }
         c_checked.push(run_under_valgrind("c", name, &c_bin, &dir));
@@ -461,6 +474,7 @@ fn run_sweep() -> Sweep {
     Sweep {
         c_checked,
         asm_checked,
+        asm_only,
         asm_refused,
         c_rejected,
         fixtures: names.len(),
@@ -505,8 +519,10 @@ fn print_summary(sweep: &Sweep, version: &str) {
             "asm",
             &sweep.asm_checked,
             &format!(
-                ", {} fixture(s) refused by the asm backend (skipped)",
-                sweep.asm_refused.len()
+                ", {} fixture(s) refused by the asm backend (skipped), \
+                 {} of the checked ones from a fixture the C backend itself rejects",
+                sweep.asm_refused.len(),
+                sweep.asm_only,
             ),
         )
     );
@@ -554,8 +570,9 @@ fn print_summary(sweep: &Sweep, version: &str) {
     );
 }
 
-/// The gate itself: every fixture the C backend builds, and every one the asm
-/// backend also builds, run under valgrind. A leak, a double free, an invalid
+/// The gate itself: every fixture the C backend builds, every one the asm
+/// backend also builds, and any fixture only the asm backend builds, each run
+/// under valgrind. A leak, a double free, an invalid
 /// read or an invalid write in either backend — in the process valgrind was
 /// launched on or in a child it forked — fails this test, and the failure
 /// quotes valgrind's own lines for it.
