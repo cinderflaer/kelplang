@@ -1383,3 +1383,44 @@ recorded here so a future pass at this gap starts from a known-working call shap
 non-`Copy` payload so the fix is not only correct for scalars, and reading the scrutinee again after the
 chain ends to prove it is still owned by the caller. It is in the AddressSanitizer list (the non-`Copy`
 payload is a `String`). The suite is **88 unit tests and 242 end-to-end tests**, all green.
+
+## The formatter, the 2024 edition, and the own backend's `Map` slice
+
+Three things shipped in one session. Two are not MK7 work and are recorded here; the third is recorded in
+detail in `mk7-own-backend.md` §0 and §5.
+
+**`kelpc fmt`** (roadmap open item 13) is the enforcement story the style rules never had. It is a
+*token-level* formatter: `lexer.rs` gained an additive trivia mode (`TokenKind::Comment`, a `keep_comments`
+flag, `tokenize_with_trivia`) so comments exist as tokens at all, and the formatter copies each token's own
+source slice and rewrites only the whitespace between tokens. That is why comments, literal spelling and
+template text survive by construction rather than by re-encoding — an AST round-trip cannot hold a comment,
+and `StringLit`/`CharLit`/`FloatLit` store decoded values. `kelpc fmt FILE` writes to stdout, `-w` rewrites in
+place, `--check` exits nonzero for CI. Two properties are structural rather than claimed: a space is
+suppressed between two tokens only when the concatenation provably re-lexes to those same tokens (without
+that, `& & x` silently became `&&x`, and the parse gate cannot catch it because `& & x` parses and only fails
+later in borrow checking), and the emitted text is re-lexed and compared against the input's significant
+token sequence before anything is printed or written. It refuses rather than guesses: a syntax error, a file
+whose aliases cannot be resolved, a non-regular node, and a lone carriage return used as a line terminator
+all report with nothing written, and a symlink named on the command line is written *through* while one found
+inside a directory is not followed. 27 corpus pairs pin the rules. Three limits are recorded in
+`kelpc/src/fmt.rs` instead of being claimed away: prose outside the enumerated rule list is unchecked, a rule
+statement wrong in the same way as the pair that pins it survives, and a raw-string or off-chain refusal
+reason is covered by no check.
+
+**The 2024 edition.** `gen` is a reserved keyword there, and the C code generator's own local was called that
+in 22 places, so it is now `g` — the name `codegen_asm.rs` already used. Nothing else bit, and that was
+measured rather than assumed: no dependencies, no `unsafe`, no `no_mangle`/`export_name`/`link_section`, no
+`static mut`, no `extern "C"`, and 272 `if let`/`while let` sites compile unchanged, which the scope-narrowing
+change to that position would have broken as a borrow error. The workspace resolver moves to 3 to match. The
+check that matters is that generated C did not move: the `asm` backend's differential result is unchanged.
+
+**The `Map` slice** is MK7 section 5's item 4 and the last container. Headline: the ABI needed nothing —
+`$Map` is a 56-byte `MEMORY`-class aggregate like `Bytes`, so the fifth heap type slotted into the aggregate
+work unchanged, and the one thing that finally depended on a type parameter is an *entry*'s own offsets,
+because the key is stored inline at `align_up(size_of(K), 8)`. Fixture-level coverage is 97 built of 145 with
+48 refused, and every map fixture's heap allocation profile is identical between the two backends (32
+allocations and 7008 bytes for the growth fixture), which pins the rehash count rather than just the printed
+numbers.
+
+**Suite at this record**: 107 unit, 266 end-to-end, 52 formatter, 2 capability-matcher, 1 path-normalizer and
+1 memory gate. `mk7-own-backend.md` §0 is current as of this date.

@@ -93,6 +93,7 @@ can be acquired.
 cargo build --release -p kelpc
 ./target/release/kelpc run examples/hello.kp
 ./target/release/kelpc build examples/download.kp      # artifact in build/download
+./target/release/kelpc fmt -w examples/hello.kp       # format in place (also: --check)
 ```
 
 With no `-o`, the binary and the generated C (or assembly) land in `build/`
@@ -110,6 +111,16 @@ The C backend is the reference: every fixture is built by both and the two
 binaries' stdout is compared, so a construct the `asm` backend does not lower
 yet is refused by name rather than silently miscompiled.
 
+`kelpc fmt` formats `.kp` source to the style rules in `plan/syntax.md` §19:
+`kelpc fmt FILE` writes to stdout, `-w` rewrites in place, and `--check` exits
+nonzero when a file is not already formatted, which is what a CI job wants. It is
+idempotent, token-faithful and comment-preserving — a formatted file lexes to the
+same tokens and keeps every comment verbatim — and it refuses rather than guesses:
+a syntax error, a file whose aliases cannot be resolved, a non-regular file, or a
+lone carriage return used as a line terminator is reported with nothing written. A
+symlink named on the command line is written *through*, and one found inside a
+directory is not followed.
+
 ## Repository layout
 
 | path | what is there |
@@ -117,14 +128,15 @@ yet is refused by name rather than silently miscompiled.
 | `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_c`, `codegen_asm`, `driver` |
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
 | `kelpc/runtime/` | the reviewed C that is still C: the capability glue `codegen_c.rs` emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
-| `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, and `run-all-backends.sh` |
+| `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and `run-all-backends.sh` |
 | `examples/` | `hello.kp`, `fib.kp`, `download.kp` |
 | `bench/speed/` | four workloads written in four languages, with checksums |
 | `plan/` | the design, syntax, plan and milestone documents (see Documentation) |
 
 ## Requirements
 
-- Rust (2021 edition) to build the compiler.
+- Rust, 2024 edition (rustc 1.85 or newer), to build the compiler. There are no
+  third-party dependencies.
 - The `c` backend: a C compiler and glibc.
 - The `asm` backend: `as` and `ld` (binutils) and the glibc it links against. If
   the library directory is not found automatically, set `KELPC_GLIBC_DIR` to the
@@ -135,6 +147,7 @@ yet is refused by name rather than silently miscompiled.
 
 ```sh
 cargo test                                   # unit tests + the fixture suite
+cargo test --test fmt                        # the formatter's corpus and properties
 KELPC_BACKEND=asm cargo test --test compile_and_run
 BACKENDS="c asm" ./kelpc/tests/run-all-backends.sh
 ```
@@ -171,4 +184,5 @@ the compiler; these two are the tooling around it.
 | `plan/roadmap.md` | the plan: the marks, the open items, and the backlog in its last part |
 | `plan/done.md` | the milestone record of what has shipped |
 | `plan/mk7-own-backend.md` | the working plan for the compiler's own backend |
+| `plan/mk7-next-slice.md` | the measured brief for the next own-backend slice, with the fixture list each candidate could reach |
 | `bench/speed/README.md` | what the benchmark measures and how |
