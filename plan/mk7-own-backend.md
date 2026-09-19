@@ -26,16 +26,18 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, then f32/f64, landed** | `codegen_asm.rs`; **101 of 240** integration tests pass under `--backend=asm`; f32/f64 arithmetic (item 2) is the newest slice |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, then a register allocator, landed** | `codegen_asm.rs`; **102 of 241** integration tests pass under `--backend=asm`; a linear-scan register allocator for integer locals (item 3) is the newest slice |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **101 of 240 tests pass on the asm backend, and the C backend passes all
-240.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **102 of 241 tests pass on the asm backend, and the C backend passes all
+241.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
-source (§1.1).
+source (§1.1). The register allocator (item 3, below) moved this by exactly one: it is a performance change,
+not a coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
+allocator's own loop-safety correction, not a previously-uncovered language feature.
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
@@ -173,12 +175,12 @@ with the backend as the only variable.
 
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
-> **Status: first slice landed, item 2 (f32/f64) now with it.** `kelpc build
-> --backend=asm` emits x86-64 assembly itself and finishes with `as` and `ld`,
-> with no C compiler in the chain. Measured: **101 of 240 end-to-end tests
-> pass**, and the C backend passes all 240 — so the differential gate is live
-> (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number can
-> only rise from here.
+> **Status: first slice landed, then f32/f64, then a register allocator (item
+> 3).** `kelpc build --backend=asm` emits x86-64 assembly itself and finishes
+> with `as` and `ld`, with no C compiler in the chain. Measured: **102 of 241
+> end-to-end tests pass**, and the C backend passes all 241 — so the
+> differential gate is live (`the_two_backends_agree_on_the_scalar_fixtures`)
+> and the coverage number can only rise from here.
 >
 > Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 > comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
@@ -191,17 +193,70 @@ with the backend as the only variable.
 > separate gap from item 2's ABI/arithmetic scope, and still in the long-tail
 > row below.
 >
-> Three deliberate first-slice choices, each a thing later work replaces:
-> a **stack machine** rather than a register allocator (item 3 below), **assembly
-> text** rather than machine code (tier 2), and **refusal over silence** — every
-> uncovered construct is reported by name, so the suite measures coverage instead
-> of hiding miscompiles. Capability-gated calls are refused rather than emitted
-> unchecked: that is the one place an unimplemented feature would be a security
-> hole rather than a wrong number. Item 2 kept the stack-machine discipline
-> rather than pre-empting item 3: `xmm0`/`xmm1` play the role `rax`/`rcx` play
-> for integers, spilling the left operand across the right's evaluation the
-> same way, so a real register allocator still replaces both paths at once
-> rather than the float path needing a second rewrite.
+> **Item 3, the register allocator, is done for integer/`bool`/`char` locals
+> (2026-09-19).** A linear-scan pass (`allocate_registers` in
+> `codegen_asm.rs`) runs once per function, before a single instruction of its
+> body is emitted, over five callee-saved registers (`rbx`, `r12`-`r15`): a
+> local whose live range fits gets pinned to one of them for the whole
+> function instead of a frame slot, turning every read and write of it into a
+> register-to-register `mov` with no memory traffic, and — because the
+> registers are callee-saved — no reloading across a call either. `tir.rs` has
+> no CFG or SSA form, so this is not general liveness analysis: it assigns
+> every statement and expression a strictly increasing position in one
+> preorder walk and takes each local's naive interval as
+> `[first touch, last touch]` in that numbering, which is already correct for
+> anything whose scope does not cross a loop (the loop's positions sit inside
+> the interval by construction). The one place that is not automatically
+> correct is a local touched *inside* a `while` and needed again next
+> iteration — its last textual touch can sit early in the loop body, and a
+> naive interval would let the register be handed to something else for the
+> rest of the body. `LiveAnalysis` corrects for exactly this: any local
+> declared **outside** a loop whose interval already overlaps the loop's
+> `[condition, body]` span is widened to cover the span in full, applied
+> smallest-span-first (innermost first, for a properly nested AST) so a
+> widened inner interval can trigger an enclosing loop's own widening in the
+> same pass. A local declared *inside* the loop is exempt — codegen visits its
+> `Let` once regardless of how many times the loop runs at runtime, so it gets
+> one physical location reused every iteration either way. Nothing not
+> confident about this gets a register: an allocation gap is a performance bug,
+> an unsafe one would be a correctness bug, so the scan falls back to a spill
+> (the same stack slot every local used before this item) whenever the pool of
+> five is exhausted. `tests/fixtures/nested_while_registers.kp` pins the
+> loop-widening correction directly (an accumulator live across an outer loop,
+> read and written inside an inner one nested in it).
+>
+> Everything else about item 3's scope stays deliberately narrow: `f32`/`f64`
+> locals are excluded entirely (xmm live-range allocation is separate work,
+> not attempted here — they keep item 2's memory-backed, `xmm0`-only
+> discipline), and expression evaluation itself is untouched — `rax`/`rcx` and
+> `xmm0`/`xmm1` still spill the left operand across the right's evaluation
+> exactly as before. Measured on a memory-traffic-bound accumulator loop
+> (`total`/`i` both register-allocated, no division), this item is an 18%
+> wall-clock improvement (1990ms → 1630ms over 2×10⁹ iterations) with zero
+> fixture regressions; on an idiv-bound workload (`collatz`-shaped, division
+> latency dominating each step) the improvement is unmeasurable, which is
+> division latency hiding a real effect rather than the allocator doing
+> nothing — the generated assembly confirms all five pool registers hold
+> live locals with zero spills in both cases. One correctness bug the
+> allocator's own regression pass caught before either benchmark ran: the
+> call-site `rsp` save (`SP_SLOT`) was a fixed `[rbp-8]`, which used to be
+> safe because nothing else lived there — once a function's used pool
+> registers are pushed *between* `mov rbp, rsp` and the frame slots, they land
+> at exactly `[rbp-8]`, `[rbp-16]`, and so on, so the fixed save aliased the
+> first pushed register and a call inside a function using one silently
+> overwrote a live callee-saved register's saved value with a stack pointer
+> (caught by `fib_computes_correctly`, a segfault, because `fib`'s parameter
+> lives in a pushed register across its own recursive calls). The slot is now
+> computed per function as `-8 * (pushed registers + 1)`, below every pushed
+> register, and threaded through `Frame` instead of being a global constant.
+>
+> Three deliberate first-slice choices remain from the original slice, each a
+> thing later work still replaces: **assembly text** rather than machine code
+> (tier 2), and **refusal over silence** — every uncovered construct is
+> reported by name, so the suite measures coverage instead of hiding
+> miscompiles. Capability-gated calls are refused rather than emitted
+> unchecked: that is the one place an unimplemented feature would be a
+> security hole rather than a wrong number.
 >
 > **Where the next 139 failures rank**, measured by aggregating what the backend
 > refuses across the fixtures the C backend builds:

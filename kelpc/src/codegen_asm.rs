@@ -103,6 +103,50 @@ const FARG: [&str; 8] = [
     "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
 ];
 
+/// The register pool a real allocator (MK7 §5 item 3) hands *integer* locals
+/// out of, at each of the four widths a local might need. All five are
+/// callee-saved, which is the whole point: a local that lives in one of these
+/// across a call does not need reloading afterward, unlike `rax`/`rcx`/`rdx`
+/// or the argument registers, all of which the stack machine and the call
+/// sequence already own. `rsp`/`rbp` are never candidates.
+const CALLEE_SAVED: [[&str; 4]; 5] = [
+    ["bl", "bx", "ebx", "rbx"],
+    ["r12b", "r12w", "r12d", "r12"],
+    ["r13b", "r13w", "r13d", "r13"],
+    ["r14b", "r14w", "r14d", "r14"],
+    ["r15b", "r15w", "r15d", "r15"],
+];
+/// The 64-bit spelling of each pool register, in the same order, for the
+/// push/pop pair a function's prologue/epilogue needs around whichever of
+/// them it actually uses.
+const CALLEE_SAVED64: [&str; 5] = ["rbx", "r12", "r13", "r14", "r15"];
+
+/// Where one local variable lives for the whole of its function: a fixed
+/// callee-saved register, or (as every local got before this item) a frame
+/// slot. A local in `Reg` is read and written as a plain register-to-register
+/// `mov`; the width-normalized-to-64-bits invariant `Width::extend` already
+/// keeps for `rax` between operations applies to a pool register the same
+/// way, so no extension is needed at a read — only at the one place a value
+/// enters the register file narrower than 64 bits: a parameter arriving in an
+/// `ARG` register.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Loc {
+    Reg(usize),
+    Stack(i32),
+}
+
+impl Loc {
+    /// `None` for a register — the float path is the only caller, and floats
+    /// are never register-allocated by this item (see `allocate_registers`),
+    /// so a `Reg` here would be this module's own bug, not a user program.
+    fn stack_offset(self) -> Option<i32> {
+        match self {
+            Loc::Stack(o) => Some(o),
+            Loc::Reg(_) => None,
+        }
+    }
+}
+
 impl Width {
     fn idx(self) -> usize {
         match self {
@@ -140,15 +184,24 @@ impl Width {
     /// register. Doing this after each operation, rather than at each use, is
     /// what lets everything else treat a value as a plain 64-bit number.
     fn extend(self, signed: bool) -> String {
+        self.extend_named(signed, RAX)
+    }
+
+    /// `extend`, generalized to any register's four-width name table — the
+    /// one other site this is needed is a register-allocated parameter's
+    /// prologue load, which extends within its assigned pool register
+    /// instead of `rax`.
+    fn extend_named(self, signed: bool, names: [&'static str; 4]) -> String {
+        let r64 = names[3];
         match (self, signed) {
-            (Width::W1, true) => "    movsx rax, al\n".to_string(),
-            (Width::W1, false) => "    movzx rax, al\n".to_string(),
-            (Width::W2, true) => "    movsx rax, ax\n".to_string(),
-            (Width::W2, false) => "    movzx rax, ax\n".to_string(),
-            (Width::W4, true) => "    movsxd rax, eax\n".to_string(),
+            (Width::W1, true) => format!("    movsx {r64}, {}\n", names[0]),
+            (Width::W1, false) => format!("    movzx {r64}, {}\n", names[0]),
+            (Width::W2, true) => format!("    movsx {r64}, {}\n", names[1]),
+            (Width::W2, false) => format!("    movzx {r64}, {}\n", names[1]),
+            (Width::W4, true) => format!("    movsxd {r64}, {}\n", names[2]),
             // A 32-bit `mov` zeroes the upper half by architectural
             // definition, so an unsigned 32-bit value already is extended.
-            (Width::W4, false) => "    mov eax, eax\n".to_string(),
+            (Width::W4, false) => format!("    mov {}, {}\n", names[2], names[2]),
             (Width::W8, _) => String::new(),
         }
     }
@@ -331,36 +384,129 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     Ok(g.finish())
 }
 
-/// One function's frame: each local gets a slot, and its offset is fixed when
-/// the declaration is reached — a `Let` initializer cannot name the binding
-/// being made, so no offset is ever needed before it is assigned, and the body
-/// can be generated before the frame size is known.
-struct Frame {
-    /// Bytes reserved below `rbp`, grown one slot per declaration. Starts at
-    /// `SP_SAVE_SIZE`, because the first slot is not a local: it belongs to the
-    /// call-site stack-pointer save (see `SP_SLOT`).
-    used: i32,
-    /// Innermost last, so a shadowed name is restored when its block ends.
-    scopes: Vec<Vec<(String, i32, Ty)>>,
+/// MK7 §5 item 3: a linear-scan register allocator over each function's
+/// locals, run once before that function's body is generated.
+///
+/// The stack machine `Gen::expr` runs stays exactly as it was — `rax`/`rcx`
+/// and `xmm0`/`xmm1` are still where an expression's intermediate values
+/// live, spilled to the real stack across a right operand's evaluation
+/// exactly as before. What this item changes is *where a named local lives
+/// between statements*: today every one of them is a frame slot, reloaded
+/// from memory at every read and stored to memory at every write. A local
+/// whose live range fits is now instead pinned to one of five callee-saved
+/// registers (`rbx`, `r12`-`r15`) for the whole function, and a read or write
+/// becomes a register-to-register `mov` — no memory traffic, and (because
+/// they are callee-saved) no reloading across a call either.
+///
+/// `tir.rs` has no CFG or SSA form — it is the structured AST `infer.rs`
+/// produced, with `if`/`while` as nested `Block`s — so this does not attempt
+/// general liveness analysis over a control-flow graph. Instead it assigns
+/// every statement and expression node a strictly increasing position in a
+/// single preorder walk (`LiveAnalysis::pos`), and takes each local's raw
+/// interval as `[first touch, last touch]` in that numbering. That alone is
+/// already correct for anything whose scope does not cross a loop: if a local
+/// is declared before a `while` and used only after it, the loop sits
+/// entirely inside its interval by construction, so the interval already
+/// reserves the loop's positions without the local ever being touched there.
+///
+/// It is *not* correct, on its own, for a local that is touched **inside** a
+/// loop and needed again on the next iteration: its last textual touch can
+/// sit early in the loop body, with more code after it before the back edge,
+/// and a naive interval would let that register be handed to something else
+/// for the remainder of the body — live across one iteration boundary but not
+/// the next, invisible to the C backend's memory-backed locals but fatal to a
+/// register one. `LiveAnalysis` corrects for exactly this: for every `while`,
+/// any local declared **outside** it whose raw interval already overlaps the
+/// loop's `[condition-start, body-end]` span has that interval widened to
+/// cover the span in full. A local declared *inside* the loop is exempt —
+/// codegen visits its `Let` once regardless of how many times the loop runs
+/// at runtime, so it gets one physical location reused every iteration
+/// either way, and nothing outside the loop ever needs its value to survive
+/// past the body's end. Nested loops are handled by applying this widening
+/// smallest-span-first (which, for a properly nested AST, is innermost
+/// first): an already-widened inner interval can then trigger the outer
+/// loop's own widening in the same pass, with no fixed point needed.
+///
+/// A local this item is not confident about does not get a register — see
+/// `allocate_registers`'s doc for what stays off the table entirely (`f32`/
+/// `f64`; nothing else is excluded, but nothing else is attempted either
+/// beyond the interval discipline above).
+struct LiveAnalysis {
+    pos: usize,
+    scopes: Vec<Vec<(String, usize)>>,
+    /// Per declaration id, in the same order `Frame::declare` will hand them
+    /// out: `(first touch, last touch)`, both inclusive, before any loop
+    /// widening.
+    ranges: Vec<(usize, usize)>,
+    /// Per declaration id: the position the `Let` (or, for a parameter,
+    /// position 0) itself sits at — this is what "declared outside the loop"
+    /// is tested against.
+    decl_pos: Vec<usize>,
+    /// Per declaration id: whether it is a float, which this item never
+    /// register-allocates (see `allocate_registers`).
+    is_float: Vec<bool>,
+    /// One `(start, end)` per `while` encountered, collected in the same
+    /// preorder the loops are visited (so an inner loop's span is pushed
+    /// before its enclosing loop's, though nothing here depends on that
+    /// order — `allocate_registers` sorts by span width itself).
+    spans: Vec<(usize, usize)>,
 }
 
-/// Where a call site saves `rsp` across the call.
-///
-/// It is a frame slot rather than a register, and that is the whole point: the
-/// first version of this used `r11`, which is **caller-saved**, so `printf`
-/// overwrote it and `mov rsp, r11` after the call restored a garbage stack
-/// pointer. The bug was invisible in a function that printed once — the
-/// epilogue reloads `rsp` from `rbp`, so the corruption was masked until a
-/// second call tried to push onto it. Memory cannot be clobbered by the callee,
-/// so this cannot recur, and it costs the same two instructions.
-const SP_SLOT: i32 = -8;
-const SP_SAVE_SIZE: i32 = 8;
-
-impl Frame {
-    fn new() -> Frame {
-        Frame {
-            used: SP_SAVE_SIZE,
+impl LiveAnalysis {
+    fn new() -> LiveAnalysis {
+        LiveAnalysis {
+            pos: 0,
             scopes: vec![Vec::new()],
+            ranges: Vec::new(),
+            decl_pos: Vec::new(),
+            is_float: Vec::new(),
+            spans: Vec::new(),
+        }
+    }
+
+    fn tick(&mut self) -> usize {
+        self.pos += 1;
+        self.pos
+    }
+
+    /// Records a declaration and returns its id. Ids are handed out in
+    /// exactly the order `Frame::declare` will later be called in — params
+    /// first (by `Gen::function`), then each `Let` in preorder — which is
+    /// what lets `allocate_registers`'s output be indexed by id and consumed
+    /// by `Frame::declare` with no other bookkeeping.
+    fn declare(&mut self, name: &str, ty: &Ty) -> usize {
+        let id = self.ranges.len();
+        let p = self.tick();
+        self.ranges.push((p, p));
+        self.decl_pos.push(p);
+        self.is_float.push(float_ty(ty).is_some());
+        self.scopes
+            .last_mut()
+            .expect("a scope always exists")
+            .push((name.to_string(), id));
+        id
+    }
+
+    fn lookup(&self, name: &str) -> Option<usize> {
+        for scope in self.scopes.iter().rev() {
+            for (n, id) in scope.iter().rev() {
+                if n == name {
+                    return Some(*id);
+                }
+            }
+        }
+        None
+    }
+
+    /// A read *or* a write of `name` at the current position — both extend
+    /// the interval the same way, since either one means the register (or
+    /// slot) has to hold the right value at this point.
+    fn touch(&mut self, name: &str) {
+        let p = self.tick();
+        if let Some(id) = self.lookup(name) {
+            let r = &mut self.ranges[id];
+            r.0 = r.0.min(p);
+            r.1 = r.1.max(p);
         }
     }
 
@@ -372,27 +518,279 @@ impl Frame {
         self.scopes.pop();
     }
 
-    /// Binds `name` to a fresh slot of `ty`'s size and returns the offset from
-    /// `rbp`, always negative.
-    fn declare(&mut self, name: &str, ty: &Ty) -> Result<i32, String> {
+    fn function_body(&mut self, f: &Function) {
+        for stmt in &f.body.stmts {
+            self.stmt(stmt);
+        }
+        if let Some(tail) = &f.body.tail {
+            self.expr(tail);
+        }
+    }
+
+    fn stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Let { name, ty, init } => {
+                self.expr(init);
+                self.declare(name, ty);
+            }
+            Stmt::While { cond, body } => {
+                let start = self.pos;
+                self.expr(cond);
+                self.block(body);
+                self.spans.push((start, self.pos));
+            }
+            Stmt::Return { value, .. } => match value {
+                Some(v) => self.expr(v),
+                None => {
+                    self.tick();
+                }
+            },
+            Stmt::Expr(e) => self.expr(e),
+        }
+    }
+
+    fn block(&mut self, block: &Block) {
+        self.push_scope();
+        for stmt in &block.stmts {
+            self.stmt(stmt);
+        }
+        if let Some(tail) = &block.tail {
+            self.expr(tail);
+        }
+        self.pop_scope();
+    }
+
+    /// Covers every node `Gen::expr` can actually lower. Anything else falls
+    /// to the catch-all and is left untouched: `Gen::expr` refuses every one
+    /// of those kinds outright, so a function containing one never reaches
+    /// code generation for the (possibly under-counted) locals around it —
+    /// see this struct's own doc comment for why that makes the omission
+    /// safe rather than a second, silent gap.
+    fn expr(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::IntLit(_) | ExprKind::BoolLit(_) | ExprKind::CharLit(_) | ExprKind::FloatLit(_) => {
+                self.tick();
+            }
+            ExprKind::Ident(name) => self.touch(name),
+            ExprKind::Unary { expr, .. } => self.expr(expr),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.expr(lhs);
+                self.expr(rhs);
+            }
+            ExprKind::Assign { target, value } => {
+                self.expr(value);
+                if let ExprKind::Ident(name) = &target.kind {
+                    self.touch(name);
+                } else {
+                    self.tick();
+                }
+            }
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                self.expr(cond);
+                self.block(then_block);
+                if let Some(else_block) = else_block {
+                    self.block(else_block);
+                }
+            }
+            ExprKind::Block(block) => self.block(block),
+            ExprKind::Call { args, .. } => {
+                for a in args {
+                    self.expr(a);
+                }
+                self.tick();
+            }
+            ExprKind::Template { pieces, .. } => {
+                for p in pieces {
+                    if let TemplatePiece::Value(v) = p {
+                        self.expr(v);
+                    }
+                }
+            }
+            _ => {
+                self.tick();
+            }
+        }
+    }
+}
+
+/// Runs `LiveAnalysis` over `f`'s parameters and body, applies the loop
+/// widening, then a first-fit linear scan over `CALLEE_SAVED`. Returns one
+/// slot per declaration id, `Some(register index)` or `None` for a spill —
+/// `Frame::declare` consumes this vector id-by-id in the same order it was
+/// built in.
+///
+/// `f32`/`f64` locals are never assigned a register here: xmm live-range
+/// allocation is a second, separate piece of work (the plan explicitly notes
+/// item 2 kept float locals on the stack-machine, memory-backed discipline
+/// rather than pre-empting this item), and this function keeps that boundary
+/// by excluding every id `LiveAnalysis` marked `is_float` from the candidate
+/// list before the scan ever runs — a float id is `None` unconditionally.
+fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
+    let mut la = LiveAnalysis::new();
+    for (name, ty) in &f.params {
+        la.declare(name, ty);
+    }
+    la.function_body(f);
+
+    // Widen smallest span first, which for a properly nested AST is
+    // innermost first: by the time an outer loop's span is processed, any
+    // interval an inner loop already widened is widened again if it now
+    // reaches the outer loop's own span (it does, if the local was touched
+    // anywhere inside the inner loop, since the inner loop's span sits
+    // inside the outer one).
+    let mut spans = la.spans.clone();
+    spans.sort_by_key(|&(s, e)| e - s);
+    for (start, end) in spans {
+        for id in 0..la.ranges.len() {
+            // Declared inside this loop's own span: exempt, see the struct
+            // doc for why codegen's single visit per `Let` makes this safe.
+            if la.decl_pos[id] >= start && la.decl_pos[id] <= end {
+                continue;
+            }
+            let (mn, mx) = la.ranges[id];
+            if mn <= end && mx >= start {
+                la.ranges[id] = (mn.min(start), mx.max(end));
+            }
+        }
+    }
+
+    struct Interval {
+        id: usize,
+        start: usize,
+        end: usize,
+    }
+    let mut intervals: Vec<Interval> = (0..la.ranges.len())
+        .filter(|&id| !la.is_float[id])
+        .map(|id| Interval {
+            id,
+            start: la.ranges[id].0,
+            end: la.ranges[id].1,
+        })
+        .collect();
+    intervals.sort_by_key(|iv| iv.start);
+
+    let mut assign: Vec<Option<usize>> = vec![None; la.ranges.len()];
+    let mut free: Vec<usize> = (0..CALLEE_SAVED.len()).collect();
+    // `(end position, register)` for every interval currently holding a
+    // register, so a later interval's start can expire whichever of these
+    // are already over.
+    let mut active: Vec<(usize, usize)> = Vec::new();
+    for iv in intervals {
+        active.retain(|&(end, reg)| {
+            if end < iv.start {
+                free.push(reg);
+                false
+            } else {
+                true
+            }
+        });
+        free.sort_unstable();
+        if let Some(reg) = free.pop() {
+            assign[iv.id] = Some(reg);
+            active.push((iv.end, reg));
+        }
+        // Else: no register free, `assign[iv.id]` stays `None` — the same
+        // frame-slot path every local used before this item, unchanged.
+    }
+    assign
+}
+
+/// One function's frame: each local gets a location fixed when its
+/// declaration is reached (a `Let` initializer cannot name the binding being
+/// made, so no location is ever needed before it is assigned) — either one of
+/// the callee-saved registers `allocate_registers` handed it, or, as every
+/// local got before this item, a stack slot whose offset is likewise decided
+/// at that point and the body can be generated before the frame's size is
+/// known.
+struct Frame {
+    /// Bytes reserved below `rbp`, grown one slot per *spilled* declaration
+    /// (a register-allocated one costs nothing here). Starts at
+    /// `SP_SAVE_SIZE`, because the first slot is not a local: it belongs to
+    /// the call-site stack-pointer save (see `sp_slot`).
+    used: i32,
+    /// Innermost last, so a shadowed name is restored when its block ends.
+    scopes: Vec<Vec<(String, Loc, Ty)>>,
+    /// `allocate_registers`'s output, consumed one id at a time as
+    /// `declare` is called — id `i` is `locs[i]`, and the call order here is
+    /// guaranteed to match the order `LiveAnalysis` built it in because both
+    /// walk the same function the same way (params, then body in preorder).
+    locs: Vec<Option<usize>>,
+    next_id: usize,
+    /// Where this function's call sites save `rsp` across a call — see the
+    /// doc below. No longer a fixed `[rbp-8]`: MK7 §5 item 3 pushes this
+    /// function's used pool registers *between* `mov rbp, rsp` and the frame
+    /// slots, at `[rbp-8]`, `[rbp-16]`, and so on, so a fixed `[rbp-8]` would
+    /// alias the first pushed register's saved value and a call would
+    /// silently overwrite a live callee-saved register with a stack pointer.
+    /// This is computed once per function, below every pushed register.
+    sp_slot: i32,
+}
+
+/// Where a call site saves `rsp` across the call — `Frame::sp_slot`, computed
+/// once per function as `-8 * (pushed registers + 1)`.
+///
+/// It is a frame slot rather than a register, and that is the whole point: the
+/// first version of this used `r11`, which is **caller-saved**, so `printf`
+/// overwrote it and `mov rsp, r11` after the call restored a garbage stack
+/// pointer. The bug was invisible in a function that printed once — the
+/// epilogue reloads `rsp` from `rbp`, so the corruption was masked until a
+/// second call tried to push onto it. Memory cannot be clobbered by the callee,
+/// so this cannot recur, and it costs the same two instructions.
+const SP_SAVE_SIZE: i32 = 8;
+
+impl Frame {
+    fn new(locs: Vec<Option<usize>>, pushed_regs: usize) -> Frame {
+        let sp_slot = -SP_SAVE_SIZE * (pushed_regs as i32 + 1);
+        Frame {
+            used: SP_SAVE_SIZE * (pushed_regs as i32 + 1),
+            scopes: vec![Vec::new()],
+            locs,
+            next_id: 0,
+            sp_slot,
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(Vec::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    /// Binds `name` to its next declaration id's location — a register if
+    /// `allocate_registers` gave it one, else a fresh stack slot exactly as
+    /// every local was assigned before this item.
+    fn declare(&mut self, name: &str, ty: &Ty) -> Result<Loc, String> {
         let bytes = int_ty(ty)
             .map(|(w, _)| w.bytes())
             .or_else(|| float_ty(ty).map(|w| w.bytes()))
             .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
-        self.used += bytes;
-        let offset = -self.used;
+        let assigned = self.locs[self.next_id];
+        self.next_id += 1;
+        let loc = match assigned {
+            Some(reg) => Loc::Reg(reg),
+            None => {
+                self.used += bytes;
+                Loc::Stack(-self.used)
+            }
+        };
         self.scopes
             .last_mut()
             .expect("a scope always exists")
-            .push((name.to_string(), offset, ty.clone()));
-        Ok(offset)
+            .push((name.to_string(), loc, ty.clone()));
+        Ok(loc)
     }
 
-    fn lookup(&self, name: &str) -> Option<(i32, Ty)> {
+    fn lookup(&self, name: &str) -> Option<(Loc, Ty)> {
         for scope in self.scopes.iter().rev() {
-            for (n, offset, ty) in scope.iter().rev() {
+            for (n, loc, ty) in scope.iter().rev() {
                 if n == name {
-                    return Some((*offset, ty.clone()));
+                    return Some((*loc, ty.clone()));
                 }
             }
         }
@@ -413,13 +811,13 @@ impl Frame {
 /// cannot be assumed. Rounding `rsp` down is safe by construction — it only
 /// ever moves the pointer below the pushed operands — and restoring the saved
 /// value afterwards puts the depth back exactly as it was.
-fn call_align_begin(out: &mut String) {
-    let _ = writeln!(out, "    mov QWORD PTR [rbp{SP_SLOT}], rsp");
+fn call_align_begin(out: &mut String, sp_slot: i32) {
+    let _ = writeln!(out, "    mov QWORD PTR [rbp{sp_slot}], rsp");
     out.push_str("    and rsp, -16\n");
 }
 
-fn call_align_end(out: &mut String) {
-    let _ = writeln!(out, "    mov rsp, QWORD PTR [rbp{SP_SLOT}]");
+fn call_align_end(out: &mut String, sp_slot: i32) {
+    let _ = writeln!(out, "    mov rsp, QWORD PTR [rbp{sp_slot}]");
 }
 
 #[derive(Default)]
@@ -519,29 +917,43 @@ impl Gen {
             )));
         }
 
-        let mut frame = Frame::new();
+        // MK7 §5 item 3: decide every local's location (register or slot)
+        // before generating a single instruction of the body — a location
+        // has to be fixed for the whole function, and the loop-widening
+        // correction `allocate_registers` applies needs the *entire* body's
+        // shape up front, not just what has been seen so far.
+        let assign = allocate_registers(f);
+        let mut used_regs: Vec<usize> = assign.iter().filter_map(|r| *r).collect();
+        used_regs.sort_unstable();
+        used_regs.dedup();
+
+        let mut frame = Frame::new(assign, used_regs.len());
         frame.push_scope();
-        // Parameters are bound to the same slots a local would use; their
-        // incoming registers are spilled in the prologue, which is written
-        // after the body because only the body knows the frame's size. An
-        // integer and a float parameter at the same *position* do not share a
-        // register: SysV classifies and numbers each register file
-        // independently, so two counters are threaded through in declaration
-        // order rather than one shared index.
+        // Parameters are bound to the same locations a local would use;
+        // their incoming registers are moved into place (spilled to a frame
+        // slot, or moved into a pool register) in the prologue, which is
+        // written after the body because only the body knows the frame's
+        // size. An integer and a float parameter at the same *position* do
+        // not share a register: SysV classifies and numbers each register
+        // file independently, so two counters are threaded through in
+        // declaration order rather than one shared index.
         enum ParamSlot {
-            Int(i32, Width, usize),
+            Int(Loc, Width, bool, usize),
             Float(i32, FWidth, usize),
         }
         let mut params: Vec<ParamSlot> = Vec::new();
         let mut int_idx = 0usize;
         let mut float_idx = 0usize;
         for (name, ty) in &f.params {
-            let offset = frame.declare(name, ty)?;
-            if let Some((width, _)) = int_ty(ty) {
-                params.push(ParamSlot::Int(offset, width, int_idx));
+            let loc = frame.declare(name, ty)?;
+            if let Some((width, signed)) = int_ty(ty) {
+                params.push(ParamSlot::Int(loc, width, signed, int_idx));
                 int_idx += 1;
             } else {
                 let width = float_ty(ty).expect("checked above");
+                let offset = loc
+                    .stack_offset()
+                    .expect("float locals are never register-allocated");
                 params.push(ParamSlot::Float(offset, width, float_idx));
                 float_idx += 1;
             }
@@ -558,17 +970,37 @@ impl Gen {
         let _ = writeln!(self.out, "    .type {symbol}, @function");
         let _ = writeln!(self.out, "{symbol}:");
         self.out.push_str("    push rbp\n    mov rbp, rsp\n");
-        let _ = writeln!(self.out, "    sub rsp, {}", frame.size().max(16));
+        // Every pool register this function actually uses is saved here and
+        // restored in the epilogue, in exact reverse — see the epilogue's
+        // comment for why plain `add`/`pop`, rather than `mov rsp, rbp`, is
+        // what makes that pairing correct regardless of how many locals
+        // spilled.
+        for &reg in &used_regs {
+            let _ = writeln!(self.out, "    push {}", CALLEE_SAVED64[reg]);
+        }
+        let frame_size = frame.size().max(16);
+        let _ = writeln!(self.out, "    sub rsp, {frame_size}");
 
         for p in &params {
             match p {
-                ParamSlot::Int(offset, width, idx) => {
+                ParamSlot::Int(Loc::Stack(offset), width, _signed, idx) => {
                     let _ = writeln!(
                         self.out,
                         "    mov {} [rbp{offset}], {}",
                         width.mem(),
                         ARG[width.idx()][*idx]
                     );
+                }
+                ParamSlot::Int(Loc::Reg(reg), width, signed, idx) => {
+                    // The incoming value is only as wide as the parameter's
+                    // own type — SysV does not promise the caller cleared the
+                    // upper bits of a narrower argument — so this extends
+                    // within the pool register exactly as a stack-machine
+                    // operation extends `rax`, just aimed at a different
+                    // register.
+                    let names = CALLEE_SAVED[*reg];
+                    let _ = writeln!(self.out, "    mov {}, {}", names[width.idx()], ARG[width.idx()][*idx]);
+                    self.out.push_str(&width.extend_named(*signed, names));
                 }
                 ParamSlot::Float(offset, width, idx) => {
                     let _ = writeln!(
@@ -588,7 +1020,22 @@ impl Gen {
             // `main`'s Kelp type is `unit`, and its C caller reads `rax`.
             self.out.push_str("    xor eax, eax\n");
         }
-        self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n");
+        // The inverse of the prologue, in exact reverse order: `add rsp` puts
+        // `rsp` back where it sat right after the pushes below (this is
+        // correct regardless of alignment or spill count, because it is the
+        // exact arithmetic inverse of the `sub` above — nothing between here
+        // and there can have left `rsp` anywhere else, since every
+        // stack-machine push within the body is popped before the statement
+        // it belongs to ends, and `call_align_begin`/`call_align_end` restore
+        // `rsp` from a memory slot rather than leaving it moved), then each
+        // saved register is popped back into place before `rbp`/`ret`. A
+        // `mov rsp, rbp` here, as before this item, would skip straight past
+        // the pushed registers and never restore them.
+        let _ = writeln!(self.out, "    add rsp, {frame_size}");
+        for &reg in used_regs.iter().rev() {
+            let _ = writeln!(self.out, "    pop {}", CALLEE_SAVED64[reg]);
+        }
+        self.out.push_str("    pop rbp\n    ret\n");
         let _ = writeln!(self.out, "    .size {symbol}, .-{symbol}");
         Ok(())
     }
@@ -613,18 +1060,34 @@ impl Gen {
         match stmt {
             Stmt::Let { name, ty, init } => {
                 self.expr(init, frame)?;
-                let offset = frame.declare(name, ty)?;
+                let loc = frame.declare(name, ty)?;
                 if let Some(width) = float_ty(ty) {
+                    let offset = loc
+                        .stack_offset()
+                        .expect("float locals are never register-allocated");
                     let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
                     return Ok(());
                 }
                 let (width, _) = int_ty(ty).expect("declare validated the type");
-                let _ = writeln!(
-                    self.out,
-                    "    mov {} [rbp{offset}], {}",
-                    width.mem(),
-                    width.rax()
-                );
+                match loc {
+                    // The stack-machine invariant already leaves `rax`
+                    // zero/sign-extended to 64 bits after evaluating `init`,
+                    // which is exactly the invariant a pool register is
+                    // supposed to hold between statements — so the store is
+                    // a plain full-width copy, no width-specific mnemonic
+                    // needed the way a memory store needs one.
+                    Loc::Reg(reg) => {
+                        let _ = writeln!(self.out, "    mov {}, rax", CALLEE_SAVED64[reg]);
+                    }
+                    Loc::Stack(offset) => {
+                        let _ = writeln!(
+                            self.out,
+                            "    mov {} [rbp{offset}], {}",
+                            width.mem(),
+                            width.rax()
+                        );
+                    }
+                }
                 Ok(())
             }
             Stmt::While { cond, body } => {
@@ -695,27 +1158,42 @@ impl Gen {
                 Ok(())
             }
             ExprKind::Ident(name) => {
-                let (offset, ty) = frame
+                let (loc, ty) = frame
                     .lookup(name)
                     .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
                 if let Some(width) = float_ty(&ty) {
+                    let offset = loc
+                        .stack_offset()
+                        .expect("float locals are never register-allocated");
                     let _ = writeln!(self.out, "    {} xmm0, [rbp{offset}]", width.mov());
                     return Ok(());
                 }
                 let (width, signed) = int_ty(&ty)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
-                // Load at the value's own width and extend, so a narrow local
-                // never leaks neighbouring frame bytes into `rax`. The
-                // destination has to be the register of that same width —
-                // `mov rax, DWORD PTR [...]` is not an instruction — which is
-                // why this is the one `mov` that does not name `rax` directly.
-                let _ = writeln!(
-                    self.out,
-                    "    mov {}, {} [rbp{offset}]",
-                    width.rax(),
-                    width.mem()
-                );
-                self.out.push_str(&width.extend(signed));
+                match loc {
+                    // A pool register already holds the full 64-bit
+                    // zero/sign-extended value by construction — every write
+                    // to it goes through the same invariant `rax` keeps — so
+                    // reading it is a plain copy, no extension needed.
+                    Loc::Reg(reg) => {
+                        let _ = writeln!(self.out, "    mov rax, {}", CALLEE_SAVED64[reg]);
+                    }
+                    Loc::Stack(offset) => {
+                        // Load at the value's own width and extend, so a
+                        // narrow local never leaks neighbouring frame bytes
+                        // into `rax`. The destination has to be the register
+                        // of that same width — `mov rax, DWORD PTR [...]` is
+                        // not an instruction — which is why this is the one
+                        // `mov` that does not name `rax` directly.
+                        let _ = writeln!(
+                            self.out,
+                            "    mov {}, {} [rbp{offset}]",
+                            width.rax(),
+                            width.mem()
+                        );
+                        self.out.push_str(&width.extend(signed));
+                    }
+                }
                 Ok(())
             }
             ExprKind::Unary { op, expr } => {
@@ -768,7 +1246,7 @@ impl Gen {
             }
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, &e.ty, frame),
             ExprKind::Assign { target, value } => {
-                let (offset, ty) = match &target.kind {
+                let (loc, ty) = match &target.kind {
                     ExprKind::Ident(name) => frame.lookup(name).ok_or_else(|| {
                         unsupported(&format!("assignment to the name `{name}`"))
                     })?,
@@ -776,6 +1254,9 @@ impl Gen {
                 };
                 self.expr(value, frame)?;
                 if let Some(width) = float_ty(&ty) {
+                    let offset = loc
+                        .stack_offset()
+                        .expect("float locals are never register-allocated");
                     let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
                     // An assignment's value is the assigned value, so `xmm0`
                     // is already correct and is deliberately not reloaded.
@@ -783,12 +1264,19 @@ impl Gen {
                 }
                 let (width, _) = int_ty(&ty)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
-                let _ = writeln!(
-                    self.out,
-                    "    mov {} [rbp{offset}], {}",
-                    width.mem(),
-                    width.rax()
-                );
+                match loc {
+                    Loc::Reg(reg) => {
+                        let _ = writeln!(self.out, "    mov {}, rax", CALLEE_SAVED64[reg]);
+                    }
+                    Loc::Stack(offset) => {
+                        let _ = writeln!(
+                            self.out,
+                            "    mov {} [rbp{offset}], {}",
+                            width.mem(),
+                            width.rax()
+                        );
+                    }
+                }
                 // An assignment's value is the assigned value, so `rax` is
                 // already correct and is deliberately not reloaded.
                 Ok(())
@@ -1157,9 +1645,9 @@ impl Gen {
             }
         }
         let symbol = Gen::symbol(callee);
-        call_align_begin(&mut self.out);
+        call_align_begin(&mut self.out, frame.sp_slot);
         let _ = writeln!(self.out, "    call {symbol}");
-        call_align_end(&mut self.out);
+        call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
     }
 
@@ -1207,9 +1695,9 @@ impl Gen {
         let label = self.bytes_label(&fmt);
         let _ = writeln!(self.out, "    lea rdi, [rip+{label}]");
         self.out.push_str("    xor eax, eax\n");
-        call_align_begin(&mut self.out);
+        call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
-        call_align_end(&mut self.out);
+        call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
     }
 
@@ -1273,9 +1761,9 @@ impl Gen {
         // `%al` holds the number of vector registers used, which is zero:
         // nothing here passes a float.
         self.out.push_str("    xor eax, eax\n");
-        call_align_begin(&mut self.out);
+        call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
-        call_align_end(&mut self.out);
+        call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
     }
 }

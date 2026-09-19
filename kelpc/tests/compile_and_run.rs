@@ -155,6 +155,11 @@ fn while_loop_accumulates_correctly() {
 }
 
 #[test]
+fn nested_while_keeps_the_outer_accumulator_live() {
+    assert_compiles_and_runs("tests/fixtures/nested_while_registers.kp", "66\n");
+}
+
+#[test]
 fn assignment_to_immutable_binding_is_rejected() {
     assert_rejected("tests/fixtures/assign_to_immutable.kp");
 }

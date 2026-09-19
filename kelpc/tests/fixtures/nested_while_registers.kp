@@ -1,0 +1,21 @@
+// A local live across an outer loop *and* read/written inside an inner loop
+// nested within it (plan/mk7-own-backend.md §5 item 3): `total` must keep the
+// same physical location across every outer iteration, and the inner loop's
+// own locals must not be assigned that location while it is still live.
+fun grid_sum(rows: i32, cols: i32).R: i32 {
+    var total = 0
+    var r = 0
+    while r < rows {
+        var c = 0
+        while c < cols {
+            total = total + r * cols + c
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return total
+}
+
+fun main() {
+    print(grid_sum(3, 4))
+}
