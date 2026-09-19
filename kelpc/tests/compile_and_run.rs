@@ -1529,6 +1529,17 @@ fn a_memory_class_datac_returns_through_a_hidden_pointer() {
     assert_compiles_and_runs("tests/fixtures/datac_memory_class.kp", "1\n2\n3\n6\n33\n60\n");
 }
 
+// MK7 §5 item 4, fourth slice: a `MEMORY`-class `datac` passed and received by
+// value, in the caller's outgoing argument area.
+
+#[test]
+fn a_memory_class_datac_passes_by_value_in_the_argument_area() {
+    assert_compiles_and_runs(
+        "tests/fixtures/datac_memory_class_by_value.kp",
+        "6\n15\n24\n150\n579\n45\n11\n11\n11\n106\n1234\n13\n",
+    );
+}
+
 #[test]
 fn a_forward_reference_between_datacs_is_rejected() {
     assert_rejected("tests/fixtures/datac_forward_reference.kp");
@@ -1808,6 +1819,19 @@ fn a_missing_map_key_panics() {
 #[test]
 fn a_shared_borrow_of_a_temporary_is_allowed_for_a_call() {
     assert_compiles_and_runs("tests/fixtures/borrow_temp_arg.kp", "3\n18\n");
+}
+
+#[test]
+fn each_borrowed_temporary_gets_a_slot_of_its_own() {
+    // MK7 §5 item 4, fourth slice: a temporary's address has to survive the
+    // whole enclosing expression, including when a second temporary is built
+    // before the first call reads it (`pair_sum(Pair(..), Pair(..))`), when the
+    // temporary is itself a call's result (`sum(make(7, 8))`), and when it is
+    // wider than one eightbyte (`quad_sum(Quad(..))`).
+    assert_compiles_and_runs(
+        "tests/fixtures/borrow_temp_slots.kp",
+        "3\n18\n15\n6\n30\n6\n6\n",
+    );
 }
 
 #[test]
@@ -3227,6 +3251,14 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         "named_args",
         "bitwise",
         "asm_float_scalars",
+        // MK7 §5 item 4's fourth slice: the two ABI shapes it adds (a borrowed
+        // `datac` temporary, and a `MEMORY`-class value passed by value in the
+        // caller's argument area) go through the oracle too. The risk register
+        // calls aggregate passing the place silent miscompiles live, and a
+        // shared wrong literal is exactly what comparing the two backends
+        // catches and a `assert_compiles_and_runs` on its own cannot.
+        "borrow_temp_slots",
+        "datac_memory_class_by_value",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();

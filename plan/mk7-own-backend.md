@@ -26,14 +26,14 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, then aggregates' first three slices, landed** | `codegen_asm.rs`; **111 of 244** integration tests pass under `--backend=asm`; real SysV eightbyte/`MEMORY` classification for a `datac` over eight bytes (item 4's third slice) is the newest slice |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, then aggregates' first four slices, landed** | `codegen_asm.rs`; **115 of 246** integration tests pass under `--backend=asm`; caller-owned storage for an aggregate temporary — a borrow of a temporary, and the SysV `MEMORY`-class argument area that needed the same storage (item 4's fourth slice) — is the newest slice |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **111 of 244 tests pass on the asm backend, and the C backend passes all
-244.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **115 of 246 tests pass on the asm backend, and the C backend passes all
+246.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -46,19 +46,24 @@ exactly one more: `a_datac_can_embed_an_earlier_datac`, over `datac_embeds_datac
 and `a_memory_class_datac_returns_through_a_hidden_pointer`, over `datac_two_eightbytes.kp` and
 `datac_memory_class.kp` — which is also why the denominator moved from 242 to 244 rather than staying fixed:
 these are new fixtures this slice's own scope needed to exist at all, not previously-uncovered ones an existing
-fixture already exercised.
+fixture already exercised. Item 4's fourth slice moved it by four: one new fixture for each of its two halves
+(`each_borrowed_temporary_gets_a_slot_of_its_own` over `borrow_temp_slots.kp`, and
+`a_memory_class_datac_passes_by_value_in_the_argument_area` over `datac_memory_class_by_value.kp`), plus two
+fixtures it unblocked — `a_shared_borrow_of_a_temporary_is_allowed_for_a_call` (`borrow_temp_arg.kp`, refused
+since item 4's first slice) and `import_alias_reference_runs`, whose `bumped(t: Tally, by: i32)` had two live
+parameters silently sharing one register (see that slice's blockquote for both bugs).
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
 
 - **Stage 0** (backend boundary): done.
 - **Stage 1** (x86-64 assembly): 3 of its own 8 build-order items (§5) are done outright — scalars, `f32`/`f64`,
-  the register allocator — and a 4th (aggregates) has its first three slices landed. That is where the 111/244
+  the register allocator — and a 4th (aggregates) has its first four slices landed. That is where the 115/246
   fixture number comes from. The remaining part of item 4 (`enum`, plus a `datac` holding a float or heap field
-  — see the third slice's blockquote for exactly what "over eight bytes" now covers and what it still does not),
-  plus items 5-8 (drop/ownership, closures, capabilities, `print`/`print!`'s remaining gaps), are what stands
-  between here and Stage 1's own definition of done: all 244 fixtures passing, `bench/speed` no worse than
-  `-O0`, and a memory gate for the asm backend.
+  — see the fourth slice's blockquote for what "by value" now covers end to end), plus items 5-8
+  (drop/ownership, closures, capabilities, `print`/`print!`'s remaining gaps), are what stands between here and
+  Stage 1's own definition of done: all 246 fixtures passing, `bench/speed` no worse than `-O0`, and a memory
+  gate for the asm backend.
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
   Stage 1 finishing first, by this plan's own tiering rule (§1.4).
 - **§8** (the parallel runtime track): 2 of its pieces are done (the capability matcher, the path normalizer);
@@ -69,38 +74,49 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (111/244) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (115/246) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
 
-1. **The runtime** — 36 fixtures are blocked by `extern fun std.mem.alloc_raw` alone. This is the §8 track
-   arriving on schedule: the biggest single unlock is not the code generator. Its first two pieces — the
-   capability matcher and the path normalizer — landed in `1071ead` and unblock no fixture by themselves.
-   **Correction (2026-09-19): the allocator does not unblock these 36 either, on its own.**
-   `codegen_asm.rs::generate` refuses any program containing *any* `extern fun` before codegen starts — it is
-   not specific to `alloc_raw` — so unblocking these fixtures needs the asm backend to call a hand-written
+1. **The runtime** — 40 fixtures are blocked by an `extern fun` at all, 38 of them by `std.mem.alloc_raw`
+   alone. This is the §8 track arriving on schedule: the biggest single unlock is not the code generator. Its
+   first two pieces — the capability matcher and the path normalizer — landed in `1071ead` and unblock no
+   fixture by themselves. **Correction (2026-09-19): the allocator does not unblock these 40 either, on its
+   own.** `codegen_asm.rs::generate` refuses any program containing *any* `extern fun` before codegen starts —
+   it is not specific to `alloc_raw` — so unblocking these fixtures needs the asm backend to call a hand-written
    assembly routine for allocation (PLT-called, the way it presumably will for other libc calls), which in
-   turn needs aggregate-by-value return (§5 item 4, `Bytes` is a struct) landed first. The §8 allocator item is
-   further blocked on its own terms — see §8's note below — so it is **not** next; see the corrected order
-   there.
-2. **Aggregates, the rest of them** — 24 fixtures were blocked by this before item 4's first slice; nine are
-   landed now (six from the first slice, one — a `datac` nested by value inside another qualifying `datac` —
-   from the second, and two new fixtures the third slice added and unblocked itself — see its blockquote),
-   leaving `enum` (tagged unions, not attempted at all), a `datac` holding a float or heap field anywhere in its
-   fields (still refused regardless of size — the third slice's eightbyte/`MEMORY` classification covers *size*,
-   not a float-classified eightbyte or a heap-typed field), a `Mem`-class `datac` passed or received *by value*
-   as a parameter or call argument (returning one is covered; passing one that way is not — see the third
-   slice's blockquote for the narrowing and why), and a borrow of a temporary (`sum(Pair(a = 1, b = 2))`, still
-   refused — see item 4's first-slice blockquote for why). This is still where the ABI work the risk register
-   calls the place silent miscompiles live is concentrated.
-3. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
-4. **String values** — 7 fixtures.
-5. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
+   turn needs aggregate-by-value return (§5 item 4, `Bytes` is a struct) landed first. That prerequisite is now
+   met: item 4's third and fourth slices cover a `datac` returned through the hidden pointer, and one passed or
+   received by value in the argument area. The §8 allocator item is further blocked on its own terms — see §8's
+   note below — so it is **not** next; see the corrected order there.
+2. **Aggregates, the rest of them** — the four slices of item 4 have landed eleven fixtures (six from the
+   first slice, one from the second — a `datac` nested by value inside another qualifying `datac` — two new
+   fixtures the third slice added and unblocked itself, and two more the fourth did). The rest are refused
+   either for `enum` (16 of them — tagged unions, not attempted at all) or for a `datac` holding a float or
+   heap field anywhere in its fields (2 float, and the heap ones, which §5's table counts under its heap row
+   because a build stops at the first refusal it hits) — refused regardless of size, since the third slice's
+   eightbyte/`MEMORY` classification covers *size*, not a float-classified eightbyte or a heap-typed field.
+   The two gaps the third slice named as its own deliberate narrowings — a `Mem`-class `datac` passed or
+   received *by value*, and a borrow of a temporary — are both closed; see the fourth slice's blockquote. The
+   ABI work the risk register calls the place silent miscompiles live is now complete for every shape this
+   backend admits at all.
+3. **A passdown (`pd`)** — 8 fixtures, and a row the earlier versions of this ranking did not name: the build
+   refuses a program containing a `pd` outright, before codegen, the same way it refuses an `extern fun`. It is
+   not in §5's item list at all, so it is not "item 9" so much as a self-contained piece of codegen that item
+   4's slices have now made cheap: a `pd` is a file-scope global plus (in the C backend) a hidden argument.
+4. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
+5. **String values** — 7 fixtures.
+6. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
    row here where a gap would be a security hole rather than a wrong number).
-6. **The long tail** — numeric conversions, printing `str`/`f64`, closures: ~20 fixtures.
+7. **The long tail** — numeric conversions, printing `str`/`f64`, closures: ~20 fixtures.
+
+Those rows are re-measured against the current backend and rank rather than partition: a fixture counts once,
+under the *first* refusal its build hits, which is why the heap-type row below is larger than the container
+feature it names (`str` is counted separately, but a `String` that a `str` argument is converted into is
+counted with the heap row). The totals are in §5's table.
 
 Two things §5's definition of done still requires that no amount of the above delivers: `bench/speed` no worse
 than the measured `-O0` column (it has not been run on the asm backend yet), and a memory gate that works for
@@ -118,11 +134,11 @@ These hold for every stage. Breaking one is how this becomes a rewrite instead o
 1. **`codegen_c.rs` is never deleted.** It becomes the permanent differential oracle: every fixture is
    compiled and run by both backends, and their stdout is compared. A backend is correct when it agrees with
    the C backend, not when it agrees with the author's intent.
-2. **The 248 fixture files are the contract.** They are backend-agnostic by construction (compile, run,
+2. **The 259 fixture files are the contract.** They are backend-agnostic by construction (compile, run,
    compare stdout), so they validate a second backend with no edits. Any fixture that has to change for the
-   new backend is a bug in one of the two, and the diff says which. The suite is 235 test functions over
+   new backend is a bug in one of the two, and the diff says which. The suite is 246 test functions over
    those files — several tests cover more than one fixture, and a fixture that must be *rejected* is a file
-   with no test of its own — so "the fixtures pass" is measured as **235 integration tests**, which is the
+   with no test of its own — so "the fixtures pass" is measured as **246 integration tests**, which is the
    number the stage gates below use.
 3. **One target.** `x86-64`, SysV ABI, Linux. Nothing else is attempted until Tier 3 is done. Cross-compilation
    (`backlog.md` MK13-S4-M3) and a portable encoder are explicitly out of scope on this branch.
@@ -156,8 +172,10 @@ Everything the plan is judged against. Re-measure before each stage gate.
 | tests at HEAD of `main` | 323 (88 unit + 235 integration), 29 s |
 
 Two corrections to the record while writing this down: `roadmap.md` says "the 118 end-to-end tests" and adds
-"~20 one-line externs". Both are stale. The integration suite is **235** tests over **248** fixture files
-(one test can cover more than one fixture, and rejected fixtures are files without a test of their own), and
+"~20 one-line externs". Both are stale. The integration suite is **246** tests over **259** fixture files
+(the table's 235/248 are this baseline's own date — 2026-09-18 — and every slice since has added fixtures a
+new backend needed rather than found an existing one that already covered them; one test can cover more than
+one fixture, and rejected fixtures are files without a test of their own), and
 the stdlib declares **90**
 `extern fun`s. The larger numbers make Stage 4 bigger than MK7's own text implies, and this plan sizes it as
 90.
@@ -205,7 +223,7 @@ Deliverables:
   takes.
 - **`--backend=c|asm|own`** on `kelpc build` and `kelpc run`, plus a `KELPC_BACKEND` environment override.
   `c` stays the default for the whole of this branch. An unknown value is a hard error naming the valid set.
-- **A double run of the fixture suite.** `cargo test` runs the 235 integration tests once per backend selected
+- **A double run of the fixture suite.** `cargo test` runs the 246 integration tests once per backend selected
   by the same env var, so a third CI job (or one job looping over backends) proves both. This is `roadmap.md`
   open item 26, and it is the thing that makes every later stage verifiable at all.
 - **The seam documented in `driver.rs`.** `driver.rs` keeps owning "write the artifact and invoke the external
@@ -218,10 +236,10 @@ with the backend as the only variable.
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
 > **Status: first slice landed, then f32/f64, then a register allocator (item
-> 3), then aggregates' first two slices (item 4).** `kelpc build --backend=asm`
+> 3), then four slices of item 4's aggregates.** `kelpc build --backend=asm`
 > emits x86-64 assembly itself and finishes with `as` and `ld`, with no C
-> compiler in the chain. Measured: **109 of 242 end-to-end tests pass**, and
-> the C backend passes all 242 — so the differential gate is live
+> compiler in the chain. Measured: **115 of 246 end-to-end tests pass**, and
+> the C backend passes all 246 — so the differential gate is live
 > (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number can
 > only rise from here.
 >
@@ -439,6 +457,89 @@ with the backend as the only variable.
 > `sum_quad` (the by-value-argument narrowing above is why `sum_quad` takes
 > `Quad`, not `move Quad`).
 >
+> **Item 4's fourth slice — caller-owned storage for an aggregate temporary —
+> is done (2026-09-19).** It closes both of the narrowings the third slice
+> named, and it closes them with one mechanism, because they were the same
+> missing thing: a `datac` whose *address* has to outlive the expression that
+> produced it needs storage the code generator owns and does not reuse. The
+> third slice said as much in its own refusal — passing a `Mem`-class value by
+> value "needs a caller-owned temporary copy whose address survives until the
+> call executes" — and the borrow of a temporary was refused for the mirror
+> reason, that `struct_lit` built every literal into one shared `agg_slot` that
+> the next literal in the same call would overwrite.
+>
+> `Frame::scratch(bytes)` is that storage: it reserves bytes below every
+> declared local and returns the offset, consuming no declaration id, so it
+> cannot desync codegen's declaration order from `LiveAnalysis`'s. A slot
+> reserved this way is **never reused**, which is the point — the frame is a few
+> bytes larger per syntactic occurrence in exchange for an address that is
+> stable for the whole enclosing statement, and `Frame::size()` is computed
+> after the body is generated, so those bytes are accounted for like any other.
+>
+> The first half is `ExprKind::Ref`. A borrow of a named `datac` local is still
+> a `lea` of its own slot (no copy — the local already *is* the object). A
+> borrow of anything else that is a `datac` — `sum(Pair(a = 1, b = 2))`, or the
+> same shape over a call that returns a `datac` — now gets a fresh slot, is
+> built into it through the same `eval_struct_into` a `let` initializer uses,
+> and is borrowed by `lea`-ing that slot. `tests/fixtures/borrow_temp_slots.kp`
+> is the shape this has to be right for and the one a shared slot cannot do: two
+> temporaries as two arguments of one call (`pair_sum(Pair(..), Pair(..))`), a
+> temporary that is itself a call's result (`sum(make(7, 8))`), a borrow inside
+> a loop (one slot, re-initialized every iteration), a nested literal, and a
+> `MEMORY`-class temporary borrowed rather than passed by value.
+>
+> The second half is the SysV `MEMORY`-class **argument**: `int_regs_for` now
+> answers `Some(0)` for one instead of `None`, so it takes no integer register
+> and — because SysV numbers the register file by how many registers each
+> earlier argument consumed — the arguments around it keep exactly the registers
+> they would have had. The value goes into the caller's outgoing argument area
+> on the stack, which *is* the caller-owned copy; `memory_arg_area` computes the
+> offsets (declaration order, each eight-byte aligned, area rounded up to
+> sixteen) and is called by both `Gen::call` and `Gen::function`'s prologue, so
+> the two ends of the convention cannot drift apart. At the call site the area
+> is subtracted from `rsp` *after* `call_align_begin` has rounded it down, so
+> `[rsp]` is the area's first byte and `rsp` is still sixteen-byte aligned at
+> the `call`; each value is copied out of the slot it was staged in once every
+> register argument is already loaded, and the hidden return pointer for a
+> `MEMORY`-class *return* is still set last. In the callee the prologue copies
+> the bytes from `[rbp+16+offset]` into the parameter's own frame slot, so a
+> `MEMORY`-class parameter behaves exactly like any other `datac` local
+> afterwards. `tests/fixtures/datac_memory_class_by_value.kp` covers a local, a
+> call result and a literal passed by value; a `MEMORY`-class argument between
+> two register arguments; two of them in one call; one after all six integer
+> registers are taken; one alongside a `Two`-class argument (a register pair, a
+> different mechanism sharing the same call) and alongside a float argument
+> (whose register file SysV numbers independently); one on a call whose *return*
+> is also `MEMORY` class; and a moved parameter copied into a mutable local
+> (which is only a copy if the parameter really is the value rather than a
+> pointer to the caller's copy).
+>
+> **Two real bugs this slice's own fixture found, both of the same family the
+> third slice's `StructLit` bug came from** — a liveness pass that never walked
+> a node kind, so two genuinely-live locals were handed the same register.
+> `LiveAnalysis::expr` had no arm for `ExprKind::FieldAccess`, `Ref` or `Deref`,
+> so the *inner* expression of each — normally a name — was never `touch`ed.
+> That is invisible for a plain `datac` local (`is_agg` keeps those off
+> registers entirely) but not for a `&datac`/`&mut datac` parameter, which is
+> one register's worth of pointer and *is* a candidate: in
+> `datac_memory_class.kp`'s `sum_quad(q: Quad)` there was only one such
+> parameter, so nothing collided, and the gap went uncaught from item 4's first
+> slice until `borrow_temp_slots.kp`'s `pair_sum(first: Pair, second: Pair)`
+> put two of them in one function — both landed in `r15`, the prologue's second
+> `mov r15, rsi` overwriting the first `mov r15, rdi`, and the wrong answer was
+> `22` instead of `18`. The same gap was a real miscompile in
+> `tests/projects/alias`, whose `bumped(t: Tally, by: i32)` mixes a reference
+> parameter with a scalar one; fixing it unblocked that fixture too. The second
+> bug is on the `Dest` side: `Gen::call` honoured a caller-supplied destination
+> for the two wider aggregate classes only (the third slice's scope), so a
+> `One`-class call result reached through `eval_struct_into` — newly reachable,
+> because a call can now *be* a borrowed temporary's initializer
+> (`sum(make(7, 8))`) — was silently left unwritten: that print read `0`
+> instead of `15`. `AggClass::One` now honours `Dest` too, with the same
+> opaque-eightbyte rule `struct_lit` already used, and every slot an aggregate
+> can be written to is `align_up(size, 8)` bytes, so the eight-byte store is
+> always contained in its own slot.
+>
 > Deliberate choices carried over unchanged from the first slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
@@ -447,17 +548,34 @@ with the backend as the only variable.
 > unchecked: that is the one place an unimplemented feature would be a
 > security hole rather than a wrong number.
 >
-> **Where the next 133 failures rank**, measured by aggregating what the backend
-> refuses across the fixtures the C backend builds:
+> **Where the next 131 failures rank**, measured by aggregating what the backend
+> refuses across the fixture files the C backend builds. The refused-fixture
+> count is 108; the failing-test count is larger because several tests build a
+> whole project rather than one fixture, and the differential gate compares two
+> backends on a fixture both already build:
 >
-> | blocker | fixtures |
+> | blocker (the backend's first refusal) | fixture files |
 > | --- | --- |
-> | `extern fun std.mem.alloc_raw` — i.e. the runtime, §8 | 36 |
-> | string values | 7 |
-> | `List<T>` / `Map<K, V>` | 9 |
-> | `enum`, or a `datac` with a float/heap field, or a `Mem`-class by-value parameter/argument | 17 |
-> | capability-gated calls | 7 |
-> | numeric conversions, printing `str`/`f64`, closures, the rest | ~20 |
+> | an `extern fun`, any of them — 38 `std.mem.alloc_raw`, 2 `std.math.sqrt_raw` | 40 |
+> | `enum` | 16 |
+> | a heap type — `Bytes`/`String`/`View`/`List`/`Map`/`Box` as a type, a parameter, an argument, a return or a printed value | 26 |
+> | a passdown (`pd`) — a row this table did not name until the fourth slice re-measured it | 8 |
+> | `str` as a parameter, an argument or a printed value | 8 |
+> | printing `f64` | 3 |
+> | a `datac` holding a float field | 2 |
+> | numeric conversions, a function value, a `&str` return | 5 |
+>
+> Two corrections this re-measurement made to the table it replaces: an
+> `extern fun` blocks 40 fixtures rather than 36, because the refusal is of the
+> *declaration* rather than of `alloc_raw` specifically; and `Mem`-class by-value
+> passing no longer appears at all, since the fourth slice closed it — the
+> `datac_memory_class.kp` fixture took its `Quad` by reference precisely to stay
+> out of that gap, so nothing was there to unblock until a fixture asked for it
+> (see the fourth slice's blockquote). The capability-gated row (7 fixtures) is
+> unchanged and still real, but it no longer ranks on its own here: every one of
+> those fixtures imports a gated module, so its build hits the `extern fun`
+> refusal first, and the runtime is what has to land before the capability check
+> is the next thing in the way.
 >
 > The first row is the argument for §8 being a *parallel* track: the single
 > biggest unlock is the runtime, not the code generator, and the runtime is the
@@ -493,21 +611,21 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 3. **A register allocator. Done** (2026-09-19). Linear-scan over five callee-saved integer registers, for
    `i32`/`i64`/`bool`/`char` locals only — see item 3's blockquote above for the loop-widening correction and
    the bug it caught.
-4. **Aggregates by value. First three slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
+4. **Aggregates by value. First four slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
    layout fits in eight bytes needs no SysV eightbyte classification at all — it is one eightbyte, so it moves
    through the same paths a `u64` already does, and only a field read or write needs the layout (see item 4's
    blockquote above). The second slice extends this to a `datac` nested by value inside another qualifying
    `datac`, as long as the outer struct's own size is still ≤8 bytes and the nested struct's own size is one of
    the four move widths (1/2/4/8 bytes). The third slice extends the *top-level* size limit past eight bytes:
-   9-16 bytes passes/returns as a register pair (`AggClass::Two`), and over sixteen bytes returns through the
-   hidden-pointer convention (`AggClass::Mem`) — sound with no SSE eightbyte case to consider, since every field
-   this module accepts is `INTEGER`-classifiable by construction (see the third slice's blockquote above). What
-   is left of this item is: `enum` (tagged union) entirely; a `datac` holding a float or heap field anywhere in
-   its fields, at any size; a `Mem`-class `datac` passed or received *by value* as a parameter or call argument
-   (a deliberate narrowing the third slice draws — returning one is covered, passing one needs a caller-owned
-   temporary copy this slice does not add); `String`, `Bytes`, `View`, `List<T>`, `Map<K, V>`, `Box<T>`; and a
-   borrow of a temporary rather than a named local. Layout must match `codegen_c.rs`'s `typedef`s exactly or the
-   two backends will not agree on a `List`'s field offsets.
+   9-16 bytes passes/returns as a register pair (`AggClass::Two`), and over sixteen bytes uses the
+   `MEMORY`-class conventions — the hidden-pointer one as a return value, and the caller's outgoing argument
+   area as a by-value parameter or argument, which is the fourth slice (`Frame::scratch` is the storage both
+   that and a borrowed temporary need) — sound with no SSE eightbyte case to consider, since every field this
+   module accepts is `INTEGER`-classifiable by construction (see the third and fourth slices' blockquotes
+   above). What is left of this item is: `enum` (tagged union) entirely; a `datac` holding a float or heap field
+   anywhere in its fields, at any size; `String`, `Bytes`, `View`, `List<T>`, `Map<K, V>`, `Box<T>`; and a
+   borrow of anything whose address is not a slotted `datac` (a scalar, a field path, a `str`). Layout must
+   match `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets.
 5. **Drop and ownership.** `borrowck.rs` already hands over a `DropPlan` keyed by span, so the backend does
    not re-derive where drops go, only what a drop *is* in machine terms: call the generated drop function,
    free the buffer, clear the pointer so a drop is idempotent at runtime as the C runtime already is.
@@ -523,7 +641,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 8. **`print`/`print!`.** One `printf` with one generated format string, as today, including the x86-64 detail
    that a variadic call must set `AL` to the number of vector registers used.
 
-Definition of done: all 235 integration tests pass under `--backend=asm` with byte-identical stdout to
+Definition of done: all 246 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked.
@@ -593,7 +711,7 @@ parallel track.
    SIMD work exists, so text-heavy code will be slower. Debug info (DWARF, open item A-16) is absent unless
    built, which means `gdb` against a generated binary is not useful until then.
 
-Definition of done: all 235 integration tests pass with no libc linked and no interpreter in the ELF; `ldd` reports
+Definition of done: all 246 integration tests pass with no libc linked and no interpreter in the ELF; `ldd` reports
 nothing or is not needed; `bench/speed/` checksums match and the runtime is no worse than `-O0`;
 `kelpc build` is under 15 ms; and a capability fixture denied by a grant is denied with the same message.
 
@@ -727,7 +845,7 @@ A's type-adding syntax → B's Stage 2 → B's Stage 3.
 
 | risk | why it bites | mitigation |
 | --- | --- | --- |
-| Aggregate ABI mismatch | Kelp passes `datac`/`enum`/`String`/`List`/`Map`/`Box` by value; a wrong eightbyte split is a silent miscompile | differential stdout on all 248 fixtures; assert struct offsets against the C typedefs in a test |
+| Aggregate ABI mismatch | Kelp passes `datac`/`enum`/`String`/`List`/`Map`/`Box` by value; a wrong eightbyte split is a silent miscompile | differential stdout on all 259 fixtures; assert struct offsets against the C typedefs in a test |
 | Capability matcher drift | byte-exact security behavior; a lenient port widens every grant | own pattern corpus + differential test against the C implementation before retiring it |
 | Float formatting | shortest-round-trip is an algorithm, not a loop | last in the runtime order; `bench/speed` `float` checksum is the gate |
 | DNS underestimation | `getaddrinfo` looks like a call and is a subsystem | schedule it explicitly, expect TCP fallback and compression to be most of it |

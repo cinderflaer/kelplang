@@ -42,7 +42,14 @@
 //! System V AMD64 — the same convention the C backend gets from clang, and
 //! therefore the one the differential oracle compares against: integer
 //! arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, the result in `rax`,
-//! and `rsp` sixteen-byte aligned at every `call`.
+//! `rsp` sixteen-byte aligned at every `call`, a `datac` of nine to sixteen
+//! bytes in a pair of integer registers, and a `datac` over sixteen bytes
+//! (`MEMORY` class) either through a hidden pointer (as a return value) or in
+//! the caller's outgoing argument area (as an argument) — see
+//! `memory_arg_area`. The stack-passed arguments are the one part of the
+//! convention that needs agreement between a call site and a callee's prologue
+//! rather than a fixed register, which is why both are generated from that one
+//! function.
 //!
 //! # Alignment
 //!
@@ -50,7 +57,10 @@
 //! call site cannot assume alignment. Rather than track the depth, every call
 //! saves `rsp` into a reserved frame slot, rounds it down to a multiple of
 //! sixteen, calls, and restores it from the same slot. Rounding *down* only
-//! ever moves `rsp` below the pushed operands, so it cannot clobber one.
+//! ever moves `rsp` below the pushed operands, so it cannot clobber one — and
+//! because the outgoing argument area is subtracted from `rsp` *after* that
+//! rounding and is itself a multiple of sixteen, the first stack-passed argument
+//! sits at `[rsp+0]` with `rsp` still aligned at the `call`.
 //!
 //! The save is a memory slot and not a register because a register is a bug
 //! waiting to happen: the first version used `r11`, `printf` clobbered it, and a
@@ -432,11 +442,47 @@ enum AggClass {
     /// integer registers (`rax`/`rdx` on return; two consecutive `ARG64`
     /// slots as a by-value argument or parameter).
     Two,
-    /// Over 16 bytes: SysV `MEMORY` class. This slice returns one (via the
-    /// hidden first-argument pointer convention) but does not accept one as a
-    /// by-value parameter or call argument — see `int_regs_for`'s doc for why
-    /// that narrowing was drawn where it was.
+    /// Over 16 bytes: SysV `MEMORY` class — returned through the hidden
+    /// first-argument-pointer convention, and (as of the fourth slice) passed
+    /// as a by-value argument or parameter **in memory**, in the caller's
+    /// outgoing argument area, rather than in registers. There is no
+    /// register-*pair* shortcut for one and no register at all: `int_regs_for`
+    /// counts it as zero integer registers, which is what keeps the numbering
+    /// of every other argument unaffected by it.
     Mem,
+}
+
+/// Every `MEMORY`-class value among `tys`, in declaration order, as
+/// `(index within tys, byte offset in the outgoing argument area, size)` —
+/// plus the area's own size, rounded up to sixteen bytes.
+///
+/// This is the one rule call sites and callees have to agree on: SysV lays the
+/// stack-passed arguments out in declaration order starting at `[rsp]` when the
+/// `call` executes, each at its own eight-byte-aligned offset, and the area is
+/// padded (above the last argument) so that `rsp` is still sixteen-byte aligned
+/// at the call. The callee reads the same value at `[rbp+16+offset]`, because at
+/// its entry `rsp` is `caller_rsp - 8` (the return address) and `rbp` is that
+/// minus the pushed `rbp`. Sharing this function between `Gen::function` and
+/// `Gen::call` is what makes the two ends of that convention impossible to
+/// drift apart.
+fn memory_arg_area<'a>(
+    tys: impl Iterator<Item = &'a Ty>,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> (Vec<(usize, i32, i32)>, i32) {
+    let mut out = Vec::new();
+    let mut cursor: i32 = 0;
+    for (i, ty) in tys.enumerate() {
+        let Some(layout) = struct_layout(ty, layouts) else {
+            continue;
+        };
+        if layout.class() != AggClass::Mem {
+            continue;
+        }
+        cursor = align_up(cursor, 8);
+        out.push((i, cursor, layout.size));
+        cursor += align_up(layout.size, 8);
+    }
+    (out, align_up(cursor, 16))
 }
 
 fn agg_class(size: i32) -> AggClass {
@@ -574,17 +620,19 @@ fn value_kind(
 }
 
 /// How many consecutive *integer* argument/parameter registers a value of
-/// `ty` occupies, or `None` if `ty` cannot be passed by value at all (this
-/// covers both an unsupported type outright and the one deliberate narrowing
-/// this slice draws: a `Mem`-class (over sixteen bytes) `datac` is supported
-/// as a **return value** — see `AggClass::Mem` — but not as a by-value
-/// parameter or call argument. Passing one that way needs a *caller-owned
-/// temporary copy* whose address survives until the call executes, which
-/// (unlike a `Two`-class value, which needs no such copy — it goes straight
-/// from wherever it is evaluated into a register pair) is real additional
-/// bookkeeping this slice does not add; a `Mem`-class value can still cross a
-/// call boundary today by reference (`&big`), which `Ty::Ref` below already
-/// covers and costs nothing extra. `float_ty` values are not covered here —
+/// `ty` occupies, or `None` if `ty` cannot be passed by value at all (a
+/// `String`/`List`/`Map`/`Box`, a `str`, a scalar reference — every type this
+/// backend still refuses). A `MEMORY`-class `datac` is `Some(0)`: it *can* be
+/// passed by value, and the fourth slice passes it the way SysV says to, in
+/// memory rather than in any register — see `memory_arg_area`. That zero is
+/// what keeps a `Mem`-class argument from disturbing the numbering of the
+/// arguments around it, since the integer register file is numbered by how
+/// many registers each earlier argument took, and this one took none.
+///
+/// (The third slice drew the opposite conclusion — `None`, a flat refusal —
+/// because passing one that way needs the value staged somewhere addressable
+/// until the call executes. The fourth slice's `Frame::scratch` is exactly that
+/// storage, so the narrowing is gone.) `float_ty` values are not covered here —
 /// every call site checks that first, since SysV classifies the vector and
 /// integer register files independently.
 fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<usize> {
@@ -592,7 +640,7 @@ fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayou
         return match layout.class() {
             AggClass::One => Some(1),
             AggClass::Two => Some(2),
-            AggClass::Mem => None,
+            AggClass::Mem => Some(0),
         };
     }
     if int_ty(ty).is_some() {
@@ -956,12 +1004,19 @@ impl LiveAnalysis {
             }
             ExprKind::Assign { target, value } => {
                 self.expr(value);
-                if let ExprKind::Ident(name) = &target.kind {
-                    self.touch(name);
-                } else {
-                    self.tick();
+                // A `FieldAccess` target is a write *through* its base, so the
+                // base is as live at this point as it would be for a read —
+                // which matters for a `&datac`/`&mut datac` parameter, since a
+                // reference to a `datac` is a register candidate (`is_agg`
+                // only covers a bare `Ty::Struct`).
+                match &target.kind {
+                    ExprKind::Ident(name) => self.touch(name),
+                    ExprKind::FieldAccess { .. } => self.expr(target),
+                    _ => {
+                        self.tick();
+                    }
                 }
-            }
+            },
             ExprKind::If {
                 cond,
                 then_block,
@@ -1003,6 +1058,20 @@ impl LiveAnalysis {
                     self.expr(v);
                 }
             }
+            // MK7 §5 item 4, fourth slice: a field read, a borrow and a
+            // dereference all *read* their inner expression, and the inner
+            // expression is normally a name. Leaving these to the catch-all
+            // (which only advances the position) is the same liveness gap the
+            // `StructLit` arm above was added for, one layer out: a
+            // `&datac` parameter that is only ever read through
+            // (`total(c)` in `fun total(c: Counter)`) would look dead on
+            // arrival, and a second such parameter would be handed the *same*
+            // pool register — caught by
+            // `tests/fixtures/borrow_temp_slots.kp`'s two-reference
+            // `pair_sum`, whose two parameters both landed in `r15`.
+            ExprKind::FieldAccess { base, .. } => self.expr(base),
+            ExprKind::Ref { expr, .. } => self.expr(expr),
+            ExprKind::Deref { expr } => self.expr(expr),
             _ => {
                 self.tick();
             }
@@ -1233,6 +1302,26 @@ impl Frame {
         Ok(loc)
     }
 
+    /// MK7 §5 item 4, fourth slice: reserves `bytes` of scratch below every
+    /// declared local and returns its frame offset. Unlike `declare` this
+    /// consumes no `next_id`, so it cannot desync the codegen-time declaration
+    /// order from `LiveAnalysis`'s — nothing here is a name a program can read,
+    /// it is storage for a value whose *address* outlives the expression that
+    /// produced it (a borrowed temporary) or that has to survive until a call
+    /// executes (a `MEMORY`-class argument, see `Gen::call`).
+    ///
+    /// A slot reserved here is **never reused** by a later one. That is the
+    /// whole reason the previous slice's `agg_slot` could not serve: a single
+    /// shared staging slot is invalidated by the next value staged into it, so
+    /// a pointer into it dangles as soon as a second `datac` literal appears in
+    /// the same call. Wasting a few bytes per syntactic occurrence is the price
+    /// of an address that is stable for the enclosing statement; the frame is
+    /// sized after the body is generated, so these are accounted for.
+    fn scratch(&mut self, bytes: i32) -> i32 {
+        self.used += bytes;
+        -self.used
+    }
+
     fn lookup(&self, name: &str) -> Option<(Loc, Ty)> {
         for scope in self.scopes.iter().rev() {
             for (n, loc, ty) in scope.iter().rev() {
@@ -1427,13 +1516,25 @@ impl Gen {
             /// register-allocated), never a single register the way a
             /// `One`-class parameter's `Int` variant can be.
             AggTwo(i32, usize, usize),
+            /// MK7 §5 item 4, fourth slice: a `MEMORY`-class `datac`
+            /// parameter — `(frame offset, byte offset in the caller's
+            /// outgoing argument area, size)`. No register is involved at
+            /// either end; the prologue copies the bytes out of the caller's
+            /// area into this function's own slot, so the parameter behaves
+            /// exactly like any other `datac` local afterwards (the model
+            /// every struct-typed value in this module already follows — see
+            /// `AggClass`'s doc).
+            AggMem(i32, i32, i32),
         }
         let mut params: Vec<ParamSlot> = Vec::new();
+        // The stack half of the argument convention, computed from the same
+        // function `Gen::call` uses — see `memory_arg_area`.
+        let (mem_params, _) = memory_arg_area(f.params.iter().map(|(_, ty)| ty), &self.layouts);
         // `rdi` (`ARG64[0]`) is the hidden return pointer for a `Mem`-class
         // return, so real parameter numbering starts one register later.
         let mut int_idx = if ret_class == RetClass::AggMem { 1 } else { 0 };
         let mut float_idx = 0usize;
-        for (name, ty) in &f.params {
+        for (pos, (name, ty)) in f.params.iter().enumerate() {
             let loc = frame.declare(name, ty, &self.layouts)?;
             if let Some(width) = float_ty(ty) {
                 let offset = loc
@@ -1452,9 +1553,14 @@ impl Gen {
                         params.push(ParamSlot::AggTwo(off, int_idx, int_idx + 1));
                         int_idx += 2;
                     }
-                    AggClass::Mem => unreachable!(
-                        "int_regs_for refuses a Mem-class parameter before this point is reached"
-                    ),
+                    AggClass::Mem => {
+                        let off = loc.stack_offset().expect("agg locals are stack-only");
+                        let (_, stack_off, size) = *mem_params
+                            .iter()
+                            .find(|(i, _, _)| *i == pos)
+                            .expect("memory_arg_area covers every Mem-class parameter");
+                        params.push(ParamSlot::AggMem(off, stack_off, size));
+                    }
                 }
             } else {
                 let (width, signed) =
@@ -1496,6 +1602,20 @@ impl Gen {
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], {}", ARG64[*idx0]);
                     let off2 = off + 8;
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off2}], {}", ARG64[*idx1]);
+                }
+                ParamSlot::AggMem(off, stack_off, size) => {
+                    // The caller's argument area starts at `[rbp+16]` — the
+                    // return address and the pushed `rbp` are what sit between
+                    // this frame's base and it. Copied rather than aliased so
+                    // every `datac` local, whatever its class, is uniformly
+                    // owned storage in this function's own frame; the callee is
+                    // allowed to modify the incoming area, but nothing here
+                    // depends on that. `emit_copy` clobbers only `rax`, which
+                    // no other prologue move reads or writes (the frame's pool
+                    // registers are `rbx`/`r12`-`r15`, and the incoming argument
+                    // registers are `ARG64`/`FARG`).
+                    let src = 16 + *stack_off;
+                    emit_copy(&mut self.out, "rbp", *off, "rbp", src, *size);
                 }
                 ParamSlot::Int(Loc::Stack(offset), width, _signed, idx) => {
                     let _ = writeln!(
@@ -1920,36 +2040,44 @@ impl Gen {
             ExprKind::EnumField { .. } => Err(unsupported("an enum payload read")),
             ExprKind::Try { .. } => Err(unsupported("the `?` operator")),
             ExprKind::Ref { expr, .. } => {
-                // MK7 §5 item 4's narrow slice: a borrow of a named `datac`
-                // local, which is what every gap this item closes actually
-                // needs — a `datac`-typed call argument that is not marked
-                // `move` becomes exactly this (`infer.rs::check_call_arg`),
-                // and it is also what an explicit `&c` compiles to. A borrow
-                // of anything else (a temporary, a field, a scalar) stays
-                // refused: a struct literal's bytes live in the single
-                // reusable `agg_slot` (see `struct_lit`), which does not have
-                // a stable address across more than the one store/load pair
-                // that builds it, so a pointer into it could be silently
-                // invalidated by the very next struct literal the same call
-                // evaluates.
-                let ExprKind::Ident(name) = &expr.kind else {
-                    return Err(unsupported(
-                        "a borrow of anything but a named `datac` local",
-                    ));
-                };
-                let (loc, ty) = frame
-                    .lookup(name)
-                    .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
-                if struct_layout(&ty, &self.layouts).is_none() {
-                    return Err(unsupported(
-                        "a borrow of anything but a named `datac` local",
-                    ));
+                // MK7 §5 item 4, first slice: a borrow of a named `datac`
+                // local, which is what most of this item's gaps actually need
+                // — a `datac`-typed call argument that is not marked `move`
+                // becomes exactly this (`infer.rs::check_call_arg`), and it is
+                // also what an explicit `&c` compiles to. No copy: the local's
+                // own slot already *is* the object.
+                if let ExprKind::Ident(name) = &expr.kind {
+                    let (loc, ty) = frame
+                        .lookup(name)
+                        .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                    if struct_layout(&ty, &self.layouts).is_some() {
+                        let off = loc
+                            .stack_offset()
+                            .expect("struct locals are never register-allocated");
+                        let _ = writeln!(self.out, "    lea rax, [rbp{off}]");
+                        return Ok(());
+                    }
                 }
-                let off = loc
-                    .stack_offset()
-                    .expect("struct locals are never register-allocated");
-                let _ = writeln!(self.out, "    lea rax, [rbp{off}]");
-                Ok(())
+                // MK7 §5 item 4, fourth slice: a borrow of a *temporary* —
+                // `sum(Pair(a = 1, b = 2))`, or the same shape over a call that
+                // returns a `datac`. The temporary gets a slot of its own
+                // (`Frame::scratch`), built into it the way a `let`'s
+                // initializer is built into its local, and the borrow is a
+                // `lea` of that slot — so the address is valid for the whole
+                // enclosing expression, which is exactly how long `borrowck.rs`
+                // says such a borrow lasts. This is why a *fresh* slot and not
+                // `agg_slot`: the shared staging slot would be overwritten by
+                // the next `datac` literal the same call evaluates, which is
+                // the hazard that made this shape a refusal until now.
+                if let Some(layout) = struct_layout(&expr.ty, &self.layouts) {
+                    let slot = frame.scratch(align_up(layout.size, 8));
+                    self.eval_struct_into(expr, frame, Dest::Direct(slot))?;
+                    let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
+                    return Ok(());
+                }
+                Err(unsupported(
+                    "a borrow of anything but a named `datac` local or a `datac` temporary",
+                ))
             }
             ExprKind::Deref { .. } => Err(unsupported("a dereference")),
         }
@@ -2519,15 +2647,24 @@ impl Gen {
             Int(usize),
             Float(usize),
             /// A `Two`-class by-value struct argument — both eightbytes'
-            /// `ARG64` indices. There is no by-value `Mem`-class argument
-            /// slot: `int_regs_for` refuses one before this loop runs (see
-            /// its doc for why).
+            /// `ARG64` indices.
             IntPair(usize, usize),
+            /// MK7 §5 item 4, fourth slice: a `Mem`-class by-value struct
+            /// argument — its byte offset in the outgoing argument area.
+            /// Nothing is popped for this slot: the value is placed in the
+            /// area directly, after every register argument has already been
+            /// loaded (see below), and stays there across the call.
+            Stack(i32),
         }
+        // The stack half of the convention, decided before anything is
+        // evaluated so both ends agree — `memory_arg_area` is the same
+        // function the callee's prologue uses.
+        let (mem_args, area_size) =
+            memory_arg_area(args.iter().map(|a| &a.ty), &self.layouts);
         let mut slots: Vec<ArgSlot> = Vec::with_capacity(args.len());
         let mut int_idx = if ret_class == Some(AggClass::Mem) { 1 } else { 0 };
         let mut float_idx = 0usize;
-        for arg in args {
+        for (pos, arg) in args.iter().enumerate() {
             if float_ty(&arg.ty).is_some() {
                 if float_idx >= FARG.len() {
                     return Err(unsupported(&format!(
@@ -2549,10 +2686,20 @@ impl Gen {
                     "a call to `{callee}` with more than six integer argument registers"
                 )));
             }
-            if need == 2 {
-                slots.push(ArgSlot::IntPair(int_idx, int_idx + 1));
-            } else {
-                slots.push(ArgSlot::Int(int_idx));
+            match need {
+                2 => slots.push(ArgSlot::IntPair(int_idx, int_idx + 1)),
+                1 => slots.push(ArgSlot::Int(int_idx)),
+                // `need == 0`: a `MEMORY`-class value, which takes no integer
+                // register, so `int_idx` deliberately does not advance — an
+                // argument after it keeps the register it would have had
+                // anyway.
+                _ => {
+                    let (_, off, _) = *mem_args
+                        .iter()
+                        .find(|(i, _, _)| *i == pos)
+                        .expect("memory_arg_area covers every Mem-class argument");
+                    slots.push(ArgSlot::Stack(off));
+                }
             }
             int_idx += need;
         }
@@ -2563,8 +2710,13 @@ impl Gen {
         // register(s) in reverse. Going through the stack rather than
         // straight into the argument registers is what makes a nested call
         // safe: an inner call cannot overwrite a register the outer one has
-        // not loaded yet, and its own pushes are popped before it returns.
-        for arg in args {
+        // not loaded yet, and its own pushes are popped before it returns. A
+        // `Mem`-class argument is the exception to "popped in reverse": it is
+        // evaluated (in declaration order, like every other argument) into a
+        // slot of its own, and only *copied* into the outgoing area once every
+        // register argument is already in its register — see below.
+        let mut mem_plan: Vec<Option<(i32, i32, i32)>> = vec![None; args.len()];
+        for (pos, arg) in args.iter().enumerate() {
             if float_ty(&arg.ty).is_some() {
                 self.expr(arg, frame)?;
                 let width = float_ty(&arg.ty).expect("checked above");
@@ -2576,6 +2728,16 @@ impl Gen {
                 let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg}]");
                 let agg2 = agg + 8;
                 let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg2}]");
+            } else if int_regs_for(&arg.ty, &self.layouts) == Some(0) {
+                let size = struct_layout(&arg.ty, &self.layouts)
+                    .expect("a zero-register argument is a Mem-class struct")
+                    .size;
+                let ArgSlot::Stack(off) = slots[pos] else {
+                    unreachable!("the classification above put this argument on the stack")
+                };
+                let staged = frame.scratch(align_up(size, 8));
+                self.eval_struct_into(arg, frame, Dest::Direct(staged))?;
+                mem_plan[pos] = Some((staged, off, size));
             } else {
                 self.expr(arg, frame)?;
                 self.out.push_str("    push rax\n");
@@ -2597,6 +2759,8 @@ impl Gen {
                     let _ = writeln!(self.out, "    pop {}", ARG64[*i1]);
                     let _ = writeln!(self.out, "    pop {}", ARG64[*i0]);
                 }
+                // Already in the outgoing area — nothing was pushed for it.
+                ArgSlot::Stack(_) => {}
             }
         }
         // The hidden return pointer, set last (after every real argument is
@@ -2604,7 +2768,9 @@ impl Gen {
         // before the call — `int_idx` starting at 1 for a `Mem`-class return
         // already guarantees no *real* argument was assigned `ARG64[0]`, but
         // setting it last keeps that invariant visibly true here too rather
-        // than relying on the reader to check the numbering above.
+        // than relying on the reader to check the numbering above. The
+        // outgoing argument area is not part of that: it is memory, and every
+        // copy into it is done by then.
         if ret_class == Some(AggClass::Mem) {
             match ret_dst.expect("checked above") {
                 Dest::Direct(off) => {
@@ -2617,6 +2783,22 @@ impl Gen {
         }
         let symbol = Gen::symbol(callee);
         call_align_begin(&mut self.out, frame.sp_slot);
+        // MK7 §5 item 4, fourth slice: the outgoing argument area, laid out
+        // *after* `call_align_begin` has rounded `rsp` down to sixteen bytes,
+        // so `[rsp]` is the area's first byte and `rsp` is still aligned at
+        // the `call`. `area_size` is already a multiple of sixteen, which is
+        // what keeps it that way; the padding it can contain sits above the
+        // last argument, where SysV expects it. Each value is copied out of the
+        // slot it was staged in during evaluation, in declaration order, and
+        // `emit_copy` touches only `rax` — so nothing already loaded into an
+        // argument register, and not the hidden return pointer either, is
+        // disturbed by this.
+        if area_size > 0 {
+            let _ = writeln!(self.out, "    sub rsp, {area_size}");
+            for (staged, off, size) in mem_plan.iter().flatten() {
+                emit_copy(&mut self.out, "rsp", *off, "rbp", *staged, *size);
+            }
+        }
         let _ = writeln!(self.out, "    call {symbol}");
         call_align_end(&mut self.out, frame.sp_slot);
         if ret_class == Some(AggClass::Two) {
@@ -2630,6 +2812,30 @@ impl Gen {
                     let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
                     self.out.push_str("    mov QWORD PTR [r11], rax\n");
                     self.out.push_str("    mov QWORD PTR [r11+8], rdx\n");
+                }
+            }
+        }
+        // MK7 §5 item 4, fourth slice: a `One`-class aggregate return needs
+        // its `Dest` honoured too, now that a call can *be* a borrowed
+        // temporary's initializer (`sum(make(7, 8))`) and so reach
+        // `eval_struct_into` with a destination. The value is one opaque
+        // eightbyte, exactly as `struct_lit` treats it, and every slot it can
+        // be written to is `align_up(size, 8)` bytes, so an eight-byte store
+        // is always contained in the slot it belongs to. Before this arm the
+        // destination was silently left untouched — the third slice's
+        // `Dest`-aware handling covered only the two wider classes, and no
+        // fixture had ever asked for a `One`-class call result to be written
+        // anywhere but `rax`.
+        if ret_class == Some(AggClass::One) {
+            if let Some(dest) = ret_dst {
+                match dest {
+                    Dest::Direct(off) => {
+                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], rax");
+                    }
+                    Dest::Indirect(slot) => {
+                        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                        self.out.push_str("    mov QWORD PTR [r11], rax\n");
+                    }
                 }
             }
         }

@@ -1,0 +1,52 @@
+// MK7 §5 item 4, fourth slice: a borrowed `datac` *temporary* gets a stack
+// slot of its own, so two of them in one expression cannot share an address.
+//
+// Before this slice a temporary was built into one reusable staging slot
+// (`Frame::agg_slot`), which `struct_lit` also loads its own value out of — so
+// a borrow of a temporary was refused rather than handed a pointer that the
+// next `datac` literal in the same call would overwrite. The cases below are
+// exactly the ones a shared slot would break: two temporaries as two arguments
+// of one call, a temporary that is itself a call's result, a borrow inside a
+// loop (the slot is reused, so it has to be re-initialized every iteration),
+// and a temporary wider than one eightbyte.
+datac Pair(val a: i32, val b: i32)
+
+// Twelve bytes: two `INTEGER` eightbytes, so a value of this type is staged
+// through the wider path rather than through `rax` alone.
+datac Trio(val x: Pair, val y: i32)
+
+// Twenty-four bytes: `MEMORY` class. Taken *by reference* here, which is what
+// makes a borrowed temporary the shape being tested rather than the by-value
+// passing the next slice adds.
+datac Quad(val a: i64, val b: i64, val c: i64)
+
+fun sum(p: Pair).R: i32 = p.a + p.b
+
+fun pair_sum(first: Pair, second: Pair).R: i32 = first.a + first.b + second.a + second.b
+
+fun make(a: i32, b: i32).R: Pair = Pair(a = a, b = b)
+
+fun trio_sum(t: Trio).R: i32 = t.x.a + t.x.b + t.y
+
+fun quad_sum(q: Quad).R: i64 = q.a + q.b + q.c
+
+fun main() {
+    print(sum(Pair(a = 1, b = 2)))
+    // Two temporaries in one call: each needs an address of its own.
+    print(pair_sum(Pair(a = 3, b = 4), Pair(a = 5, b = 6)))
+    // A temporary that is itself a call's result, not a literal.
+    print(sum(make(7, 8)))
+    print(pair_sum(make(1, 1), make(2, 2)))
+    // A nested struct literal, passed by value to a parameter that borrows it.
+    print(trio_sum(Trio(x = Pair(a = 9, b = 10), y = 11)))
+    // A borrow inside a loop: one slot, re-initialized per iteration.
+    var i = 0
+    var total = 0
+    while i < 3 {
+        total = total + sum(Pair(a = i, b = 1))
+        i = i + 1
+    }
+    print(total)
+    // A `MEMORY`-class temporary, borrowed rather than passed by value.
+    print(quad_sum(Quad(a = 1, b = 2, c = 3)))
+}
