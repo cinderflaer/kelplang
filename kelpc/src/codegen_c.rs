@@ -2492,7 +2492,30 @@ impl<'a> Gen<'a> {
             ExprKind::FloatLit(v) => c_float_literal(*v),
             ExprKind::StringLit(s) => c_string_literal(s),
             ExprKind::BoolLit(b) => b.to_string(),
-            ExprKind::Ident(name) => c_name(name),
+            // A read of an owned binding is usually the value itself; at a
+            // *move site* it is also the point the binding gives its value up,
+            // so the value is copied into a temporary and the binding is
+            // zeroed. `DropPlan::moves_at` is what marks one, and the drop the
+            // binding still owes on the paths that did not move it then finds
+            // the zero value (`kelp_bytes_drop`/`kelp_string_drop` free a NULL
+            // `data`, and every generated drop is the same shape one level
+            // down). See `borrowck.rs`'s module doc, "a move clears its
+            // source".
+            ExprKind::Ident(name) => {
+                if self.drops.moves_at(&self.function, expr) {
+                    let tmp = fresh_temp();
+                    format!(
+                        "({{ {} = {}; {} = ({}){{0}}; {}; }})",
+                        expr.ty.c_decl(&tmp),
+                        c_name(name),
+                        c_name(name),
+                        expr.ty.c_type(),
+                        tmp
+                    )
+                } else {
+                    c_name(name)
+                }
+            }
             ExprKind::Unary { op, expr: sub } => {
                 let sym = match op {
                     UnOp::Neg => "-",

@@ -840,6 +840,29 @@ fn ownership_through_branches_frees_exactly_once() {
 }
 
 #[test]
+fn a_move_one_path_takes_is_freed_on_the_path_that_did_not() {
+    // The drop-plan defect `memory_gate.rs` found in `std_str_order`: a move
+    // out of an owned local that only one path through a branch takes used to
+    // mark the binding moved for *both* paths, so the branch that kept the
+    // value leaked it. The fixture also covers the assignment after the join,
+    // which frees the old value — the path that moved it cleared the slot, so
+    // that free finds nothing there.
+    assert_compiles_and_runs(
+        "tests/fixtures/owned_conditional_move.kp",
+        "live\nfresh\nfresh\n",
+    );
+}
+
+#[test]
+fn an_owned_local_bound_in_a_loop_body_is_dropped_on_both_paths() {
+    // The defect's own minimal repro (MK7 §5): the owned local is bound inside
+    // the loop body, moved on one path through it and abandoned on the other,
+    // so the body's end-of-block drop has to run on the path that left the value
+    // behind — and the two `while`-pass plan write must not lose it.
+    assert_compiles_and_runs("tests/fixtures/owned_move_in_loop.kp", "hi\n");
+}
+
+#[test]
 fn a_bytes_parameter_is_a_borrow_not_a_move() {
     assert_compiles_and_runs(
         "tests/fixtures/heap_param_borrow.kp",
@@ -1702,6 +1725,15 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "closure_basic",
         "closure_move",
         "stdlib_closure_callbacks",
+        // M6: the drop-plan defect's own two fixtures. A move only one path
+        // takes used to remove the binding from every drop set, so the path
+        // that kept the value leaked it; both fixtures are here as well as
+        // under `memory_gate.rs`'s valgrind sweep because the leak was
+        // *invisible* under AddressSanitizer on the C backend's `-O2` build
+        // (clang deletes an allocation nothing reads), and valgrind is the
+        // gate that saw it.
+        "owned_conditional_move",
+        "owned_move_in_loop",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");

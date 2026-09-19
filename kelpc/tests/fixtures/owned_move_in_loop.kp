@@ -1,0 +1,27 @@
+// M6: the loop shape the drop-plan defect's minimal repro used (MK7 §5 of
+// `plan/mk7-own-backend.md`). The owned local is bound *inside* the body, moved
+// on one path through it and abandoned on the other, so the body's own
+// end-of-block drop has to run on the path that left the value behind — and the
+// move that cleared the slot has to leave the other path's free with nothing to
+// free.
+//
+// The loop matters to the planner as well as to the leak: `borrowck.rs` checks
+// a `while` body twice (the double-move trick) and the block's drop set is
+// written by whichever pass runs last, so a body whose two paths disagree about
+// the move is exactly the case that has to survive being walked twice.
+fun main() {
+    var words: List<String> = List.empty()
+    words.push("a")
+    var round: usize = 2
+    var go = true
+    while round > 0 && go {
+        val text = String.from_str("hi")
+        if round == 2 {
+            words.set(0, text)
+            round = 1
+        } else {
+            go = false
+        }
+    }
+    print(words.get(0))
+}

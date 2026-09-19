@@ -2408,6 +2408,37 @@ fn emit_copy(out: &mut String, dst_reg: &str, dst_off: i32, src_reg: &str, src_o
     }
 }
 
+/// Zeroes exactly `size` bytes at `[base+off]`, in falling chunk widths, the
+/// same way `emit_copy` splits a copy — and for the same reason: a `datac`'s
+/// size is only aligned to its widest field, so a three-`i32` struct is 12
+/// bytes. This is how codegen *clears* an owned binding at a move site (see
+/// `DropPlan::moves_at`): the value has already been copied out, and every
+/// owning drop `types::drop_fn_name` names treats a zeroed value as nothing to
+/// free, which is what lets the binding still be dropped on the path that did
+/// not move it.
+fn emit_zero(out: &mut String, base: &str, off: i32, mut size: i32) {
+    let mut at = 0i32;
+    while size > 0 {
+        let (w, n) = if size >= 8 {
+            (Width::W8, 8)
+        } else if size >= 4 {
+            (Width::W4, 4)
+        } else if size >= 2 {
+            (Width::W2, 2)
+        } else {
+            (Width::W1, 1)
+        };
+        let _ = writeln!(
+            out,
+            "    mov {} [{base}{}], 0",
+            w.mem(),
+            off_str(off + at)
+        );
+        at += n;
+        size -= n;
+    }
+}
+
 fn emit_copy_to_global(
     out: &mut String,
     label: &str,
@@ -3084,7 +3115,20 @@ impl<'a> LiveAnalysis<'a> {
             ExprKind::IntLit(_) | ExprKind::BoolLit(_) | ExprKind::CharLit(_) | ExprKind::FloatLit(_) => {
                 self.tick();
             }
-            ExprKind::Ident(name) => self.touch(name),
+            ExprKind::Ident(name) => {
+                self.touch(name);
+                // A move site clears this local's slot after copying the value
+                // out (`Gen::clear_if_move`), so it has to *have* a slot: the
+                // same reason an addressed local does, and the same remedy —
+                // it loses its claim on a pool register. Nothing else about
+                // the interval changes; the clear is a write at this position,
+                // which `touch` has already counted.
+                if self.drops.moves_at(self.function, e) {
+                    if let Some(id) = self.lookup(name) {
+                        self.addr_taken[id] = true;
+                    }
+                }
+            }
             ExprKind::Unary { expr, .. } => self.expr(expr),
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.expr(lhs);
@@ -4338,6 +4382,36 @@ impl Gen {
     /// of any other type is refused by name rather than silently skipped,
     /// because a skipped free is a leak and a skip that *looks* handled is
     /// exactly what this backend's refusals exist to prevent.
+    /// Clears an owned binding at a *move site* — the read `DropPlan` marks
+    /// with `moves_at` — once its value has been copied out. The binding is
+    /// still in a drop set (a block end, a `return`, a `?` or an assignment),
+    /// because some path through a branch or loop body did not move it; zeroing
+    /// the slot here is what makes that one drop correct on both paths, since
+    /// every drop routine this backend calls reads a zeroed value as nothing to
+    /// free. `codegen_c.rs` emits the same thing as a statement expression.
+    ///
+    /// A move site is always a *stack* slot: `LiveAnalysis` marks the local
+    /// `addr_taken` at the same node for exactly this reason, so the register
+    /// allocator never hands it a pool register that has no address to clear.
+    /// Anything else is refused by name rather than silently left uncleared —
+    /// an uncleared slot is a double free, not a wrong number.
+    fn clear_if_move(&mut self, expr: &Expr, ty: &Ty, loc: Loc) -> Result<(), String> {
+        if !self.drops.moves_at(&self.function, expr) {
+            return Ok(());
+        }
+        let Some(off) = loc.stack_offset() else {
+            return Err(unsupported(&format!(
+                "clearing the moved value `{}` (a register holds no slot to clear)",
+                ty.display()
+            )));
+        };
+        let size = struct_layout(ty, &self.layouts)
+            .map(|l| l.size)
+            .ok_or_else(|| unsupported(&format!("clearing a moved value of type `{}`", ty.display())))?;
+        emit_zero(&mut self.out, "rbp", off, size);
+        Ok(())
+    }
+
     fn emit_drop(&mut self, target: &DropTarget, frame: &Frame) -> Result<(), String> {
         // A `View` is a `Copy` borrow and has no drop arm in `types.rs`
         // (`drop_fn_name(View)` is `unreachable!`), so this can only be
@@ -7086,7 +7160,7 @@ impl Gen {
                         unreachable!("an integer local is never in the float pool")
                     }
                 }
-                Ok(())
+                self.clear_if_move(e, &ty, loc)
             }
             ExprKind::Unary { op, expr } => {
                 self.expr(expr, frame)?;
@@ -8659,7 +8733,7 @@ impl Gen {
                         emit_copy_to_global(&mut self.out, &label, 0, "rbp", src_off, layout.size);
                     }
                 }
-                Ok(())
+                self.clear_if_move(expr, &ty, loc)
             }
             ExprKind::Call { callee, args } => self.call(callee, args, &expr.ty, Some(dest), frame),
             _ => Err(unsupported(

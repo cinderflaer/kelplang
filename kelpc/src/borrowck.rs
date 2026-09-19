@@ -68,6 +68,24 @@
 //! has no user-defined destructors, so nothing can observe the difference
 //! except memory use.
 //!
+//! **A move clears its source**, and that is what makes a *conditional* move
+//! leak-free. A local moved on one path through a branch or loop body and not
+//! on another is neither "live" nor "moved": dropping it would free a value
+//! a new owner already holds on one path, and not dropping it leaks on the
+//! other. The plan therefore keeps such a local in every drop set it reaches
+//! (`MoveState::MaybeMoved`), and records the *move sites* themselves
+//! (`FnDrops::at_move`, keyed by the moved expression's own identity). Codegen
+//! renders a read at one of those sites as "copy the value out, then zero the
+//! binding", so the drop that runs is a free of nothing on the path that
+//! moved and a real free on the path that did not. That is also why an
+//! assignment to an owned binding frees the old value whenever the binding is
+//! not *definitely* moved: in the cleared case the free is of the zero value.
+//!
+//! Without this, an owned local bound inside a loop body leaked whenever one
+//! path through the body moved it and another abandoned it — see §5 of
+//! `plan/mk7-own-backend.md` for the measurement, and
+//! `tests/fixtures/owned_conditional_move.kp` for the regression.
+//!
 //! Known, deliberately out-of-scope gap: `p = &c` *reassigning* an
 //! existing binding to a fresh borrow is checked at the moment of
 //! assignment (conflicts with anything currently active are still caught)
@@ -89,6 +107,36 @@ use crate::types::Ty;
 pub struct DropTarget {
     pub name: String,
     pub ty: Ty,
+}
+
+/// How an owned local's value stands at the point being checked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MoveState {
+    /// Still owned by the binding: the scope that declared it frees it.
+    Live,
+    /// Moved out on every path that reaches here. A new owner holds the
+    /// value, this binding is dead, and nothing frees it here.
+    Moved,
+    /// Moved out on some path and not on another — a branch or a loop body
+    /// that moved it joined with one that did not. The binding still has to
+    /// be freed (the moved path cleared its slot, so that free is of the
+    /// zero value), and the value is no longer readable: the borrow state
+    /// treats it as moved.
+    MaybeMoved,
+}
+
+impl MoveState {
+    /// The state two paths agree on. Anything the two do not both say is
+    /// `MaybeMoved`, which is the only conservative answer: `Moved` would
+    /// drop the path that kept the value on the floor, and `Live` would free
+    /// a value the other path handed to a new owner.
+    fn merge(self, other: MoveState) -> MoveState {
+        if self == other {
+            self
+        } else {
+            MoveState::MaybeMoved
+        }
+    }
 }
 
 /// Where every owned local is freed, per function.
@@ -115,12 +163,25 @@ fn block_id(block: &tir::Block) -> NodeId {
     block as *const tir::Block as NodeId
 }
 
+/// The identity of one `tir::Expr` node, for the move-site key — the same
+/// identity argument as `block_id`, and for the same reason.
+fn expr_id(expr: &tir::Expr) -> NodeId {
+    expr as *const tir::Expr as NodeId
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FnDrops {
     at_block_end: HashMap<NodeId, Vec<DropTarget>>,
     at_return: HashMap<Span, Vec<DropTarget>>,
     at_assign: HashMap<Span, Vec<DropTarget>>,
     at_try: HashMap<Span, Vec<DropTarget>>,
+    /// The expressions that *move* an owned binding's value out of it and
+    /// therefore have to clear the binding's slot after copying the value out
+    /// — one entry per moved expression, so codegen can ask about the node it
+    /// is already rendering. Only bindings that some path leaves live get an
+    /// entry: a binding moved on every path is dropped nowhere, so its slot's
+    /// contents are never read again and clearing it would be dead code.
+    at_move: std::collections::HashSet<NodeId>,
 }
 
 impl DropPlan {
@@ -172,6 +233,16 @@ impl DropPlan {
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
+
+    /// Whether the value read at `expr` is a move out of an owned binding
+    /// whose slot codegen has to clear — copy the value out, then zero the
+    /// binding. See the module doc's "a move clears its source".
+    pub fn moves_at(&self, function: &str, expr: &tir::Expr) -> bool {
+        self.functions
+            .get(function)
+            .map(|f| f.at_move.contains(&expr_id(expr)))
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug)]
@@ -207,9 +278,10 @@ struct VarState {
 struct OwnedVar {
     name: String,
     ty: Ty,
-    /// Set when this binding's value is moved elsewhere; a moved-out local is
-    /// never dropped by the scope that declared it.
-    moved: bool,
+    /// Whether this binding's value is still here; a definitely moved-out
+    /// local is never dropped by the scope that declared it (see
+    /// `MoveState`).
+    state: MoveState,
 }
 
 #[derive(Clone, Default)]
@@ -245,14 +317,14 @@ impl Scope {
         }
         // Owned locals declared in *this* scope survive the merge (an `if`
         // arm or loop body is always its own block, so nothing here was
-        // declared inside one). A local is treated as moved if *either* side
-        // moved it: that can leak in the branch that did not — safe — where
-        // the other choice would free a value the other branch had already
-        // handed to a new owner.
+        // declared inside one). Two paths that disagree about whether the
+        // value was moved leave it `MaybeMoved`: it is *still* dropped, and
+        // the path that moved it cleared the slot, which is what makes that
+        // drop correct on both paths. `MoveState::merge` has the reasoning.
         let mut owned = a.owned;
         for entry in owned.iter_mut() {
             if let Some(other) = b.owned.iter().find(|o| o.name == entry.name) {
-                entry.moved = entry.moved || other.moved;
+                entry.state = entry.state.merge(other.state);
             }
         }
         Scope { vars, scope_borrows: Vec::new(), owned }
@@ -279,6 +351,15 @@ struct Ctx {
     ret_is_borrow: bool,
     /// The declared return type, for the wording of that diagnostic.
     ret_ty: Ty,
+    /// The expressions that move an owned binding's value out of it, keyed by
+    /// the binding's name, innermost-last (a shadowing binding's name is the
+    /// same key, and codegen's own C scoping resolves the same way — see
+    /// `check_function`, which is where these become `FnDrops::at_move`).
+    move_sites: HashMap<String, Vec<NodeId>>,
+    /// The names of owned bindings that some merge left `MaybeMoved`. Only
+    /// those have a drop site a move could double up with, so only their move
+    /// sites are recorded as clears.
+    maybe_moved_names: std::collections::HashSet<String>,
 }
 
 impl Ctx {
@@ -314,13 +395,29 @@ impl Ctx {
         out
     }
 
-    /// Marks the innermost owned binding named `name` as moved out.
-    fn mark_moved(&mut self, name: &str) {
+    /// Marks the innermost owned binding named `name` as moved out. Returns
+    /// whether such a binding exists: only an owned local can need its slot
+    /// cleared on the way out (see `mark_move_site`).
+    fn mark_moved(&mut self, name: &str) -> bool {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
-                owned.moved = true;
-                return;
+                owned.state = MoveState::Moved;
+                return true;
             }
+        }
+        false
+    }
+
+    /// Records that the value read at `expr` is a move out of the owned
+    /// binding `name`: codegen clears that binding's slot there, which is what
+    /// lets the binding still be dropped on the path that did not move it.
+    /// A name that is not an owned local (a `pd` global's storage, a `str`, a
+    /// borrow) is not recorded — nothing frees it, so nothing can double-free.
+    fn mark_move_site(&mut self, name: &str, expr: &tir::Expr) {
+        let entry = self.move_sites.entry(name.to_string()).or_default();
+        let id = expr_id(expr);
+        if !entry.contains(&id) {
+            entry.push(id);
         }
     }
 
@@ -329,7 +426,7 @@ impl Ctx {
     fn mark_owned_again(&mut self, name: &str) {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
-                owned.moved = false;
+                owned.state = MoveState::Live;
                 return;
             }
         }
@@ -400,8 +497,21 @@ impl Ctx {
         scope.owned.push(OwnedVar {
             name: name.to_string(),
             ty: ty.clone(),
-            moved: false,
+            state: MoveState::Live,
         });
+    }
+
+    /// Whether the innermost owned binding named `name` has *definitely* been
+    /// moved out. An assignment uses this to decide whether the old value is
+    /// still there to free: a `MaybeMoved` binding's slot is still freed,
+    /// because the path that moved it cleared it.
+    fn owned_definitely_moved(&self, name: &str) -> bool {
+        for scope in self.scopes.iter().rev() {
+            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
+                return owned.state == MoveState::Moved;
+            }
+        }
+        false
     }
 
     /// Whether any scope in the frame already binds `name`.
@@ -464,15 +574,16 @@ impl Ctx {
     }
 
     /// Like `use_value`, but also tells the drop planner that the binding's
-    /// value now lives somewhere else.
-    fn use_value_moving(&mut self, name: &str, span: Span) -> Result<()> {
+    /// value now lives somewhere else — and, when it does, records the read as
+    /// a move site so codegen clears the binding's slot (see the module doc).
+    fn use_value_moving(&mut self, name: &str, expr: &tir::Expr) -> Result<()> {
         let was_copy = self
             .lookup_mut(name)
             .map(|v| v.ty.is_copy())
             .unwrap_or(true);
-        self.use_value(name, span)?;
-        if !was_copy {
-            self.mark_moved(name);
+        self.use_value(name, expr.span)?;
+        if !was_copy && self.mark_moved(name) {
+            self.mark_move_site(name, expr);
         }
         Ok(())
     }
@@ -643,7 +754,21 @@ impl Ctx {
     }
 
     fn merge_into(&mut self, then_snap: Vec<Scope>, else_snap: Vec<Scope>) {
-        let merged = then_snap.into_iter().zip(else_snap).map(|(a, b)| Scope::merge(a, b)).collect();
+        let merged: Vec<Scope> = then_snap
+            .into_iter()
+            .zip(else_snap)
+            .map(|(a, b)| Scope::merge(a, b))
+            .collect();
+        // A binding whose two paths disagree now has a *conditional* move, so
+        // its move sites have to clear its slot even though it is still
+        // dropped — see the module doc.
+        for scope in &merged {
+            for owned in &scope.owned {
+                if owned.state == MoveState::MaybeMoved {
+                    self.maybe_moved_names.insert(owned.name.clone());
+                }
+            }
+        }
         self.restore(merged);
     }
 }
@@ -665,11 +790,14 @@ fn display_root(name: &str) -> String {
 /// The drops for a set of owned locals: reverse declaration order, live ones
 /// only. Reverse order matches the lexical nesting of the bindings — a value
 /// moved out of an earlier binding into a later one is freed exactly once,
-/// by the later one, and before the earlier one would have been.
+/// by the later one, and before the earlier one would have been. "Live"
+/// includes a `MaybeMoved` binding: its slot holds either the value or the
+/// zero a move left there, and freeing the zero is what makes the drop correct
+/// on both paths (the module doc's "a move clears its source").
 fn live_drops<'a>(owned: impl DoubleEndedIterator<Item = &'a OwnedVar>) -> Vec<DropTarget> {
     owned
         .rev()
-        .filter(|o| !o.moved)
+        .filter(|o| o.state != MoveState::Moved)
         .map(|o| DropTarget {
             name: o.name.clone(),
             ty: o.ty.clone(),
@@ -830,6 +958,8 @@ fn check_function(
         },
         ret_is_borrow: crate::infer::is_borrowed_value(&f.ret),
         ret_ty: f.ret.clone(),
+        move_sites: HashMap::new(),
+        maybe_moved_names: std::collections::HashSet::new(),
     };
     for (name, ty) in &f.params {
         ctx.define(name, ty);
@@ -871,6 +1001,22 @@ fn check_function(
     if !leftover.is_empty() {
         ctx.plan.at_block_end.insert(block_id(&f.body), leftover);
     }
+
+    // The move sites whose binding some path leaves live. Each of them has to
+    // clear its binding's slot after copying the value out, because that
+    // binding is still in a drop set — at a block end, a `return`, a `?` or an
+    // assignment — and the free has to find nothing on the path that moved.
+    // A binding moved on *every* path is in no drop set, so its move sites are
+    // deliberately left out: clearing a slot nothing will ever free is dead
+    // code, and an `if`/`loop` merge is the only thing that can leave one
+    // `MaybeMoved`.
+    let clears: Vec<NodeId> = ctx
+        .move_sites
+        .iter()
+        .filter(|(name, _)| ctx.maybe_moved_names.contains(*name))
+        .flat_map(|(_, sites)| sites.iter().copied())
+        .collect();
+    ctx.plan.at_move.extend(clears);
     Ok(ctx.plan)
 }
 
@@ -1045,7 +1191,7 @@ fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut 
 /// shared reference."
 fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &expr.kind {
-        tir::ExprKind::Ident(name) => ctx.use_value_moving(name, expr.span),
+        tir::ExprKind::Ident(name) => ctx.use_value_moving(name, expr),
         tir::ExprKind::FieldAccess { base, field } => {
             check_place(base, ctx)?;
             // A field read is a *place*, and v1 has no partial moves: reading
@@ -1086,7 +1232,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     continue;
                 }
                 match &init.kind {
-                    tir::ExprKind::Ident(name) => ctx.use_value_moving(name, init.span),
+                    tir::ExprKind::Ident(name) => ctx.use_value_moving(name, init),
                     // A nested literal copying out of the enclosing closure's
                     // environment: only `Copy` values get here, so the read
                     // moves nothing.
@@ -1187,12 +1333,12 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // Read *before* `check_assign_target` reinitializes the binding:
             // `x = f(x)`, where `f` takes its argument by value, moved x into
             // the call, so the value is not there to be freed any more and
-            // dropping it would free memory a new owner now holds.
+            // dropping it would free memory a new owner now holds. Only a
+            // binding that is *definitely* moved skips the free: one moved on
+            // some path only was cleared there, so the free of the old value
+            // is still owed to the paths that kept it (`owned_definitely_moved`).
             let moved_by_value = match &target.kind {
-                tir::ExprKind::Ident(name) => ctx
-                    .lookup_mut(name)
-                    .map(|state| state.moved_at.is_some())
-                    .unwrap_or(false),
+                tir::ExprKind::Ident(name) => ctx.owned_definitely_moved(name),
                 _ => false,
             };
             check_assign_target(target, ctx)?;

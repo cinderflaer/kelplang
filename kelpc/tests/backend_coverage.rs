@@ -64,10 +64,16 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 170 fixtures the C backend
-/// builds, 146 of them also built by the asm backend, 24 refused — which is the
+/// The counts this list was recorded against: 172 fixtures the C backend
+/// builds, 148 of them also built by the asm backend, 24 refused — which is the
 /// 241-of-290 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
+///
+/// The last re-recording is the drop-plan defect's fix, which added
+/// `owned_conditional_move` and `owned_move_in_loop`: both are ordinary owned
+/// values moved on one path and not another, so both backends build them, and
+/// the denominator moved from 170 to 172 with the refused count unchanged at
+/// 24.
 ///
 /// (This paragraph said 153/106/47 while the list beneath it had grown to 129
 /// entries, which the plan's §5 blockquotes had already recorded as 160/129/31;
@@ -255,6 +261,8 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "named_args",
     "nested_literal_staging",
     "nested_while_registers",
+    "owned_conditional_move",
+    "owned_move_in_loop",
     "panic_msg",
     "panic_tail",
     "passdown_datac",
