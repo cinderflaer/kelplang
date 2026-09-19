@@ -26,14 +26,14 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, six slices of item 4's aggregates (the last two being `datac`s that own a heap field and `Box<T>`), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **164 of 255** integration tests pass under `--backend=asm`; all 66 fixtures the asm backend builds print byte-identical stdout to the C backend, and four heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 133 C and 66 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, seven slices of item 4's aggregates (the last three being `datac`s that own a heap field, `Box<T>`, and `List<T>` — the first container whose element can itself own), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **182 of 260** integration tests pass under `--backend=asm`; all 85 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 139 C and 85 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **164 of 255 tests pass on the asm backend, and the C backend passes all
-255.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **182 of 260 tests pass on the asm backend, and the C backend passes all
+260.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -100,27 +100,35 @@ points at, so the element's own layout is deliberately not required while the pa
 the slice's own fixture found a **pre-existing bug in this backend that no earlier fixture had reached** — an
 assignment to an aggregate local wrote its first field into the target's own slot before evaluating a field
 initializer that reads the target (`list = Node(value = 2, next = Box.of(list))`), which C's
-compound-literal-then-assign order gets for free and which this backend has to stage explicitly.
+compound-literal-then-assign order gets for free and which this backend has to stage explicitly. The list
+slice (below) moved it by nineteen at the fixture level and eighteen at the test level: `List<T>`'s single
+`$List` layout key turned every fixture that had been refused for a list type *somewhere* into a build —
+fourteen of them, from `list_basic` to `box_basic`, `for_loop`, `move_param`, `path_polish`, `recursive_datac`
+and `view` — and the five fixtures the slice's own scope forced into existence (`list_element_widths`,
+`list_growth_and_rebuild`, `list_insert_remove_shifts`, `list_insert_bounds`, `list_remove_bounds`) are why the
+denominator moved from 255 to 260 rather than staying fixed. 85 fixtures build, 54 are refused, the asm suite
+is 182 of 260, and valgrind is clean over all 139 C-backend and 85 asm-backend binaries.
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
 
 - **Stage 0** (backend boundary): done.
 - **Stage 1** (x86-64 assembly): 3 of its original 8 build-order items (§5) are done outright — scalars,
-  `f32`/`f64`, the register allocator — plus a 4th (aggregates) with six of its slices landed (a `datac` by
+  `f32`/`f64`, the register allocator — plus a 4th (aggregates) with seven of its slices landed (a `datac` by
   value, a nested `datac`, the wider SysV classes, a `MEMORY`-class argument and a borrowed temporary, an owned
-  heap field, and `Box<T>`), the first
+  heap field, `Box<T>`, and `List<T>`), the first
   half of item 8 (`print`/`print!` of `str` and the floats), passdowns (§5's ninth item, added after the fact:
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
   `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
   backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
-  compiled. That is where the 164/255 fixture number comes from. The remaining part of item 4 (`enum`, plus a
-  `datac` holding a float or `List`/`Map` field — `String`/`Bytes` fields and `Box<T>` itself are now covered,
-  see the heap-field and box slices' blockquotes, and the fourth slice's covers what "by value" means end to
-  end), the rest of item 8 (printing an owned buffer in a template), the rest of items 5 and 10 (`List`/`Map`
-  drops, and the externs whose bodies are the heap and the syscall layer), plus items 6-7
+  compiled. That is where the 182/260 fixture number comes from. The remaining part of item 4 (`enum`, plus a
+  `datac` holding a float or `Map` field — `String`/`Bytes`/`List` fields and `Box<T>` itself are now covered,
+  see the heap-field, box and list slices' blockquotes, and the fourth slice's covers what "by value" means end
+  to end), the rest of item 8 (printing an owned `String`/`View` as a value), the rest of items 5 and 10
+  (`Map` drops, the externs whose bodies are the heap and the syscall layer, and the `List` S1 methods that need
+  an element comparison or clone), plus items 6-7
   (closures, capabilities), are what stands between here and Stage
-  1's own definition of done: all 255 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for
+  1's own definition of done: all 260 integration tests passing, `bench/speed` no worse than `-O0`, and a memory gate for
   the asm backend — which the heap slice supplied, in the form of a `valgrind` sweep over every fixture this
   backend builds, and which is documented rather than wired into the suite (see that blockquote for why).
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
@@ -133,54 +141,45 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (164/255) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (182/260) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
 
-1. **The runtime** — the row that was 40 fixtures blocked by an `extern fun` at all, 38 of them by
-   `std.mem.alloc_raw` alone. **Re-measured after the extern slice it was 25, after the two heap slices 13, and
-   after the box slice it is 13 still — no longer a row about
-   externs at all.** The blanket refusal is gone; the fixtures that still name an `extern fun` do so because
-   *that* extern is one this backend cannot supply a body for yet, and all of them are heap-backed (`str`'s
-   parsers and `from_f64_raw` 5, `path.normalize_raw` 1, `fs`/`io`/`net` 5) or gated (`time` 2). So the runtime row has collapsed into the heap row below it, which is the honest
-   answer and the same one the plan's earlier correction reached from the other direction: the allocator does
-   not unblock these on its own, because a program that allocates a `Bytes` also has to be able to lower one.
-   See §8's note for why the allocator itself is still blocked, and §5's table for what the 25 are.
-2. **Aggregates, the rest of them** — the six slices of item 4 have landed seventeen fixtures (six from the
-   first slice, one from the second — a `datac` nested by value inside another qualifying `datac` — two new
-   fixtures the third slice added and unblocked itself, two more the fourth did, three the heap-field slice
-   moved, and three the box slice did). The rest are refused
-   either for `enum` (16 of them when this row was first written; **9** after the extern slice removed the mask
-   that was hiding the heap row in front of it — **18** now, see §5's table — tagged unions, not attempted at
-   all) or for a `datac` holding
-   a float, `List` or `Map` field anywhere in its fields — refused regardless of size, since the third
-   slice's eightbyte/`MEMORY` classification covers *size*, not a float-classified eightbyte or a container
-   pointer's field. **A `datac` holding an owned `String`/`Bytes` field is no longer in this row**: the
-   heap-field slice (below) covers it, and the three fixtures it moved had been refused for the field's type
-   rather than for the aggregate machinery; **nor is `Box<T>`**, which the box slice covers the same way. The two gaps the third slice named as its own deliberate
-   narrowings — a `Mem`-class `datac` passed or received *by value*, and a borrow of a temporary — are both
-   closed; see the fourth slice's blockquote. The
-   ABI work the risk register calls the place silent miscompiles live is now complete for every shape this
-   backend admits at all, and neither the extern slice nor the heap-field one touched any of it.
-3. **A passdown (`pd`)** — **done** (see §5's passdown blockquote). It was 8 fixtures when this ranking first
-   named the row, five of which now build; the three left (`pd_owned`, `list_field`,
-   `pd_argument_forwarding`) are refused for the *type* their passdown holds (`String`, `List<i32>`) rather than
-   for the passdown mechanism, so the row has effectively moved into the heap one below.
-4. **`List`/`Map`** — the row that is now unmistakably next. `Box` landed (see the box blockquote), which was
-   the cheap one, and every remaining container fixture needs `List` or `Map`. Their layouts are in §12's
-   annex; they are the first types whose *routines* are per-instantiation over an element that can itself own;
-   and `List<String>` is the first refusal of `str_to_string_coercion`, `stdlib_list`, `list_owned`,
-   `move_param` and most of the rest of the heap row.
-5. **String values** — now a heap row rather than a printing one: `str` values themselves work, and what remains
-   is the owned `String`/`Bytes`/`View` types and their drops.
+1. **The heap row, which `List` has now cut in half** — 25 fixtures, and no longer a row about `extern fun`
+   declarations (the blanket refusal is gone; what is left names an extern only because the extern's own body
+   needs the heap). Re-measured by building each one, the 25 split by mechanism rather than by fixture: **`Map`**
+   (`map_basic`, `map_key_types`, `map_missing_key`, `map_owned`, `map_remove_missing`, and
+   `str_to_string_coercion`, whose first refusal is now the `Map<String, String>` behind its `List<String>`) — 6;
+   **the `fs`/`io`/`net`/`path` extern bodies** (`fs_errno`, `io_stdio`, `io_streams`, `net_loopback`, `net_poll`,
+   `net_resolve`, `net_timeout`, `path_normalize`, `process_spawn`) — 9; **an owning passdown**, which needs the
+   `atexit` handler the C backend gets for free (`list_field`, `pd_owned`, `pd_argument_forwarding`) — 3;
+   **the three `List` S1 methods this slice refused by name** (`stdlib_sort` needs `sort`, `list_slice_insert`
+   needs both, `list_slice_bounds` needs `slice`) — 3; **the `str` parsers**, whose `mut i64`/`f64`
+   out-parameter needs a scalar borrow the backend cannot address yet (`stdlib_build`, `stdlib_parse`,
+   `borrow_provenance_and_arms`) — 3; and **printing an owned `String`** in a template
+   (`heap_temporary_print`) — 1. See §5's table.
+2. **Aggregates, the rest of them** — the seven slices of item 4 have landed thirty-six fixtures; what is left
+   is `enum` (`tagged unions, not attempted at all` — now the largest single row at **18**, none of which the
+   heap, box or list slices could reach because a payload is a float or an owned type) and a `datac` holding a
+   float or `Map` field (`Map` only: `List` and `Box` fields are covered). The ABI work the risk register calls
+   the place silent miscompiles live is now complete for every shape this backend admits at all, and the extern,
+   heap-field, box and list slices touched none of it.
+3. **A passdown (`pd`)** — **done**, except for the three fixtures whose passdown *owns* something: those are
+   refused for the type it holds (`String`, `List<i32>`), which is the `atexit` row above rather than a passdown
+   one. See §5's passdown blockquote.
+4. **`List`'s own leftovers** — `sort`, `contains` and `slice`, which need an element-level comparison or clone
+   (and, for `slice`, a clone) this backend has no way to express; three fixtures.
+5. **`Map`** — the other container, and the next single mechanism: its layouts are in §12's annex, its header is
+   56 bytes whatever the key and value are, and its `keys`/`values` routines return a `List`, so it lands on top
+   of this slice rather than beside it.
 6. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
    row here where a gap would be a security hole rather than a wrong number).
 7. **The long tail** — numeric conversions, printing `str`/`f64` and closures: the first two are gone as of item
-   8's first slice, and closures are what is left (~1 fixture plus the `FnRef`/`ClosureLit` machinery §5 item 6
-   describes).
+   8's first slice, and closures are what is left (`FnRef`/`ClosureLit`/`IndirectCall`, 7 fixtures, plus the
+   `stdlib_closure_callbacks`/`stdlib_list_callbacks` pair).
 
 Those rows are re-measured against the current backend and rank rather than partition: a fixture counts once,
 under the *first* refusal its build hits, which is why the heap-type row below is larger than the container
@@ -310,14 +309,17 @@ with the backend as the only variable.
 > then the first half of item 8,
 > then passdowns, then the extern path (the ninth and tenth items — both added
 > after the fact, because each was a blanket refusal at the top of `generate`
-> that kept the feature out of codegen entirely).**
+> that kept the feature out of codegen entirely), then item 4's seventh slice
+> (`List<T>`, the first container whose element can itself own).**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **164 of 255 end-to-end
-> tests pass**, and the C backend passes all 255 — so the differential gate is
+> and `ld`, with no C compiler in the chain. Measured: **182 of 260 end-to-end
+> tests pass**, and the C backend passes all 260 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
-> can only rise from here. Every fixture the asm backend builds was also compared
-> against the C backend's own binary for this re-measurement (37 fixtures, 37
-> identical stdout), which is the check the fixture literals cannot make.
+> can only rise from here. Every fixture the asm backend builds is compared
+> against the C backend's own binary — by the differential sweep in
+> `kelpc/tests/backend_coverage.rs` since §1.1's sweep landed, and by hand for the
+> first slice that had any fixture to compare — which is the check the fixture
+> literals cannot make: 85 fixtures, 85 identical stdout at this measurement.
 >
 > Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 > comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
@@ -1126,6 +1128,118 @@ with the backend as the only variable.
 > chain. `box_basic` stays refused, and for the honest reason: it boxes a
 > `List<i32>`, so it is a `List` fixture wearing a box.
 
+> **The list slice — `List<T>`, the first per-instantiation routine set over
+> an element that can itself own — is done.** This is §5 item 4's `List` row,
+> and it is the row nearly every remaining heap fixture named: `List<String>`
+> alone was the first refusal of `str_to_string_coercion`, `stdlib_list`,
+> `list_owned`, `move_param` and most of the rest of it. `Box` went first
+> because it was the cheap one and needed no element walk at all; a list is
+> where the per-instantiation routine set has to free the elements it owns, one
+> at a time.
+>
+> **One `$List` key for every element type, and the ABI needed nothing.** The C
+> typedef is `{data, len, cap}` — `data` at 0, `len` at 8, `cap` at 16, size 24,
+> align 8 — which is byte for byte the `Bytes`/`String` header with a different
+> pointee, so a list *value* travels on paths this backend already had: a
+> `MEMORY`-class local sized `align_up(size, 8)`, a by-value argument in the
+> fourth item-4 slice's outgoing argument area, a return through the hidden
+> pointer. The struct's own size does not depend on the element at all — only
+> the pointee of `data` does — so `list_layout()` answers from one key exactly
+> the way `box_layout()` does, and the element's own layout is deliberately
+> **not** required to place a list. That is what lets a `List` field sit inside
+> a `datac` whose element type is not resolvable at that point, and it is why
+> `List<Shape>` over an `enum` is a 24-byte value the ABI handles fine while
+> everything a program can actually *do* with one (push it, get from it, drop
+> it) is refused where it is done, by name.
+>
+> **The routine set, all of it per instantiation but one.**
+> `kelp_List__<mangle>__{empty, of, len, is_empty, push, bounds, get,
+> get_const, set, pop, clear, insert, remove, reverse}` and
+> `kelp_list_drop__<mangle>`, named exactly as `codegen_c.rs::write_list` and
+> `write_list_s1` name them and with their panic text intact
+> (`List.get: index out of bounds`, `List.pop: the list is empty`,
+> `List.insert: index out of bounds`, `List.remove: index out of bounds`).
+> `get` versus `get_const` is decided from the call's own result type, never by
+> guessing — the same `matches!(ret, Ty::Ref { .. })` split the box slice made.
+> The one routine that is **not** monomorphized is the growth helper,
+> `kelp_rt$list_reserve(self, want, elem_size)`: start at four elements, double
+> until the wanted length fits, `realloc`, panic with `out of memory` on
+> `NULL`. `codegen_c.rs` writes one of those per element type because the
+> element is baked into its C signature; here the element size is a third
+> argument, which makes this the one place the two backends' symbol sets
+> deliberately differ.
+>
+> **Ownership, which is the whole reason the element walk exists.** `set` drops
+> the element it overwrites before storing the new one, `clear` drops elements
+> `0..len` and then sets `len = 0`, and the generated drop is `clear` plus
+> `free(data)` plus zeroing `data` and `cap` — `codegen_c.rs`'s three bodies,
+> instruction for instruction. The element's own drop is resolved through
+> `drop_site_for`, so a `String`, a `Bytes`, a generated `datac` drop, another
+> box and another list are all the same call the rest of this module already
+> makes. A `List<T>` always owns its buffer — `empty()` is the only list with
+> nothing allocated, and it still has a header to free — so `ty_owns(List)` is
+> unconditionally true and no path here can skip a drop and call it handled.
+> A `pop` or a `remove` whose element is `MEMORY` class hands the element back
+> through the hidden return pointer rather than in a register, which is the
+> shape `List<String>` has: the receiver then arrives in `rsi` and the index in
+> `rdx`, and that shift is the one place in the set where the argument
+> registers are not the obvious ones.
+>
+> **Deliberately refused, and named so it stays a visible gap:**
+> `List#sort`, `List#contains` and `List#slice`, each because it needs an
+> element-level comparison or clone this backend has no way to express yet —
+> which is what keeps `list_slice_bounds`, `list_slice_insert` and
+> `stdlib_sort` refused. An owning `pd` passdown is still refused too (nothing
+> here frees one at process exit, and the C backend gets that from `atexit`),
+> so `list_field` and `pd_owned` stay out even though the type behind them now
+> builds. `Map` is untouched.
+>
+> **Measured:** the asm suite goes 164 → **182** of 260 (the C denominator moved
+> from 255 for the five fixtures and tests this slice added), the fixture-level
+> build set 66 → **85**, the refused set 67 → **54**, of the 139 fixtures the C
+> backend builds (was 133), and valgrind reports **zero findings and zero leak
+> bytes** over 139 C-backend and 85 asm-backend binaries. Fourteen fixtures
+> stopped refusing, and they were held out by three spellings of the same row: a
+> boxed `List` (`box_basic`, `box_field_take`), a `List` in a signature
+> (`for_loop`, `generic_function_basic`, `move_param`, `path_polish`,
+> `recursive_datac`, `stdlib_list`, `view`), and the list itself (`list_basic`,
+> `list_datac_element`, `list_owned`, `list_pop_empty`,
+> `list_owned_replacement`). Five more are new, because this slice's own scope
+> needed them to exist: `list_element_widths` (a one-byte `bool`, an eight-byte
+> `i64` and a twelve-byte `Trio` — not a power of two, so copying one is two
+> instructions rather than one), `list_growth_and_rebuild` (three hundred pushes
+> across six `realloc`s, a clear-and-refill, then a `List<String>` drained by
+> `pop`), `list_insert_remove_shifts` (`insert`/`remove`/`reverse` shifting
+> twenty-four-byte owned elements), and `list_insert_bounds` and
+> `list_remove_bounds` for the two panic messages nothing else reached.
+>
+> **One gap item 3's exclusion list had to close for the new type.** `is_agg`
+> did not name `Ty::List(_)`, so a list local was a register candidate — and a
+> list local is 24 bytes that every method on one takes `&self`/`&mut self` to,
+> so a pool register would have been handed a value that needs an address. It
+> failed loudly and at once (`agg locals are stack-only`, on the first fixture
+> that compiled) rather than miscompiling, which is what makes it a gap in an
+> exclusion list rather than a wrong answer.
+>
+> **Three more things the slice's own work found, recorded as found rather than
+> introduced.** `emit_elem_return`'s `MEMORY`-class arm loaded the hidden
+> return pointer into `r11` — the same register that held the source address —
+> so the copy was `r11` to `r11`, and a `List<String>.pop()` handed back
+> twenty-four uninitialized bytes; a two-line hand-written probe
+> (`print(names.pop())` printing an empty line where `element` belonged) found
+> it, and the destination now goes through `r10`. `drop_site_for` *names* the
+> fixed `Bytes`/`String` drops without registering them, and both
+> `require_list_fn` and — latently, since the box slice — `require_box_fn`
+> assumed it did the registering, so a `List<String>` or `Box<String>` whose
+> only drop path is the generated one linked against a `kelp_rt$string_drop`
+> nothing emitted; both now register the routine the site names. And
+> `addr_of_struct` accepted a `&datac`-typed base but not a by-value aggregate
+> temporary, so `xs.pop().a` and `xs.remove(0).b` — unreachable until
+> `List#pop`/`List#remove` started handing the element back by value — were
+> refused; they now stage the temporary in a fresh `Frame::scratch` slot and
+> `lea` it, which is the fourth item-4 slice's mechanism for a borrowed
+> temporary applied to the by-value case.
+
 > Deliberate choices carried over unchanged from the first slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
@@ -1134,21 +1248,21 @@ with the backend as the only variable.
 > unchecked: that is the one place an unimplemented feature would be a
 > security hole rather than a wrong number.
 >
-> **Where the remaining refusals rank**, re-measured after the box slice, and
+> **Where the remaining refusals rank**, re-measured after the list slice, and
 > reproducible instead of hand-run: `kelpc/tests/backend_coverage.rs` sweeps
 > every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
 > a ratchet on the set the asm backend builds, and prints this exact table under
 > `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
-> count is 67 of the 133 fixtures the C backend builds (66 built, all agreeing
+> count is 54 of the 139 fixtures the C backend builds (85 built, all agreeing
 > byte for byte). The categories are the *feature* in the way, read off each
 > fixture's first refusal message:
 >
 > | blocker (the backend's first refusal) | fixture files |
 > | --- | --- |
-> | a heap type — `List`/`Map`, a `datac` or `enum` that holds one, a `str` in an `enum` payload, a `String` interpolated into a `print` template, or a `String` a `str` argument is coerced into; 13 of them still reached through an `extern fun` this backend has no routine for (the `str` parsers 3, `from_f64_raw` 2, `path.normalize_raw` 1, `time` 2, `fs` 2, `io` 2, `net` 1) | 37 |
-> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature; 18 fixtures, none of which the heap or box slices could reach because a payload is a float or an owned type | 18 |
-> | a `datac` holding a float or `List`/`Map` field | 5 |
-> | a closure or a function value | 6 |
+> | a heap type — `Map`, a `datac` or `enum` that holds one, a `str` in an `enum` payload, an owned `String` printed or interpolated, an owning `pd`, a `List` S1 method, or a `str` parser's `mut` out-parameter; no longer `List` itself, which this slice landed | 25 |
+> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature; 18 fixtures, none of which the heap, box or list slices could reach because a payload is a float or an owned type | 18 |
+> | a closure or a function value | 7 |
+> | a `datac` holding a float or `Map` field (the tool's classifier also catches a `&Shape` parameter here, which is the `enum` row seen from a signature) | 3 |
 > | a gated extern (`time.now_unix_raw`, refused for the gate rather than the symbol) | 1 |
 >
 > Re-measured after the heap-field slice the movement was refused 71 -> 69,
@@ -1160,7 +1274,15 @@ with the backend as the only variable.
 > first refusal used to name the `datac` holding the box. The `enum` row moved
 > 17 -> 18 for a reason that is an artefact of the classifier rather than of the
 > backend: with the `Box` out of the way, one fixture's first refusal is now an
-> `enum` two steps further in.
+> `enum` two steps further in. After the list slice it is refused 67 -> 54 and
+> built 66 -> 85, and every row moved with it, because a `List` type was standing
+> in front of all of them in one spelling or another: the heap row 37 -> 25 (the
+> fourteen the list slice landed, less `str_to_string_coercion`, which stopped at
+> the `Map` behind its list), the `datac` row 5 -> 3, the closure row 6 -> 7 (a
+> `List<closure>` fixture and its `Box<closure>` sibling, whose first refusal is
+> now the closure rather than the list), and `enum` unchanged at 18 — the one row
+> this slice did not touch, because an `enum` with an owning payload has no
+> routine set to inherit from a list.
 >
 > The numbers do not match the hand tally two blockquotes up, and the reason is
 > the classifier rather than the backend: the tool reads the message a fixture
@@ -1171,35 +1293,39 @@ with the backend as the only variable.
 > counted as heap by hand. Both are honest readings of the same 71 fixtures;
 > the tool's is the one to quote, because it is the one anyone can re-run.
 >
-> **The heap is still the whole of what is left, and the shape of the remainder
-> is now visible** — and, since this paragraph was written, half of it has
-> landed. The text types are done (`Bytes`, `String`, `View`), and so is **a
-> `datac` that *holds* a heap field**, which was this paragraph's own "next
-> slice": `string_field.kp` (`datac Holder(val name: String, val n: i32)`) is
-> the smallest instance it named, and it builds now. What the slice did **not**
-> do is the four fixtures this paragraph claimed it would unlock. Re-measured by
-> building each one, none of `str_to_string_coercion`, `box_field_take`,
-> `map_datac` and `recursive_datac` is reachable without `List`/`Map`/`Box` or an
-> `enum` — `str_to_string_coercion`'s first refusal is simply `List<String>` now
-> that the `String` field of its `Doc` is no longer in front of it. The honest
-> statement is that the field mechanism is the **prerequisite** for owned
-> elements in containers, not a substitute for them, and that the paragraph's
-> coupling of the two was wrong in the same direction the plan's ranking has been
-> wrong before: it credited a slice with the fixtures its successor reaches.
+> **The heap is no longer the whole of what is left, and the row that replaced it
+> is `Map`** — and, since this paragraph was written, `List` itself has landed
+> too. What the list slice did **not** do is the fixtures this ranking's earlier
+> version credited it with: `str_to_string_coercion` stopped at its
+> `Map<String, String>` rather than finishing, `stdlib_sort`/`list_slice_insert`/
+> `list_slice_bounds` need `sort`/`contains`/`slice` (refused by name),
+> `list_field`/`pd_owned`/`pd_argument_forwarding` need the `atexit` handler, and
+> `stdlib_build`/`stdlib_parse` still need the `str` parsers' `mut` out-parameter.
+> The honest statement is that a container's layout and routine set is the
+> **prerequisite** for the fixtures that name one, not a substitute for the
+> mechanism behind it, and that this plan has now been wrong in the same direction
+> twice: it credited a slice with the fixtures its successor reaches.
 >
-> What is left in that row is therefore the containers — `List` and `Map`, since
-> `Box` landed with the box slice (below) —
+> What is left in that row is therefore `Map` — the list landed with the list
+> slice above, and the annex's `List` half is now history —
 > plus **an `enum` that holds a heap type**, which is the other half of the
 > `enum` row too, since `Result<i64, String>` and `Option<String>` are enums whose
 > payloads own.
 >
-> Behind that, in the order the refusals rank themselves: `List`/`Map`
-> themselves (their layouts are in the annex; they are the first per-instantiation
-> routine set over an element that can itself own, and `List<String>` is now the
-> first refusal of `str_to_string_coercion`, `stdlib_list`, `list_owned` and
-> `move_param` alike); the `str` parsers and `from_f64_raw` as routines, which now
+> Behind that, in the order the refusals rank themselves, and measured by
+> building each of the 25: `Map` itself (six fixtures, `str_to_string_coercion`
+> among them — its first refusal is the `Map<String, String>` behind its
+> `List<String>`; the layouts are in §12, and `keys`/`values` return a `List`, so
+> it lands on top of the list slice rather than beside it); the `fs`/`io`/`net`/
+> `path` extern bodies (nine); an owning `pd`, which needs the `atexit` handler
+> (`list_field`, `pd_owned`, `pd_argument_forwarding`); the three `List` S1
+> methods refused by name (`stdlib_sort`, `list_slice_insert`, `list_slice_bounds`);
+> the `str` parsers and `from_f64_raw` as routines, which now
 > need only a `mut` scalar borrow out-parameter to be expressible at all
-> (`stdlib_build`, `stdlib_parse`); `enum`'s 17 fixtures; and the two things
+> (`stdlib_build`, `stdlib_parse`, `borrow_provenance_and_arms`); and printing an
+> owned `String` as a value (`heap_temporary_print`). Behind the heap row:
+> `enum`'s eighteen fixtures; then
+> the two things
 > `bench/speed` needs before §3's gate can be measured at all — the `std/time`
 > externs *and* the capability check that gates them (§5 item 7), plus the scalar
 > `mut` borrow that `float`/`fib` take as a counter. None of those last two
@@ -1208,9 +1334,11 @@ with the backend as the only variable.
 >
 > The passdown row is gone from this table, which is the whole measurement of
 > the passdown slice: the three fixtures that still name a `pd` in their refusal
-> are refused for the type it holds, so they are heap rows now. And the
-> `extern fun` row is gone as a *row* while 25 fixtures still name an extern in
-> their message: that is the extern slice working, not a leftover — the refusal
+> are refused for the type it holds (and, for the `List` one, for the exit handler
+> that type would need), so they are heap rows now. And the
+> `extern fun` row is gone as a *row* while 12 of the 25 remaining heap fixtures
+> still name an extern in their message: that is the extern slice working, not a
+> leftover — the refusal
 > is now of a call to an extern this backend cannot supply, which is the same
 > statement as "this program needs the heap". Before that, the
 > two earlier re-measurements had already removed three rows — `str` printing,
@@ -1261,7 +1389,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 3. **A register allocator. Done** (2026-09-19). Linear-scan over five callee-saved integer registers, for
    `i32`/`i64`/`bool`/`char` locals only — see item 3's blockquote above for the loop-widening correction and
    the bug it caught.
-4. **Aggregates by value. First six slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
+4. **Aggregates by value. First seven slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
    layout fits in eight bytes needs no SysV eightbyte classification at all — it is one eightbyte, so it moves
    through the same paths a `u64` already does, and only a field read or write needs the layout (see item 4's
    blockquote above). The second slice extends this to a `datac` nested by value inside another qualifying
@@ -1276,29 +1404,36 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    nested `datac` of any size), which is an `INTEGER`-class aggregate like any other — see the heap-field
    blockquote above, whose whole point is that no ABI code changed. The sixth adds `Box<T>` itself: one pointer,
    one layout for every element type, seven generated routines and a drop — see the box blockquote above, which
-   also records the pre-existing assignment-evaluation-order bug the slice's own fixture found. What is left of
-   this item is: `enum` (tagged union) entirely; a `datac` holding a float, `List<T>` or `Map<K, V>` field
-   anywhere in its fields, at any size; `List<T>` and `Map<K, V>` themselves (`Bytes`, `String`, `View` and `Box`
-   are done — see the heap blockquotes above, and `plan/heap-runtime.md`'s annex (§12) for the layouts,
-   invariants, runtime functions and drop orders the other two need, cited to the C they mirror); and a borrow of
+   also records the pre-existing assignment-evaluation-order bug the slice's own fixture found. The seventh adds
+   `List<T>`: the same `{data, len, cap}` header `Bytes`/`String` are, one `$List` layout key for every element
+   type, fifteen routines per instantiation plus a generated drop, and one growth helper that is deliberately
+   *not* monomorphized — see the list blockquote above, which also records the register allocator's exclusion
+   list that had to learn the new type and the three plumbing bugs the slice's own probes found. What is left of
+   this item is: `enum` (tagged union) entirely; a `datac` holding a float or `Map<K, V>` field
+   anywhere in its fields, at any size; `Map<K, V>` itself (`Bytes`, `String`, `View`, `Box` and `List`
+   are done — see the heap blockquotes above, and §12 for the layouts,
+   invariants, runtime functions and drop orders it needs, cited to the C they mirror); and a borrow of
    anything whose address is not a slotted `datac`, one of its aggregate fields, or a `Ref`-typed expression (a
    scalar `&i32`, a `str`). Layout must
    match `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets.
-5. **Drop and ownership. Third slice done** (2026-09-19), for `Bytes`, `String`, every `datac` that holds
-   one, and `Box<T>`: `borrowck.rs` already hands over a
+5. **Drop and ownership. Fourth slice done** (2026-09-19), for `Bytes`, `String`, every `datac` that holds
+   one, `Box<T>` and every `List<T>`: `borrowck.rs` already hands over a
    `DropPlan` keyed by span, so the backend does not re-derive where drops go, only what a drop *is* in machine
    terms — `kelp_bytes_drop`/`kelp_string_drop` for the two builtins, which free the buffer and clear the
    pointer and length so a second drop frees nothing, and a generated `kelp_drop_<c_ident>` for a `datac`,
-   which drops each owning field in declaration order (see the heap-field blockquote above), and a generated
-   `kelp_box_drop__<mangle>` per instantiation, which frees the element (if it owns) and the box. The points are
+   which drops each owning field in declaration order (see the heap-field blockquote above), a generated
+   `kelp_box_drop__<mangle>` per instantiation, which frees the element (if it owns) and the box, and a
+   generated `kelp_list_drop__<mangle>` per instantiation, which clears the elements and frees the buffer — and
+   whose element drop is whatever `drop_site_for` answers, so a `List<String>`, a `List<datac>`, a
+   `List<Box<T>>` and a `List<List<T>>` need no new mechanism. The points are
    `codegen_c.rs`'s four (block end, function body end, a `return`'s span, the old value
    of an assignment), a value produced before a drop is parked while the drops run, and a borrowed temporary is
-   freed after the call that borrowed it — the last of which now covers a borrowed *`datac`* or *`Box`*
-   temporary as well, since either can own what it holds. What is left of this item is every remaining owning
-   type (`List`, `Map`, and an `enum` that holds one) plus the generated per-type drop
+   freed after the call that borrowed it — the last of which now covers a borrowed *`datac`*, *`Box`* or
+   *`List`* temporary as well, since any of them can own what it holds. What is left of this item is every
+   remaining owning type (`Map`, and an `enum` that holds one) plus the generated per-type drop
    functions they need — and, for a `pd` that owns, the process-exit handler the C backend gets from `atexit`,
    which this backend refuses by name for now (`ty_owns`, so the refusal still catches a `datac` that owns a
-   `String`, not just a `Bytes`/`String` passdown).
+   `String`, not just a `Bytes`/`String`/`List` passdown).
 6. **Closures and indirect calls.** `FnRef`, `ClosureLit`, `Capture`, `FnToClosure`, `IndirectCall`. The
    environment pointer is a hidden parameter, so the SysV classification applies to it too, and the generated
    thunk has to be emitted per signature exactly as `codegen_c.rs::write_closure` does.
@@ -1314,7 +1449,8 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    one of each numbers the two files independently (see the fifth slice's blockquote). An owned `Bytes` is
    printed too, as one `printf("%.*s", (int)len, data)` with the temporary freed after it — the shape
    `codegen_c.rs` uses — and every other owning type follows the same `%.*s` shape once its layout exists. What
-   is left of this item is `String`/`View` printing (the heap slice, not a printing gap), **`Bytes` interpolated
+   is left of this item is an owned `String`/`View` printed *as a value* (`print(s)`, refused by name — the
+   fixture `heap_temporary_print` is exactly this), **`Bytes` interpolated
    into a `print` template** (`print("x=${b}")`, refused by name: only the single-argument call forms are
    implemented), and lifting the five-interpolation limit on a template, which no fixture reaches.
 9. **Passdowns.** Done (2026-09-19), and an item this list never had: `pd` is M5.2's language feature, and the
@@ -1336,13 +1472,13 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
     of a row rather than a finished one.
 
-Definition of done: all 255 integration tests pass under `--backend=asm` with byte-identical stdout to
+Definition of done: all 260 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
 memory gate this list has always asked for is `cargo test --test memory_gate -- --ignored`
 (`kelpc/tests/memory_gate.rs`, `0747195`): a `valgrind --leak-check=full` sweep over every fixture the C backend
-builds and every one the asm backend accepts — 133 and 66 today, zero findings — run when the heap or drop
+builds and every one the asm backend accepts — 139 and 85 today, zero findings — run when the heap or drop
 machinery changes. ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker
