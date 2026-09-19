@@ -281,6 +281,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "stdlib_path",
     "stdlib_str",
     "str_to_string_coercion",
+    "std_str_order",
     "string_basic",
     "string_build",
     "string_field",

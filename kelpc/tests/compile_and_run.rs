@@ -1356,6 +1356,25 @@ fn a_str_becomes_a_string_where_one_is_expected() {
     );
 }
 
+/// `str.less` is the ordering `str` never had, and `str.is_digit` is the digit
+/// predicate that four libraries in the catalogue wrote by hand.
+///
+/// `str` refuses `==`, `<` and the rest (they would compare pointers — see
+/// `str_comparison.kp` next door), and `std/str` offered no comparison instead, so
+/// `fpl/json` carries a private `str_less` for its key sorting and `fpl/json`,
+/// `fpl/decimal`, `fpl/encoding` and `fpl/httpx` each have their own digit test.
+/// This fixture is the two functions used the way a caller uses them — a number
+/// parser that stops at the first non-digit, and an insertion sort — plus the two
+/// rules their doc comments commit to, because a codepoint comparison instead of a
+/// byte comparison would pass a predicate test and silently change a sort.
+#[test]
+fn a_str_is_ordered_by_byte_and_a_digit_is_decimal() {
+    assert_compiles_and_runs(
+        "tests/fixtures/std_str_order.kp",
+        "true\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\n12\n2\napple\nfig\npear\n",
+    );
+}
+
 #[test]
 fn a_view_carries_its_length_and_slices_without_allocating() {
     assert_compiles_and_runs(

@@ -121,7 +121,48 @@ fun eq(a: &str, b: &str).R: bool {
     return true
 }
 
+// Byte-wise ordering, the `<` that `str` deliberately does not have: `eq` above
+// explains why `==` compares addresses rather than bytes, and the same argument
+// applies to every other operator, so a caller that has to *order* text has to
+// say which order it means. This is the answer that matches `List<T>.sort` on a
+// `List<u8>`: compare at the first byte that differs, and when one text is a
+// prefix of the other the shorter one is less.
+//
+// It is here rather than in each caller because the catalogue already wrote it
+// once: `fpl/json` has a private `str_less` with this exact rule in its doc
+// comment, used by `write_sorted` to order keys. A consumer that sorts a
+// `List<String>` had no way to help it, because a library cannot import a
+// sibling library and std had no comparison to offer. Bytes, not codepoints, so
+// the answer is stable for any UTF-8 input and costs no allocation.
+fun less(a: &str, b: &str).R: bool {
+    val na = len(a)
+    val nb = len(b)
+    var i: usize = 0
+    val limit = if nb < na { nb } else { na }
+    while i < limit {
+        val ca = byte(a, i)
+        val cb = byte(b, i)
+        if ca != cb {
+            return ca < cb
+        }
+        i = i + 1
+    }
+    return na < nb
+}
+
 fun is_space(c: u8).R: bool = c == 32 || c == 9 || c == 10 || c == 13
+
+// The decimal-digit predicate that pairs with `is_space`.
+//
+// The catalogue wrote it seven times before std had it. Two libraries with a
+// private copy: `fpl/json` (line 1444, beside a second inline check at 1790) and
+// `fpl/decimal`. Two spelling it as two magic numbers instead of two literals:
+// `fpl/encoding` (three times: the `0`-`9` arm of a base64 value, of an
+// unreserved-URL test, and of `hex_value`) and `fpl/httpx` (once, in the same URL
+// test). One implementation is one place to be right about the endpoints, and
+// `c >= '0' && c <= '9'` is the spelling that can be read. ASCII only, like
+// `to_upper` and `is_space`.
+fun is_digit(c: u8).R: bool = c >= '0' && c <= '9'
 
 // Leading whitespace is skipped by advancing the pointer, so this is a view
 // of `s` rather than a copy.
