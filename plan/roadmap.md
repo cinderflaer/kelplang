@@ -539,7 +539,7 @@ Kelp will never do "everything", and that is the point. The languages that tried
 
 ## Far future additions
 
-*The itemized lists (`A-1`-`A-17`, `B-1`-`B-10`, `C-1`-`C-4`, `D-1`-`D-5`, and the suggested order) are in the Backlog part below. They are a backlog, not a schedule: no numbers, no order, no commitment. What stays here is the part that is a decision rather than an item.*
+*The itemized lists (`A-1`-`A-17`, `B-1`-`B-10`, `C-1`-`C-4`, `D-1`-`D-5`, the suggested order, the unscheduled ergonomics wants in `G-1`-`G-5`, and the pitfalls work-off in `H-1`-`H-18`) are in the Backlog part below. They are a backlog, not a schedule: no numbers, no order, no commitment. What stays here is the part that is a decision rather than an item.*
 
 **Three structural blockers.** Each one is a whole class of program the language cannot express today, and each one is why a block of backlog exists at all.
 
@@ -567,15 +567,20 @@ shipped, the Mark tables above are the authority for what is next, and everythin
 until something needs it.
 
 - **The `A`-`F` item lists**, which the roadmap used to carry inline: the language surface a self-hosted `kelpc` needs (A), the substrate deep-systems work needs (B), the capability-model gaps (C), the verification and semantics duty (D), a suggested order with the plan's cost calibration (E), and dependency and precedence notes (F). MK8, MK9, MK10 and MK11 promote parts of A-D to Marks; the items keep their `A-n`/`B-n`/`C-n`/`D-n` labels here as the detail.
+- **The `G` wants**, which are ergonomics rather than structural goals: a native UI library, multiple return values, `elif`, the capability clause without `with`, and a comment lint. None is a blocker, none is a reversal, and none has a milestone.
+- **The `H` list**, which is the whole set of rows the wiki's `Known issues` and `Pitfalls` pages carry, one item per row, with the work each row needs to stop being a workaround. The invariant: when H is worked off, no page needs a "Workarounds" paragraph and `Known issues` stays empty. Most H items overlap an A-item and name it; the ones nothing else covers are new.
 - **Coral**, the project-layer build tool and package manager, if open item 72 is ever answered yes.
 - **Regulated and financial domains**, if open item 71 is ever answered yes.
 
-### Blocks A–F: the far future, in detail
+### Blocks A–H: the far future, in detail
 
 The two goals every block is read against are stated above in **Far future additions**: writing
 `kelpc` itself in Kelp, and deep systems work (promoted to MK9). Neither is reachable with v1
 plus the MK5 stages, and the three structural blockers and three reversals that stand between
-them are stated there — block C exists for the runtime-authority gap in particular.
+them are stated there — block C exists for the runtime-authority gap in particular. Block G is
+the exception: it is read against neither goal, it removes no blocker, and it reverses nothing.
+It is a list of small wants, kept so the ideas stop being re-invented in conversation. Block H
+is read against a different goal again: the documentation's own workaround list, worked to zero.
 
 #### A. Language surface required to write `kelpc` in Kelp
 
@@ -660,6 +665,49 @@ For calibration: A-1, A-2, A-4, B-3, B-6 and B-9 are each larger than the entire
 - **Open items these blocks close or supersede**: 4 (`when` value patterns), 11 (line continuation, if syntax work starts), 12 (a datac naming only earlier datacs), 13 and 23 (`kelpc fmt`/lint), 15 (the three deliberate leaks, via field-granular drop plus a flow-sensitive merge), 18 (`main` unrestricted), 20 (`#line`/debug), 28 (element rules), 29, 30 and 33 (borrow lifetimes, provenance, bound-borrow scoping), 34 (generics), 36c (`Option`/`Result`), 37 (TLS, as the first FFI/link case), 41 (`Map` keys, `Set`), 44 (a length-carrying view), 53 (`char`). Three that were on this list — 27, 36a and 46 (`for`) — closed early, as **MK8-S1-M3**: the cheap loop shipped as a parser desugar, and only the `iter`/`next` protocol is still a question.
 - **The structural blockers, restated**: see **Far future additions** above for the three, and why the first two are also the reason A-2 sits on the critical path.
 - **What is not in this backlog, on purpose**: GC or exceptions (both permanent divergences, `syntax.md` §13), and a REPL/LSP/IDE story (unscoped in this plan entirely, and downstream of A-1 to A-17). A package registry and third-party dependencies were on that list; they are now the Coral design's decision (roadmap open item 72) rather than a settled non-goal, with path and git dependencies paying off whether or not an index ever exists.
+
+#### G. Small language and ergonomics wants
+
+*Unscheduled, and not blockers. Every item below is a convenience rather than a class of
+program the language cannot express, and none is a reversal of a v1 decision. They are written
+down so the plan can say no to a concrete thing instead of re-arguing an idea.*
+
+- **G-1. A native UI library.** A window, an event loop, text entry, drawing and input events, all written in Kelp. v1 cannot reach a native toolkit: GTK, Qt, Win32 and Cocoa are all C APIs, so they need B-1 (user FFI) and B-2 (layout control), and a window plus a GUI event loop is runtime authority — an X11 or Wayland socket, a device node — which needs C-1. The toolkit-free alternative (an own rasterizer plus a platform windowing layer) is B-2, B-3, B-6 and B-9 territory. The earlier position was that GUI is "a library (writable once views and generics exist), a target, or a deliberate non-decision"; views and generics exist now, so what is missing is the substrate, not the ergonomics. Nothing is scheduled, and the first honest step is B-1.
+- **G-2. Multiple return values.** `fun min_max(xs: &List<i32>).R: (i32, i32)`, plus a destructuring binding (`val (lo, hi) = min_max(xs)`), so a function hands back two things without a one-shot `datac` per pair. This needs tuple types, which the language does not have at all today, and a decision on how a tuple interacts with `?`, with `move`, and with the field-ordering rule that already binds `datac` and `enum`. Nothing needs it yet: the one-off `datac` works, is named in diagnostics, and is why nothing has asked. `syntax.md` gains the type and the binding form first.
+- **G-3. `elif`.** Spelling sugar for `else if`, which `syntax.md` §6.1 already allows in chains (`if`, `else if`, `else`, and `else if let`). The compiler change is parser-only and small, and the decision is the open part: `elif` is Python's spelling, `else if` is C's, and the plan's Kotlin-look preference argues for keeping `else if` and rejecting `elif`. `syntax.md` §6.1 gains the spelling first if it is ever wanted.
+- **G-4. The capability clause spelled `caps(...)`, without `with`.** The spelling today is `impl "client" with caps(net = ["127.0.0.1:*"])`, and the proposal is `impl "client" caps(net = ["127.0.0.1:*"])`. `with` carries no information: `impl` already means "this module declares what it imports", and `with` is not even a keyword — it is a contextual identifier the `impl` parser matches literally (`parser.rs`), and it appears nowhere else in the language. The cost is not the parser, it is the surface: every fixture, every diagnostic message, every example in `syntax.md` §15.2, `architecture.md` and `wiki/`, and the error text for a bad pattern. `syntax.md` §15.2 is the authority and is edited first; nothing is scheduled.
+- **G-5. A comment lint: a run of line comments that wants to be a block comment.** Two or more consecutive `//` lines with no blank line and no code between them warn that one `/* ... */` block comment says the same thing, which is exactly what block comments are for (`syntax.md` §2.1: a note that spans lines, or a commented-out region — and block comments nest). Warning only, never an error: consecutive line comments stay legal, the run length is a free parameter with a default of 2, and a `//` line immediately describing the statement below it stays a line comment. The lint belongs to a lint pass that does not exist yet — the same pass open item 23's naming-case option is waiting on.
+
+#### H. The documentation's workaround list, worked off
+
+*Sources: the wiki's [Known issues](/meta/known-issues) and [Pitfalls](/language/pitfalls)
+pages, which are derived from `syntax.md` §17 (limits in v1), §18 (errors you will hit) and §22
+(the rules that explain most errors). One item per row that carries a workaround. The invariant
+this block exists for: when H is worked off, the Pitfalls page is rules rather than workarounds,
+and Known issues is empty. Every H item names the existing item it overlaps, or says it is new.*
+
+- **H-1. Partial moves, and the owned payloads they unblock.** Deletes `cannot read the owned field 'name' by value: v1 has no partial moves` and `option.unwrap` on an `Option<String>` will not type-check. **Work: A-11** (partial moves), which A-4 already records as what the owned combinators (`option.unwrap`, `result.map`, `list.filter` over an owned element) wait on, and open item 15's field-granular drop tracking.
+- **H-2. A temporary that a binding keeps alive.** Deletes `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` and `.as_str()`/`.view()` on a temporary is refused. **Work: A-11** (lifetimes) plus a temporary lifetime extension rule — a temporary bound by `val u = set.union(a, b)` lives as long as `u` — which is the shape open item 30 draws the line against today.
+- **H-3. One borrowed text type.** Deletes `argument 'b' has type 'String', expected 'str'` and `argument 'x' has type 'View', expected 'str'`. **Work: open item 21's other direction** (an owned `String` where a `&str` is expected) plus collapsing `str` and `View` into one length-carrying borrowed type, so `v.to_string()` is not the price of a slice at a `str` parameter. `syntax.md` §5.1/§11.5 are the authority.
+- **H-4. Borrows in fields.** Deletes `field 'text' is a borrowed type ('View')` and `field 'text' is a borrowed type (str)`. **Work: A-8/A-11** — the lifetime syntax that lets a stored borrow name its source; A-8 is exactly the half that did not ship with `View`.
+- **H-5. Equality that is not spelled `eq`.** Deletes `cannot compare 'View' values with '=='`. **Work: A-12** (a `PartialEq`-shaped trait) or a builtin `==` over the text types; item 25 records why `==` on an owned value, a `datac` or a `str` is a deliberate type error today, and that decision is what this item reopens.
+- **H-6. Element type inferred for an empty container.** Deletes `List.empty()` / `Map.new()` has no element type. **Work: new** — infer the element from the first `push`/insert, or from the expected type where one exists, so the binding annotation is not the only source. `List<Circle>` (declared after the element type) is the ordering rule the work has to respect.
+- **H-7. Nested and view-valued containers.** Deletes a nested container is refused. **Work: A-10** (loosened container element rules, `List<List<T>>`, `List<Box<T>>`, borrow and view elements), which needs H-9's or A-11's lifetime story for the borrow case.
+- **H-8. `Map` keys beyond `String`, the integers and `bool`.** Deletes `Map` key type refused. **Work: A-6**, which needs A-12 (a trait carrying hash/equality) or A-4's comparator function; the compiler generating the key's hash and equality is what closes the key set today.
+- **H-9. Iteration that may mutate.** Deletes `for` cannot `push` to what it walks. **Work: A-5's open protocol** — a second spelling (a consuming `for x in move xs`, or an explicit iterator/cursor API) rather than a weaker borrow rule, since the loop borrowing its iterable is the design and the same rule every ownership language has.
+- **H-10. Fallible narrowing conversions.** Deletes `i32.to_u64: value out of range` (runtime panic). **Work: new** — `try_to_<T>` beside `to_<T>`, returning `Option`/`Result` the way every other fallible stdlib call does since MK5-S6-M1, so a caller tests instead of panicking.
+- **H-11. A byte-literal spelling.** Deletes `argument 'c' has type 'char', expected 'u8'` and the `val c: u8 = '"'` workaround. **Work: new** — a `b'x'`-shaped literal that is a `u8` by construction, so a byte never needs the type written on a binding first. `syntax.md` §2.4 (literals) gains the spelling first.
+- **H-12. A literal that adapts to a widening target.** Deletes the `n * 1.0` type error. **Work: open item 54's narrow fix** — a *literal* adapts to the expected numeric type (`f(255)` where `f(n: u64)`), while conversions of *values* stay explicit; item 54 records why widening operator rules were rejected.
+- **H-13. Error conversion for `?`.** Deletes `?` refuses to propagate a different error type. **Work: A-12 plus a `From`-shaped conversion**, or a builtin rule; `syntax.md` §17 states "no error conversion, no `From`, and no boxing" as today's limit, and `result.map_err` is the workaround this deletes.
+- **H-14. User-code overloading.** Deletes two `fun pick(...)` overloads collide. **Work: new** — the restriction is policy, not a missing mechanism: the compiler already overloads `abs`/`min`/`max`/`clamp` for the stdlib (MK2-S2-M1), so the work is deciding the user-facing rule (arity only, or full overload resolution) and its diagnostics.
+- **H-15. Methods on `enum`, and combinators on the option/result types.** Deletes an `enum` cannot have a method and `Option`/`Result` having no methods. **Work: A-12 or receiver syntax over `enum`** so `o.unwrap()` replaces `option.unwrap(o)`; the combinator half is Copy-only because of H-1, not because of this item.
+- **H-16. Capture by borrow.** Deletes a borrowed binding cannot be captured. **Work: A-11** — a lifetime-carrying closure type so a literal that only reads captures a borrow, and `move` stays the opt-in for owning the environment.
+- **H-17. `net` patterns that name an address.** Deletes `127.0.0.1` is not covered by `localhost`. **Work: new** — match a resolved address as well as the host string, or an explicitly address-valued pattern form; this is the same neighbourhood as open item 32's vocabulary and open item 55's listener gap, and it is capability semantics rather than stdlib surface.
+- **H-18. Checked arithmetic.** Deletes the pitfalls page's one non-warning: integer `+`/`-`/`*` wrap silently, workaround `mathx`. **Work: MK12-S1 (numeric correctness)** — checked or trapping arithmetic under a build profile, with wrapping the opt-in; `-fwrapv` from the C toolchain is what makes today's behaviour the compiled-in one (D-2 also lists overflow in the UB catalogue).
+
+**Rows that stay, because they are the design rather than a workaround.** `use of moved value 'a'` and `cannot move out of a borrow` are ownership working; `operator requires matching integer operands` is item 54's decision; `the character '中' (U+4E2D) does not fit in 'u8'` is a correct compile error (H-11 changes the spelling, not the rule); `cannot find module`, a relative or `..` capability pattern, a gated call refused, and an `impl` after a declaration are all deliberate; `*x` on a closure parameter is what `Copy` means; and the `asm` backend refusing a construct by name is its documented design. Those rows are rules for the Pitfalls page to keep, and the page's wording should say so rather than offering a workaround.
+
+**Keeping Known issues empty.** The three reports on that page (BUG-1, BUG-2, BUG-3) are fixed, each with a fixture, and no H item is needed for them. What the page's own record leaves behind is three rules any future change must not break: a desugaring pass must key a block's drops by the block's identity and never by a span (BUG-1), a type spelling emitted before the `datac`s must walk through a borrow to the forward-declared tag (BUG-2), and codegen must not wrap a group a second time or emit a bound the source range rules out (BUG-3). The fixtures stay in the suite; a new desugar or a new early typedef is the change most likely to re-open one.
 
 ### Coral: the build tool and package manager (roadmap open item 72)
 
