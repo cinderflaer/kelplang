@@ -17,6 +17,48 @@ this branch takes.
 
 ---
 
+## 0. Where the branch is
+
+*Updated as work lands. This table is the answer to "what is done and what is left"; every section below is
+the detail behind one row. Branch `mk7/own-backend`, and the numbers are measured on this machine, not
+projected.*
+
+| stage | state | evidence |
+| --- | --- | --- |
+| **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — first slice landed** | `codegen_asm.rs`, 977 lines; **100 of 235** integration tests pass under `--backend=asm`; commit `1cd4d42` |
+| **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
+| **3. Freestanding (no libc)** | not started | blocked on tier 2 |
+| **8. Runtime decoupling (parallel)** | not started | it is the top item of §5's ranking; see below |
+| **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
+
+The one number that matters most: **100 of 235 tests pass on the asm backend, and the C backend passes all
+235.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
+source (§1.1).
+
+**What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
+builds, and detailed in §5):
+
+1. **The runtime** — 36 fixtures are blocked by `extern fun std.mem.alloc_raw` alone. This is the §8 track
+   arriving on schedule: the biggest single unlock is not the code generator.
+2. **Aggregates** — `datac`/`enum` by value, 24 fixtures, and the ABI work the risk register calls the place
+   silent miscompiles live.
+3. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
+4. **String values** — 7 fixtures.
+5. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
+   row here where a gap would be a security hole rather than a wrong number).
+6. **The long tail** — numeric conversions, printing `str`/`f64`, closures: ~20 fixtures.
+
+Two things §5's definition of done still requires that no amount of the above delivers: `bench/speed` no worse
+than the measured `-O0` column (it has not been run on the asm backend yet), and a memory gate that works for
+the asm backend, since the AddressSanitizer gate instruments the generated C and is therefore C-backend-only.
+
+**Environmental prerequisite:** `driver.rs` invokes `as` and `ld` by name, so `binutils` is a real dependency
+now rather than something clang pulls in. Debugging hits (gdb, strace, valgrind) are in `/etc/nixos/tools.nix`.
+
+---
+
 ## 1. Ground rules
 
 These hold for every stage. Breaking one is how this becomes a rewrite instead of a replacement.
@@ -24,9 +66,12 @@ These hold for every stage. Breaking one is how this becomes a rewrite instead o
 1. **`codegen_c.rs` is never deleted.** It becomes the permanent differential oracle: every fixture is
    compiled and run by both backends, and their stdout is compared. A backend is correct when it agrees with
    the C backend, not when it agrees with the author's intent.
-2. **248 fixtures are the contract.** They are backend-agnostic by construction (compile, run, compare
-   stdout), so they validate a second backend with no edits. Any fixture that has to change for the new
-   backend is a bug in one of the two, and the diff says which.
+2. **The 248 fixture files are the contract.** They are backend-agnostic by construction (compile, run,
+   compare stdout), so they validate a second backend with no edits. Any fixture that has to change for the
+   new backend is a bug in one of the two, and the diff says which. The suite is 235 test functions over
+   those files — several tests cover more than one fixture, and a fixture that must be *rejected* is a file
+   with no test of its own — so "the fixtures pass" is measured as **235 integration tests**, which is the
+   number the stage gates below use.
 3. **One target.** `x86-64`, SysV ABI, Linux. Nothing else is attempted until Tier 3 is done. Cross-compilation
    (`backlog.md` MK13-S4-M3) and a portable encoder are explicitly out of scope on this branch.
 4. **Tiered, not simultaneous.** Tier 2 does not start before Tier 1 passes the full suite; Tier 3 does not
@@ -56,10 +101,12 @@ Everything the plan is judged against. Re-measure before each stage gate.
 | C emitter being replaced | `codegen_c.rs`, 3745 lines |
 | lowering surface the backend consumes | `tir.rs`, 286 lines, ~25 node kinds |
 | `Ty` variants the backend must handle exhaustively | 20+ |
-| tests at HEAD of `main` | 310 (80 unit + 230 integration), 30 s |
+| tests at HEAD of `main` | 323 (88 unit + 235 integration), 29 s |
 
 Two corrections to the record while writing this down: `roadmap.md` says "the 118 end-to-end tests" and adds
-"~20 one-line externs". Both are stale. The integration suite is **230** tests, and the stdlib declares **90**
+"~20 one-line externs". Both are stale. The integration suite is **235** tests over **248** fixture files
+(one test can cover more than one fixture, and rejected fixtures are files without a test of their own), and
+the stdlib declares **90**
 `extern fun`s. The larger numbers make Stage 4 bigger than MK7's own text implies, and this plan sizes it as
 90.
 
@@ -86,6 +133,13 @@ where every stage gate runs.
 
 ## 4. Stage 0 — backend boundary
 
+> **Status: done** (commit `68746a6`). `backend.rs` owns the selector, `--backend=` and `KELPC_BACKEND` both
+> work with the flag winning, the planned names are refused as planned rather than as unknown, the suite runs
+> once per backend via `kelpc/tests/run-all-backends.sh`, and the AddressSanitizer gate reports itself as
+> C-backend-only instead of silently skipping. Verified both ways: `BACKENDS="c asm"` passes 235/235 on `c`,
+> and pointing the suite at a backend that does not exist fails 174 of its tests, which is what makes the
+> mechanism a gate rather than a variable.
+
 **The one commit that costs nothing and every later stage depends on.** Do it alone, one agent, before any
 fan-out. Today `main.rs:72` calls `codegen_c::generate` directly and `driver.rs` (43 lines) is the only code
 that shells out; there is no seam for a second backend to exist in, which means two agents would otherwise
@@ -99,7 +153,7 @@ Deliverables:
   takes.
 - **`--backend=c|asm|own`** on `kelpc build` and `kelpc run`, plus a `KELPC_BACKEND` environment override.
   `c` stays the default for the whole of this branch. An unknown value is a hard error naming the valid set.
-- **A double run of the fixture suite.** `cargo test` runs the 230 integration tests once per backend selected
+- **A double run of the fixture suite.** `cargo test` runs the 235 integration tests once per backend selected
   by the same env var, so a third CI job (or one job looping over backends) proves both. This is `roadmap.md`
   open item 26, and it is the thing that makes every later stage verifiable at all.
 - **The seam documented in `driver.rs`.** `driver.rs` keeps owning "write the artifact and invoke the external
@@ -190,7 +244,8 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 8. **`print`/`print!`.** One `printf` with one generated format string, as today, including the x86-64 detail
    that a variadic call must set `AL` to the number of vector registers used.
 
-Definition of done: all 248 fixtures pass under `--backend=asm` with byte-identical stdout to `--backend=c`;
+Definition of done: all 235 integration tests pass under `--backend=asm` with byte-identical stdout to
+`--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked.
 
@@ -259,13 +314,16 @@ parallel track.
    SIMD work exists, so text-heavy code will be slower. Debug info (DWARF, open item A-16) is absent unless
    built, which means `gdb` against a generated binary is not useful until then.
 
-Definition of done: all 248 fixtures pass with no libc linked and no interpreter in the ELF; `ldd` reports
+Definition of done: all 235 integration tests pass with no libc linked and no interpreter in the ELF; `ldd` reports
 nothing or is not needed; `bench/speed/` checksums match and the runtime is no worse than `-O0`;
 `kelpc build` is under 15 ms; and a capability fixture denied by a grant is denied with the same message.
 
 ---
 
 ## 8. Parallel track: runtime decoupling
+
+> **Status: not started.** It is the top row of §5's ranking (36 fixtures blocked by `std.mem.alloc_raw`), so
+> it is the next thing to start, and it needs no new tooling.
 
 The important structural observation of this plan: **most of Tier 3 is backend-independent.** The allocator,
 the formatter, the error table, the path normalizer, the capability matcher and the DNS resolver are the same
@@ -287,6 +345,10 @@ runtime" and becomes "the runtime is already libc-free by the time the backend c
 ---
 
 ## 9. Two-agent split
+
+> **Status: not started, and no longer blocked.** Stage 0 has landed, which was the one commit both tracks
+> had to touch, so this is now a decision to make rather than a prerequisite to satisfy. Everything in this
+> section is unexecuted detail — treat it as a proposal, not as a record.
 
 Two agents work on this in parallel, in **separate git worktrees**. Same working tree is not an option: both
 would edit `main.rs`, `Cargo.toml` and `infer.rs` inside the first hour, and Rust's exhaustiveness checks make

@@ -76,7 +76,7 @@ A fully-qualified identifier is written `MK1-S2-M3`. In context the short form (
 | **MK4** | Capability security | S1 capabilities | medium | Done |
 | **MK5** | Standard library program | S1-S7, S4b, S4c | large | In progress: MK5-S1, MK5-S2 (M1 `io` + `process`, M2 `spawn_in`/`run_in`, the fallible `try_run`, and `fs.symlink` as its continuation of MK5-S5), MK5-S3, MK5-S4, MK5-S5 and MK5-S6-M1 are done; MK5-S4b (TLS) is a decision and MK5-S7-M1 is the concurrency analysis |
 | **MK6** | Concurrency | S1 threads, S2 multithreaded downloads | very large | Not started |
-| **MK7** | Own backend | S1-S5 | very large | Not started |
+| **MK7** | Own backend | S1-S5 | very large | **In progress** — stage 0 done, stage 1 (x86-64 assembly) first slice landed; 100/235 integration tests on the new backend, 235/235 on the C one |
 | **MK8** | Self-hosting | S1-S3 language readiness, S4-S6 bootstrap | very large | In progress: MK8-S1-M1 part 1 (tagged unions + pattern `when`) and part 2 (A-2, generics) both done, A-3 shipped as MK5-S6-M1, A-4 is **MK8-S1-M2** (phases A-F, all done), and A-5's `for` loop shipped as **MK8-S1-M3** — so the rest of S1 is A-11's checker expressiveness. MK8-S2 has started: **MK8-S2-M1** shipped character literals, the bitwise operators, `to_f64`/`to_f32`, the implicit `str`/`View` -> `String` conversion and the `View` type (the language half of A-8; A-9; open items 21, 44, 53), and added `syntax.md` §22 — the idioms a model needs to write Kelp without reading the compiler |
 | **MK9** | Systems substrate | S1-S9 | very large | Proposed; planned |
 | **MK10** | Capability model extensions | S1-S3 | large | Proposed; planned |
@@ -246,9 +246,13 @@ Deliverable: an answer, plus `poll`. What works without new language features **
 ### MK7 (far future) own backend: compile Kelp to machine code, not to C
 
 *Execution plan: `mk7-own-backend.md`. The Mark below says why and what it costs; that file owns the stage
-order, the two-agent split, the gates and the risk register. A branch `mk7/own-backend` exists for it. Two
-numbers in the text below are stale and corrected there: the integration suite is 230 tests, not 118, and the
-stdlib declares 90 `extern fun`s, not ~20.*
+order, the two-agent split, the gates and the risk register, and its §0 is the live answer to "what is done
+and what is left". A branch `mk7/own-backend` carries it: stage 0 (the backend seam, so a second backend can
+be validated at all) is done, and stage 1's first slice emits x86-64 assembly itself through `as` and `ld` with
+no C compiler in the chain. Measured at that point: **100 of 235 integration tests pass on the new backend and
+235 of 235 on the C one**, so the differential gate is live and the coverage number is a measurement rather
+than a claim. Two numbers in the text below are stale and corrected in that file: the integration suite is 235
+tests, not 118, and the stdlib declares 90 `extern fun`s, not ~20.*
 
 Stated as a goal in its own right: *Kelp should stop being C with a mask*. Nothing about the language's identity lives in the backend the differentiators are the capability system and the move/borrow model so this is not about making Kelp faster. It is about Kelp not depending on a C compiler to exist, and about fixing the one thing that is actually bad today: **compile time is ~95% somebody else's fixed overhead.**
 
