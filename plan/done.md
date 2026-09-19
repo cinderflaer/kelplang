@@ -1315,3 +1315,71 @@ pins infinity (an overflowing literal) and NaN (a folded `0.0 / 0.0`); and
 an owned `pd val` and a `datac` passdown, through `main`, a bare forwarder, a
 chain, and a function that reads and forwards. The suite is **88 unit tests and
 239 end-to-end tests**, all green.
+
+## The fourth pass of a real program: a JSON library and a query tool over it (DONE)
+
+A second, independent program (a JSON reader/writer plus a small query tool built on it) hit four more
+defects, probed rather than guessed at the way the third pass was. One was a real, confirmed language bug —
+6.1's own worked example did not compile — and two were not bugs at all: a documented one-directional
+implicit conversion, read as bidirectional, and a sound refusal with no lifetime mechanism to relax it. Both
+of the latter got a better diagnostic instead of a behavior change, which is the honest fix when the reported
+behavior is already correct. The fourth (a closure parameter typed as a borrow of a module type breaking
+codegen) is real and stays open — it is a codegen gap in the closure-and-borrow intersection, not a small
+fix, and the report's own workaround (dropping the closure-based traversal API for named accessor functions)
+is recorded so the gap does not have to be rediscovered.
+
+**1. `else if let` on the same scrutinee re-moved it.** `if let PAT1 = x { .. } else if let PAT2 = x { .. }`
+desugars each `if let` independently (`parse_if_let`), and every version of that desugar bound the scrutinee
+to a fresh owning temporary unconditionally: `{ val #iflet0 = x  when #iflet0 { PAT1 -> .. else -> {
+val #iflet1 = x  when #iflet1 { PAT2 -> .. } } } }`. `x`'s type is a `datac`/`enum` — never `Copy`, regardless
+of what its payload holds, since `Ty::is_copy` excludes every `Ty::Struct(_)` outright — so the first `val
+#iflet0 = x` reads as a move, and the second link's own re-evaluation of the same source expression `x` then
+reads an already-moved place. 6.1 documents the chain as legal and its own worked example (`Rect`/`Circle`
+over one `shape`) is exactly this shape; it did not compile before this fix, on `main` or on any released
+build. The existing `if_let_basic.kp` fixture never caught it because every chained scrutinee it used was a
+fresh temporary literal, never the same place read twice.
+
+The fix is narrower than "stop moving the scrutinee": binding it to a temporary at all is only there because
+`when`'s pattern form needs a *place* (6.1's own note — "a bare `when` needs a place, since a payload borrow
+has to outlive the arm"), and a scrutinee that is *already* a place needs no temporary, exactly the way a
+bare `when x { .. }` needs none. `parse_if_let` now checks that first: a place scrutinee (`Ident`,
+`.field`, `*expr`) is handed to the synthesized `when` directly, with no `val #iflet_i = ..` at all, so
+reading it again in a chained `else if let` is exactly as legal as `when`'s own multi-arm form reading its
+one scrutinee once and testing it repeatedly — because matching a place was never a move of the whole value
+to begin with (`check_when`'s binding logic only ever copies or borrows the matched *field*). A scrutinee
+that is not already a place (a call's result, a literal) still gets the temporary, since there is nothing
+else for `when` to borrow through. `ast::is_place` is the shared definition parser.rs and infer.rs both use
+now (it used to be a private `infer.rs` copy under the name `is_ast_place`, kept callable so every existing
+call site stayed unchanged), so "what counts as a place" cannot drift between the two.
+
+**2 (not a bug). An owned `String` does not implicitly become a `str` argument.** The report read this as an
+inconsistency — `print(a_string)` accepts one, `str.concat(a_string, "!")` does not — but 5.1 only promises
+the conversion in the other direction (`str`/`View` to an owned `String`); `print` accepting a `String`
+directly is a `print`-specific rule (it also accepts `Bytes`/`View` and every scalar), not the general
+argument-matching path every other call goes through. The confusion is real even though the behavior is
+correct, so the mismatch now names which direction is implicit and what to write instead: `argument 'a' has
+type 'String', expected 'str' — there is no implicit conversion this direction (5.1 only goes the other way,
+'str'/'View' to an owned 'String'); call \`.as_str()\` to borrow it`.
+
+**3 (not a bug). `.as_str()` on a temporary stays refused.** `fmt.int(n).as_str()` is refused because the
+call returns a borrow of its own `self` argument and `self` here is a temporary with nowhere to outlive the
+call to — v1 has no lifetime syntax to say the borrow only needs to survive the rest of the enclosing
+statement, so relaxing this is real engineering (borrowck would have to reason about how long the returned
+borrow is actually used, and codegen's temporary-hoisting would have to agree), not a diagnostic fix. Given
+the choice the report itself offered — relax the rule, or name the workaround — this took the safe one: the
+message now says to bind the value to a local first, rather than only naming the parameter that cannot be a
+temporary.
+
+**4 (open). A closure parameter typed as a borrow of a module type breaks codegen.** `closure(&Json).R: bool`
+mangles into a symbol codegen cannot forward-declare through (`kelp_Closure__refjson.Json__bool`, a name
+containing a module-qualified dot codegen did not expect a monomorphized closure name to carry) — a real gap
+in how closure monomorphization and cross-module borrow types combine, not something the diagnostic-hint
+treatment above fits. Left open. The report's own workaround — the whole closure-based traversal API
+(`each_value`/`each_field`/`map_array`/`filter_array`/`count_where`/`index_where`) rewritten as named
+accessor functions (`count_nodes`/`depth_of`/`count_of_kind`/`collect_strings`/`filter_array_by_kind`) — is
+recorded here so a future pass at this gap starts from a known-working call shape instead of guessing at one.
+
+**Tests**: `if_let_chain_same_scrutinee.kp` pins fix 1 — 6.1's own example verbatim, a third link with a
+non-`Copy` payload so the fix is not only correct for scalars, and reading the scrutinee again after the
+chain ends to prove it is still owned by the caller. It is in the AddressSanitizer list (the non-`Copy`
+payload is a `String`). The suite is **88 unit tests and 242 end-to-end tests**, all green.

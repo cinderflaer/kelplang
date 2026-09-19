@@ -383,7 +383,7 @@ What *does* convert, and what does not:
 
 - It fires on an **exact `String` expectation**, and nowhere else. `str.len(s)`, `str.eq(a, b)`, `fs.write_text(path, text)` and every other `str` parameter keep taking a borrowed view with no allocation.
 - A `str` or a `View` each copy the right number of bytes: a `View` may be a *slice* with no NUL after it, so it is copied by its length (`View.to_string`), never with `strlen`.
-- **Nothing converts the other way.** `String` -> `str` is a borrow with a lifetime, so it is written out: `s.as_str()`. `str` -> `View` and `String` -> `View` are written `s.view()`.
+- **Nothing converts the other way.** `String` -> `str` is a borrow with a lifetime, so it is written out: `s.as_str()`. `str` -> `View` and `String` -> `View` are written `s.view()`. `print(x)` (22.4) accepting a `String` directly is not an exception to this — `print` is its own builtin that takes a scalar, `str`, `String`, `Bytes` or `View` outright, not a call whose parameter converts; a declared function's `str` parameter still needs `.as_str()` from a `String` argument, the same as `str.concat`, `str.eq`, or anything else in the stdlib.
 - A `View` is not a `str`: a slice has no NUL after it, so passing one where a `str` is expected is an error rather than a silent `strlen` past the end. Take `v.to_string()` when you need an owned `String`, or keep the `View` and use the length-aware operations (11.5).
 
 #### The `?` operator
@@ -449,11 +449,20 @@ if let Rect(w, h) = shape {
 } else {
     print(0.0)
 }
+
+// `shape` is read by both links above and is still owned here: matching it
+// only ever copies or borrows the matched *field*, never the whole value, so
+// reading the same scrutinee more than once across a chain is exactly as
+// legal as a bare `when shape { ... }` reading it once and testing it
+// repeatedly.
+if let Circle(r) = shape {
+    print(r)
+}
 ```
 
 - It is exactly the pattern form of `when` (6.3) with a single arm and an `else`, which is why the arm rules are the same: the variant must exist, the number of bindings must match the payload, `_` ignores one, and a payload binds as a copy when it is `Copy` and as a shared borrow otherwise.
-- The scrutinee may be **any expression**, temporary or place, because it is bound to a local before it is matched. (A bare `when` needs a *place*, since a payload borrow has to outlive the arm.)
-- `else if let` chains, and a plain `else if`, are both allowed; without any `else` the whole expression is `Unit`, the same as an `if` without one.
+- The scrutinee may be **any expression**, temporary or place. A *place* (a name, a `.field` chain, `*expr`) is matched directly, with nothing moved — the same rule a bare `when` follows (6.3). A *temporary* (a call's result, a literal) is bound to a local first, since `when`'s pattern form needs a place to borrow a payload through; that local is a fresh binding no other code can see, so it never collides with anything and there is nothing to reuse it across links of a chain.
+- `else if let` chains, and a plain `else if`, are both allowed; without any `else` the whole expression is `Unit`, the same as an `if` without one. Chaining on the *same place* (`if let A = x { .. } else if let B = x { .. }`) is legal for the reason above: neither link moves `x`, so the second link's own read of it is not a use of a moved value.
 - `let` is an ordinary identifier everywhere else in the language. It is read as the pattern form only directly after `if`, so a binding named `let` cannot be the condition of an `if` without parentheses.
 
 ### 6.2 `for` and `while`
@@ -509,6 +518,7 @@ fun area(s: &Shape).R: f64 = when s {
 }
 ```
 
+- The scrutinee must be a **place** (a name, a `.field` chain, `*expr`), never a temporary: a payload borrow has to outlive the arm it is bound in, and there is nothing to outlive if the scrutinee itself does not survive the match. `if let` (6.1) lifts this restriction by binding a temporary scrutinee to a local first; a place scrutinee is matched directly here too, with nothing moved — only the matched field is ever copied or borrowed.
 - The scrutinee's type is an `enum`, and every arm head is one of its variants (9.2). An `else ->` arm matches every variant not named above it.
 - Matching must be exhaustive: either every variant has an arm, or an `else` arm is present. A missing variant is a compile error that names it.
 - There are no guards, no literal patterns and no nested patterns in v1; an arm head is a variant name with one binding per payload field, and `_` ignores a payload.

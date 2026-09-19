@@ -42,6 +42,29 @@ moved it by six: `datac_basic`, `borrow_basic` (both shared and exclusive borrow
 the exclusive one), `field_read_does_not_move`, `move_then_reinit`, and two module-resolution fixtures that
 happen to declare a `datac` on the way to what they are actually testing.
 
+**How much of the whole plan is done, stated the same way the rest of this file measures things — in what
+landed, not a percentage that would imply more precision than the plan has:**
+
+- **Stage 0** (backend boundary): done.
+- **Stage 1** (x86-64 assembly): 3 of its own 8 build-order items (§5) are done outright — scalars, `f32`/`f64`,
+  the register allocator — and a 4th (aggregates) has its first slice landed. That is where the 108/241
+  fixture number comes from. The remaining 4½ items (the rest of aggregates, drop/ownership, closures,
+  capabilities, `print`/`print!`'s remaining gaps) are what stands between here and Stage 1's own definition
+  of done: all 241 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for the asm backend.
+- **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
+  Stage 1 finishing first, by this plan's own tiering rule (§1.4).
+- **§8** (the parallel runtime track): 2 of its pieces are done (the capability matcher, the path normalizer);
+  the allocator is blocked on raw pointers (not on this branch — see §8's note below) and the formatter and DNS
+  resolver have not been started.
+- **§9** (the two-agent split): not started — a decision to make, not a prerequisite, since Stage 0 already
+  unblocked it.
+
+So: **one of four backend stages done, the second about halfway through its own item list, the third and
+fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
+touched. Read the fixture ratio (108/241) as the honest single number if one number is wanted; it already
+accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
+memory gate — which is why both are called out separately above and in §5's definition of done.
+
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
 
