@@ -6106,6 +6106,64 @@ fn comparison_error(ty: &Ty, op: BinOp) -> String {
     }
 }
 
+/// Whether the expression is a bare numeric or character literal — a value
+/// with **no width of its own**, whose type comes entirely from its context
+/// (`syntax.md` §2.4/§5). A literal in that position has no type until
+/// something asks for one, which is what lets the rule below pick the
+/// sibling operand's type for it.
+///
+/// An `Ident` is deliberately not one: a `const` has a *declared* type, so
+/// `const N: i32 = 5` followed by `N + u32_expr` is a real mismatch rather
+/// than a literal to retype.
+fn is_untyped_literal(expr: &ast::Expr) -> bool {
+    matches!(
+        expr,
+        ast::Expr::IntLit(..) | ast::Expr::FloatLit(..) | ast::Expr::CharLit(..)
+    )
+}
+
+/// Both operands of a binary operator, with the rule that makes the language's
+/// own literal story true: **a literal takes the type of its sibling operand,
+/// whichever side it is written on.**
+///
+/// The naive left-to-right order (`l` with the expectation, then `r` with
+/// `l`'s type) leaves one hole, and it is the one a program written against
+/// Rust's inference falls straight into:
+///
+/// ```kelp
+/// fun push_byte(out: mut String, cp: u32) {
+///     out.push((192 + cp / 64).to_u8())   // '192' can only be i32, from the left
+/// }
+/// ```
+///
+/// `192 + cp / 64` is `u32` in Rust, where the literal's type is inferred from
+/// the expression it meets. Here `192` was typed `i32` before the right side
+/// was ever read, and the result was
+/// `operator requires matching numeric operands, found 'i32' and 'u32'` — for
+/// a rule the reference already stated ("a literal has no width of its own; it
+/// takes the integer type its context requires"). The sibling operand *is* the
+/// context.
+///
+/// So: when there is no expectation to work from and the left side is a bare
+/// literal while the right side is not, the right side is checked first and
+/// the literal takes its type. Both literals, or neither, still go left to
+/// right — nothing about the common cases changes.
+fn check_binary_operands(
+    lhs: &ast::Expr,
+    rhs: &ast::Expr,
+    ctx: &mut Ctx,
+    hint: Option<&Ty>,
+) -> Result<(tir::Expr, tir::Expr)> {
+    if hint.is_none() && is_untyped_literal(lhs) && !is_untyped_literal(rhs) {
+        let right = check_expr(rhs, ctx, None)?;
+        let left = check_expr(lhs, ctx, Some(&right.ty))?;
+        return Ok((left, right));
+    }
+    let left = check_expr(lhs, ctx, hint)?;
+    let right = check_expr(rhs, ctx, Some(&left.ty))?;
+    Ok((left, right))
+}
+
 fn check_binary(
     op: BinOp,
     lhs: &ast::Expr,
@@ -6118,8 +6176,7 @@ fn check_binary(
     match op {
         Add | Sub | Mul | Div | Mod => {
             let numeric_expected = expected.filter(|t| t.is_numeric());
-            let l = check_expr(lhs, ctx, numeric_expected)?;
-            let r = check_expr(rhs, ctx, Some(&l.ty))?;
+            let (l, r) = check_binary_operands(lhs, rhs, ctx, numeric_expected)?;
             if !l.ty.is_numeric() || l.ty != r.ty {
                 return Err(TypeError {
                     message: format!(
@@ -6150,8 +6207,7 @@ fn check_binary(
         // which is a trap, and `&&` is right there.
         BitAnd | BitOr | BitXor | Shl | Shr => {
             let int_expected = expected.filter(|t| t.is_integer());
-            let l = check_expr(lhs, ctx, int_expected)?;
-            let r = check_expr(rhs, ctx, Some(&l.ty))?;
+            let (l, r) = check_binary_operands(lhs, rhs, ctx, int_expected)?;
             if !l.ty.is_integer() || l.ty != r.ty {
                 return Err(TypeError {
                     message: format!(
@@ -6174,8 +6230,7 @@ fn check_binary(
             })
         }
         Lt | LtEq | Gt | GtEq | Eq | NotEq => {
-            let l = check_expr(lhs, ctx, None)?;
-            let r = check_expr(rhs, ctx, Some(&l.ty))?;
+            let (l, r) = check_binary_operands(lhs, rhs, ctx, None)?;
             if l.ty != r.ty {
                 return Err(TypeError {
                     message: format!(

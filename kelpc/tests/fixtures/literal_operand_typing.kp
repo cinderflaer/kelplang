@@ -1,0 +1,62 @@
+// A numeric or character literal has no width of its own: it takes the type
+// its context requires, and a binary operator's sibling operand *is* that
+// context — on either side.
+//
+// This was found by a real program. `192 + cp / 64` (a UTF-8 encoder) was
+// written against Rust's inference, where the literal is `u32` from the
+// sibling. Here the left side was typed `i32` before the right side was ever
+// read, so the program was told "operator requires matching numeric operands,
+// found 'i32' and 'u32'" about a rule the reference already stated.
+impl "std/str"
+
+fun push_codepoint(out: mut String, cp: u32) {
+    if cp < 128 {
+        out.push(cp.to_u8())
+    } else if cp < 2048 {
+        out.push((192 + cp / 64).to_u8())
+        out.push((128 + cp % 64).to_u8())
+    } else if cp < 65536 {
+        out.push((224 + cp / 4096).to_u8())
+        out.push((128 + (cp / 64) % 64).to_u8())
+        out.push((128 + cp % 64).to_u8())
+    } else {
+        out.push((240 + cp / 262144).to_u8())
+        out.push((128 + (cp / 4096) % 64).to_u8())
+        out.push((128 + (cp / 64) % 64).to_u8())
+        out.push((128 + cp % 64).to_u8())
+    }
+}
+
+fun main() {
+    // The literal on the left takes `cp`'s `u32`.
+    var out = String.empty()
+    push_codepoint(out, 20013)
+    print(str.eq(out.as_str(), "中"))
+
+    // Both sides, every width, and both directions.
+    val a: u8 = 3
+    print(1 + a)
+    print(a + 1)
+    val b: u64 = 5
+    print(3000000000 + b)
+    print(b + 3000000000)
+    val c: i32 = 2
+    print(-1 * c)
+    print(c * -1)
+
+    // Comparisons and the bitwise operators follow the same rule.
+    print(0 == b)
+    val mask: u32 = 240
+    print(255 & mask)
+    print(mask & 255)
+    if 0 < a { print("positive") }
+
+    // A `char` literal is the same kind of literal, so it takes the sibling's
+    // type too.
+    val digit: u8 = 7
+    print('0' + digit)
+    print(digit + '0')
+
+    // A literal on the right of a non-literal still takes the left's type.
+    print(mask + 1)
+}

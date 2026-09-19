@@ -1160,6 +1160,19 @@ fn a_view_of_a_temporary_is_rejected() {
 }
 
 #[test]
+fn a_literal_takes_its_sibling_operands_type_on_either_side() {
+    assert_compiles_and_runs(
+        "tests/fixtures/literal_operand_typing.kp",
+        "true\n4\n4\n3000000005\n3000000005\n-2\n-2\nfalse\n240\n240\npositive\n55\n55\n241\n",
+    );
+}
+
+#[test]
+fn a_const_is_not_a_literal_for_operand_typing() {
+    assert_rejected("tests/fixtures/literal_const_is_not_a_literal.kp");
+}
+
+#[test]
 fn bitwise_operators_shift_mask_and_complement() {
     assert_compiles_and_runs(
         "tests/fixtures/bitwise.kp",

@@ -1,0 +1,9 @@
+// The rule is about *literals*, not about values spelled with digits: a
+// `const` has a declared type, so `BASE + wide` is a real mismatch between two
+// types and stays one. Only a bare literal has no width to argue about.
+const BASE: i32 = 5
+
+fun main() {
+    val wide: u32 = 7
+    print(BASE + wide)
+}
