@@ -26,14 +26,14 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, then extern calls through the PLT** | `codegen_asm.rs`; **135 of 248** integration tests pass under `--backend=asm`; all 37 fixtures the asm backend builds print byte-identical stdout to the C backend, and the newest slice is the runtime's first arrival: an `extern fun` is now a call-site concern (`libc@PLT` or a routine this backend owns), and unreachable functions are not compiled, so a module's unused heap-typed functions stop refusing the programs that merely import it |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **146 of 249** integration tests pass under `--backend=asm`; all 48 fixtures the asm backend builds print byte-identical stdout to the C backend, and the newest slice is the first heap type: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), verified leak- and double-free-clean under `valgrind` on the ten heap fixtures plus a 48-fixture sweep — which is also the memory gate §5's definition of done had been missing, since the AddressSanitizer gate instruments generated C and cannot see this backend at all |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **135 of 248 tests pass on the asm backend, and the C backend passes all
-248.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **146 of 249 tests pass on the asm backend, and the C backend passes all
+249.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -73,6 +73,11 @@ further — the blanket `extern fun` refusal is gone, and with it the mask that 
 extern declaration as their first blocker when the heap type or `enum` behind it was what was actually in the
 way. Re-measured after that slice, the 90 refused fixtures rank as **heap types 73, `enum` 9, a `datac` with a
 float field 3, closures 4, a gated extern 1** — see §5's table for the per-message breakdown.
+The heap slice (also below) moved it by ten at the fixture level and by eleven at the test level: the ten
+fixtures in §5's heap blockquote, plus a new `int_mod_narrow.kp` that only exists because that slice's own
+probe found `%` unassemblable below sixty-four bits. Its other two measurements are the ones worth keeping: 48
+fixtures now build (was 37), the refused set is 80 (was 90), and every one of the 48 is `valgrind`-clean, which
+is the first memory gate this backend has had.
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
@@ -84,12 +89,14 @@ landed, not a percentage that would imply more precision than the plan has:**
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
   `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
   backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
-  compiled. That is where the 135/248 fixture number comes from. The remaining part of item 4 (`enum`, plus a
+  compiled. That is where the 146/249 fixture number comes from. The remaining part of item 4 (`enum`, plus a
   `datac` holding a float or heap field — see the fourth slice's blockquote for what "by value" now covers end
-  to end), the second half of item 8 (printing an owned buffer, which needs the heap types rather than the
-  printing path), plus items 5-7 (drop/ownership, closures, capabilities) and the rest of item 10 (the externs
-  whose bodies are the heap and the syscall layer), are what stands between here and Stage 1's own definition
-  of done: all 248 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for the asm backend.
+  to end), the rest of item 8 (printing an owned buffer for the remaining heap types, plus a `Bytes` in a
+  template), the rest of items 5 and 10 (every other owning type's drop, and the externs whose bodies are the
+  heap and the syscall layer), plus items 6-7 (closures, capabilities), are what stands between here and Stage
+  1's own definition of done: all 249 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for
+  the asm backend — which the heap slice supplied, in the form of a `valgrind` sweep over every fixture this
+  backend builds, and which is documented rather than wired into the suite (see that blockquote for why).
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
   Stage 1 finishing first, by this plan's own tiering rule (§1.4).
 - **§8** (the parallel runtime track): 2 of its pieces are done (the capability matcher, the path normalizer);
@@ -269,7 +276,7 @@ with the backend as the only variable.
 > after the fact, because each was a blanket refusal at the top of `generate`
 > that kept the feature out of codegen entirely).**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **135 of 248 end-to-end
+> and `ld`, with no C compiler in the chain. Measured: **146 of 249 end-to-end
 > tests pass**, and the C backend passes all 248 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
 > can only rise from here. Every fixture the asm backend builds was also compared
@@ -787,6 +794,88 @@ with the backend as the only variable.
 > enum (recovered from the base's own type), so a program that genuinely uses one
 > still fails with the enum's name.
 
+> **The heap slice — `Bytes`, and the first memory gate — is done (2026-09-19).**
+> This is §5 item 4's remainder arriving for a real heap type, plus item 5's first
+> slice, plus the rest of item 8, all at once: `Bytes` is the type every other
+> heap type is a variation on, and it needed all three at the same time.
+>
+> **One synthesized layout, and nothing else in the ABI had to change.**
+> `codegen_c.rs`'s `kelp_Bytes` is `{data, len, cap}` — 24 bytes, align 8, so
+> SysV `MEMORY` class, exactly like a three-`i64` `datac`. `build_layouts`
+> inserts that layout under a key no user type can collide with (`$Bytes` is not
+> a Kelp identifier), and `struct_layout` resolves `Ty::Bytes` through it. Every
+> site that already handled a `Mem`-class `datac` — `value_kind`, `int_regs_for`,
+> `Frame::declare`, `RetClass`, `memory_arg_area`, `eval_struct_into`, `emit_copy`
+> — then handles an owned `Bytes` with no new special case at all: it is a local,
+> a parameter, an argument in the caller's outgoing area, a return through the
+> hidden pointer, and a `&Bytes` is a plain pointer. That was the *point* of item
+> 4's third and fourth slices, and this slice is the first evidence they were
+> enough.
+>
+> **Thirteen routines this backend owns**, emitted on demand the way the extern
+> slice's two already were: `kelp_buf_reserve` (the doubling rule, `realloc`,
+> `want + 1`, re-terminate), `kelp_bytes_drop`, `kelp_bytes_alloc_raw`,
+> `kelp_Bytes__empty/from_str/len/is_empty/get/set/clone/push/append/clear`.
+> Each is a transliteration of the matching C body in `codegen_c.rs`'s RUNTIME,
+> panic messages and bounds checks included, and `std.mem.alloc_raw` — the plan's
+> named "hand-written assembly routine for allocation, PLT-called" — is the
+> malloc/zero-fill pair those routines already needed. `print`/`print!` of an
+> owned buffer is `printf("%.*s", (int)len, data)`, with the temporary freed
+> after the `printf` exactly as the C backend frees the one it hoists.
+>
+> **Drops.** `Gen` now carries the `DropPlan` `borrowck.rs` already computed and
+> the function whose body is being written, and frees at the same four points
+> `codegen_c.rs` does: block end, function body end, a `return`'s span, and the
+> old value of an assignment. A value produced *before* a drop is parked in a
+> frame slot while the drops run (`park`/`unpark`, the asm side of the C
+> backend's `write_temp_then_drops`), a `&Bytes` temporary is hoisted into a
+> never-reused `Frame::scratch` slot and freed after the call that borrowed it,
+> and a target whose type is not `Bytes` is refused by name rather than skipped —
+> a skipped `free` is a leak, and looking handled is exactly what this backend's
+> refusals exist to prevent.
+>
+> **A memory gate exists now, and it is not ASAN.** §5's definition of done has
+> asked for one since the plan was written; the AddressSanitizer gate instruments
+> *generated C*, so it cannot see this backend, and the plan's standing answer was
+> that the claim would have to be argued from Kelp's semantics instead. That is
+> true of ASAN and false of the question: `valgrind --leak-check=full` runs on an
+> asm-generated binary like any other, and it reports the ten heap fixtures clean
+> — no leak, no double free, no invalid access — as it does for all 48 fixtures
+> this backend now builds. The four fixtures whose valgrind output is not empty
+> are the panic fixtures, whose *programs* print `panic: ...` to stderr; valgrind
+> itself says nothing. That is a real gate of the kind the definition of done
+> asks for, and it cost a script rather than a week. It is not yet wired into the
+> suite as a test (valgrind is not a declared dependency of this repository, and
+> §1.5 forbids making the default `cargo test` slower or needier), so today it is
+> a documented manual gate — see `plan/heap-runtime.md` for the layouts it
+> checks and §5's ranking table for the fixture list to run it over.
+>
+> **`%` did not work below sixty-four bits, and no fixture had ever noticed.**
+> A division's remainder lands in the *high* half of the dividend — `ah`, `dx`,
+> `edx` — and this backend moved it into a 64-bit destination (`mov rax, edx`),
+> which `as` rejects outright. It was a loud failure rather than a silent wrong
+> number, but it meant `7 % 3` on an `i32` could not be compiled at all, and the
+> only fixtures dividing a narrow value were refused for other reasons first —
+> a *fixture* hole as much as a backend one. Fixed in the same commit as
+> `int_mod_narrow.kp`, a new fixture covering `i32`/`u32`/`u8`/`u16`/`i64` with
+> values chosen so a wrong remainder register or a missing extension prints a
+> different number; it is in the differential gate. That is also why the test
+> count moved by eleven rather than ten.
+>
+> **A finding this slice did not fix, because it is in the oracle.** Inline
+> literals wider than their own inferred type are folded at 64 bits by the *C*
+> backend while this one truncates them to the expression's width first, so
+> `print(1000000000007 % 1000000007)` prints `999993014` under `--backend=c` and
+> `-727379961` under `--backend=asm`. The expression is `i32` on both sides (the
+> C backend prints it with `%d`), so this one is right and the C backend is
+> computing in a width its own emitted format string contradicts — a `val x: i32
+> = 1000000000007;` local truncates identically in both backends, so the trigger
+> is a literal used *inline* as an operand. It is recorded here rather than
+> fixed because the C backend is §1.1's oracle: changing it can change what an
+> existing fixture is asserting, which is a decision about the corpus rather than
+> a one-line cast. `int_mod_narrow.kp` deliberately uses named locals for its
+> wide cases so it pins neither answer.
+
 > Deliberate choices carried over unchanged from the first slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
@@ -795,31 +884,42 @@ with the backend as the only variable.
 > unchecked: that is the one place an unimplemented feature would be a
 > security hole rather than a wrong number.
 >
-> **Where the next 113 failures rank**, measured by aggregating what the backend
-> refuses across the fixture files the C backend builds, and re-measured after
-> the extern slice — which is the first time this table has *not* been distorted
-> by a blanket program-level refusal in front of it. The refused-fixture count is
-> 90; the failing-test count is larger because several tests build a whole
-> project rather than one fixture, and the differential gate compares two
-> backends on a fixture both already build. The categories are the *feature* in
-> the way, recovered from each fixture's first refusal message:
+> **Where the next 103 failures rank**, re-measured after the heap slice, and
+> now reproducible instead of hand-run: `kelpc/tests/backend_coverage.rs` sweeps
+> every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
+> a ratchet on the set the asm backend builds, and prints this exact table under
+> `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
+> count is 80 of the 128 fixtures the C backend builds (48 built, all agreeing
+> byte for byte). The categories are the *feature* in the way, read off each
+> fixture's first refusal message:
 >
 > | blocker (the backend's first refusal) | fixture files |
 > | --- | --- |
-> | a heap type — `Bytes`/`String`/`View`/`List`/`Map`/`Box` as a type, a parameter, an argument, a return, a field, a passdown or an owned buffer being printed; 25 of them reached through an `extern fun` whose body this backend has no routine for (`alloc_raw` 18, the `str` parsers 3, `from_f64_raw` 2, `path.normalize_raw` 1, `time.now_unix_raw` 1) | 73 |
-> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature | 9 |
-> | a `datac` holding a float field (`Circle`, `Bag`'s nested shape) | 3 |
+> | a heap type — `Bytes`/`String`/`View`/`List`/`Map`/`Box` as a type, a parameter, an argument, a return, a field, a passdown, or an owned buffer interpolated into a `print` template; 25 of them still reached through an `extern fun` this backend has no routine for (`alloc_raw` 18, the `str` parsers 3, `from_f64_raw` 2, `path.normalize_raw` 1, `time.now_unix_raw` 1) | 51 |
+> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature | 15 |
+> | a `datac` holding a float or heap field, or a `Box`/`Map` inside one | 9 |
 > | a closure or a function value | 4 |
-> | a gated extern (`time.now_unix_raw`, which is refused for the gate rather than the symbol) | 1 |
+> | a gated extern (`time.now_unix_raw`, refused for the gate rather than the symbol) | 1 |
 >
-> Read the first row as one row and the ranking stops being arguable: **the heap
-> is the whole of what is left**, and it is bigger than the sum of everything
-> else. It is also what §8's own ordering cannot supply (the allocator in Kelp is
-> blocked on raw pointers), so the honest next slice is the one the plan already
-> described and the extern work just made possible: `Bytes` — its layout, its
-> PLT-backed `malloc`/`realloc`/`free`, its eleven runtime methods as routines
-> this backend owns, and item 5's drops — which is nine of those 73 fixtures and
-> the first heap type any other one needs.
+> The numbers do not match the hand tally two blockquotes up, and the reason is
+> the classifier rather than the backend: the tool reads the message a fixture
+> was refused with, and one message (`the datac X (it is too large, or holds a
+> field this slice cannot lower yet)`) covers both a float field and a heap
+> field, so it lands in the `datac` row here where the hand tally split those
+> cases; conversely a `&Shape` parameter is an `enum` to the tool and was
+> counted as heap by hand. Both are honest readings of the same 80 fixtures;
+> the tool's is the one to quote, because it is the one anyone can re-run.
+>
+> **The heap is still the whole of what is left, by a wider margin than the
+> count suggests**: `Bytes` was the *smallest* member of that row, and the 51
+> now includes the two types the `str`-heavy fixtures actually need. The next
+> slice is `String` + `View` (`kelp_String` and `kelp_View` are the same shape —
+> 24 and 16 bytes — and `View` is the first two-eightbyte aggregate, so it
+> exercises the `AggClass::Two` path with a heap type), which between them carry
+> `string_basic`, `string_build`, `string_views`, `view`, `str_to_string_coercion`
+> and most of `std/str`; then the parsers and formatter externs, which need
+> `String` first; then `List`/`Map` (which need `String` for keys); then `enum`,
+> which is 15 fixtures on its own and blocks `Result`/`Option` everywhere.
 >
 > The passdown row is gone from this table, which is the whole measurement of
 > the passdown slice: the three fixtures that still name a `pd` in their refusal
@@ -888,12 +988,20 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    that and a borrowed temporary need) — sound with no SSE eightbyte case to consider, since every field this
    module accepts is `INTEGER`-classifiable by construction (see the third and fourth slices' blockquotes
    above). What is left of this item is: `enum` (tagged union) entirely; a `datac` holding a float or heap field
-   anywhere in its fields, at any size; `String`, `Bytes`, `View`, `List<T>`, `Map<K, V>`, `Box<T>`; and a
-   borrow of anything whose address is not a slotted `datac` (a scalar, a field path, a `str`). Layout must
+   anywhere in its fields, at any size; `String`, `View`, `List<T>`, `Map<K, V>` and `Box<T>` (`Bytes`, the first
+   of the six, is done — see the heap blockquote above, and `plan/heap-runtime.md` for the layouts, invariants,
+   runtime functions and drop orders the other five need, cited to the C they mirror); and a borrow of anything
+   whose address is not a slotted `datac` (a scalar, a field path, a `str`). Layout must
    match `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets.
-5. **Drop and ownership.** `borrowck.rs` already hands over a `DropPlan` keyed by span, so the backend does
-   not re-derive where drops go, only what a drop *is* in machine terms: call the generated drop function,
-   free the buffer, clear the pointer so a drop is idempotent at runtime as the C runtime already is.
+5. **Drop and ownership. First slice done** (2026-09-19), for `Bytes`: `borrowck.rs` already hands over a
+   `DropPlan` keyed by span, so the backend does not re-derive where drops go, only what a drop *is* in machine
+   terms — `kelp_bytes_drop`, which frees the buffer and clears the pointer and length so a second drop frees
+   nothing. The points are `codegen_c.rs`'s four (block end, function body end, a `return`'s span, the old value
+   of an assignment), a value produced before a drop is parked while the drops run, and a borrowed temporary is
+   freed after the call that borrowed it. What is left of this item is every other owning type (`String`,
+   `View`, `List`, `Map`, `Box`, and an `enum`/`datac` that holds one) plus the generated per-type drop
+   functions they need — and, for a `pd` that owns, the process-exit handler the C backend gets from `atexit`,
+   which this backend refuses by name for now.
 6. **Closures and indirect calls.** `FnRef`, `ClosureLit`, `Capture`, `FnToClosure`, `IndirectCall`. The
    environment pointer is a hidden parameter, so the SysV classification applies to it too, and the generated
    thunk has to be emitted per signature exactly as `codegen_c.rs::write_closure` does.
@@ -903,12 +1011,15 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    regression, not a test failure. Port them as assembly-called libc-backed routines at this stage (they are
    part of the 813 runtime lines), and keep the C versions as the reference for a differential test of the
    matcher itself over a generated pattern corpus.
-8. **`print`/`print!`. First half done** (2026-09-19): `str`/`&str` and `f32`/`f64` are printed, including the
+8. **`print`/`print!`. Second half started** (2026-09-19): `str`/`&str` and `f32`/`f64` are printed, including the
    x86-64 details — a float argument goes in the `xmm` file rather than an integer register, `f32` is promoted to
    `double`, and a variadic call sets `AL` to the number of vector registers used, so a template interpolating
-   one of each numbers the two files independently (see the fifth slice's blockquote). What is left of this item
-   is printing an owned `Bytes`/`String`/`View` — not a printing gap at all, since `%.*s` needs the heap types —
-   and lifting the five-interpolation limit on a template, which no fixture reaches.
+   one of each numbers the two files independently (see the fifth slice's blockquote). An owned `Bytes` is
+   printed too, as one `printf("%.*s", (int)len, data)` with the temporary freed after it — the shape
+   `codegen_c.rs` uses — and every other owning type follows the same `%.*s` shape once its layout exists. What
+   is left of this item is `String`/`View` printing (the heap slice, not a printing gap), **`Bytes` interpolated
+   into a `print` template** (`print("x=${b}")`, refused by name: only the single-argument call forms are
+   implemented), and lifting the five-interpolation limit on a template, which no fixture reaches.
 9. **Passdowns.** Done (2026-09-19), and an item this list never had: `pd` is M5.2's language feature, and the
    asm backend refused any program containing one at the top of `generate` — before codegen, the way it refused
    `extern fun` — so it never appeared in the build order §5 lays out. The C backend's shape is one file-scope
@@ -928,10 +1039,13 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
     of a row rather than a finished one.
 
-Definition of done: all 248 integration tests pass under `--backend=asm` with byte-identical stdout to
+Definition of done: all 249 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
-`kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked.
+`kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
+memory gate this list has always asked for is a `valgrind --leak-check=full` sweep over the fixtures the asm
+backend builds (the ten heap ones at minimum; all 48 today), run when the heap or drop machinery changes —
+ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker
 
