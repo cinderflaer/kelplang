@@ -3298,6 +3298,21 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // parameter inside a function and a global in `main`, and getting that
         // wrong reads the wrong storage rather than failing to build.
         "passdown_globals",
+        // MK7 §5 item 1: the extern path. These three are the first fixtures
+        // that build under the asm backend only because an `extern fun` became
+        // a call-site concern rather than a program-level refusal, and each one
+        // pins a different half of it. `escapes` and `char_literals` reach
+        // `std/str`'s three byte primitives — `strlen` through the PLT, plus
+        // this backend's own bounds-checked `byte_at_raw` — while importing a
+        // module whose other 40-odd functions are heap-typed, so they are also
+        // the proof that an unreachable function is not this program's code
+        // (`live_functions`). `stdlib_math` is the libm agreement: the C
+        // backend calls `sqrt`/`floor` and so does this one, and the point of
+        // comparing them is that a hand-written backend getting the *value*
+        // right by a different route would still be a divergence.
+        "escapes",
+        "char_literals",
+        "stdlib_math",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();

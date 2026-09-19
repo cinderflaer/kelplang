@@ -26,13 +26,13 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, then passdowns' generated storage** | `codegen_asm.rs`; **132 of 248** integration tests pass under `--backend=asm`; a `pd` as a `.bss` global assigned by a sequence at the top of `main`, with the same identifier meaning its hidden parameter inside a function, is the newest slice |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, then extern calls through the PLT** | `codegen_asm.rs`; **135 of 248** integration tests pass under `--backend=asm`; all 37 fixtures the asm backend builds print byte-identical stdout to the C backend, and the newest slice is the runtime's first arrival: an `extern fun` is now a call-site concern (`libc@PLT` or a routine this backend owns), and unreachable functions are not compiled, so a module's unused heap-typed functions stop refusing the programs that merely import it |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **132 of 248 tests pass on the asm backend, and the C backend passes all
+The one number that matters most: **135 of 248 tests pass on the asm backend, and the C backend passes all
 248.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
@@ -67,21 +67,29 @@ hidden parameter and so passes the global's own address) and five fixtures it un
 `passdown_datac`, `pd_shadowed`, `pd_var_copy_read_twice` and `pd_var_write`. The three passdown fixtures it
 did **not** unblock (`pd_owned`, `list_field`, `pd_argument_forwarding`) are refused for their passdown's
 type, which is `String` or `List<i32>`: the mechanism is there, the heap is not, and the refusal now says so.
+The extern slice (below) moved it by three, and its number is the least interesting thing about it: `escapes`,
+`char_literals` and `stdlib_math` now build and agree with the C backend, while the *ranking* moved much
+further — the blanket `extern fun` refusal is gone, and with it the mask that made 40 fixtures report an
+extern declaration as their first blocker when the heap type or `enum` behind it was what was actually in the
+way. Re-measured after that slice, the 90 refused fixtures rank as **heap types 73, `enum` 9, a `datac` with a
+float field 3, closures 4, a gated extern 1** — see §5's table for the per-message breakdown.
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
 
 - **Stage 0** (backend boundary): done.
-- **Stage 1** (x86-64 assembly): 3 of its own 8 build-order items (§5) are done outright — scalars, `f32`/`f64`,
-  the register allocator — plus a 4th (aggregates) with its first four slices landed, the first half of item 8
-  (`print`/`print!` of `str` and the floats), and passdowns, which §5's item list never enumerated (it is M5.2's
-  language feature, and the asm backend's second self-contained piece of codegen after the `datac` work). That
-  is where the 132/248 fixture number comes from. The remaining part of item 4 (`enum`, plus a `datac` holding
-  a float or heap field — see the fourth slice's blockquote for what "by value" now covers end to end), the
-  second half of item 8 (printing an owned buffer, which needs the heap types rather than the printing path),
-  plus items 5-7 (drop/ownership, closures, capabilities), are what stands between here and Stage 1's own
-  definition of done: all 248 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for the
-  asm backend.
+- **Stage 1** (x86-64 assembly): 3 of its original 8 build-order items (§5) are done outright — scalars,
+  `f32`/`f64`, the register allocator — plus a 4th (aggregates) with its first four slices landed, the first
+  half of item 8 (`print`/`print!` of `str` and the floats), passdowns (§5's ninth item, added after the fact:
+  `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
+  `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
+  backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
+  compiled. That is where the 135/248 fixture number comes from. The remaining part of item 4 (`enum`, plus a
+  `datac` holding a float or heap field — see the fourth slice's blockquote for what "by value" now covers end
+  to end), the second half of item 8 (printing an owned buffer, which needs the heap types rather than the
+  printing path), plus items 5-7 (drop/ownership, closures, capabilities) and the rest of item 10 (the externs
+  whose bodies are the heap and the syscall layer), are what stands between here and Stage 1's own definition
+  of done: all 248 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for the asm backend.
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
   Stage 1 finishing first, by this plan's own tiering rule (§1.4).
 - **§8** (the parallel runtime track): 2 of its pieces are done (the capability matcher, the path normalizer);
@@ -99,28 +107,27 @@ memory gate — which is why both are called out separately above and in §5's d
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
 
-1. **The runtime** — 40 fixtures are blocked by an `extern fun` at all, 38 of them by `std.mem.alloc_raw`
-   alone. This is the §8 track arriving on schedule: the biggest single unlock is not the code generator. Its
-   first two pieces — the capability matcher and the path normalizer — landed in `1071ead` and unblock no
-   fixture by themselves. **Correction (2026-09-19): the allocator does not unblock these 40 either, on its
-   own.** `codegen_asm.rs::generate` refuses any program containing *any* `extern fun` before codegen starts —
-   it is not specific to `alloc_raw` — so unblocking these fixtures needs the asm backend to call a hand-written
-   assembly routine for allocation (PLT-called, the way it presumably will for other libc calls), which in
-   turn needs aggregate-by-value return (§5 item 4, `Bytes` is a struct) landed first. That prerequisite is now
-   met: item 4's third and fourth slices cover a `datac` returned through the hidden pointer, and one passed or
-   received by value in the argument area. The §8 allocator item is further blocked on its own terms — see §8's
-   note below — so it is **not** next; see the corrected order there.
+1. **The runtime** — the row that was 40 fixtures blocked by an `extern fun` at all, 38 of them by
+   `std.mem.alloc_raw` alone. **Re-measured after the extern slice: this row is now 25, and it is no longer a
+   row about externs at all.** The blanket refusal is gone; the 25 fixtures that still name an `extern fun` do
+   so because *that* extern is one this backend cannot supply a body for yet, and every one of them is
+   heap-backed (`alloc_raw` 18, the `str` parsers and `from_f64_raw` 5, `path.normalize_raw` 1) or gated
+   (`time.now_unix_raw` 1). So the runtime row has collapsed into the heap row below it, which is the honest
+   answer and the same one the plan's earlier correction reached from the other direction: the allocator does
+   not unblock these on its own, because a program that allocates a `Bytes` also has to be able to lower one.
+   See §8's note for why the allocator itself is still blocked, and §5's table for what the 25 are.
 2. **Aggregates, the rest of them** — the four slices of item 4 have landed eleven fixtures (six from the
    first slice, one from the second — a `datac` nested by value inside another qualifying `datac` — two new
    fixtures the third slice added and unblocked itself, and two more the fourth did). The rest are refused
-   either for `enum` (16 of them — tagged unions, not attempted at all) or for a `datac` holding a float or
-   heap field anywhere in its fields (2 float, and the heap ones, which §5's table counts under its heap row
-   because a build stops at the first refusal it hits) — refused regardless of size, since the third slice's
-   eightbyte/`MEMORY` classification covers *size*, not a float-classified eightbyte or a heap-typed field.
-   The two gaps the third slice named as its own deliberate narrowings — a `Mem`-class `datac` passed or
+   either for `enum` (16 of them when this row was first written; **9** after the extern slice removed the mask
+   that was hiding the heap row in front of it — tagged unions, not attempted at all) or for a `datac` holding
+   a float or heap field anywhere in its fields (2 float, and the heap ones, which §5's table counts under its
+   heap row because a build stops at the first refusal it hits) — refused regardless of size, since the third
+   slice's eightbyte/`MEMORY` classification covers *size*, not a float-classified eightbyte or a heap-typed
+   field. The two gaps the third slice named as its own deliberate narrowings — a `Mem`-class `datac` passed or
    received *by value*, and a borrow of a temporary — are both closed; see the fourth slice's blockquote. The
    ABI work the risk register calls the place silent miscompiles live is now complete for every shape this
-   backend admits at all.
+   backend admits at all, and the extern slice did not touch any of it.
 3. **A passdown (`pd`)** — **done** (see §5's passdown blockquote). It was 8 fixtures when this ranking first
    named the row, five of which now build; the three left (`pd_owned`, `list_field`,
    `pd_argument_forwarding`) are refused for the *type* their passdown holds (`String`, `List<i32>`) rather than
@@ -257,12 +264,17 @@ with the backend as the only variable.
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
 > **Status: first slice landed, then f32/f64, then a register allocator (item
-> 3), then four slices of item 4's aggregates, then the first half of item 8.**
+> 3), then four slices of item 4's aggregates, then the first half of item 8,
+> then passdowns, then the extern path (the ninth and tenth items — both added
+> after the fact, because each was a blanket refusal at the top of `generate`
+> that kept the feature out of codegen entirely).**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **126 of 247 end-to-end
-> tests pass**, and the C backend passes all 247 — so the differential gate is
+> and `ld`, with no C compiler in the chain. Measured: **135 of 248 end-to-end
+> tests pass**, and the C backend passes all 248 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
-> can only rise from here.
+> can only rise from here. Every fixture the asm backend builds was also compared
+> against the C backend's own binary for this re-measurement (37 fixtures, 37
+> identical stdout), which is the check the fixture literals cannot make.
 >
 > Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 > comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
@@ -709,6 +721,72 @@ with the backend as the only variable.
 > refused, which is a limit of the printing path rather than of this slice — it
 > is in the long tail below, and no fixture is blocked by it.
 >
+> **The extern slice — the runtime starts arriving — is done (2026-09-19).**
+> This is the plan's §0 ranking row 1, in the only form it had left: not an
+> allocator in Kelp (still blocked on raw pointers, §8), but the *mechanism* an
+> allocator, a formatter or any other libc-backed primitive needs — an `extern
+> fun` this backend can call. It also removes the mask that had been distorting
+> every ranking table above: `generate` refused any program containing *any*
+> `extern fun` *declaration*, and `impl "std/str"` alone declares seven of them,
+> so the first refusal 40 fixtures reported named a declaration none of them had
+> to call.
+>
+> **An `extern fun` is now a call-site concern, and the call site knows nothing
+> about it.** `extern_target` (`codegen_asm.rs`) maps a canonical key
+> (`std.math.sqrt_raw`) to either a libc symbol or one of this backend's own
+> routines; `Gen::call` then substitutes that symbol for `Gen::symbol(callee) →
+> kelp_...` and everything else about the call is unchanged, because the argument
+> marshalling is driven by the extern's *declared* signature — the same contract
+> `externs.rs` keeps the C bodies honest about. Three shapes of extern exist in
+> `std/*.kp` and two of them need nothing else: a libc function whose signature is
+> already the extern's (`strlen`, and all fourteen libm transcendentals that
+> `std/math` wraps — calling the same libm the C backend calls is what makes the
+> two agree *bit for bit*, not approximately), and a C **macro** with no symbol
+> to call (`isnan`/`isfinite`, which are a `ucomisd` parity test and an exponent
+> mask here). The third shape — a body with a bounds check in front of the
+> library call (`str.byte`, `str.substring`) — is a routine this backend owns,
+> `strlen@PLT` plus the same panic message `externs.rs` writes. `kelp_panic`
+> is emitted for one exactly as it is for `panic`/`assert`, through the same
+> `needs_panic` flag.
+>
+> **A live extern with no entry here is still a refusal, and it names the
+> declaration** — the message is the one the blanket check used to give, naming
+> the `extern fun` and its key — so the discipline the
+> blanket check was for is intact: the message moved from "this program has an
+> extern" to "this program *calls* this extern". The 25 fixtures still refused
+> that way are all heap-backed or gated: `alloc_raw` 18, the `str` parsers and
+> `from_f64_raw` 5, `path.normalize_raw` 1, `time.now_unix_raw` 1.
+>
+> **The second half of this slice is `live_functions`: dead-code elimination at
+> function granularity.** A Kelp program's function list is not a program's code
+> — importing `std/str` brings in all 40-odd of its functions, and every one this
+> backend cannot lower (a `String` parameter, a `Bytes` return) used to refuse
+> the whole program even when nothing called it. The C backend emits them all and
+> lets `cc` discard the unused ones, so refusing them meant refusing programs the
+> oracle builds. The roots are `main` and every passdown initializer (and
+> `FnRef`/`ClosureLit` are edges like any call); the walk is written as an
+> exhaustive `match` on the TIR, so a new node kind cannot be silently missed.
+> It is sound by construction — an unreachable function cannot run, print or drop
+> — and what it costs is stated plainly: an uncovered shape appearing *only* in
+> dead code is no longer a build error. That is the same trade the `datac` layout
+> rule already makes (a `datac` that does not qualify is refused where a value of
+> it is *moved*, not where it is declared), and it is what `escapes.kp` — which
+> imports `std/str` and uses two of its functions — is the proof of.
+>
+> Three fixtures moved: `escapes` and `char_literals` (the `str` byte primitives,
+> through a module whose other functions are all heap-typed) and `stdlib_math`
+> (libm). All three are in the differential gate, because the values a
+> transcendental produces are exactly the kind of thing two backends can agree on
+> as text while disagreeing in the last bit.
+>
+> A fourth, deliberate change is in the *message*, not the coverage: the
+> program-level `enum` refusal is gone, for the same reason the extern one went —
+> `std/str` declares `ParseErr`, so every `impl "std/str"` program refused with
+> "the enum `std.str.ParseErr`" whether or not it ever named one. `EnumLit`,
+> `EnumTag`, `EnumField` and `Try` each refuse where they are reached and name the
+> enum (recovered from the base's own type), so a program that genuinely uses one
+> still fails with the enum's name.
+
 > Deliberate choices carried over unchanged from the first slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
@@ -717,39 +795,57 @@ with the backend as the only variable.
 > unchecked: that is the one place an unimplemented feature would be a
 > security hole rather than a wrong number.
 >
-> **Where the next 116 failures rank**, measured by aggregating what the backend
-> refuses across the fixture files the C backend builds. The refused-fixture
-> count is 93; the failing-test count is larger because several tests build a
-> whole project rather than one fixture, and the differential gate compares two
-> backends on a fixture both already build:
+> **Where the next 113 failures rank**, measured by aggregating what the backend
+> refuses across the fixture files the C backend builds, and re-measured after
+> the extern slice — which is the first time this table has *not* been distorted
+> by a blanket program-level refusal in front of it. The refused-fixture count is
+> 90; the failing-test count is larger because several tests build a whole
+> project rather than one fixture, and the differential gate compares two
+> backends on a fixture both already build. The categories are the *feature* in
+> the way, recovered from each fixture's first refusal message:
 >
 > | blocker (the backend's first refusal) | fixture files |
 > | --- | --- |
-> | an `extern fun`, any of them — 38 `std.mem.alloc_raw`, 2 `std.math.sqrt_raw` | 40 |
-> | a heap type — `Bytes`/`String`/`View`/`List`/`Map`/`Box` as a type, a parameter, an argument, a return, a field, a passdown or a printed value | 32 |
-> | `enum` | 16 |
-> | a `datac` holding a float field | 2 |
-> | a `datac` that recurses through a `Box` | 2 |
-> | a function value | 1 |
+> | a heap type — `Bytes`/`String`/`View`/`List`/`Map`/`Box` as a type, a parameter, an argument, a return, a field, a passdown or an owned buffer being printed; 25 of them reached through an `extern fun` whose body this backend has no routine for (`alloc_raw` 18, the `str` parsers 3, `from_f64_raw` 2, `path.normalize_raw` 1, `time.now_unix_raw` 1) | 73 |
+> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature | 9 |
+> | a `datac` holding a float field (`Circle`, `Bag`'s nested shape) | 3 |
+> | a closure or a function value | 4 |
+> | a gated extern (`time.now_unix_raw`, which is refused for the gate rather than the symbol) | 1 |
+>
+> Read the first row as one row and the ranking stops being arguable: **the heap
+> is the whole of what is left**, and it is bigger than the sum of everything
+> else. It is also what §8's own ordering cannot supply (the allocator in Kelp is
+> blocked on raw pointers), so the honest next slice is the one the plan already
+> described and the extern work just made possible: `Bytes` — its layout, its
+> PLT-backed `malloc`/`realloc`/`free`, its eleven runtime methods as routines
+> this backend owns, and item 5's drops — which is nine of those 73 fixtures and
+> the first heap type any other one needs.
 >
 > The passdown row is gone from this table, which is the whole measurement of
 > the passdown slice: the three fixtures that still name a `pd` in their refusal
-> are refused for the type it holds, so they are heap rows now. Before that, the
+> are refused for the type it holds, so they are heap rows now. And the
+> `extern fun` row is gone as a *row* while 25 fixtures still name an extern in
+> their message: that is the extern slice working, not a leftover — the refusal
+> is now of a call to an extern this backend cannot supply, which is the same
+> statement as "this program needs the heap". Before that, the
 > two earlier re-measurements had already removed three rows — `str` printing,
 > `f64` printing and the numeric conversions, all at zero refused fixtures — and
-> corrected an `extern fun` from 36 to 40, because the refusal is of the
-> *declaration* rather than of `alloc_raw` specifically. The capability-gated row
-> (7 fixtures) is unchanged and still real, but it does not rank on its own: every
-> one of those fixtures imports a gated module, so its build hits the `extern fun`
-> refusal first, and the runtime is what has to land before the capability check is
-> the next thing in the way.
+> corrected an `extern fun` from 36 to 40, because the refusal was of the
+> *declaration* rather than of `alloc_raw` specifically, which is also why the
+> extern slice went after the declaration rather than after `alloc_raw`. The
+> capability-gated row (7 fixtures) is unchanged and still real, and it is still
+> **masked**: every one of those fixtures imports a gated module and calls an
+> extern of it, and the live-extern check in `generate` runs before the gate check
+> in `call`, so the gate is still not the next thing in any of their way. It will
+> stop being masked the moment the extern it calls has a body — which is a
+> property of this ordering, not a claim about the gate work.
 >
 > The first row is the argument for §8 being a *parallel* track: the single
 > biggest unlock is the runtime, not the code generator, and the runtime is the
-> half of this work that is backend-independent — though as the correction
-> above (§0 item 1, and §8 below) records, the runtime landing in Kelp does not
-> by itself clear that row; the asm backend's blanket extern refusal has to move
-> too.
+> half of this work that is backend-independent. The extern slice is what turned
+> that observation into a mechanism — the runtime pieces this backend can already
+> call (libm, `strlen`, and whatever else a routine of its own fronts) are
+> reachable now, and the ones it cannot are the ones that need the heap first.
 >
 > Two bugs the differential suite found, kept as evidence the gate works:
 > comparisons took their operand width from the `bool` result type (so every
@@ -820,6 +916,17 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    backend's is the same object assigned from `main` with the parameter kept (it costs nothing: an `&T`-typed
    local is a local). See the passdown blockquote above for the three things that had to exist, and for the two
    narrowings it leaves.
+10. **`extern fun`, and the dead code around it. First slice done** (2026-09-19), and the second item this list
+    never had — for the same reason as the ninth: the blanket refusal at the top of `generate` meant no extern
+    ever reached codegen, so nothing here was ever *built*. Calls to the externs this backend can lower now
+    resolve to `libc@PLT` or to a routine it owns (`strlen`; the fourteen libm transcendentals; `str.byte` and
+    `str.substring`, whose C bodies add a bounds check and a panic; `isnan`/`isfinite`, which are macros with
+    no symbol to call), and the whole of an `extern fun`'s *declaration* is now irrelevant to whether a program
+    builds. The second half is `live_functions`: only functions reachable from `main` (or a passdown
+    initializer) are compiled at all, so a module's heap-typed functions stop refusing the programs that only
+    import it. See the extern blockquote above. What is left of this item is the externs whose bodies are the
+    heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
+    of a row rather than a finished one.
 
 Definition of done: all 248 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
@@ -901,9 +1008,11 @@ nothing or is not needed; `bench/speed/` checksums match and the runtime is no w
 
 > **Status: in progress.** The first two pieces §8 puts first — the capability
 > matcher and the path normalizer — are Kelp as of `1071ead`, with the C kept as
-> the reference each one is differentially tested against. The allocator is next,
-> and it is also the top row of §5's ranking above (36 fixtures blocked by
-> `std.mem.alloc_raw`).
+> the reference each one is differentially tested against. The allocator is still
+> blocked on its own terms (see the note at the end of this section), and the
+> extern path that would let the asm backend *call* one landed separately in
+> §5 item 10; 18 fixtures still name `std.mem.alloc_raw` in their refusal, and
+> every one of them needs the heap types before the allocator itself matters.
 >
 > What landed: `kelpc/std/rt.kp`, a shipped module the resolver injects for any
 > program that imports a gated module or `std/path` — the same conditions that
@@ -969,6 +1078,16 @@ nothing or is not needed; `bench/speed/` checksums match and the runtime is no w
 > over `mmap` or `brk`"), which stays blocked on raw pointers until B-1/B-2/B-3
 > land. Until then, §8's order should treat the allocator as **blocked**, not
 > next, and pull the formatter forward in its place.
+>
+> **One thing that note was waiting on has landed, on the other track** (2026-09-19):
+> the asm backend can now lower an `extern fun` — `libc@PLT`, or a routine it
+> owns (see §5 item 10). That is the asm-side half of "thin C-backed terminal
+> primitives": `alloc_raw`, `realloc_raw` and `free_raw` are now *writable* as
+> routines the asm backend emits, where before this slice no program containing
+> them could build at all. What they are not is *useful* yet — a routine
+> returning a `Bytes` hands back a value no other part of this backend can
+> lower, so the heap row in §5's table is what actually has to move first. The
+> allocator's own status is unchanged.
 
 The important structural observation of this plan: **most of Tier 3 is backend-independent.** The allocator,
 the formatter, the error table, the path normalizer, the capability matcher and the DNS resolver are the same

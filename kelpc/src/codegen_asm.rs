@@ -372,6 +372,18 @@ fn str_ty(ty: &Ty) -> bool {
         || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
 }
 
+/// The user type a value names, looking through a borrow — `codegen_c.rs`'s own
+/// helper of the same name, needed here because an `EnumTag`/`EnumField` node
+/// carries only the two variant/field indices and the base's type is what names
+/// the `enum` a refusal should mention.
+fn enum_name_of(ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(name) => name.clone(),
+        Ty::Ref { inner, .. } => enum_name_of(inner),
+        other => other.display(),
+    }
+}
+
 /// MK7 §5: one passdown's generated storage — the internal `pd#<qualified>`
 /// name (which is also the name of the hidden parameter a referencing function
 /// receives), the symbol that storage is emitted under, and the passdown's own
@@ -419,6 +431,233 @@ fn pd_storage_size(
 /// therefore what a reader greps for — is uniform.
 fn unsupported(what: &str) -> String {
     format!("the 'asm' backend does not support {what} yet")
+}
+
+/// How this backend lowers one `extern fun` (MK7 §5, the first slice of item 1
+/// — the runtime starts arriving).
+///
+/// The point of this table is that an `extern fun` is no longer a *program*
+/// refusal: a program that never calls one compiles, and a program that calls
+/// one compiles when this table can supply the body. That matters beyond the
+/// handful of fixtures it unblocks today: the blanket refusal was masking every
+/// other gap behind it (a program that imports a gated module or `std/str`
+/// declares ninety externs whether or not it calls them, so the first refusal
+/// every one of those programs hit named an `extern fun` rather than the heap
+/// type or the `enum` that was actually in the way).
+///
+/// The call site needs no per-extern knowledge at all, which is why this is a
+/// symbol and not a code path: the argument marshalling in `Gen::call` is
+/// driven by the *declared* signature, and `externs.rs` is what keeps a
+/// compiler-supplied body honest about that signature. So an extern is either a
+/// libc function with the same signature, or one of this backend's own
+/// routines with the same signature.
+enum Extern {
+    /// A C library function whose signature is exactly the extern's own. The
+    /// call goes through the PLT, which is how the panic routine already
+    /// reaches `fprintf`/`exit`.
+    Libc(&'static str),
+    /// One of this backend's own hand-written routines — for the externs whose
+    /// C body does more than call one library function (a bounds check, a
+    /// libm *macro* like `isnan`, a syscall pair).
+    Routine(Routine),
+}
+
+/// One routine this backend owns, emitted once per program that needs it
+/// (`Gen::emit_routine`). Named by an enum rather than a string so the set of
+/// them is closed and a typo is a compile error rather than a missing symbol.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Routine {
+    StrByteAtRaw,
+    StrSliceFromRaw,
+    MathIsNanRaw,
+    MathIsFiniteRaw,
+}
+
+impl Routine {
+    /// The symbol this routine is emitted under. `$` is deliberate: a Kelp
+    /// identifier cannot contain one, `types::c_ident` never produces one, and
+    /// so no key a program could write mangles into this name — which a plain
+    /// `kelp_rt_str_byte_at_raw` would not have (a module `rt` holding
+    /// `str_byte_at_raw` mangles to exactly that).
+    fn label(self) -> &'static str {
+        match self {
+            Routine::StrByteAtRaw => "kelp_rt$str_byte_at_raw",
+            Routine::StrSliceFromRaw => "kelp_rt$str_slice_from_raw",
+            Routine::MathIsNanRaw => "kelp_rt$math_is_nan_raw",
+            Routine::MathIsFiniteRaw => "kelp_rt$math_is_finite_raw",
+        }
+    }
+}
+
+/// The lowering for the extern with canonical key `key` (`std.math.sqrt_raw`),
+/// or `None` for one this backend cannot supply a body for yet — which becomes
+/// a refusal at the *call site* rather than at the declaration.
+fn extern_target(key: &str) -> Option<Extern> {
+    Some(match key {
+        // `std/str`'s three byte primitives: `strlen` is exactly the first
+        // one, and the other two wrap it in the bounds check the C body has.
+        "std.str.byte_len_raw" => Extern::Libc("strlen"),
+        "std.str.byte_at_raw" => Extern::Routine(Routine::StrByteAtRaw),
+        "std.str.slice_from_raw" => Extern::Routine(Routine::StrSliceFromRaw),
+        // `std/math`: one libm call each, all `double` in and `double` out. The
+        // names differ (`ln_raw` is C's `log`), the signatures do not, and
+        // calling the same libm the C backend calls is what makes the two
+        // backends agree bit for bit rather than approximately.
+        "std.math.sqrt_raw" => Extern::Libc("sqrt"),
+        "std.math.pow_raw" => Extern::Libc("pow"),
+        "std.math.floor_raw" => Extern::Libc("floor"),
+        "std.math.ceil_raw" => Extern::Libc("ceil"),
+        "std.math.round_raw" => Extern::Libc("round"),
+        "std.math.trunc_raw" => Extern::Libc("trunc"),
+        "std.math.exp_raw" => Extern::Libc("exp"),
+        "std.math.ln_raw" => Extern::Libc("log"),
+        "std.math.log2_raw" => Extern::Libc("log2"),
+        "std.math.log10_raw" => Extern::Libc("log10"),
+        "std.math.sin_raw" => Extern::Libc("sin"),
+        "std.math.cos_raw" => Extern::Libc("cos"),
+        "std.math.tan_raw" => Extern::Libc("tan"),
+        "std.math.atan2_raw" => Extern::Libc("atan2"),
+        // `isnan`/`isfinite` are C *macros*, not functions: there is no
+        // `isnan` symbol to call, and glibc's `__isnan`/`__finite` are private.
+        // Both are pure bit tests on the operand, so they are ours.
+        "std.math.is_nan_raw" => Extern::Routine(Routine::MathIsNanRaw),
+        "std.math.is_finite_raw" => Extern::Routine(Routine::MathIsFiniteRaw),
+        _ => return None,
+    })
+}
+
+/// Every function key a program can actually reach.
+///
+/// This is *dead-code elimination at function granularity*, and it exists
+/// because a Kelp program's function list is not a program's code: importing
+/// `std/str` brings in all 40-odd of its functions, and each one this backend
+/// cannot lower (a `String` parameter, a `Bytes` return) used to refuse the
+/// whole program even when nothing called it. The C backend emits every one of
+/// them and lets `cc` discard the unused ones, so refusing them here was
+/// refusing programs the oracle builds.
+///
+/// It is safe by construction: an unreachable function cannot run, cannot
+/// write to stdout and cannot drop anything, so it cannot change what a fixture
+/// observes. What it *does* change is honest and worth stating plainly — an
+/// uncovered shape that only appears in dead code is no longer a build error,
+/// which is the same trade `generate`'s `datac` handling already makes (a
+/// `datac` that does not qualify is refused where a value of it is moved, not
+/// where it is declared).
+///
+/// The roots are `main` and every passdown initializer, because `main` is what
+/// runs the `pd_init` sequence. `FnRef`/`ClosureLit` are edges like any call:
+/// their keys name generated top-level functions, so a literal's body is live
+/// exactly when the expression naming it is.
+fn live_functions(program: &Program) -> std::collections::HashSet<String> {
+    let mut found: Vec<String> = vec!["main".to_string()];
+    for pd in &program.pds {
+        collect_calls_expr(&pd.init, &mut found);
+    }
+    let mut live = std::collections::HashSet::new();
+    while let Some(key) = found.pop() {
+        if !live.insert(key.clone()) {
+            continue;
+        }
+        let Some(f) = program.functions.iter().find(|f| f.name == key) else {
+            continue;
+        };
+        collect_calls_block(&f.body, &mut found);
+    }
+    live
+}
+
+fn collect_calls_block(block: &Block, out: &mut Vec<String>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let { init, .. } => collect_calls_expr(init, out),
+            Stmt::While { cond, body } => {
+                collect_calls_expr(cond, out);
+                collect_calls_block(body, out);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    collect_calls_expr(v, out);
+                }
+            }
+            Stmt::Expr(e) => collect_calls_expr(e, out),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_calls_expr(tail, out);
+    }
+}
+
+fn collect_calls_expr(e: &Expr, out: &mut Vec<String>) {
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Capture { .. } => {}
+        ExprKind::Unary { expr, .. }
+        | ExprKind::Ref { expr, .. }
+        | ExprKind::Deref { expr }
+        | ExprKind::EnumTag { expr, .. } => collect_calls_expr(expr, out),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_calls_expr(lhs, out);
+            collect_calls_expr(rhs, out);
+        }
+        ExprKind::Call { callee, args } => {
+            out.push(callee.clone());
+            for a in args {
+                collect_calls_expr(a, out);
+            }
+        }
+        ExprKind::IndirectCall { callee, args } => {
+            collect_calls_expr(callee, out);
+            for a in args {
+                collect_calls_expr(a, out);
+            }
+        }
+        ExprKind::FieldAccess { base, .. } | ExprKind::EnumField { base, .. } => {
+            collect_calls_expr(base, out)
+        }
+        ExprKind::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_calls_expr(v, out);
+            }
+        }
+        ExprKind::EnumLit { fields, .. } => {
+            for v in fields {
+                collect_calls_expr(v, out);
+            }
+        }
+        ExprKind::Try { expr, .. } => collect_calls_expr(expr, out),
+        ExprKind::Assign { target, value } => {
+            collect_calls_expr(target, out);
+            collect_calls_expr(value, out);
+        }
+        ExprKind::If { cond, then_block, else_block } => {
+            collect_calls_expr(cond, out);
+            collect_calls_block(then_block, out);
+            if let Some(b) = else_block {
+                collect_calls_block(b, out);
+            }
+        }
+        ExprKind::Block(b) => collect_calls_block(b, out),
+        ExprKind::FnRef(key) => out.push(key.clone()),
+        ExprKind::ClosureLit { key, captures } => {
+            out.push(key.clone());
+            for c in captures {
+                collect_calls_expr(c, out);
+            }
+        }
+        ExprKind::FnToClosure { func } => collect_calls_expr(func, out),
+        ExprKind::Template { pieces, .. } => {
+            for p in pieces {
+                if let TemplatePiece::Value(v) = p {
+                    collect_calls_expr(v, out);
+                }
+            }
+        }
+    }
 }
 
 /// MK7 §5 item 4, first slice: a `datac` whose fields are all scalar
@@ -878,17 +1117,32 @@ enum Dest {
 /// is, so an uncovered construct fails the build instead of producing a binary
 /// that is quietly wrong.
 pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> Result<String, String> {
+    // MK7 §5: an `extern fun` is no longer a program-level refusal. Only the
+    // ones a program can actually *call* matter, and only the ones this
+    // backend can supply a body for build — see `extern_target`. A live extern
+    // with no entry is refused here, naming the declaration exactly as the
+    // blanket refusal used to, so nothing about the message shape changed for
+    // a program that really does call one.
+    let live = live_functions(program);
+    for f in program.functions.iter().filter(|f| f.extern_ && live.contains(&f.name)) {
+        if extern_target(&f.name).is_none() {
+            return Err(unsupported(&format!("the `extern fun {}`", f.name)));
+        }
+    }
     // Program-level shapes this slice does not lower. Checking them up front
     // gives a message naming the *declaration* rather than whatever expression
-    // happened to touch it first.
-    if let Some(f) = program.functions.iter().find(|f| f.extern_) {
-        return Err(unsupported(&format!("the `extern fun {}`", f.name)));
-    }
-    if let Some(e) = program.enums.first() {
-        return Err(unsupported(&format!("the enum `{}`", e.name)));
-    }
+    // happened to touch it first. An `enum` is deliberately no longer one of
+    // them: like a `datac` that does not qualify (see the `layouts` line
+    // below), it is refused where a program actually *uses* a value of it, so a
+    // module that merely declares one — `std/str`'s `ParseErr`, which every
+    // `impl "std/str"` brings along — no longer poisons the whole program.
 
     let mut g = Gen::default();
+    for f in program.functions.iter().filter(|f| f.extern_ && live.contains(&f.name)) {
+        if let Some(target) = extern_target(&f.name) {
+            g.externs.insert(f.name.clone(), target);
+        }
+    }
     // MK7 §5 item 4, first slice: a `datac` is no longer refused outright — a
     // program keeps compiling as long as every `datac` it actually *uses* is
     // one `build_layouts` accepted (see `StructLayout`'s doc). A `datac` that
@@ -940,7 +1194,25 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
         if f.module == crate::stdlib::RT_MODULE {
             continue;
         }
+        // An `extern fun` has no body to emit — a *call* to one names libc or
+        // one of this backend's own routines (`Gen::call`).
+        if f.extern_ {
+            continue;
+        }
+        // Unreachable functions are not this program's code: see
+        // `live_functions`.
+        if !live.contains(&f.name) {
+            continue;
+        }
         g.function(f)?;
+    }
+    // MK7 §5: the routines this backend owns for the externs it implements,
+    // emitted once each, on demand. Before the panic routine because a routine
+    // that can panic is what sets `needs_panic`.
+    let mut routines: Vec<Routine> = g.routines.iter().copied().collect();
+    routines.sort_by_key(|r| r.label());
+    for r in routines {
+        g.emit_routine(r);
     }
     // MK7 §5 item 8: the panic routine, after every function and before the
     // data section `finish` writes. One copy per program, and only for a
@@ -1553,6 +1825,17 @@ struct Gen {
     /// inside `PdGlobal` so that `PdGlobal` stays a plain description of
     /// storage, which is all `Dest::Global` needs.
     pd_inits: Vec<Expr>,
+    /// MK7 §5 item 1: the lowering for each `extern fun` this program calls and
+    /// this backend can supply a body for, keyed by the extern's canonical key
+    /// (`std.math.sqrt_raw`). Empty for a program that calls no extern, which
+    /// is what makes the refusal a property of the call rather than of the
+    /// declaration.
+    externs: std::collections::HashMap<String, Extern>,
+    /// The routines this backend owns that this program needs, collected as
+    /// call sites name them and emitted once each after every function — a
+    /// route that writes into `Gen::out` mid-function would put a routine
+    /// inside a caller's body.
+    routines: std::collections::HashSet<Routine>,
 }
 
 impl Gen {
@@ -2323,10 +2606,20 @@ impl Gen {
             }
             ExprKind::FieldAccess { base, field } => self.field_read(base, field, frame),
             ExprKind::StructLit { name, fields } => self.struct_lit(name, fields, frame),
-            ExprKind::EnumLit { .. } => Err(unsupported("an enum literal")),
-            ExprKind::EnumTag { .. } => Err(unsupported("an enum tag test")),
-            ExprKind::EnumField { .. } => Err(unsupported("an enum payload read")),
-            ExprKind::Try { .. } => Err(unsupported("the `?` operator")),
+            ExprKind::EnumLit { enum_name, .. } => {
+                Err(unsupported(&format!("the enum `{enum_name}`")))
+            }
+            ExprKind::EnumTag { expr, .. } => Err(unsupported(&format!(
+                "the enum `{}`",
+                enum_name_of(&expr.ty)
+            ))),
+            ExprKind::EnumField { base, .. } => Err(unsupported(&format!(
+                "the enum `{}`",
+                enum_name_of(&base.ty)
+            ))),
+            ExprKind::Try { source, .. } => {
+                Err(unsupported(&format!("the enum `{source}` (the `?` operator)")))
+            }
             ExprKind::Ref { expr, .. } => {
                 // MK7 §5 item 8: a `&str` is the pointer itself — there is
                 // nothing to take the address of, and `codegen_c.rs` makes the
@@ -3179,7 +3472,16 @@ impl Gen {
                 }
             }
         }
-        let symbol = Gen::symbol(callee);
+        let symbol = match self.externs.get(callee) {
+            Some(Extern::Libc(sym)) => format!("{sym}@PLT"),
+            Some(Extern::Routine(r)) => {
+                // Recorded, not emitted: a routine written into `self.out` here
+                // would land inside this function's body, mid-expression.
+                self.routines.insert(*r);
+                r.label().to_string()
+            }
+            None => Gen::symbol(callee),
+        };
         call_align_begin(&mut self.out, frame.sp_slot);
         // MK7 §5 item 4, fourth slice: the outgoing argument area, laid out
         // *after* `call_align_begin` has rounded `rsp` down to sixteen bytes,
@@ -3374,6 +3676,76 @@ impl Gen {
     fn call_panic(&mut self) {
         self.needs_panic = true;
         self.out.push_str("    call kelp_panic\n");
+    }
+
+    /// MK7 §5 item 1: one of the routines this backend owns for an `extern
+    /// fun` whose C body is more than a single library call — see
+    /// `extern_target`.
+    ///
+    /// Each is written against the *declared* signature in `std/*.kp` (the
+    /// same contract `externs.rs` keeps the C bodies honest about), so the call
+    /// site needs nothing special: parameters are where the extern's own
+    /// declaration puts them, and the result is in `rax`.
+    ///
+    /// `strlen` is reached through the PLT the same way `kelp_panic` reaches
+    /// `fprintf`. A routine that can panic sets `needs_panic`, so `kelp_panic`
+    /// is emitted exactly when something calls it.
+    fn emit_routine(&mut self, r: Routine) {
+        let label = r.label();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        match r {
+            // `if (i >= strlen(s)) panic("str.byte: index out of bounds");
+            //  return (uint8_t)s[i];` — the check `externs.rs` writes, for the
+            // same message: the byte read is the one place a `str` index can
+            // run past the end, and the C backend panics rather than reading
+            // whatever follows the NUL.
+            Routine::StrByteAtRaw => {
+                let msg = self.bytes_label(b"str.byte: index out of bounds");
+                // `s` and `i` both have to survive `strlen`, which is entitled
+                // to clobber every caller-saved register (`rsi` included), so
+                // both go into callee-saved ones. The extra eight bytes keep
+                // `rsp` sixteen-byte aligned at the `call`.
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n");
+                self.out.push_str("    call strlen@PLT\n");
+                self.out.push_str("    cmp r12, rax\n    jae .Lstr_byte_at_oob\n");
+                self.out.push_str("    movzx eax, BYTE PTR [rbx+r12]\n");
+                self.out.push_str("    add rsp, 8\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lstr_byte_at_oob:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `if (from > strlen(s)) panic("str.substring: index out of
+            // bounds"); return s + from;` — note `>`, not `>=`: a slice that
+            // starts exactly at the NUL is the empty string, not an error.
+            Routine::StrSliceFromRaw => {
+                let msg = self.bytes_label(b"str.substring: index out of bounds");
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n");
+                self.out.push_str("    mov r12, rdi\n    mov rbx, rsi\n");
+                self.out.push_str("    call strlen@PLT\n");
+                self.out.push_str("    cmp rbx, rax\n    ja .Lstr_slice_from_oob\n");
+                self.out.push_str("    lea rax, [r12+rbx]\n");
+                self.out.push_str("    add rsp, 8\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lstr_slice_from_oob:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `isnan(x)`: the comparison sets the parity flag only when the
+            // operand is unordered, which is exactly a NaN.
+            Routine::MathIsNanRaw => {
+                self.out.push_str("    ucomisd xmm0, xmm0\n    setp al\n    movzx eax, al\n    ret\n");
+            }
+            // `isfinite(x)`: finite iff the exponent field is not all ones.
+            // `movq` moves the bits into the integer file, where the field is
+            // a shift and a mask — `isfinite` is a macro rather than a symbol,
+            // which is why this is a routine instead of a `call`.
+            Routine::MathIsFiniteRaw => {
+                self.out.push_str(
+                    "    movq rax, xmm0\n    shr rax, 52\n    and eax, 2047\n    cmp eax, 2047\n    setne al\n    movzx eax, al\n    ret\n",
+                );
+            }
+        }
+        let _ = writeln!(self.out, "    .size {label}, .-{label}");
     }
 
     /// The one piece of runtime this backend owns so far: the C backend's
