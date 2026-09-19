@@ -22,7 +22,7 @@
 //!    tier 2 removes both. What that buys here is that a wrong instruction is a
 //!    readable diff rather than a byte offset.
 //!
-//! 3. **A refusal is a feature.** Anything this slice cannot lower — `Map`, an
+//! 3. **A refusal is a feature.** Anything this slice cannot lower — an
 //!    `enum`, a closure, a capability-gated call, a `List` method whose element
 //!    would need a comparison or a clone, an owning `pd` — is reported as
 //!    `unsupported` with the type, method or node named, rather than emitted
@@ -42,8 +42,9 @@
 //! float arguments classified independently per SysV, recursion, `print`/`print!`
 //! of integers, characters, booleans, `str`, floats and an owned buffer, `datac`
 //! aggregates by value at any size (including a `MEMORY`-class one as an
-//! argument), `Bytes`, `String`, `View`, `Box<T>` and `List<T>` with their own
-//! free at every drop point, a `pd`'s generated storage, and calls to the
+//! argument), `Bytes`, `String`, `View`, `Box<T>`, `List<T>` and `Map<K, V>`
+//! with their own free at every drop point, a `pd`'s generated storage, and
+//! calls to the
 //! `extern fun`s whose bodies this backend owns or can forward to libc through
 //! the PLT. Printing through `fmt`'s `Display` machinery is not covered, and
 //! neither is anything in the refusal list above.
@@ -524,6 +525,66 @@ fn list_layout() -> StructLayout {
     }
 }
 
+/// The key `struct_layout` looks every `Ty::Map<K, V>` up under. **One key for
+/// every key and value type**, `LIST_LAYOUT_KEY`'s sibling and for the same
+/// reason: the map *header* is `{entries, entry_count, entry_cap, len, index,
+/// index_cap, index_used}` — seven words whatever it holds — so
+/// `types::map_c_type`'s per-instantiation name is needed for the *functions*
+/// and not for the layout. The **entry** does depend on the key type, but an
+/// entry is only ever an array element (see `map_entry`), never a by-value
+/// argument, so only its size is needed and this one key is enough.
+const MAP_LAYOUT_KEY: &str = "$Map";
+
+/// The C layout of `kelp_Map__K__V` (`codegen_c.rs:1121-1134`): seven eight-byte
+/// fields at 0/8/16/24/32/40/48 — `entries`, `entry_count`, `entry_cap`, `len`,
+/// `index`, `index_cap`, `index_used` — size 56, align 8. Seven INTEGER
+/// eightbytes, so **MEMORY** class: a `Map` local, parameter, argument and
+/// return travel exactly the way a `Bytes`/`List` one already does, and the
+/// fourth item-4 slice's `MEMORY`-class argument area is what passes one by
+/// value. `entries` and `index` are both nullable; `len == 0` does not imply
+/// either is. The header does **not** depend on `K`/`V` — that is the whole
+/// reason one key serves every instantiation.
+fn map_layout() -> StructLayout {
+    StructLayout {
+        entries: vec![
+            FieldEntry::Scalar("entries".to_string(), 0, Width::W8, false),
+            FieldEntry::Scalar("entry_count".to_string(), 8, Width::W8, false),
+            FieldEntry::Scalar("entry_cap".to_string(), 16, Width::W8, false),
+            FieldEntry::Scalar("len".to_string(), 24, Width::W8, false),
+            FieldEntry::Scalar("index".to_string(), 32, Width::W8, false),
+            FieldEntry::Scalar("index_cap".to_string(), 40, Width::W8, false),
+            FieldEntry::Scalar("index_used".to_string(), 48, Width::W8, false),
+        ],
+        size: 56,
+        align: 8,
+    }
+}
+
+/// One `kelp_Map__K__V_entry`'s layout, which **does** depend on the key type:
+/// `{K key; V* value; uint8_t live;}` (`codegen_c.rs:1121`), laid out by the
+/// same sequential, naturally-aligned rule clang applies to that struct. This
+/// is the arithmetic `write_map`'s generated code counts on for
+/// `realloc(entries, cap * sizeof(entry))` and for every `entries[e]` access,
+/// and it is the whole reason the per-instantiation routines exist.
+///
+/// Only the *key* matters: `value` is always a pointer and `live` always a
+/// byte, so a `String` key gives value at 24, live at 32 and size 40, while a
+/// scalar key gives value at 8, live at 16 and size 24 — the two points the
+/// plan's annex verifies. An entry is never a by-value argument, so this is
+/// the only place the layout is needed.
+struct MapEntry {
+    value_offset: i32,
+    live_offset: i32,
+    size: i32,
+}
+
+fn map_entry(key: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<MapEntry> {
+    let key_size = elem_size(key, layouts)?;
+    let value_offset = align_up(key_size, 8);
+    let live_offset = value_offset + 8;
+    Some(MapEntry { value_offset, live_offset, size: align_up(live_offset + 1, 8) })
+}
+
 /// The C layout of `kelp_String` (`codegen_c.rs:316-321`): the same
 /// `{data, len, cap}` the `Bytes` layout is, so a `String` local, parameter,
 /// argument and return travel exactly the way a `Bytes` one does.
@@ -713,6 +774,17 @@ enum Routine {
     /// length, `rdx` = `sizeof(elem)`), so one copy serves every instantiation —
     /// the only arithmetic that actually differs between them.
     ListReserve,
+    /// MK7 §5's map slice: the three shared key helpers `codegen_c.rs`'s runtime
+    /// defines once and every map instantiation calls, transliterated from
+    /// `codegen_c.rs:502-542`. `MapHash` is FNV-1a over a key's bytes (a
+    /// `String` key), `MapKeyEq` is the length-aware `memcmp` equality against
+    /// a borrowed `str`, and `MapMix` is the scalar-key 64-bit finalizer. Like
+    /// `ListReserve`, none of them is monomorphized: the key type's difference
+    /// is entirely in *how the caller reads the key*, which the generated
+    /// routine does — the arithmetic is the same three bodies for every key.
+    MapHash,
+    MapKeyEq,
+    MapMix,
 }
 
 impl Routine {
@@ -768,6 +840,9 @@ impl Routine {
             Routine::FmtHexRaw => "kelp_rt$fmt_hex_raw",
             Routine::FmtBytesRaw => "kelp_rt$fmt_bytes_raw",
             Routine::ListReserve => "kelp_rt$list_reserve",
+            Routine::MapHash => "kelp_rt$map_hash",
+            Routine::MapKeyEq => "kelp_rt$map_key_eq",
+            Routine::MapMix => "kelp_rt$map_mix",
         }
     }
 }
@@ -1037,9 +1112,9 @@ fn collect_calls_expr(e: &Expr, out: &mut Vec<String>) {
 /// the 8 bytes — and, for a nested field (`o.inner.v`), to find the nested
 /// struct's own offset first.
 ///
-/// A `datac` that does not qualify — a float field, a `List`/`Map`/`Box`
-/// field, or a `str`/`View` field (which the front end refuses outright: a
-/// `datac` holds owned data only) — simply has no entry here, and every site
+/// A `datac` that does not qualify — a float field, an `enum` or closure
+/// field, or a nested `datac` that has one — simply has no entry here, and
+/// every site
 /// that would need one reports `unsupported` naming the type. That is
 /// deliberately the same "coverage boundary" discipline the rest of this
 /// module uses: a later slice's shapes are later slices, not silent
@@ -1107,13 +1182,15 @@ fn layout_key(ty: &Ty) -> Option<String> {
         Ty::View => Some(VIEW_LAYOUT_KEY.to_string()),
         Ty::Box(_) => Some(BOX_LAYOUT_KEY.to_string()),
         Ty::List(_) => Some(LIST_LAYOUT_KEY.to_string()),
+        Ty::Map(..) => Some(MAP_LAYOUT_KEY.to_string()),
         _ => None,
     }
 }
 
 /// How many bytes a value of `ty` occupies in the C layout — `sizeof(T)` for a
 /// `Box<T>` element. `None` for a type this backend cannot lay out at all
-/// (`List`/`Map`/`Enum`/a closure), which is the same answer `struct_layout`
+/// (an `enum`, a closure, a `Vec`-like shape it has no layout for), which is
+/// the same answer `struct_layout`
 /// gives and what makes `Box<List<i32>>` a refusal rather than an allocation of
 /// the wrong size.
 fn elem_size(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<i32> {
@@ -1278,6 +1355,117 @@ impl ListFn {
     }
 }
 
+/// The symbol one `Map<K, V>` routine is emitted (and called) under — kept
+/// identical to `codegen_c.rs::write_map`'s generated names
+/// (`types::map_c_type` plus the operation) and, for the three shared key
+/// helpers, to the same arithmetic those helpers implement. As with `BoxFn`
+/// and `ListFn`, `drop_fn_name`'s own spelling is used for the drop rather
+/// than a second convention being invented here.
+///
+/// The set is what a map needs to exist at all: `new`, the probe (`find`),
+/// the index rebuild (`rehash`), the mutators (`insert`/`remove`/`clear`),
+/// the readers (`has`/`get`/`get_const`/`len`/`is_empty`), the two list
+/// producers (`keys`/`values`) and `get_or`. The two conditional operations are
+/// `get_or` and `values`, offered only where `types::list_clonable_elem`
+/// answers for the value type — the same predicate `infer.rs` uses to offer
+/// them in the first place, so the call site and the emitter cannot disagree
+/// about whether a symbol exists.
+#[derive(Clone, PartialEq, Eq)]
+enum MapFn {
+    New(Ty, Ty),
+    Find(Ty, Ty),
+    Rehash(Ty, Ty),
+    Insert(Ty, Ty),
+    Has(Ty, Ty),
+    /// `__get` when the value comes back by value (a `Copy` scalar, in `rax`)
+    /// and `__get_const` when a pointer to it does. The flag is decided at the
+    /// call site from the call's own result type — a `&V` result is the
+    /// borrowing form — which is exactly how `codegen_c.rs` decides it
+    /// (`matches!(ret, Ty::Ref { .. })`), and how `BoxFn::Get`/`ListFn::Get`
+    /// already do.
+    Get(Ty, Ty, bool),
+    GetOr(Ty, Ty),
+    Remove(Ty, Ty),
+    Clear(Ty, Ty),
+    Len(Ty, Ty),
+    IsEmpty(Ty, Ty),
+    Keys(Ty, Ty),
+    Values(Ty, Ty),
+    Drop(Ty, Ty),
+}
+
+impl MapFn {
+    fn key(&self) -> &Ty {
+        match self {
+            MapFn::New(k, _)
+            | MapFn::Find(k, _)
+            | MapFn::Rehash(k, _)
+            | MapFn::Insert(k, _)
+            | MapFn::Has(k, _)
+            | MapFn::Get(k, _, _)
+            | MapFn::GetOr(k, _)
+            | MapFn::Remove(k, _)
+            | MapFn::Clear(k, _)
+            | MapFn::Len(k, _)
+            | MapFn::IsEmpty(k, _)
+            | MapFn::Keys(k, _)
+            | MapFn::Values(k, _)
+            | MapFn::Drop(k, _) => k,
+        }
+    }
+
+    fn value(&self) -> &Ty {
+        match self {
+            MapFn::New(_, v)
+            | MapFn::Find(_, v)
+            | MapFn::Rehash(_, v)
+            | MapFn::Insert(_, v)
+            | MapFn::Has(_, v)
+            | MapFn::Get(_, v, _)
+            | MapFn::GetOr(_, v)
+            | MapFn::Remove(_, v)
+            | MapFn::Clear(_, v)
+            | MapFn::Len(_, v)
+            | MapFn::IsEmpty(_, v)
+            | MapFn::Keys(_, v)
+            | MapFn::Values(_, v)
+            | MapFn::Drop(_, v) => v,
+        }
+    }
+
+    fn label(&self) -> String {
+        let base = crate::types::map_c_type(self.key(), self.value());
+        match self {
+            MapFn::New(..) => format!("{base}__new"),
+            MapFn::Find(..) => format!("{base}__find"),
+            MapFn::Rehash(..) => format!("{base}__rehash"),
+            MapFn::Insert(..) => format!("{base}__insert"),
+            MapFn::Has(..) => format!("{base}__has"),
+            MapFn::Get(_, _, by_value) => {
+                if *by_value {
+                    format!("{base}__get")
+                } else {
+                    format!("{base}__get_const")
+                }
+            }
+            MapFn::GetOr(..) => format!("{base}__get_or"),
+            MapFn::Remove(..) => format!("{base}__remove"),
+            MapFn::Clear(..) => format!("{base}__clear"),
+            MapFn::Len(..) => format!("{base}__len"),
+            MapFn::IsEmpty(..) => format!("{base}__is_empty"),
+            MapFn::Keys(..) => format!("{base}__keys"),
+            MapFn::Values(..) => format!("{base}__values"),
+            // `types::drop_fn_name`'s spelling, which is not the
+            // `kelp_Map__*__<op>` shape the rest of the set uses.
+            MapFn::Drop(k, v) => format!(
+                "kelp_map_drop__{}__{}",
+                crate::types::ty_mangle(k),
+                crate::types::ty_mangle(v)
+            ),
+        }
+    }
+}
+
 fn align_up(cursor: i32, align: i32) -> i32 {
     (cursor + align - 1) / align * align
 }
@@ -1296,6 +1484,10 @@ fn ty_owns(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -
         // free (`free(NULL)`). This is why `drop_site_for` must never answer
         // `None` for one: there is no list that needs no drop.
         Ty::List(_) => true,
+        // A `Map<K, V>` always owns its two arrays (and, for an owning key or
+        // value, what they point at), for the same reason a list does. There
+        // is no map that needs no drop.
+        Ty::Map(..) => true,
         Ty::Struct(name) => datac_owns_in(name, layouts, &mut std::collections::HashSet::new()),
         _ => false,
     }
@@ -1314,7 +1506,7 @@ fn datac_owns_in(
     };
     layout.entries.iter().any(|e| match e {
         FieldEntry::Aggregate(_, _, _, ty) => match ty {
-            Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) => true,
+            Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) | Ty::Map(..) => true,
             Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
             _ => false,
         },
@@ -1481,6 +1673,9 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
     // MK7 §5's list slice: same shape of shortcut — one entry covers every
     // `List<T>` (see `LIST_LAYOUT_KEY`).
     out.insert(LIST_LAYOUT_KEY.to_string(), list_layout());
+    // MK7 §5's map slice: one entry covers every `Map<K, V>` (see
+    // `MAP_LAYOUT_KEY`).
+    out.insert(MAP_LAYOUT_KEY.to_string(), map_layout());
     for _ in 0..=structs.len() {
         let mut changed = false;
         for s in structs {
@@ -1512,6 +1707,10 @@ fn struct_layout<'a>(
         Ty::View => layouts.get(VIEW_LAYOUT_KEY),
         Ty::Box(_) => layouts.get(BOX_LAYOUT_KEY),
         Ty::List(_) => layouts.get(LIST_LAYOUT_KEY),
+        // MK7 §5's map slice: one key covers every `Map<K, V>` (see
+        // `MAP_LAYOUT_KEY`). The entry's own layout is per-key-type, but an
+        // entry is never a value the ABI moves — see `map_entry`.
+        Ty::Map(..) => layouts.get(MAP_LAYOUT_KEY),
         _ => None,
     }
 }
@@ -1565,9 +1764,8 @@ fn value_kind(
 }
 
 /// How many consecutive *integer* argument/parameter registers a value of
-/// `ty` occupies, or `None` if `ty` cannot be passed by value at all (a
-/// `String`/`List`/`Map`/`Box`, a `str`, a scalar reference — every type this
-/// backend still refuses). A `MEMORY`-class `datac` is `Some(0)`: it *can* be
+/// `ty` occupies, or `None` if `ty` cannot be passed by value at all (an
+/// `enum`, a closure, `unit` — every type this backend still refuses). A `MEMORY`-class `datac` is `Some(0)`: it *can* be
 /// passed by value, and the fourth slice passes it the way SysV says to, in
 /// memory rather than in any register — see `memory_arg_area`. That zero is
 /// what keeps a `Mem`-class argument from disturbing the numbering of the
@@ -1922,6 +2120,22 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         emitted_lists.push(f.label());
         g.emit_list_routine(&f)?;
     }
+    // MK7 §5's map slice: one routine set per `Map<K, V>` instantiation this
+    // program needs. Emitted last, after the list routines — a map's
+    // `keys`/`values` call the list's `empty` and the shared growth helper, and
+    // its drop calls the value's own drop — and read to a fixpoint for the
+    // same reason the other three loops are.
+    let mut emitted_maps: Vec<String> = Vec::new();
+    loop {
+        let next = g
+            .map_fns
+            .iter()
+            .find(|f| !emitted_maps.contains(&f.label()))
+            .cloned();
+        let Some(f) = next else { break };
+        emitted_maps.push(f.label());
+        g.emit_map_routine(&f)?;
+    }
     // MK7 §5 item 8: the panic routine, after every function and before the
     // data section `finish` writes. One copy per program, and only for a
     // program that can reach it.
@@ -2057,10 +2271,18 @@ impl LiveAnalysis {
         // is how every method on it is called, and a borrowed local has to
         // have an address. `List` joined it with the list slice, for the first
         // of those reasons (24 bytes, `eval_struct_into`/`emit_copy` only) and
-        // because every method on one takes `&self`/`&mut self`.
+        // because every method on one takes `&self`/`&mut self`. `Map` joined
+        // it with the map slice for both of them at once: its header is 56
+        // bytes and every method on one takes `&self`/`&mut self`.
         self.is_agg.push(matches!(
             ty,
-            Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::View | Ty::Box(_) | Ty::List(_)
+            Ty::Struct(_)
+                | Ty::Bytes
+                | Ty::String
+                | Ty::View
+                | Ty::Box(_)
+                | Ty::List(_)
+                | Ty::Map(..)
         ));
         self.scopes
             .last_mut()
@@ -2582,6 +2804,11 @@ struct Gen {
     /// after the box set, and re-read to a fixpoint so a `List<List<T>>`'s drop
     /// (which calls the inner list's drop) is emitted too.
     list_fns: Vec<ListFn>,
+    /// MK7 §5's map slice: the `Map<K, V>` routines this program needs, under
+    /// the same discipline as `list_fns` — labelled by `MapFn::label`, emitted
+    /// last (a map's `keys`/`values` call the list routines, and its drop calls
+    /// the value's own drop), and re-read to a fixpoint for the same reason.
+    map_fns: Vec<MapFn>,
 }
 
 /// One owned type's drop, as a symbol this module can `call`.
@@ -2606,6 +2833,11 @@ enum DropSite {
     /// buffer, so this is the one site that can never be skipped when it
     /// applies.
     List(Ty),
+    /// A per-instantiation `Map<K, V>` drop, `kelp_map_drop__<k>__<v>` —
+    /// `types::drop_fn_name`'s spelling for `Ty::Map`, emitted by
+    /// `Gen::emit_map_routine`. A map **always** owns its two arrays, so —
+    /// like the list site — this one can never be skipped when it applies.
+    Map(Ty, Ty),
 }
 
 impl DropSite {
@@ -2615,6 +2847,7 @@ impl DropSite {
             DropSite::Datac(name) => format!("kelp_drop_{}", crate::types::c_ident(name)),
             DropSite::Box(elem) => BoxFn::Drop(elem.clone()).label(),
             DropSite::List(elem) => ListFn::Drop(elem.clone()).label(),
+            DropSite::Map(key, value) => MapFn::Drop(key.clone(), value.clone()).label(),
         }
     }
 }
@@ -3128,6 +3361,18 @@ impl Gen {
                 self.require_list_fn(ListFn::Drop((**elem).clone()));
                 Some(DropSite::List((**elem).clone()))
             }
+            // A `Map<K, V>` owns its two arrays unconditionally, so this arm is
+            // reached for every map a program drops. Both types are required to
+            // have a size first — the generated drop indexes entries by the
+            // key's size and frees values of the value's size — and a type this
+            // backend cannot lay out comes back as `None`, which `emit_drop`
+            // refuses by name rather than skipping.
+            Ty::Map(key, value) => {
+                elem_size(key, &self.layouts)?;
+                elem_size(value, &self.layouts)?;
+                self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
+                Some(DropSite::Map((**key).clone(), (**value).clone()))
+            }
             _ => None,
         }
     }
@@ -3211,6 +3456,118 @@ impl Gen {
         self.list_fns.push(f);
     }
 
+    /// Records that one `Map<K, V>` routine is needed, along with everything
+    /// its body calls. Same before-the-snapshot rule as `require_box_fn` and
+    /// `require_list_fn`: the routine set is emitted from a snapshot, so a call
+    /// registered while a body is being written would link against a symbol
+    /// nothing emitted.
+    ///
+    /// The dependencies are `write_map`'s bodies read one for one. Every routine
+    /// that probes the index — `insert`, `has`, `get`/`get_const`, `get_or`,
+    /// `remove` — needs `find`; `insert` also grows and rebuilds the index
+    /// (`rehash`); `find` and `rehash` hash the key, which is `MapHash` +
+    /// `MapKeyEq` for a `String` key and `MapMix` for a scalar one; `clear`,
+    /// `insert`'s overwrite path and `drop` free live values, so each registers
+    /// the value's own drop through `drop_site_for`; `remove` frees the stored
+    /// key (`StringDrop`, for a `String` key); `keys` and `values` return a
+    /// `List`, so their `ListFn::Empty` and the shared growth helper are
+    /// registered *here* rather than at emission time — and the clone of each
+    /// element they append (`StringClone`/`BytesClone`) with them; and `drop` is
+    /// `clear` plus the two `free`s.
+    fn require_map_fn(&mut self, f: MapFn) {
+        if self.map_fns.iter().any(|x| x.label() == f.label()) {
+            return;
+        }
+        let key = f.key().clone();
+        let value = f.value().clone();
+        // Hashing a key is `kelp_map_hash` + `kelp_map_key_eq` for a `String`
+        // key and `kelp_map_mix` for a scalar — the same split `write_map`'s
+        // `hash_arg`/`hash_stored`/`eq_stored` closures make.
+        if key == Ty::String {
+            self.require_routine(Routine::MapHash);
+            self.require_routine(Routine::MapKeyEq);
+        } else {
+            self.require_routine(Routine::MapMix);
+        }
+        match &f {
+            MapFn::New(..) | MapFn::Find(..) | MapFn::Rehash(..) | MapFn::Len(..)
+            | MapFn::IsEmpty(..) => {}
+            MapFn::Has(..) | MapFn::Get(..) | MapFn::GetOr(..) | MapFn::Remove(..) => {
+                self.require_map_fn(MapFn::Find(key.clone(), value.clone()));
+            }
+            MapFn::Insert(..) => {
+                self.require_map_fn(MapFn::Find(key.clone(), value.clone()));
+                self.require_map_fn(MapFn::Rehash(key.clone(), value.clone()));
+                // `entries[e].key = kelp_String__from_str(k)` — the key's own
+                // copy-in, for a `String` key.
+                if key == Ty::String {
+                    self.require_routine(Routine::StringFromStr);
+                }
+            }
+            MapFn::Clear(..) => {
+                // The stored key is dropped per live entry, for a `String` key.
+                if key == Ty::String {
+                    self.require_routine(Routine::StringDrop);
+                }
+            }
+            MapFn::Drop(..) => {
+                // `clear` frees every live value and key and resets the header;
+                // the drop then frees the two arrays and zeroes the rest.
+                self.require_map_fn(MapFn::Clear(key.clone(), value.clone()));
+            }
+            MapFn::Keys(..) => {
+                self.require_list_fn(ListFn::Empty(key.clone()));
+                self.require_routine(Routine::ListReserve);
+                if key == Ty::String {
+                    self.require_routine(Routine::StringClone);
+                }
+            }
+            MapFn::Values(..) => {
+                self.require_list_fn(ListFn::Empty(value.clone()));
+                self.require_routine(Routine::ListReserve);
+                match value {
+                    Ty::String => self.require_routine(Routine::StringClone),
+                    Ty::Bytes => self.require_routine(Routine::BytesClone),
+                    _ => {}
+                }
+            }
+        }
+        // The value's own drop, wherever a live value is freed. `drop_site_for`
+        // answers `None` for a value that owns nothing (a scalar, a non-owning
+        // `datac`), which is exactly `needs_drop`'s answer in the C backend. Its
+        // one fixed-routine answer still has to be *registered* here, because
+        // `drop_site_for` only names a `Bytes`/`String` routine — registering it
+        // is the caller's job, exactly as `require_datac_drop`'s callers do.
+        if matches!(f, MapFn::Insert(..) | MapFn::Clear(..) | MapFn::Drop(..)) {
+            if let Some(site) = self.drop_site_for(&value) {
+                if let DropSite::Routine(r) = site {
+                    self.require_routine(r);
+                }
+            }
+        }
+        if matches!(f, MapFn::GetOr(..)) {
+            // `get_or` clones the existing value out on the hit path and drops
+            // the fallback it no longer needs.
+            match value {
+                Ty::String => {
+                    self.require_routine(Routine::StringClone);
+                    self.require_routine(Routine::StringDrop);
+                }
+                Ty::Bytes => {
+                    self.require_routine(Routine::BytesClone);
+                    self.require_routine(Routine::BytesDrop);
+                }
+                _ => {}
+            }
+        }
+        if matches!(f, MapFn::Remove(..)) && key == Ty::String {
+            // `remove` drops the stored key (`kelp_string_drop`); a scalar key
+            // is Copy and has nothing to free.
+            self.require_routine(Routine::StringDrop);
+        }
+        self.map_fns.push(f);
+    }
+
     /// Whether a `datac` owns anything, read off the layouts: a `String` or
     /// `Bytes` field anywhere in it, or a nested `datac` that has one. This is
     /// the asm backend's twin of `types::owned_types`, computed on demand
@@ -3270,6 +3627,21 @@ impl Gen {
                     Ty::Box(elem) => {
                         if elem_size(elem, &self.layouts).is_some() {
                             self.require_box_fn(BoxFn::Drop((**elem).clone()));
+                        }
+                    }
+                    // MK7 §5's map slice: a `datac` holding a `Map` field is
+                    // dropped by the map's generated drop, so that one (and
+                    // everything it calls, including the `List` routines a
+                    // `keys()` needs if a field of *that* datac asks for them)
+                    // has to be registered before the routine snapshot — the
+                    // same rule as the two containers above. Both type
+                    // arguments are required to have a size first; the guard in
+                    // `emit_datac_drop` turns the refusal into a named message.
+                    Ty::Map(key, value) => {
+                        if elem_size(key, &self.layouts).is_some()
+                            && elem_size(value, &self.layouts).is_some()
+                        {
+                            self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
                         }
                     }
                     Ty::Struct(inner) => {
@@ -3337,6 +3709,17 @@ impl Gen {
                     return Err(unsupported(&format!(
                         "the `List<{}>` field of `{name}`",
                         elem.display()
+                    )));
+                }
+            }
+            if let Ty::Map(key, value) = ty {
+                if elem_size(key, &self.layouts).is_none()
+                    || elem_size(value, &self.layouts).is_none()
+                {
+                    return Err(unsupported(&format!(
+                        "the `Map<{}, {}>` field of `{name}`",
+                        key.display(),
+                        value.display()
                     )));
                 }
             }
@@ -4002,6 +4385,952 @@ impl Gen {
         Ok(())
     }
 
+    /// The hash of the map's *key argument* (the `Karg` a method received),
+    /// which lives in `key_slot`, into `rax` — `codegen_c.rs::write_map`'s
+    /// `hash_arg` closure. A `String` key is a `const char*`, so it is hashed
+    /// over its bytes (`strlen` then `kelp_map_hash`); a scalar key is already
+    /// the value the map stores, so it is widened and mixed.
+    fn emit_map_hash_arg(&mut self, key: &Ty, key_slot: i32) {
+        if key == &Ty::String {
+            let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{key_slot}]");
+            self.out.push_str("    call strlen@PLT\n    mov rsi, rax\n");
+            let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{key_slot}]");
+            let _ = writeln!(self.out, "    call {}", Routine::MapHash.label());
+        } else {
+            let (w, signed) =
+                int_ty(key).expect("a map key is `String`, an integer or `bool`");
+            let _ = writeln!(self.out, "    mov {}, {} [rbp{key_slot}]", w.rax(), w.mem());
+            self.out.push_str(&w.extend(signed));
+            self.out.push_str("    mov rdi, rax\n");
+            let _ = writeln!(self.out, "    call {}", Routine::MapMix.label());
+        }
+    }
+
+    /// The hash of a *stored* key — the `kelp_String` (or scalar) sitting at
+    /// offset 0 of the entry whose address is in `entry_slot` — into `rax`.
+    /// `codegen_c.rs::write_map`'s `hash_stored` closure, and the reason
+    /// hashing an argument and hashing a stored key are two different reads of
+    /// the same bytes.
+    fn emit_map_hash_stored(&mut self, key: &Ty, entry_slot: i32) {
+        if key == &Ty::String {
+            // `kelp_map_hash(key.data, key.len)` — the entry's key is a
+            // `{data, len, cap}` at offset 0.
+            let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{entry_slot}]");
+            self.out.push_str("    mov rsi, QWORD PTR [rax+8]\n    mov rdi, QWORD PTR [rax]\n");
+            let _ = writeln!(self.out, "    call {}", Routine::MapHash.label());
+        } else {
+            let (w, signed) = int_ty(key).expect("a map key is `String`, an integer or `bool`");
+            let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{entry_slot}]");
+            let _ = writeln!(self.out, "    mov {}, {} [rdx]", w.rax(), w.mem());
+            self.out.push_str(&w.extend(signed));
+            self.out.push_str("    mov rdi, rax\n");
+            let _ = writeln!(self.out, "    call {}", Routine::MapMix.label());
+        }
+    }
+
+    /// Whether the entry whose address is in `entry_slot` has the same key as
+    /// the argument in `key_slot`, as 0/1 in `rax` — `codegen_c.rs::write_map`'s
+    /// `eq_stored` closure. A `String` key compares length-first through
+    /// `kelp_map_key_eq` (never `strcmp`, because a stored key may hold bytes
+    /// `strlen` would stop at); a scalar key compares by value, at its own
+    /// width and signedness, so a four-byte key's untouched upper bytes cannot
+    /// make two equal keys look different.
+    fn emit_map_key_eq(&mut self, key: &Ty, entry_slot: i32, key_slot: i32) {
+        if key == &Ty::String {
+            let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{key_slot}]");
+            self.out.push_str("    call strlen@PLT\n    mov rdx, rax\n");
+            let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{entry_slot}]");
+            let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{key_slot}]");
+            let _ = writeln!(self.out, "    call {}", Routine::MapKeyEq.label());
+            self.out.push_str("    movzx eax, al\n");
+        } else {
+            let (w, signed) = int_ty(key).expect("a map key is `String`, an integer or `bool`");
+            let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{entry_slot}]");
+            let _ = writeln!(self.out, "    mov {}, {} [rdx]", w.rax(), w.mem());
+            self.out.push_str(&w.extend(signed));
+            let _ = writeln!(self.out, "    cmp rax, QWORD PTR [rbp{key_slot}]");
+            self.out.push_str("    sete al\n    movzx eax, al\n");
+        }
+    }
+
+    /// `entries[e].key = store_key(k)` — the key argument in `key_slot` written
+    /// into the entry whose address is in `entry_slot`. A `String` key copies
+    /// in from the borrowed `str` (`kelp_String__from_str` writes its result
+    /// straight through the hidden pointer, which is the entry's own key, so no
+    /// temporary is needed); a scalar key is stored at its own width.
+    fn emit_map_store_key(&mut self, key: &Ty, entry_slot: i32, key_slot: i32) {
+        if key == &Ty::String {
+            let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{entry_slot}]");
+            let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{key_slot}]");
+            let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+        } else {
+            let (w, _) = int_ty(key).expect("a map key is `String`, an integer or `bool`");
+            let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{key_slot}]");
+            let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{entry_slot}]");
+            let _ = writeln!(self.out, "    mov {} [rdx], {}", w.mem(), w.rax());
+        }
+    }
+
+    /// The address of the live entry the index slot held in `slot_i` names
+    /// (`&self->entries[self->index[slot] - 1]`) into `slot_e`. Every routine
+    /// that probes the index and then touches the entry needs exactly this, and
+    /// it is in memory rather than a register because the calls in between are
+    /// entitled to clobber every caller-saved register.
+    fn emit_map_entry_addr(&mut self, entry_size: i32, slot_self: i32, slot_i: i32, slot_e: i32) {
+        let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+        self.out.push_str("    mov rcx, QWORD PTR [rcx+32]\n");
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+        self.out.push_str("    mov rax, QWORD PTR [rcx+rax*8]\n    sub rax, 1\n");
+        let _ = writeln!(self.out, "    imul rax, {entry_size}");
+        let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+        self.out.push_str("    mov rcx, QWORD PTR [rcx]\n    add rcx, rax\n");
+        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_e}], rcx");
+    }
+
+    /// A value held at `[src]` handed back the way its SysV class says to:
+    /// `rax` (or `rax`/`rdx`) for a register-classed value, and a copy through
+    /// the hidden return pointer for a `MEMORY`-class one. The same rule
+    /// `emit_elem_return` applies, with one difference: the source here is a
+    /// `malloc(sizeof(V))` block, exactly as wide as the value, so a `One`-class
+    /// `datac` narrower than eight bytes is staged in a frame slot before the
+    /// eight-byte load rather than read past the end of its own allocation
+    /// (which the memory gate would — correctly — call an invalid read).
+    fn emit_map_value_out(
+        &mut self,
+        value: &Ty,
+        size: i32,
+        class: AggClass,
+        src: &str,
+        slot_v: i32,
+        slot_ret: i32,
+    ) {
+        match class {
+            AggClass::One => {
+                if let Some((w, signed)) = int_ty(value) {
+                    let _ = writeln!(self.out, "    mov {}, {} [{src}]", w.rax(), w.mem());
+                    self.out.push_str(&w.extend(signed));
+                } else {
+                    self.out.push_str("    xor eax, eax\n");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
+                    emit_copy(&mut self.out, "rbp", slot_v, src, 0, size);
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
+                }
+            }
+            AggClass::Two => {
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [{src}]");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [{src}+8]");
+            }
+            AggClass::Mem => {
+                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
+                emit_copy(&mut self.out, "r10", 0, src, 0, size);
+                self.out.push_str("    mov rax, r10\n");
+            }
+        }
+    }
+
+    /// `*entries[e].value = v` — the value the method received, written into
+    /// the entry's value block at `[dst]`. A register-classed value was staged
+    /// in `slot_v` when the routine began (because `malloc`/`realloc` are free
+    /// to clobber the register it arrived in); a `MEMORY`-class one is still in
+    /// the caller's outgoing argument area at `[rbp+16]`, which no call can
+    /// invalidate, so no copy of it is made anywhere else.
+    fn emit_map_store_value(&mut self, size: i32, class: AggClass, dst: &str, slot_v: i32) {
+        match class {
+            AggClass::Mem => emit_copy(&mut self.out, dst, 0, "rbp", 16, size),
+            _ => emit_copy(&mut self.out, dst, 0, "rbp", slot_v, size),
+        }
+    }
+
+    /// One `Map<K, V>` instantiation's function set, transliterated from
+    /// `codegen_c.rs::write_map`. The map *header* is the same 56 bytes for
+    /// every instantiation (`map_layout`), so a map *value* travels the ABI
+    /// paths `Bytes`/`List` already use — the fourth item-4 slice's
+    /// `MEMORY`-class argument area and hidden return pointer — with no new
+    /// code in `Gen::call`. What is per-instantiation is the entry: the key is
+    /// inline, so every routine that probes, stores or frees one has to know
+    /// the key's own width and hash.
+    ///
+    /// The frame is fixed for every routine: eleven words of slots (`self`,
+    /// the key argument, the `find` out-parameter, the index capacity, three
+    /// counters, the hidden return pointer, the entry address and a staging
+    /// word) plus a sixteen-byte value staging block, with `sub rsp, 112` so
+    /// `rsp` is still sixteen-byte aligned at every `call`. Nothing is kept in
+    /// a register across a call — `malloc`, `realloc`, `free`, `memcmp` and an
+    /// element's own drop are all entitled to clobber every caller-saved
+    /// register, and this backend's generated functions pin their locals to
+    /// `rbx`/`r12`-`r15`, so a runtime routine leaves those alone. That is why
+    /// every live value is re-read from memory after a call instead of being
+    /// cached.
+    ///
+    /// Everything a body calls was registered by `require_map_fn` before the
+    /// routine snapshot was taken, so nothing here has to remember a dependency
+    /// at emission time.
+    fn emit_map_routine(&mut self, f: &MapFn) -> Result<(), String> {
+        let key = f.key().clone();
+        let value = f.value().clone();
+        let value_size = elem_size(&value, &self.layouts).ok_or_else(|| {
+            unsupported(&format!(
+                "the `Map<{}, {}>` behind `{}` (the value type has no size this backend can 
+                 allocate)",
+                key.display(),
+                value.display(),
+                f.label()
+            ))
+        })?;
+        let entry = map_entry(&key, &self.layouts).ok_or_else(|| {
+            unsupported(&format!(
+                "the `Map<{}, {}>` behind `{}` (the key type has no size this backend can lay 
+                 out)",
+                key.display(),
+                value.display(),
+                f.label()
+            ))
+        })?;
+        let value_class = elem_class(&value, &self.layouts);
+        let k_is_str = key == Ty::String;
+        let label = f.label();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        let frame = 112;
+        let slot_self = -8;
+        let slot_key = -16;
+        let slot_found = -24;
+        let slot_cap = -32;
+        let slot_i = -40;
+        let slot_j = -48;
+        let slot_tomb = -56;
+        let slot_ret = -64;
+        let slot_e = -72;
+        let slot_w = -80;
+        let slot_v = -112;
+        let prologue = format!("    push rbp\n    mov rbp, rsp\n    sub rsp, {frame}\n");
+        let epilogue = "    mov rsp, rbp\n    pop rbp\n    ret\n";
+        let find = MapFn::Find(key.clone(), value.clone()).label();
+        let value_drop = self.drop_site_for(&value);
+        let entry_size = entry.size;
+        let value_offset = entry.value_offset;
+        let live_offset = entry.live_offset;
+        match f {
+            // `m.entries = NULL; ... m.index_used = 0; return m;` — the map is
+            // `MEMORY` class, so `rdi` is the hidden destination.
+            MapFn::New(..) => {
+                self.out.push_str(
+                    "    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n\
+                     mov QWORD PTR [rdi+16], 0\n    mov QWORD PTR [rdi+24], 0\n\
+                     mov QWORD PTR [rdi+32], 0\n    mov QWORD PTR [rdi+40], 0\n\
+                     mov QWORD PTR [rdi+48], 0\n    mov rax, rdi\n    ret\n",
+                );
+            }
+            MapFn::Len(..) => {
+                self.out.push_str("    mov rax, QWORD PTR [rdi+24]\n    ret\n");
+            }
+            MapFn::IsEmpty(..) => {
+                self.out
+                    .push_str("    cmp QWORD PTR [rdi+24], 0\n    sete al\n    movzx eax, al\n    ret\n");
+            }
+            // `*found = false; if (self->index_cap == 0) return 0;
+            //  mask = index_cap - 1; i = hash(k) & mask; tomb = SIZE_MAX;
+            //  for (;;) { slot = index[i]; if (slot == 0) return tomb != SIZE_MAX
+            //  ? tomb : i; if (slot == SIZE_MAX) { if (tomb == SIZE_MAX) tomb =
+            //  i; } else if (entries[slot-1].live && key_eq(...)) { *found =
+            //  true; return i; } i = (i + 1) & mask; }`
+            MapFn::Find(..) => {
+                let zero = self.label("map_find_zero");
+                let loop_ = self.label("map_find_loop");
+                let empty = self.label("map_find_empty");
+                let tomb = self.label("map_find_tomb");
+                let next = self.label("map_find_next");
+                let hit = self.label("map_find_hit");
+                let ret = self.label("map_find_ret");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_found}], rdx");
+                self.out.push_str("    mov BYTE PTR [rdx], 0\n");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+40]\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {zero}");
+                self.out.push_str("    sub rax, 1\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_cap}], rax");
+                self.emit_map_hash_arg(&key, slot_key);
+                let _ = writeln!(self.out, "    and rax, QWORD PTR [rbp{slot_cap}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rax");
+                self.out.push_str("    mov rax, -1\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_tomb}], rax");
+                let _ = writeln!(self.out, "{loop_}:");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rcx+32]\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rcx+rdx*8]\n    test rcx, rcx\n");
+                let _ = writeln!(self.out, "    je {empty}");
+                self.out.push_str("    cmp rcx, -1\n");
+                let _ = writeln!(self.out, "    je {tomb}");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdx, QWORD PTR [rdx]\n    sub rcx, 1\n");
+                let _ = writeln!(self.out, "    imul rcx, {entry_size}");
+                self.out.push_str("    add rdx, rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_e}], rdx");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rdx+{live_offset}], 0");
+                let _ = writeln!(self.out, "    je {next}");
+                self.emit_map_key_eq(&key, slot_e, slot_key);
+                self.out.push_str("    test eax, eax\n");
+                let _ = writeln!(self.out, "    jne {hit}");
+                let _ = writeln!(self.out, "{next}:");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    add rcx, 1\n");
+                let _ = writeln!(self.out, "    and rcx, QWORD PTR [rbp{slot_cap}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rcx");
+                let _ = writeln!(self.out, "    jmp {loop_}");
+                let _ = writeln!(self.out, "{tomb}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_tomb}]");
+                self.out.push_str("    cmp rax, -1\n");
+                let _ = writeln!(self.out, "    jne {next}");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_tomb}], rax");
+                let _ = writeln!(self.out, "    jmp {next}");
+                let _ = writeln!(self.out, "{empty}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_tomb}]");
+                self.out.push_str("    cmp rax, -1\n");
+                let _ = writeln!(self.out, "    jne {ret}");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    jmp {ret}");
+                let _ = writeln!(self.out, "{hit}:");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_found}]");
+                self.out.push_str("    mov BYTE PTR [rdx], 1\n");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "{ret}:");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{zero}:");
+                self.out.push_str("    xor eax, eax\n");
+                self.out.push_str(epilogue);
+            }
+            // `for (e = 0; e < entry_count; e++) if (live) { i = hash(key) &
+            //  (cap-1); while (index[i]) i = (i+1) & (cap-1);
+            //  index[i] = e+1; index_used++; }`, after rebuilding the index at
+            // `cap = max(8, smallest power of two >= want*4)`.
+            MapFn::Rehash(..) => {
+                let grow = self.label("map_rehash_grow");
+                let have = self.label("map_rehash_have");
+                let oom = self.label("map_rehash_oom");
+                let loop_ = self.label("map_rehash_loop");
+                let probe = self.label("map_rehash_probe");
+                let place = self.label("map_rehash_place");
+                let next = self.label("map_rehash_next");
+                let done = self.label("map_rehash_done");
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_w}], rsi");
+                self.out.push_str("    mov rax, 8\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_cap}], rax");
+                self.out.push_str("    mov rcx, rsi\n    shl rcx, 2\n");
+                let _ = writeln!(self.out, "{grow}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    cmp rax, rcx\n");
+                let _ = writeln!(self.out, "    jae {have}");
+                self.out.push_str("    add rax, rax\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_cap}], rax");
+                let _ = writeln!(self.out, "    jmp {grow}");
+                let _ = writeln!(self.out, "{have}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi+32]\n    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    shl rdi, 3\n    call malloc@PLT\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [rcx+32], rax\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {oom}");
+                self.out.push_str("    mov rdi, rax\n    xor esi, esi\n");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    shl rdx, 3\n    call memset@PLT\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    mov QWORD PTR [rcx+40], rax\n    mov QWORD PTR [rcx+48], 0\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                let _ = writeln!(self.out, "{loop_}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    cmp rcx, rax\n");
+                let _ = writeln!(self.out, "    jae {done}");
+                self.out.push_str("    mov rdx, QWORD PTR [rdi]\n");
+                let _ = writeln!(self.out, "    imul rcx, {entry_size}");
+                self.out.push_str("    add rdx, rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_e}], rdx");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rdx+{live_offset}], 0");
+                let _ = writeln!(self.out, "    je {next}");
+                self.emit_map_hash_stored(&key, slot_e);
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    sub rcx, 1\n    and rax, rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rax");
+                let _ = writeln!(self.out, "{probe}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi+32]\n");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_j}]");
+                self.out.push_str("    cmp QWORD PTR [rdi+rax*8], 0\n");
+                let _ = writeln!(self.out, "    je {place}");
+                self.out.push_str("    add rax, 1\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    sub rcx, 1\n    and rax, rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rax");
+                let _ = writeln!(self.out, "    jmp {probe}");
+                let _ = writeln!(self.out, "{place}:");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    add rcx, 1\n    mov QWORD PTR [rdi+rax*8], rcx\n");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    add QWORD PTR [rdi+48], 1\n");
+                let _ = writeln!(self.out, "{next}:");
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    jmp {loop_}");
+                let _ = writeln!(self.out, "{done}:");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{oom}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `if (index_cap == 0 || (index_used + 1) * 4 >= index_cap * 3)
+            //  rehash(self, len + 1); slot = find(self, k, &found);
+            //  if (found) { e = index[slot]-1; drop(*entries[e].value);
+            //  *entries[e].value = v; return; }
+            //  if (entry_count == entry_cap) grow entries;
+            //  e = entry_count++; entries[e].key = store_key(k);
+            //  entries[e].value = malloc(sizeof(V)); *entries[e].value = v;
+            //  entries[e].live = 1; if (index[slot] == 0) index_used++;
+            //  index[slot] = e + 1; len++;` — `write_map`'s insert, with the
+            // value staged in the frame before the first possible `malloc`,
+            // because the register it arrived in is caller-saved.
+            MapFn::Insert(..) => {
+                let rehash = MapFn::Rehash(key.clone(), value.clone()).label();
+                let rehash_needed = self.label("map_insert_rehash");
+                let after_rehash = self.label("map_insert_after_rehash");
+                let fresh = self.label("map_insert_fresh");
+                let have_cap = self.label("map_insert_have_cap");
+                let double = self.label("map_insert_double");
+                let got_cap = self.label("map_insert_got_cap");
+                let no_used = self.label("map_insert_no_used");
+                let done = self.label("map_insert_done");
+                let oom = self.label("map_insert_oom");
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                match value_class {
+                    AggClass::One => {
+                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rdx");
+                    }
+                    AggClass::Two => {
+                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rdx");
+                        let _ =
+                            writeln!(self.out, "    mov QWORD PTR [rbp{}], rcx", slot_v + 8);
+                    }
+                    // A `MEMORY`-class value is already in the caller's
+                    // outgoing argument area at `[rbp+16]`.
+                    AggClass::Mem => {}
+                }
+                // Capacity check: `index_cap == 0` or the load factor would
+                // exceed three quarters on the next insert.
+                self.out.push_str("    mov rax, QWORD PTR [rdi+40]\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {rehash_needed}");
+                self.out.push_str("    mov rcx, QWORD PTR [rdi+48]\n    add rcx, 1\n    shl rcx, 2\n");
+                self.out.push_str("    lea rdx, [rax+rax*2]\n    cmp rcx, rdx\n");
+                let _ = writeln!(self.out, "    jae {rehash_needed}");
+                let _ = writeln!(self.out, "    jmp {after_rehash}");
+                let _ = writeln!(self.out, "{rehash_needed}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rsi, QWORD PTR [rdi+24]\n    add rsi, 1\n");
+                let _ = writeln!(self.out, "    call {rehash}");
+                let _ = writeln!(self.out, "{after_rehash}:");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_key}]");
+                let _ = writeln!(self.out, "    lea rdx, [rbp{slot_found}]");
+                let _ = writeln!(self.out, "    call {find}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rax");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    je {fresh}");
+                // Existing key: replace the value in place.
+                self.emit_map_entry_addr(entry_size, slot_self, slot_i, slot_e);
+                if let Some(site) = &value_drop {
+                    let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rdx+{value_offset}]");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                }
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rdx+{value_offset}]");
+                self.emit_map_store_value(value_size, value_class, "r10", slot_v);
+                let _ = writeln!(self.out, "    jmp {done}");
+                let _ = writeln!(self.out, "{fresh}:");
+                // Grow the dense entries array when it is full.
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                self.out.push_str("    cmp rax, QWORD PTR [rdi+16]\n");
+                let _ = writeln!(self.out, "    jne {have_cap}");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+16]\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    jne {double}");
+                self.out.push_str("    mov eax, 8\n");
+                let _ = writeln!(self.out, "    jmp {got_cap}");
+                let _ = writeln!(self.out, "{double}:");
+                self.out.push_str("    add rax, rax\n");
+                let _ = writeln!(self.out, "{got_cap}:");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_cap}], rax");
+                self.out.push_str("    mov rsi, rax\n");
+                let _ = writeln!(self.out, "    imul rsi, {entry_size}");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi]\n    call realloc@PLT\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [rcx], rax\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {oom}");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_cap}]");
+                self.out.push_str("    mov QWORD PTR [rcx+16], rax\n");
+                let _ = writeln!(self.out, "{have_cap}:");
+                // `e = entry_count++`, then the entry's own address.
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n    lea rcx, [rax+1]\n");
+                self.out.push_str("    mov QWORD PTR [rdi+8], rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_w}], rax");
+                self.out.push_str("    mov rdx, QWORD PTR [rdi]\n");
+                let _ = writeln!(self.out, "    imul rax, {entry_size}");
+                self.out.push_str("    add rdx, rax\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_e}], rdx");
+                self.emit_map_store_key(&key, slot_e, slot_key);
+                let _ = writeln!(self.out, "    mov edi, {value_size}");
+                self.out.push_str("    call malloc@PLT\n    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {oom}");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rdx+{value_offset}], rax");
+                let _ = writeln!(self.out, "    mov r10, rax");
+                self.emit_map_store_value(value_size, value_class, "r10", slot_v);
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rdx+{live_offset}], 1");
+                // `if (index[slot] == 0) index_used++; index[slot] = e + 1;`
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rcx+32]\n");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    cmp QWORD PTR [rcx+rax*8], 0\n");
+                let _ = writeln!(self.out, "    jne {no_used}");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    add QWORD PTR [rdx+48], 1\n");
+                let _ = writeln!(self.out, "{no_used}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_w}]");
+                self.out.push_str("    add rax, 1\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rcx+32]\n");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    mov QWORD PTR [rcx+rdx*8], rax\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    add QWORD PTR [rcx+24], 1\n");
+                let _ = writeln!(self.out, "{done}:");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{oom}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `bool found = false; find(self, k, &found); return found;`
+            MapFn::Has(..) => {
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_key}]");
+                let _ = writeln!(self.out, "    lea rdx, [rbp{slot_found}]");
+                let _ = writeln!(self.out, "    call {find}");
+                let _ = writeln!(self.out, "    movzx eax, BYTE PTR [rbp{slot_found}]");
+                self.out.push_str(epilogue);
+            }
+            // `find(self, k, &found); if (!found) panic("Map.get: key not
+            //  found"); return *entries[index[slot]-1].value;` — the by-value
+            // form, for a `Copy` (scalar) value, so the value itself comes back
+            // in `rax`.
+            MapFn::Get(_, _, true) => {
+                let missing = self.label("map_get_missing");
+                let msg = self.bytes_label(b"Map.get: key not found");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_key}]");
+                let _ = writeln!(self.out, "    lea rdx, [rbp{slot_found}]");
+                let _ = writeln!(self.out, "    call {find}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rax");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    je {missing}");
+                self.emit_map_entry_addr(entry_size, slot_self, slot_i, slot_e);
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rdx+{value_offset}]");
+                self.emit_map_value_out(
+                    &value,
+                    value_size,
+                    AggClass::One,
+                    "r11",
+                    slot_v,
+                    slot_ret,
+                );
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{missing}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // The borrowing form: `return entries[index[slot]-1].value;`
+            MapFn::Get(_, _, false) => {
+                let missing = self.label("map_get_missing");
+                let msg = self.bytes_label(b"Map.get: key not found");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_key}]");
+                let _ = writeln!(self.out, "    lea rdx, [rbp{slot_found}]");
+                let _ = writeln!(self.out, "    call {find}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rax");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    je {missing}");
+                self.emit_map_entry_addr(entry_size, slot_self, slot_i, slot_e);
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rdx+{value_offset}]");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{missing}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `find(...); if (!found) return fallback;
+            //  existing = entries[index[slot]-1].value; result = copy(existing);
+            //  drop(fallback); return result;` — only for a clonable value
+            // (`infer.rs` never offers it otherwise, and `Gen::call` refuses
+            // the call by name if the two ever disagreed).
+            MapFn::GetOr(..) => {
+                let absent = self.label("map_get_or_absent");
+                self.out.push_str(&prologue);
+                if value_class == AggClass::Mem {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rdx");
+                } else {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rdx");
+                }
+                let _ = writeln!(self.out, "    mov BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_key}]");
+                let _ = writeln!(self.out, "    lea rdx, [rbp{slot_found}]");
+                let _ = writeln!(self.out, "    call {find}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rax");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    je {absent}");
+                self.emit_map_entry_addr(entry_size, slot_self, slot_i, slot_e);
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rdx+{value_offset}]");
+                match value {
+                    Ty::String => {
+                        let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                        self.out.push_str("    mov rsi, r11\n");
+                        let _ = writeln!(self.out, "    call {}", Routine::StringClone.label());
+                        let _ = writeln!(self.out, "    lea rdi, [rbp+16]");
+                        let _ = writeln!(self.out, "    call {}", Routine::StringDrop.label());
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_ret}]");
+                    }
+                    Ty::Bytes => {
+                        let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                        self.out.push_str("    mov rsi, r11\n");
+                        let _ = writeln!(self.out, "    call {}", Routine::BytesClone.label());
+                        let _ = writeln!(self.out, "    lea rdi, [rbp+16]");
+                        let _ = writeln!(self.out, "    call {}", Routine::BytesDrop.label());
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_ret}]");
+                    }
+                    _ => {
+                        // A `Copy` scalar: `*existing`, with no drop for the
+                        // fallback (`(void)fallback`).
+                        let (w, signed) =
+                            int_ty(&value).expect("a clonable non-`String` value is a scalar");
+                        let _ = writeln!(self.out, "    mov {}, {} [r11]", w.rax(), w.mem());
+                        self.out.push_str(&w.extend(signed));
+                    }
+                }
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{absent}:");
+                if value_class == AggClass::Mem {
+                    let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
+                    emit_copy(&mut self.out, "r10", 0, "rbp", 16, value_size);
+                    self.out.push_str("    mov rax, r10\n");
+                } else {
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
+                }
+                self.out.push_str(epilogue);
+            }
+            // `find(...); if (!found) panic("Map.remove: key not found");
+            //  v = *entries[e].value; free(entries[e].value);
+            //  entries[e].value = NULL; drop_key(entries[e].key);
+            //  entries[e].live = 0; index[slot] = SIZE_MAX; len--; return v;`
+            MapFn::Remove(..) => {
+                let missing = self.label("map_remove_missing");
+                let msg = self.bytes_label(b"Map.remove: key not found");
+                self.out.push_str(&prologue);
+                if value_class == AggClass::Mem {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rdx");
+                } else {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
+                }
+                let _ = writeln!(self.out, "    mov BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_key}]");
+                let _ = writeln!(self.out, "    lea rdx, [rbp{slot_found}]");
+                let _ = writeln!(self.out, "    call {find}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rax");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rbp{slot_found}], 0");
+                let _ = writeln!(self.out, "    je {missing}");
+                self.emit_map_entry_addr(entry_size, slot_self, slot_i, slot_e);
+                // `v = *entries[e].value` — staged in `slot_v` (or written
+                // straight to the caller's return slot for a `MEMORY`-class
+                // value) *before* the `free`, because both `free` and the key's
+                // own drop are entitled to clobber `rax`/`rdx`.
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rdx+{value_offset}]");
+                match value_class {
+                    AggClass::Mem => self.emit_map_value_out(
+                        &value,
+                        value_size,
+                        value_class,
+                        "r11",
+                        slot_v,
+                        slot_ret,
+                    ),
+                    AggClass::Two => {
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [r11]");
+                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [r11+8]");
+                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
+                        let _ =
+                            writeln!(self.out, "    mov QWORD PTR [rbp{}], rdx", slot_v + 8);
+                    }
+                    AggClass::One => {
+                        if let Some((w, signed)) = int_ty(&value) {
+                            let _ = writeln!(
+                                self.out,
+                                "    mov {}, {} [r11]",
+                                w.rax(),
+                                w.mem()
+                            );
+                            self.out.push_str(&w.extend(signed));
+                            let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
+                        } else {
+                            self.out.push_str("    xor eax, eax\n");
+                            let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
+                            emit_copy(&mut self.out, "rbp", slot_v, "r11", 0, value_size);
+                        }
+                    }
+                }
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rdx+{value_offset}]");
+                self.out.push_str("    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rdx+{value_offset}], 0");
+                if k_is_str {
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_e}]");
+                    let _ = writeln!(self.out, "    call {}", Routine::StringDrop.label());
+                }
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rdx+{live_offset}], 0");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rcx+32]\n");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    mov QWORD PTR [rcx+rax*8], -1\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    sub QWORD PTR [rcx+24], 1\n");
+                match value_class {
+                    AggClass::Mem => {
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_ret}]");
+                    }
+                    AggClass::Two => {
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
+                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{}]", slot_v + 8);
+                    }
+                    AggClass::One => {
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
+                    }
+                }
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{missing}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `for (e = 0; e < entry_count; e++) if (live) { drop(value);
+            //  free(value); value = NULL; drop_key(key); live = 0; }
+            //  entry_count = 0; len = 0; index_used = 0;
+            //  memset(index, 0, index_cap * sizeof(size_t));`
+            MapFn::Clear(..) => {
+                let loop_ = self.label("map_clear_loop");
+                let skip = self.label("map_clear_skip");
+                let skip_memset = self.label("map_clear_memset_skip");
+                let done = self.label("map_clear_done");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                let _ = writeln!(self.out, "{loop_}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    cmp rcx, rax\n");
+                let _ = writeln!(self.out, "    jae {done}");
+                self.out.push_str("    mov rdx, QWORD PTR [rdi]\n");
+                let _ = writeln!(self.out, "    imul rcx, {entry_size}");
+                self.out.push_str("    add rdx, rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_e}], rdx");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rdx+{live_offset}], 0");
+                let _ = writeln!(self.out, "    je {skip}");
+                if let Some(site) = &value_drop {
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rdx+{value_offset}]");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                }
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rdx+{value_offset}]");
+                self.out.push_str("    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rdx+{value_offset}], 0");
+                if k_is_str {
+                    let _ = writeln!(self.out, "    mov rdi, rdx");
+                    let _ = writeln!(self.out, "    call {}", Routine::StringDrop.label());
+                }
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                let _ = writeln!(self.out, "    mov BYTE PTR [rdx+{live_offset}], 0");
+                let _ = writeln!(self.out, "{skip}:");
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    jmp {loop_}");
+                let _ = writeln!(self.out, "{done}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str(
+                    "    mov QWORD PTR [rdi+8], 0\n    mov QWORD PTR [rdi+24], 0\n\
+                     mov QWORD PTR [rdi+48], 0\n",
+                );
+                self.out.push_str("    mov rdi, QWORD PTR [rdi+32]\n    test rdi, rdi\n");
+                let _ = writeln!(self.out, "    je {skip_memset}");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdx, QWORD PTR [rcx+40]\n    shl rdx, 3\n    xor esi, esi\n");
+                self.out.push_str("    call memset@PLT\n");
+                let _ = writeln!(self.out, "{skip_memset}:");
+                self.out.push_str(epilogue);
+            }
+            // `out = <List<K>>__empty(); <List<K>>__reserve(&out, self->len);
+            //  for (e ...) if (live) out.data[out.len++] = clone(key);
+            //  return out;` — the list is built straight in the caller's return
+            // destination (`MEMORY` class), so no list local is needed.
+            MapFn::Keys(..) | MapFn::Values(..) => {
+                let is_keys = matches!(f, MapFn::Keys(..));
+                let elem = if is_keys { key.clone() } else { value.clone() };
+                let elem_bytes = elem_size(&elem, &self.layouts).ok_or_else(|| {
+                    unsupported(&format!(
+                        "the `Map<{}, {}>` list element `{}`",
+                        key.display(),
+                        value.display(),
+                        elem.display()
+                    ))
+                })?;
+                let empty = ListFn::Empty(elem.clone()).label();
+                let reserve = Routine::ListReserve.label();
+                let loop_ = self.label("map_list_loop");
+                let next = self.label("map_list_next");
+                let done = self.label("map_list_done");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                let _ = writeln!(self.out, "    call {empty}");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rsi, QWORD PTR [rcx+24]\n");
+                let _ = writeln!(self.out, "    mov edx, {elem_bytes}");
+                let _ = writeln!(self.out, "    call {reserve}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                let _ = writeln!(self.out, "{loop_}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    cmp rcx, rax\n");
+                let _ = writeln!(self.out, "    jae {done}");
+                self.out.push_str("    mov rdx, QWORD PTR [rdi]\n");
+                let _ = writeln!(self.out, "    imul rcx, {entry_size}");
+                self.out.push_str("    add rdx, rcx\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_e}], rdx");
+                let _ = writeln!(self.out, "    cmp BYTE PTR [rdx+{live_offset}], 0");
+                let _ = writeln!(self.out, "    je {next}");
+                // dest = out.data + out.len * elem_size
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    imul rcx, {elem_bytes}");
+                self.out.push_str("    add rcx, QWORD PTR [rdi]\n");
+                if elem == Ty::String {
+                    if is_keys {
+                        // The entry's key is at offset 0.
+                        let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_e}]");
+                    } else {
+                        // The value is the pointer at `value_offset`.
+                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                        let _ = writeln!(
+                            self.out,
+                            "    mov rsi, QWORD PTR [rdx+{value_offset}]"
+                        );
+                    }
+                    self.out.push_str("    mov rdi, rcx\n");
+                    let _ = writeln!(self.out, "    call {}", Routine::StringClone.label());
+                } else if elem == Ty::Bytes {
+                    // `values()` over a `Bytes` value clones the buffer.
+                    let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                    let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rdx+{value_offset}]");
+                    self.out.push_str("    mov rdi, rcx\n");
+                    let _ = writeln!(self.out, "    call {}", Routine::BytesClone.label());
+                } else {
+                    // A scalar element (a `String` key's clone is above, and
+                    // for `keys()` that is the only non-scalar case).
+                    let (w, _) = int_ty(&elem).ok_or_else(|| {
+                        unsupported(&format!(
+                            "the `Map<{}, {}>` list element `{}`",
+                            key.display(),
+                            value.display(),
+                            elem.display()
+                        ))
+                    })?;
+                    let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
+                    if is_keys {
+                        let _ = writeln!(self.out, "    mov {}, {} [rdx]", w.rax(), w.mem());
+                    } else {
+                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rdx+{value_offset}]");
+                        let _ = writeln!(self.out, "    mov {}, {} [rdx]", w.rax(), w.mem());
+                    }
+                    let _ = writeln!(self.out, "    mov {} [rcx], {}", w.mem(), w.rax());
+                }
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str("    add QWORD PTR [rdi+8], 1\n");
+                let _ = writeln!(self.out, "{next}:");
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    jmp {loop_}");
+                let _ = writeln!(self.out, "{done}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str(epilogue);
+            }
+            // `clear(self); free(self->entries); free(self->index);
+            //  self->entries = NULL; ... self->index_used = 0;` — `clear`
+            // already dropped every live value and key (in that order, entry by
+            // entry) and reset the counters, so the drop is those two frees and
+            // the header zeroing, exactly `write_map`'s order.
+            MapFn::Drop(..) => {
+                let clear = MapFn::Clear(key.clone(), value.clone()).label();
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    call {clear}");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi]\n    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi+32]\n    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                for off in [0, 8, 16, 24, 32, 40, 48] {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rdi+{off}], 0");
+                }
+                self.out.push_str(epilogue);
+            }
+        }
+        Ok(())
+    }
+
     /// Records that a routine, and everything it calls, has to be emitted.
     fn require_routine(&mut self, r: Routine) {
         match r {
@@ -4129,6 +5458,26 @@ impl Gen {
                 }
                 self.require_list_fn(ListFn::Drop((**elem).clone()));
                 DropSite::List((**elem).clone())
+            }
+            // MK7 §5's map slice: the same shape as the list above, one
+            // aggregate wider — `f(Map.new())` where `f` takes the map by
+            // borrow has to free both of its arrays (and everything in them)
+            // after the call. A map always owns, so this arm is reached for
+            // every key and value type; what can still be refused is either
+            // type's own size, refused by name rather than staged without a
+            // drop.
+            Ty::Map(key, value) => {
+                if elem_size(key, &self.layouts).is_none()
+                    || elem_size(value, &self.layouts).is_none()
+                {
+                    return Err(unsupported(&format!(
+                        "a borrow of the temporary `Map<{}, {}>`",
+                        key.display(),
+                        value.display()
+                    )));
+                }
+                self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
+                DropSite::Map((**key).clone(), (**value).clone())
             }
             _ => return Ok(None),
         };
@@ -5728,6 +7077,86 @@ impl Gen {
             let label = f.label();
             self.require_list_fn(f);
             label
+        } else if let Some(op) = callee.strip_prefix("Map#") {
+            // MK7 §5's map slice: the `Map<K, V>` surface, monomorphized the
+            // way `codegen_c.rs::write_map` does it. Both type arguments come
+            // from whichever of the two places they can: the call's own result
+            // type for the associated `Map.new()`, and the receiver for every
+            // method (through `types::map_key_of`/`map_elem_of`, which look
+            // through the `&Map<K, V>` a method receiver is). Only the *map's*
+            // layout has to exist here — a map value is a 56-byte header
+            // whatever it holds — while the key's and value's own sizes are
+            // what the routines need, so both are checked and refused by name.
+            //
+            // `Map.empty()` never arrives: `infer.rs` lowers it to `Map#new`
+            // (a map starts empty), which is the one spelling `write_map`
+            // emits.
+            let (key, value) = if op == "new" {
+                (
+                    crate::types::map_key_of(ret_ty).cloned(),
+                    crate::types::map_elem_of(ret_ty).cloned(),
+                )
+            } else {
+                (
+                    args.first().and_then(|a| crate::types::map_key_of(&a.ty)).cloned(),
+                    args.first().and_then(|a| crate::types::map_elem_of(&a.ty)).cloned(),
+                )
+            };
+            let (Some(key), Some(value)) = (key, value) else {
+                return Err(unsupported(&format!(
+                    "the method `{}`",
+                    callee.replace('#', ".")
+                )));
+            };
+            if elem_size(&key, &self.layouts).is_none()
+                || elem_size(&value, &self.layouts).is_none()
+            {
+                return Err(unsupported(&format!(
+                    "the `Map<{}, {}>` ahead of `{}`",
+                    key.display(),
+                    value.display(),
+                    callee.replace('#', ".")
+                )));
+            }
+            // `get_or` and `values` exist only where the C backend emits them,
+            // and `codegen_c.rs::write_map` gates both on
+            // `types::list_clonable_elem(value)` — the same predicate
+            // `infer.rs::map_sig` uses to offer the method at all. Checking it
+            // again here (rather than assuming) is what keeps a call site from
+            // ever naming a symbol nothing emitted: a divergence between the
+            // two would be a refusal by name instead of an undefined symbol.
+            if matches!(op, "get_or" | "values")
+                && !crate::types::list_clonable_elem(&value)
+            {
+                return Err(unsupported(&format!(
+                    "the method `{}` on a `Map` (its value type `{}` cannot be copied out, so 
+                     the C backend emits no `{op}` for this instantiation)",
+                    callee.replace('#', "."),
+                    value.display()
+                )));
+            }
+            let f = match op {
+                "new" => MapFn::New(key, value),
+                "insert" => MapFn::Insert(key, value),
+                "has" => MapFn::Has(key, value),
+                "get" => MapFn::Get(key, value, !matches!(ret_ty, Ty::Ref { .. })),
+                "get_or" => MapFn::GetOr(key, value),
+                "remove" => MapFn::Remove(key, value),
+                "clear" => MapFn::Clear(key, value),
+                "len" => MapFn::Len(key, value),
+                "is_empty" => MapFn::IsEmpty(key, value),
+                "keys" => MapFn::Keys(key, value),
+                "values" => MapFn::Values(key, value),
+                _ => {
+                    return Err(unsupported(&format!(
+                        "the method `{}` on a `Map`",
+                        callee.replace('#', ".")
+                    )))
+                }
+            };
+            let label = f.label();
+            self.require_map_fn(f);
+            label
         } else if callee.starts_with("Bytes#")
             || callee.starts_with("String#")
             || callee.starts_with("View#")
@@ -6557,6 +7986,40 @@ impl Gen {
                 self.out.push_str(".Llist_reserve_oom:\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{oom}]");
                 self.call_panic();
+            }
+            // `uint64_t kelp_map_hash(const char* data, size_t len)` — FNV-1a
+            // over the key's bytes, `codegen_c.rs:502-510` instruction for
+            // instruction, constants included. `rdi` is the data, `rsi` the
+            // length, the result lands in `rax`; no call is made, so nothing
+            // has to be preserved and the four registers used are all
+            // caller-saved.
+            Routine::MapHash => {
+                self.out.push_str("    movabs rax, 1469598103934665603\n    xor rcx, rcx\n");
+                self.out.push_str(".Lmap_hash_loop:\n    cmp rcx, rsi\n    jae .Lmap_hash_done\n");
+                self.out.push_str("    movzx edx, BYTE PTR [rdi+rcx]\n    xor rax, rdx\n");
+                self.out.push_str("    movabs r8, 1099511628211\n    imul rax, r8\n");
+                self.out.push_str("    add rcx, 1\n    jmp .Lmap_hash_loop\n.Lmap_hash_done:\n    ret\n");
+            }
+            // `bool kelp_map_key_eq(const kelp_String* key, const char* data,
+            // size_t len)` — a length check before the `memcmp`, because a
+            // `String` key may hold bytes `strlen` would stop at
+            // (`codegen_c.rs:511-518`). The `sub rsp, 8`/`add rsp, 8` pair is
+            // the same alignment shim `View__eq` uses around `memcmp`.
+            Routine::MapKeyEq => {
+                self.out.push_str("    cmp QWORD PTR [rdi+8], rdx\n    jne .Lmap_key_eq_false\n");
+                self.out.push_str("    test rdx, rdx\n    je .Lmap_key_eq_true\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi]\n    sub rsp, 8\n    call memcmp@PLT\n    add rsp, 8\n");
+                self.out.push_str("    test eax, eax\n    sete al\n    movzx eax, al\n    ret\n");
+                self.out.push_str(".Lmap_key_eq_true:\n    mov eax, 1\n    ret\n.Lmap_key_eq_false:\n    xor eax, eax\n    ret\n");
+            }
+            // `uint64_t kelp_map_mix(uint64_t x)` — the scalar-key finalizer
+            // (`codegen_c.rs:520-528`): two shifts-xors and one multiply, so
+            // keys differing in one bit land in different buckets. The result
+            // is in `rax`, the argument in `rdi`.
+            Routine::MapMix => {
+                self.out.push_str("    mov rax, rdi\n    mov rcx, rax\n    shr rcx, 33\n    xor rax, rcx\n");
+                self.out.push_str("    movabs r8, 0xff51afd7ed558ccd\n    imul rax, r8\n");
+                self.out.push_str("    mov rcx, rax\n    shr rcx, 33\n    xor rax, rcx\n    ret\n");
             }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");
