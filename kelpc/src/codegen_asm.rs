@@ -22,9 +22,10 @@
 //!    tier 2 removes both. What that buys here is that a wrong instruction is a
 //!    readable diff rather than a byte offset.
 //!
-//! 3. **A refusal is a feature.** Anything this slice cannot lower — an
-//!    `enum`, a closure, a capability-gated call, a `List` method whose element
-//!    would need a comparison or a clone, an owning `pd` — is reported as
+//! 3. **A refusal is a feature.** Anything this slice cannot lower — a `float`
+//!    payload in an aggregate, a closure, a capability-gated call, a `List`
+//!    method whose element would need a comparison or a clone, an owning
+//!    `pd` — is reported as
 //!    `unsupported` with the type, method or node named, rather than emitted
 //!    wrongly. A capability-gated call is refused rather than emitted unchecked,
 //!    because that is the one gap that would be a security hole instead of a
@@ -42,7 +43,9 @@
 //! float arguments classified independently per SysV, recursion, `print`/`print!`
 //! of integers, characters, booleans, `str`, floats and an owned buffer, `datac`
 //! aggregates by value at any size (including a `MEMORY`-class one as an
-//! argument), `Bytes`, `String`, `View`, `Box<T>`, `List<T>` and `Map<K, V>`
+//! argument), `enum` — the tagged union, its four node kinds, `?`, and a
+//! generated drop that switches on the runtime tag — `Bytes`, `String`, `View`,
+//! `Box<T>`, `List<T>` and `Map<K, V>`
 //! with their own free at every drop point, a `pd`'s generated storage, and
 //! calls to the
 //! `extern fun`s whose bodies this backend owns or can forward to libc through
@@ -77,6 +80,11 @@
 //! The save is a memory slot and not a register because a register is a bug
 //! waiting to happen: the first version used `r11`, `printf` clobbered it, and a
 //! function that printed twice restored a garbage stack pointer. See `SP_SLOT`.
+//!
+//! The epilogue rebuilds `rsp` from `rbp` rather than adding the frame size back,
+//! because a `jmp` to the return label does not always arrive from a statement
+//! boundary: `?`'s failure arm returns from the middle of an expression, with a
+//! pending operand still pushed. See `Gen::function`'s epilogue.
 
 use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{DropPlan, DropTarget};

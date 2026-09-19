@@ -7,6 +7,22 @@ no source. Every refusal text was reproduced by hand with
 and the C backend was built for every fixture named reachable, because a fixture
 the oracle rejects is not a target.
 
+**Addendum, recorded after the fact (2026-09-19, when the enum slice that section
+D recommends landed):** the recommendation was taken and D is done, so every count
+in this file is now history rather than a measurement — kept, because §9's first
+lesson is that a slice's own brief is what its acceptance is judged against. The
+current numbers are **125 built of the 158 fixtures the C backend builds, 33
+refused**, the asm suite is **219 of 278**, and the ranking is `heap 16, enum 4,
+a `datac` holding a float field 2, closure 10, gated extern 1`. Two of this
+brief's measurements were corrected by measurement rather than by argument, and
+both are recorded in `plan/mk7-own-backend.md`'s enum blockquote: `try_drops_frame`
+is **not** reachable by D — its last function wraps the same `?` in a `fun`
+literal, so the closure is its first refusal, which makes it a closures-row fixture
+and means that of the fourteen fixtures the slice's acceptance list spells out, the
+thirteen below build and that one does not; and the four float-payload fixture
+names in section D's split are exactly the four that remain, which is the one part
+of that split that held exactly.
+
 ---
 
 ## 0. The refusal ranking, verbatim
