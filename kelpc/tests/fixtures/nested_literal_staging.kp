@@ -1,0 +1,73 @@
+// A pre-existing staging bug this slice's own fixtures reached, not one they
+// introduce: the asm backend used to build every aggregate value that was
+// *staged* for a call argument or for a `Two`-class `return` in one shared
+// frame slot (`Frame::agg_slot`). That reasoning — "one slot, because no two
+// uses overlap in time" — is false for nesting: a field initializer is itself
+// an expression, and if it stages a second aggregate value, the inner one
+// overwrites what the outer one had already written while the outer one is
+// still being built.
+//
+// `Node` is 16 bytes, so it is a `Two`-class value and every one of these
+// literals is staged. Three shapes are pinned here:
+//
+//   * `chain`/`four` — a `Two`-class argument whose own field initializer is
+//     another `Two`-class argument (`Box.of(Node(...))` inside `Node(...)`).
+//     Before the fix the middle node read the innermost node's `value`:
+//     `chain` totalled 7 instead of 6, and `four()` returned 10 instead of 9.
+//   * `mixed` — a `One`-class literal (`Pair`) evaluated as a call argument
+//     *inside* the field initializer of the staged outer value, which clobbers
+//     the same shared slot from the other direction.
+//   * `five` — both at once, in a `Two`-class return value's own staging.
+//
+// Nothing about this is enum-specific; the fixture lives beside the enum slice
+// because `generic_recursive`, newly reachable once an `enum` no longer refused
+// it, is what found it.
+datac Node(val value: i64, val next: Box<Node>)
+
+datac Pair(val left: i32, val right: i32)
+
+fun pair_sum(p: Pair).R: i64 = p.left.to_i64() + p.right.to_i64()
+
+fun node_total(n: &Node).R: i64 = if n.next.is_empty() {
+    n.value
+} else {
+    n.value + node_total(n = n.next.get())
+}
+
+// A `Two`-class return value: the literal is staged where the epilogue reads it
+// from, and its `next` field initializer stages another one.
+fun four().R: Node = Node(value = 4, next = Box.of(Node(value = 5, next = Box.empty())))
+
+fun five(p: Pair).R: Node = Node(
+    value = 4 + pair_sum(p = p),
+    next = Box.of(Node(value = pair_sum(p = Pair(left = 5, right = 5)), next = Box.empty())),
+)
+
+fun main() {
+    // A three-node chain, each link staged before the previous link's fields
+    // are finished.
+    val chain = Node(
+        value = 1,
+        next = Box.of(Node(
+            value = 2,
+            next = Box.of(Node(value = 3, next = Box.empty())),
+        )),
+    )
+    print(node_total(n = chain))
+
+    // A `One`-class literal as an argument inside each field initializer.
+    val mixed = Node(
+        value = pair_sum(p = Pair(left = 1, right = 2)),
+        next = Box.of(Node(value = pair_sum(p = Pair(left = 3, right = 4)), next = Box.empty())),
+    )
+    print(node_total(n = mixed))
+
+    // A `One`-class literal staged inside a `Two`-class return value's own
+    // staging.
+    print(node_total(n = four()))
+    print(node_total(n = five(p = Pair(left = 2, right = 3))))
+
+    // A `Two`-class argument passed straight from a call whose own argument
+    // was a literal.
+    print(node_total(n = Node(value = pair_sum(p = Pair(left = 6, right = 7)), next = Box.empty())))
+}

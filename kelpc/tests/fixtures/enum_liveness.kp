@@ -1,0 +1,76 @@
+// MK7 §5's enum slice: the regression test for the register allocator's
+// liveness pass, on the four node kinds this slice adds. `LiveAnalysis` has now
+// twice handed two genuinely-live locals the *same* physical register because a
+// node kind it did not walk made one of them look dead on declaration — a
+// `StructLit` first, then `FieldAccess`/`Ref`/`Deref`. The failure mode is a
+// wrong number, not a refusal, and it only appears when two locals are live
+// *around* the node in question, so every function below keeps two scalars
+// alive across the node kind it is named for and adds them back afterwards.
+//
+//   * `literal`  — `EnumLit`: the payload reads `a`.
+//   * `tagged`   — `EnumTag` and `EnumField`: the scrutinee's tag is tested
+//                  while `a` and `b` are both live, and the payload's value is
+//                  read out of the union.
+//   * `propagated` — `Try`: the `?` sits inside a binary operator, so `a` and
+//                  `b` are live across the early return's own branch.
+//
+// A register collision shows up as one of the sums being wrong, and the four
+// functions between them cover the arithmetic both ways round so a swapped pair
+// cannot cancel out.
+enum Slot {
+    Full(val n: i64)
+    Empty
+}
+
+enum Res {
+    Ok(val value: i64)
+    Err(val why: i64)
+}
+
+fun literal(a: i64, b: i64).R: i64 {
+    val s = Slot.Full(n = a * 2)
+    a + b * 3 + when s {
+        Full(v) -> v
+        Empty -> 0
+    }
+}
+
+fun tagged(a: i64, b: i64, s: &Slot).R: i64 = when s {
+    Full(v) -> v + a * 5 + b * 7
+    Empty -> a * 5 - b * 7
+}
+
+fun propagated(a: i64, b: i64, have: bool).R: Res {
+    val r = if have { Res.Ok(value = 5) } else { Res.Err(why = 0) }
+    val v = r?
+    return Res.Ok(value = a * 11 + b * 13 + v)
+}
+
+fun res_value(r: &Res).R: i64 = when r {
+    Ok(v) -> v
+    Err(_e) -> -1
+}
+
+fun nested(a: i64, b: i64, s: &Slot).R: i64 {
+    val inner = Slot.Full(n = b)
+    val outer = when s {
+        Full(v) -> Slot.Full(n = v + a)
+        Empty -> inner
+    }
+    return tagged(a = a, b = b, s = outer)
+}
+
+fun main() {
+    val full = Slot.Full(n = 100)
+    val empty = Slot.Empty
+    print(literal(a = 3, b = 4))
+    print(tagged(a = 3, b = 4, s = full))
+    print(tagged(a = 3, b = 4, s = empty))
+    print(tagged(a = 4, b = 3, s = full))
+
+    print(res_value(r = propagated(a = 1, b = 2, have = true)))
+    print(res_value(r = propagated(a = 1, b = 2, have = false)))
+
+    print(nested(a = 6, b = 7, s = full))
+    print(nested(a = 6, b = 7, s = empty))
+}

@@ -1596,6 +1596,14 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "enum_owned",
         "enum_recursive",
         "enum_container",
+        // MK7 §5's enum slice: the same tag switch reached through a `List`
+        // element, a `Map` value and a `Box` element, plus an enum nested
+        // inside an enum — each one a generated drop calling another one.
+        "enum_in_containers",
+        // MK7 §5's enum slice: a pre-existing staging bug (a shared slot for a
+        // staged aggregate value), found by `generic_recursive` once an `enum`
+        // no longer refused it. This fixture owns three nested `Box` chains.
+        "nested_literal_staging",
         // A-2: an owned payload in a generic instantiation, and a generic
         // type that recurses through a `Box` — the instantiation's generated
         // drop and the recursive drop path.
@@ -1617,6 +1625,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "if_let_chain_same_scrutinee",
         "try_operator",
         "try_drops_frame",
+        // MK7 §5's enum slice: the same `?`-frees-the-frame shape as the line
+        // above, without the `fun` literal that this backend refuses.
+        "try_frame_drops",
         "stdlib_option_result",
         // A-4: a `move T` parameter owns what it is handed, so each buffer is
         // freed exactly once by whichever function owns it at scope exit.
@@ -2854,6 +2865,55 @@ fn a_recursive_enum_nests_through_a_box() {
 }
 
 #[test]
+fn an_enum_payload_is_laid_out_the_way_the_c_typedef_is() {
+    // The three SysV classes a tagged union lands in, each with a payload that
+    // only reads back correctly at the offset clang gives it: `Narrow`'s union
+    // is at offset 4 because every payload is a `u8` (so the whole enum is 8
+    // bytes, `AggClass::One`), `Eight`'s is at 8 (16 bytes, a register pair),
+    // and `Wide`'s is at 8 with a 24-byte union (32 bytes, `MEMORY`). A wrong
+    // payload offset and a wrong union size are both silent, which is what
+    // makes this fixture worth its length.
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_layout.kp",
+        "5\n17\n-1\n41\n-2\n14\n15\n-3\n17\n1\n-1\n20\n-2\n404\n0\n202\n0\n116\n2\n5\n",
+    );
+}
+
+#[test]
+fn an_enum_is_a_list_element_a_map_value_and_a_box_element() {
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_in_containers.kp",
+        "2\n5\n0\n6\n0\n1\n2\n3\n5\nfalse\n5\nfalse\n1\n5\n0\n0\n6\n0\n0\n4\n0\n5\n9\n-1\n0\n",
+    );
+}
+
+#[test]
+fn the_enum_node_kinds_keep_two_live_locals_in_different_registers() {
+    // The register allocator's liveness pass has twice handed two live locals
+    // the same register because a node kind it never walked made one of them
+    // look dead on declaration. This fixture keeps two scalars alive across
+    // each of this slice's four node kinds, so a repeat of that mistake is a
+    // wrong sum rather than a silent one.
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_liveness.kp",
+        "21\n143\n-13\n141\n42\n-1\n185\n86\n",
+    );
+}
+
+#[test]
+fn nested_aggregate_literals_are_staged_in_slots_of_their_own() {
+    // A pre-existing bug, not one this slice introduces: every staged aggregate
+    // value used one shared frame slot, so a field initializer that staged
+    // another one overwrote what the outer value had already written. Three of
+    // these five prints were wrong before the fix (`7` for `6`, `10` for `9`,
+    // `20` for `19`).
+    assert_compiles_and_runs(
+        "tests/fixtures/nested_literal_staging.kp",
+        "6\n10\n9\n19\n13\n",
+    );
+}
+
+#[test]
 fn an_enum_is_a_container_element_and_a_container_drops_it() {
     assert_compiles_and_runs(
         "tests/fixtures/enum_container.kp",
@@ -2957,6 +3017,20 @@ fn try_frees_the_frame_it_returns_from() {
     assert_compiles_and_runs(
         "tests/fixtures/try_drops_frame.kp",
         "9\n-2\n6\n-2\n14\n-2\n4\n-1\n-2\n7\n9\n-2\n",
+    );
+}
+
+#[test]
+fn a_propagated_failure_frees_the_frame_it_leaves() {
+    // `?`'s early return is a `return`, so the frame's owned locals die on it
+    // too. `try_drops_frame.kp` pins the same shape, but its last function
+    // wraps it in a `fun` literal, which this backend refuses by name — so this
+    // fixture is the same mechanism without the closure. The printed values pin
+    // the success arm; the valgrind sweep is what proves the failure arm frees,
+    // because a leak prints nothing.
+    assert_compiles_and_runs(
+        "tests/fixtures/try_frame_drops.kp",
+        "9\n-1\n6\n-1\n14\n-1\n-1\n7\n6\n-1\n",
     );
 }
 

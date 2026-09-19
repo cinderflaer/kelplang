@@ -1,0 +1,139 @@
+// MK7 §5's enum slice: the layout the asm backend builds for a tagged union has
+// to be the one `codegen_c.rs::write_enum`'s emitted `typedef` gets from clang,
+// and the two numbers it can get wrong are both silent — a wrong payload offset
+// reads the wrong bytes, and a union sized to the wrong variant changes the
+// enum's own size, which changes its SysV class. Neither crashes.
+//
+// So this fixture pins the three class decisions at once, each with a payload
+// that only reads back correctly at its real offset:
+//
+//   * `Narrow` is the case where the union's alignment is *one* — every payload
+//     is `u8` — so the tag's four bytes are followed by the payload at offset
+//     4, not 8, and the whole enum is 8 bytes (`AggClass::One`). The "obvious"
+//     wrong answer, a union at offset 8, makes it 16 bytes instead, which is a
+//     different ABI class as well as a different field address.
+//   * `Eight` is 16 bytes (`AggClass::Two`): an `i64` payload in a register
+//     pair, like `std.option.Option<i64>`.
+//   * `Wide` is 32 bytes (`AggClass::MEMORY`): a three-`i64` payload and a
+//     `datac` payload sharing a union whose largest member is 24 bytes.
+//
+// Every one of them is passed **by value** (`move`, since a Kelp parameter is
+// otherwise a borrow) and returned by value, so the class each one gets is
+// observable at the boundary rather than only inside one frame.
+datac Entry(val id: i32, val score: i64)
+
+enum Narrow {
+    One(val a: u8)
+    Three(val a: u8, val b: u8, val c: u8)
+    Blank
+}
+
+enum Eight {
+    Value(val n: i64)
+    Empty
+}
+
+enum Wide {
+    Text(val first: i64, val second: i64, val third: i64)
+    Point(val p: Entry)
+    Blank
+}
+
+// One class: the enum *is* one eightbyte, so it rides `rax` exactly like a
+// `u64` would.
+fun narrow(a: move Narrow).R: i64 = when a {
+    One(x) -> x.to_i64()
+    Three(x, y, z) -> (x.to_i64() * 1) + (y.to_i64() * 2) + (z.to_i64() * 4)
+    Blank -> -1
+}
+
+// Two class: `rax:rdx`.
+fun eight(e: move Eight).R: i64 = when e {
+    Value(n) -> n
+    Empty -> 0 - 2
+}
+
+// MEMORY class: the callee's result is written through a hidden pointer, and
+// the argument arrives in the caller's outgoing argument area.
+fun wide(w: move Wide).R: i64 = when w {
+    Text(f, s, t) -> f + (s * 2) + (t * 3)
+    Point(p) -> p.id.to_i64() + p.score
+    Blank -> -3
+}
+
+// A returned enum, at each class, and the same value read back through a
+// borrow — the two directions an enum crosses a function boundary in.
+fun make_narrow(n: i64).R: Narrow = if n > 1 {
+    Narrow.Three(a = 1, b = 2, c = 3)
+} else if n > 0 {
+    Narrow.One(a = n.to_u8())
+} else {
+    Narrow.Blank
+}
+
+fun make_eight(n: i64).R: Eight = if n > 0 {
+    Eight.Value(n = n * 10)
+} else {
+    Eight.Empty
+}
+
+fun make_wide(n: i64).R: Wide = if n > 0 {
+    Wide.Point(p = Entry(id = n.to_i32(), score = n * 100))
+} else {
+    Wide.Text(first = n, second = n * 2, third = n * 3)
+}
+
+fun peek(w: &Wide).R: i64 = when w {
+    Text(f, s, t) -> f + (s * 2) + (t * 3)
+    Point(p) -> p.id.to_i64() + p.score
+    Blank -> -3
+}
+
+// An enum by value inside a `datac` — a nested aggregate, placed by the same
+// sequential rule a `String` field is, whatever class it has.
+datac Holder(val name: i64, val small: Narrow, val mid: Eight, val big: Wide)
+
+fun holder_total(h: &Holder).R: i64 = h.name + narrow(a = h.small) + wide(w = h.big)
+
+fun main() {
+    // One class, constructed and passed.
+    print(narrow(a = Narrow.One(a = 5)))
+    print(narrow(a = Narrow.Three(a = 1, b = 2, c = 3)))
+    print(narrow(a = Narrow.Blank))
+
+    // Two class.
+    print(eight(e = Eight.Value(n = 41)))
+    print(eight(e = Eight.Empty))
+
+    // MEMORY class, including the `datac`-payload variant.
+    print(wide(w = Wide.Text(first = 1, second = 2, third = 3)))
+    print(wide(w = Wide.Point(p = Entry(id = 7, score = 8))))
+    print(wide(w = Wide.Blank))
+
+    // The same three classes returned by value.
+    print(narrow(a = make_narrow(n = 3)))
+    print(narrow(a = make_narrow(n = 1)))
+    print(narrow(a = make_narrow(n = 0)))
+    print(eight(e = make_eight(n = 2)))
+    print(eight(e = make_eight(n = 0)))
+    print(wide(w = make_wide(n = 4)))
+    print(wide(w = make_wide(n = 0)))
+
+    // A returned MEMORY-class enum read through a borrow, and round-tripped
+    // through a local that was assigned rather than declared.
+    var w = make_wide(n = 2)
+    print(peek(w = w))
+    w = make_wide(n = 0)
+    print(peek(w = w))
+
+    // An enum at each class as a `datac` field.
+    val h = Holder(
+        name = 100,
+        small = Narrow.One(a = 2),
+        mid = Eight.Value(n = 5),
+        big = Wide.Text(first = 1, second = 2, third = 3),
+    )
+    print(holder_total(h = h))
+    print(narrow(a = h.small))
+    print(eight(e = h.mid))
+}
