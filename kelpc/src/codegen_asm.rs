@@ -2300,7 +2300,6 @@ impl Gen {
                 Err(unsupported("a function value"))
             }
             ExprKind::Capture { .. } => Err(unsupported("a closure capture")),
-            ExprKind::StringLit(_) => Err(unsupported("a string value")),
             ExprKind::FloatLit(v) => {
                 // There is no `mov xmm, imm`: a float constant has to arrive
                 // through the integer file as its raw bit pattern and cross
