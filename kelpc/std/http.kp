@@ -5,36 +5,36 @@ impl "std/fmt"
 impl "std/option"
 impl "std/result"
 
-// std/http — an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
-// the grant that governs its connections is the one its importer wrote
-// (`impl "std/http" with caps(net = ["api.example.com:443"])`), and the
-// runtime check that follows uses those patterns, not any of its own. Because
-// naming `net.connect` needs the `net` domain, a project that imports this
-// module without delegating gets a compile error naming the module, not a
-// client that fails at runtime.
-//
-// What this module owns, beyond request/response text:
-//
-//  * **Keep-alive.** HTTP/1.1 is persistent by default, so the client does not
-//    send `Connection: close`; a connection goes back into the pool when the
-//    body was completely framed and the server did not ask to close.
-//  * **Framing, all of it.** `Content-Length`, `Transfer-Encoding: chunked`, a
-//    bodyless response, and the read-to-end-of-file fallback — the only case
-//    that costs a connection.
-//  * **The pool.** `http_pool` in `coral.toml` is how many kept-alive connections
-//    per `host:port` a program keeps (default 4; `0` disables pooling). The
-//    ceiling is spliced in by the compiler at the `const` below, and the pool
-//    is lazy: nothing connects until a request needs it.
-//
-// A `Lease` is a *ticket*, not an owner. The pool holds every descriptor; a
-// lease is permission to use one for one exchange, and `release` consumes it.
-// Since a `datac` is never `Copy`, releasing twice or using a lease after
-// release is a compile error. That is the reason to have the pool in Kelp rather
-// than in C: the ownership check is the borrow checker's, and it is free.
-//
-// Not here, deliberately: gzip, HTTP/2, cookies, proxies,
-// `Expect: 100-continue`, idle reaping, and `https` (TLS is S4b, and
-// `parse_url` refuses it by name rather than pretending).
+/* std/http — an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
+   the grant that governs its connections is the one its importer wrote
+   (`impl "std/http" with caps(net = ["api.example.com:443"])`), and the
+   runtime check that follows uses those patterns, not any of its own. Because
+   naming `net.connect` needs the `net` domain, a project that imports this
+   module without delegating gets a compile error naming the module, not a
+   client that fails at runtime.
+
+   What this module owns, beyond request/response text:
+
+    * **Keep-alive.** HTTP/1.1 is persistent by default, so the client does not
+      send `Connection: close`; a connection goes back into the pool when the
+      body was completely framed and the server did not ask to close.
+    * **Framing, all of it.** `Content-Length`, `Transfer-Encoding: chunked`, a
+      bodyless response, and the read-to-end-of-file fallback — the only case
+      that costs a connection.
+    * **The pool.** `http_pool` in `coral.toml` is how many kept-alive connections
+      per `host:port` a program keeps (default 4; `0` disables pooling). The
+      ceiling is spliced in by the compiler at the `const` below, and the pool
+      is lazy: nothing connects until a request needs it.
+
+   A `Lease` is a *ticket*, not an owner. The pool holds every descriptor; a
+   lease is permission to use one for one exchange, and `release` consumes it.
+   Since a `datac` is never `Copy`, releasing twice or using a lease after
+   release is a compile error. That is the reason to have the pool in Kelp rather
+   than in C: the ownership check is the borrow checker's, and it is free.
+
+   Not here, deliberately: gzip, HTTP/2, cookies, proxies,
+   `Expect: 100-continue`, idle reaping, and `https` (TLS is S4b, and
+   `parse_url` refuses it by name rather than pretending). */
 
 const DEFAULT_SCHEME: str = "http"
 const DEFAULT_PORT: u16 = 80
@@ -397,7 +397,7 @@ fun mut Cursor.read_to_end().R: Bytes {
 
 // One hex digit. Panics: if the byte is not one.
 fun hex_digit(c: u8).R: u32 {
-    if c >= 48 && c <= 57 {
+    if str.is_digit(c) {
         return (c - 48).to_u32()
     }
     if c >= 97 && c <= 102 {

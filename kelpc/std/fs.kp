@@ -2,27 +2,27 @@ impl "std/str"
 impl "std/path" as p
 impl "std/io"
 
-// std/fs — the gated filesystem namespace (M7).
-//
-// The domain gate is compile-time: a module without the `fs` capability
-// cannot *name* `fs.read` at all (resolution fails), and a module that does
-// hold it gets its patterns compiled in as constant data, checked against
-// every path argument at each call site before the syscall runs. The raw
-// syscalls are the externs below; everything a caller sees is ordinary Kelp.
-//
-// Paths are `/`-separated on every platform in this API (the plan's `path`
-// section): translating to `\` belongs at the syscall boundary.
-//
-// Symlinks appear twice here. The capability check *resolves* one before
-// matching (`realpath`, and the rule each gated module's header states),
-// because a link is not a name the author chose — so a link inside the grant
-// that points outside it is denied. And `fs.symlink` *creates* one (MK5-S2-M2), with
-// both of its paths checked against the grant, so a grant stays closed under
-// link creation: a module can only make a link whose target it could also
-// name. `target` has to be absolute, like every other path this API takes,
-// because the check normalizes before it matches and only an absolute path
-// normalizes at all. There is no `read_link` — nothing has needed to resolve a
-// link back to its target text.
+/* std/fs — the gated filesystem namespace (M7).
+
+   The domain gate is compile-time: a module without the `fs` capability
+   cannot *name* `fs.read` at all (resolution fails), and a module that does
+   hold it gets its patterns compiled in as constant data, checked against
+   every path argument at each call site before the syscall runs. The raw
+   syscalls are the externs below; everything a caller sees is ordinary Kelp.
+
+   Paths are `/`-separated on every platform in this API (the plan's `path`
+   section): translating to `\` belongs at the syscall boundary.
+
+   Symlinks appear twice here. The capability check *resolves* one before
+   matching (`realpath`, and the rule each gated module's header states),
+   because a link is not a name the author chose — so a link inside the grant
+   that points outside it is denied. And `fs.symlink` *creates* one (MK5-S2-M2), with
+   both of its paths checked against the grant, so a grant stays closed under
+   link creation: a module can only make a link whose target it could also
+   name. `target` has to be absolute, like every other path this API takes,
+   because the check normalizes before it matches and only an absolute path
+   normalizes at all. There is no `read_link` — nothing has needed to resolve a
+   link back to its target text. */
 
 extern fun read_raw(path: &str).R: Bytes
 extern fun write_raw(path: &str, data: Bytes)

@@ -2,29 +2,31 @@ impl "std/mem"
 impl "std/str"
 impl "std/option"
 
-// std/io — streams, line reading, and the standard descriptors (S2).
-//
-// One concrete type over a file descriptor is the honest answer to "what
-// does a reader/writer abstraction cost without traits and generics": a
-// file, a pipe, a socket and a terminal are the same thing at the POSIX
-// level, so there is one `File` and no `Reader`/`Writer` hierarchy. The
-// unportable primitives — `read`/`write`/`close`/`poll`/`fcntl` — are the
-// externs below; everything a caller sees is ordinary Kelp.
-//
-// The capability question this module raises is answered the other way from
-// `fs`/`net`/`process`: `io` is *ungated* (open item 38). Writing your own
-// stdout and reading your own stdin is authority over nothing shared, so a
-// filter needs no grant: `std/io` has no row in `stdlib::domain_of`, and `io`
-// is deliberately not a name in `stdlib::DOMAINS` either. The option to gate
-// it arrives only if `coral.toml [caps]` can one day restrict the entry module
-// itself (open item 18), which is where that decision belongs.
+/* std/io — streams, line reading, and the standard descriptors (S2).
 
-// The one process-wide line reader, over stdin. A `pd var` is an exclusive
-// borrow inside any function that names it (M6.4), which is exactly what
-// reading through it needs; it is also why the buffered bytes survive between
-// calls instead of being re-read per line. Module-scoped, like every
-// passdown — and it has to sit above every `fun`, since that is where `pd`
-// lines go. The type it names is declared further down, which `pd` allows.
+   One concrete type over a file descriptor is the honest answer to "what
+   does a reader/writer abstraction cost without traits and generics": a
+   file, a pipe, a socket and a terminal are the same thing at the POSIX
+   level, so there is one `File` and no `Reader`/`Writer` hierarchy. The
+   unportable primitives — `read`/`write`/`close`/`poll`/`fcntl` — are the
+   externs below; everything a caller sees is ordinary Kelp.
+
+   The capability question this module raises is answered the other way from
+   `fs`/`net`/`process`: `io` is *ungated* (open item 38). Writing your own
+   stdout and reading your own stdin is authority over nothing shared, so a
+   filter needs no grant: `std/io` has no row in `stdlib::domain_of`, and `io`
+   is deliberately not a name in `stdlib::DOMAINS` either. The option to gate
+   it arrives only if `coral.toml [caps]` can one day restrict the entry module
+   itself (open item 18), which is where that decision belongs. */
+
+/* The one process-wide line reader, over stdin. A `pd var`'s hidden borrow is
+   shared until some function writes it (M6.4, item 17), so a helper that only
+   reads the buffer holds a shared borrow while `read_line` — which advances
+   `start`/`end` — holds an exclusive one, and `close_pd_modes` follows the call
+   graph to decide. That is also why the buffered bytes survive between calls
+   instead of being re-read per line. Module-scoped, like every passdown — and it
+   has to sit above every `fun`, since that is where `pd` lines go. The type it
+   names is declared further down, which `pd` allows. */
 pd var stdin_reader = BufReader(file = File(fd = 0), buf = mem.alloc(8192), start = 0, end = 0)
 
 extern fun is_open_raw(fd: i32).R: bool

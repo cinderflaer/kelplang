@@ -1,28 +1,28 @@
-// std/result — `Result<T, E>`, and the helpers the language can express
-// (MK5-S6-M1).
-//
-// `Ok`/`Err` is the other shape `?` understands (`syntax.md` §5), and the one
-// that carries a reason: a function returns `Result<T, E>` when the caller may
-// want to know *why* it failed, and `expr?` propagates the `E` unchanged into
-// the enclosing function's `Result<_, E>`.
-//
-// The combinators take a callback (A-4) and read the payload through a
-// *borrow*, so a callback never takes ownership: `map`'s is
-// `closure(&T).R: U`. It is a *closure* (A-4 phase E), so it may capture a
-// binding from the frame that passes it; a plain function value is widened
-// into one at the call through a generated shim, so passing a declared `fun`
-// still allocates nothing. The arm that has to *rebuild* the other side of the
-// result is the one with the `Copy` requirement — `map` rebuilds `Err`, so its
-// `E` must be `Copy`; `map_err` rebuilds `Ok`, so its `T` must be.
-//
-// What is deliberately absent, and why:
-//
-// - `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out by value, which needs
-//   a move out of the enum, so they are offered for a `Copy` payload and are a
-//   compile error at any other instantiation.
-// - There is no error *conversion*: `?` requires the operand's failure payload
-//   type and the enclosing function's to be identical, so `From`-style lifting
-//   of one error into another is where a trait would go (A-12).
+/* std/result — `Result<T, E>`, and the helpers the language can express
+   (MK5-S6-M1).
+
+   `Ok`/`Err` is the other shape `?` understands (`syntax.md` §5), and the one
+   that carries a reason: a function returns `Result<T, E>` when the caller may
+   want to know *why* it failed, and `expr?` propagates the `E` unchanged into
+   the enclosing function's `Result<_, E>`.
+
+   The combinators take a callback (A-4) and read the payload through a
+   *borrow*, so a callback never takes ownership: `map`'s is
+   `closure(&T).R: U`. It is a *closure* (A-4 phase E), so it may capture a
+   binding from the frame that passes it; a plain function value is widened
+   into one at the call through a generated shim, so passing a declared `fun`
+   still allocates nothing. The arm that has to *rebuild* the other side of the
+   result is the one with the `Copy` requirement — `map` rebuilds `Err`, so its
+   `E` must be `Copy`; `map_err` rebuilds `Ok`, so its `T` must be.
+
+   What is deliberately absent, and why:
+
+   - `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out by value, which needs
+     a move out of the enum, so they are offered for a `Copy` payload and are a
+     compile error at any other instantiation.
+   - There is no error *conversion*: `?` requires the operand's failure payload
+     type and the enclosing function's to be identical, so `From`-style lifting
+     of one error into another is where a trait would go (A-12). */
 
 enum Result<T, E> {
     Ok(val value: T)

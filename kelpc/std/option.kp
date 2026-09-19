@@ -1,31 +1,31 @@
-// std/option — `Option<T>`, and the helpers the language can express (MK5-S6-M1).
-//
-// The enum is the point. `Some`/`None` is one of the two shapes the `?`
-// operator understands (`syntax.md` §5) and the shape `if let` branches on, so
-// a function that can fail exactly one way returns `Option<T>` and its caller
-// writes `val x = f(...)?`.
-//
-// The combinators take a callback (A-4) and read the payload through a
-// *borrow*: `map`'s callback is `closure(&T).R: U`, not `closure(T).R: U`,
-// because a `when` arm binds an owned payload as a shared borrow. That is also
-// why they work at every instantiation — a `Copy` payload is copied into the
-// arm and auto-borrowed at the call, an owned one is already a borrow.
-//
-// The callback is a *closure* (A-4 phase E), so it may capture a binding from
-// the frame that passes it. A plain function value is widened into one at the
-// call, through a generated shim, so passing a declared `fun` still allocates
-// nothing.
-//
-// What is deliberately absent, and why:
-//
-// - Anything that hands the payload *out* by value needs a move out of the
-//   enum, and v1's `when` binds a payload as a borrow: so `unwrap_or`/`unwrap`
-//   are offered for a `Copy` payload and are a compile error at any other
-//   instantiation — the same rule `List.get` follows, and the reason there is
-//   no `Option<String>.unwrap()`. `or_else` is in the same group: rebuilding
-//   `Some` from the payload it was handed needs a copy.
-// - `ok_or` (turning an `Option` into a `Result`) would have to move its
-//   payload into `Ok`, which is that same missing piece.
+/* std/option — `Option<T>`, and the helpers the language can express (MK5-S6-M1).
+
+   The enum is the point. `Some`/`None` is one of the two shapes the `?`
+   operator understands (`syntax.md` §5) and the shape `if let` branches on, so
+   a function that can fail exactly one way returns `Option<T>` and its caller
+   writes `val x = f(...)?`.
+
+   The combinators take a callback (A-4) and read the payload through a
+   *borrow*: `map`'s callback is `closure(&T).R: U`, not `closure(T).R: U`,
+   because a `when` arm binds an owned payload as a shared borrow. That is also
+   why they work at every instantiation — a `Copy` payload is copied into the
+   arm and auto-borrowed at the call, an owned one is already a borrow.
+
+   The callback is a *closure* (A-4 phase E), so it may capture a binding from
+   the frame that passes it. A plain function value is widened into one at the
+   call, through a generated shim, so passing a declared `fun` still allocates
+   nothing.
+
+   What is deliberately absent, and why:
+
+   - Anything that hands the payload *out* by value needs a move out of the
+     enum, and v1's `when` binds a payload as a borrow: so `unwrap_or`/`unwrap`
+     are offered for a `Copy` payload and are a compile error at any other
+     instantiation — the same rule `List.get` follows, and the reason there is
+     no `Option<String>.unwrap()`. `or_else` is in the same group: rebuilding
+     `Some` from the payload it was handed needs a copy.
+   - `ok_or` (turning an `Option` into a `Result`) would have to move its
+     payload into `Ok`, which is that same missing piece. */
 
 enum Option<T> {
     Some(val value: T)

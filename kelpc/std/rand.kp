@@ -1,6 +1,6 @@
-// std/rand — the gated entropy namespace (M7). Reading entropy is a
-// capability (WASI's `wasi:random`), so a program that cannot observe it is
-// reproducible by construction.
+/* std/rand — the gated entropy namespace (M7). Reading entropy is a
+   capability (WASI's `wasi:random`), so a program that cannot observe it is
+   reproducible by construction. */
 impl "std/mem"
 
 extern fun u64_raw().R: u64

@@ -1,13 +1,13 @@
-// std/math — arithmetic and the C library's transcendentals (M6.3).
-//
-// Two things here exist because the plan needed them: `const` (PI/E/TAU are
-// compile-time values, not globals) and argument-type overloading
-// (`abs`/`min`/`max`/`clamp` are declared once per numeric type and resolved
-// at the call site by the argument's type — a rule available only to
-// compiler-shipped modules, so user code gains no new complexity).
-//
-// The library functions are one-line externs: `sqrt` in C is already the
-// function `sqrt`, and writing it in Kelp would mean reimplementing it.
+/* std/math — arithmetic and the C library's transcendentals (M6.3).
+
+   Two things here exist because the plan needed them: `const` (PI/E/TAU are
+   compile-time values, not globals) and argument-type overloading
+   (`abs`/`min`/`max`/`clamp` are declared once per numeric type and resolved
+   at the call site by the argument's type — a rule available only to
+   compiler-shipped modules, so user code gains no new complexity).
+
+   The library functions are one-line externs: `sqrt` in C is already the
+   function `sqrt`, and writing it in Kelp would mean reimplementing it. */
 
 const PI: f64 = 3.141592653589793
 const E: f64 = 2.718281828459045

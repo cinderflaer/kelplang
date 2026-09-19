@@ -1,23 +1,23 @@
-// std/list — the callback-shaped operations on the builtin `List<T>` (A-4).
-//
-// The element-wise API (`len`, `get`, `push`, `sort`, …) is built into the
-// compiler, because a list is monomorphized and its methods are generated C
-// per element type (syntax.md §12.1). What lives here is the other half: the
-// operations that need a *function value*, which the compiler cannot generate
-// without knowing what the callback returns. They are free functions in a
-// module, exactly like `str.*` and `math.*` — `list.map(xs, f)`.
-//
-// Every callback takes a *borrow* of the element and is a **closure**
-// (`closure(&T).R: U`), so a call never moves an element out of the list, the
-// same functions work for `Copy` and owned element types, and a callback may
-// capture a binding from the frame that passes it (A-4 phase E). A plain
-// function value — a declared `fun`, or a literal that captured nothing — is
-// widened into a closure at the call, through a generated shim, so passing one
-// allocates nothing. Where a function has to hand an element out
-// by value, it is offered for a `Copy` element and is a compile error at any
-// other instantiation — the rule `List.get` and `option.unwrap` already
-// follow, and the honest edge of a language where reading an owned element out
-// of a list is not expressible.
+/* std/list — the callback-shaped operations on the builtin `List<T>` (A-4).
+
+   The element-wise API (`len`, `get`, `push`, `sort`, …) is built into the
+   compiler, because a list is monomorphized and its methods are generated C
+   per element type (syntax.md §12.1). What lives here is the other half: the
+   operations that need a *function value*, which the compiler cannot generate
+   without knowing what the callback returns. They are free functions in a
+   module, exactly like `str.*` and `math.*` — `list.map(xs, f)`.
+
+   Every callback takes a *borrow* of the element and is a **closure**
+   (`closure(&T).R: U`), so a call never moves an element out of the list, the
+   same functions work for `Copy` and owned element types, and a callback may
+   capture a binding from the frame that passes it (A-4 phase E). A plain
+   function value — a declared `fun`, or a literal that captured nothing — is
+   widened into a closure at the call, through a generated shim, so passing one
+   allocates nothing. Where a function has to hand an element out
+   by value, it is offered for a `Copy` element and is a compile error at any
+   other instantiation — the rule `List.get` and `option.unwrap` already
+   follow, and the honest edge of a language where reading an owned element out
+   of a list is not expressible. */
 impl "std/option"
 
 // The list of `f(x)` for every `x`. Works for any element type: the result is

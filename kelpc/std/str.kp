@@ -2,14 +2,14 @@ impl "std/mem"
 impl "std/option"
 impl "std/result"
 
-// The three operations on a `&str` that Kelp cannot express: its byte length, a
-// byte at an index, and a borrow of the suffix starting at an index. All
-// three bodies are compiler-supplied; the public wrappers below are ordinary
-// Kelp code, and they are what callers see.
-//
-// The bounds checks live in the compiler-supplied bodies (see `externs.rs`)
-// rather than here, so there is exactly one of each and no call site can
-// forget it.
+/* The three operations on a `&str` that Kelp cannot express: its byte length, a
+   byte at an index, and a borrow of the suffix starting at an index. All
+   three bodies are compiler-supplied; the public wrappers below are ordinary
+   Kelp code, and they are what callers see.
+
+   The bounds checks live in the compiler-supplied bodies (see `externs.rs`)
+   rather than here, so there is exactly one of each and no call site can
+   forget it. */
 extern fun byte_len_raw(s: &str).R: usize
 extern fun byte_at_raw(s: &str, i: usize).R: u8
 extern fun slice_from_raw(s: &str, from: usize).R: &str

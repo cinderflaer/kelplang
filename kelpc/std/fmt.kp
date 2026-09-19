@@ -1,13 +1,13 @@
 impl "std/str"
 
-// std/fmt — turning values into text (S1). Ungated: this is arithmetic and
-// byte shuffling, and it cannot reach the outside world.
-//
-// Everything here is a thin Kelp wrapper over `std/str`, except the two places
-// where the digit work needs C: `snprintf` for hexadecimal, and a byte-level
-// hex dump. `fmt` deliberately has no variadic `format`: that needs generics
-// or macros, and neither exists in v1 (see plan.md's non-goals). Callers
-// concatenate with `str.concat` or push into a `String`.
+/* std/fmt — turning values into text (S1). Ungated: this is arithmetic and
+   byte shuffling, and it cannot reach the outside world.
+
+   Everything here is a thin Kelp wrapper over `std/str`, except the two places
+   where the digit work needs C: `snprintf` for hexadecimal, and a byte-level
+   hex dump. `fmt` deliberately has no variadic `format`: that needs generics
+   or macros, and neither exists in v1 (see plan.md's non-goals). Callers
+   concatenate with `str.concat` or push into a `String`. */
 
 fun int(n: i64).R: String = str.from_i64(n)
 

@@ -1,8 +1,8 @@
 impl "std/mem"
 impl "std/str"
 
-// `/` is the separator on every platform in the API; a `\` translation
-// belongs at the syscall boundary, not here (stdlib plan, `path` section).
+/* `/` is the separator on every platform in the API; a `\` translation
+   belongs at the syscall boundary, not here (stdlib plan, `path` section). */
 fun is_absolute(s: &str).R: bool = str.len(s) > 0 && str.byte(s, 0) == 47
 
 // Purely lexical normalization: `//` collapses, `.` is dropped, `..` pops a

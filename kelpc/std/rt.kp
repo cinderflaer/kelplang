@@ -1,33 +1,33 @@
-// std/rt — the compiler's own runtime, written in Kelp (MK7 §8).
-//
-// This module is not part of the stdlib's public surface. It is the *runtime*
-// that generated code calls into, and it is here so that a piece of the runtime
-// exists once, in Kelp, for every backend — instead of as C text emitted into
-// every program, which is what MK7 §7 is retiring.
-//
-// The first piece to move is the capability matcher, which §8 puts first in the
-// runtime track because it is the one runtime piece whose replacement is a
-// *security* question rather than a performance one: a port that is one byte
-// more lenient than the C version widens every grant in every program. The C it
-// replaces is kept in `kelpc/runtime/cap_matcher_ref.c`, and
-// `kelpc/tests/cap_matcher.rs` runs a pattern corpus through both
-// implementations and compares every verdict.
-//
-// That is also why this module is importable by ordinary Kelp code, which is a
-// deliberate exception rather than an accident: a security check whose
-// replacement cannot be called directly cannot be differentially tested. The
-// corpus is the only fixture that imports it, and nothing outside the compiler
-// should.
-//
-// The module is injected by the resolver for a program that imports a gated
-// module, so a program that checks no capability never carries it.
-//
-// The three functions below are transliterations of the C reference. Every
-// reading of `s[i]` in C is a `str.byte` call here, and every `char` literal is
-// a byte value (`47` is `/`, `42` is `*`, `46` is `.`, `58` is `:`): `str.byte`
-// yields a `u8` and a `char` literal is a code point (`u32`), so writing `'/'`
-// would not compare. The shape of each loop is the C version's, because that
-// shape is what the corpus is checking.
+/* std/rt — the compiler's own runtime, written in Kelp (MK7 §8).
+
+   This module is not part of the stdlib's public surface. It is the *runtime*
+   that generated code calls into, and it is here so that a piece of the runtime
+   exists once, in Kelp, for every backend — instead of as C text emitted into
+   every program, which is what MK7 §7 is retiring.
+
+   The first piece to move is the capability matcher, which §8 puts first in the
+   runtime track because it is the one runtime piece whose replacement is a
+   *security* question rather than a performance one: a port that is one byte
+   more lenient than the C version widens every grant in every program. The C it
+   replaces is kept in `kelpc/runtime/cap_matcher_ref.c`, and
+   `kelpc/tests/cap_matcher.rs` runs a pattern corpus through both
+   implementations and compares every verdict.
+
+   That is also why this module is importable by ordinary Kelp code, which is a
+   deliberate exception rather than an accident: a security check whose
+   replacement cannot be called directly cannot be differentially tested. The
+   corpus is the only fixture that imports it, and nothing outside the compiler
+   should.
+
+   The module is injected by the resolver for a program that imports a gated
+   module, so a program that checks no capability never carries it.
+
+   The three functions below are transliterations of the C reference. Every
+   reading of `s[i]` in C is a `str.byte` call here, and every `char` literal is
+   a byte value (`47` is `/`, `42` is `*`, `46` is `.`, `58` is `:`): `str.byte`
+   yields a `u8` and a `char` literal is a code point (`u32`), so writing `'/'`
+   would not compare. The shape of each loop is the C version's, because that
+   shape is what the corpus is checking. */
 impl "std/str"
 
 // Whether `pat` admits `path`. `*` matches within one path segment, `**`
