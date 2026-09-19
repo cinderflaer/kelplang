@@ -26,7 +26,7 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, ten slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, `enum`, and then a float field in an aggregate, the real per-eightbyte SysV classifier that closes item 4 outright), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **240 of 289** integration tests pass under `--backend=asm`; all 144 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), then a float field in an aggregate (a per-eightbyte classifier over `INTEGER`/`SSE`, `xmm` transport through every boundary, and the union merge that makes two same-size enums differ only in register file — see §5's blockquote), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 168 C and 144 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit, and then the float codegen slice (below) — `f32`/`f64` locals in an `xmm` pool and float operands named directly instead of loaded — which is the first change on this branch that moves a `bench/speed` kernel rather than a fixture count, and the first whose measured effect had to be re-derived after the classifier landed because the two slices share this file: on the merge result `float` goes from **4.16x** the measured `-O0` column to **0.54x**, with `collatz` 0.97, `mix` 0.70 and `fib` 1.66 (see §5's float blockquote for the table, the method and why `fib`'s number is a different slice's) |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, ten slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, `enum`, and then a float field in an aggregate, the real per-eightbyte SysV classifier that closes item 4 outright), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **240 of 289** integration tests pass under `--backend=asm`; all 144 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), then a float field in an aggregate (a per-eightbyte classifier over `INTEGER`/`SSE`, `xmm` transport through every boundary, and the union merge that makes two same-size enums differ only in register file — see §5's blockquote), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 168 C and 144 asm, zero findings — at that commit; §5's float blockquote records what the same sweep reports at and after `e748b06`, which is not zero at either point — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit, and then the float codegen slice (below) — `f32`/`f64` locals in an `xmm` pool and float operands named directly instead of loaded — which is the first change on this branch that moves a `bench/speed` kernel rather than a fixture count, and the first whose measured effect had to be re-derived after the classifier landed because the two slices share this file: on the merge result `float` goes from **4.16x** the measured `-O0` column to **0.54x**, with `collatz` 0.97, `mix` 0.70 and `fib` 1.66 (see §5's float blockquote for the table, the method and why `fib`'s number is a different slice's) |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
@@ -1965,10 +1965,11 @@ with the backend as the only variable.
 > dropped, and `heap_field_of_temporary`/`heap_field_of_owned_temporary` are
 > the regression test — the second is the one fixture in the corpus only the
 > asm backend accepts, so `memory_gate.rs` now builds and valgrinds those too
-> (`c_rejected`). Measured on a bounded scratch copy under `/tmp` (the
-> committed fixture's own loop is infinite — see §5's float blockquote):
-> valgrind-clean on the merged compiler, and 30 bytes in 10 blocks definitely
-> lost on the compiler before the fix. The ratchet `e748b06` re-records is 170
+> (`c_rejected`). Measured: valgrind-clean on the merged compiler, and 30
+> bytes in 10 blocks definitely lost on the compiler before the fix. It had no
+> test under either backend until `01ec7aa`, which is how a non-terminating
+> loop got committed with it; that loop is bounded now and the fixture's whole
+> stdout is asserted. The ratchet `e748b06` re-records is 170
 > C-built / 146 asm-built / 24 refused.
 >
 The first working own backend. Emits **x86-64 assembly text** and shells out to `as` and `ld` instead of `cc`.
@@ -2263,25 +2264,69 @@ tip's, so the slice moved no test in either direction. `backend_coverage --
 is green (C backend, 290 of 290, and the unit tests). The ratchet's own numbers
 are therefore unchanged by the merge.
 
-**The one invariant this merge does *not* report green, recorded because the
-row above asserts it.** `cargo test --release --test memory_gate -- --ignored`
-reports **three findings over 317 runs on both sides of the merge** — the same
-three, with the same per-backend summary (`c: 170 binaries checked, 1
-finding`; `asm: 147 binaries checked, 24 refused, 1 of the checked ones from a
-fixture the C backend itself rejects, 2 findings`) — so the merge changes
-nothing here either, but the §0 row's "zero findings" is not what the sweep
-says at `e748b06` or at `7594b25`:
+**The one invariant this merge does *not* report green, and the one defect it
+leaves behind, recorded because the row above asserts a green gate.**
+`cargo test --release --test memory_gate -- --ignored` is **red on both sides
+of the merge**, and the merge changes nothing about it:
 
-- `std_str_order` (both backends) loses 10 bytes in 2 blocks, both from
-  `kelp_rt$string_from_str` blocks the program never frees. It is not
-  backend-specific: the C backend's binary loses the same 10 bytes.
-- `heap_field_of_owned_temporary` (asm only, the owned-temporary drop fix's own
-  fixture) never terminates — its `while mkName().r.len() > 0` has a condition
-  `mkName()` always answers `true` for, and the body resets the counter it
-  increments — so valgrind is killed at the gate's 60 s limit and that is
-  counted as a finding. A bounded scratch copy of the same fixture under `/tmp`
-  is valgrind-clean on the merge and leaks 30 bytes in 10 blocks on the
-  compiler before `e748b06`, which is what pins the drop fix.
+- At `e748b06` it reports **three findings over 317 runs** (`c: 170 binaries
+  checked, 1 finding`; `asm: 147 binaries checked, 24 refused, 1 of the checked
+  ones from a fixture the C backend itself rejects, 2 findings`). Two are
+  `std_str_order` (below); the third was `heap_field_of_owned_temporary`, whose
+  loop never terminated, so valgrind was killed at the gate's 60 s limit and
+  that counted as a finding. **That hang is fixed in `01ec7aa`** — the fixture
+  now bounds its own loop and still evaluates a temporary inside the condition,
+  and `compile_and_run.rs` holds its stdout — and the sweep then reports **two
+  findings**: `c: 170 checked, 1 finding`; `asm: 147 checked, 24 refused, 1 asm
+  only, 1 finding`; 317 runs.
+- Both remaining findings are `std_str_order`, 10 bytes in 2 blocks in each
+  backend, and they are **one defect, not two**: an owned local bound inside a
+  loop body is **not dropped** on a path through that body which does not move
+  it, when another path through the same body does. The drops are simply
+  absent from the emitted code — the generated C for the fixture's insertion
+  sort has no `kelp_String__drop` for `left_text`/`right_text` anywhere in the
+  body — so the two 10-byte losses are the pair the last inner pass abandoned
+  (valgrind: `10 bytes in 2 blocks are definitely lost in loss record 1 of 1`,
+  both `at … malloc` / `by … kelp_rt$string_from_str`; the C backend's build
+  splits them into 4 and 6 bytes, which clang `-O2`'s dead-store elimination
+  explains — it can delete an allocation nothing reads, which is why the C
+  backend's binary sometimes reads clean for the same program).
+- **Minimal repro, written from scratch under `/tmp`** (`v15`), 16 lines:
+
+  ```
+  impl "std/str"
+  fun main() {
+      var words: List<String> = List.empty()
+      words.push("a")
+      var b: usize = 2
+      var moved = true
+      while b > 0 && moved {
+          val s = String.from_str("hi")
+          if b == 2 {
+              words.set(0, s)
+              b = 1
+          } else {
+              moved = false
+          }
+      }
+      print(words.get(0))
+  }
+  ```
+
+  The asm backend leaks `3 bytes in 1 blocks` (the pass that sets
+  `moved = false` abandons `s`); the C backend's binary is clean at `-O2`
+  because clang deletes the unobservable allocation. Removing the `if`/`else`
+  (an abandoned local in the same body) frees it correctly, and so does a body
+  with no move at all — the defect needs both paths.
+- **It is a compiler defect and it is not this merge's, not this branch's, and
+  not the fixture's.** The same 16-line program's *generated C from `main`
+  (`061883b`) at `-O0`* — with no branch work in it at all — leaks the same
+  `3 bytes in 1 blocks`, so it is in the shared drop plan and predates the
+  branch. It reproduces identically at `e748b06` and on the merge, and the
+  fixture only makes it visible because a `String` allocated inside the loop
+  body has a path that abandons it. It is **not** papered over here and not
+  fixed in this lane: `std_str_order.kp` is unchanged, and this is its own
+  slice after the release.
 
 Definition of done: all 280 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
