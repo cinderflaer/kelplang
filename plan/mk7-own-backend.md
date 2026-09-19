@@ -26,18 +26,21 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, then a register allocator, landed** | `codegen_asm.rs`; **102 of 241** integration tests pass under `--backend=asm`; a linear-scan register allocator for integer locals (item 3) is the newest slice |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, then aggregates' first slice, landed** | `codegen_asm.rs`; **108 of 241** integration tests pass under `--backend=asm`; ≤8-byte all-scalar `datac` by value (item 4's first slice) is the newest slice |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **102 of 241 tests pass on the asm backend, and the C backend passes all
+The one number that matters most: **108 of 241 tests pass on the asm backend, and the C backend passes all
 241.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
-source (§1.1). The register allocator (item 3, below) moved this by exactly one: it is a performance change,
-not a coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
-allocator's own loop-safety correction, not a previously-uncovered language feature.
+source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
+coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
+allocator's own loop-safety correction, not a previously-uncovered language feature. Item 4's first slice (below)
+moved it by six: `datac_basic`, `borrow_basic` (both shared and exclusive borrows of one, plus mutation through
+the exclusive one), `field_read_does_not_move`, `move_then_reinit`, and two module-resolution fixtures that
+happen to declare a `datac` on the way to what they are actually testing.
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
@@ -52,8 +55,12 @@ builds, and detailed in §5):
    turn needs aggregate-by-value return (§5 item 4, `Bytes` is a struct) landed first. The §8 allocator item is
    further blocked on its own terms — see §8's note below — so it is **not** next; see the corrected order
    there.
-2. **Aggregates** — `datac`/`enum` by value, 24 fixtures, and the ABI work the risk register calls the place
-   silent miscompiles live.
+2. **Aggregates, the rest of them** — 24 fixtures were blocked by this before item 4's first slice; six are
+   landed (below), leaving `enum` (tagged unions, not attempted at all), any `datac` over eight bytes or holding
+   a float/heap field (two-eightbyte and `MEMORY`-class SysV passing — real eightbyte classification, not the
+   opaque-blob shortcut a single eightbyte allows), and a borrow of a temporary (`sum(Pair(a = 1, b = 2))`,
+   still refused — see item 4's blockquote for why). This is still where the ABI work the risk register calls
+   the place silent miscompiles live is concentrated.
 3. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
 4. **String values** — 7 fixtures.
 5. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
@@ -176,11 +183,12 @@ with the backend as the only variable.
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
 > **Status: first slice landed, then f32/f64, then a register allocator (item
-> 3).** `kelpc build --backend=asm` emits x86-64 assembly itself and finishes
-> with `as` and `ld`, with no C compiler in the chain. Measured: **102 of 241
-> end-to-end tests pass**, and the C backend passes all 241 — so the
-> differential gate is live (`the_two_backends_agree_on_the_scalar_fixtures`)
-> and the coverage number can only rise from here.
+> 3), then aggregates' first slice (item 4).** `kelpc build --backend=asm`
+> emits x86-64 assembly itself and finishes with `as` and `ld`, with no C
+> compiler in the chain. Measured: **108 of 241 end-to-end tests pass**, and
+> the C backend passes all 241 — so the differential gate is live
+> (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number can
+> only rise from here.
 >
 > Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 > comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
@@ -250,6 +258,42 @@ with the backend as the only variable.
 > computed per function as `-8 * (pushed registers + 1)`, below every pushed
 > register, and threaded through `Frame` instead of being a global constant.
 >
+> **Item 4's first slice — `datac` by value, ≤8 bytes, all-scalar fields — is
+> done (2026-09-19).** The scope is deliberately narrow: a `datac` qualifies
+> only if every field is `int_ty`-representable (no float field, no nested
+> `datac`, no `str`/`String`/`List`/`Map`/`Box` field) and its C-equivalent
+> layout — sequential fields at natural alignment, exactly what `codegen_c.rs`'s
+> typedef gets from clang — fits in eight bytes (`build_layouts` in
+> `codegen_asm.rs`; every fixture in the sample set, `Pair`/`Point`/`Counter`,
+> is two `i32`s). A qualifying value needs no SysV eightbyte classification at
+> all: it *is* one eightbyte, so it moves through exactly the paths a `u64`
+> already used — a `Let`, an `Assign`, a call argument, a return value, even a
+> pool register (`value_kind` widens `int_ty`'s notion of "a value this slice
+> moves whole" to include one). Only a *field* read or write needs the layout,
+> to find the byte offset and width inside those eight bytes — `struct_lit`
+> builds one field by field into a single reused scratch slot (`Frame::agg_slot`)
+> then loads the whole eightbyte into `rax`, and `field_read`/`field_assign` go
+> through `addr_of_struct`, which computes the object's address into `r11` (a
+> register otherwise unused in this module, and — unlike its brief, buggy stint
+> as the call-site stack save — never live across a call here, only from one
+> instruction to the next) for three shapes: a local `datac`, a local
+> `&datac`/`&mut datac` (the common case — a `datac` parameter that is not
+> `move` desugars to a reference, so `total(c)`/`bump(c)` inside `fun total(c:
+> Counter)` are this, not a direct value), and an explicit `(*r).field`.
+> `ExprKind::Ref` is supported for exactly one shape: a named `datac` local —
+> `&c` and the implicit borrow `infer.rs` inserts at a call site both compile
+> to a `lea` of that local's own frame slot.
+>
+> **Deliberately still refused, and named so it stays a visible gap rather
+> than a silent one:** a `datac` over eight bytes, or holding a float or heap
+> field (real SysV eightbyte/`MEMORY`-class classification is unwritten); every
+> `enum` (not attempted); and a borrow of a *temporary* — `sum(Pair(a = 1, b =
+> 2))` still fails, because `struct_lit` builds into one reused scratch slot,
+> and a pointer into it would dangle the moment a second struct literal in the
+> same call reused it before the callee read the first. `tests/fixtures/borrow_temp_arg.kp`
+> is exactly this shape and stays uncovered until a temporary gets its own
+> slot rather than a shared one.
+>
 > Three deliberate first-slice choices remain from the original slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
@@ -258,7 +302,7 @@ with the backend as the only variable.
 > unchecked: that is the one place an unimplemented feature would be a
 > security hole rather than a wrong number.
 >
-> **Where the next 139 failures rank**, measured by aggregating what the backend
+> **Where the next 133 failures rank**, measured by aggregating what the backend
 > refuses across the fixtures the C backend builds:
 >
 > | blocker | fixtures |
@@ -266,7 +310,7 @@ with the backend as the only variable.
 > | `extern fun std.mem.alloc_raw` — i.e. the runtime, §8 | 36 |
 > | string values | 7 |
 > | `List<T>` / `Map<K, V>` | 9 |
-> | `datac` / `enum` aggregates | 24 |
+> | `datac` over 8 bytes, a float/heap field, or an `enum` | 18 |
 > | capability-gated calls | 7 |
 > | numeric conversions, printing `str`/`f64`, closures, the rest | ~20 |
 >
@@ -301,14 +345,18 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    that a call's vector-register usage is independent of the integer argument registers, verified both
    directions (an `f64` argument in the middle of an integer arg list, and vice versa). Printing a float is
    deliberately not part of this item; it stays refused until the formatter (§8) exists.
-3. **A register allocator.** Not necessarily a good one: a linear-scan allocator over the TIR block structure,
-   falling back to spilling. This is the piece that decides the `-O0`-vs-`-O2` position, and it is better to
-   write it once properly than to ship a stack machine and rewrite it at Stage 2.
-4. **Aggregates by value.** `datac`, `enum` (tagged union), `String`, `Bytes`, `View`, `List<T>`, `Map<K, V>`,
-   `Box<T>`. This is the ABI work, and it is where the silent miscompiles live: SysV classifies each aggregate
-   field by field into `INTEGER`/`SSE`/`MEMORY`, passes eightbyte chunks in registers where it can, and puts
-   anything over 16 bytes on the stack. Layout must match `codegen_c.rs`'s `typedef`s exactly or the two
-   backends will not agree on a `List`'s field offsets.
+3. **A register allocator. Done** (2026-09-19). Linear-scan over five callee-saved integer registers, for
+   `i32`/`i64`/`bool`/`char` locals only — see item 3's blockquote above for the loop-widening correction and
+   the bug it caught.
+4. **Aggregates by value. First slice done** (2026-09-19): a `datac` whose fields are all scalar and whose
+   layout fits in eight bytes needs no SysV eightbyte classification at all — it is one eightbyte, so it moves
+   through the same paths a `u64` already does, and only a field read or write needs the layout (see item 4's
+   blockquote above). What is left of this item is the rest of the ABI work, and it is where the silent
+   miscompiles live: `enum` (tagged union) entirely; any `datac` over eight bytes or holding a float/heap field,
+   which needs real SysV `INTEGER`/`SSE`/`MEMORY` eightbyte classification, passing eightbyte chunks in
+   registers where it can and putting anything over sixteen bytes on the stack; `String`, `Bytes`, `View`,
+   `List<T>`, `Map<K, V>`, `Box<T>`; and a borrow of a temporary rather than a named local. Layout must match
+   `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets.
 5. **Drop and ownership.** `borrowck.rs` already hands over a `DropPlan` keyed by span, so the backend does
    not re-derive where drops go, only what a drop *is* in machine terms: call the generated drop function,
    free the buffer, clear the pointer so a drop is idempotent at runtime as the C runtime already is.

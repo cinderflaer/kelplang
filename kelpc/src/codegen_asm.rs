@@ -331,6 +331,100 @@ fn unsupported(what: &str) -> String {
     format!("the 'asm' backend does not support {what} yet")
 }
 
+/// MK7 §5 item 4, first slice: a `datac` whose fields are all scalar
+/// (`int_ty`-representable — no float field, no nested aggregate, no heap
+/// type) and whose C layout fits in eight bytes. Such a value needs no eightbyte
+/// classification at all: it *is* one eightbyte, so it can move through
+/// exactly the same `rax`/stack-slot/argument-register paths a `u64` already
+/// does — a call argument, a return value, a `Let`, an `Assign` and even a
+/// pool register all already know how to carry an opaque 8-byte value. Only a
+/// **field read** needs the layout below, to find the byte offset and width to
+/// load out of the 8 bytes.
+///
+/// A `datac` that does not qualify — a float field, a nested `datac`, a `str`/
+/// `String`/`List`/`Map`/`Box` field, or more than eight bytes of fields —
+/// simply has no entry here, and every site that would need one reports
+/// `unsupported` naming the type. That is deliberately the same "coverage
+/// boundary" discipline the rest of this module uses: two-eightbyte and
+/// `MEMORY`-class structs (`plan/mk7-own-backend.md` §5 item 4's larger scope)
+/// are a later slice, not a silent truncation.
+#[derive(Clone)]
+struct StructLayout {
+    /// One entry per field, in declaration order: `(name, byte offset from
+    /// the struct's base, width, signed)`. Offsets follow the same natural
+    /// C alignment `codegen_c.rs`'s emitted typedef gets from clang — a
+    /// field's alignment is its own size, since every field type here is
+    /// `int_ty`-representable (1, 2, 4 or 8 bytes).
+    fields: Vec<(String, i32, Width, bool)>,
+}
+
+/// Computes `StructLayout` for every `datac` that qualifies (see
+/// `StructLayout`'s doc), by simulating the same sequential, naturally-aligned
+/// layout a C compiler gives the equivalent typedef. A struct that does not
+/// qualify is simply absent from the returned map.
+fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashMap<String, StructLayout> {
+    let mut out = std::collections::HashMap::new();
+    'structs: for s in structs {
+        let mut cursor: i32 = 0;
+        let mut max_align: i32 = 1;
+        let mut fields = Vec::with_capacity(s.fields.len());
+        for f in &s.fields {
+            let Some((width, signed)) = int_ty(&f.ty) else {
+                continue 'structs;
+            };
+            let align = width.bytes();
+            cursor = (cursor + align - 1) / align * align;
+            fields.push((f.name.clone(), cursor, width, signed));
+            cursor += width.bytes();
+            max_align = max_align.max(align);
+        }
+        let size = (cursor + max_align - 1) / max_align * max_align;
+        if size <= 8 {
+            out.insert(s.name.clone(), StructLayout { fields });
+        }
+    }
+    out
+}
+
+/// `ty`'s layout, if it is a `datac` `build_layouts` accepted.
+fn struct_layout<'a>(
+    ty: &Ty,
+    layouts: &'a std::collections::HashMap<String, StructLayout>,
+) -> Option<&'a StructLayout> {
+    match ty {
+        Ty::Struct(name) => layouts.get(name),
+        _ => None,
+    }
+}
+
+/// `int_ty`, widened to also accept a qualifying aggregate as one opaque
+/// eightbyte (`Width::W8`, `signed` is meaningless there since `Width::W8`'s
+/// `extend` is already a no-op — see `StructLayout`'s doc for why this is
+/// sound). Every site that used to call `int_ty(ty).ok_or_else(...)` for a
+/// value it moves whole (a local, a parameter, a return, a call argument)
+/// calls this instead; a site that needs a *field*'s own width still goes
+/// through `StructLayout::fields` directly.
+fn value_kind(
+    ty: &Ty,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<(Width, bool)> {
+    int_ty(ty)
+        .or_else(|| struct_layout(ty, layouts).map(|_| (Width::W8, false)))
+        .or_else(|| match ty {
+            // A `&datac`/`&mut datac` is a plain pointer — `Width::W8`, same
+            // as the aggregate itself, just one level of indirection away.
+            // Nothing else about `Ty::Ref` is accepted here: a reference to a
+            // scalar needs assignment-through-a-pointer codegen this slice
+            // does not have (`ExprKind::Deref` as an *assignment target*
+            // stays refused), so only the `datac` case — read-only field
+            // access through the pointer — is claimed.
+            Ty::Ref { inner, .. } if struct_layout(inner, layouts).is_some() => {
+                Some((Width::W8, false))
+            }
+            _ => None,
+        })
+}
+
 /// Generates assembly for `program`.
 ///
 /// `Err` carries a complete diagnostic, printed the same way a frontend error
@@ -346,14 +440,18 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     if let Some(pd) = program.pds.first() {
         return Err(unsupported(&format!("the passdown `pd {}`", pd.qualified)));
     }
-    if let Some(s) = program.structs.first() {
-        return Err(unsupported(&format!("the datac `{}`", s.name)));
-    }
     if let Some(e) = program.enums.first() {
         return Err(unsupported(&format!("the enum `{}`", e.name)));
     }
 
     let mut g = Gen::default();
+    // MK7 §5 item 4, first slice: a `datac` is no longer refused outright — a
+    // program keeps compiling as long as every `datac` it actually *uses* is
+    // one `build_layouts` accepted (see `StructLayout`'s doc). A `datac` that
+    // does not qualify is not rejected here either: it is rejected wherever a
+    // program tries to move a value of that type, which names the offending
+    // type instead of the mere presence of an unrelated declaration.
+    g.layouts = build_layouts(&program.structs);
     // The gated-call table, so a call that the C backend would wrap in a
     // runtime capability check is refused rather than emitted unchecked. This
     // is the one place where an unimplemented feature would be a *security*
@@ -445,6 +543,13 @@ struct LiveAnalysis {
     /// Per declaration id: whether it is a float, which this item never
     /// register-allocates (see `allocate_registers`).
     is_float: Vec<bool>,
+    /// Per declaration id: whether it is a `datac` (MK7 §5 item 4). Also
+    /// never register-allocated: a struct local's only reader that needs its
+    /// *address* is `Gen::field_access`, and giving every struct local a
+    /// stack slot — the same way a float local always does — is what lets
+    /// that stay a plain `[rbp+offset]` computation instead of a second,
+    /// register-aware addressing mode nothing else in this module needs yet.
+    is_agg: Vec<bool>,
     /// One `(start, end)` per `while` encountered, collected in the same
     /// preorder the loops are visited (so an inner loop's span is pushed
     /// before its enclosing loop's, though nothing here depends on that
@@ -460,6 +565,7 @@ impl LiveAnalysis {
             ranges: Vec::new(),
             decl_pos: Vec::new(),
             is_float: Vec::new(),
+            is_agg: Vec::new(),
             spans: Vec::new(),
         }
     }
@@ -480,6 +586,7 @@ impl LiveAnalysis {
         self.ranges.push((p, p));
         self.decl_pos.push(p);
         self.is_float.push(float_ty(ty).is_some());
+        self.is_agg.push(matches!(ty, Ty::Struct(_)));
         self.scopes
             .last_mut()
             .expect("a scope always exists")
@@ -664,7 +771,7 @@ fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
         end: usize,
     }
     let mut intervals: Vec<Interval> = (0..la.ranges.len())
-        .filter(|&id| !la.is_float[id])
+        .filter(|&id| !la.is_float[id] && !la.is_agg[id])
         .map(|id| Interval {
             id,
             start: la.ranges[id].0,
@@ -728,6 +835,16 @@ struct Frame {
     /// silently overwrite a live callee-saved register with a stack pointer.
     /// This is computed once per function, below every pushed register.
     sp_slot: i32,
+    /// MK7 §5 item 4: where `Gen::struct_lit` builds an aggregate's bytes
+    /// field by field before loading the whole eightbyte into `rax`. One
+    /// slot, reserved once per function directly below `sp_slot` exactly the
+    /// way `sp_slot` itself is reserved below every pushed register — a
+    /// function only ever has one struct literal "under construction" at a
+    /// time (an argument list evaluates one struct literal fully into `rax`,
+    /// and further uses of it are a plain copy of that value, before the next
+    /// argument's own evaluation starts), so a single fixed slot is safe to
+    /// reuse across every struct literal the function contains.
+    agg_slot: i32,
 }
 
 /// Where a call site saves `rsp` across the call — `Frame::sp_slot`, computed
@@ -745,12 +862,14 @@ const SP_SAVE_SIZE: i32 = 8;
 impl Frame {
     fn new(locs: Vec<Option<usize>>, pushed_regs: usize) -> Frame {
         let sp_slot = -SP_SAVE_SIZE * (pushed_regs as i32 + 1);
+        let agg_slot = sp_slot - SP_SAVE_SIZE;
         Frame {
-            used: SP_SAVE_SIZE * (pushed_regs as i32 + 1),
+            used: SP_SAVE_SIZE * (pushed_regs as i32 + 2),
             scopes: vec![Vec::new()],
             locs,
             next_id: 0,
             sp_slot,
+            agg_slot,
         }
     }
 
@@ -765,8 +884,13 @@ impl Frame {
     /// Binds `name` to its next declaration id's location — a register if
     /// `allocate_registers` gave it one, else a fresh stack slot exactly as
     /// every local was assigned before this item.
-    fn declare(&mut self, name: &str, ty: &Ty) -> Result<Loc, String> {
-        let bytes = int_ty(ty)
+    fn declare(
+        &mut self,
+        name: &str,
+        ty: &Ty,
+        layouts: &std::collections::HashMap<String, StructLayout>,
+    ) -> Result<Loc, String> {
+        let bytes = value_kind(ty, layouts)
             .map(|(w, _)| w.bytes())
             .or_else(|| float_ty(ty).map(|w| w.bytes()))
             .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
@@ -835,6 +959,8 @@ struct Gen {
     /// without one: the check is the language's headline promise, and a backend
     /// that skipped it would be removing a guarantee rather than a feature.
     gated: std::collections::HashMap<String, String>,
+    /// MK7 §5 item 4: every `datac` `build_layouts` accepted, keyed by name.
+    layouts: std::collections::HashMap<String, StructLayout>,
 }
 
 impl Gen {
@@ -889,7 +1015,7 @@ impl Gen {
             )));
         }
         for (name, ty) in &f.params {
-            if int_ty(ty).is_none() && float_ty(ty).is_none() {
+            if value_kind(ty, &self.layouts).is_none() && float_ty(ty).is_none() {
                 return Err(unsupported(&format!(
                     "the parameter `{name}: {}` of `{}`",
                     ty.display(),
@@ -897,14 +1023,28 @@ impl Gen {
                 )));
             }
         }
-        if f.ret != Ty::Unit && int_ty(&f.ret).is_none() && float_ty(&f.ret).is_none() {
+        if f.ret != Ty::Unit
+            && value_kind(&f.ret, &self.layouts).is_none()
+            && float_ty(&f.ret).is_none()
+        {
             return Err(unsupported(&format!(
                 "the return type `{}` of `{}`",
                 f.ret.display(),
                 f.name
             )));
         }
-        if f.params.iter().filter(|(_, ty)| int_ty(ty).is_some()).count() > ARG64.len() {
+        // A qualifying `datac` parameter is one opaque eightbyte (see
+        // `StructLayout`'s doc), so it consumes an *integer* argument
+        // register exactly the way a `u64` would — this count has to include
+        // it or a function with six `i32`s and one small `datac` would be
+        // wrongly accepted with seven integer-register arguments.
+        if f
+            .params
+            .iter()
+            .filter(|(_, ty)| value_kind(ty, &self.layouts).is_some())
+            .count()
+            > ARG64.len()
+        {
             return Err(unsupported(&format!(
                 "`{}`, which takes more than six integer parameters",
                 f.name
@@ -945,8 +1085,8 @@ impl Gen {
         let mut int_idx = 0usize;
         let mut float_idx = 0usize;
         for (name, ty) in &f.params {
-            let loc = frame.declare(name, ty)?;
-            if let Some((width, signed)) = int_ty(ty) {
+            let loc = frame.declare(name, ty, &self.layouts)?;
+            if let Some((width, signed)) = value_kind(ty, &self.layouts) {
                 params.push(ParamSlot::Int(loc, width, signed, int_idx));
                 int_idx += 1;
             } else {
@@ -1060,7 +1200,7 @@ impl Gen {
         match stmt {
             Stmt::Let { name, ty, init } => {
                 self.expr(init, frame)?;
-                let loc = frame.declare(name, ty)?;
+                let loc = frame.declare(name, ty, &self.layouts)?;
                 if let Some(width) = float_ty(ty) {
                     let offset = loc
                         .stack_offset()
@@ -1068,7 +1208,7 @@ impl Gen {
                     let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
                     return Ok(());
                 }
-                let (width, _) = int_ty(ty).expect("declare validated the type");
+                let (width, _) = value_kind(ty, &self.layouts).expect("declare validated the type");
                 match loc {
                     // The stack-machine invariant already leaves `rax`
                     // zero/sign-extended to 64 bits after evaluating `init`,
@@ -1168,7 +1308,7 @@ impl Gen {
                     let _ = writeln!(self.out, "    {} xmm0, [rbp{offset}]", width.mov());
                     return Ok(());
                 }
-                let (width, signed) = int_ty(&ty)
+                let (width, signed) = value_kind(&ty, &self.layouts)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
                 match loc {
                     // A pool register already holds the full 64-bit
@@ -1246,6 +1386,9 @@ impl Gen {
             }
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, &e.ty, frame),
             ExprKind::Assign { target, value } => {
+                if let ExprKind::FieldAccess { base, field } = &target.kind {
+                    return self.field_assign(base, field, value, frame);
+                }
                 let (loc, ty) = match &target.kind {
                     ExprKind::Ident(name) => frame.lookup(name).ok_or_else(|| {
                         unsupported(&format!("assignment to the name `{name}`"))
@@ -1262,7 +1405,7 @@ impl Gen {
                     // is already correct and is deliberately not reloaded.
                     return Ok(());
                 }
-                let (width, _) = int_ty(&ty)
+                let (width, _) = value_kind(&ty, &self.layouts)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
                 match loc {
                     Loc::Reg(reg) => {
@@ -1330,13 +1473,44 @@ impl Gen {
                 }
                 Ok(())
             }
-            ExprKind::FieldAccess { .. } => Err(unsupported("a field read")),
-            ExprKind::StructLit { .. } => Err(unsupported("a datac literal")),
+            ExprKind::FieldAccess { base, field } => self.field_read(base, field, frame),
+            ExprKind::StructLit { name, fields } => self.struct_lit(name, fields, frame),
             ExprKind::EnumLit { .. } => Err(unsupported("an enum literal")),
             ExprKind::EnumTag { .. } => Err(unsupported("an enum tag test")),
             ExprKind::EnumField { .. } => Err(unsupported("an enum payload read")),
             ExprKind::Try { .. } => Err(unsupported("the `?` operator")),
-            ExprKind::Ref { .. } => Err(unsupported("a borrow")),
+            ExprKind::Ref { expr, .. } => {
+                // MK7 §5 item 4's narrow slice: a borrow of a named `datac`
+                // local, which is what every gap this item closes actually
+                // needs — a `datac`-typed call argument that is not marked
+                // `move` becomes exactly this (`infer.rs::check_call_arg`),
+                // and it is also what an explicit `&c` compiles to. A borrow
+                // of anything else (a temporary, a field, a scalar) stays
+                // refused: a struct literal's bytes live in the single
+                // reusable `agg_slot` (see `struct_lit`), which does not have
+                // a stable address across more than the one store/load pair
+                // that builds it, so a pointer into it could be silently
+                // invalidated by the very next struct literal the same call
+                // evaluates.
+                let ExprKind::Ident(name) = &expr.kind else {
+                    return Err(unsupported(
+                        "a borrow of anything but a named `datac` local",
+                    ));
+                };
+                let (loc, ty) = frame
+                    .lookup(name)
+                    .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                if struct_layout(&ty, &self.layouts).is_none() {
+                    return Err(unsupported(
+                        "a borrow of anything but a named `datac` local",
+                    ));
+                }
+                let off = loc
+                    .stack_offset()
+                    .expect("struct locals are never register-allocated");
+                let _ = writeln!(self.out, "    lea rax, [rbp{off}]");
+                Ok(())
+            }
             ExprKind::Deref { .. } => Err(unsupported("a dereference")),
         }
     }
@@ -1547,6 +1721,155 @@ impl Gen {
         self.expr(rhs, frame)?;
         self.out.push_str("    test rax, rax\n    setne al\n    movzx rax, al\n");
         let _ = writeln!(self.out, "{end}:");
+        Ok(())
+    }
+
+    /// MK7 §5 item 4: `Name { field = expr, ... }`. Every field is evaluated
+    /// and stored straight into `frame.agg_slot` at its own offset and width —
+    /// no different from an ordinary local's store — and the whole eightbyte
+    /// is then loaded into `rax`, which is where every expression leaves its
+    /// value regardless of type. `fields` need not be written in declaration
+    /// order (Kelp's literal syntax names each field), so the offset comes
+    /// from `layout.fields`, looked up by name, not from `fields`'s own order.
+    fn struct_lit(
+        &mut self,
+        name: &str,
+        fields: &[(String, Expr)],
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        let layout = self.layouts.get(name).cloned().ok_or_else(|| {
+            unsupported(&format!(
+                "the datac `{name}` (it is too large, or holds a field this slice cannot \
+                 lower yet — see plan/mk7-own-backend.md §5 item 4)"
+            ))
+        })?;
+        let agg_slot = frame.agg_slot;
+        for (fname, foffset, fwidth, _signed) in &layout.fields {
+            let value = fields
+                .iter()
+                .find(|(n, _)| n == fname)
+                .map(|(_, e)| e)
+                .ok_or_else(|| {
+                    unsupported(&format!("a `{name}` literal missing its `{fname}` field"))
+                })?;
+            self.expr(value, frame)?;
+            let addr = agg_slot + foffset;
+            let _ = writeln!(
+                self.out,
+                "    mov {} [rbp{addr}], {}",
+                fwidth.mem(),
+                fwidth.rax()
+            );
+        }
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{agg_slot}]");
+        Ok(())
+    }
+
+    /// Computes `base`'s address into `r11` — a datac's own address, or the
+    /// pointer a `&datac`/`&mut datac` value holds — and returns the layout
+    /// to look a field up in. `r11` is caller-saved and otherwise unused in
+    /// this module (its predecessor as the call-site `rsp` save is exactly
+    /// why it was retired from that job — see `Frame::sp_slot`'s doc — but
+    /// that hazard was about a value expected to survive *across* a call;
+    /// nothing here does, the address is computed and consumed immediately).
+    ///
+    /// Three shapes of `base` are covered, which between them are every shape
+    /// `infer.rs` produces for a field access this slice's types can reach:
+    /// a plain local of `datac` type (`c.count`, address is its own frame
+    /// slot); a plain local of `&datac`/`&mut datac` type (`c.count` again,
+    /// but inside a function whose `c` parameter is a reference — `infer.rs`
+    /// does not insert a separate `Deref` node for this case, the field
+    /// access's `base` is simply the reference-typed `Ident` itself, so the
+    /// distinction is only in which kind of value the slot holds); and an
+    /// explicit `*r` (`(*r).count`), whose inner expression is evaluated
+    /// generically since anything typed `&datac` already knows how to put
+    /// its pointer value in `rax` (it is `value_kind`'s `Width::W8` case, the
+    /// same path a plain pointer-sized local uses).
+    fn addr_of_struct(&mut self, base: &Expr, frame: &mut Frame) -> Result<StructLayout, String> {
+        match &base.kind {
+            ExprKind::Ident(name) => {
+                let (loc, ty) = frame
+                    .lookup(name)
+                    .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                if let Some(_layout) = struct_layout(&ty, &self.layouts) {
+                    let off = loc
+                        .stack_offset()
+                        .expect("struct locals are never register-allocated");
+                    let _ = writeln!(self.out, "    lea r11, [rbp{off}]");
+                } else if let Ty::Ref { inner, .. } = &ty {
+                    if struct_layout(inner, &self.layouts).is_none() {
+                        return Err(unsupported(&format!("the type `{}`", ty.display())));
+                    }
+                    match loc {
+                        Loc::Reg(reg) => {
+                            let _ = writeln!(self.out, "    mov r11, {}", CALLEE_SAVED64[reg]);
+                        }
+                        Loc::Stack(off) => {
+                            let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{off}]");
+                        }
+                    }
+                } else {
+                    return Err(unsupported(&format!("the type `{}`", ty.display())));
+                }
+            }
+            ExprKind::Deref { expr } => {
+                self.expr(expr, frame)?;
+                self.out.push_str("    mov r11, rax\n");
+            }
+            _ => return Err(unsupported("a field access on anything but a local or `*local`")),
+        }
+        // Re-derive the layout from `base.ty` (stripping one `Ref`, the way
+        // `infer.rs::struct_name_of` does) rather than threading the borrow
+        // out of the match above — `self.layouts` outlives this call either
+        // way, so this is only about not fighting the borrow checker over a
+        // value already known.
+        let inner_ty = match &base.ty {
+            Ty::Ref { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        struct_layout(inner_ty, &self.layouts)
+            .cloned()
+            .ok_or_else(|| unsupported(&format!("the type `{}`", base.ty.display())))
+    }
+
+    /// `base.field` as a value: load it at its own width and extend, through
+    /// the address `addr_of_struct` computes into `r11`.
+    fn field_read(&mut self, base: &Expr, field: &str, frame: &mut Frame) -> Result<(), String> {
+        let layout = self.addr_of_struct(base, frame)?;
+        let (foffset, width, signed) = layout
+            .fields
+            .iter()
+            .find(|(n, ..)| n == field)
+            .map(|(_, o, w, s)| (*o, *w, *s))
+            .ok_or_else(|| unsupported(&format!("the field `{field}` of `{}`", base.ty.display())))?;
+        let _ = writeln!(self.out, "    mov {}, {} [r11+{foffset}]", width.rax(), width.mem());
+        self.out.push_str(&width.extend(signed));
+        Ok(())
+    }
+
+    /// `base.field = value`: the assignment counterpart of `field_read`. The
+    /// address is computed *before* `value` is evaluated, so a value
+    /// expression that itself reads through `r11` (nested field access is not
+    /// reachable here today, but nothing about the ordering assumes that)
+    /// cannot clobber the address it is about to be stored through.
+    fn field_assign(
+        &mut self,
+        base: &Expr,
+        field: &str,
+        value: &Expr,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        let layout = self.addr_of_struct(base, frame)?;
+        let (foffset, width, _signed) = layout
+            .fields
+            .iter()
+            .find(|(n, ..)| n == field)
+            .map(|(_, o, w, s)| (*o, *w, *s))
+            .ok_or_else(|| unsupported(&format!("the field `{field}` of `{}`", base.ty.display())))?;
+        self.out.push_str("    push r11\n");
+        self.expr(value, frame)?;
+        self.out.push_str("    pop r11\n");
+        let _ = writeln!(self.out, "    mov {} [r11+{foffset}], {}", width.mem(), width.rax());
         Ok(())
     }
 
