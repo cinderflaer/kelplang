@@ -39,7 +39,10 @@
 //! Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 //! comparisons (including the unordered/NaN case), all unary and binary
 //! operators including short-circuiting `&&`/`||`, `if`/`else` in statement and
-//! value position, `while`, assignment, calls with up to six integer and eight
+//! value position, `while`, assignment, a borrow of a named scalar local and
+//! the read and store through it (`*p`/`*p = v` for an integer or float
+//! pointee, which is the caller's half and the callee's half of a `mut` out
+//! parameter), calls with up to six integer and eight
 //! float arguments classified independently per SysV, recursion, `print`/`print!`
 //! of integers, characters, booleans, `str`, floats and an owned buffer, `datac`
 //! aggregates by value at any size (including a `MEMORY`-class one as an
@@ -716,6 +719,18 @@ enum Extern {
 enum Routine {
     StrByteAtRaw,
     StrSliceFromRaw,
+    /// MK7 §5's next slice: the three `str` parsers, transliterated from their
+    /// `externs.rs` bodies. Each is `strtoll`/`strtoull`/`strtod` through the
+    /// PLT behind the same empty-or-whitespace check and the same whole-string
+    /// check, with the one store through the caller's `mut` out-parameter that
+    /// the scalar-borrow slice made expressible. `parse_u64_raw` is the one
+    /// that also rejects a leading `-`, and `parse_i64_raw`/`parse_u64_raw` are
+    /// the two that read `errno` — `strtoll`'s overflow signal, which is what
+    /// makes an out-of-range literal a failure rather than a saturated
+    /// success.
+    StrParseI64Raw,
+    StrParseU64Raw,
+    StrParseF64Raw,
     MathIsNanRaw,
     MathIsFiniteRaw,
     /// MK7 §5's first heap slice: the `Bytes` runtime this backend owns — the
@@ -811,6 +826,9 @@ impl Routine {
         match self {
             Routine::StrByteAtRaw => "kelp_rt$str_byte_at_raw",
             Routine::StrSliceFromRaw => "kelp_rt$str_slice_from_raw",
+            Routine::StrParseI64Raw => "kelp_rt$str_parse_i64_raw",
+            Routine::StrParseU64Raw => "kelp_rt$str_parse_u64_raw",
+            Routine::StrParseF64Raw => "kelp_rt$str_parse_f64_raw",
             Routine::MathIsNanRaw => "kelp_rt$math_is_nan_raw",
             Routine::MathIsFiniteRaw => "kelp_rt$math_is_finite_raw",
             Routine::BufReserve => "kelp_rt$buf_reserve",
@@ -966,14 +984,17 @@ fn extern_target(key: &str) -> Option<Extern> {
         "std.mem.alloc_raw" => Extern::Routine(Routine::BytesAllocRaw),
         // The `str`/`fmt` externs that became lowerable once `String` existed
         // (MK7 §5's second heap slice). Each is a transliteration of its
-        // `externs.rs` body. The `parse_i64_raw`/`parse_u64_raw`/
-        // `parse_f64_raw` family is deliberately **not** here: its `out` is a
-        // `mut i64`/`u64`/`f64` parameter, and this backend's `ExprKind::Ref`
-        // lowering addresses a named `datac`/`Bytes`/`String` local but not a
-        // scalar one, so mapping it would move the refusal from the
-        // declaration to the call site rather than unblock a fixture. See
-        // this slice's report.
+        // `externs.rs` body.
         "std.str.from_f64_raw" => Extern::Routine(Routine::StrFromF64Raw),
+        // MK7 §5's next slice: the parsers, whose `out` is a `mut
+        // i64`/`u64`/`f64` parameter. What kept them out until now was that
+        // a borrow of a *scalar* local had no lowering, so `ExprKind::Ref`
+        // refused `&mut v` at the call site; with that arm in place the
+        // declared signature is all the call marshalling needs, exactly as
+        // every other extern here.
+        "std.str.parse_i64_raw" => Extern::Routine(Routine::StrParseI64Raw),
+        "std.str.parse_u64_raw" => Extern::Routine(Routine::StrParseU64Raw),
+        "std.str.parse_f64_raw" => Extern::Routine(Routine::StrParseF64Raw),
         "std.fmt.hex_raw" => Extern::Routine(Routine::FmtHexRaw),
         "std.fmt.bytes_raw" => Extern::Routine(Routine::FmtBytesRaw),
         _ => return None,
@@ -1932,7 +1953,12 @@ fn value_kind(
             // the `Deref` that reads and writes it expressible at all (MK7 §5,
             // the passdown slice). The pointer itself is the value here; what
             // it points at is only ever touched through `ExprKind::Deref`.
-            Ty::Ref { inner, .. } if int_ty(inner).is_some() => Some((Width::W8, false)),
+            // MK7 §5's next slice adds the float pointee: a `mut f64`
+            // out-parameter is one word of address too, so `int_ty(inner)` and
+            // `float_ty(inner)` are the same case from here.
+            Ty::Ref { inner, .. } if int_ty(inner).is_some() || float_ty(inner).is_some() => {
+                Some((Width::W8, false))
+            }
             _ => None,
         })
         // MK7 §5 item 8: a `str`/`&str` is a pointer, so it is a value this
@@ -1975,7 +2001,10 @@ fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayou
         if struct_layout(inner, layouts).is_some() {
             return Some(1);
         }
-        if int_ty(inner).is_some() {
+        // A `&mut f64` is the same one pointer as a `&mut i64`; MK7 §5's next
+        // slice needs it because a `mut f64` out-parameter is declared that
+        // way, and the pointer travels in one integer register.
+        if int_ty(inner).is_some() || float_ty(inner).is_some() {
             return Some(1);
         }
     }
@@ -2454,6 +2483,20 @@ struct LiveAnalysis {
     /// that stay a plain `[rbp+offset]` computation instead of a second,
     /// register-aware addressing mode nothing else in this module needs yet.
     is_agg: Vec<bool>,
+    /// Per declaration id: whether this local's address is ever taken, which
+    /// forces it into a frame slot for the same reason a float or an aggregate
+    /// does — a pool register has no address, so `&x` on one would be a `lea`
+    /// of nothing. MK7 §5's next slice needs this for the caller's half of a
+    /// `mut` out-parameter (`parse_i64_raw(s, out = v)` is `&mut v`, and the
+    /// callee stores through the address), which is the first time a *scalar*
+    /// local is borrowed.
+    addr_taken: Vec<bool>,
+    /// Per declaration id: whether `&name` on this local would actually take an
+    /// address. A `str`/`&T` local is already the pointer such a borrow would
+    /// produce — `Gen::expr`'s `Ref` arm returns the name's own value for both
+    /// — so marking those would spill a pool register for a borrow that takes
+    /// no address at all.
+    already_a_pointer: Vec<bool>,
     /// One `(start, end)` per `while` encountered, collected in the same
     /// preorder the loops are visited (so an inner loop's span is pushed
     /// before its enclosing loop's, though nothing here depends on that
@@ -2470,6 +2513,8 @@ impl LiveAnalysis {
             decl_pos: Vec::new(),
             is_float: Vec::new(),
             is_agg: Vec::new(),
+            addr_taken: Vec::new(),
+            already_a_pointer: Vec::new(),
             spans: Vec::new(),
         }
     }
@@ -2511,6 +2556,14 @@ impl LiveAnalysis {
                 | Ty::List(_)
                 | Ty::Map(..)
         ));
+        // A `str`/`&T` name is already the pointer a borrow of it would
+        // produce (`Gen::expr`'s `Ref` arm returns the value for both), so an
+        // `&` written on one takes no address and must not cost the local its
+        // register. Anything else whose address is taken does (see
+        // `addr_taken`).
+        self.already_a_pointer
+            .push(str_ty(ty) || matches!(ty, Ty::Ref { .. }));
+        self.addr_taken.push(false);
         self.scopes
             .last_mut()
             .expect("a scope always exists")
@@ -2538,6 +2591,29 @@ impl LiveAnalysis {
             let r = &mut self.ranges[id];
             r.0 = r.0.min(p);
             r.1 = r.1.max(p);
+        }
+    }
+
+    /// The `&name` shape of a use: the same tick and touch `expr` would do for
+    /// the name, plus the one thing only a borrow needs — the local loses its
+    /// claim on a pool register, because a register has no address. A name
+    /// that is already a pointer (`str`, `&T`) takes no address, so it keeps
+    /// its register. Anything that is not a bare name (a field of one, a
+    /// dereference, a literal) is just walked.
+    fn address_of(&mut self, e: &Expr) {
+        let ExprKind::Ident(name) = &e.kind else {
+            self.expr(e);
+            return;
+        };
+        let p = self.tick();
+        let Some(id) = self.lookup(name) else {
+            return;
+        };
+        let r = &mut self.ranges[id];
+        r.0 = r.0.min(p);
+        r.1 = r.1.max(p);
+        if !self.already_a_pointer[id] {
+            self.addr_taken[id] = true;
         }
     }
 
@@ -2711,7 +2787,7 @@ impl LiveAnalysis {
             // `?` evaluates its operand (which is the only expression the node
             // holds — the rebuilt failure is codegen's own construction).
             ExprKind::Try { expr, .. } => self.expr(expr),
-            ExprKind::Ref { expr, .. } => self.expr(expr),
+            ExprKind::Ref { expr, .. } => self.address_of(expr),
             ExprKind::Deref { expr } => self.expr(expr),
             _ => {
                 self.tick();
@@ -2731,7 +2807,10 @@ impl LiveAnalysis {
 /// item 2 kept float locals on the stack-machine, memory-backed discipline
 /// rather than pre-empting this item), and this function keeps that boundary
 /// by excluding every id `LiveAnalysis` marked `is_float` from the candidate
-/// list before the scan ever runs — a float id is `None` unconditionally.
+/// list before the scan ever runs — a float id is `None` unconditionally. The
+/// same exclusion covers the aggregate kinds (`is_agg`) and, since the
+/// scalar-borrow slice, every local whose address is taken (`addr_taken`):
+/// both need an address, and a pool register has none.
 fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
     let mut la = LiveAnalysis::new();
     for (name, ty) in &f.params {
@@ -2767,7 +2846,7 @@ fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
         end: usize,
     }
     let mut intervals: Vec<Interval> = (0..la.ranges.len())
-        .filter(|&id| !la.is_float[id] && !la.is_agg[id])
+        .filter(|&id| !la.is_float[id] && !la.is_agg[id] && !la.addr_taken[id])
         .map(|id| Interval {
             id,
             start: la.ranges[id].0,
@@ -6316,6 +6395,23 @@ impl Gen {
                             return Ok(());
                         }
                     }
+                    if let Some(width) = float_ty(&target.ty) {
+                        // MK7 §5's next slice: the store half of a `mut
+                        // f64` out-parameter — `*p = v` through the pointer
+                        // in `r11`, with the value in `xmm0` where every
+                        // float expression leaves it. The pointer is pushed
+                        // rather than kept in a register across the value's
+                        // evaluation for the same reason the integer arm
+                        // below pushes it: the value can itself read through
+                        // the same pointer (`*p = *p + 1`), and evaluating
+                        // it claims registers.
+                        self.expr(expr, frame)?;
+                        self.out.push_str("    push rax\n");
+                        self.expr(value, frame)?;
+                        self.out.push_str("    pop r11\n");
+                        let _ = writeln!(self.out, "    {} [r11], xmm0", width.mov());
+                        return Ok(());
+                    }
                     let (width, _) = int_ty(&target.ty).ok_or_else(|| {
                         unsupported(&format!(
                             "assignment through a reference to `{}`",
@@ -6503,6 +6599,23 @@ impl Gen {
                             // value, and there is no address to take.
                             return self.expr(expr, frame);
                         }
+                        // MK7 §5's next slice: a borrow of a named *scalar*
+                        // local — `sum(&(*origin))`, an explicit `&mut x`, and
+                        // above all the `&mut v` `infer.rs` inserts for a `mut`
+                        // out-parameter (`parse_i64_raw(s, out = v)`). Nothing
+                        // is copied and no scratch slot is needed: the local
+                        // already has a frame slot of its own, because
+                        // `LiveAnalysis` keeps every local whose address is
+                        // taken out of the register pool (`addr_taken`). The
+                        // address is then an ordinary integer-typed pointer, so
+                        // the call marshalling above needs no change.
+                        if let Some(off) = loc.stack_offset() {
+                            let _ = writeln!(self.out, "    lea rax, [rbp{off}]");
+                            return Ok(());
+                        }
+                        return Err(unsupported(&format!(
+                            "a borrow of the register-allocated local `{name}`"
+                        )));
                     }
                     // Not a local: a passdown's generated storage, whose
                     // borrow is its address (`infer::PdInfo::arg`'s
@@ -6572,7 +6685,8 @@ impl Gen {
                     return Ok(());
                 }
                 Err(unsupported(
-                    "a borrow of anything but a named `datac` local or a `datac` temporary",
+                    "a borrow of anything but a named local (a scalar, a `datac` or a heap \
+                     type), a `datac` temporary, or a field of one",
                 ))
             }
             ExprKind::Deref { expr } => {
@@ -6597,6 +6711,18 @@ impl Gen {
                         "reading a `datac` out of a reference by value (read its fields, or \
                          take it as a borrow)",
                     ));
+                }
+                // MK7 §5's next slice: `*p` for a scalar pointee. An integer
+                // load is the passdown slice's own — width-specific, then
+                // re-extended — and a *float* one is the same `movss`/`movsd`
+                // a float local's read uses, aimed at the pointer in `rax`
+                // instead of a frame slot. This is the read half of a `mut
+                // i64`/`mut f64` out-parameter; the store half is the `Deref`
+                // target of `ExprKind::Assign`.
+                if let Some(width) = float_ty(&e.ty) {
+                    self.expr(expr, frame)?;
+                    let _ = writeln!(self.out, "    {} xmm0, [rax]", width.mov());
+                    return Ok(());
                 }
                 let (width, signed) = int_ty(&e.ty)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", e.ty.display())))?;
@@ -8397,6 +8523,75 @@ impl Gen {
                 self.out.push_str(".Lstr_slice_from_oob:\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
                 self.call_panic();
+            }
+            // ---- MK7 §5's next slice: the three `str` parsers -------------
+            //
+            // Each is its `externs.rs` body, translated: the empty and
+            // whitespace checks first (before any frame is set up, so the
+            // early refusal is a bare `xor eax, eax; ret`), then one libc
+            // conversion, then the checks that it consumed the whole string,
+            // then one store through the caller's own `mut` out-parameter.
+            // `s` and `out` arrive in `rdi`/`rsi` from the declared
+            // signature, so nothing about the call marshalling had to change.
+            // `rbx`/`r12` hold `out` and `s` across the call, `[rsp]` is
+            // `end`, and — for the two integer parsers — `[rsp+8]` is the
+            // `errno` location, fetched once and read back after the
+            // conversion. That last check is what makes an out-of-range
+            // number a failure instead of a saturated success, and it is why
+            // `parse_i64("9223372036854775808")` is `Err`.
+            Routine::StrParseI64Raw => {
+                self.out.push_str("    cmp BYTE PTR [rdi], 0\n    je .Lpi64_fail_early\n    mov rax, rdi\n");
+                self.out.push_str(".Lpi64_ws:\n    movzx ecx, BYTE PTR [rax]\n    test cl, cl\n    je .Lpi64_go\n");
+                self.out.push_str("    cmp cl, 32\n    je .Lpi64_fail_early\n    cmp cl, 9\n    je .Lpi64_fail_early\n");
+                self.out.push_str("    cmp cl, 10\n    je .Lpi64_fail_early\n    cmp cl, 13\n    je .Lpi64_fail_early\n");
+                self.out.push_str("    add rax, 1\n    jmp .Lpi64_ws\n.Lpi64_fail_early:\n    xor eax, eax\n    ret\n");
+                self.out.push_str(".Lpi64_go:\n    push rbx\n    push r12\n    sub rsp, 24\n");
+                self.out.push_str("    mov rbx, rsi\n    mov r12, rdi\n    mov QWORD PTR [rsp], 0\n    call __errno_location@PLT\n");
+                self.out.push_str("    mov QWORD PTR [rsp+8], rax\n    mov DWORD PTR [rax], 0\n");
+                self.out.push_str("    mov rdi, r12\n    mov rsi, rsp\n    mov edx, 10\n    call strtoll@PLT\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rsp]\n    cmp rcx, r12\n    je .Lpi64_fail\n");
+                self.out.push_str("    cmp BYTE PTR [rcx], 0\n    jne .Lpi64_fail\n");
+                self.out.push_str("    mov rdx, QWORD PTR [rsp+8]\n    cmp DWORD PTR [rdx], 0\n    jne .Lpi64_fail\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov eax, 1\n    jmp .Lpi64_done\n");
+                self.out.push_str(".Lpi64_fail:\n    xor eax, eax\n.Lpi64_done:\n    add rsp, 24\n    pop r12\n    pop rbx\n    ret\n");
+            }
+            // The same body with `strtoull`, plus the one extra rejection the
+            // C source has: a leading `-` is not a number, not a negative
+            // one.
+            Routine::StrParseU64Raw => {
+                self.out.push_str("    cmp BYTE PTR [rdi], 0\n    je .Lpu64_fail_early\n");
+                self.out.push_str("    cmp BYTE PTR [rdi], 45\n    je .Lpu64_fail_early\n    mov rax, rdi\n");
+                self.out.push_str(".Lpu64_ws:\n    movzx ecx, BYTE PTR [rax]\n    test cl, cl\n    je .Lpu64_go\n");
+                self.out.push_str("    cmp cl, 32\n    je .Lpu64_fail_early\n    cmp cl, 9\n    je .Lpu64_fail_early\n");
+                self.out.push_str("    cmp cl, 10\n    je .Lpu64_fail_early\n    cmp cl, 13\n    je .Lpu64_fail_early\n");
+                self.out.push_str("    add rax, 1\n    jmp .Lpu64_ws\n.Lpu64_fail_early:\n    xor eax, eax\n    ret\n");
+                self.out.push_str(".Lpu64_go:\n    push rbx\n    push r12\n    sub rsp, 24\n");
+                self.out.push_str("    mov rbx, rsi\n    mov r12, rdi\n    mov QWORD PTR [rsp], 0\n    call __errno_location@PLT\n");
+                self.out.push_str("    mov QWORD PTR [rsp+8], rax\n    mov DWORD PTR [rax], 0\n");
+                self.out.push_str("    mov rdi, r12\n    mov rsi, rsp\n    mov edx, 10\n    call strtoull@PLT\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rsp]\n    cmp rcx, r12\n    je .Lpu64_fail\n");
+                self.out.push_str("    cmp BYTE PTR [rcx], 0\n    jne .Lpu64_fail\n");
+                self.out.push_str("    mov rdx, QWORD PTR [rsp+8]\n    cmp DWORD PTR [rdx], 0\n    jne .Lpu64_fail\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov eax, 1\n    jmp .Lpu64_done\n");
+                self.out.push_str(".Lpu64_fail:\n    xor eax, eax\n.Lpu64_done:\n    add rsp, 24\n    pop r12\n    pop rbx\n    ret\n");
+            }
+            // `strtod`, and no `errno` — the C body does not read it, because
+            // `strtod` reports an out-of-range value as `HUGE_VAL` rather than
+            // as a failure. The store is the float form of the same one
+            // instruction: `movsd` straight through the caller's pointer.
+            Routine::StrParseF64Raw => {
+                self.out.push_str("    cmp BYTE PTR [rdi], 0\n    je .Lpf64_fail_early\n    mov rax, rdi\n");
+                self.out.push_str(".Lpf64_ws:\n    movzx ecx, BYTE PTR [rax]\n    test cl, cl\n    je .Lpf64_go\n");
+                self.out.push_str("    cmp cl, 32\n    je .Lpf64_fail_early\n    cmp cl, 9\n    je .Lpf64_fail_early\n");
+                self.out.push_str("    cmp cl, 10\n    je .Lpf64_fail_early\n    cmp cl, 13\n    je .Lpf64_fail_early\n");
+                self.out.push_str("    add rax, 1\n    jmp .Lpf64_ws\n.Lpf64_fail_early:\n    xor eax, eax\n    ret\n");
+                self.out.push_str(".Lpf64_go:\n    push rbx\n    push r12\n    sub rsp, 24\n");
+                self.out.push_str("    mov rbx, rsi\n    mov r12, rdi\n    mov QWORD PTR [rsp], 0\n");
+                self.out.push_str("    mov rdi, r12\n    mov rsi, rsp\n    call strtod@PLT\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rsp]\n    cmp rcx, r12\n    je .Lpf64_fail\n");
+                self.out.push_str("    cmp BYTE PTR [rcx], 0\n    jne .Lpf64_fail\n");
+                self.out.push_str("    movsd QWORD PTR [rbx], xmm0\n    mov eax, 1\n    jmp .Lpf64_done\n");
+                self.out.push_str(".Lpf64_fail:\n    xor eax, eax\n.Lpf64_done:\n    add rsp, 24\n    pop r12\n    pop rbx\n    ret\n");
             }
             // `isnan(x)`: the comparison sets the parity flag only when the
             // operand is unordered, which is exactly a NaN.
