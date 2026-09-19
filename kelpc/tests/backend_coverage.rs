@@ -64,15 +64,22 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 128 fixtures the C backend
-/// builds, 48 of them also built by the asm backend, 80 refused — which is the
-/// 146-of-249 integration-test ratio in the plan's §0 table, measured at the
-/// fixture level instead of the test level. (Re-recorded for MK7 §5's first
-/// heap slice, which added `bytes_build`, `heap_branches`, `heap_bytes`,
+/// The counts this list was recorded against: 129 fixtures the C backend
+/// builds, 58 of them also built by the asm backend, 71 refused — which is the
+/// 156-of-251 integration-test ratio in the plan's §0 table, measured at the
+/// fixture level instead of the test level.
+///
+/// Re-recorded three times so far, and the *reason* each time is worth keeping:
+/// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
-/// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem`; the
-/// list was 37 entries at 135-of-248 before it. `int_mod_narrow` came with the
-/// `%` fix that slice's probe forced, in the same commit.)
+/// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
+/// entries at 135-of-248 before it, with `int_mod_narrow` arriving in the same
+/// commit as the `%` fix its probe forced); the String/`View` slice added
+/// `string_basic`, `string_build`, `string_view_basic`, `stdlib_str`,
+/// `stdlib_path`, `path_parts`, `stdlib_fmt`, `literal_operand_typing`,
+/// `float_integral_literal` and `view_released_at_scope_end` — nine fixtures
+/// that were refused for a `String` type they no longer mention, plus the one
+/// fixture the slice added to pin `View`'s register-pair ABI.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -93,6 +100,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "escapes",
     "field_read_does_not_move",
     "float_conversions",
+    "float_integral_literal",
     "float_nonfinite_literal",
     "heap_branches",
     "heap_bytes",
@@ -106,6 +114,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "int_conversion_overflow",
     "int_conversions",
     "int_mod_narrow",
+    "literal_operand_typing",
     "move_then_reinit",
     "named_args",
     "nested_while_registers",
@@ -114,11 +123,19 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "passdown_datac",
     "passdown_globals",
     "passdowns",
+    "path_parts",
     "pd_shadowed",
     "pd_var_copy_read_twice",
     "pd_var_write",
+    "stdlib_fmt",
     "stdlib_math",
     "stdlib_mem",
+    "stdlib_path",
+    "stdlib_str",
+    "string_basic",
+    "string_build",
+    "string_view_basic",
+    "view_released_at_scope_end",
     "when_expr",
     "when_in_args",
     "while_accumulator",

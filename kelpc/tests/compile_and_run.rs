@@ -861,6 +861,22 @@ fn stdlib_fmt_formats_numbers_hex_padding_and_bytes() {
     );
 }
 
+/// MK7 §5: the owned `String` and the borrowed `View`, both ways round.
+///
+/// `String` is a MEMORY-class aggregate like `Bytes`; `View` is the first heap
+/// type that is *two* INTEGER eightbytes, so it travels in a register pair
+/// rather than through the hidden pointer — a shape no heap fixture had reached
+/// before this one. Both are pinned against the C backend by
+/// `the_two_backends_agree_on_the_scalar_fixtures`, because a wrong register
+/// pair is a wrong string rather than a build failure.
+#[test]
+fn string_and_view_construct_measure_slice_and_convert() {
+    assert_compiles_and_runs(
+        "tests/fixtures/string_view_basic.kp",
+        "the quick brown fox\n19\nfalse\ntrue\nquick\nthe\nhe quick brown fox\ntrue\ntrue\nfalse\ntrue\nthe\n3\ntrue\n0\ntrue\nquick\n5\nowned text\ntext\nraw\n3\n",
+    );
+}
+
 #[test]
 fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
     assert_compiles_and_runs(
