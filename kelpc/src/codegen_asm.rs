@@ -332,55 +332,147 @@ fn unsupported(what: &str) -> String {
 }
 
 /// MK7 §5 item 4, first slice: a `datac` whose fields are all scalar
-/// (`int_ty`-representable — no float field, no nested aggregate, no heap
-/// type) and whose C layout fits in eight bytes. Such a value needs no eightbyte
-/// classification at all: it *is* one eightbyte, so it can move through
-/// exactly the same `rax`/stack-slot/argument-register paths a `u64` already
-/// does — a call argument, a return value, a `Let`, an `Assign` and even a
-/// pool register all already know how to carry an opaque 8-byte value. Only a
-/// **field read** needs the layout below, to find the byte offset and width to
-/// load out of the 8 bytes.
+/// (`int_ty`-representable — no float field, no heap type) — or, as of the
+/// second slice, another qualifying `datac` nested by value — and whose C
+/// layout fits in eight bytes. Such a value needs no eightbyte classification
+/// at all: it *is* one eightbyte, so it can move through exactly the same
+/// `rax`/stack-slot/argument-register paths a `u64` already does — a call
+/// argument, a return value, a `Let`, an `Assign` and even a pool register all
+/// already know how to carry an opaque 8-byte value. Only a **field read**
+/// needs the layout below, to find the byte offset and width to load out of
+/// the 8 bytes — and, for a nested field (`o.inner.v`), to find the nested
+/// struct's own offset first.
 ///
-/// A `datac` that does not qualify — a float field, a nested `datac`, a `str`/
-/// `String`/`List`/`Map`/`Box` field, or more than eight bytes of fields —
-/// simply has no entry here, and every site that would need one reports
-/// `unsupported` naming the type. That is deliberately the same "coverage
-/// boundary" discipline the rest of this module uses: two-eightbyte and
-/// `MEMORY`-class structs (`plan/mk7-own-backend.md` §5 item 4's larger scope)
-/// are a later slice, not a silent truncation.
+/// A `datac` that does not qualify — a float field, a `str`/`String`/`List`/
+/// `Map`/`Box` field, a nested `datac` whose own size is not itself a valid
+/// move width (1/2/4/8 bytes — see `width_for_size`), or more than eight bytes
+/// of fields overall — simply has no entry here, and every site that would
+/// need one reports `unsupported` naming the type. That is deliberately the
+/// same "coverage boundary" discipline the rest of this module uses:
+/// two-eightbyte and `MEMORY`-class structs (`plan/mk7-own-backend.md` §5 item
+/// 4's larger scope) are a later slice, not a silent truncation.
 #[derive(Clone)]
 struct StructLayout {
-    /// One entry per field, in declaration order: `(name, byte offset from
-    /// the struct's base, width, signed)`. Offsets follow the same natural
-    /// C alignment `codegen_c.rs`'s emitted typedef gets from clang — a
-    /// field's alignment is its own size, since every field type here is
-    /// `int_ty`-representable (1, 2, 4 or 8 bytes).
-    fields: Vec<(String, i32, Width, bool)>,
+    /// One entry per field, in declaration order, preserved because
+    /// `struct_lit` must evaluate field-initializer expressions in the order
+    /// they were written for side-effect correctness even though scalar and
+    /// nested fields are looked up through different lists below.
+    entries: Vec<FieldEntry>,
+    /// This struct's own size and alignment, in bytes — needed when this
+    /// struct is itself nested inside another one, to place it and to know
+    /// how wide a single `mov` must be to copy it whole.
+    size: i32,
+    align: i32,
+}
+
+#[derive(Clone)]
+enum FieldEntry {
+    /// `(name, byte offset from the struct's base, width, signed)`. Offsets
+    /// follow the same natural C alignment `codegen_c.rs`'s emitted typedef
+    /// gets from clang.
+    Scalar(String, i32, Width, bool),
+    /// `(name, byte offset from the struct's base, nested struct's name)`.
+    Nested(String, i32, String),
+}
+
+impl StructLayout {
+    fn scalar_field(&self, name: &str) -> Option<(i32, Width, bool)> {
+        self.entries.iter().find_map(|e| match e {
+            FieldEntry::Scalar(n, o, w, s) if n == name => Some((*o, *w, *s)),
+            _ => None,
+        })
+    }
+
+    fn nested_field(&self, name: &str) -> Option<(i32, &str)> {
+        self.entries.iter().find_map(|e| match e {
+            FieldEntry::Nested(n, o, ty) if n == name => Some((*o, ty.as_str())),
+            _ => None,
+        })
+    }
+}
+
+/// The `Width` that moves exactly `size` bytes in one instruction, or `None`
+/// if `size` is not one of the four this backend's `mov` forms cover. A
+/// top-level qualifying struct's own size can be anything up to eight bytes
+/// (it is always moved whole, as one opaque `QWORD`, by `value_kind`'s
+/// blanket `Width::W8`), but a struct nested *inside* another one is copied
+/// by exactly this many bytes into the parent's slot, so its size has to be a
+/// real move width or the nesting is refused rather than done wrong.
+fn width_for_size(size: i32) -> Option<Width> {
+    Some(match size {
+        1 => Width::W1,
+        2 => Width::W2,
+        4 => Width::W4,
+        8 => Width::W8,
+        _ => return None,
+    })
+}
+
+fn align_up(cursor: i32, align: i32) -> i32 {
+    (cursor + align - 1) / align * align
+}
+
+/// One struct's layout, given every struct already decided (accepted or
+/// rejected) so far. `None` covers both "not decided yet" (a nested struct
+/// this pass hasn't reached) and "permanently disqualified" — `build_layouts`
+/// cannot tell them apart without re-trying, which is why it loops.
+fn try_build_layout(
+    s: &crate::types::StructDef,
+    out: &std::collections::HashMap<String, StructLayout>,
+) -> Option<StructLayout> {
+    let mut cursor: i32 = 0;
+    let mut max_align: i32 = 1;
+    let mut entries = Vec::with_capacity(s.fields.len());
+    for f in &s.fields {
+        if let Some((width, signed)) = int_ty(&f.ty) {
+            let align = width.bytes();
+            cursor = align_up(cursor, align);
+            entries.push(FieldEntry::Scalar(f.name.clone(), cursor, width, signed));
+            cursor += width.bytes();
+            max_align = max_align.max(align);
+        } else if let Ty::Struct(name) = &f.ty {
+            let inner = out.get(name)?;
+            width_for_size(inner.size)?;
+            let align = inner.align;
+            cursor = align_up(cursor, align);
+            entries.push(FieldEntry::Nested(f.name.clone(), cursor, name.clone()));
+            cursor += inner.size;
+            max_align = max_align.max(align);
+        } else {
+            return None;
+        }
+    }
+    let size = align_up(cursor, max_align);
+    if size <= 8 {
+        Some(StructLayout { entries, size, align: max_align })
+    } else {
+        None
+    }
 }
 
 /// Computes `StructLayout` for every `datac` that qualifies (see
 /// `StructLayout`'s doc), by simulating the same sequential, naturally-aligned
 /// layout a C compiler gives the equivalent typedef. A struct that does not
-/// qualify is simply absent from the returned map.
+/// qualify is simply absent from the returned map. Nested structs mean a
+/// struct's own qualification can depend on another one's, in either textual
+/// order, so this runs to a fixed point rather than in one pass — bounded by
+/// `structs.len()` passes, which is enough to resolve any nesting depth since
+/// a by-value `datac` cannot nest itself (rejected earlier, in `infer.rs`).
 fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashMap<String, StructLayout> {
     let mut out = std::collections::HashMap::new();
-    'structs: for s in structs {
-        let mut cursor: i32 = 0;
-        let mut max_align: i32 = 1;
-        let mut fields = Vec::with_capacity(s.fields.len());
-        for f in &s.fields {
-            let Some((width, signed)) = int_ty(&f.ty) else {
-                continue 'structs;
-            };
-            let align = width.bytes();
-            cursor = (cursor + align - 1) / align * align;
-            fields.push((f.name.clone(), cursor, width, signed));
-            cursor += width.bytes();
-            max_align = max_align.max(align);
+    for _ in 0..=structs.len() {
+        let mut changed = false;
+        for s in structs {
+            if out.contains_key(&s.name) {
+                continue;
+            }
+            if let Some(layout) = try_build_layout(s, &out) {
+                out.insert(s.name.clone(), layout);
+                changed = true;
+            }
         }
-        let size = (cursor + max_align - 1) / max_align * max_align;
-        if size <= 8 {
-            out.insert(s.name.clone(), StructLayout { fields });
+        if !changed {
+            break;
         }
     }
     out
@@ -1728,9 +1820,16 @@ impl Gen {
     /// and stored straight into `frame.agg_slot` at its own offset and width —
     /// no different from an ordinary local's store — and the whole eightbyte
     /// is then loaded into `rax`, which is where every expression leaves its
-    /// value regardless of type. `fields` need not be written in declaration
-    /// order (Kelp's literal syntax names each field), so the offset comes
-    /// from `layout.fields`, looked up by name, not from `fields`'s own order.
+    /// value regardless of type. `entries` is walked in declaration order
+    /// (Kelp's literal syntax names each field, so the surface order can
+    /// differ — but the *evaluation* order must still be declaration order,
+    /// since a field initializer can have side effects) and each field's
+    /// name is looked up in `fields` to find its expression. A nested-struct
+    /// field (`FieldEntry::Nested`) evaluates the same way — its initializer
+    /// is itself a `StructLit`, which leaves the nested value packed in
+    /// `rax` — and is stored at its own byte width, computed from the nested
+    /// struct's own size (`width_for_size`, guaranteed present by
+    /// `try_build_layout` already having checked it).
     fn struct_lit(
         &mut self,
         name: &str,
@@ -1744,7 +1843,20 @@ impl Gen {
             ))
         })?;
         let agg_slot = frame.agg_slot;
-        for (fname, foffset, fwidth, _signed) in &layout.fields {
+        for entry in &layout.entries {
+            let (fname, foffset, fwidth) = match entry {
+                FieldEntry::Scalar(n, o, w, _) => (n, *o, *w),
+                FieldEntry::Nested(n, o, nested_name) => {
+                    let nested = self.layouts.get(nested_name).expect(
+                        "a nested field's struct is always in `self.layouts`, since \
+                         `try_build_layout` only accepted it after looking it up there",
+                    );
+                    let w = width_for_size(nested.size).expect(
+                        "try_build_layout already checked the nested struct's size is a valid move width",
+                    );
+                    (n, *o, w)
+                }
+            };
             let value = fields
                 .iter()
                 .find(|(n, _)| n == fname)
@@ -1773,19 +1885,38 @@ impl Gen {
     /// that hazard was about a value expected to survive *across* a call;
     /// nothing here does, the address is computed and consumed immediately).
     ///
-    /// Three shapes of `base` are covered, which between them are every shape
+    /// Four shapes of `base` are covered, which between them are every shape
     /// `infer.rs` produces for a field access this slice's types can reach:
     /// a plain local of `datac` type (`c.count`, address is its own frame
     /// slot); a plain local of `&datac`/`&mut datac` type (`c.count` again,
     /// but inside a function whose `c` parameter is a reference — `infer.rs`
     /// does not insert a separate `Deref` node for this case, the field
     /// access's `base` is simply the reference-typed `Ident` itself, so the
-    /// distinction is only in which kind of value the slot holds); and an
+    /// distinction is only in which kind of value the slot holds); an
     /// explicit `*r` (`(*r).count`), whose inner expression is evaluated
     /// generically since anything typed `&datac` already knows how to put
     /// its pointer value in `rax` (it is `value_kind`'s `Width::W8` case, the
-    /// same path a plain pointer-sized local uses).
+    /// same path a plain pointer-sized local uses); and a nested field access
+    /// itself (`o.inner` as the base of `o.inner.v`) — the recursive case a
+    /// nested `datac` needs, which resolves `inner`'s own offset within `o`
+    /// by recursing on `o` first and then stepping `r11` forward by that
+    /// offset, without a second `lea` (an `add` is enough, since the nested
+    /// value lives inside the outer one rather than behind its own pointer).
     fn addr_of_struct(&mut self, base: &Expr, frame: &mut Frame) -> Result<StructLayout, String> {
+        if let ExprKind::FieldAccess { base: inner_base, field } = &base.kind {
+            let inner_layout = self.addr_of_struct(inner_base, frame)?;
+            let (offset, nested_name) = inner_layout.nested_field(field).ok_or_else(|| {
+                unsupported(&format!("the field `{field}` of `{}`", inner_base.ty.display()))
+            })?;
+            if offset != 0 {
+                let _ = writeln!(self.out, "    add r11, {offset}");
+            }
+            return self
+                .layouts
+                .get(nested_name)
+                .cloned()
+                .ok_or_else(|| unsupported(&format!("the datac `{nested_name}`")));
+        }
         match &base.kind {
             ExprKind::Ident(name) => {
                 let (loc, ty) = frame
@@ -1837,10 +1968,7 @@ impl Gen {
     fn field_read(&mut self, base: &Expr, field: &str, frame: &mut Frame) -> Result<(), String> {
         let layout = self.addr_of_struct(base, frame)?;
         let (foffset, width, signed) = layout
-            .fields
-            .iter()
-            .find(|(n, ..)| n == field)
-            .map(|(_, o, w, s)| (*o, *w, *s))
+            .scalar_field(field)
             .ok_or_else(|| unsupported(&format!("the field `{field}` of `{}`", base.ty.display())))?;
         let _ = writeln!(self.out, "    mov {}, {} [r11+{foffset}]", width.rax(), width.mem());
         self.out.push_str(&width.extend(signed));
@@ -1861,10 +1989,7 @@ impl Gen {
     ) -> Result<(), String> {
         let layout = self.addr_of_struct(base, frame)?;
         let (foffset, width, _signed) = layout
-            .fields
-            .iter()
-            .find(|(n, ..)| n == field)
-            .map(|(_, o, w, s)| (*o, *w, *s))
+            .scalar_field(field)
             .ok_or_else(|| unsupported(&format!("the field `{field}` of `{}`", base.ty.display())))?;
         self.out.push_str("    push r11\n");
         self.expr(value, frame)?;

@@ -26,31 +26,33 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, then aggregates' first slice, landed** | `codegen_asm.rs`; **108 of 241** integration tests pass under `--backend=asm`; ≤8-byte all-scalar `datac` by value (item 4's first slice) is the newest slice |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, then aggregates' first two slices, landed** | `codegen_asm.rs`; **109 of 242** integration tests pass under `--backend=asm`; a `datac` nested by value inside another qualifying `datac` (item 4's second slice) is the newest slice |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **108 of 241 tests pass on the asm backend, and the C backend passes all
-241.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **109 of 242 tests pass on the asm backend, and the C backend passes all
+242.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
-allocator's own loop-safety correction, not a previously-uncovered language feature. Item 4's first slice (below)
-moved it by six: `datac_basic`, `borrow_basic` (both shared and exclusive borrows of one, plus mutation through
+allocator's own loop-safety correction, not a previously-uncovered language feature. Item 4's first slice moved
+it by six: `datac_basic`, `borrow_basic` (both shared and exclusive borrows of one, plus mutation through
 the exclusive one), `field_read_does_not_move`, `move_then_reinit`, and two module-resolution fixtures that
-happen to declare a `datac` on the way to what they are actually testing.
+happen to declare a `datac` on the way to what they are actually testing. Item 4's second slice (below) moved
+it by exactly one more: `a_datac_can_embed_an_earlier_datac`, over `datac_embeds_datac.kp`.
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
 
 - **Stage 0** (backend boundary): done.
 - **Stage 1** (x86-64 assembly): 3 of its own 8 build-order items (§5) are done outright — scalars, `f32`/`f64`,
-  the register allocator — and a 4th (aggregates) has its first slice landed. That is where the 108/241
-  fixture number comes from. The remaining 4½ items (the rest of aggregates, drop/ownership, closures,
-  capabilities, `print`/`print!`'s remaining gaps) are what stands between here and Stage 1's own definition
-  of done: all 241 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for the asm backend.
+  the register allocator — and a 4th (aggregates) has its first two slices landed. That is where the 109/242
+  fixture number comes from. The remaining part of item 4 (real SysV eightbyte/`MEMORY` classification for a
+  `datac` over eight bytes or holding a float/heap field, and `enum`), plus items 5-8 (drop/ownership, closures,
+  capabilities, `print`/`print!`'s remaining gaps), are what stands between here and Stage 1's own definition
+  of done: all 242 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for the asm backend.
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
   Stage 1 finishing first, by this plan's own tiering rule (§1.4).
 - **§8** (the parallel runtime track): 2 of its pieces are done (the capability matcher, the path normalizer);
@@ -61,7 +63,7 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (108/241) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (109/242) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
@@ -78,12 +80,13 @@ builds, and detailed in §5):
    turn needs aggregate-by-value return (§5 item 4, `Bytes` is a struct) landed first. The §8 allocator item is
    further blocked on its own terms — see §8's note below — so it is **not** next; see the corrected order
    there.
-2. **Aggregates, the rest of them** — 24 fixtures were blocked by this before item 4's first slice; six are
-   landed (below), leaving `enum` (tagged unions, not attempted at all), any `datac` over eight bytes or holding
-   a float/heap field (two-eightbyte and `MEMORY`-class SysV passing — real eightbyte classification, not the
-   opaque-blob shortcut a single eightbyte allows), and a borrow of a temporary (`sum(Pair(a = 1, b = 2))`,
-   still refused — see item 4's blockquote for why). This is still where the ABI work the risk register calls
-   the place silent miscompiles live is concentrated.
+2. **Aggregates, the rest of them** — 24 fixtures were blocked by this before item 4's first slice; seven are
+   landed now (six from the first slice, one — a `datac` nested by value inside another qualifying `datac` —
+   from the second), leaving `enum` (tagged unions, not attempted at all), any `datac` over eight bytes or
+   holding a float/heap field (two-eightbyte and `MEMORY`-class SysV passing — real eightbyte classification,
+   not the opaque-blob shortcut a single eightbyte allows), and a borrow of a temporary (`sum(Pair(a = 1, b =
+   2))`, still refused — see item 4's blockquote for why). This is still where the ABI work the risk register
+   calls the place silent miscompiles live is concentrated.
 3. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
 4. **String values** — 7 fixtures.
 5. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
@@ -206,10 +209,10 @@ with the backend as the only variable.
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
 > **Status: first slice landed, then f32/f64, then a register allocator (item
-> 3), then aggregates' first slice (item 4).** `kelpc build --backend=asm`
+> 3), then aggregates' first two slices (item 4).** `kelpc build --backend=asm`
 > emits x86-64 assembly itself and finishes with `as` and `ld`, with no C
-> compiler in the chain. Measured: **108 of 241 end-to-end tests pass**, and
-> the C backend passes all 241 — so the differential gate is live
+> compiler in the chain. Measured: **109 of 242 end-to-end tests pass**, and
+> the C backend passes all 242 — so the differential gate is live
 > (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number can
 > only rise from here.
 >
@@ -317,7 +320,34 @@ with the backend as the only variable.
 > is exactly this shape and stays uncovered until a temporary gets its own
 > slot rather than a shared one.
 >
-> Three deliberate first-slice choices remain from the original slice, each a
+> **Item 4's second slice — a `datac` nested by value inside another
+> qualifying `datac` — is done (2026-09-19).** `Outer(inner: Inner, n: i32)`
+> where `Inner` is itself a qualifying (all-scalar, ≤8-byte) `datac` now
+> builds and reads back correctly, as long as `Outer`'s own total size is
+> still ≤8 bytes. `build_layouts` runs to a fixed point over the whole struct
+> list (bounded by `structs.len()` passes) rather than in one pass, since a
+> struct's own qualification can now depend on another struct's — declared
+> before or after it in source, either way — and `StructLayout` gained a
+> second kind of field entry (`FieldEntry::Nested`, alongside the existing
+> `FieldEntry::Scalar`) recording a nested field's own byte offset and struct
+> name rather than a width. A nested struct is only accepted if its own size
+> is *exactly* one of the four widths this backend can `mov` in one
+> instruction (1/2/4/8 bytes, `width_for_size`) — not merely ≤8 — because
+> unlike a top-level qualifying struct (always moved whole, as one opaque
+> `QWORD`, regardless of its real size) a nested one is copied into its
+> parent's slot at its own precise width, and a struct whose fields leave it,
+> say, 3 bytes wide would either under-copy or spill into the next field's
+> bytes. `addr_of_struct` gained a fourth shape to resolve a `base` expression
+> through: `ExprKind::FieldAccess` itself, so a chain like `o.inner.v`
+> recurses — computing `o`'s own address first, then stepping `r11` forward by
+> `inner`'s offset within `Outer` (an `add`, not a second `lea`, since the
+> nested value lives inside the outer one rather than behind its own
+> pointer) — before `field_read`/`field_assign` resolve the final scalar leaf
+> exactly as they already did. `tests/fixtures/datac_embeds_datac.kp` is the
+> fixture this unblocks: `Outer(inner = Inner(v = 7), n = 1)`, printing
+> `o.inner.v + o.n`.
+>
+> Deliberate choices carried over unchanged from the first slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
 > reported by name, so the suite measures coverage instead of hiding
@@ -333,7 +363,7 @@ with the backend as the only variable.
 > | `extern fun std.mem.alloc_raw` — i.e. the runtime, §8 | 36 |
 > | string values | 7 |
 > | `List<T>` / `Map<K, V>` | 9 |
-> | `datac` over 8 bytes, a float/heap field, or an `enum` | 18 |
+> | `datac` over 8 bytes, a float/heap field, or an `enum` | 17 |
 > | capability-gated calls | 7 |
 > | numeric conversions, printing `str`/`f64`, closures, the rest | ~20 |
 >
@@ -371,11 +401,13 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 3. **A register allocator. Done** (2026-09-19). Linear-scan over five callee-saved integer registers, for
    `i32`/`i64`/`bool`/`char` locals only — see item 3's blockquote above for the loop-widening correction and
    the bug it caught.
-4. **Aggregates by value. First slice done** (2026-09-19): a `datac` whose fields are all scalar and whose
+4. **Aggregates by value. First two slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
    layout fits in eight bytes needs no SysV eightbyte classification at all — it is one eightbyte, so it moves
    through the same paths a `u64` already does, and only a field read or write needs the layout (see item 4's
-   blockquote above). What is left of this item is the rest of the ABI work, and it is where the silent
-   miscompiles live: `enum` (tagged union) entirely; any `datac` over eight bytes or holding a float/heap field,
+   blockquote above). The second slice extends this to a `datac` nested by value inside another qualifying
+   `datac`, as long as the outer struct's own size is still ≤8 bytes and the nested struct's own size is one of
+   the four move widths (1/2/4/8 bytes). What is left of this item is the rest of the ABI work, and it is where
+   the silent miscompiles live: `enum` (tagged union) entirely; any `datac` over eight bytes or holding a float/heap field,
    which needs real SysV `INTEGER`/`SSE`/`MEMORY` eightbyte classification, passing eightbyte chunks in
    registers where it can and putting anything over sixteen bytes on the stack; `String`, `Bytes`, `View`,
    `List<T>`, `Map<K, V>`, `Box<T>`; and a borrow of a temporary rather than a named local. Layout must match
