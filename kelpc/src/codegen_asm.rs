@@ -386,6 +386,27 @@ fn bytes_ty(ty: &Ty) -> bool {
     }
 }
 
+/// `String` and `&String`/`&mut String` — the owned text buffer and a borrow
+/// of it, the `String#*` methods' receiver and one of the two shapes
+/// `print`/`print!` accept (MK7 §5's second heap slice). `kelp_String` is the
+/// same `{data, len, cap}` aggregate `kelp_Bytes` is, so every site that
+/// handles an owned `Bytes` handles an owned `String` too — the only thing
+/// this predicate adds is where the *drop* and the method table differ.
+fn string_ty(ty: &Ty) -> bool {
+    match ty {
+        Ty::String => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::String),
+        _ => false,
+    }
+}
+
+/// `View` — the two-eightbyte `{ptr, len}` borrowed text view (MK7 §5's
+/// second heap slice). It is `Copy`, so there is no `&View` shape to look
+/// through: a view parameter and a view argument are the value itself.
+fn view_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::View)
+}
+
 /// `codegen_c.rs::is_place`'s predicate: an expression that names storage an
 /// address can be taken of. Used to tell `&b` (a borrow of a local, no copy)
 /// from `&Bytes.from_str(..)` (a borrow of a temporary, which needs a slot of
@@ -426,6 +447,44 @@ fn bytes_layout() -> StructLayout {
             FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
         ],
         size: 24,
+        align: 8,
+    }
+}
+
+/// The key `struct_layout` looks `Ty::String` up under — `$Bytes`'s sibling,
+/// for the same reason (no Kelp identifier can contain a `$`).
+const STRING_LAYOUT_KEY: &str = "$String";
+
+/// The key `struct_layout` looks `Ty::View` up under.
+const VIEW_LAYOUT_KEY: &str = "$View";
+
+/// The C layout of `kelp_String` (`codegen_c.rs:316-321`): the same
+/// `{data, len, cap}` the `Bytes` layout is, so a `String` local, parameter,
+/// argument and return travel exactly the way a `Bytes` one does.
+fn string_layout() -> StructLayout {
+    StructLayout {
+        entries: vec![
+            FieldEntry::Scalar("data".to_string(), 0, Width::W8, false),
+            FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
+            FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
+        ],
+        size: 24,
+        align: 8,
+    }
+}
+
+/// The C layout of `kelp_View` (`codegen_c.rs:115-118`): `ptr` at 0, `len` at
+/// 8, size 16, align 8. Two INTEGER eightbytes, so this is the first heap type
+/// whose `AggClass` is `Two` — it travels in a register pair (`rdi`/`rsi` in,
+/// `rax`/`rdx` out) rather than through the hidden pointer, which is the path
+/// item 4's third slice built and no heap type had exercised until now.
+fn view_layout() -> StructLayout {
+    StructLayout {
+        entries: vec![
+            FieldEntry::Scalar("ptr".to_string(), 0, Width::W8, false),
+            FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
+        ],
+        size: 16,
         align: 8,
     }
 }
@@ -537,6 +596,50 @@ enum Routine {
     BytesPush,
     BytesAppend,
     BytesClear,
+    /// MK7 §5's second heap slice: `Bytes#as_str` — a bounds-checked borrow of
+    /// the buffer as text, which needs `Utf8Valid` and was the one `Bytes#*`
+    /// method the first slice left unmapped.
+    BytesAsStr,
+    /// The shared UTF-8 well-formedness check `String#from_bytes` and
+    /// `Bytes#as_str` both use — `codegen_c.rs:186-208`, transliterated.
+    Utf8Valid,
+    /// The owned `String` runtime: `codegen_c.rs`'s sixteen `kelp_String__*`
+    /// functions plus `kelp_string_drop`. Same `{data, len, cap}` shape as
+    /// `Bytes`, so the call/return ABI is identical (`String#reserve` is
+    /// `BufReserve` directly, exactly as `Bytes#reserve` is).
+    StringEmpty,
+    StringFromStr,
+    StringFromBytes,
+    StringIntoBytes,
+    StringLen,
+    StringIsEmpty,
+    StringCharCount,
+    StringClone,
+    StringPush,
+    StringPushStr,
+    StringWithCapacity,
+    StringClear,
+    StringAsStr,
+    StringView,
+    StringDrop,
+    /// The borrowed `View` runtime: `codegen_c.rs`'s seven `kelp_View__*`/
+    /// `kelp_str__view` functions. A `View` borrows, so it has no drop — this
+    /// is the one heap type whose runtime is all read-only.
+    ViewLen,
+    ViewIsEmpty,
+    ViewGet,
+    ViewSlice,
+    ViewEq,
+    ViewToString,
+    StrView,
+    /// MK7 §5: the `str`/`fmt` externs whose bodies became lowerable once
+    /// `String` existed. `StrFromF64Raw` is one `snprintf` pair plus the
+    /// `Bytes` allocator; `FmtHexRaw` and `FmtBytesRaw` are `snprintf`/byte
+    /// shuffling plus `String.from_bytes`. The `parse_*_raw` family is left
+    /// out — see `extern_target`.
+    StrFromF64Raw,
+    FmtHexRaw,
+    FmtBytesRaw,
 }
 
 impl Routine {
@@ -564,6 +667,33 @@ impl Routine {
             Routine::BytesPush => "kelp_rt$bytes_push",
             Routine::BytesAppend => "kelp_rt$bytes_append",
             Routine::BytesClear => "kelp_rt$bytes_clear",
+            Routine::BytesAsStr => "kelp_rt$bytes_as_str",
+            Routine::Utf8Valid => "kelp_rt$utf8_valid",
+            Routine::StringEmpty => "kelp_rt$string_empty",
+            Routine::StringFromStr => "kelp_rt$string_from_str",
+            Routine::StringFromBytes => "kelp_rt$string_from_bytes",
+            Routine::StringIntoBytes => "kelp_rt$string_into_bytes",
+            Routine::StringLen => "kelp_rt$string_len",
+            Routine::StringIsEmpty => "kelp_rt$string_is_empty",
+            Routine::StringCharCount => "kelp_rt$string_char_count",
+            Routine::StringClone => "kelp_rt$string_clone",
+            Routine::StringPush => "kelp_rt$string_push",
+            Routine::StringPushStr => "kelp_rt$string_push_str",
+            Routine::StringWithCapacity => "kelp_rt$string_with_capacity",
+            Routine::StringClear => "kelp_rt$string_clear",
+            Routine::StringAsStr => "kelp_rt$string_as_str",
+            Routine::StringView => "kelp_rt$string_view",
+            Routine::StringDrop => "kelp_rt$string_drop",
+            Routine::ViewLen => "kelp_rt$view_len",
+            Routine::ViewIsEmpty => "kelp_rt$view_is_empty",
+            Routine::ViewGet => "kelp_rt$view_get",
+            Routine::ViewSlice => "kelp_rt$view_slice",
+            Routine::ViewEq => "kelp_rt$view_eq",
+            Routine::ViewToString => "kelp_rt$view_to_string",
+            Routine::StrView => "kelp_rt$str_view",
+            Routine::StrFromF64Raw => "kelp_rt$str_from_f64_raw",
+            Routine::FmtHexRaw => "kelp_rt$fmt_hex_raw",
+            Routine::FmtBytesRaw => "kelp_rt$fmt_bytes_raw",
         }
     }
 }
@@ -586,6 +716,49 @@ fn bytes_method(callee: &str) -> Option<Routine> {
         "Bytes#append" => Routine::BytesAppend,
         "Bytes#reserve" => Routine::BufReserve,
         "Bytes#clear" => Routine::BytesClear,
+        "Bytes#as_str" => Routine::BytesAsStr,
+        _ => return None,
+    })
+}
+
+/// The routine a `String#*` builtin method lowers to (MK7 §5's second heap
+/// slice). Same discipline as `bytes_method`: `String#reserve` is
+/// `BufReserve` directly (identical `(String*, size_t)` ABI), and an unmapped
+/// method is refused by name at the call site.
+fn string_method(callee: &str) -> Option<Routine> {
+    Some(match callee {
+        "String#empty" => Routine::StringEmpty,
+        "String#from_str" => Routine::StringFromStr,
+        "String#from_bytes" => Routine::StringFromBytes,
+        "String#into_bytes" => Routine::StringIntoBytes,
+        "String#len" => Routine::StringLen,
+        "String#is_empty" => Routine::StringIsEmpty,
+        "String#char_count" => Routine::StringCharCount,
+        "String#clone" => Routine::StringClone,
+        "String#push" => Routine::StringPush,
+        "String#push_str" => Routine::StringPushStr,
+        "String#reserve" => Routine::BufReserve,
+        "String#with_capacity" => Routine::StringWithCapacity,
+        "String#clear" => Routine::StringClear,
+        "String#as_str" => Routine::StringAsStr,
+        "String#view" => Routine::StringView,
+        _ => return None,
+    })
+}
+
+/// The routine a `View#*` or `str#*` builtin method lowers to. `str#view`
+/// shares the table because `str.view()` is the other constructor of a
+/// `View`; every `View` method takes `self` by value (a `View` is `Copy`),
+/// so the receiver is already the pair of registers the routine expects.
+fn view_method(callee: &str) -> Option<Routine> {
+    Some(match callee {
+        "str#view" => Routine::StrView,
+        "View#len" => Routine::ViewLen,
+        "View#is_empty" => Routine::ViewIsEmpty,
+        "View#get" => Routine::ViewGet,
+        "View#slice" => Routine::ViewSlice,
+        "View#eq" => Routine::ViewEq,
+        "View#to_string" => Routine::ViewToString,
         _ => return None,
     })
 }
@@ -623,11 +796,23 @@ fn extern_target(key: &str) -> Option<Extern> {
         // Both are pure bit tests on the operand, so they are ours.
         "std.math.is_nan_raw" => Extern::Routine(Routine::MathIsNanRaw),
         "std.math.is_finite_raw" => Extern::Routine(Routine::MathIsFiniteRaw),
-        // MK7 §5's first heap slice: `std.mem.alloc_raw` is the plan's named
+        // MK7 §5: `std.mem.alloc_raw` is the plan's named
         // "hand-written assembly routine for allocation, PLT-called" — one
         // `malloc` through the PLT plus the zero-fill and NUL-termination
         // contract `mem.kp` documents.
         "std.mem.alloc_raw" => Extern::Routine(Routine::BytesAllocRaw),
+        // The `str`/`fmt` externs that became lowerable once `String` existed
+        // (MK7 §5's second heap slice). Each is a transliteration of its
+        // `externs.rs` body. The `parse_i64_raw`/`parse_u64_raw`/
+        // `parse_f64_raw` family is deliberately **not** here: its `out` is a
+        // `mut i64`/`u64`/`f64` parameter, and this backend's `ExprKind::Ref`
+        // lowering addresses a named `datac`/`Bytes`/`String` local but not a
+        // scalar one, so mapping it would move the refusal from the
+        // declaration to the call site rather than unblock a fixture. See
+        // this slice's report.
+        "std.str.from_f64_raw" => Extern::Routine(Routine::StrFromF64Raw),
+        "std.fmt.hex_raw" => Extern::Routine(Routine::FmtHexRaw),
+        "std.fmt.bytes_raw" => Extern::Routine(Routine::FmtBytesRaw),
         _ => return None,
     })
 }
@@ -985,6 +1170,8 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
     // handle it with no special case: it is a `Mem`-class three-eightbyte
     // struct, exactly as the C typedef says.
     out.insert(BYTES_LAYOUT_KEY.to_string(), bytes_layout());
+    out.insert(STRING_LAYOUT_KEY.to_string(), string_layout());
+    out.insert(VIEW_LAYOUT_KEY.to_string(), view_layout());
     for _ in 0..=structs.len() {
         let mut changed = false;
         for s in structs {
@@ -1012,6 +1199,8 @@ fn struct_layout<'a>(
     match ty {
         Ty::Struct(name) => layouts.get(name),
         Ty::Bytes => layouts.get(BYTES_LAYOUT_KEY),
+        Ty::String => layouts.get(STRING_LAYOUT_KEY),
+        Ty::View => layouts.get(VIEW_LAYOUT_KEY),
         _ => None,
     }
 }
@@ -1299,11 +1488,12 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         // an owned `Bytes` passdown is refused by name rather than leaked
         // silently — the same refusal-over-silence rule the rest of this
         // module follows. No fixture declares one.
-        if pd.value_ty == Ty::Bytes {
+        if matches!(pd.value_ty, Ty::Bytes | Ty::String) {
             return Err(unsupported(&format!(
-                "the passdown `pd {}` (its type is `Bytes`, and the asm backend does not yet \
+                "the passdown `pd {}` (its type is `{}`, and the asm backend does not yet \
                  free a passdown at process exit — see plan/mk7-own-backend.md §5)",
-                pd.qualified
+                pd.qualified,
+                pd.value_ty.display()
             )));
         }
         g.pds.push(PdGlobal { hidden: pd.name.clone(), label, value_ty: pd.value_ty.clone() });
@@ -1485,7 +1675,8 @@ impl LiveAnalysis {
         // `eval_struct_into`/`emit_copy`, so it must be stack-only for the
         // same reason a `datac` is — the register allocator must not hand it
         // one of its five registers.
-        self.is_agg.push(matches!(ty, Ty::Struct(_) | Ty::Bytes));
+        self.is_agg
+            .push(matches!(ty, Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::View));
         self.scopes
             .last_mut()
             .expect("a scope always exists")
@@ -2429,31 +2620,47 @@ impl Gen {
     /// *looks* handled is exactly what this backend's refusals exist to
     /// prevent.
     fn emit_drop(&mut self, target: &DropTarget, frame: &Frame) -> Result<(), String> {
-        if target.ty != Ty::Bytes {
+        // A `View` is a `Copy` borrow and has no drop arm in `types.rs`
+        // (`drop_fn_name(View)` is `unreachable!`), so this can only be
+        // reached if a `DropPlan` were built wrong. Refused by name rather
+        // than skipped, the same rule the rest of this module follows: a skip
+        // that looks handled is what the refusals exist to prevent.
+        if target.ty == Ty::View {
             return Err(unsupported(&format!(
-                "dropping the owned value `{}` of type `{}`",
-                target.name,
-                target.ty.display()
+                "dropping the borrowed view `{}` (a `View` owns nothing and is never freed)",
+                target.name
             )));
         }
+        let drop = match target.ty {
+            Ty::Bytes => Routine::BytesDrop,
+            Ty::String => Routine::StringDrop,
+            _ => {
+                return Err(unsupported(&format!(
+                    "dropping the owned value `{}` of type `{}`",
+                    target.name,
+                    target.ty.display()
+                )))
+            }
+        };
         let off = match frame.lookup(&target.name) {
             Some((loc, _)) => loc
                 .stack_offset()
-                .expect("an owned Bytes local is stack-only"),
+                .expect("an owned heap local is stack-only"),
             None => return Err(unsupported(&format!("a drop of the name `{}`", target.name))),
         };
-        self.emit_drop_slot(off, frame)
+        self.emit_drop_slot(drop, off, frame)
     }
 
-    /// Frees an owned `Bytes` whose storage this code generator staged in a
-    /// `Frame::scratch` slot — a temporary borrowed for a call argument, or
-    /// printed directly. The same two calls `emit_drop` makes, addressed by
-    /// frame offset rather than by name.
-    fn emit_drop_slot(&mut self, slot: i32, frame: &Frame) -> Result<(), String> {
-        self.require_routine(Routine::BytesDrop);
+    /// Frees an owned `Bytes`/`String` whose storage this code generator
+    /// staged in a `Frame::scratch` slot — a temporary borrowed for a call
+    /// argument, or printed directly. The same two calls `emit_drop` makes,
+    /// addressed by frame offset rather than by name, and with the drop
+    /// routine chosen by the caller because a scratch slot carries no type.
+    fn emit_drop_slot(&mut self, r: Routine, slot: i32, frame: &Frame) -> Result<(), String> {
+        self.require_routine(r);
         call_align_begin(&mut self.out, frame.sp_slot);
         let _ = writeln!(self.out, "    lea rdi, [rbp{slot}]");
-        let _ = writeln!(self.out, "    call {}", Routine::BytesDrop.label());
+        let _ = writeln!(self.out, "    call {}", r.label());
         call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
     }
@@ -2461,8 +2668,24 @@ impl Gen {
     /// Records that a routine, and everything it calls, has to be emitted.
     fn require_routine(&mut self, r: Routine) {
         match r {
-            Routine::BytesPush | Routine::BytesAppend => {
+            Routine::BytesPush
+            | Routine::BytesAppend
+            | Routine::StringPush
+            | Routine::StringPushStr
+            | Routine::StringWithCapacity => {
                 self.routines.insert(Routine::BufReserve);
+            }
+            Routine::BytesAsStr | Routine::StringFromBytes => {
+                self.routines.insert(Routine::Utf8Valid);
+            }
+            Routine::StrFromF64Raw => {
+                self.routines.insert(Routine::Utf8Valid);
+                self.routines.insert(Routine::BytesAllocRaw);
+            }
+            Routine::FmtBytesRaw => {
+                self.routines.insert(Routine::Utf8Valid);
+                self.routines.insert(Routine::BytesAllocRaw);
+                self.routines.insert(Routine::StringEmpty);
             }
             _ => {}
         }
@@ -2497,31 +2720,37 @@ impl Gen {
         }
     }
 
-    /// A `&Bytes` argument whose inner expression is a *temporary* —
-    /// `b.append(Bytes.from_str("de"))` — needs storage its address can be
-    /// taken of. It gets a fresh scratch slot built through `eval_struct_into`
-    /// and a `lea` of that slot; the caller records the slot so the temporary
-    /// is freed right after the call, which is what `codegen_c.rs::call_value`
-    /// does by hoisting the same temporary into a C variable. `None` for a
-    /// borrow of a place (`&b`, addressed directly) and for anything that is
-    /// not a temporary `Bytes`.
-    fn hoist_bytes_temporary(
+    /// An owned `Bytes`/`String` argument passed as a *borrow* (`&b`, `&s`)
+    /// whose inner expression is a temporary — `b.append(Bytes.from_str("de"))`,
+    /// `f(String.from_str("x"))` — needs storage its address can be taken of.
+    /// It gets a fresh scratch slot built through `eval_struct_into` and a
+    /// `lea` of that slot; the caller records the slot and the drop routine so
+    /// the temporary is freed right after the call, which is what
+    /// `codegen_c.rs::call_value` does by hoisting the same temporary into a C
+    /// variable. `None` for a borrow of a place (`&b`, addressed directly) and
+    /// for anything that is not a temporary `Bytes`/`String`.
+    fn hoist_owned_temporary(
         &mut self,
         arg: &Expr,
         frame: &mut Frame,
-    ) -> Result<Option<i32>, String> {
+    ) -> Result<Option<(i32, Routine)>, String> {
         let ExprKind::Ref { expr: inner, .. } = &arg.kind else {
             return Ok(None);
         };
-        if inner.ty != Ty::Bytes || is_place(inner) {
+        let drop = match inner.ty {
+            Ty::Bytes => Routine::BytesDrop,
+            Ty::String => Routine::StringDrop,
+            _ => return Ok(None),
+        };
+        if is_place(inner) {
             return Ok(None);
         }
         let layout = struct_layout(&inner.ty, &self.layouts)
-            .expect("Bytes has a synthesized layout");
+            .expect("Bytes and String have synthesized layouts");
         let slot = frame.scratch(align_up(layout.size, 8));
         self.eval_struct_into(inner, frame, Dest::Direct(slot))?;
         let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
-        Ok(Some(slot))
+        Ok(Some((slot, drop)))
     }
 
     fn stmt(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
@@ -3603,14 +3832,33 @@ impl Gen {
         // inline by the C backend as a cast plus a range check that panics.
         // MK7 §5 item 8 emits the same shape here — see `Gen::conversion` —
         // including the panic message, which is the callee's own dotted name.
+        //
+        // The name shape alone is not enough: `View#to_string` also contains
+        // `#to_`, and it is a plain method (`kelp_View__to_string`), not a
+        // numeric conversion — the same distinction `codegen_c.rs` draws by
+        // requiring both halves to name an integer/float type before it takes
+        // its conversion path. So the lookup is what decides, and a callee the
+        // lookup cannot resolve falls through to the `String`/`View`/`Bytes`
+        // method tables below (and then to an ordinary call).
         if callee.contains("#to_") {
-            let [arg] = args else {
-                return Err(unsupported(&format!(
-                    "the numeric conversion `{}`",
-                    callee.replace('#', ".")
-                )));
-            };
-            return self.conversion(callee, arg, frame);
+            let numeric = callee
+                .split_once("#to_")
+                .map(|(src, dst)| {
+                    Ty::from_name(src).map(|t| t.is_integer()).unwrap_or(false)
+                        && Ty::from_name(dst)
+                            .map(|t| t.is_integer() || t.is_float())
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if numeric {
+                let [arg] = args else {
+                    return Err(unsupported(&format!(
+                        "the numeric conversion `{}`",
+                        callee.replace('#', ".")
+                    )));
+                };
+                return self.conversion(callee, arg, frame);
+            }
         }
         // `panic` and `assert` are builtins (`infer.rs`'s `BUILTINS`), not
         // functions, and the C backend lowers them to its own runtime routines
@@ -3754,13 +4002,14 @@ impl Gen {
         // slot of its own, and only *copied* into the outgoing area once every
         // register argument is already in its register — see below.
         let mut mem_plan: Vec<Option<(i32, i32, i32)>> = vec![None; args.len()];
-        // MK7 §5 item 5: a `&Bytes` argument whose inner expression is a
-        // temporary gets a slot of its own (`hoist_bytes_temporary`) and is
-        // freed right after the call — the shape `codegen_c.rs::call_value`
-        // gets from hoisting the same temporary into a C variable.
-        let mut hoisted: Vec<i32> = Vec::new();
+        // MK7 §5 item 5: a `&Bytes`/`&String` argument whose inner expression
+        // is a temporary gets a slot of its own (`hoist_owned_temporary`) and
+        // is freed right after the call — the shape `codegen_c.rs::call_value`
+        // gets from hoisting the same temporary into a C variable. The drop
+        // routine travels with the slot because a scratch slot carries no type.
+        let mut hoisted: Vec<(i32, Routine)> = Vec::new();
         for (pos, arg) in args.iter().enumerate() {
-            if let Some(slot) = self.hoist_bytes_temporary(arg, frame)? {
+            if let Some(slot) = self.hoist_owned_temporary(arg, frame)? {
                 hoisted.push(slot);
                 self.out.push_str("    push rax\n");
             } else if float_ty(&arg.ty).is_some() {
@@ -3834,14 +4083,21 @@ impl Gen {
                 }
             }
         }
-        let symbol = if let Some(r) = bytes_method(callee) {
-            // MK7 §5's heap slice: the `Bytes` builtins are routines this
-            // backend owns, exactly like the externs `extern_target` maps.
+        let symbol = if let Some(r) = bytes_method(callee)
+            .or_else(|| string_method(callee))
+            .or_else(|| view_method(callee))
+        {
+            // MK7 §5's heap slices: the `Bytes`/`String`/`View` builtins are
+            // routines this backend owns, exactly like the externs
+            // `extern_target` maps.
             self.require_routine(r);
             r.label().to_string()
-        } else if callee.starts_with("Bytes#") {
+        } else if callee.starts_with("Bytes#")
+            || callee.starts_with("String#")
+            || callee.starts_with("View#")
+        {
             return Err(unsupported(&format!(
-                "the method `{}` on an owned `Bytes`",
+                "the method `{}` on an owned value",
                 callee.replace('#', ".")
             )));
         } else {
@@ -3942,8 +4198,8 @@ impl Gen {
             } else {
                 None
             };
-            for slot in &hoisted {
-                self.emit_drop_slot(*slot, frame)?;
+            for (slot, drop) in &hoisted {
+                self.emit_drop_slot(*drop, *slot, frame)?;
             }
             if let Some(p) = parked {
                 self.unpark(p);
@@ -4293,6 +4549,327 @@ impl Gen {
             Routine::BytesClear => {
                 self.out.push_str("    mov QWORD PTR [rdi+8], 0\n    mov rax, QWORD PTR [rdi]\n    test rax, rax\n    je .Lclear_done\n    mov BYTE PTR [rax], 0\n.Lclear_done:\n    ret\n");
             }
+            // ---- MK7 §5's second heap slice: `String`, `View`, and the
+            // shared helpers they need -------------------------------------
+            //
+            // Every routine below is a transliteration of the matching C body
+            // in `codegen_c.rs`'s RUNTIME. The `String` ABI is the `Bytes` ABI
+            // (`{data, len, cap}`), so a `String` routine is a `String`-typed
+            // copy of the `Bytes` one; a `View` routine is different in kind:
+            // a `View` is a `Two`-class value, so it arrives in a register
+            // pair (`rdi`/`rsi`) and a `View`-returning routine leaves its
+            // result in `rax`/`rdx`.
+            Routine::Utf8Valid => {
+                // kelp_utf8_valid(p, n): the well-formedness scan `from_bytes`
+                // and `Bytes.as_str` both run. `i` is `rcx`, `cp` `rax`,
+                // `extra` `r8`; every register used is caller-saved and the
+                // routine makes no call, so nothing has to be preserved.
+                self.out.push_str("    xor ecx, ecx\n.Lutf8_loop:\n    cmp rcx, rsi\n    jae .Lutf8_true\n");
+                self.out.push_str("    movzx eax, BYTE PTR [rdi+rcx]\n    cmp eax, 0x80\n    jb .Lutf8_next\n");
+                self.out.push_str("    mov edx, eax\n    and edx, 0xE0\n    cmp edx, 0xC0\n    je .Lutf8_two\n");
+                self.out.push_str("    mov edx, eax\n    and edx, 0xF0\n    cmp edx, 0xE0\n    je .Lutf8_three\n");
+                self.out.push_str("    mov edx, eax\n    and edx, 0xF8\n    cmp edx, 0xF0\n    je .Lutf8_four\n    jmp .Lutf8_false\n");
+                self.out.push_str(".Lutf8_two:\n    mov r8d, 1\n    and eax, 0x1F\n    jmp .Lutf8_have\n");
+                self.out.push_str(".Lutf8_three:\n    mov r8d, 2\n    and eax, 0x0F\n    jmp .Lutf8_have\n");
+                self.out.push_str(".Lutf8_four:\n    mov r8d, 3\n    and eax, 0x07\n");
+                self.out.push_str(".Lutf8_have:\n    lea r9, [rcx+r8]\n    cmp r9, rsi\n    jae .Lutf8_false\n    mov r10d, 1\n");
+                self.out.push_str(".Lutf8_kloop:\n    cmp r10, r8\n    ja .Lutf8_kafter\n    lea r9, [rcx+r10]\n    movzx r11d, BYTE PTR [rdi+r9]\n");
+                self.out.push_str("    mov edx, r11d\n    and edx, 0xC0\n    cmp edx, 0x80\n    jne .Lutf8_false\n    and r11d, 0x3F\n    shl rax, 6\n    or rax, r11\n");
+                self.out.push_str("    add r10, 1\n    jmp .Lutf8_kloop\n.Lutf8_kafter:\n");
+                self.out.push_str("    cmp r8, 1\n    jne .Lutf8_n1\n    cmp rax, 0x80\n    jb .Lutf8_false\n.Lutf8_n1:\n");
+                self.out.push_str("    cmp r8, 2\n    jne .Lutf8_n2\n    cmp rax, 0x800\n    jb .Lutf8_false\n.Lutf8_n2:\n");
+                self.out.push_str("    cmp r8, 3\n    jne .Lutf8_n3\n    cmp rax, 0x10000\n    jb .Lutf8_false\n.Lutf8_n3:\n");
+                self.out.push_str("    cmp rax, 0x10FFFF\n    ja .Lutf8_false\n    cmp rax, 0xD800\n    jb .Lutf8_nsur\n    cmp rax, 0xDFFF\n    jbe .Lutf8_false\n");
+                self.out.push_str(".Lutf8_nsur:\n    add rcx, r8\n    add rcx, 1\n    jmp .Lutf8_loop\n");
+                self.out.push_str(".Lutf8_next:\n    add rcx, 1\n    jmp .Lutf8_loop\n");
+                self.out.push_str(".Lutf8_true:\n    mov eax, 1\n    ret\n.Lutf8_false:\n    xor eax, eax\n    ret\n");
+            }
+            Routine::BytesAsStr => {
+                // kelp_Bytes__as_str(self): check the buffer is UTF-8, then
+                // hand its pointer out as a `str`. `rbx` holds `self` across
+                // the check; the one push keeps `rsp` aligned at the call.
+                let msg = self.bytes_label(b"Bytes.as_str: input is not valid utf-8");
+                self.out.push_str("    push rbx\n    mov rbx, rdi\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbx]\n    mov rsi, QWORD PTR [rbx+8]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::Utf8Valid.label());
+                self.out.push_str("    test al, al\n    je .Lbytes_as_str_bad\n    mov rax, QWORD PTR [rbx]\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lbytes_as_str_bad:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::StringEmpty => {
+                // kelp_String__empty: as `kelp_Bytes__empty`, one allocated
+                // zero byte so an empty string is never NULL.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    mov rbx, rdi\n    mov edi, 1\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lstring_empty_oom\n    mov BYTE PTR [rax], 0\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], 0\n    mov QWORD PTR [rbx+16], 0\n");
+                self.out.push_str("    mov rax, rbx\n    pop rbx\n    ret\n.Lstring_empty_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::StringFromStr => {
+                // kelp_String__from_str(text): strlen, malloc(n + 1), memcpy
+                // including the NUL.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov rdi, r12\n    call strlen@PLT\n");
+                self.out.push_str("    mov r13, rax\n    lea rdi, [r13+1]\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lstring_from_str_oom\n");
+                self.out.push_str("    mov rdi, rax\n    mov rsi, r12\n    lea rdx, [r13+1]\n    call memcpy@PLT\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], r13\n    mov QWORD PTR [rbx+16], r13\n");
+                self.out.push_str("    mov rax, rbx\n    pop r13\n    pop r12\n    pop rbx\n    ret\n.Lstring_from_str_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::StringFromBytes => {
+                // kelp_String__from_bytes(kelp_Bytes b): `b` is a MEMORY-class
+                // argument in the caller's outgoing area (`[rbp+16]` from this
+                // routine's own frame), so `rbp` is set up to reach it. On a
+                // valid buffer the three fields transfer wholesale — no copy
+                // — and the caller's binding is moved into the call.
+                let msg = self.bytes_label(b"String.from_bytes: input is not valid utf-8");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov rdi, QWORD PTR [rbp+16]\n    mov rsi, QWORD PTR [rbp+24]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::Utf8Valid.label());
+                self.out.push_str("    test al, al\n    je .Lstring_from_bytes_bad\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp+16]\n    mov QWORD PTR [rbx], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp+24]\n    mov QWORD PTR [rbx+8], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp+32]\n    mov QWORD PTR [rbx+16], rax\n");
+                self.out.push_str("    add rsp, 8\n    pop rbx\n    pop rbp\n    ret\n.Lstring_from_bytes_bad:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::StringIntoBytes => {
+                // kelp_Bytes kelp_String__into_bytes(kelp_String self): the
+                // `String` argument is a MEMORY-class value at `[rsp+8]` (the
+                // hidden `Bytes` return pointer is in `rdi`), and the whole
+                // 24 bytes transfer with no copy.
+                self.out.push_str("    mov rax, QWORD PTR [rsp+8]\n    mov QWORD PTR [rdi], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+16]\n    mov QWORD PTR [rdi+8], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+24]\n    mov QWORD PTR [rdi+16], rax\n    ret\n");
+            }
+            Routine::StringLen => {
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n    ret\n");
+            }
+            Routine::StringIsEmpty => {
+                self.out.push_str("    cmp QWORD PTR [rdi+8], 0\n    sete al\n    movzx eax, al\n    ret\n");
+            }
+            Routine::StringCharCount => {
+                // kelp_String__char_count(self): a byte is a character start
+                // unless `(byte & 0xC0) == 0x80`.
+                self.out.push_str("    xor eax, eax\n    xor ecx, ecx\n    mov rdx, QWORD PTR [rdi+8]\n    mov r8, QWORD PTR [rdi]\n");
+                self.out.push_str(".Lchar_count_loop:\n    cmp rcx, rdx\n    jae .Lchar_count_done\n");
+                self.out.push_str("    movzx r9d, BYTE PTR [r8+rcx]\n    mov r10d, r9d\n    and r10d, 0xC0\n    cmp r10d, 0x80\n    je .Lchar_count_next\n    add rax, 1\n");
+                self.out.push_str(".Lchar_count_next:\n    add rcx, 1\n    jmp .Lchar_count_loop\n.Lchar_count_done:\n    ret\n");
+            }
+            Routine::StringClone => {
+                // kelp_String__clone(self): a fresh `len`-byte buffer, copy,
+                // re-terminate.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov r13, QWORD PTR [r12+8]\n    lea rdi, [r13+1]\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lstring_clone_oom\n");
+                self.out.push_str("    mov rdi, rax\n    mov rsi, QWORD PTR [r12]\n    mov rdx, r13\n    call memcpy@PLT\n");
+                self.out.push_str("    mov BYTE PTR [rax+r13], 0\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], r13\n    mov QWORD PTR [rbx+16], r13\n");
+                self.out.push_str("    mov rax, rbx\n    pop r13\n    pop r12\n    pop rbx\n    ret\n.Lstring_clone_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::StringPush => {
+                // kelp_String__push(self, ch): reserve one byte, store it at
+                // `len`, advance, re-terminate.
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov rdi, rbx\n    mov esi, 1\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BufReserve.label());
+                self.out.push_str("    mov rax, QWORD PTR [rbx]\n    mov rcx, QWORD PTR [rbx+8]\n");
+                self.out.push_str("    mov BYTE PTR [rax+rcx], r12b\n    add rcx, 1\n    mov QWORD PTR [rbx+8], rcx\n    mov BYTE PTR [rax+rcx], 0\n");
+                self.out.push_str("    add rsp, 8\n    pop r12\n    pop rbx\n    ret\n");
+            }
+            Routine::StringPushStr => {
+                // kelp_String__push_str(self, text): nothing to do for an
+                // empty `text`; otherwise reserve `n`, memcpy, advance,
+                // re-terminate.
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov rdi, r12\n    call strlen@PLT\n    mov r13, rax\n    test r13, r13\n    je .Lstring_push_str_done\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, r13\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BufReserve.label());
+                self.out.push_str("    mov rdi, QWORD PTR [rbx]\n    add rdi, QWORD PTR [rbx+8]\n    mov rsi, r12\n    mov rdx, r13\n    call memcpy@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbx+8]\n    add rax, r13\n    mov QWORD PTR [rbx+8], rax\n    mov rcx, QWORD PTR [rbx]\n    mov BYTE PTR [rcx+rax], 0\n");
+                self.out.push_str(".Lstring_push_str_done:\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+            }
+            Routine::StringWithCapacity => {
+                // kelp_String__with_capacity(n): `{NULL, 0, 0}` then a reserve
+                // of `n`, built in a 24-byte stack temporary and copied out.
+                // `n == 0` leaves `data == NULL`, exactly as the C body does
+                // (see plan/heap-runtime.md's first uncertainty) — a faithful
+                // transliteration rather than a corrected one.
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 24\n");
+                self.out.push_str("    mov rbx, rdi\n    mov QWORD PTR [rsp], 0\n    mov QWORD PTR [rsp+8], 0\n    mov QWORD PTR [rsp+16], 0\n");
+                self.out.push_str("    mov rdi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BufReserve.label());
+                self.out.push_str("    mov rax, QWORD PTR [rsp]\n    mov QWORD PTR [rbx], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+8]\n    mov QWORD PTR [rbx+8], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+16]\n    mov QWORD PTR [rbx+16], rax\n");
+                self.out.push_str("    add rsp, 24\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            Routine::StringClear => {
+                self.out.push_str("    mov QWORD PTR [rdi+8], 0\n    mov rax, QWORD PTR [rdi]\n    test rax, rax\n    je .Lstring_clear_done\n    mov BYTE PTR [rax], 0\n.Lstring_clear_done:\n    ret\n");
+            }
+            Routine::StringAsStr => {
+                self.out.push_str("    mov rax, QWORD PTR [rdi]\n    ret\n");
+            }
+            Routine::StringView => {
+                // kelp_View kelp_String__view(const kelp_String* self): no
+                // `strlen` — the length is already there.
+                self.out.push_str("    mov rax, QWORD PTR [rdi]\n    mov rdx, QWORD PTR [rdi+8]\n    ret\n");
+            }
+            Routine::StringDrop => {
+                // kelp_string_drop(kelp_String* s): as `kelp_bytes_drop`.
+                self.out.push_str("    push rdi\n    mov rdi, QWORD PTR [rdi]\n    call free@PLT\n");
+                self.out.push_str("    pop rdi\n    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n    ret\n");
+            }
+            Routine::ViewLen => {
+                // kelp_View__len(self): a `View` is `{rdi, rsi}`, so the
+                // length is already in `rsi`.
+                self.out.push_str("    mov rax, rsi\n    ret\n");
+            }
+            Routine::ViewIsEmpty => {
+                self.out.push_str("    cmp rsi, 0\n    sete al\n    movzx eax, al\n    ret\n");
+            }
+            Routine::ViewGet => {
+                // kelp_View__get(self, i): `self` in `rdi`/`rsi`, `i` in
+                // `rdx`; length-aware, so no NUL is required.
+                let msg = self.bytes_label(b"View.get: index out of bounds");
+                self.out.push_str("    cmp rdx, rsi\n    jae .Lview_get_oob\n    movzx eax, BYTE PTR [rdi+rdx]\n    ret\n");
+                self.out.push_str(".Lview_get_oob:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::ViewSlice => {
+                // kelp_View__slice(self, from, to): `self` in `rdi`/`rsi`,
+                // `from` `rdx`, `to` `rcx`; result in `rax`/`rdx`.
+                let msg = self.bytes_label(b"View.slice: index out of bounds");
+                self.out.push_str("    cmp rdx, rcx\n    ja .Lview_slice_oob\n    cmp rcx, rsi\n    ja .Lview_slice_oob\n");
+                self.out.push_str("    mov r8, rcx\n    sub r8, rdx\n    lea rax, [rdi+rdx]\n    mov rdx, r8\n    ret\n");
+                self.out.push_str(".Lview_slice_oob:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::ViewEq => {
+                // kelp_View__eq(a, b): `a` in `rdi`/`rsi`, `b` in `rdx`/`rcx`.
+                // Length first (`memcmp` over the shorter prefix would call a
+                // prefix equal), then a length-aware `memcmp`.
+                self.out.push_str("    cmp rsi, rcx\n    jne .Lview_eq_false\n    test rsi, rsi\n    je .Lview_eq_true\n");
+                self.out.push_str("    xchg rsi, rdx\n    sub rsp, 8\n    call memcmp@PLT\n    add rsp, 8\n");
+                self.out.push_str("    test eax, eax\n    sete al\n    movzx eax, al\n    ret\n");
+                self.out.push_str(".Lview_eq_true:\n    mov eax, 1\n    ret\n.Lview_eq_false:\n    xor eax, eax\n    ret\n");
+            }
+            Routine::ViewToString => {
+                // kelp_String kelp_View__to_string(kelp_View self): hidden
+                // `String` destination in `rdi`, the view in `rsi`/`rdx`.
+                // Copies exactly `len` bytes — never `strlen`.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov r13, rdx\n    lea rdi, [r13+1]\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lview_to_string_oom\n    test r13, r13\n    je .Lview_to_string_term\n");
+                self.out.push_str("    mov rdi, rax\n    mov rsi, r12\n    mov rdx, r13\n    call memcpy@PLT\n");
+                self.out.push_str(".Lview_to_string_term:\n    mov BYTE PTR [rax+r13], 0\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], r13\n    mov QWORD PTR [rbx+16], r13\n");
+                self.out.push_str("    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n.Lview_to_string_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::StrView => {
+                // kelp_View kelp_str__view(const char* s): the one place a
+                // length is derived from a `str`. A NULL `s` views as
+                // `{NULL, 0}`, as the C body says.
+                self.out.push_str("    push rbx\n    mov rbx, rdi\n    test rdi, rdi\n    je .Lstr_view_null\n");
+                self.out.push_str("    call strlen@PLT\n    mov rdx, rax\n    mov rax, rbx\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lstr_view_null:\n    xor edx, edx\n    mov rax, rbx\n    pop rbx\n    ret\n");
+            }
+            // ---- MK7 §5's second heap slice: the `str`/`fmt` externs -------
+            Routine::StrFromF64Raw => {
+                // std/str.from_f64_raw(x, decimals): `snprintf(NULL, 0, ..)`
+                // to size the result, allocate that many bytes through the
+                // `Bytes` allocator, format into them, then transfer the
+                // buffer to a `String`. `x` is saved on the stack because
+                // `snprintf` is entitled to clobber `xmm0`.
+                let fmt = self.bytes_label(b"%.*f");
+                let bad = self.bytes_label(b"str.from_f64: formatting failed");
+                let utf8 = self.bytes_label(b"String.from_bytes: input is not valid utf-8");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 40\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    movsd QWORD PTR [rsp], xmm0\n");
+                self.out.push_str("    xor edi, edi\n    xor esi, esi\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{fmt}]");
+                self.out.push_str("    mov rcx, r12\n    movsd xmm0, QWORD PTR [rsp]\n    mov eax, 1\n    call snprintf@PLT\n");
+                self.out.push_str("    test eax, eax\n    js .Lfrom_f64_bad\n    mov r13, rax\n");
+                let _ = writeln!(self.out, "    lea rdi, [rsp+8]\n    mov rsi, r13\n    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    mov rdi, QWORD PTR [rsp+8]\n    mov rsi, QWORD PTR [rsp+16]\n    add rsi, 1\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{fmt}]");
+                self.out.push_str("    mov rcx, r12\n    movsd xmm0, QWORD PTR [rsp]\n    mov eax, 1\n    call snprintf@PLT\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rsp+8]\n    mov rsi, QWORD PTR [rsp+16]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::Utf8Valid.label());
+                self.out.push_str("    test al, al\n    je .Lfrom_f64_utf8\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+8]\n    mov QWORD PTR [rbx], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+16]\n    mov QWORD PTR [rbx+8], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+24]\n    mov QWORD PTR [rbx+16], rax\n");
+                self.out.push_str("    add rsp, 40\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfrom_f64_bad:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{bad}]");
+                self.call_panic();
+                self.out.push_str(".Lfrom_f64_utf8:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{utf8}]");
+                self.call_panic();
+            }
+            Routine::FmtHexRaw => {
+                // std/fmt.hex_raw(n): one `snprintf(buf, 32, "%llx", n)` into
+                // a stack buffer, then `String.from_str(buf)`.
+                let fmt = self.bytes_label(b"%llx");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 40\n");
+                self.out.push_str("    mov rbx, rdi\n    mov rcx, rsi\n    mov rdi, rsp\n    mov esi, 40\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{fmt}]");
+                self.out.push_str("    xor eax, eax\n    call snprintf@PLT\n    mov rdi, rbx\n    mov rsi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+                self.out.push_str("    add rsp, 40\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            Routine::FmtBytesRaw => {
+                // std/fmt.bytes_raw(b): an empty buffer is an empty `String`;
+                // otherwise a `len * 3 - 1`-byte buffer, each byte as two
+                // lowercase hex digits with a space between, then the buffer
+                // handed to a `String` (its bytes are ASCII, so the check
+                // always passes — it is kept because the C body runs it).
+                let hexlab = self.bytes_label(b"0123456789abcdef");
+                let utf8 = self.bytes_label(b"String.from_bytes: input is not valid utf-8");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n    push r14\n    sub rsp, 40\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n");
+                let _ = writeln!(self.out, "    lea r14, [rip+{hexlab}]");
+                self.out.push_str("    mov r13, QWORD PTR [r12+8]\n    test r13, r13\n    jne .Lbytes_raw_go\n");
+                self.out.push_str("    mov rdi, rbx\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringEmpty.label());
+                self.out.push_str("    add rsp, 40\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lbytes_raw_go:\n    lea rsi, [r13+r13*2]\n    sub rsi, 1\n    lea rdi, [rsp]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    xor r8, r8\n    xor r9, r9\n");
+                self.out.push_str(".Lbytes_raw_loop:\n    cmp r8, r13\n    jae .Lbytes_raw_done\n    test r8, r8\n    je .Lbytes_raw_nosep\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp]\n    mov BYTE PTR [rax+r9], 0x20\n    add r9, 1\n");
+                self.out.push_str(".Lbytes_raw_nosep:\n    mov rax, QWORD PTR [r12]\n    movzx ecx, BYTE PTR [rax+r8]\n");
+                self.out.push_str("    mov edx, ecx\n    shr edx, 4\n    and edx, 0xF\n    movzx edx, BYTE PTR [r14+rdx]\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp]\n    mov BYTE PTR [rax+r9], dl\n    add r9, 1\n");
+                self.out.push_str("    mov edx, ecx\n    and edx, 0xF\n    movzx edx, BYTE PTR [r14+rdx]\n");
+                self.out.push_str("    mov BYTE PTR [rax+r9], dl\n    add r9, 1\n    add r8, 1\n    jmp .Lbytes_raw_loop\n");
+                self.out.push_str(".Lbytes_raw_done:\n    mov rdi, QWORD PTR [rsp]\n    mov rsi, QWORD PTR [rsp+8]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::Utf8Valid.label());
+                self.out.push_str("    test al, al\n    je .Lbytes_raw_utf8\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp]\n    mov QWORD PTR [rbx], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+8]\n    mov QWORD PTR [rbx+8], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+16]\n    mov QWORD PTR [rbx+16], rax\n");
+                self.out.push_str("    add rsp, 40\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lbytes_raw_utf8:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{utf8}]");
+                self.call_panic();
+            }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");
     }
@@ -4357,13 +4934,19 @@ impl Gen {
         let [arg] = args else {
             return Err(unsupported("a print that is not given exactly one value"));
         };
-        // MK7 §5 item 4: an owned `Bytes` (or a borrow of one) prints through
-        // `%.*s`, which takes the length and the pointer as *two* arguments,
-        // and a temporary is freed right after the `printf` — see
-        // `print_bytes`. `printable_ty` deliberately does not cover `Bytes`,
-        // because its specifier alone is not enough to render it.
-        if bytes_ty(&arg.ty) {
-            return self.print_bytes(newline, arg, frame);
+        // MK7 §5 item 4: an owned `Bytes`/`String` (or a borrow of one) prints
+        // through `%.*s`, which takes the length and the pointer as *two*
+        // arguments, and a temporary is freed right after the `printf` — see
+        // `print_buffer`. `printable_ty` deliberately does not cover them,
+        // because their specifier alone is not enough to render them.
+        if bytes_ty(&arg.ty) || string_ty(&arg.ty) {
+            return self.print_buffer(newline, arg, frame);
+        }
+        // A `View` is the same `%.*s` shape but from a *value* (a pair of
+        // registers), and it is a borrow, so nothing is freed — see
+        // `print_view`.
+        if view_ty(&arg.ty) {
+            return self.print_view(newline, arg, frame);
         }
         let spec = printable_ty(&arg.ty)
             .ok_or_else(|| unsupported(&format!("printing a value of type `{}`", arg.ty.display())))?;
@@ -4397,27 +4980,32 @@ impl Gen {
         Ok(())
     }
 
-    /// `print(b)` / `print!(b)` where `b` is an owned `Bytes` or a borrow of
-    /// one (MK7 §5 item 4): `printf("%.*s", (int)len, (const char*)data)`,
-    /// exactly the C backend's shape. `%.*s` draws the length from the first
-    /// two variadic slots (`rsi` an `int`, `rdx` the pointer), so `rsi` and
-    /// `rdx` are loaded from the buffer rather than `rsi` from `rax` the way a
-    /// one-specifier print works.
+    /// `print(b)` / `print!(b)` where `b` is an owned `Bytes`/`String` or a
+    /// borrow of one (MK7 §5 item 4): `printf("%.*s", (int)len,
+    /// (const char*)data)`, exactly the C backend's shape. `%.*s` draws the
+    /// length from the first two variadic slots (`rsi` an `int`, `rdx` the
+    /// pointer), so `rsi` and `rdx` are loaded from the buffer rather than
+    /// `rsi` from `rax` the way a one-specifier print works.
     ///
-    /// An *owned* `Bytes` here is a temporary nothing else owns, so it is
-    /// staged in a scratch slot and freed after the `printf` — the lifetime
-    /// `codegen_c.rs::call_value` gives the same temporary. A borrow is used
-    /// where it already lives and is never freed.
-    fn print_bytes(&mut self, newline: bool, arg: &Expr, frame: &mut Frame) -> Result<(), String> {
-        let owned_slot = if arg.ty == Ty::Bytes {
+    /// An *owned* `Bytes`/`String` here is a temporary nothing else owns, so
+    /// it is staged in a scratch slot and freed after the `printf` — the
+    /// lifetime `codegen_c.rs::call_value` gives the same temporary. A borrow
+    /// is used where it already lives and is never freed.
+    fn print_buffer(&mut self, newline: bool, arg: &Expr, frame: &mut Frame) -> Result<(), String> {
+        let owned = match arg.ty {
+            Ty::Bytes => Some(Routine::BytesDrop),
+            Ty::String => Some(Routine::StringDrop),
+            _ => None,
+        };
+        let owned_slot = if let Some(_) = owned {
             let layout = struct_layout(&arg.ty, &self.layouts)
-                .expect("Bytes has a synthesized layout");
+                .expect("Bytes and String have synthesized layouts");
             let slot = frame.scratch(align_up(layout.size, 8));
             self.eval_struct_into(arg, frame, Dest::Direct(slot))?;
             let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
             Some(slot)
         } else {
-            // A `&Bytes`/`&mut Bytes`: `rax` holds the pointer to the buffer.
+            // A `&Bytes`/`&String`: `rax` holds the pointer to the buffer.
             self.expr(arg, frame)?;
             None
         };
@@ -4435,9 +5023,39 @@ impl Gen {
         call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
         call_align_end(&mut self.out, frame.sp_slot);
-        if let Some(slot) = owned_slot {
-            self.emit_drop_slot(slot, frame)?;
+        if let (Some(slot), Some(drop)) = (owned_slot, owned) {
+            self.emit_drop_slot(drop, slot, frame)?;
         }
+        Ok(())
+    }
+
+    /// `print(v)` / `print!(v)` where `v` is a `View` (MK7 §5's second heap
+    /// slice): the same `%.*s` shape but the value is a `{ptr, len}` pair
+    /// rather than a pointer to a buffer. It is staged in a scratch slot
+    /// (`eval_struct_into`, because a `Two`-class value has no single register
+    /// `self.expr` could leave it in) and its two fields read out. A `View`
+    /// borrows, so nothing is freed — the one place this differs from
+    /// `print_buffer`.
+    fn print_view(&mut self, newline: bool, arg: &Expr, frame: &mut Frame) -> Result<(), String> {
+        let layout = struct_layout(&arg.ty, &self.layouts).expect("View has a synthesized layout");
+        let slot = frame.scratch(align_up(layout.size, 8));
+        self.eval_struct_into(arg, frame, Dest::Direct(slot))?;
+        // `ptr` into `rdx`, `len` into `rsi` — the `%.*s` variadic slots.
+        self.out.push_str("    mov rdx, QWORD PTR [rbp");
+        self.out.push_str(&off_str(slot));
+        self.out.push_str("]\n    mov rsi, QWORD PTR [rbp");
+        self.out.push_str(&off_str(slot + 8));
+        self.out.push_str("]\n");
+        let mut fmt = b"%.*s".to_vec();
+        if newline {
+            fmt.push(b'\n');
+        }
+        let label = self.bytes_label(&fmt);
+        let _ = writeln!(self.out, "    lea rdi, [rip+{label}]");
+        self.out.push_str("    xor eax, eax\n");
+        call_align_begin(&mut self.out, frame.sp_slot);
+        self.out.push_str("    call printf@PLT\n");
+        call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
     }
 
