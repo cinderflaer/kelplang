@@ -16,3 +16,23 @@
 # file with a path, not a `const` inside the compiler binary.
 !kelpc/runtime/
 !kelpc/runtime/*.c
+
+# Stray `kelpc build` output. With no `-o`, the driver writes the binary *and*
+# the emitted C into the working directory — the `.c` half is covered by `*.c`
+# above, and the binary half has no extension, so no pattern can match it.
+# These ten were committed across six commits (0.2.0 through the `View` work)
+# before anyone noticed. They are ignored by name so a rebuild cannot re-add
+# them; a *new* stray name still shows up as `??` in `git status` rather than
+# disappearing, which is why this is a list and not a blanket rule. The durable
+# fix is the default output path itself (a `kelpc build` run from a checkout
+# should not write into the checkout), not a longer list.
+/bitwise
+/borrow_provenance_and_arms
+/lit
+/lit2
+/literal_operand_typing
+/mutparam
+/ok
+/scanner
+/view
+/view1
