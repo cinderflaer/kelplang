@@ -687,6 +687,17 @@ impl Loader<'_> {
             let target = imp.path.clone();
             aliases.insert(alias, target.clone());
             self.visit(&target, imp.span, id, strict)?;
+            // MK7 §8: importing a module that holds a capability domain is what
+            // makes generated code call the capability matcher, and
+            // `std/path`'s own `normalize` calls the normalizer; both live in
+            // Kelp (`std/rt`) rather than in C text emitted into the program.
+            // Injecting it at the import that needs it — keyed on the same
+            // conditions as the calls themselves — is what keeps the runtime out
+            // of programs that use neither, and what makes the module the
+            // emitted C calls into always present.
+            if crate::stdlib::domain_of(&target).is_some() || target == "std/path" {
+                self.visit(crate::stdlib::RT_MODULE, imp.span, id, strict)?;
+            }
         }
 
         self.stack.pop();
@@ -697,7 +708,7 @@ impl Loader<'_> {
         let prefix = if id == self.entry {
             String::new()
         } else {
-            format!("{}.", id.replace('/', "."))
+            crate::stdlib::key_prefix(id)
         };
         self.prefixes.insert(id.to_string(), prefix.clone());
         self.modules.push(ModuleInfo {

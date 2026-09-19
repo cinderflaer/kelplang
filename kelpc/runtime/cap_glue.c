@@ -1,51 +1,32 @@
-// ---- Kelp capability runtime (M7) --------------------------------------------
-/* `*` matches within one path segment, `**` crosses segments and is legal
-   only as a whole segment; no other metacharacters, no regex. */
-static bool kelp_glob_match(const char* pat, const char* path) {
-    while (*pat != 0) {
-        /* A trailing '/**' also matches the directory itself: `**` is zero
-           or more segments, and `fs.mkdir_all`/`fs.remove_all` walk up to
-           (and back down to) the grant root, so a grant on a tree has to
-           admit the tree's own root. */
-        if (pat[0] == '/' && pat[1] == '*' && pat[2] == '*' && pat[3] == 0 && *path == 0) {
-            return true;
-        }
-        if (pat[0] == '*' && pat[1] == '*') {
-            const char* rest = pat + 2;
-            if (*rest == '/') {
-                rest++;
-            }
-            if (*rest == 0) {
-                return true;   /* a trailing '**' matches everything below */
-            }
-            for (const char* p = path; ; p++) {
-                if (kelp_glob_match(rest, p)) {
-                    return true;
-                }
-                if (*p == 0) {
-                    return false;
-                }
-            }
-        }
-        if (*pat == '*') {
-            const char* rest = pat + 1;
-            for (const char* p = path; ; p++) {
-                if (kelp_glob_match(rest, p)) {
-                    return true;
-                }
-                if (*p == '/' || *p == 0) {
-                    return false;
-                }
-            }
-        }
-        if (*pat != *path) {
-            return false;
-        }
-        pat++;
-        path++;
-    }
-    return *path == 0;
-}
+// ---- Kelp capability check: the glue (M7, MK7 §8) ---------------------------
+//
+// What is left of the capability runtime in C after its matcher moved to Kelp
+// (`kelpc/std/rt.kp`). Three things stayed, and each one is deliberately not
+// matcher logic:
+//
+//   * **The buffered plumbing.** `host:port` formatting, the `PATH_MAX`
+//     scratch buffers, the `snprintf` that cuts a pattern's host part. It is
+//     the same code the C reference did, so no port can change what it means.
+//     The buffers are declared one byte longer than `PATH_MAX` where a Kelp
+//     function writes into one: `Bytes` keeps its NUL in the slot *at* `len`,
+//     and a view whose `len` is the capacity has to be an honest view of
+//     something.
+//   * **The deny path.** `fprintf` to stderr plus `exit(1)`, which is I/O and
+//     belongs with the rest of the runtime's I/O until MK7 §7 replaces it.
+//   * **The allowlist loop.** "Any pattern that admits the resource admits the
+//     call" is three lines per check kind and has no matching in it; the
+//     matching itself — the part a lenient port would widen — is the Kelp.
+//
+// `kelp_resolve_path` is still C, and is the last piece here that the matcher
+// depends on: it resolves symlinks before matching, and it moves to Kelp with
+// the filesystem half of the runtime (it needs `realpath` and a buffer, which is
+// the same interface question the normalizer just answered).
+//
+// This file is emitted into every program that contains a gated call, spliced
+// together with prototypes for the `std/rt` functions it calls; see
+// `codegen_c.rs`. It relies on the generated program's own `#include` block
+// (`stdio.h`, `stdlib.h`, `string.h`, `limits.h`, and the rest).
+// ---- end emission note ------------------------------------------------------
 
 /* Symlinks are resolved *before* matching, which is the whole reason this
    exists: a link inside the grant that points outside it must be denied.
@@ -93,8 +74,17 @@ static void kelp_cap_deny(const char* domain, const char* path, const char* cons
    the grant that points outside it must be denied. */
 static void kelp_cap_check_path(const char* domain, const char* path, const char* const* patterns,
                              size_t count, const char* module, const char* at) {
-    char normalized[PATH_MAX];
-    if (!kelp_path_normalize(path, normalized, sizeof normalized)) {
+    /* One byte past `PATH_MAX`, because the normalizer is handed a borrowed
+       `kelp_Bytes` *view* of this array whose `len` is the capacity, and
+       `Bytes` puts its NUL in the slot at `len`: an array of exactly `len`
+       bytes would make that slot a lie. The view is never dropped — it is not
+       an allocation, and dropping it would free a stack address. */
+    char normalized[PATH_MAX + 1];
+    kelp_Bytes view;
+    view.data = (unsigned char*)normalized;
+    view.len = PATH_MAX;
+    view.cap = PATH_MAX;
+    if (!kelp_std__rt__path_normalize(path, &view)) {
         return kelp_cap_deny(domain, path, patterns, count, module, at);
     }
     char resolved[PATH_MAX];
@@ -102,7 +92,7 @@ static void kelp_cap_check_path(const char* domain, const char* path, const char
         snprintf(resolved, sizeof resolved, "%s", normalized);
     }
     for (size_t i = 0; i < count; i++) {
-        if (kelp_glob_match(patterns[i], resolved)) {
+        if (kelp_std__rt__glob_match(patterns[i], resolved)) {
             return;
         }
     }
@@ -114,67 +104,11 @@ static void kelp_cap_check_path(const char* domain, const char* path, const char
 static void kelp_cap_check_name(const char* domain, const char* name, const char* const* patterns,
                              size_t count, const char* module, const char* at) {
     for (size_t i = 0; i < count; i++) {
-        if (kelp_glob_match(patterns[i], name)) {
+        if (kelp_std__rt__glob_match(patterns[i], name)) {
             return;
         }
     }
     return kelp_cap_deny(domain, name, patterns, count, module, at);
-}
-
-/* ---- net (S3): a host, or a host and a port ------------------------------
-   the plan's vocabulary: `host`, `host:port`, `*.host`, `*:port`, `*`. `*`
-   matches within one label — it does not cross `.` or `:` — so `*.example.com`
-   is one label plus a domain, and a lone `*` (handled before this) is the
-   whole-resource wildcard the entry module holds. There is no `**` here:
-   there is nothing for it to mean that `*` does not already say. */
-static bool kelp_host_glob(const char* pat, const char* text) {
-    while (*pat != 0) {
-        if (*pat == '*') {
-            const char* rest = pat + 1;
-            for (const char* p = text; ; p++) {
-                if (kelp_host_glob(rest, p)) {
-                    return true;
-                }
-                if (*p == 0 || *p == '.' || *p == ':') {
-                    return false;
-                }
-            }
-        }
-        if (*pat != *text) {
-            return false;
-        }
-        pat++;
-        text++;
-    }
-    return *text == 0;
-}
-
-/* The host part of `hostport` ("h:p" -> "h"), copied into `out`. */
-static void kelp_host_part(const char* hostport, char* out, size_t cap) {
-    const char* colon = strrchr(hostport, ':');
-    size_t n = colon == NULL ? strlen(hostport) : (size_t)(colon - hostport);
-    if (n >= cap) {
-        n = cap - 1;
-    }
-    memcpy(out, hostport, n);
-    out[n] = 0;
-}
-
-/* Whether `pat` admits the resource `hostport`. The match is on the string
-   the code wrote — no DNS before matching, which is the rule that keeps a
-   grant for `example.com` from covering `93.184.216.34` (`fs` resolves
-   symlinks first for the opposite reason: a link is not a name the author
-   chose). A pattern with no port admits any port. */
-static bool kelp_host_match(const char* pat, const char* hostport) {
-    if (strcmp(pat, "*") == 0) {
-        return true;
-    }
-    if (strrchr(pat, ':') == NULL) {
-        char host[PATH_MAX];
-        kelp_host_part(hostport, host, sizeof host);
-        return kelp_host_glob(pat, host);
-    }
-    return kelp_host_glob(pat, hostport);
 }
 
 /* A host on its own (`net.resolve`): resolution is not port-specific, so a
@@ -186,7 +120,7 @@ static void kelp_cap_check_host(const char* domain, const char* host, const char
         if (strcmp(pat, "*") == 0) {
             return;
         }
-        if (kelp_host_glob(pat, host)) {
+        if (kelp_std__rt__host_glob(pat, host)) {
             return;
         }
         const char* colon = strrchr(pat, ':');
@@ -198,7 +132,7 @@ static void kelp_cap_check_host(const char* domain, const char* host, const char
             }
             memcpy(head, pat, n);
             head[n] = 0;
-            if (kelp_host_glob(head, host)) {
+            if (kelp_std__rt__host_glob(head, host)) {
                 return;
             }
         }
@@ -214,7 +148,7 @@ static void kelp_cap_check_hostport(const char* domain, const char* host, uint16
     char hostport[PATH_MAX];
     snprintf(hostport, sizeof hostport, "%s:%u", host, (unsigned)port);
     for (size_t i = 0; i < count; i++) {
-        if (kelp_host_match(patterns[i], hostport)) {
+        if (kelp_std__rt__host_match(patterns[i], hostport)) {
             return;
         }
     }
@@ -240,11 +174,9 @@ static void kelp_cap_check_port(const char* domain, uint16_t port, const char* c
         if (colon == NULL) {
             return;   /* a host-only pattern constrains no port */
         }
-        if (kelp_host_glob(colon + 1, number)) {
+        if (kelp_std__rt__host_glob(colon + 1, number)) {
             return;
         }
     }
     return kelp_cap_deny(domain, text, patterns, count, module, at);
 }
-
-// ---- end Kelp capability runtime ---------------------------------------------

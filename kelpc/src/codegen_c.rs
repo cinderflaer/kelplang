@@ -541,24 +541,11 @@ static kelp_Bytes kelp_bytes_alloc_raw(size_t n) {
 // ---- end Kelp runtime -------------------------------------------------------
 "#;
 
-/// Lexical path normalization, shared by `path.normalize` (M6.3) and the
-/// capability check (M7) — the plan requires exactly one implementation,
-/// because the security-relevant normalization must not be a second,
-/// slightly different function. Returns false when the path is not absolute
-/// or escapes its own root via `..`.
-///
-/// The body lives in `kelpc/runtime/path_ref.c` rather than in a literal here
-/// because it is a *reference implementation* (MK7 §8): the runtime track is
-/// replacing it with Kelp, and the only way a differential test can compile
-/// the C it is comparing against is if the C is a file with a path.
-const PATH_RUNTIME: &str = include_str!("../runtime/path_ref.c");
-
-/// The capability check itself (M7). Emitted only for programs that contain a
-/// gated call, since `kelp_path_normalize` is the only piece they share.
-///
-/// The body lives in `kelpc/runtime/cap_ref.c` for the same reason
-/// `PATH_RUNTIME` does — see its comment.
-const CAP_RUNTIME: &str = include_str!("../runtime/cap_ref.c");
+/// Where the capability check's own half lives (MK7 §8): the deny path, the
+/// buffered plumbing, and the allowlist loops. The *matching* and the *path
+/// normalization* it calls are Kelp (`std/rt`), declared just before this text
+/// is emitted — see `runtime_prototypes` and `kelpc/runtime/cap_glue.c`.
+const CAP_GLUE: &str = include_str!("../runtime/cap_glue.c");
 
 /// Which function keys are gated, and each module's patterns per domain.
 /// Built once per program in `generate`; `Gen` carries a reference to it so
@@ -612,9 +599,11 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             })
             .collect(),
     };
-    // The path runtime is shared by `path.normalize` and the capability
-    // check, so it is emitted whenever either could use it; the capability
-    // runtime only when some call is actually gated.
+    // The capability check and `path.normalize` both reach into `std/rt` now:
+    // the check for its matcher and normalizer, `path.normalize` for its
+    // normalizer. Either one means the module's functions must be declared
+    // before the C text that calls them, and the check's glue is emitted only
+    // when some call is actually gated.
     let path_loaded = program.functions.iter().any(|f| f.module == "std/path");
     let cap_needed = !program.gated.is_empty();
     let mut out = String::new();
@@ -644,11 +633,30 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     out.push_str(RUNTIME);
     out.push('\n');
     if path_loaded || cap_needed {
-        out.push_str(PATH_RUNTIME);
+        // The runtime's own half is Kelp (`std/rt`, MK7 §8), defined with the
+        // rest of the program's functions, further down; the C text below calls
+        // it, so the declarations come first. They are generated rather than
+        // written out so that a name cannot drift from the definition: this and
+        // the definition are the same `c_name` of the same function key.
+        //
+        // The module has to be *in* the program, or the calls below are
+        // undefined symbols at link time. That is guaranteed by the resolver,
+        // which injects `std/rt` for every module that holds a capability domain
+        // and for `std/path` — the same conditions that made either flag true —
+        // so an absence here is a compiler bug and is reported as one rather
+        // than discovered by `ld` with nothing pointing at the cause.
+        let prototypes = runtime_prototypes(program);
+        assert!(
+            !prototypes.is_empty(),
+            "`path.normalize` or a gated call is in this program but no `{}` \
+             function is: the resolver must inject that module (see `resolve.rs`)",
+            crate::stdlib::RT_MODULE
+        );
+        out.push_str(&prototypes);
         out.push('\n');
     }
     if cap_needed {
-        out.push_str(CAP_RUNTIME);
+        out.push_str(CAP_GLUE);
         out.push('\n');
     }
 
@@ -2031,6 +2039,29 @@ fn write_env(out: &mut String, f: &Function, owned: &HashSet<String>) {
         }
     }
     out.push_str("    free(e);\n}\n\n");
+}
+
+/// C prototypes for the compiler's runtime module (`std/rt`) as it appears in
+/// this program.
+///
+/// The capability checks are emitted before the program's own functions and
+/// call into this module, so the declarations have to come first. They are
+/// generated from the module's functions rather than written out as text, so a
+/// rename in `std/rt.kp` cannot leave a stale name behind in a C string: the
+/// prototype and the definition are two spellings of one `c_name`.
+fn runtime_prototypes(program: &Program) -> String {
+    let mut out = String::new();
+    out.push_str("// The capability matcher, written in Kelp (`std/rt`): one\n");
+    out.push_str("// implementation for every backend (MK7 \u{a7}8).\n");
+    for f in program
+        .functions
+        .iter()
+        .filter(|f| f.module == crate::stdlib::RT_MODULE)
+    {
+        write_signature(&mut out, f);
+        out.push_str(";\n");
+    }
+    out
 }
 
 fn write_signature(out: &mut String, f: &Function) {

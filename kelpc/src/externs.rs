@@ -280,7 +280,13 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/path",
         "normalize_raw",
-        "    char buf[PATH_MAX];\n    if (!kelp_path_normalize(kelp_s, buf, sizeof buf)) {\n        kelp_panic(\"path.normalize: path must be absolute and must not escape its own root\");\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(strlen(buf));\n    memcpy(b.data, buf, b.len);\n    return kelp_String__from_bytes(b);\n",
+        // The normalization itself is Kelp (`std/rt`), so this body is the
+        // buffer it writes into and the owned `String` it hands back. The
+        // `kelp_Bytes` here is a borrowed *view* of a stack array — `len` is
+        // the capacity, which is the normalizer's contract — and it is
+        // deliberately never dropped: it is not an allocation, and dropping it
+        // would `free` a stack address.
+        "    char buf[PATH_MAX + 1];\n    kelp_Bytes view;\n    view.data = (unsigned char*)buf;\n    view.len = PATH_MAX;\n    view.cap = PATH_MAX;\n    if (!kelp_std__rt__path_normalize(kelp_s, &view)) {\n        kelp_panic(\"path.normalize: path must be absolute and must not escape its own root\");\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(strlen(buf));\n    memcpy(b.data, buf, b.len);\n    return kelp_String__from_bytes(b);\n",
     ),
     (
         "std/env",

@@ -246,6 +246,17 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     g.out.push_str("    .text\n");
 
     for f in &program.functions {
+        // The compiler's runtime module (`std/rt`, MK7 §8) is not defined here.
+        // Every function in it is Kelp that the C backend compiles in for its
+        // capability checks, and this backend refuses every gated call rather
+        // than emitting one unchecked — so nothing in this backend's output can
+        // reach the matcher, and defining it would replace the refusal that
+        // names the real gap with a refusal that names the runtime. A program
+        // that calls into the module itself is refused in `call`, so skipping
+        // the definitions cannot turn into an undefined symbol at link time.
+        if f.module == crate::stdlib::RT_MODULE {
+            continue;
+        }
         g.function(f)?;
     }
     Ok(g.finish())
@@ -826,6 +837,16 @@ impl Gen {
                 "the numeric conversion `{}` (it needs the panic path, which is part of the \
                  runtime this slice does not have)",
                 callee.replace('#', ".")
+            )));
+        }
+        // A call into the compiler's runtime module (`std/rt`, MK7 §8). Its
+        // definitions are skipped above, so this cannot be left to the linker:
+        // the refusal has to name the feature, not the missing symbol.
+        if callee.starts_with(&crate::stdlib::key_prefix(crate::stdlib::RT_MODULE)) {
+            return Err(unsupported(&format!(
+                "the runtime function `{}` — the 'asm' backend compiles no `{}` in yet",
+                callee.replace('.', "::"),
+                crate::stdlib::RT_MODULE
             )));
         }
         if let Some(domain) = self.gated.get(callee) {

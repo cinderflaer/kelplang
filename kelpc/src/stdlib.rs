@@ -12,6 +12,20 @@
 //! lexer, same parser, same aliases, same prefixing — with the text coming
 //! from here instead of from `src/`.
 
+/// The compiler's own runtime module (MK7 §8). It is not a library a program is
+/// meant to import: the resolver injects it for a program that imports a gated
+/// module, because that is when generated code calls the capability matcher it
+/// holds. The one other importer is the differential corpus, which calls the
+/// matcher directly to compare it against its C reference.
+pub const RT_MODULE: &str = "std/rt";
+
+/// The function-key prefix of a module id: `std/rt` is `std.rt.`. The two have
+/// to agree everywhere a key is built or recognized, so the rule lives here
+/// rather than being spelled out at each call site.
+pub fn key_prefix(module: &str) -> String {
+    format!("{}.", module.replace('/', "."))
+}
+
 /// Source for the stdlib module with `impl` id `id` (`std/mem`), or `None`
 /// when the compiler does not ship it.
 ///
@@ -45,6 +59,13 @@ pub fn source_configured(id: &str, http_pool: usize) -> Option<String> {
 
 fn raw_source(id: &str) -> Option<&'static str> {
     Some(match id {
+        // The compiler's own runtime (MK7 §8), in Kelp rather than C text. It
+        // is shipped like a stdlib module because that is the only way a module
+        // reaches the compiler, and it is *not* part of the stdlib surface: the
+        // resolver injects it for a program that imports a gated module, and
+        // the capability corpus imports it directly to test it against its C
+        // reference. See `RT_MODULE`.
+        id if id == RT_MODULE => include_str!("../std/rt.kp"),
         "std/mem" => include_str!("../std/mem.kp"),
         "std/str" => include_str!("../std/str.kp"),
         "std/path" => include_str!("../std/path.kp"),
@@ -65,8 +86,14 @@ fn raw_source(id: &str) -> Option<&'static str> {
     })
 }
 
-/// The names of every stdlib module the compiler ships, for diagnostics that
-/// want to list them.
+/// The names of every stdlib module a *program* may import, for diagnostics
+/// that want to list them.
+///
+/// `std/rt` is deliberately absent even though `raw_source` resolves it: this
+/// list is the answer to "which `std/...` may I write in an `impl`", and the
+/// runtime is not part of that surface. A program that names it gets the module
+/// (the differential corpus does exactly that, to call the capability matcher
+/// directly), but nothing should be told it is a library to reach for.
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",

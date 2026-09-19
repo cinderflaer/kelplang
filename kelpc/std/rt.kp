@@ -1,0 +1,296 @@
+// std/rt — the compiler's own runtime, written in Kelp (MK7 §8).
+//
+// This module is not part of the stdlib's public surface. It is the *runtime*
+// that generated code calls into, and it is here so that a piece of the runtime
+// exists once, in Kelp, for every backend — instead of as C text emitted into
+// every program, which is what MK7 §7 is retiring.
+//
+// The first piece to move is the capability matcher, which §8 puts first in the
+// runtime track because it is the one runtime piece whose replacement is a
+// *security* question rather than a performance one: a port that is one byte
+// more lenient than the C version widens every grant in every program. The C it
+// replaces is kept in `kelpc/runtime/cap_matcher_ref.c`, and
+// `kelpc/tests/cap_matcher.rs` runs a pattern corpus through both
+// implementations and compares every verdict.
+//
+// That is also why this module is importable by ordinary Kelp code, which is a
+// deliberate exception rather than an accident: a security check whose
+// replacement cannot be called directly cannot be differentially tested. The
+// corpus is the only fixture that imports it, and nothing outside the compiler
+// should.
+//
+// The module is injected by the resolver for a program that imports a gated
+// module, so a program that checks no capability never carries it.
+//
+// The three functions below are transliterations of the C reference. Every
+// reading of `s[i]` in C is a `str.byte` call here, and every `char` literal is
+// a byte value (`47` is `/`, `42` is `*`, `46` is `.`, `58` is `:`): `str.byte`
+// yields a `u8` and a `char` literal is a code point (`u32`), so writing `'/'`
+// would not compare. The shape of each loop is the C version's, because that
+// shape is what the corpus is checking.
+impl "std/str"
+
+// Whether `pat` admits `path`. `*` matches within one path segment, `**`
+// crosses segments and is legal only as a whole segment; no other
+// metacharacters, no regex.
+//
+// The C reference reads `pat[1]`, `pat[2]` and `pat[3]` through a pointer,
+// which is the one place this cannot be line-for-line: the length tests below
+// are the same tests with the reads made safe, and the corpus covers the short
+// patterns (`""`, `*`, `**`, `/**`) those reads are about.
+fun glob_match(pat: &str, path: &str).R: bool {
+    val plen = str.len(pat)
+    val slen = str.len(path)
+    var pi: usize = 0
+    var si: usize = 0
+    while pi < plen {
+        // A trailing `/**` also matches the directory itself: `**` is zero or
+        // more segments, and `fs.mkdir_all`/`fs.remove_all` walk up to (and back
+        // down to) the grant root, so a grant on a tree has to admit the tree's
+        // own root.
+        if pi + 3 == plen && si == slen && dir_wildcard_at(pat, pi) {
+            return true
+        }
+        if pi + 1 < plen && str.byte(pat, pi) == 42 && str.byte(pat, pi + 1) == 42 {
+            var rest = pi + 2
+            if rest < plen && str.byte(pat, rest) == 47 {
+                rest = rest + 1
+            }
+            // A trailing `**` matches everything below.
+            if rest == plen {
+                return true
+            }
+            var p: usize = si
+            while true {
+                if glob_match(str.substring(pat, rest), str.substring(path, p)) {
+                    return true
+                }
+                if p == slen {
+                    return false
+                }
+                p = p + 1
+            }
+        }
+        if str.byte(pat, pi) == 42 {
+            val rest = pi + 1
+            var p: usize = si
+            while true {
+                if glob_match(str.substring(pat, rest), str.substring(path, p)) {
+                    return true
+                }
+                if p == slen || str.byte(path, p) == 47 {
+                    return false
+                }
+                p = p + 1
+            }
+        }
+        // The C version compares `*pat != *path` with `*path` at its
+        // terminator and finds them unequal; reading past the end of a Kelp
+        // `str` is a panic, and the verdict here is the same one.
+        if si == slen {
+            return false
+        }
+        if str.byte(pat, pi) != str.byte(path, si) {
+            return false
+        }
+        pi = pi + 1
+        si = si + 1
+    }
+    return si == slen
+}
+
+// `s[i..]` is exactly `/`, `*`, `*`. The caller guarantees `i + 3 <= len`.
+fun dir_wildcard_at(s: &str, i: usize).R: bool {
+    return str.byte(s, i) == 47 && str.byte(s, i + 1) == 42 && str.byte(s, i + 2) == 42
+}
+
+// Whether `pat` admits `text` in the `net` vocabulary: `*` is one label wide, so
+// it stops at `.` and `:`, and there is no `**` — there is nothing for it to
+// mean that `*` does not already say.
+fun host_glob(pat: &str, text: &str).R: bool {
+    return host_glob_at(pat, 0, text, 0, str.len(text))
+}
+
+// The host matcher's core, with both indices explicit.
+//
+// The indices are the C version's two pointers, and `tend` is the difference
+// between `host_glob` and `host_part` + `host_glob`: the C code *copies* the
+// host out of `host:port` so that a NUL terminator can stand where the `:`
+// was, and this version matches only as far as `tend` instead. Nothing is
+// copied, and the verdicts are the same — which is what the corpus checks, the
+// `host:port` cases included.
+fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usize).R: bool {
+    val plen = str.len(pat)
+    var pi = pstart
+    var ti = tstart
+    while pi < plen {
+        if str.byte(pat, pi) == 42 {
+            val rest = pi + 1
+            var p = ti
+            while true {
+                if host_glob_at(pat, rest, text, p, tend) {
+                    return true
+                }
+                // `*p == 0` in the C version: with the host copied into a
+                // buffer, the bound *is* the terminator.
+                if p == tend || str.byte(text, p) == 46 || str.byte(text, p) == 58 {
+                    return false
+                }
+                p = p + 1
+            }
+        }
+        if ti == tend {
+            return false
+        }
+        if str.byte(pat, pi) != str.byte(text, ti) {
+            return false
+        }
+        pi = pi + 1
+        ti = ti + 1
+    }
+    return ti == tend
+}
+
+// Whether `pat` admits the resource `hostport`. The match is on the string the
+// code wrote — no DNS before matching, which is the rule that keeps a grant for
+// `example.com` from covering `93.184.216.34` (`fs` resolves symlinks first for
+// the opposite reason: a link is not a name the author chose). A pattern with no
+// port admits any port.
+//
+// The C version copies the host part into a `PATH_MAX` buffer first; `host_end`
+// is that buffer's bound, kept so that an over-long name cannot become *more*
+// admissible here than it was there.
+fun host_match(pat: &str, hostport: &str).R: bool {
+    if str.eq(pat, "*") {
+        return true
+    }
+    if has_colon(pat) {
+        return host_glob(pat, hostport)
+    }
+    return host_glob_at(pat, 0, hostport, 0, host_end(hostport))
+}
+
+// The index just past the host part of `hostport` — where its *last* `:`
+// is — cut the way `kelp_host_part`'s `char host[PATH_MAX]` cuts it. `PATH_MAX`
+// is 4096 on Linux, and the C version keeps the first `cap - 1` bytes of what it
+// copied.
+fun host_end(hostport: &str).R: usize {
+    val n = str.len(hostport)
+    var end = n
+    var i = n
+    while i > 0 {
+        if str.byte(hostport, i - 1) == 58 {
+            end = i - 1
+            i = 0
+        } else {
+            i = i - 1
+        }
+    }
+    if end >= 4096 {
+        return 4095
+    }
+    return end
+}
+
+// Whether `pat` names a port at all — the C version's `strrchr(pat, ':') !=
+// NULL`, which asks only whether a colon exists, not where.
+fun has_colon(pat: &str).R: bool {
+    val n = str.len(pat)
+    var i: usize = 0
+    while i < n {
+        if str.byte(pat, i) == 58 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// ---- lexical path normalization --------------------------------------------
+
+// `s` normalized into `out`: `//` collapses, `.` is dropped, and `..` pops a
+// segment. Returns false when `s` is not absolute or escapes its own root
+// through `..`, which is what makes this the *one* normalization the language
+// uses — `path.normalize` panics on it and the capability check denies, but the
+// decision itself is made here, once.
+//
+// **The buffer is the caller's and this allocates nothing.** `out` is a view of
+// storage the caller owns, and `out.len()` is the capacity: `data[len]` is the
+// NUL slot `Bytes` keeps, which is exactly the spare byte the C version's
+// `char buf[cap]` rule needed. The C reference `path_normalize_ref.c` is the
+// same algorithm with a `char*` and a `size_t cap`, and
+// `kelpc/tests/path_normalize.rs` compares the two — including the bytes each
+// one leaves in the buffer when it fails, which is why the rule has to match
+// and not merely the verdict.
+//
+// A caller in C passes a borrowed `kelp_Bytes` over its own array and must not
+// drop it (dropping would `free` a stack address); `kelp_cap_check_path` and
+// `path.normalize`'s body both do exactly that, and say so where they do it.
+fun path_normalize(s: &str, out: mut Bytes).R: bool {
+    val cap = out.len()
+    val n = str.len(s)
+    if n == 0 || str.byte(s, 0) != 47 {
+        return false
+    }
+    out.set(0, 47)
+    var o: usize = 1
+    var p: usize = 0
+    var depth: usize = 0
+    while p < n {
+        while p < n && str.byte(s, p) == 47 {
+            p = p + 1
+        }
+        // The C version `break`s here when the path ended in separators. Kelp
+        // has no `break`: guarding the body says the same thing, because the
+        // loop's own condition is what ends it.
+        if p < n {
+            val start = p
+            while p < n && str.byte(s, p) != 47 {
+                p = p + 1
+            }
+            val len = p - start
+            // `.` names the directory it sits in and `..` the one above, so
+            // each of the three shapes is handled on its own: Kelp has no
+            // `continue`, and the two flags are what the C version's two
+            // `continue`s said.
+            val this_dir = len == 1 && str.byte(s, start) == 46
+            val up_dir = len == 2 && str.byte(s, start) == 46 && str.byte(s, start + 1) == 46
+            if up_dir {
+                if depth == 0 {
+                    return false
+                }
+                // Pop: drop the last segment written, and the `/` before it.
+                while o > 1 && out.get(o - 1) != 47 {
+                    o = o - 1
+                }
+                if o > 1 {
+                    o = o - 1
+                }
+                depth = depth - 1
+            }
+            if !this_dir && !up_dir {
+                // A separator is written before every segment but the first, so
+                // `//` and a trailing `/` cannot survive.
+                if o > 1 {
+                    if o + 1 >= cap {
+                        return false
+                    }
+                    out.set(o, 47)
+                    o = o + 1
+                }
+                if o + len >= cap {
+                    return false
+                }
+                var i: usize = 0
+                while i < len {
+                    out.set(o + i, str.byte(s, start + i))
+                    i = i + 1
+                }
+                o = o + len
+                depth = depth + 1
+            }
+        }
+    }
+    out.set(o, 0)
+    return true
+}
