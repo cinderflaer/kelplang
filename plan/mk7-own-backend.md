@@ -1959,6 +1959,18 @@ with the backend as the only variable.
 > (the temporary's drop is not keyed at a field-access statement), not a
 > half-working shape this one introduced.
 >
+> **That slice has since landed and the fix is recorded as `e748b06`**, which
+> is where it belongs because that commit did not touch this file: a call
+> temporary read through a field access is now staged and the *temporary* is
+> dropped, and `heap_field_of_temporary`/`heap_field_of_owned_temporary` are
+> the regression test — the second is the one fixture in the corpus only the
+> asm backend accepts, so `memory_gate.rs` now builds and valgrinds those too
+> (`c_rejected`). Measured on a bounded scratch copy under `/tmp` (the
+> committed fixture's own loop is infinite — see §5's float blockquote):
+> valgrind-clean on the merged compiler, and 30 bytes in 10 blocks definitely
+> lost on the compiler before the fix. The ratchet `e748b06` re-records is 170
+> C-built / 146 asm-built / 24 refused.
+>
 The first working own backend. Emits **x86-64 assembly text** and shells out to `as` and `ld` instead of `cc`.
 This drops the C compiler from the dependency chain while keeping libc, and it is deliberately the tier with
 the best value-per-line: the assembler does instruction encoding, so the hand-written part is lowering,
@@ -2186,6 +2198,90 @@ lane's compilation landed at 459-496 ms while the `-O0` and `-O2` columns stayed
 inside 3% of their own medians through the same window. The gate number is the
 uncontended one; a run on a loaded machine is not comparable, and the same
 caution applies to every slice that makes a kernel *faster*.
+
+**Re-derived on the merge result (`7594b25`, this slice merged into the branch
+that already had the per-eightbyte classifier), because the table above was
+measured before the classifier landed in the same file (2026-09-21).** Same
+method and the same four kernels: `bench/speed/speed.kp`'s bodies and
+constants verbatim, the clock calls removed, the C columns from this
+compiler's own generated C with `cc -O0 -fwrapv -lm` and `cc -O2 -fwrapv -lm`
+(clang 21.1.8), the asm columns built `--backend=asm`, external wall clock
+around the whole process so no column times itself, all four columns
+interleaved round-robin so machine load hits every column in the same round, 9
+runs each, medians in ms. Machine `AMD Ryzen 5 7600` (6C/12T); load average
+2.4-2.8 from other lanes' work throughout the sweep (2.13 on the 15-run
+re-check below).
+
+| workload | `-O0` | `-O2` | asm at the tip (`e748b06`) | asm on the merge | merge/`-O0` |
+| --- | --- | --- | --- | --- | --- |
+| `collatz` | 443.5 | 82.4 | 429.5 | 431.4 | 0.97 |
+| `float` | 258.6 | 105.9 | 1075.2 | **139.0** | **0.54** |
+| `mix` | 201.2 | 164.4 | 141.9 | 140.7 | 0.70 |
+| `fib` | 28.5 | 24.1 | 46.9 | 47.2 | 1.66 |
+
+All sixteen columns printed the same checksum as `bench/speed/results.txt` and
+as each other — `collatz 131434424`, `float` 57735026 with `VALUE
+78539816.062926`, `mix 542344`, `fib` 18454929 calls and 5702887 — so no
+column's time is a column that did less. The `collatz`, `mix` and `fib`
+binaries the merge builds are **byte-identical** to the ones the tip builds
+(`md5sum` equal); only `float` differs, which is the whole of this slice's
+effect and is why the other three ratios move only by machine state — this
+sweep's `float` "before" column reads 1075.2 against the 1077.2 in the table
+above, i.e. the same measurement twice.
+
+**What is still slow, re-derived.** `float`'s residual is the integer loop
+control the fast paths do not reach, and `fib` is the same statement from the
+other end: it has no float local at all, its binary is byte-identical before
+and after this slice, and its 1.66x is therefore entirely the integer path's
+call sequence (69 instructions per call against clang `-O0`'s 34, from the
+diagnosis above) — a different slice's number, which this one neither causes
+nor could move. §3's claim that a competent allocator with no optimizer lands
+between the two columns survives this measurement for `collatz` (0.97), `mix`
+(0.70) and `float` (0.54), but not for `fib`.
+
+**The bimodality caveat, measured twice and still the condition on every
+number above.** `float`'s new loop is throughput-bound, so it is far more
+sensitive to co-running work than clang's `-O0` code is, and a contended
+median lands a factor of two off the uncontended one. In the sweep above its
+nine runs were 133.6-140.4 ms five times and 372.8-493.1 ms four times (median
+139.0, min 134.9, max 405.9) while the `-O0` and `-O2` columns stayed inside
+1.8% and 10.9% of their own medians through the same window. A second, 15-run
+sweep of the same four columns at load 2.13 put 14 of its 15 merge runs between
+134.3 and 216.0 ms (median 140.3) with one at 290.9, over a `-O0` median of
+258.3 ms — 0.55x. The gate number is the uncontended one, **0.54x to 0.55x**
+here; the 185 ms this slice reported at its own base is the same loop with its
+median landing in the contended mode (that run's minimum was 140 ms), not a
+slower compiler.
+
+**What the merge had to leave untouched, re-checked on `7594b25`.**
+`KELPC_BACKEND=asm cargo test --release --test compile_and_run` is **241 passed
+/ 49 failed of 290**, and the 49 failing *names* are identical to the pre-merge
+tip's, so the slice moved no test in either direction. `backend_coverage --
+--ignored --nocapture` is **24 fixtures refused of 170 the C backend builds,
+146 built**, rows **heap 13, `enum` 0, a `datac` holding a float or heap field
+0, a closure or function value 10, a gated extern 1**. `cargo test --release`
+is green (C backend, 290 of 290, and the unit tests). The ratchet's own numbers
+are therefore unchanged by the merge.
+
+**The one invariant this merge does *not* report green, recorded because the
+row above asserts it.** `cargo test --release --test memory_gate -- --ignored`
+reports **three findings over 317 runs on both sides of the merge** — the same
+three, with the same per-backend summary (`c: 170 binaries checked, 1
+finding`; `asm: 147 binaries checked, 24 refused, 1 of the checked ones from a
+fixture the C backend itself rejects, 2 findings`) — so the merge changes
+nothing here either, but the §0 row's "zero findings" is not what the sweep
+says at `e748b06` or at `7594b25`:
+
+- `std_str_order` (both backends) loses 10 bytes in 2 blocks, both from
+  `kelp_rt$string_from_str` blocks the program never frees. It is not
+  backend-specific: the C backend's binary loses the same 10 bytes.
+- `heap_field_of_owned_temporary` (asm only, the owned-temporary drop fix's own
+  fixture) never terminates — its `while mkName().r.len() > 0` has a condition
+  `mkName()` always answers `true` for, and the body resets the counter it
+  increments — so valgrind is killed at the gate's 60 s limit and that is
+  counted as a finding. A bounded scratch copy of the same fixture under `/tmp`
+  is valgrind-clean on the merge and leaks 30 bytes in 10 blocks on the
+  compiler before `e748b06`, which is what pins the drop fix.
 
 Definition of done: all 280 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
