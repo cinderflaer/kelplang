@@ -412,6 +412,49 @@ fn align_up(cursor: i32, align: i32) -> i32 {
     (cursor + align - 1) / align * align
 }
 
+/// MK7 §5 item 4, third slice: a top-level `datac`'s own SysV eightbyte class,
+/// derived purely from its size — sound *only* because every field this
+/// module accepts at all is `int_ty`-representable or itself a nested
+/// qualifying (≤8-byte) `datac`, which by induction is the same thing. A real
+/// SysV classifier also has to consider whether each eightbyte is reachable
+/// only through float fields (making it `SSE` class); this module never
+/// builds a layout for a `datac` with a float field in the first place (see
+/// `try_build_layout`'s field loop — `Ty::F32`/`Ty::F64` fall through to
+/// `None`), so every eightbyte a layout here ever describes is `INTEGER`
+/// class, and the three-way split below is exactly "how many `INTEGER`
+/// eightbytes, and does the count still fit in registers" rather than a
+/// general classifier.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AggClass {
+    /// ≤8 bytes: one opaque eightbyte, unchanged from the first two slices.
+    One,
+    /// 9-16 bytes: two `INTEGER` eightbytes, passed/returned in a pair of
+    /// integer registers (`rax`/`rdx` on return; two consecutive `ARG64`
+    /// slots as a by-value argument or parameter).
+    Two,
+    /// Over 16 bytes: SysV `MEMORY` class. This slice returns one (via the
+    /// hidden first-argument pointer convention) but does not accept one as a
+    /// by-value parameter or call argument — see `int_regs_for`'s doc for why
+    /// that narrowing was drawn where it was.
+    Mem,
+}
+
+fn agg_class(size: i32) -> AggClass {
+    if size <= 8 {
+        AggClass::One
+    } else if size <= 16 {
+        AggClass::Two
+    } else {
+        AggClass::Mem
+    }
+}
+
+impl StructLayout {
+    fn class(&self) -> AggClass {
+        agg_class(self.size)
+    }
+}
+
 /// One struct's layout, given every struct already decided (accepted or
 /// rejected) so far. `None` covers both "not decided yet" (a nested struct
 /// this pass hasn't reached) and "permanently disqualified" — `build_layouts`
@@ -431,6 +474,10 @@ fn try_build_layout(
             cursor += width.bytes();
             max_align = max_align.max(align);
         } else if let Ty::Struct(name) = &f.ty {
+            // A *nested* field must still be a one-eightbyte struct — see
+            // `width_for_size`'s doc — regardless of what the third slice
+            // does for a top-level value's own size. Only a top-level
+            // `datac` gets the wider 9-16-byte/`MEMORY` treatment.
             let inner = out.get(name)?;
             width_for_size(inner.size)?;
             let align = inner.align;
@@ -443,11 +490,11 @@ fn try_build_layout(
         }
     }
     let size = align_up(cursor, max_align);
-    if size <= 8 {
-        Some(StructLayout { entries, size, align: max_align })
-    } else {
-        None
-    }
+    // MK7 §5 item 4, third slice: no size cutoff here any more — every size
+    // gets a layout, and `AggClass` (derived from `size` wherever a value is
+    // actually moved) is what decides whether it needs eightbyte-pair or
+    // hidden-pointer handling. Only a *nested* field (above) is still capped.
+    Some(StructLayout { entries, size, align: max_align })
 }
 
 /// Computes `StructLayout` for every `datac` that qualifies (see
@@ -501,7 +548,16 @@ fn value_kind(
     layouts: &std::collections::HashMap<String, StructLayout>,
 ) -> Option<(Width, bool)> {
     int_ty(ty)
-        .or_else(|| struct_layout(ty, layouts).map(|_| (Width::W8, false)))
+        // MK7 §5 item 4, third slice: only a *one-eightbyte* struct is an
+        // opaque `Width::W8` value moved through `rax` this way any more — a
+        // `Two`/`Mem`-class struct has its own transport (a register pair or
+        // a hidden pointer) and is handled at each site through
+        // `struct_layout`/`AggClass` directly, never through this function.
+        .or_else(|| {
+            struct_layout(ty, layouts)
+                .filter(|l| l.class() == AggClass::One)
+                .map(|_| (Width::W8, false))
+        })
         .or_else(|| match ty {
             // A `&datac`/`&mut datac` is a plain pointer — `Width::W8`, same
             // as the aggregate itself, just one level of indirection away.
@@ -515,6 +571,128 @@ fn value_kind(
             }
             _ => None,
         })
+}
+
+/// How many consecutive *integer* argument/parameter registers a value of
+/// `ty` occupies, or `None` if `ty` cannot be passed by value at all (this
+/// covers both an unsupported type outright and the one deliberate narrowing
+/// this slice draws: a `Mem`-class (over sixteen bytes) `datac` is supported
+/// as a **return value** — see `AggClass::Mem` — but not as a by-value
+/// parameter or call argument. Passing one that way needs a *caller-owned
+/// temporary copy* whose address survives until the call executes, which
+/// (unlike a `Two`-class value, which needs no such copy — it goes straight
+/// from wherever it is evaluated into a register pair) is real additional
+/// bookkeeping this slice does not add; a `Mem`-class value can still cross a
+/// call boundary today by reference (`&big`), which `Ty::Ref` below already
+/// covers and costs nothing extra. `float_ty` values are not covered here —
+/// every call site checks that first, since SysV classifies the vector and
+/// integer register files independently.
+fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<usize> {
+    if let Some(layout) = struct_layout(ty, layouts) {
+        return match layout.class() {
+            AggClass::One => Some(1),
+            AggClass::Two => Some(2),
+            AggClass::Mem => None,
+        };
+    }
+    if int_ty(ty).is_some() {
+        return Some(1);
+    }
+    if let Ty::Ref { inner, .. } = ty {
+        if struct_layout(inner, layouts).is_some() {
+            return Some(1);
+        }
+    }
+    None
+}
+
+/// A signed frame-relative or pointer-relative displacement, formatted with
+/// an explicit sign — `[rbp{off_str(-24)}]` is `[rbp-24]`, matching every
+/// existing frame-slot reference in this module, but `[r11{off_str(8)}]` is
+/// `[r11+8]`, which plain `i32` interpolation would get wrong (`[r118]`).
+/// Needed once offsets stop being frame slots (always negative, by
+/// construction) and start being byte offsets from an arbitrary base
+/// (`emit_copy`, `Dest::Indirect`), which can be zero or positive.
+fn off_str(n: i32) -> String {
+    if n >= 0 {
+        format!("+{n}")
+    } else {
+        n.to_string()
+    }
+}
+
+/// Copies exactly `size` bytes from `[src_reg+src_off]` to `[dst_reg+dst_off]`
+/// through `rax`, in falling chunk widths (8, then 4, then 2, then 1 — enough
+/// to cover any byte count with no alignment assumption on `size` itself,
+/// since a `datac`'s total size is only ever aligned to its *widest field*,
+/// which can still leave an odd tail: three `i32`s is 12 bytes, not a
+/// multiple of eight). This is the whole of how a `Two`/`Mem`-class `datac`
+/// value moves between two named locations (a local read into another local,
+/// or a parameter's incoming pointer into its frame slot) — there is no
+/// single instruction that moves an arbitrary-width blob, unlike the
+/// one-eightbyte case's plain `mov`.
+fn emit_copy(out: &mut String, dst_reg: &str, dst_off: i32, src_reg: &str, src_off: i32, mut size: i32) {
+    let mut off = 0i32;
+    while size > 0 {
+        let (w, n) = if size >= 8 {
+            (Width::W8, 8)
+        } else if size >= 4 {
+            (Width::W4, 4)
+        } else if size >= 2 {
+            (Width::W2, 2)
+        } else {
+            (Width::W1, 1)
+        };
+        let _ = writeln!(
+            out,
+            "    mov {}, {} [{src_reg}{}]",
+            w.rax(),
+            w.mem(),
+            off_str(src_off + off)
+        );
+        let _ = writeln!(
+            out,
+            "    mov {} [{dst_reg}{}], {}",
+            w.mem(),
+            off_str(dst_off + off),
+            w.rax()
+        );
+        off += n;
+        size -= n;
+    }
+}
+
+/// How a function's own return value leaves it — the return-side counterpart
+/// of `AggClass`, widened to also cover the non-aggregate cases so every
+/// function has exactly one of these rather than `AggClass` plus a separate
+/// "or nothing" case scattered across call sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetClass {
+    Unit,
+    Scalar,
+    Float,
+    AggOne,
+    AggTwo,
+    AggMem,
+}
+
+/// Where a `Two`/`Mem`-class `datac` value is being written, for the sites
+/// that can produce one (`Gen::eval_struct_into`, and `Gen::call`'s own
+/// return handling): either a plain frame-relative address (`Direct`, used
+/// for a local's own slot or the scratch slot a call's outgoing argument or a
+/// function's own `Two`-class return stages through), or a pointer that
+/// itself lives in a frame slot (`Indirect` — the hidden return-pointer case,
+/// `RetClass::AggMem`, where the *destination* is wherever the caller
+/// pointed, not a location this function owns). `Indirect` always reloads the
+/// pointer from its slot immediately before each use rather than caching it
+/// in a register across other codegen (in particular, across whatever
+/// `struct_lit_at` evaluates for one field before storing the next) — a
+/// register is never guaranteed to survive a nested call, and a frame slot
+/// always is.
+#[derive(Clone, Copy)]
+enum Dest {
+    Direct(i32),
+    Indirect(i32),
 }
 
 /// Generates assembly for `program`.
@@ -809,6 +987,22 @@ impl LiveAnalysis {
                     }
                 }
             }
+            // MK7 §5 item 4, third slice: a struct literal's field
+            // initializers are ordinary expressions and can read a plain
+            // scalar local or parameter (`Pair3(a = a, b = b)`) — a real gap
+            // this item's own fixtures found, not something the third slice
+            // introduces: without this arm, `a`/`b` above would look
+            // dead-on-declaration to `allocate_registers` (nothing after
+            // their `Let`/parameter binding ever calls `touch`), and the
+            // linear scan would happily hand two live parameters the *same*
+            // register, believing their intervals never overlap. A struct
+            // literal's own base has no name to `touch` (it is not a read of
+            // an existing local), so only its fields are walked.
+            ExprKind::StructLit { fields, .. } => {
+                for (_, v) in fields {
+                    self.expr(v);
+                }
+            }
             _ => {
                 self.tick();
             }
@@ -927,16 +1121,34 @@ struct Frame {
     /// silently overwrite a live callee-saved register with a stack pointer.
     /// This is computed once per function, below every pushed register.
     sp_slot: i32,
-    /// MK7 §5 item 4: where `Gen::struct_lit` builds an aggregate's bytes
-    /// field by field before loading the whole eightbyte into `rax`. One
-    /// slot, reserved once per function directly below `sp_slot` exactly the
-    /// way `sp_slot` itself is reserved below every pushed register — a
-    /// function only ever has one struct literal "under construction" at a
-    /// time (an argument list evaluates one struct literal fully into `rax`,
-    /// and further uses of it are a plain copy of that value, before the next
-    /// argument's own evaluation starts), so a single fixed slot is safe to
-    /// reuse across every struct literal the function contains.
+    /// MK7 §5 item 4: where a `datac` value under construction or in transit
+    /// is staged — field by field for a struct literal (first slice), then,
+    /// as of the third slice, also a `Two`-class by-value call argument
+    /// (built here, then both its eightbytes pushed) and a function's own
+    /// `Two`-class return value (written here by every `return`/tail site,
+    /// then loaded into `rax`/`rdx` once at `return_label`). Sixteen bytes —
+    /// widened from the first slice's eight — because a `Two`-class value
+    /// needs both eightbytes live at once. Reserved once per function
+    /// directly below `sp_slot`, exactly the way `sp_slot` itself is reserved
+    /// below every pushed register. A single fixed slot is safe to reuse
+    /// across every use because none of them overlaps in time: an argument
+    /// list evaluates one aggregate fully (into here, then off the stack via
+    /// `push`) before the next argument starts, and a function's `return`
+    /// value is written and immediately consumed by the following `jmp`.
     agg_slot: i32,
+    /// MK7 §5 item 4, third slice: where a `Mem`-class (`AggClass::Mem`)
+    /// function stashes the hidden return pointer its caller passed in `rdi`,
+    /// so it survives past whatever else the body does with `rdi` before the
+    /// value is actually written — see `Dest::Indirect`. Unused (but always
+    /// reserved — a fixed per-function layout is simpler than a conditional
+    /// one) when `ret_class` is not `RetClass::AggMem`.
+    ret_ptr_slot: i32,
+    /// This function's own `RetClass`, carried on `Frame` rather than `Gen`
+    /// because `Stmt::Return` and a function body's tail expression both need
+    /// it and both already thread `frame` through, whereas threading it
+    /// through `Gen` would mean resetting a field at the start of every
+    /// function instead of it simply falling out of scope with the frame.
+    ret_class: RetClass,
 }
 
 /// Where a call site saves `rsp` across the call — `Frame::sp_slot`, computed
@@ -951,17 +1163,27 @@ struct Frame {
 /// so this cannot recur, and it costs the same two instructions.
 const SP_SAVE_SIZE: i32 = 8;
 
+/// `Frame::agg_slot`'s width — see that field's doc for why it grew from
+/// eight bytes to this.
+const AGG_SLOT_SIZE: i32 = 16;
+
 impl Frame {
-    fn new(locs: Vec<Option<usize>>, pushed_regs: usize) -> Frame {
+    fn new(locs: Vec<Option<usize>>, pushed_regs: usize, ret_class: RetClass) -> Frame {
         let sp_slot = -SP_SAVE_SIZE * (pushed_regs as i32 + 1);
-        let agg_slot = sp_slot - SP_SAVE_SIZE;
+        let agg_slot = sp_slot - AGG_SLOT_SIZE;
+        let ret_ptr_slot = agg_slot - SP_SAVE_SIZE;
         Frame {
-            used: SP_SAVE_SIZE * (pushed_regs as i32 + 2),
+            // `-ret_ptr_slot`, the lowest (most negative) reserved offset so
+            // far, is exactly how many bytes are already spoken for below
+            // `rbp` before the first real local is declared.
+            used: -ret_ptr_slot,
             scopes: vec![Vec::new()],
             locs,
             next_id: 0,
             sp_slot,
             agg_slot,
+            ret_ptr_slot,
+            ret_class,
         }
     }
 
@@ -982,10 +1204,19 @@ impl Frame {
         ty: &Ty,
         layouts: &std::collections::HashMap<String, StructLayout>,
     ) -> Result<Loc, String> {
-        let bytes = value_kind(ty, layouts)
-            .map(|(w, _)| w.bytes())
-            .or_else(|| float_ty(ty).map(|w| w.bytes()))
-            .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
+        // A struct local's slot is sized from its own layout regardless of
+        // class — `value_kind` only ever answers for a `One`-class struct
+        // (see its doc), so a `Two`/`Mem`-class local has to be sized here
+        // directly or it would silently get an 8-byte slot with the rest of
+        // its bytes overlapping whatever the next local reserves.
+        let bytes = if let Some(layout) = struct_layout(ty, layouts) {
+            align_up(layout.size, 8)
+        } else {
+            value_kind(ty, layouts)
+                .map(|(w, _)| w.bytes())
+                .or_else(|| float_ty(ty).map(|w| w.bytes()))
+                .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?
+        };
         let assigned = self.locs[self.next_id];
         self.next_id += 1;
         let loc = match assigned {
@@ -1107,7 +1338,7 @@ impl Gen {
             )));
         }
         for (name, ty) in &f.params {
-            if value_kind(ty, &self.layouts).is_none() && float_ty(ty).is_none() {
+            if float_ty(ty).is_none() && int_regs_for(ty, &self.layouts).is_none() {
                 return Err(unsupported(&format!(
                     "the parameter `{name}: {}` of `{}`",
                     ty.display(),
@@ -1115,30 +1346,48 @@ impl Gen {
                 )));
             }
         }
-        if f.ret != Ty::Unit
-            && value_kind(&f.ret, &self.layouts).is_none()
-            && float_ty(&f.ret).is_none()
-        {
+        // MK7 §5 item 4, third slice: a function's return value is one of
+        // six shapes (`RetClass`) rather than the two `value_kind`/`float_ty`
+        // used to distinguish — a `Two`-class `datac` returns in `rax:rdx`,
+        // and a `Mem`-class one through the hidden-pointer convention, both
+        // of which `Stmt::Return`/the tail expression need to know about
+        // (`Frame::ret_class`), not just whether the type is acceptable at
+        // all.
+        let ret_class = if f.ret == Ty::Unit {
+            RetClass::Unit
+        } else if float_ty(&f.ret).is_some() {
+            RetClass::Float
+        } else if let Some(layout) = struct_layout(&f.ret, &self.layouts) {
+            match layout.class() {
+                AggClass::One => RetClass::AggOne,
+                AggClass::Two => RetClass::AggTwo,
+                AggClass::Mem => RetClass::AggMem,
+            }
+        } else if int_ty(&f.ret).is_some() {
+            RetClass::Scalar
+        } else {
             return Err(unsupported(&format!(
                 "the return type `{}` of `{}`",
                 f.ret.display(),
                 f.name
             )));
+        };
+        // A qualifying `datac` parameter consumes one *integer* argument
+        // register if it is `One`- or `Two`-class... no, a `Two`-class value
+        // needs two consecutive registers (`int_regs_for`), and a `Mem`-class
+        // return reserves `rdi` for the hidden pointer before any real
+        // parameter is numbered — both have to be counted or a function
+        // could be wrongly accepted with more live integer registers than
+        // SysV actually has.
+        let mut int_regs_needed = if ret_class == RetClass::AggMem { 1 } else { 0 };
+        for (_, ty) in &f.params {
+            if let Some(n) = int_regs_for(ty, &self.layouts) {
+                int_regs_needed += n;
+            }
         }
-        // A qualifying `datac` parameter is one opaque eightbyte (see
-        // `StructLayout`'s doc), so it consumes an *integer* argument
-        // register exactly the way a `u64` would — this count has to include
-        // it or a function with six `i32`s and one small `datac` would be
-        // wrongly accepted with seven integer-register arguments.
-        if f
-            .params
-            .iter()
-            .filter(|(_, ty)| value_kind(ty, &self.layouts).is_some())
-            .count()
-            > ARG64.len()
-        {
+        if int_regs_needed > ARG64.len() {
             return Err(unsupported(&format!(
-                "`{}`, which takes more than six integer parameters",
+                "`{}`, which needs more than six integer argument registers",
                 f.name
             )));
         }
@@ -1159,7 +1408,7 @@ impl Gen {
         used_regs.sort_unstable();
         used_regs.dedup();
 
-        let mut frame = Frame::new(assign, used_regs.len());
+        let mut frame = Frame::new(assign, used_regs.len(), ret_class);
         frame.push_scope();
         // Parameters are bound to the same locations a local would use;
         // their incoming registers are moved into place (spilled to a frame
@@ -1172,22 +1421,46 @@ impl Gen {
         enum ParamSlot {
             Int(Loc, Width, bool, usize),
             Float(i32, FWidth, usize),
+            /// MK7 §5 item 4, third slice: a `Two`-class `datac` parameter —
+            /// `(frame offset, first eightbyte's `ARG64` index, second
+            /// eightbyte's)`. Always a stack slot (struct locals are never
+            /// register-allocated), never a single register the way a
+            /// `One`-class parameter's `Int` variant can be.
+            AggTwo(i32, usize, usize),
         }
         let mut params: Vec<ParamSlot> = Vec::new();
-        let mut int_idx = 0usize;
+        // `rdi` (`ARG64[0]`) is the hidden return pointer for a `Mem`-class
+        // return, so real parameter numbering starts one register later.
+        let mut int_idx = if ret_class == RetClass::AggMem { 1 } else { 0 };
         let mut float_idx = 0usize;
         for (name, ty) in &f.params {
             let loc = frame.declare(name, ty, &self.layouts)?;
-            if let Some((width, signed)) = value_kind(ty, &self.layouts) {
-                params.push(ParamSlot::Int(loc, width, signed, int_idx));
-                int_idx += 1;
-            } else {
-                let width = float_ty(ty).expect("checked above");
+            if let Some(width) = float_ty(ty) {
                 let offset = loc
                     .stack_offset()
                     .expect("float locals are never register-allocated");
                 params.push(ParamSlot::Float(offset, width, float_idx));
                 float_idx += 1;
+            } else if let Some(layout) = struct_layout(ty, &self.layouts) {
+                match layout.class() {
+                    AggClass::One => {
+                        params.push(ParamSlot::Int(loc, Width::W8, false, int_idx));
+                        int_idx += 1;
+                    }
+                    AggClass::Two => {
+                        let off = loc.stack_offset().expect("agg locals are stack-only");
+                        params.push(ParamSlot::AggTwo(off, int_idx, int_idx + 1));
+                        int_idx += 2;
+                    }
+                    AggClass::Mem => unreachable!(
+                        "int_regs_for refuses a Mem-class parameter before this point is reached"
+                    ),
+                }
+            } else {
+                let (width, signed) =
+                    value_kind(ty, &self.layouts).expect("int_ty or Ref-to-struct, checked above");
+                params.push(ParamSlot::Int(loc, width, signed, int_idx));
+                int_idx += 1;
             }
         }
 
@@ -1213,8 +1486,17 @@ impl Gen {
         let frame_size = frame.size().max(16);
         let _ = writeln!(self.out, "    sub rsp, {frame_size}");
 
+        if ret_class == RetClass::AggMem {
+            let rp = frame.ret_ptr_slot;
+            let _ = writeln!(self.out, "    mov QWORD PTR [rbp{rp}], rdi");
+        }
         for p in &params {
             match p {
+                ParamSlot::AggTwo(off, idx0, idx1) => {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], {}", ARG64[*idx0]);
+                    let off2 = off + 8;
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off2}], {}", ARG64[*idx1]);
+                }
                 ParamSlot::Int(Loc::Stack(offset), width, _signed, idx) => {
                     let _ = writeln!(
                         self.out,
@@ -1248,9 +1530,30 @@ impl Gen {
         self.out.push_str(&body);
         let return_label = self.return_label.clone();
         let _ = writeln!(self.out, "{return_label}:");
-        if f.name == "main" {
-            // `main`'s Kelp type is `unit`, and its C caller reads `rax`.
-            self.out.push_str("    xor eax, eax\n");
+        match ret_class {
+            // MK7 §5 item 4, third slice: every `return`/tail site for this
+            // function already wrote the value into `agg_slot`
+            // (`RetClass::AggTwo`) or through the hidden pointer
+            // (`RetClass::AggMem`) — see `Gen::stmt`'s `Return` arm and
+            // `Gen::function_body`'s tail handling — so the one thing left is
+            // loading the SysV-mandated registers from that fixed location,
+            // once, regardless of which `return` actually ran.
+            RetClass::AggTwo => {
+                let agg = frame.agg_slot;
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{agg}]");
+                let agg2 = agg + 8;
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{agg2}]");
+            }
+            RetClass::AggMem => {
+                let rp = frame.ret_ptr_slot;
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{rp}]");
+            }
+            _ => {
+                if f.name == "main" {
+                    // `main`'s Kelp type is `unit`, and its C caller reads `rax`.
+                    self.out.push_str("    xor eax, eax\n");
+                }
+            }
         }
         // The inverse of the prologue, in exact reverse order: `add rsp` puts
         // `rsp` back where it sat right after the pushes below (this is
@@ -1277,10 +1580,23 @@ impl Gen {
             self.stmt(stmt, frame)?;
         }
         if let Some(tail) = &f.body.tail {
-            self.expr(tail, frame)?;
+            // MK7 §5 item 4, third slice: a tail expression is a `return`,
+            // which `infer.rs` treats the same as `return <tail>` — so a
+            // `Two`/`Mem`-class return value has to go through the same
+            // `Dest`-based staging `Stmt::Return` uses below, not a plain
+            // `self.expr` that would leave it (wrongly) in `rax` alone.
+            match frame.ret_class {
+                RetClass::AggTwo => {
+                    let agg = frame.agg_slot;
+                    self.eval_struct_into(tail, frame, Dest::Direct(agg))?;
+                }
+                RetClass::AggMem => {
+                    let rp = frame.ret_ptr_slot;
+                    self.eval_struct_into(tail, frame, Dest::Indirect(rp))?;
+                }
+                _ => self.expr(tail, frame)?,
+            }
             if f.ret != Ty::Unit {
-                // A tail expression is a `return`, which `infer.rs` treats the
-                // same as `return <tail>`, so the backend must too.
                 let label = self.return_label.clone();
                 let _ = writeln!(self.out, "    jmp {label}");
             }
@@ -1291,6 +1607,21 @@ impl Gen {
     fn stmt(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
         match stmt {
             Stmt::Let { name, ty, init } => {
+                // MK7 §5 item 4, third slice: a `Two`/`Mem`-class `datac`
+                // initializer is staged straight into its local's own slot
+                // (`eval_struct_into`) rather than round-tripping through
+                // `rax`, which cannot hold more than one eightbyte. This has
+                // to declare the local *first* — unlike the scalar path
+                // below, which evaluates before declaring purely because
+                // nothing in that path needs the destination address ahead
+                // of time.
+                if let Some(layout) = struct_layout(ty, &self.layouts) {
+                    if layout.class() != AggClass::One {
+                        let loc = frame.declare(name, ty, &self.layouts)?;
+                        let off = loc.stack_offset().expect("agg locals are stack-only");
+                        return self.eval_struct_into(init, frame, Dest::Direct(off));
+                    }
+                }
                 self.expr(init, frame)?;
                 let loc = frame.declare(name, ty, &self.layouts)?;
                 if let Some(width) = float_ty(ty) {
@@ -1336,7 +1667,17 @@ impl Gen {
             }
             Stmt::Return { value, .. } => {
                 match value {
-                    Some(v) => self.expr(v, frame)?,
+                    Some(v) => match frame.ret_class {
+                        RetClass::AggTwo => {
+                            let agg = frame.agg_slot;
+                            self.eval_struct_into(v, frame, Dest::Direct(agg))?;
+                        }
+                        RetClass::AggMem => {
+                            let rp = frame.ret_ptr_slot;
+                            self.eval_struct_into(v, frame, Dest::Indirect(rp))?;
+                        }
+                        _ => self.expr(v, frame)?,
+                    },
                     None => self.out.push_str("    xor eax, eax\n"),
                 }
                 let label = self.return_label.clone();
@@ -1487,6 +1828,13 @@ impl Gen {
                     })?,
                     _ => return Err(unsupported("assignment to anything but a local")),
                 };
+                if let Some(layout) = struct_layout(&ty, &self.layouts) {
+                    if layout.class() != AggClass::One {
+                        let off = loc.stack_offset().expect("agg locals are stack-only");
+                        self.eval_struct_into(value, frame, Dest::Direct(off))?;
+                        return Ok(());
+                    }
+                }
                 self.expr(value, frame)?;
                 if let Some(width) = float_ty(&ty) {
                     let offset = loc
@@ -1536,7 +1884,7 @@ impl Gen {
                 Ok(())
             }
             ExprKind::Block(block) => self.block(block, frame),
-            ExprKind::Call { callee, args } => self.call(callee, args, frame),
+            ExprKind::Call { callee, args } => self.call(callee, args, &e.ty, None, frame),
             ExprKind::Template { newline, pieces } => self.template(*newline, pieces, frame),
             ExprKind::IndirectCall { .. } => Err(unsupported("a call through a function value")),
             ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } | ExprKind::ClosureLit { .. } => {
@@ -1842,7 +2190,46 @@ impl Gen {
                  lower yet — see plan/mk7-own-backend.md §5 item 4)"
             ))
         })?;
+        // MK7 §5 item 4, third slice: this rax-returning form is only sound
+        // for a `One`-class literal — the four contexts that can hold a
+        // wider value (`Let`, an ident-targeted `Assign`, a `return`/tail,
+        // and a `Two`-class call argument) all intercept a `Two`/`Mem`-class
+        // `StructLit` *before* reaching the generic `expr()` dispatch that
+        // calls this function, via `eval_struct_into`/`struct_lit_at`
+        // directly — so reaching here with a wider class would be this
+        // module's own bug (a missed interception site), not a user program,
+        // and the guard exists to fail loudly rather than truncate silently.
+        if layout.class() != AggClass::One {
+            return Err(unsupported(&format!(
+                "the datac `{name}` used as a plain value (it is over eight bytes; only a \
+                 `let`, an assignment, a `return`, or a call argument may hold one directly)"
+            )));
+        }
         let agg_slot = frame.agg_slot;
+        self.struct_lit_at(name, fields, frame, Dest::Direct(agg_slot))?;
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{agg_slot}]");
+        Ok(())
+    }
+
+    /// The class-agnostic core of `struct_lit`: writes every field's value
+    /// straight to `dest` (a fixed frame address, or a pointer stashed in a
+    /// frame slot — see `Dest`), field by field, in declaration order (see
+    /// `struct_lit`'s original doc for why the order matters). No trailing
+    /// load into `rax` — the caller decides what "the value" means for a
+    /// wider-than-one-eightbyte result, since `rax` alone cannot hold one.
+    fn struct_lit_at(
+        &mut self,
+        name: &str,
+        fields: &[(String, Expr)],
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        let layout = self.layouts.get(name).cloned().ok_or_else(|| {
+            unsupported(&format!(
+                "the datac `{name}` (it is too large, or holds a field this slice cannot \
+                 lower yet — see plan/mk7-own-backend.md §5 item 4)"
+            ))
+        })?;
         for entry in &layout.entries {
             let (fname, foffset, fwidth) = match entry {
                 FieldEntry::Scalar(n, o, w, _) => (n, *o, *w),
@@ -1865,16 +2252,77 @@ impl Gen {
                     unsupported(&format!("a `{name}` literal missing its `{fname}` field"))
                 })?;
             self.expr(value, frame)?;
-            let addr = agg_slot + foffset;
-            let _ = writeln!(
-                self.out,
-                "    mov {} [rbp{addr}], {}",
-                fwidth.mem(),
-                fwidth.rax()
-            );
+            match dest {
+                Dest::Direct(base) => {
+                    let addr = base + foffset;
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {} [rbp{addr}], {}",
+                        fwidth.mem(),
+                        fwidth.rax()
+                    );
+                }
+                Dest::Indirect(slot) => {
+                    // `rax` already holds the field's value; loading the
+                    // pointer doesn't touch it, so no save/restore is needed
+                    // around this the way `field_assign` needs one around its
+                    // own address computation.
+                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {} [r11{}], {}",
+                        fwidth.mem(),
+                        off_str(foffset),
+                        fwidth.rax()
+                    );
+                }
+            }
         }
-        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{agg_slot}]");
         Ok(())
+    }
+
+    /// MK7 §5 item 4, third slice: evaluates a `Two`/`Mem`-class `datac`
+    /// expression directly into `dest`, for the handful of contexts that can
+    /// hold one — a `let` initializer, an ident-targeted assignment, a
+    /// `return`/tail value, and (from `call`) an outgoing `Two`-class
+    /// argument. Only three expression shapes are covered, which between
+    /// them are every one `infer.rs` can actually produce in those
+    /// positions: a struct literal (`struct_lit_at`), a named local of the
+    /// same struct type (a plain byte copy — `emit_copy`), and a call whose
+    /// own return type is this wide (`call`'s own `Dest`-aware return
+    /// handling). Anything else — nesting one of these inside a further
+    /// expression, e.g. as another call's argument or a struct literal
+    /// field's initializer — is refused: this slice's contexts are the only
+    /// ones a wide `datac` value is staged through, deliberately, rather than
+    /// threading `Dest` generally through every expression kind `expr`
+    /// handles.
+    fn eval_struct_into(&mut self, expr: &Expr, frame: &mut Frame, dest: Dest) -> Result<(), String> {
+        match &expr.kind {
+            ExprKind::StructLit { name, fields } => self.struct_lit_at(name, fields, frame, dest),
+            ExprKind::Ident(name) => {
+                let (loc, ty) = frame
+                    .lookup(name)
+                    .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                let layout = struct_layout(&ty, &self.layouts)
+                    .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
+                let src_off = loc.stack_offset().expect("agg locals are stack-only");
+                match dest {
+                    Dest::Direct(off) => {
+                        emit_copy(&mut self.out, "rbp", off, "rbp", src_off, layout.size);
+                    }
+                    Dest::Indirect(slot) => {
+                        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                        emit_copy(&mut self.out, "r11", 0, "rbp", src_off, layout.size);
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::Call { callee, args } => self.call(callee, args, &expr.ty, Some(dest), frame),
+            _ => Err(unsupported(
+                "this struct-returning expression (only a struct literal, a named local, or a \
+                 call are supported for a value over eight bytes wide)",
+            )),
+        }
     }
 
     /// Computes `base`'s address into `r11` — a datac's own address, or the
@@ -1998,7 +2446,14 @@ impl Gen {
         Ok(())
     }
 
-    fn call(&mut self, callee: &str, args: &[Expr], frame: &mut Frame) -> Result<(), String> {
+    fn call(
+        &mut self,
+        callee: &str,
+        args: &[Expr],
+        ret_ty: &Ty,
+        ret_dst: Option<Dest>,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
         // `print`/`print!` are builtins rather than functions, and only a
         // *template* argument becomes an `ExprKind::Template`: `print(x)` where
         // `x` is a plain value stays a call to the builtin, so both spellings
@@ -2035,16 +2490,42 @@ impl Gen {
                  backend cannot emit an unchecked call, so it refuses instead"
             )));
         }
+        // MK7 §5 item 4, third slice: a call's own return shape — see
+        // `RetClass`'s sibling classification here (there is no `RetClass`
+        // value for "not a struct", so this stays a plain `AggClass` lookup
+        // rather than reusing that enum). `ret_dst` is required exactly when
+        // the return is wider than one eightbyte: `eval_struct_into` always
+        // supplies one for such a call, and `expr()`'s generic dispatch never
+        // does, so a struct-returning call reached generically (as a plain
+        // value, e.g. nested inside another call's argument list) is refused
+        // here rather than silently losing everything past the first
+        // eightbyte.
+        let ret_class = struct_layout(ret_ty, &self.layouts).map(|l| l.class());
+        if matches!(ret_class, Some(AggClass::Two) | Some(AggClass::Mem)) && ret_dst.is_none() {
+            return Err(unsupported(
+                "a struct-returning call of more than eight bytes used as a plain value (only a \
+                 `let`, an assignment, a `return`, or a discarded statement may hold one)",
+            ));
+        }
+
         // SysV numbers the integer and vector argument registers
         // independently, so `f(1, 2.0, 3)` passes `2.0` in `xmm0` — the
         // classification below counts each argument's own class, not its
-        // position in the list.
+        // position in the list. A `Mem`-class return reserves `rdi` for the
+        // hidden pointer before any real argument is numbered, exactly the
+        // way a `Mem`-class *parameter* shifts `Gen::function`'s own
+        // numbering.
         enum ArgSlot {
             Int(usize),
             Float(usize),
+            /// A `Two`-class by-value struct argument — both eightbytes'
+            /// `ARG64` indices. There is no by-value `Mem`-class argument
+            /// slot: `int_regs_for` refuses one before this loop runs (see
+            /// its doc for why).
+            IntPair(usize, usize),
         }
         let mut slots: Vec<ArgSlot> = Vec::with_capacity(args.len());
-        let mut int_idx = 0usize;
+        let mut int_idx = if ret_class == Some(AggClass::Mem) { 1 } else { 0 };
         let mut float_idx = 0usize;
         for arg in args {
             if float_ty(&arg.ty).is_some() {
@@ -2055,28 +2536,48 @@ impl Gen {
                 }
                 slots.push(ArgSlot::Float(float_idx));
                 float_idx += 1;
-            } else {
-                if int_idx >= ARG64.len() {
-                    return Err(unsupported(&format!(
-                        "a call to `{callee}` with more than six integer arguments"
-                    )));
-                }
-                slots.push(ArgSlot::Int(int_idx));
-                int_idx += 1;
+                continue;
             }
+            let need = int_regs_for(&arg.ty, &self.layouts).ok_or_else(|| {
+                unsupported(&format!(
+                    "the type `{}` as an argument to `{callee}`",
+                    arg.ty.display()
+                ))
+            })?;
+            if int_idx + need > ARG64.len() {
+                return Err(unsupported(&format!(
+                    "a call to `{callee}` with more than six integer argument registers"
+                )));
+            }
+            if need == 2 {
+                slots.push(ArgSlot::IntPair(int_idx, int_idx + 1));
+            } else {
+                slots.push(ArgSlot::Int(int_idx));
+            }
+            int_idx += need;
         }
-        // Every argument is evaluated and pushed (as one 8-byte stack slot
-        // either way), then popped into its register in reverse. Going
-        // through the stack rather than straight into the argument registers
-        // is what makes a nested call safe: an inner call cannot overwrite a
-        // register the outer one has not loaded yet, and its own pushes are
-        // popped before it returns.
+        // Every argument is evaluated and pushed — one 8-byte stack slot for
+        // a scalar/float/`One`-class value, two consecutive ones (built
+        // through `frame.agg_slot`, since a `Two`-class value cannot fit in
+        // `rax` alone) for a `Two`-class argument — then popped into its
+        // register(s) in reverse. Going through the stack rather than
+        // straight into the argument registers is what makes a nested call
+        // safe: an inner call cannot overwrite a register the outer one has
+        // not loaded yet, and its own pushes are popped before it returns.
         for arg in args {
-            self.expr(arg, frame)?;
-            if let Some(width) = float_ty(&arg.ty) {
+            if float_ty(&arg.ty).is_some() {
+                self.expr(arg, frame)?;
+                let width = float_ty(&arg.ty).expect("checked above");
                 self.out.push_str("    sub rsp, 8\n");
                 let _ = writeln!(self.out, "    {} [rsp], xmm0", width.mov());
+            } else if int_regs_for(&arg.ty, &self.layouts) == Some(2) {
+                let agg = frame.agg_slot;
+                self.eval_struct_into(arg, frame, Dest::Direct(agg))?;
+                let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg}]");
+                let agg2 = agg + 8;
+                let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg2}]");
             } else {
+                self.expr(arg, frame)?;
                 self.out.push_str("    push rax\n");
             }
         }
@@ -2090,12 +2591,54 @@ impl Gen {
                     let _ = writeln!(self.out, "    {} {}, [rsp]", width.mov(), FARG[*i]);
                     self.out.push_str("    add rsp, 8\n");
                 }
+                ArgSlot::IntPair(i0, i1) => {
+                    // Pushed as (eightbyte 0, eightbyte 1) in that order, so
+                    // eightbyte 1 is on top and comes off first.
+                    let _ = writeln!(self.out, "    pop {}", ARG64[*i1]);
+                    let _ = writeln!(self.out, "    pop {}", ARG64[*i0]);
+                }
+            }
+        }
+        // The hidden return pointer, set last (after every real argument is
+        // already in its own register) so nothing above can clobber `rdi`
+        // before the call — `int_idx` starting at 1 for a `Mem`-class return
+        // already guarantees no *real* argument was assigned `ARG64[0]`, but
+        // setting it last keeps that invariant visibly true here too rather
+        // than relying on the reader to check the numbering above.
+        if ret_class == Some(AggClass::Mem) {
+            match ret_dst.expect("checked above") {
+                Dest::Direct(off) => {
+                    let _ = writeln!(self.out, "    lea rdi, [rbp{off}]");
+                }
+                Dest::Indirect(slot) => {
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot}]");
+                }
             }
         }
         let symbol = Gen::symbol(callee);
         call_align_begin(&mut self.out, frame.sp_slot);
         let _ = writeln!(self.out, "    call {symbol}");
         call_align_end(&mut self.out, frame.sp_slot);
+        if ret_class == Some(AggClass::Two) {
+            match ret_dst.expect("checked above") {
+                Dest::Direct(off) => {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], rax");
+                    let off2 = off + 8;
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off2}], rdx");
+                }
+                Dest::Indirect(slot) => {
+                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                    self.out.push_str("    mov QWORD PTR [r11], rax\n");
+                    self.out.push_str("    mov QWORD PTR [r11+8], rdx\n");
+                }
+            }
+        }
+        // `AggClass::Mem`: the callee already wrote the result through the
+        // pointer this call site passed in `rdi` — there is nothing further
+        // to copy. `AggClass::One`/no aggregate at all: the result is
+        // already exactly where every other caller of `call` expects it
+        // (`rax`, or `xmm0` for `print`/a template, which never reach this
+        // function at all).
         Ok(())
     }
 

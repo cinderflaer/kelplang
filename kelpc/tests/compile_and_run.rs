@@ -1516,6 +1516,19 @@ fn a_datac_can_embed_an_earlier_datac() {
     assert_compiles_and_runs("tests/fixtures/datac_embeds_datac.kp", "8\n");
 }
 
+// MK7 §5 item 4, third slice: real SysV eightbyte/MEMORY classification for a
+// `datac` over eight bytes.
+
+#[test]
+fn a_two_eightbyte_datac_passes_and_returns_in_a_register_pair() {
+    assert_compiles_and_runs("tests/fixtures/datac_two_eightbytes.kp", "3\n4\n14\n11\n");
+}
+
+#[test]
+fn a_memory_class_datac_returns_through_a_hidden_pointer() {
+    assert_compiles_and_runs("tests/fixtures/datac_memory_class.kp", "1\n2\n3\n6\n33\n60\n");
+}
+
 #[test]
 fn a_forward_reference_between_datacs_is_rejected() {
     assert_rejected("tests/fixtures/datac_forward_reference.kp");
