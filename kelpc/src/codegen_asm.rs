@@ -67,7 +67,7 @@
 //! function that printed twice restored a garbage stack pointer. See `SP_SLOT`.
 
 use crate::ast::{BinOp, UnOp};
-use crate::borrowck::DropPlan;
+use crate::borrowck::{DropPlan, DropTarget};
 use crate::diag::SourceMap;
 use crate::tir::*;
 use crate::types::Ty;
@@ -372,6 +372,31 @@ fn str_ty(ty: &Ty) -> bool {
         || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
 }
 
+/// `Bytes` and `&Bytes`/`&mut Bytes` — the owned heap buffer and a borrow of
+/// it, which is the shape every `Bytes#*` method takes as its receiver and
+/// `print`/`print!` accept. MK7 §5's first heap slice: a `Bytes` value is a
+/// 24-byte `{data, len, cap}` aggregate (`struct_layout` synthesizes its
+/// layout), so an *owned* one travels through the same `MEMORY`-class paths a
+/// three-field `datac` does, while a borrow is a plain pointer.
+fn bytes_ty(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bytes => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::Bytes),
+        _ => false,
+    }
+}
+
+/// `codegen_c.rs::is_place`'s predicate: an expression that names storage an
+/// address can be taken of. Used to tell `&b` (a borrow of a local, no copy)
+/// from `&Bytes.from_str(..)` (a borrow of a temporary, which needs a slot of
+/// its own) — see `Gen::hoist_bytes_temporary`.
+fn is_place(expr: &Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Ident(_) | ExprKind::FieldAccess { .. } | ExprKind::Deref { .. }
+    )
+}
+
 /// The user type a value names, looking through a borrow — `codegen_c.rs`'s own
 /// helper of the same name, needed here because an `EnumTag`/`EnumField` node
 /// carries only the two variant/field indices and the base's type is what names
@@ -381,6 +406,27 @@ fn enum_name_of(ty: &Ty) -> String {
         Ty::Struct(name) => name.clone(),
         Ty::Ref { inner, .. } => enum_name_of(inner),
         other => other.display(),
+    }
+}
+
+/// The key `struct_layout` looks `Ty::Bytes` up under in `Gen::layouts`.
+/// `$` is deliberate: no Kelp identifier can contain one, so a user `datac`
+/// can never collide with it — the same reason `Routine::label` uses one.
+const BYTES_LAYOUT_KEY: &str = "$Bytes";
+
+/// The C layout of `kelp_Bytes` in `codegen_c.rs`'s RUNTIME: `data` at 0,
+/// `len` at 8, `cap` at 16, size 24, align 8. Synthesized rather than parsed,
+/// because the two backends agreeing on this struct's *offsets* is the same
+/// promise the fixture suite makes for every `datac` typedef.
+fn bytes_layout() -> StructLayout {
+    StructLayout {
+        entries: vec![
+            FieldEntry::Scalar("data".to_string(), 0, Width::W8, false),
+            FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
+            FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
+        ],
+        size: 24,
+        align: 8,
     }
 }
 
@@ -451,6 +497,7 @@ fn unsupported(what: &str) -> String {
 /// compiler-supplied body honest about that signature. So an extern is either a
 /// libc function with the same signature, or one of this backend's own
 /// routines with the same signature.
+#[derive(Clone, Copy)]
 enum Extern {
     /// A C library function whose signature is exactly the extern's own. The
     /// call goes through the PLT, which is how the panic routine already
@@ -458,7 +505,7 @@ enum Extern {
     Libc(&'static str),
     /// One of this backend's own hand-written routines — for the externs whose
     /// C body does more than call one library function (a bounds check, a
-    /// libm *macro* like `isnan`, a syscall pair).
+    /// libm *macro* like `isnan`, a syscall pair, the `Bytes` allocator).
     Routine(Routine),
 }
 
@@ -471,6 +518,25 @@ enum Routine {
     StrSliceFromRaw,
     MathIsNanRaw,
     MathIsFiniteRaw,
+    /// MK7 §5's first heap slice: the `Bytes` runtime this backend owns — the
+    /// C bodies of `codegen_c.rs`'s RUNTIME, transliterated instruction by
+    /// instruction. `BufReserve` and `BytesDrop` are the two internal helpers
+    /// the method routines call (`kelp_buf_reserve`, `kelp_bytes_drop`);
+    /// everything else is one `Bytes` method or the allocation primitive
+    /// `std/mem` wraps.
+    BufReserve,
+    BytesDrop,
+    BytesAllocRaw,
+    BytesEmpty,
+    BytesFromStr,
+    BytesLen,
+    BytesIsEmpty,
+    BytesGet,
+    BytesSet,
+    BytesClone,
+    BytesPush,
+    BytesAppend,
+    BytesClear,
 }
 
 impl Routine {
@@ -485,8 +551,43 @@ impl Routine {
             Routine::StrSliceFromRaw => "kelp_rt$str_slice_from_raw",
             Routine::MathIsNanRaw => "kelp_rt$math_is_nan_raw",
             Routine::MathIsFiniteRaw => "kelp_rt$math_is_finite_raw",
+            Routine::BufReserve => "kelp_rt$buf_reserve",
+            Routine::BytesDrop => "kelp_rt$bytes_drop",
+            Routine::BytesAllocRaw => "kelp_rt$bytes_alloc_raw",
+            Routine::BytesEmpty => "kelp_rt$bytes_empty",
+            Routine::BytesFromStr => "kelp_rt$bytes_from_str",
+            Routine::BytesLen => "kelp_rt$bytes_len",
+            Routine::BytesIsEmpty => "kelp_rt$bytes_is_empty",
+            Routine::BytesGet => "kelp_rt$bytes_get",
+            Routine::BytesSet => "kelp_rt$bytes_set",
+            Routine::BytesClone => "kelp_rt$bytes_clone",
+            Routine::BytesPush => "kelp_rt$bytes_push",
+            Routine::BytesAppend => "kelp_rt$bytes_append",
+            Routine::BytesClear => "kelp_rt$bytes_clear",
         }
     }
+}
+
+/// The routine a `Bytes#*` builtin method lowers to, or `None` for one this
+/// slice does not implement — which becomes a refusal at the call site rather
+/// than an undefined symbol at link time. `Bytes#reserve` and
+/// `Bytes#push`/`Bytes#append` share `kelp_buf_reserve`'s ABI (`self` in
+/// `rdi`, `extra` in `rsi`), so `reserve` is that routine directly.
+fn bytes_method(callee: &str) -> Option<Routine> {
+    Some(match callee {
+        "Bytes#empty" => Routine::BytesEmpty,
+        "Bytes#from_str" => Routine::BytesFromStr,
+        "Bytes#len" => Routine::BytesLen,
+        "Bytes#is_empty" => Routine::BytesIsEmpty,
+        "Bytes#get" => Routine::BytesGet,
+        "Bytes#set" => Routine::BytesSet,
+        "Bytes#clone" => Routine::BytesClone,
+        "Bytes#push" => Routine::BytesPush,
+        "Bytes#append" => Routine::BytesAppend,
+        "Bytes#reserve" => Routine::BufReserve,
+        "Bytes#clear" => Routine::BytesClear,
+        _ => return None,
+    })
 }
 
 /// The lowering for the extern with canonical key `key` (`std.math.sqrt_raw`),
@@ -522,6 +623,11 @@ fn extern_target(key: &str) -> Option<Extern> {
         // Both are pure bit tests on the operand, so they are ours.
         "std.math.is_nan_raw" => Extern::Routine(Routine::MathIsNanRaw),
         "std.math.is_finite_raw" => Extern::Routine(Routine::MathIsFiniteRaw),
+        // MK7 §5's first heap slice: `std.mem.alloc_raw` is the plan's named
+        // "hand-written assembly routine for allocation, PLT-called" — one
+        // `malloc` through the PLT plus the zero-fill and NUL-termination
+        // contract `mem.kp` documents.
+        "std.mem.alloc_raw" => Extern::Routine(Routine::BytesAllocRaw),
         _ => return None,
     })
 }
@@ -872,6 +978,13 @@ fn try_build_layout(
 /// a by-value `datac` cannot nest itself (rejected earlier, in `infer.rs`).
 fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashMap<String, StructLayout> {
     let mut out = std::collections::HashMap::new();
+    // MK7 §5's heap slice: `Bytes` is not a `datac` the program declared, but
+    // it *is* an aggregate on the ABI and in the frame, so it gets a layout
+    // like one. Adding it here is what makes every site below (`value_kind`,
+    // `int_regs_for`, `Frame::declare`, `RetClass`, `eval_struct_into`)
+    // handle it with no special case: it is a `Mem`-class three-eightbyte
+    // struct, exactly as the C typedef says.
+    out.insert(BYTES_LAYOUT_KEY.to_string(), bytes_layout());
     for _ in 0..=structs.len() {
         let mut changed = false;
         for s in structs {
@@ -890,13 +1003,15 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
     out
 }
 
-/// `ty`'s layout, if it is a `datac` `build_layouts` accepted.
+/// `ty`'s layout, if it is a `datac` `build_layouts` accepted — or `Bytes`,
+/// whose layout `build_layouts` synthesizes (see `BYTES_LAYOUT_KEY`).
 fn struct_layout<'a>(
     ty: &Ty,
     layouts: &'a std::collections::HashMap<String, StructLayout>,
 ) -> Option<&'a StructLayout> {
     match ty {
         Ty::Struct(name) => layouts.get(name),
+        Ty::Bytes => layouts.get(BYTES_LAYOUT_KEY),
         _ => None,
     }
 }
@@ -1111,12 +1226,21 @@ enum Dest {
     Global(usize),
 }
 
+/// A register a drop call would clobber, parked in a frame scratch slot for
+/// the duration of the drops — see `Gen::park`. `xmm` is `Some` when the
+/// value came out of `xmm0` (a float), `None` when it came out of `rax`.
+#[derive(Clone, Copy)]
+struct Parked {
+    slot: i32,
+    xmm: Option<FWidth>,
+}
+
 /// Generates assembly for `program`.
 ///
 /// `Err` carries a complete diagnostic, printed the same way a frontend error
 /// is, so an uncovered construct fails the build instead of producing a binary
 /// that is quietly wrong.
-pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> Result<String, String> {
+pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Result<String, String> {
     // MK7 §5: an `extern fun` is no longer a program-level refusal. Only the
     // ones a program can actually *call* matter, and only the ones this
     // backend can supply a body for build — see `extern_target`. A live extern
@@ -1138,6 +1262,9 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     // `impl "std/str"` brings along — no longer poisons the whole program.
 
     let mut g = Gen::default();
+    // MK7 §5 item 5: the drop plan `borrowck.rs` handed over, so an owned
+    // `Bytes` is freed at exactly the points the C backend frees one.
+    g.drops = drops.clone();
     for f in program.functions.iter().filter(|f| f.extern_ && live.contains(&f.name)) {
         if let Some(target) = extern_target(&f.name) {
             g.externs.insert(f.name.clone(), target);
@@ -1164,6 +1291,19 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
                  for one — see plan/mk7-own-backend.md §5)",
                 pd.qualified,
                 pd.value_ty.display()
+            )));
+        }
+        // An *owned* passdown has no scope to die at, so the C backend frees it
+        // from an `atexit` handler at process exit (see
+        // `codegen_c.rs::write_pds`). This backend has no such handler yet, so
+        // an owned `Bytes` passdown is refused by name rather than leaked
+        // silently — the same refusal-over-silence rule the rest of this
+        // module follows. No fixture declares one.
+        if pd.value_ty == Ty::Bytes {
+            return Err(unsupported(&format!(
+                "the passdown `pd {}` (its type is `Bytes`, and the asm backend does not yet \
+                 free a passdown at process exit — see plan/mk7-own-backend.md §5)",
+                pd.qualified
             )));
         }
         g.pds.push(PdGlobal { hidden: pd.name.clone(), label, value_ty: pd.value_ty.clone() });
@@ -1341,7 +1481,11 @@ impl LiveAnalysis {
         self.ranges.push((p, p));
         self.decl_pos.push(p);
         self.is_float.push(float_ty(ty).is_some());
-        self.is_agg.push(matches!(ty, Ty::Struct(_)));
+        // A `Bytes` local is 24 bytes and is only ever addressed through
+        // `eval_struct_into`/`emit_copy`, so it must be stack-only for the
+        // same reason a `datac` is — the register allocator must not hand it
+        // one of its five registers.
+        self.is_agg.push(matches!(ty, Ty::Struct(_) | Ty::Bytes));
         self.scopes
             .last_mut()
             .expect("a scope always exists")
@@ -1836,6 +1980,15 @@ struct Gen {
     /// route that writes into `Gen::out` mid-function would put a routine
     /// inside a caller's body.
     routines: std::collections::HashSet<Routine>,
+    /// MK7 §5 item 5, first slice: where every owned `Bytes` is freed,
+    /// decided by `borrowck.rs` and looked up by span exactly as
+    /// `codegen_c.rs` does. Cloned into `Gen` rather than borrowed so the
+    /// emitter can hold it while mutating everything else.
+    drops: DropPlan,
+    /// The function currently being generated — `DropPlan`'s keys are
+    /// `(function, span)`, so the drop lookups need it. Set at the top of
+    /// `Gen::function` and reset for each one.
+    function: String,
 }
 
 impl Gen {
@@ -1883,6 +2036,9 @@ impl Gen {
     }
 
     fn function(&mut self, f: &Function) -> Result<(), String> {
+        // `DropPlan` is keyed by `(function, span)`, so every drop lookup
+        // below needs the name of the function whose body is being written.
+        self.function = f.name.clone();
         if f.env.is_some() {
             return Err(unsupported(&format!(
                 "the closure environment of `{}`",
@@ -2181,27 +2337,53 @@ impl Gen {
         for stmt in &f.body.stmts {
             self.stmt(stmt, frame)?;
         }
+        // MK7 §5 item 5: the function body's own end-of-scope drops, keyed by
+        // the body block's span exactly as `codegen_c.rs::write_function_body`
+        // looks them up. A present non-`unit` tail is a `return` (`infer.rs`
+        // treats a tail expression the same as `return <tail>`), so a value it
+        // leaves in a register is parked while the drops run — the same
+        // ordering `write_temp_then_drops` gives a written `return`.
+        let drops = self.drops.at_block_end(&self.function, f.body.span).to_vec();
         if let Some(tail) = &f.body.tail {
             // MK7 §5 item 4, third slice: a tail expression is a `return`,
             // which `infer.rs` treats the same as `return <tail>` — so a
             // `Two`/`Mem`-class return value has to go through the same
             // `Dest`-based staging `Stmt::Return` uses below, not a plain
             // `self.expr` that would leave it (wrongly) in `rax` alone.
-            match frame.ret_class {
+            let parked = match frame.ret_class {
                 RetClass::AggTwo => {
                     let agg = frame.agg_slot;
                     self.eval_struct_into(tail, frame, Dest::Direct(agg))?;
+                    None
                 }
                 RetClass::AggMem => {
                     let rp = frame.ret_ptr_slot;
                     self.eval_struct_into(tail, frame, Dest::Indirect(rp))?;
+                    None
                 }
-                _ => self.expr(tail, frame)?,
+                _ => {
+                    self.expr(tail, frame)?;
+                    if drops.is_empty() {
+                        None
+                    } else {
+                        Some(self.park(float_ty(&tail.ty), frame))
+                    }
+                }
+            };
+            for t in &drops {
+                self.emit_drop(t, frame)?;
+            }
+            if let Some(p) = parked {
+                self.unpark(p);
             }
             if f.ret != Ty::Unit {
                 let label = self.return_label.clone();
                 let _ = writeln!(self.out, "    jmp {label}");
             }
+            return Ok(());
+        }
+        for t in &drops {
+            self.emit_drop(t, frame)?;
         }
         Ok(())
     }
@@ -2238,6 +2420,108 @@ impl Gen {
     /// global" in `main` (and in a `pd` initializer).
     fn pd_global(&self, name: &str) -> Option<usize> {
         self.pds.iter().position(|pd| pd.hidden == name)
+    }
+
+    /// MK7 §5 item 5, first slice: emits one owned local's `free` at a drop
+    /// point. Only `Bytes` is implemented — the one heap type this slice
+    /// lowers — and a target of any other type is refused by name rather than
+    /// silently skipped, because a skipped free is a leak and a skip that
+    /// *looks* handled is exactly what this backend's refusals exist to
+    /// prevent.
+    fn emit_drop(&mut self, target: &DropTarget, frame: &Frame) -> Result<(), String> {
+        if target.ty != Ty::Bytes {
+            return Err(unsupported(&format!(
+                "dropping the owned value `{}` of type `{}`",
+                target.name,
+                target.ty.display()
+            )));
+        }
+        let off = match frame.lookup(&target.name) {
+            Some((loc, _)) => loc
+                .stack_offset()
+                .expect("an owned Bytes local is stack-only"),
+            None => return Err(unsupported(&format!("a drop of the name `{}`", target.name))),
+        };
+        self.emit_drop_slot(off, frame)
+    }
+
+    /// Frees an owned `Bytes` whose storage this code generator staged in a
+    /// `Frame::scratch` slot — a temporary borrowed for a call argument, or
+    /// printed directly. The same two calls `emit_drop` makes, addressed by
+    /// frame offset rather than by name.
+    fn emit_drop_slot(&mut self, slot: i32, frame: &Frame) -> Result<(), String> {
+        self.require_routine(Routine::BytesDrop);
+        call_align_begin(&mut self.out, frame.sp_slot);
+        let _ = writeln!(self.out, "    lea rdi, [rbp{slot}]");
+        let _ = writeln!(self.out, "    call {}", Routine::BytesDrop.label());
+        call_align_end(&mut self.out, frame.sp_slot);
+        Ok(())
+    }
+
+    /// Records that a routine, and everything it calls, has to be emitted.
+    fn require_routine(&mut self, r: Routine) {
+        match r {
+            Routine::BytesPush | Routine::BytesAppend => {
+                self.routines.insert(Routine::BufReserve);
+            }
+            _ => {}
+        }
+        self.routines.insert(r);
+    }
+
+    /// Parks the return value a drop call would otherwise clobber — `xmm0`
+    /// when `xmm` is `Some`, `rax` otherwise — in a scratch slot. This is the
+    /// asm side of `codegen_c.rs::write_temp_then_drops`: a value produced
+    /// before a drop has to be moved somewhere the drop cannot reach.
+    fn park(&mut self, xmm: Option<FWidth>, frame: &mut Frame) -> Parked {
+        let slot = frame.scratch(8);
+        match xmm {
+            Some(w) => {
+                let _ = writeln!(self.out, "    {} QWORD PTR [rbp{slot}], xmm0", w.mov());
+            }
+            None => {
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot}], rax");
+            }
+        }
+        Parked { slot, xmm }
+    }
+
+    fn unpark(&mut self, p: Parked) {
+        match p.xmm {
+            Some(w) => {
+                let _ = writeln!(self.out, "    {} xmm0, QWORD PTR [rbp{}]", w.mov(), p.slot);
+            }
+            None => {
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{}]", p.slot);
+            }
+        }
+    }
+
+    /// A `&Bytes` argument whose inner expression is a *temporary* —
+    /// `b.append(Bytes.from_str("de"))` — needs storage its address can be
+    /// taken of. It gets a fresh scratch slot built through `eval_struct_into`
+    /// and a `lea` of that slot; the caller records the slot so the temporary
+    /// is freed right after the call, which is what `codegen_c.rs::call_value`
+    /// does by hoisting the same temporary into a C variable. `None` for a
+    /// borrow of a place (`&b`, addressed directly) and for anything that is
+    /// not a temporary `Bytes`.
+    fn hoist_bytes_temporary(
+        &mut self,
+        arg: &Expr,
+        frame: &mut Frame,
+    ) -> Result<Option<i32>, String> {
+        let ExprKind::Ref { expr: inner, .. } = &arg.kind else {
+            return Ok(None);
+        };
+        if inner.ty != Ty::Bytes || is_place(inner) {
+            return Ok(None);
+        }
+        let layout = struct_layout(&inner.ty, &self.layouts)
+            .expect("Bytes has a synthesized layout");
+        let slot = frame.scratch(align_up(layout.size, 8));
+        self.eval_struct_into(inner, frame, Dest::Direct(slot))?;
+        let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
+        Ok(Some(slot))
     }
 
     fn stmt(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
@@ -2301,20 +2585,44 @@ impl Gen {
                 let _ = writeln!(self.out, "{end}:");
                 Ok(())
             }
-            Stmt::Return { value, .. } => {
-                match value {
+            Stmt::Return { value, span } => {
+                // MK7 §5 item 5: the drops `borrowck.rs` keyed by this
+                // `return`'s span run *after* the value is produced, so an
+                // owned local other than the value being moved out is freed on
+                // this path — the shape `codegen_c.rs` writes as
+                // `tmp = value; drops; return tmp;`.
+                let drops = self.drops.at_return(&self.function, *span).to_vec();
+                let parked = match value {
                     Some(v) => match frame.ret_class {
                         RetClass::AggTwo => {
                             let agg = frame.agg_slot;
                             self.eval_struct_into(v, frame, Dest::Direct(agg))?;
+                            None
                         }
                         RetClass::AggMem => {
                             let rp = frame.ret_ptr_slot;
                             self.eval_struct_into(v, frame, Dest::Indirect(rp))?;
+                            None
                         }
-                        _ => self.expr(v, frame)?,
+                        _ => {
+                            self.expr(v, frame)?;
+                            if drops.is_empty() {
+                                None
+                            } else {
+                                Some(self.park(float_ty(&v.ty), frame))
+                            }
+                        }
                     },
-                    None => self.out.push_str("    xor eax, eax\n"),
+                    None => {
+                        self.out.push_str("    xor eax, eax\n");
+                        None
+                    }
+                };
+                for t in &drops {
+                    self.emit_drop(t, frame)?;
+                }
+                if let Some(p) = parked {
+                    self.unpark(p);
                 }
                 let label = self.return_label.clone();
                 let _ = writeln!(self.out, "    jmp {label}");
@@ -2325,14 +2633,30 @@ impl Gen {
     }
 
     /// A block in statement position. Its tail, if any, is computed for its
-    /// effects and discarded — only a function body's tail is a return.
+    /// effects and discarded — only a function body's tail is a return — and
+    /// then the block's own owned locals are freed (MK7 §5 item 5): the
+    /// points `borrowck.rs` keyed by this block's span, in reverse declaration
+    /// order. A block in *value* position is the same code — the tail it
+    /// leaves in `rax`/`xmm0` is parked across the drops, exactly as the C
+    /// backend's `write_temp_then_drops` evaluates into a temporary first.
     fn block(&mut self, block: &Block, frame: &mut Frame) -> Result<(), String> {
         frame.push_scope();
         for stmt in &block.stmts {
             self.stmt(stmt, frame)?;
         }
+        let tail_ty = block.tail.as_ref().map(|t| t.ty.clone());
         if let Some(tail) = &block.tail {
             self.expr(tail, frame)?;
+        }
+        let drops = self.drops.at_block_end(&self.function, block.span).to_vec();
+        if !drops.is_empty() {
+            let parked = tail_ty.as_ref().map(|ty| self.park(float_ty(ty), frame));
+            for t in &drops {
+                self.emit_drop(t, frame)?;
+            }
+            if let Some(p) = parked {
+                self.unpark(p);
+            }
         }
         frame.pop_scope();
         Ok(())
@@ -2523,7 +2847,23 @@ impl Gen {
                 if let Some(layout) = struct_layout(&ty, &self.layouts) {
                     if layout.class() != AggClass::One {
                         let off = loc.stack_offset().expect("agg locals are stack-only");
-                        self.eval_struct_into(value, frame, Dest::Direct(off))?;
+                        let size = layout.size;
+                        // MK7 §5 item 5: overwriting an owned binding frees the
+                        // value being replaced, *after* the new one has been
+                        // read. The new value is staged in its own scratch slot
+                        // first because reading it is allowed to read the old
+                        // one (`b = b.clone()`), and the old one is gone by the
+                        // time it is copied home.
+                        let drops = self.drops.at_assign(&self.function, e.span).to_vec();
+                        if drops.is_empty() {
+                            return self.eval_struct_into(value, frame, Dest::Direct(off));
+                        }
+                        let slot = frame.scratch(align_up(size, 8));
+                        self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+                        for t in &drops {
+                            self.emit_drop(t, frame)?;
+                        }
+                        emit_copy(&mut self.out, "rbp", off, "rbp", slot, size);
                         return Ok(());
                     }
                 }
@@ -3400,8 +3740,16 @@ impl Gen {
         // slot of its own, and only *copied* into the outgoing area once every
         // register argument is already in its register — see below.
         let mut mem_plan: Vec<Option<(i32, i32, i32)>> = vec![None; args.len()];
+        // MK7 §5 item 5: a `&Bytes` argument whose inner expression is a
+        // temporary gets a slot of its own (`hoist_bytes_temporary`) and is
+        // freed right after the call — the shape `codegen_c.rs::call_value`
+        // gets from hoisting the same temporary into a C variable.
+        let mut hoisted: Vec<i32> = Vec::new();
         for (pos, arg) in args.iter().enumerate() {
-            if float_ty(&arg.ty).is_some() {
+            if let Some(slot) = self.hoist_bytes_temporary(arg, frame)? {
+                hoisted.push(slot);
+                self.out.push_str("    push rax\n");
+            } else if float_ty(&arg.ty).is_some() {
                 self.expr(arg, frame)?;
                 let width = float_ty(&arg.ty).expect("checked above");
                 self.out.push_str("    sub rsp, 8\n");
@@ -3472,15 +3820,27 @@ impl Gen {
                 }
             }
         }
-        let symbol = match self.externs.get(callee) {
-            Some(Extern::Libc(sym)) => format!("{sym}@PLT"),
-            Some(Extern::Routine(r)) => {
-                // Recorded, not emitted: a routine written into `self.out` here
-                // would land inside this function's body, mid-expression.
-                self.routines.insert(*r);
-                r.label().to_string()
+        let symbol = if let Some(r) = bytes_method(callee) {
+            // MK7 §5's heap slice: the `Bytes` builtins are routines this
+            // backend owns, exactly like the externs `extern_target` maps.
+            self.require_routine(r);
+            r.label().to_string()
+        } else if callee.starts_with("Bytes#") {
+            return Err(unsupported(&format!(
+                "the method `{}` on an owned `Bytes`",
+                callee.replace('#', ".")
+            )));
+        } else {
+            match self.externs.get(callee).copied() {
+                Some(Extern::Libc(sym)) => format!("{sym}@PLT"),
+                Some(Extern::Routine(r)) => {
+                    // Recorded, not emitted: a routine written into `self.out` here
+                    // would land inside this function's body, mid-expression.
+                    self.require_routine(r);
+                    r.label().to_string()
+                }
+                None => Gen::symbol(callee),
             }
-            None => Gen::symbol(callee),
         };
         call_align_begin(&mut self.out, frame.sp_slot);
         // MK7 §5 item 4, fourth slice: the outgoing argument area, laid out
@@ -3554,6 +3914,27 @@ impl Gen {
         // already exactly where every other caller of `call` expects it
         // (`rax`, or `xmm0` for `print`/a template, which never reach this
         // function at all).
+        //
+        // MK7 §5 item 5: a hoisted `&Bytes` temporary is freed *here* — after
+        // the call has read it, and (for a value-returning call) after the
+        // result is already somewhere a drop cannot reach, which is why the
+        // result is parked first. This is `codegen_c.rs::call_value`'s
+        // "evaluate the temporary, call, free, then yield the result".
+        if !hoisted.is_empty() {
+            let parked = if *ret_ty != Ty::Unit && ret_class.is_none() {
+                Some(self.park(float_ty(ret_ty), frame))
+            } else if ret_class == Some(AggClass::One) && ret_dst.is_none() {
+                Some(self.park(None, frame))
+            } else {
+                None
+            };
+            for slot in &hoisted {
+                self.emit_drop_slot(*slot, frame)?;
+            }
+            if let Some(p) = parked {
+                self.unpark(p);
+            }
+        }
         Ok(())
     }
 
@@ -3744,6 +4125,160 @@ impl Gen {
                     "    movq rax, xmm0\n    shr rax, 52\n    and eax, 2047\n    cmp eax, 2047\n    setne al\n    movzx eax, al\n    ret\n",
                 );
             }
+            // ---- MK7 §5's heap slice: the `Bytes` runtime -------------------
+            //
+            // Every routine below is a transliteration of the matching C body
+            // in `codegen_c.rs`'s RUNTIME, including its panic message and its
+            // bounds check. The `self` pointer is `rdi` for each (the receiver
+            // is the first argument, exactly as the C signature says), `rax`
+            // carries a scalar result, and a `Bytes`-returning routine writes
+            // its 24 bytes through `rdi` — the SysV hidden-pointer convention
+            // the call site already uses for a `MEMORY`-class return, so it
+            // passes the destination in `rdi` and the first real argument in
+            // `rsi`.
+            Routine::BufReserve => {
+                // kelp_buf_reserve(data**, len, cap*, extra), reached with the
+                // whole `kelp_Bytes*` in `rdi` instead of three separate
+                // pointers, because every caller has one. Doubling (or jumping
+                // to 8) keeps appending amortized O(1); `realloc` may move the
+                // buffer, so `rbx` holds the struct and `r14` the old length,
+                // both callee-saved so they survive the call.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n    push r14\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n");
+                self.out.push_str("    mov r14, QWORD PTR [rbx+8]\n");
+                self.out.push_str("    mov r12, r14\n    add r12, rsi\n");
+                self.out.push_str("    cmp r12, QWORD PTR [rbx+16]\n    jbe .Lbuf_done\n");
+                self.out.push_str("    mov r13, QWORD PTR [rbx+16]\n");
+                self.out.push_str("    test r13, r13\n    jne .Lbuf_have\n    mov r13d, 8\n");
+                self.out.push_str(".Lbuf_have:\n    cmp r13, r12\n    jae .Lbuf_grow\n    add r13, r13\n    jmp .Lbuf_have\n");
+                self.out.push_str(".Lbuf_grow:\n    mov rdi, QWORD PTR [rbx]\n    lea rsi, [r13+1]\n    call realloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lbuf_oom\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+16], r13\n");
+                self.out.push_str("    mov BYTE PTR [rax+r14], 0\n");
+                self.out.push_str(".Lbuf_done:\n    add rsp, 8\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lbuf_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesDrop => {
+                // kelp_bytes_drop(kelp_Bytes* b): free the buffer, clear the
+                // pointer and the length, so a second drop (which the move
+                // checker makes unreachable anyway) frees nothing.
+                self.out.push_str("    push rdi\n    mov rdi, QWORD PTR [rdi]\n    call free@PLT\n");
+                self.out.push_str("    pop rdi\n    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n    ret\n");
+            }
+            Routine::BytesAllocRaw => {
+                // kelp_bytes_alloc_raw(n): malloc(n + 1), zero the whole
+                // `n + 1` bytes, and hand back `{data, n, n}` — the zero-fill
+                // and the invariant that `data[len] == 0` are what make the
+                // result a valid empty-of-content `str` too.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    lea rdi, [r12+1]\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lalloc_oom\n");
+                self.out.push_str("    mov rdi, rax\n    xor esi, esi\n    lea rdx, [r12+1]\n    call memset@PLT\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], r12\n    mov QWORD PTR [rbx+16], r12\n");
+                self.out.push_str("    mov rax, rbx\n    add rsp, 8\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lalloc_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesEmpty => {
+                // kelp_Bytes__empty: one allocated zero byte rather than NULL,
+                // so `data[len] == 0` holds and `%s` can never be handed NULL.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    mov rbx, rdi\n    mov edi, 1\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lempty_oom\n");
+                self.out.push_str("    mov BYTE PTR [rax], 0\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], 0\n    mov QWORD PTR [rbx+16], 0\n");
+                self.out.push_str("    mov rax, rbx\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lempty_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesFromStr => {
+                // kelp_Bytes__from_str(s): n = strlen(s); malloc(n + 1);
+                // memcpy including the NUL, so the copy is terminated too.
+                // `memcpy` returns its destination, which is why `rax` is the
+                // new buffer again after the call.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov rdi, r12\n    call strlen@PLT\n");
+                self.out.push_str("    mov r13, rax\n    lea rdi, [r13+1]\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lfrom_str_oom\n");
+                self.out.push_str("    mov rdi, rax\n    mov rsi, r12\n    lea rdx, [r13+1]\n    call memcpy@PLT\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], r13\n    mov QWORD PTR [rbx+16], r13\n");
+                self.out.push_str("    mov rax, rbx\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lfrom_str_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesLen => {
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n    ret\n");
+            }
+            Routine::BytesIsEmpty => {
+                self.out.push_str("    cmp QWORD PTR [rdi+8], 0\n    sete al\n    movzx eax, al\n    ret\n");
+            }
+            Routine::BytesGet => {
+                let msg = self.bytes_label(b"Bytes.get: index out of bounds");
+                self.out.push_str("    cmp rsi, QWORD PTR [rdi+8]\n    jae .Lbytes_get_oob\n");
+                self.out.push_str("    mov rax, QWORD PTR [rdi]\n    movzx eax, BYTE PTR [rax+rsi]\n    ret\n");
+                self.out.push_str(".Lbytes_get_oob:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesSet => {
+                let msg = self.bytes_label(b"Bytes.set: index out of bounds");
+                self.out.push_str("    cmp rsi, QWORD PTR [rdi+8]\n    jae .Lbytes_set_oob\n");
+                self.out.push_str("    mov rax, QWORD PTR [rdi]\n    mov BYTE PTR [rax+rsi], dl\n    ret\n");
+                self.out.push_str(".Lbytes_set_oob:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesClone => {
+                // kelp_Bytes__clone(self): a fresh buffer of `self->len` bytes,
+                // copied without the terminator (there is nothing to copy), and
+                // re-terminated at `len`.
+                let msg = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov r13, QWORD PTR [r12+8]\n    lea rdi, [r13+1]\n    call malloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Lclone_oom\n");
+                self.out.push_str("    mov rdi, rax\n    mov rsi, QWORD PTR [r12]\n    mov rdx, r13\n    call memcpy@PLT\n");
+                self.out.push_str("    mov BYTE PTR [rax+r13], 0\n");
+                self.out.push_str("    mov QWORD PTR [rbx], rax\n    mov QWORD PTR [rbx+8], r13\n    mov QWORD PTR [rbx+16], r13\n");
+                self.out.push_str("    mov rax, rbx\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lclone_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            Routine::BytesPush => {
+                // kelp_Bytes__push(self, byte): reserve one byte, store it at
+                // `len`, advance `len`, re-terminate.
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov rdi, rbx\n    mov esi, 1\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BufReserve.label());
+                self.out.push_str("    mov rax, QWORD PTR [rbx]\n    mov rcx, QWORD PTR [rbx+8]\n");
+                self.out.push_str("    mov BYTE PTR [rax+rcx], r12b\n    add rcx, 1\n    mov QWORD PTR [rbx+8], rcx\n    mov BYTE PTR [rax+rcx], 0\n");
+                self.out.push_str("    add rsp, 8\n    pop r12\n    pop rbx\n    ret\n");
+            }
+            Routine::BytesAppend => {
+                // kelp_Bytes__append(self, other): nothing to do for an empty
+                // `other`; otherwise reserve `other->len`, `memcpy` it past
+                // `self->len`, advance `self->len`, re-terminate.
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n    mov rax, QWORD PTR [r12+8]\n    test rax, rax\n    je .Lappend_done\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, rax\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BufReserve.label());
+                self.out.push_str("    mov rdi, QWORD PTR [rbx]\n    add rdi, QWORD PTR [rbx+8]\n");
+                self.out.push_str("    mov rsi, QWORD PTR [r12]\n    mov rdx, QWORD PTR [r12+8]\n    call memcpy@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [r12+8]\n    add QWORD PTR [rbx+8], rax\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rbx]\n    mov rdx, QWORD PTR [rbx+8]\n    mov BYTE PTR [rcx+rdx], 0\n");
+                self.out.push_str(".Lappend_done:\n    add rsp, 8\n    pop r12\n    pop rbx\n    ret\n");
+            }
+            Routine::BytesClear => {
+                self.out.push_str("    mov QWORD PTR [rdi+8], 0\n    mov rax, QWORD PTR [rdi]\n    test rax, rax\n    je .Lclear_done\n    mov BYTE PTR [rax], 0\n.Lclear_done:\n    ret\n");
+            }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");
     }
@@ -3808,6 +4343,14 @@ impl Gen {
         let [arg] = args else {
             return Err(unsupported("a print that is not given exactly one value"));
         };
+        // MK7 §5 item 4: an owned `Bytes` (or a borrow of one) prints through
+        // `%.*s`, which takes the length and the pointer as *two* arguments,
+        // and a temporary is freed right after the `printf` — see
+        // `print_bytes`. `printable_ty` deliberately does not cover `Bytes`,
+        // because its specifier alone is not enough to render it.
+        if bytes_ty(&arg.ty) {
+            return self.print_bytes(newline, arg, frame);
+        }
         let spec = printable_ty(&arg.ty)
             .ok_or_else(|| unsupported(&format!("printing a value of type `{}`", arg.ty.display())))?;
         let mut fmt = spec.as_bytes().to_vec();
@@ -3837,6 +4380,50 @@ impl Gen {
         call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
         call_align_end(&mut self.out, frame.sp_slot);
+        Ok(())
+    }
+
+    /// `print(b)` / `print!(b)` where `b` is an owned `Bytes` or a borrow of
+    /// one (MK7 §5 item 4): `printf("%.*s", (int)len, (const char*)data)`,
+    /// exactly the C backend's shape. `%.*s` draws the length from the first
+    /// two variadic slots (`rsi` an `int`, `rdx` the pointer), so `rsi` and
+    /// `rdx` are loaded from the buffer rather than `rsi` from `rax` the way a
+    /// one-specifier print works.
+    ///
+    /// An *owned* `Bytes` here is a temporary nothing else owns, so it is
+    /// staged in a scratch slot and freed after the `printf` — the lifetime
+    /// `codegen_c.rs::call_value` gives the same temporary. A borrow is used
+    /// where it already lives and is never freed.
+    fn print_bytes(&mut self, newline: bool, arg: &Expr, frame: &mut Frame) -> Result<(), String> {
+        let owned_slot = if arg.ty == Ty::Bytes {
+            let layout = struct_layout(&arg.ty, &self.layouts)
+                .expect("Bytes has a synthesized layout");
+            let slot = frame.scratch(align_up(layout.size, 8));
+            self.eval_struct_into(arg, frame, Dest::Direct(slot))?;
+            let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
+            Some(slot)
+        } else {
+            // A `&Bytes`/`&mut Bytes`: `rax` holds the pointer to the buffer.
+            self.expr(arg, frame)?;
+            None
+        };
+        // `data` into `rdx`, `len` into `rsi` — read before either is
+        // overwritten, and `rax` (the buffer's address) is not needed after.
+        self.out.push_str("    mov rdx, QWORD PTR [rax]\n");
+        self.out.push_str("    mov rsi, QWORD PTR [rax+8]\n");
+        let mut fmt = b"%.*s".to_vec();
+        if newline {
+            fmt.push(b'\n');
+        }
+        let label = self.bytes_label(&fmt);
+        let _ = writeln!(self.out, "    lea rdi, [rip+{label}]");
+        self.out.push_str("    xor eax, eax\n");
+        call_align_begin(&mut self.out, frame.sp_slot);
+        self.out.push_str("    call printf@PLT\n");
+        call_align_end(&mut self.out, frame.sp_slot);
+        if let Some(slot) = owned_slot {
+            self.emit_drop_slot(slot, frame)?;
+        }
         Ok(())
     }
 
