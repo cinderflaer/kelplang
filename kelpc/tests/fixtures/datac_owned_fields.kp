@@ -1,0 +1,64 @@
+// M6.2 / MK7 §5: a `datac` that owns three heap fields at once — a `String`, a
+// `Bytes`, and a nested `datac` (`Label`) that itself owns a `String` — plus an
+// `i32` scalar that is deliberately *not* last, so a heap field follows a
+// non-heap one. Dropping `Row` has to recurse through `Label` into its
+// `String`, and each buffer must be freed exactly once whether the value is
+// read through a borrow, moved into a second binding, or dropped at scope end.
+//
+// A `View` is exercised here as a local borrow, never as a field: a `datac`
+// holds owned data only in v1, and `is_borrowed_field_ty` (kelpc/src/types.rs)
+// refuses a `View`/`&str`/`Ref` field outright — `view_field.kp` and
+// `a_view_cannot_be_stored_in_a_datac` pin that rejection. So the `View` below
+// is `moved.name.view()`, printed and then dropped without being freed because
+// it owns nothing.
+impl "std/str"
+
+datac Label(val text: String)
+
+datac Row(val name: String, val tag: i32, val data: Bytes, val inner: Label)
+
+// `Row` is a borrow here (v1 owned parameters are borrows), so this reads the
+// owned `String`, `Bytes` and nested `String` fields without taking them.
+fun show(r: Row) {
+    print(r.name)
+    print(r.tag)
+    print(r.data)
+    print(r.inner.text)
+}
+
+fun tag_of(r: Row).R: i32 = r.tag
+
+fun main() {
+    // Block scope: every owned field of `row` drops at the closing brace.
+    {
+        val row = Row(
+            name = String.from_str("alpha"),
+            tag = 7,
+            data = Bytes.from_str("raw"),
+            inner = Label(text = String.from_str("nested")),
+        )
+        show(row)
+        print(tag_of(row))
+    }
+    print("after scope")
+
+    // A move into a second binding: `owner` is dead, so `moved` frees the
+    // three buffers exactly once.
+    val owner = Row(
+        name = String.from_str("beta"),
+        tag = 9,
+        data = Bytes.from_str("more"),
+        inner = Label(text = String.from_str("deep")),
+    )
+    val moved = owner
+    show(moved)
+
+    // The `View` borrow: printed, then gone at the block's end, owning nothing.
+    {
+        val v = moved.name.view()
+        print(v)
+        print(v.len())
+    }
+    print(moved.inner.text)
+    print("done")
+}

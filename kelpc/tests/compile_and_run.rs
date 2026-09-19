@@ -953,6 +953,28 @@ fn owned_datac_fields_are_dropped_with_the_struct() {
     );
 }
 
+/// The same mechanism with all three owned heap shapes in one struct: a
+/// `String`, a `Bytes`, and a nested `datac` that itself owns a `String`, with
+/// the `i32` scalar deliberately *not* last so a heap field follows a non-heap
+/// one. This is the shape that pins the generated per-`datac` drop on order:
+/// dropping `Row` must recurse through `Label` into its `String`, and reading
+/// the fields through a borrowed `Row` must not steal them.
+///
+/// The `View` here is a local borrow (`moved.name.view()`), not a field:
+/// `is_borrowed_field_ty` (`kelpc/src/types.rs`) refuses a `View`/`&str`/`Ref`
+/// datac field outright, which `view_field.kp` and
+/// `a_view_cannot_be_stored_in_a_datac` pin, so a borrow that owns nothing is
+/// expressible only outside the struct. It is printed and then dropped without
+/// being freed, which is the one way a heap type in this fixture must *not*
+/// reach a free.
+#[test]
+fn datac_owned_fields_recurse_and_drop_once() {
+    assert_compiles_and_runs(
+        "tests/fixtures/datac_owned_fields.kp",
+        "alpha\n7\nraw\nnested\n7\nafter scope\nbeta\n9\nmore\ndeep\nbeta\n4\ndeep\ndone\n",
+    );
+}
+
 #[test]
 fn an_owned_passdown_is_freed_at_exit() {
     assert_compiles_and_runs("tests/fixtures/pd_owned.kp", "== x ==\n== x ==\n");
@@ -1464,6 +1486,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_parse",
         "stdlib_fmt",
         "string_field",
+        "datac_owned_fields",
         "pd_owned",
         // A passdown forwarded through a caller that does not name it: the
         // hidden argument is the global's address there, while an owned

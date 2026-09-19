@@ -64,12 +64,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 131 fixtures the C backend
-/// builds, 60 of them also built by the asm backend, 71 refused — which is the
-/// 158-of-253 integration-test ratio in the plan's §0 table, measured at the
+/// The counts this list was recorded against: 132 fixtures the C backend
+/// builds, 63 of them also built by the asm backend, 69 refused — which is the
+/// 161-of-254 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// Re-recorded three times so far, and the *reason* each time is worth keeping:
+/// Re-recorded four times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
 /// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
@@ -82,7 +82,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixture the slice added to pin `View`'s register-pair ABI; and two more that
 /// close the two bugs the heap spec's uncertainty list and the `%` probe turned
 /// up — `int_literal_width` and `string_with_capacity_zero`, both fixed in the
-/// C backend and in this one in the same commit that recorded them here.
+/// C backend and in this one in the same commit that recorded them here; and the
+/// heap-field slice added `string_field`, `generic_method_basic` — which was
+/// refused only for the `String`-instantiated `Pair` it declares, so a generic
+/// `datac` over owned fields moved with it for free — and
+/// `datac_owned_fields`, the fixture that slice wrote to pin a `datac` holding a
+/// `String`, a `Bytes` and a nested owning `datac` at once.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -99,12 +104,14 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "datac_embeds_datac",
     "datac_memory_class",
     "datac_memory_class_by_value",
+    "datac_owned_fields",
     "datac_two_eightbytes",
     "escapes",
     "field_read_does_not_move",
     "float_conversions",
     "float_integral_literal",
     "float_nonfinite_literal",
+    "generic_method_basic",
     "heap_branches",
     "heap_bytes",
     "heap_drops_in_control_flow",
@@ -138,6 +145,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "stdlib_str",
     "string_basic",
     "string_build",
+    "string_field",
     "string_view_basic",
     "string_with_capacity_zero",
     "view_released_at_scope_end",
