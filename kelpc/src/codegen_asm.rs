@@ -963,24 +963,23 @@ fn collect_calls_expr(e: &Expr, out: &mut Vec<String>) {
 /// the 8 bytes — and, for a nested field (`o.inner.v`), to find the nested
 /// struct's own offset first.
 ///
-/// A `datac` that does not qualify — a float field, a `str`/`String`/`List`/
-/// `Map`/`Box` field, a nested `datac` whose own size is not itself a valid
-/// move width (1/2/4/8 bytes — see `width_for_size`), or more than eight bytes
-/// of fields overall — simply has no entry here, and every site that would
-/// need one reports `unsupported` naming the type. That is deliberately the
-/// same "coverage boundary" discipline the rest of this module uses:
-/// two-eightbyte and `MEMORY`-class structs (`plan/mk7-own-backend.md` §5 item
-/// 4's larger scope) are a later slice, not a silent truncation.
+/// A `datac` that does not qualify — a float field, a `List`/`Map`/`Box`
+/// field, or a `str`/`View` field (which the front end refuses outright: a
+/// `datac` holds owned data only) — simply has no entry here, and every site
+/// that would need one reports `unsupported` naming the type. That is
+/// deliberately the same "coverage boundary" discipline the rest of this
+/// module uses: a later slice's shapes are later slices, not silent
+/// truncations.
 #[derive(Clone)]
 struct StructLayout {
     /// One entry per field, in declaration order, preserved because
     /// `struct_lit` must evaluate field-initializer expressions in the order
     /// they were written for side-effect correctness even though scalar and
-    /// nested fields are looked up through different lists below.
+    /// aggregate fields are looked up through different lists below.
     entries: Vec<FieldEntry>,
     /// This struct's own size and alignment, in bytes — needed when this
     /// struct is itself nested inside another one, to place it and to know
-    /// how wide a single `mov` must be to copy it whole.
+    /// how many bytes to copy out of it.
     size: i32,
     align: i32,
 }
@@ -991,8 +990,16 @@ enum FieldEntry {
     /// follow the same natural C alignment `codegen_c.rs`'s emitted typedef
     /// gets from clang.
     Scalar(String, i32, Width, bool),
-    /// `(name, byte offset from the struct's base, nested struct's name)`.
-    Nested(String, i32, String),
+    /// `(name, byte offset from the struct's base, layout key, field type)` —
+    /// a field that is itself an aggregate. Two shapes land here. A *nested
+    /// `datac`* is one, copied by `emit_copy` at its own (arbitrary) size
+    /// rather than a single `mov`; and, as of MK7 §5's heap-field slice, a
+    /// `String` or `Bytes` field is another — a field whose layout is one of
+    /// the synthesized ones in `build_layouts` and which the containing
+    /// `datac`'s generated drop function has to free. Keeping the field's own
+    /// `Ty` (rather than just a name to look a layout up by) is what lets
+    /// `emit_datac_drop` ask `drop_site_for` what frees it.
+    Aggregate(String, i32, String, Ty),
 }
 
 impl StructLayout {
@@ -1003,39 +1010,75 @@ impl StructLayout {
         })
     }
 
-    fn nested_field(&self, name: &str) -> Option<(i32, &str)> {
+    /// `(byte offset, layout key, field type)` for an aggregate field, which
+    /// is what both a chained field access (`o.inner.v`) and a heap field
+    /// (`h.name`) are addressed through.
+    fn aggregate_field(&self, name: &str) -> Option<(i32, &str, &Ty)> {
         self.entries.iter().find_map(|e| match e {
-            FieldEntry::Nested(n, o, ty) if n == name => Some((*o, ty.as_str())),
+            FieldEntry::Aggregate(n, o, key, ty) if n == name => Some((*o, key.as_str(), ty)),
             _ => None,
         })
     }
 }
 
-/// The `Width` that moves exactly `size` bytes in one instruction, or `None`
-/// if `size` is not one of the four this backend's `mov` forms cover. A
-/// top-level qualifying struct's own size can be anything up to eight bytes
-/// (it is always moved whole, as one opaque `QWORD`, by `value_kind`'s
-/// blanket `Width::W8`), but a struct nested *inside* another one is copied
-/// by exactly this many bytes into the parent's slot, so its size has to be a
-/// real move width or the nesting is refused rather than done wrong.
-fn width_for_size(size: i32) -> Option<Width> {
-    Some(match size {
-        1 => Width::W1,
-        2 => Width::W2,
-        4 => Width::W4,
-        8 => Width::W8,
-        _ => return None,
-    })
+/// The layout key `struct_layout` looks a field's type up under: a `datac`'s
+/// own name, or the synthesized `$String`/`$Bytes`/`$View` key. This is the
+/// one place the two spellings are related, so `try_build_layout` can place a
+/// heap field with the same code it places a nested `datac`.
+fn layout_key(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Struct(name) => Some(name.clone()),
+        Ty::Bytes => Some(BYTES_LAYOUT_KEY.to_string()),
+        Ty::String => Some(STRING_LAYOUT_KEY.to_string()),
+        Ty::View => Some(VIEW_LAYOUT_KEY.to_string()),
+        _ => None,
+    }
 }
 
 fn align_up(cursor: i32, align: i32) -> i32 {
     (cursor + align - 1) / align * align
 }
 
+/// Whether a value of `ty` owns heap memory: `Bytes`, `String`, or a `datac`
+/// that (transitively) holds one. The free-function twin of
+/// `Gen::datac_owns`, for the checks that run before a `Gen` exists or without
+/// one to hand — currently the passdown storage check in `generate`, which has
+/// to refuse an owning passdown by name because nothing here frees one at
+/// process exit.
+fn ty_owns(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> bool {
+    match ty {
+        Ty::Bytes | Ty::String => true,
+        Ty::Struct(name) => datac_owns_in(name, layouts, &mut std::collections::HashSet::new()),
+        _ => false,
+    }
+}
+
+fn datac_owns_in(
+    name: &str,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+    seen: &mut std::collections::HashSet<String>,
+) -> bool {
+    if !seen.insert(name.to_string()) {
+        return false;
+    }
+    let Some(layout) = layouts.get(name) else {
+        return false;
+    };
+    layout.entries.iter().any(|e| match e {
+        FieldEntry::Aggregate(_, _, _, ty) => match ty {
+            Ty::Bytes | Ty::String => true,
+            Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
+            _ => false,
+        },
+        FieldEntry::Scalar(..) => false,
+    })
+}
+
 /// MK7 §5 item 4, third slice: a top-level `datac`'s own SysV eightbyte class,
 /// derived purely from its size — sound *only* because every field this
-/// module accepts at all is `int_ty`-representable or itself a nested
-/// qualifying (≤8-byte) `datac`, which by induction is the same thing. A real
+/// module accepts at all is `int_ty`-representable, a nested aggregate whose
+/// own eightbytes are the same thing by induction, or one of the heap
+/// layouts, whose three fields are a pointer and two `size_t`s. A real
 /// SysV classifier also has to consider whether each eightbyte is reachable
 /// only through float fields (making it `SSE` class); this module never
 /// builds a layout for a `datac` with a float field in the first place (see
@@ -1129,16 +1172,18 @@ fn try_build_layout(
             entries.push(FieldEntry::Scalar(f.name.clone(), cursor, width, signed));
             cursor += width.bytes();
             max_align = max_align.max(align);
-        } else if let Ty::Struct(name) = &f.ty {
-            // A *nested* field must still be a one-eightbyte struct — see
-            // `width_for_size`'s doc — regardless of what the third slice
-            // does for a top-level value's own size. Only a top-level
-            // `datac` gets the wider 9-16-byte/`MEMORY` treatment.
-            let inner = out.get(name)?;
-            width_for_size(inner.size)?;
+        } else if let Some(inner) = struct_layout(&f.ty, out) {
+            // MK7 §5's heap-field slice: any field whose own layout exists is
+            // placed here with natural alignment. That covers a nested `datac`
+            // (any size — the copy is `emit_copy`'s arbitrary-width one, not a
+            // single `mov`) *and* a `String`/`Bytes` field, whose layout is one
+            // of the synthesized ones. The field's key is what its own layout
+            // is looked up by later, which is why it is recorded rather than
+            // the type alone.
+            let key = layout_key(&f.ty).expect("a field with a layout has a layout key");
             let align = inner.align;
             cursor = align_up(cursor, align);
-            entries.push(FieldEntry::Nested(f.name.clone(), cursor, name.clone()));
+            entries.push(FieldEntry::Aggregate(f.name.clone(), cursor, key, f.ty.clone()));
             cursor += inner.size;
             max_align = max_align.max(align);
         } else {
@@ -1350,7 +1395,14 @@ fn emit_copy(out: &mut String, dst_reg: &str, dst_off: i32, src_reg: &str, src_o
     }
 }
 
-fn emit_copy_to_global(out: &mut String, label: &str, src_reg: &str, src_off: i32, mut size: i32) {
+fn emit_copy_to_global(
+    out: &mut String,
+    label: &str,
+    dst_off: i32,
+    src_reg: &str,
+    src_off: i32,
+    mut size: i32,
+) {
     let mut off = 0i32;
     while size > 0 {
         let (w, n) = if size >= 8 {
@@ -1369,7 +1421,13 @@ fn emit_copy_to_global(out: &mut String, label: &str, src_reg: &str, src_off: i3
             w.mem(),
             off_str(src_off + off)
         );
-        let _ = writeln!(out, "    mov {} [rip+{label}{}], {}", w.mem(), off_str(off), w.rax());
+        let _ = writeln!(
+            out,
+            "    mov {} [rip+{label}{}], {}",
+            w.mem(),
+            off_str(dst_off + off),
+            w.rax()
+        );
         off += n;
         size -= n;
     }
@@ -1485,10 +1543,13 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         // An *owned* passdown has no scope to die at, so the C backend frees it
         // from an `atexit` handler at process exit (see
         // `codegen_c.rs::write_pds`). This backend has no such handler yet, so
-        // an owned `Bytes` passdown is refused by name rather than leaked
-        // silently — the same refusal-over-silence rule the rest of this
-        // module follows. No fixture declares one.
-        if matches!(pd.value_ty, Ty::Bytes | Ty::String) {
+        // an owning passdown is refused by name rather than leaked silently —
+        // the same refusal-over-silence rule the rest of this module follows.
+        // The test is `ty_owns` rather than a `Bytes`/`String` match because
+        // the heap-field slice made a `datac` that holds a `String` an owning
+        // type too, and one of those as a passdown would leak in exactly the
+        // same way.
+        if ty_owns(&pd.value_ty, &g.layouts) {
             return Err(unsupported(&format!(
                 "the passdown `pd {}` (its type is `{}`, and the asm backend does not yet \
                  free a passdown at process exit — see plan/mk7-own-backend.md §5)",
@@ -1543,6 +1604,26 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     routines.sort_by_key(|r| r.label());
     for r in routines {
         g.emit_routine(r);
+    }
+    // MK7 §5's heap-field slice: one drop function per `datac` that owns
+    // memory, for the ones this program actually drops. Emitted after the
+    // fixed routines (`require_datac_drop` recorded every `Bytes`/`String`
+    // routine a body calls into that set) and before the panic routine, so no
+    // function body is ever written in the middle of another. The loop re-reads
+    // the set each time rather than iterating a snapshot, so a drop function
+    // that turns out to need another one (a `datac` held by value in a `datac`
+    // dropped later in the program) is emitted too instead of linking against
+    // a symbol nothing wrote.
+    let mut emitted: Vec<String> = Vec::new();
+    loop {
+        let next = g
+            .drop_datacs
+            .iter()
+            .find(|n| !emitted.contains(n))
+            .cloned();
+        let Some(name) = next else { break };
+        g.emit_datac_drop(&name);
+        emitted.push(name);
     }
     // MK7 §5 item 8: the panic routine, after every function and before the
     // data section `finish` writes. One copy per program, and only for a
@@ -2180,6 +2261,34 @@ struct Gen {
     /// `(function, span)`, so the drop lookups need it. Set at the top of
     /// `Gen::function` and reset for each one.
     function: String,
+    /// MK7 §5's heap-field slice: the `datac`s whose generated drop function
+    /// this program calls, transitively. A `datac` that owns a `String` field
+    /// needs one; so does a `datac` holding *that* `datac` by value, which is
+    /// why this is closed over nested fields at the point a drop is first
+    /// needed (`require_datac_drop`) rather than being a single name.
+    drop_datacs: std::collections::BTreeSet<String>,
+}
+
+/// One owned type's drop, as a symbol this module can `call`.
+#[derive(Clone, PartialEq, Eq)]
+enum DropSite {
+    /// One of the fixed routines this backend already emits (`Bytes`,
+    /// `String`).
+    Routine(Routine),
+    /// A per-`datac` drop function, generated on demand by
+    /// `Gen::emit_datac_drop` under the same symbol `types::drop_fn_name`
+    /// gives the C backend (`kelp_drop_<c_ident>`), so a stack trace and a
+    /// differential test name the same thing.
+    Datac(String),
+}
+
+impl DropSite {
+    fn label(&self) -> String {
+        match self {
+            DropSite::Routine(r) => r.label().to_string(),
+            DropSite::Datac(name) => format!("kelp_drop_{}", crate::types::c_ident(name)),
+        }
+    }
 }
 
 impl Gen {
@@ -2613,12 +2722,13 @@ impl Gen {
         self.pds.iter().position(|pd| pd.hidden == name)
     }
 
-    /// MK7 §5 item 5, first slice: emits one owned local's `free` at a drop
-    /// point. Only `Bytes` is implemented — the one heap type this slice
-    /// lowers — and a target of any other type is refused by name rather than
-    /// silently skipped, because a skipped free is a leak and a skip that
-    /// *looks* handled is exactly what this backend's refusals exist to
-    /// prevent.
+    /// MK7 §5 item 5: emits one owned local's `free` at a drop point. `Bytes`
+    /// and `String` have fixed routines; a `datac` that (transitively) owns
+    /// memory has a generated one, `kelp_drop_<name>` — the same symbol the C
+    /// backend's `write_struct` gives the equivalent typedef's drop. A target
+    /// of any other type is refused by name rather than silently skipped,
+    /// because a skipped free is a leak and a skip that *looks* handled is
+    /// exactly what this backend's refusals exist to prevent.
     fn emit_drop(&mut self, target: &DropTarget, frame: &Frame) -> Result<(), String> {
         // A `View` is a `Copy` borrow and has no drop arm in `types.rs`
         // (`drop_fn_name(View)` is `unreachable!`), so this can only be
@@ -2631,16 +2741,12 @@ impl Gen {
                 target.name
             )));
         }
-        let drop = match target.ty {
-            Ty::Bytes => Routine::BytesDrop,
-            Ty::String => Routine::StringDrop,
-            _ => {
-                return Err(unsupported(&format!(
-                    "dropping the owned value `{}` of type `{}`",
-                    target.name,
-                    target.ty.display()
-                )))
-            }
+        let Some(site) = self.drop_site_for(&target.ty) else {
+            return Err(unsupported(&format!(
+                "dropping the owned value `{}` of type `{}`",
+                target.name,
+                target.ty.display()
+            )));
         };
         let off = match frame.lookup(&target.name) {
             Some((loc, _)) => loc
@@ -2648,21 +2754,122 @@ impl Gen {
                 .expect("an owned heap local is stack-only"),
             None => return Err(unsupported(&format!("a drop of the name `{}`", target.name))),
         };
-        self.emit_drop_slot(drop, off, frame)
+        self.emit_drop_slot(&site, off, frame)
     }
 
-    /// Frees an owned `Bytes`/`String` whose storage this code generator
-    /// staged in a `Frame::scratch` slot — a temporary borrowed for a call
-    /// argument, or printed directly. The same two calls `emit_drop` makes,
-    /// addressed by frame offset rather than by name, and with the drop
-    /// routine chosen by the caller because a scratch slot carries no type.
-    fn emit_drop_slot(&mut self, r: Routine, slot: i32, frame: &Frame) -> Result<(), String> {
-        self.require_routine(r);
+    /// The drop call for `ty`, if a value of `ty` owns anything: a fixed
+    /// routine for `Bytes`/`String`, or a generated per-`datac` function for a
+    /// `datac` whose fields (transitively) include one. `None` for a type that
+    /// owns nothing — a scalar, a `View`, or a `datac` of scalars — which is
+    /// the same answer `types::needs_drop` gives the C backend, and what makes
+    /// a `datac`'s generated drop skip its scalar fields instead of calling a
+    /// function that does not exist.
+    fn drop_site_for(&mut self, ty: &Ty) -> Option<DropSite> {
+        match ty {
+            Ty::Bytes => Some(DropSite::Routine(Routine::BytesDrop)),
+            Ty::String => Some(DropSite::Routine(Routine::StringDrop)),
+            Ty::Struct(name) => {
+                if !self.datac_owns(name) {
+                    return None;
+                }
+                self.require_datac_drop(name);
+                Some(DropSite::Datac(name.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a `datac` owns anything, read off the layouts: a `String` or
+    /// `Bytes` field anywhere in it, or a nested `datac` that has one. This is
+    /// the asm backend's twin of `types::owned_types`, computed on demand
+    /// instead of in declaration order — the layouts are already a fixed point
+    /// (`build_layouts` runs to one), so this recursion needs no ordering.
+    fn datac_owns(&self, name: &str) -> bool {
+        datac_owns_in(name, &self.layouts, &mut std::collections::HashSet::new())
+    }
+
+    /// Records that `name`'s generated drop function is needed, and every
+    /// `datac` drop it calls — so `generate` can emit the whole closure after
+    /// the routine set has been snapshotted. The fixed `Bytes`/`String`
+    /// routines a datac's drop calls are registered here too, for the same
+    /// reason: `require_routine` is what puts a routine in that snapshot, and
+    /// a call registered after the snapshot links against a symbol nothing
+    /// emitted.
+    fn require_datac_drop(&mut self, name: &str) {
+        let mut stack = vec![name.to_string()];
+        while let Some(n) = stack.pop() {
+            if !self.drop_datacs.insert(n.clone()) {
+                continue;
+            }
+            let Some(layout) = self.layouts.get(&n).cloned() else {
+                continue;
+            };
+            for entry in &layout.entries {
+                let FieldEntry::Aggregate(_, _, _, ty) = entry else {
+                    continue;
+                };
+                match ty {
+                    Ty::Bytes => {
+                        self.require_routine(Routine::BytesDrop);
+                    }
+                    Ty::String => {
+                        self.require_routine(Routine::StringDrop);
+                    }
+                    Ty::Struct(inner) => {
+                        if self.datac_owns(inner) {
+                            stack.push(inner.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Frees an owned value whose storage this code generator staged in a
+    /// `Frame::scratch` slot — a temporary borrowed for a call argument, or
+    /// printed directly. The same call `emit_drop` makes, addressed by frame
+    /// offset rather than by name, and with the drop chosen by the caller
+    /// because a scratch slot carries no type.
+    fn emit_drop_slot(&mut self, site: &DropSite, slot: i32, frame: &Frame) -> Result<(), String> {
+        if let DropSite::Routine(r) = site {
+            self.require_routine(*r);
+        }
         call_align_begin(&mut self.out, frame.sp_slot);
         let _ = writeln!(self.out, "    lea rdi, [rbp{slot}]");
-        let _ = writeln!(self.out, "    call {}", r.label());
+        let _ = writeln!(self.out, "    call {}", site.label());
         call_align_end(&mut self.out, frame.sp_slot);
         Ok(())
+    }
+
+    /// One `datac`'s generated drop function: each owned field in declaration
+    /// order, at its own offset, exactly the body `codegen_c.rs::write_struct`
+    /// writes. `rdi` is the pointer to the value, kept in a callee-saved
+    /// register because a nested drop call is entitled to clobber every
+    /// caller-saved one. The `sub rsp, 8` is alignment: at entry `rsp` is eight
+    /// bytes off sixteen, `push rbp` and `push rbx` leave it eight off again,
+    /// and a `call` must see it aligned.
+    fn emit_datac_drop(&mut self, name: &str) {
+        let Some(layout) = self.layouts.get(name).cloned() else {
+            return;
+        };
+        let label = format!("kelp_drop_{}", crate::types::c_ident(name));
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        self.out
+            .push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 8\n");
+        self.out.push_str("    mov rbx, rdi\n");
+        for entry in &layout.entries {
+            let FieldEntry::Aggregate(_, offset, _, ty) = entry else {
+                continue;
+            };
+            let Some(site) = self.drop_site_for(ty) else {
+                continue;
+            };
+            let _ = writeln!(self.out, "    lea rdi, [rbx{}]", off_str(*offset));
+            let _ = writeln!(self.out, "    call {}", site.label());
+        }
+        self.out
+            .push_str("    add rsp, 8\n    pop rbx\n    pop rbp\n    ret\n");
     }
 
     /// Records that a routine, and everything it calls, has to be emitted.
@@ -2730,37 +2937,48 @@ impl Gen {
         }
     }
 
-    /// An owned `Bytes`/`String` argument passed as a *borrow* (`&b`, `&s`)
-    /// whose inner expression is a temporary — `b.append(Bytes.from_str("de"))`,
-    /// `f(String.from_str("x"))` — needs storage its address can be taken of.
-    /// It gets a fresh scratch slot built through `eval_struct_into` and a
-    /// `lea` of that slot; the caller records the slot and the drop routine so
-    /// the temporary is freed right after the call, which is what
-    /// `codegen_c.rs::call_value` does by hoisting the same temporary into a C
-    /// variable. `None` for a borrow of a place (`&b`, addressed directly) and
-    /// for anything that is not a temporary `Bytes`/`String`.
+    /// An owned `Bytes`/`String`/`datac` argument passed as a *borrow* (`&b`,
+    /// `&s`, `&holder`) whose inner expression is a temporary —
+    /// `b.append(Bytes.from_str("de"))`, `f(String.from_str("x"))`,
+    /// `show(Holder(name = String.from_str("h"), n = 1))` — needs storage its
+    /// address can be taken of. It gets a fresh scratch slot built through
+    /// `eval_struct_into` and a `lea` of that slot; the caller records the slot
+    /// and the drop so the temporary is freed right after the call, which is
+    /// what `codegen_c.rs::call_value` does by hoisting the same temporary into
+    /// a C variable. `None` for a borrow of a place (`&b`, addressed directly),
+    /// for a temporary that owns nothing (a `datac` of scalars — the `Ref` arm
+    /// in `expr` stages that one), and for anything not an owned aggregate.
     fn hoist_owned_temporary(
         &mut self,
         arg: &Expr,
         frame: &mut Frame,
-    ) -> Result<Option<(i32, Routine)>, String> {
+    ) -> Result<Option<(i32, DropSite)>, String> {
         let ExprKind::Ref { expr: inner, .. } = &arg.kind else {
             return Ok(None);
         };
-        let drop = match inner.ty {
-            Ty::Bytes => Routine::BytesDrop,
-            Ty::String => Routine::StringDrop,
+        let site = match &inner.ty {
+            Ty::Bytes => DropSite::Routine(Routine::BytesDrop),
+            Ty::String => DropSite::Routine(Routine::StringDrop),
+            // A `datac` temporary is staged here only when it owns something:
+            // an owning one has to be freed after the call, and a non-owning
+            // one is what `expr`'s `Ref` arm already stages with no drop
+            // (`is_place` below never sees it, so the two paths cannot
+            // disagree about who stages it).
+            Ty::Struct(name) if self.datac_owns(name) => {
+                self.require_datac_drop(name);
+                DropSite::Datac(name.clone())
+            }
             _ => return Ok(None),
         };
         if is_place(inner) {
             return Ok(None);
         }
         let layout = struct_layout(&inner.ty, &self.layouts)
-            .expect("Bytes and String have synthesized layouts");
+            .expect("an owned aggregate has a layout");
         let slot = frame.scratch(align_up(layout.size, 8));
         self.eval_struct_into(inner, frame, Dest::Direct(slot))?;
         let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
-        Ok(Some((slot, drop)))
+        Ok(Some((slot, site)))
     }
 
     fn stmt(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
@@ -3244,6 +3462,24 @@ impl Gen {
                         return self.expr(expr, frame);
                     }
                 }
+                // MK7 §5's heap-field slice: `&d.f` where `f` is an aggregate
+                // field — the address of the field inside the base object,
+                // computed with the same layout a read uses. This is what a
+                // method call on an owned field lowers to (`h.name.len()` is
+                // `String#len(&h.name)`), and it has to be an address rather
+                // than a copy: the temporary branch below would hand the callee
+                // a fresh staging slot whose buffer nothing ever frees.
+                if let ExprKind::FieldAccess { base, field } = &expr.kind {
+                    if let Ok(layout) = self.addr_of_struct(base, frame) {
+                        if let Some((offset, _, _)) = layout.aggregate_field(field) {
+                            if offset != 0 {
+                                let _ = writeln!(self.out, "    add r11, {offset}");
+                            }
+                            self.out.push_str("    mov rax, r11\n");
+                            return Ok(());
+                        }
+                    }
+                }
                 // MK7 §5 item 4, fourth slice: a borrow of a *temporary* —
                 // `sum(Pair(a = 1, b = 2))`, or the same shape over a call that
                 // returns a `datac`. The temporary gets a slot of its own
@@ -3545,8 +3781,9 @@ impl Gen {
     ) -> Result<(), String> {
         let layout = self.layouts.get(name).cloned().ok_or_else(|| {
             unsupported(&format!(
-                "the datac `{name}` (it is too large, or holds a field this slice cannot \
-                 lower yet — see plan/mk7-own-backend.md §5 item 4)"
+                "the datac `{name}` (it holds a field this backend cannot lower yet — a \
+                 float, a `List`/`Map`/`Box`/`enum`, or a `datac` that does — see \
+                 plan/mk7-own-backend.md §5 item 4)"
             ))
         })?;
         // MK7 §5 item 4, third slice: this rax-returning form is only sound
@@ -3585,23 +3822,14 @@ impl Gen {
     ) -> Result<(), String> {
         let layout = self.layouts.get(name).cloned().ok_or_else(|| {
             unsupported(&format!(
-                "the datac `{name}` (it is too large, or holds a field this slice cannot \
-                 lower yet — see plan/mk7-own-backend.md §5 item 4)"
+                "the datac `{name}` (it holds a field this backend cannot lower yet — a \
+                 float, a `List`/`Map`/`Box`/`enum`, or a `datac` that does — see \
+                 plan/mk7-own-backend.md §5 item 4)"
             ))
         })?;
         for entry in &layout.entries {
-            let (fname, foffset, fwidth) = match entry {
-                FieldEntry::Scalar(n, o, w, _) => (n, *o, *w),
-                FieldEntry::Nested(n, o, nested_name) => {
-                    let nested = self.layouts.get(nested_name).expect(
-                        "a nested field's struct is always in `self.layouts`, since \
-                         `try_build_layout` only accepted it after looking it up there",
-                    );
-                    let w = width_for_size(nested.size).expect(
-                        "try_build_layout already checked the nested struct's size is a valid move width",
-                    );
-                    (n, *o, w)
-                }
+            let fname = match entry {
+                FieldEntry::Scalar(n, ..) | FieldEntry::Aggregate(n, ..) => n,
             };
             let value = fields
                 .iter()
@@ -3610,48 +3838,93 @@ impl Gen {
                 .ok_or_else(|| {
                     unsupported(&format!("a `{name}` literal missing its `{fname}` field"))
                 })?;
-            self.expr(value, frame)?;
-            match dest {
-                Dest::Direct(base) => {
-                    let addr = base + foffset;
-                    let _ = writeln!(
-                        self.out,
-                        "    mov {} [rbp{addr}], {}",
-                        fwidth.mem(),
-                        fwidth.rax()
-                    );
+            match entry {
+                FieldEntry::Scalar(_, foffset, fwidth, _) => {
+                    self.expr(value, frame)?;
+                    self.store_value(dest, *foffset, *fwidth);
                 }
-                Dest::Indirect(slot) => {
-                    // `rax` already holds the field's value; loading the
-                    // pointer doesn't touch it, so no save/restore is needed
-                    // around this the way `field_assign` needs one around its
-                    // own address computation.
-                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
-                    let _ = writeln!(
-                        self.out,
-                        "    mov {} [r11{}], {}",
-                        fwidth.mem(),
-                        off_str(foffset),
-                        fwidth.rax()
-                    );
-                }
-                // MK7 §5 (the passdown slice): a `pd` initializer builds its
-                // fields straight into the passdown's own storage, no frame
-                // slot in between — `[rip+label+offset]` is the same field
-                // store as `Dest::Direct`'s, with a symbol instead of `rbp`.
-                Dest::Global(index) => {
-                    let label = self.pds[index].label.clone();
-                    let _ = writeln!(
-                        self.out,
-                        "    mov {} [rip+{label}{}], {}",
-                        fwidth.mem(),
-                        off_str(foffset),
-                        fwidth.rax()
-                    );
+                // MK7 §5's heap-field slice: an aggregate field — a `String`,
+                // a `Bytes`, or a nested `datac` — is staged in a scratch slot
+                // of its own (`eval_struct_into`, which is the same code a
+                // `let` of that type uses) and then copied into place at its
+                // own byte count. A shared `agg_slot` would not do: the field
+                // value can itself contain a nested literal that reuses it,
+                // and a second field's staging would overwrite the first
+                // before this one's copy ran.
+                FieldEntry::Aggregate(_, foffset, key, _) => {
+                    let inner = self.layouts.get(key).cloned().ok_or_else(|| {
+                        unsupported(&format!("the type a field of `{name}` holds"))
+                    })?;
+                    let slot = frame.scratch(align_up(inner.size, 8));
+                    self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+                    self.copy_into_dest(dest, *foffset, slot, inner.size);
                 }
             }
         }
         Ok(())
+    }
+
+    /// Stores `rax`'s low `width` bytes at `offset` into `dest` — the scalar
+    /// half of `struct_lit_at`, shared by all three `Dest` shapes.
+    fn store_value(&mut self, dest: Dest, offset: i32, width: Width) {
+        match dest {
+            Dest::Direct(base) => {
+                let addr = base + offset;
+                let _ = writeln!(
+                    self.out,
+                    "    mov {} [rbp{addr}], {}",
+                    width.mem(),
+                    width.rax()
+                );
+            }
+            Dest::Indirect(slot) => {
+                // `rax` already holds the field's value; loading the pointer
+                // doesn't touch it, so no save/restore is needed around this
+                // the way `field_assign` needs one around its own address
+                // computation.
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                let _ = writeln!(
+                    self.out,
+                    "    mov {} [r11{}], {}",
+                    width.mem(),
+                    off_str(offset),
+                    width.rax()
+                );
+            }
+            Dest::Global(index) => {
+                // MK7 §5 (the passdown slice): a `pd` initializer builds its
+                // fields straight into the passdown's own storage, with no
+                // frame slot in between — the same store as `Dest::Direct`'s,
+                // with a symbol instead of `rbp`.
+                let label = self.pds[index].label.clone();
+                let _ = writeln!(
+                    self.out,
+                    "    mov {} [rip+{label}{}], {}",
+                    width.mem(),
+                    off_str(offset),
+                    width.rax()
+                );
+            }
+        }
+    }
+
+    /// Copies `size` bytes from the frame slot `src` to `dest + offset` — the
+    /// aggregate half of `struct_lit_at`, and the shape `eval_struct_into`'s
+    /// field-access arm writes an owned field through.
+    fn copy_into_dest(&mut self, dest: Dest, offset: i32, src: i32, size: i32) {
+        match dest {
+            Dest::Direct(base) => {
+                emit_copy(&mut self.out, "rbp", base + offset, "rbp", src, size)
+            }
+            Dest::Indirect(slot) => {
+                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot}]");
+                emit_copy(&mut self.out, "r10", offset, "rbp", src, size);
+            }
+            Dest::Global(index) => {
+                let label = self.pds[index].label.clone();
+                emit_copy_to_global(&mut self.out, &label, offset, "rbp", src, size);
+            }
+        }
     }
 
     /// MK7 §5 item 4, third slice: evaluates a `Two`/`Mem`-class `datac`
@@ -3672,6 +3945,36 @@ impl Gen {
     fn eval_struct_into(&mut self, expr: &Expr, frame: &mut Frame, dest: Dest) -> Result<(), String> {
         match &expr.kind {
             ExprKind::StructLit { name, fields } => self.struct_lit_at(name, fields, frame, dest),
+            // MK7 §5's heap-field slice: an *aggregate field* read by value —
+            // `print(h.name)`, `val s = h.name`, an owned field handed to a
+            // callee. `addr_of_struct` already computes the base object's
+            // address into `r11` (including through a borrow), so the whole of
+            // this arm is a byte copy out of `[r11+offset]` at the field
+            // layout's own size, exactly what `emit_copy` does for a `Mem`- or
+            // `Two`-class value elsewhere.
+            ExprKind::FieldAccess { base, field } => {
+                let layout = self.addr_of_struct(base, frame)?;
+                let (offset, key, _) = layout.aggregate_field(field).ok_or_else(|| {
+                    unsupported(&format!("the field `{field}` of `{}`", base.ty.display()))
+                })?;
+                let inner = self.layouts.get(key).cloned().ok_or_else(|| {
+                    unsupported(&format!("the type a field of `{}` holds", base.ty.display()))
+                })?;
+                match dest {
+                    Dest::Direct(off) => {
+                        emit_copy(&mut self.out, "rbp", off, "r11", offset, inner.size)
+                    }
+                    Dest::Indirect(slot) => {
+                        let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot}]");
+                        emit_copy(&mut self.out, "r10", 0, "r11", offset, inner.size);
+                    }
+                    Dest::Global(index) => {
+                        let label = self.pds[index].label.clone();
+                        emit_copy_to_global(&mut self.out, &label, 0, "r11", offset, inner.size);
+                    }
+                }
+                Ok(())
+            }
             ExprKind::Ident(name) => {
                 let (loc, ty) = frame
                     .lookup(name)
@@ -3689,7 +3992,7 @@ impl Gen {
                     }
                     Dest::Global(index) => {
                         let label = self.pds[index].label.clone();
-                        emit_copy_to_global(&mut self.out, &label, "rbp", src_off, layout.size);
+                        emit_copy_to_global(&mut self.out, &label, 0, "rbp", src_off, layout.size);
                     }
                 }
                 Ok(())
@@ -3730,7 +4033,7 @@ impl Gen {
     fn addr_of_struct(&mut self, base: &Expr, frame: &mut Frame) -> Result<StructLayout, String> {
         if let ExprKind::FieldAccess { base: inner_base, field } = &base.kind {
             let inner_layout = self.addr_of_struct(inner_base, frame)?;
-            let (offset, nested_name) = inner_layout.nested_field(field).ok_or_else(|| {
+            let (offset, nested_name, _) = inner_layout.aggregate_field(field).ok_or_else(|| {
                 unsupported(&format!("the field `{field}` of `{}`", inner_base.ty.display()))
             })?;
             if offset != 0 {
@@ -3792,9 +4095,24 @@ impl Gen {
     /// the address `addr_of_struct` computes into `r11`.
     fn field_read(&mut self, base: &Expr, field: &str, frame: &mut Frame) -> Result<(), String> {
         let layout = self.addr_of_struct(base, frame)?;
-        let (foffset, width, signed) = layout
-            .scalar_field(field)
-            .ok_or_else(|| unsupported(&format!("the field `{field}` of `{}`", base.ty.display())))?;
+        let (foffset, width, signed) = layout.scalar_field(field).ok_or_else(|| {
+            // MK7 §5's heap-field slice: an *aggregate* field (`h.name`) is a
+            // value wider than `rax`, so `expr` cannot leave one there. The
+            // contexts that can hold one — `print`, a `let`, a call argument —
+            // stage it through `eval_struct_into`, which is where the field
+            // access arm lives; reaching here means something asked for the
+            // field as a plain one-register value, and that is refused by name
+            // rather than truncated to the field's first eight bytes.
+            if layout.aggregate_field(field).is_some() {
+                unsupported(&format!(
+                    "reading the aggregate field `{field}` of `{}` as a plain value (bind \
+                     it, pass it, or print it whole)",
+                    base.ty.display()
+                ))
+            } else {
+                unsupported(&format!("the field `{field}` of `{}`", base.ty.display()))
+            }
+        })?;
         let _ = writeln!(self.out, "    mov {}, {} [r11+{foffset}]", width.rax(), width.mem());
         self.out.push_str(&width.extend(signed));
         Ok(())
@@ -4017,7 +4335,7 @@ impl Gen {
         // is freed right after the call — the shape `codegen_c.rs::call_value`
         // gets from hoisting the same temporary into a C variable. The drop
         // routine travels with the slot because a scratch slot carries no type.
-        let mut hoisted: Vec<(i32, Routine)> = Vec::new();
+        let mut hoisted: Vec<(i32, DropSite)> = Vec::new();
         for (pos, arg) in args.iter().enumerate() {
             if let Some(slot) = self.hoist_owned_temporary(arg, frame)? {
                 hoisted.push(slot);
@@ -4208,8 +4526,8 @@ impl Gen {
             } else {
                 None
             };
-            for (slot, drop) in &hoisted {
-                self.emit_drop_slot(*drop, *slot, frame)?;
+            for (slot, site) in &hoisted {
+                self.emit_drop_slot(site, *slot, frame)?;
             }
             if let Some(p) = parked {
                 self.unpark(p);
@@ -5013,8 +5331,8 @@ impl Gen {
     /// is used where it already lives and is never freed.
     fn print_buffer(&mut self, newline: bool, arg: &Expr, frame: &mut Frame) -> Result<(), String> {
         let owned = match arg.ty {
-            Ty::Bytes => Some(Routine::BytesDrop),
-            Ty::String => Some(Routine::StringDrop),
+            Ty::Bytes => Some(DropSite::Routine(Routine::BytesDrop)),
+            Ty::String => Some(DropSite::Routine(Routine::StringDrop)),
             _ => None,
         };
         let owned_slot = if let Some(_) = owned {
@@ -5043,8 +5361,8 @@ impl Gen {
         call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
         call_align_end(&mut self.out, frame.sp_slot);
-        if let (Some(slot), Some(drop)) = (owned_slot, owned) {
-            self.emit_drop_slot(drop, slot, frame)?;
+        if let (Some(slot), Some(site)) = (owned_slot, owned) {
+            self.emit_drop_slot(&site, slot, frame)?;
         }
         Ok(())
     }
