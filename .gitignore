@@ -36,3 +36,7 @@
 /scanner
 /view
 /view1
+
+# Unreleased changes for the wiki changelog page (`kelp-wiki`'s `changelog.md`).
+# A release writes the entry from this file, then wipes it back to its header.
+/CHANGELOG.pending.md
