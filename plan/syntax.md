@@ -139,14 +139,15 @@ entry = "src/main.kp"
 kelp = "v0.2.0"             # the kelpc version this project builds with
 ```
 
-Written by `coral toolchain kelp pin v0.2.0`, printed by `coral toolchain kelp pin`, removed by `--clear`. It is a line edit, so comments and section order survive, and a pinned version that is not installed yet is installed on the spot (`coral toolchain kelp install <ver>`, which prefers a release binary and falls back to clone-and-build).
+Written by `coral toolchain kelp pin v0.2.0`, printed by `coral toolchain kelp pin`, removed by `--clear`. It is a line edit, so comments and section order survive, and a pinned version that is not installed yet is installed on the spot (`coral toolchain kelp install <ver>`, which prefers a release binary and falls back to clone-and-build). The store holds one version per component, so installing or using a version drops the others; a pin that is not the stored one is reinstalled the next time the project builds.
 
 Coral resolves the compiler in this order: `$KELPC`, then the project's pin, then `~/.coral/bin/kelpc`, then `PATH`. Two things follow, and both bite:
 
 - **A pin does nothing for a direct `kelpc` call.** Running `kelpc run src/main.kp` yourself uses whatever `~/.coral/bin/kelpc` points at (the machine default, set by `coral toolchain kelp use <ver>`), not the pin. Build through Coral — `coral build` / `coral run` — for the pin to apply.
+- **The store holds one version at a time.** `install` and `use` delete the other versions under `~/.coral/toolchains/` once the new binary is in place, so a pin that is not the stored version displaces it: two projects pinned to different versions reinstall on each switch (a release download when the tag has one, a clone-and-build when it does not). A pin still selects the compiler — it just does not keep both.
 - **`kelpc build`/`run` writes its output into the current directory** by default (1.3), while `coral build` writes `build/`. An IDE run configuration should point at `coral run`, or at the `build/` artifact.
 
-`coral toolchain kelp list` prints the versions available on Gitea; `coral toolchain kelp installed` prints the ones already under `~/.coral/toolchains/`.
+`coral toolchain kelp list` prints the versions available on Gitea; `coral toolchain kelp installed` prints what is under `~/.coral/toolchains/` — at most one version, since the store keeps one per component.
 
 ## 2. Lexical structure
 
