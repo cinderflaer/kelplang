@@ -26,14 +26,14 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, four slices of aggregates, `datac`s that own a heap field, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **161 of 254** integration tests pass under `--backend=asm`; all 63 fixtures the asm backend builds print byte-identical stdout to the C backend, and three heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 132 C and 63 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, five slices of aggregates, `datac`s that own a heap field, `Box<T>`, item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **164 of 255** integration tests pass under `--backend=asm`; all 66 fixtures the asm backend builds print byte-identical stdout to the C backend, and three heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 133 C and 66 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d` |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **161 of 254 tests pass on the asm backend, and the C backend passes all
-254.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **164 of 255 tests pass on the asm backend, and the C backend passes all
+255.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -90,7 +90,17 @@ the one fixture the slice wrote to pin a struct with three owned shapes in it at
 (`datac_owned_fields`) — 63 fixtures build, 69 are refused, and the asm suite is 161 of 254. Its measurement
 worth keeping is that **the ABI needed nothing**: a `String` field is a nested aggregate like any other, so the
 generated per-`datac` drop was the only new mechanism, and every fixture the slice moved had been refused for
-the field's type rather than for anything about how a value travels.
+the field's type rather than for anything about how a value travels. The box slice (also below) moved it by
+three: the two fixtures the builtin owning pointer had been keeping out (`box_recursive`, whose recursive
+`datac` through a `Box` field is the type's whole reason to exist, and `box_empty_panic`) and
+`box_owned_elements`, the fixture that slice wrote for replacing and taking an owned element — 66 fixtures
+build, 67 are refused, and the asm suite is 164 of 255. Two things about it are worth more than the count: a
+`datac` whose field is a `Box` needed the *recursive* layout to resolve (a box is eight bytes whatever it
+points at, so the element's own layout is deliberately not required while the parent's fields are placed), and
+the slice's own fixture found a **pre-existing bug in this backend that no earlier fixture had reached** — an
+assignment to an aggregate local wrote its first field into the target's own slot before evaluating a field
+initializer that reads the target (`list = Node(value = 2, next = Box.of(list))`), which C's
+compound-literal-then-assign order gets for free and which this backend has to stage explicitly.
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
@@ -102,13 +112,13 @@ landed, not a percentage that would imply more precision than the plan has:**
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
   `datac` work), and the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
   backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
-  compiled. That is where the 161/254 fixture number comes from. The remaining part of item 4 (`enum`, plus a
-  `datac` holding a float or `List`/`Map`/`Box` field — a `datac` holding an owned `String`/`Bytes` field is now
-  covered, see the heap-field slice's blockquote, and the fourth slice's covers what "by value" means end to
-  end), the rest of item 8 (printing an owned buffer in a template), the rest of items 5 and 10 (every other
-  owning type's drop, and the externs whose bodies are the heap and the syscall layer), plus items 6-7
+  compiled. That is where the 164/255 fixture number comes from. The remaining part of item 4 (`enum`, plus a
+  `datac` holding a float or `List`/`Map` field — `String`/`Bytes` fields and `Box<T>` itself are now covered,
+  see the heap-field and box slices' blockquotes, and the fourth slice's covers what "by value" means end to
+  end), the rest of item 8 (printing an owned buffer in a template), the rest of items 5 and 10 (`List`/`Map`
+  drops, and the externs whose bodies are the heap and the syscall layer), plus items 6-7
   (closures, capabilities), are what stands between here and Stage
-  1's own definition of done: all 254 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for
+  1's own definition of done: all 255 fixtures passing, `bench/speed` no worse than `-O0`, and a memory gate for
   the asm backend — which the heap slice supplied, in the form of a `valgrind` sweep over every fixture this
   backend builds, and which is documented rather than wired into the suite (see that blockquote for why).
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
@@ -121,7 +131,7 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (161/254) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (164/255) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
@@ -129,7 +139,8 @@ memory gate — which is why both are called out separately above and in §5's d
 builds, and detailed in §5):
 
 1. **The runtime** — the row that was 40 fixtures blocked by an `extern fun` at all, 38 of them by
-   `std.mem.alloc_raw` alone. **Re-measured after the extern slice it was 25, and after the two heap slices it is 13 — no longer a row about
+   `std.mem.alloc_raw` alone. **Re-measured after the extern slice it was 25, after the two heap slices 13, and
+   after the box slice it is 13 still — no longer a row about
    externs at all.** The blanket refusal is gone; the fixtures that still name an `extern fun` do so because
    *that* extern is one this backend cannot supply a body for yet, and all of them are heap-backed (`str`'s
    parsers and `from_f64_raw` 5, `path.normalize_raw` 1, `fs`/`io`/`net` 5) or gated (`time` 2). So the runtime row has collapsed into the heap row below it, which is the honest
@@ -154,7 +165,11 @@ builds, and detailed in §5):
    named the row, five of which now build; the three left (`pd_owned`, `list_field`,
    `pd_argument_forwarding`) are refused for the *type* their passdown holds (`String`, `List<i32>`) rather than
    for the passdown mechanism, so the row has effectively moved into the heap one below.
-4. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
+4. **`List`/`Map`** — the row that is now unmistakably next. `Box` landed (see the box blockquote), which was
+   the cheap one, and every remaining container fixture needs `List` or `Map`. Their layouts are in §12's
+   annex; they are the first types whose *routines* are per-instantiation over an element that can itself own;
+   and `List<String>` is the first refusal of `str_to_string_coercion`, `stdlib_list`, `list_owned`,
+   `move_param` and most of the rest of the heap row.
 5. **String values** — now a heap row rather than a printing one: `str` values themselves work, and what remains
    is the owned `String`/`Bytes`/`View` types and their drops.
 6. **Capability checks** — 7 fixtures, currently *refused* rather than emitted unchecked (§5, and the only
@@ -291,8 +306,8 @@ with the backend as the only variable.
 > after the fact, because each was a blanket refusal at the top of `generate`
 > that kept the feature out of codegen entirely).**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **161 of 254 end-to-end
-> tests pass**, and the C backend passes all 254 — so the differential gate is
+> and `ld`, with no C compiler in the chain. Measured: **164 of 255 end-to-end
+> tests pass**, and the C backend passes all 255 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
 > can only rise from here. Every fixture the asm backend builds was also compared
 > against the C backend's own binary for this re-measurement (37 fixtures, 37
@@ -1042,6 +1057,69 @@ with the backend as the only variable.
 > `view_field.kp` — so the slice's fixture exercises it as a local borrow printed
 > and then dropped unfreed, which is the only shape a zero-owning heap type has.
 
+> **The box slice — `Box<T>`, the builtin owning pointer — is done.** This is §5
+> item 4's `Box<T>` row and the last container that fits the ABI without a
+> `List`-shaped per-instantiation element walk. It is also the type that makes a
+> *recursive* `datac` expressible (`datac Node(val next: Box<Node>)`), so it is
+> the first slice whose layout work is circular by construction.
+>
+> **One layout for every element type, and the circularity falls out of it.**
+> `struct_layout(Ty::Box(_))` answers from a single `$Box` key — eight bytes,
+> one pointer, `NULL` for empty — because a box is one pointer whatever it
+> points at; only the *routines* are per-instantiation
+> (`kelp_Box__<mangle>__of`), exactly the split `types::box_c_type` makes for
+> the C names. That is what lets `Node`'s own layout resolve while `Node`'s
+> fields are still being placed: the box field is eight bytes and its element's
+> layout is deliberately **not** required at that point. So a `Box` field is
+> placed by the same `FieldEntry::Aggregate` code a `String` field is, and an
+> element this backend cannot size (`Box<List<i32>>`) is refused where it
+> matters instead — by `Gen::call`'s `Box#` dispatch for a value a program
+> builds, and by `emit_datac_drop` for one it only drops. `is_agg` gained
+> `Ty::Box` in the same slice, because every method on a box is called through
+> `&b`/`&mut b` and a borrowed local has to have an address.
+>
+> **Seven routines per instantiation**, transliterated from
+> `codegen_c.rs::write_box` with its panic text intact: `__empty` (NULL),
+> `__of` (`malloc(sizeof(T))`, copy the argument in), `__is_empty`,
+> `__get`/`__get_const` (by value for a `Copy` element, by pointer otherwise —
+> decided from the call's own result type, the same `matches!(ret, Ty::Ref{..})`
+> `codegen_c.rs` uses, so the two backends cannot pick different spellings),
+> `__set` (allocate if empty, otherwise free the value the slot held),
+> `__take` (move the value out, free the slot, `NULL` it) and
+> `kelp_box_drop__<mangle>`. Each is written against the SysV class of its
+> element — `rdi` for a register-classed argument, the caller's outgoing area at
+> `[rbp+16]` for a `MEMORY`-class one, `rax`/`rdx` or the hidden pointer on the
+> way out — and keeps everything in frame slots rather than callee-saved
+> registers, because the register allocator pins this program's locals to
+> `rbx`/`r12`-`r15` and `malloc`/`free` are exactly the calls a caller-saved
+> register cannot survive. `take` parks the value in its frame buffer before
+> freeing, because `free` is entitled to clobber `rax`/`rdx`.
+>
+> **The bug this slice's own fixture found was not in the box code at all.**
+> `list = Node(value = 2, next = Box.of(list))` miscompiled: the assignment
+> staged the new aggregate straight into `list`'s own slot when the drop plan
+> was empty, so the first field written (`value`) overwrote the old `list`
+> *before* the field initializer that reads it (`Box.of(list)`) ran. C's
+> compound-literal-then-assign order gives `codegen_c.rs` this for free; here it
+> has to be explicit, so an aggregate assignment always stages the new value in
+> a scratch slot and copies it home afterwards. The same hazard was found and
+> closed on the `let` side in the same commit: the local is declared *after* its
+> initializer is staged, so a shadowing declaration cannot read its own
+> not-yet-initialized slot. Both were latent from item 4's third slice and no
+> fixture had ever written a struct literal whose field initializer names the
+> binding being assigned.
+>
+> **Measured:** the asm suite goes 161 → **164** of 255 (the C denominator moved
+> by one for the fixture this slice added), the fixture-level build set 63 →
+> **66**, the refused set 69 → **67**, the `datac` row 8 → **5**, and valgrind
+> reports nothing over all 133 C-backend and 66 asm-backend binaries. Three
+> fixtures moved: `box_recursive` (whose recursive walk, `take`/`set` round trip
+> and 200-link chain exercise the recursive drop), `box_empty_panic`, and
+> `box_owned_elements`, the new fixture that replaces and takes an owned
+> `String`, an owned `Bytes` and a `datac` element and then walks a 100-node
+> chain. `box_basic` stays refused, and for the honest reason: it boxes a
+> `List<i32>`, so it is a `List` fixture wearing a box.
+
 > Deliberate choices carried over unchanged from the first slice, each a
 > thing later work still replaces: **assembly text** rather than machine code
 > (tier 2), and **refusal over silence** — every uncovered construct is
@@ -1055,23 +1133,28 @@ with the backend as the only variable.
 > every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
 > a ratchet on the set the asm backend builds, and prints this exact table under
 > `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
-> count is 69 of the 132 fixtures the C backend builds (63 built, all agreeing
+> count is 67 of the 133 fixtures the C backend builds (66 built, all agreeing
 > byte for byte). The categories are the *feature* in the way, read off each
 > fixture's first refusal message:
 >
 > | blocker (the backend's first refusal) | fixture files |
 > | --- | --- |
-> | a heap type — `List`/`Map`/`Box`, a `datac` or `enum` that holds one, a `str` in an `enum` payload, a `String` interpolated into a `print` template, or a `String` a `str` argument is coerced into; 13 of them still reached through an `extern fun` this backend has no routine for (the `str` parsers 3, `from_f64_raw` 2, `path.normalize_raw` 1, `time` 2, `fs` 2, `io` 2, `net` 1) | 37 |
-> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature; 17 fixtures, none of which the heap slice could reach because a payload is a float or an owned type | 17 |
-> | a `datac` holding a float or `List`/`Map`/`Box` field | 8 |
+> | a heap type — `List`/`Map`, a `datac` or `enum` that holds one, a `str` in an `enum` payload, a `String` interpolated into a `print` template, or a `String` a `str` argument is coerced into; 13 of them still reached through an `extern fun` this backend has no routine for (the `str` parsers 3, `from_f64_raw` 2, `path.normalize_raw` 1, `time` 2, `fs` 2, `io` 2, `net` 1) | 37 |
+> | `enum` — through a value, or through a `&Shape`/`&Option<i32>` parameter, which is the same gap seen from a signature; 18 fixtures, none of which the heap or box slices could reach because a payload is a float or an owned type | 18 |
+> | a `datac` holding a float or `List`/`Map` field | 5 |
 > | a closure or a function value | 6 |
 > | a gated extern (`time.now_unix_raw`, refused for the gate rather than the symbol) | 1 |
 >
-> Re-measured after the heap-field slice, and the movement is the measurement:
-> refused 71 -> 69, built 60 -> 63, the `datac` row 11 -> 8, and the heap row
-> 36 -> 37 because `str_to_string_coercion` now stops at its `List<String>`
-> rather than at the `String` field of the `Doc` in front of it. The `enum` row
-> is unchanged at 17 — none of those fixtures was ever blocked by a field.
+> Re-measured after the heap-field slice the movement was refused 71 -> 69,
+> built 60 -> 63, the `datac` row 11 -> 8, and the heap row 36 -> 37 because
+> `str_to_string_coercion` stopped at its `List<String>` rather than at the
+> `String` field of the `Doc` in front of it. After the box slice it is refused
+> 69 -> 67, built 63 -> 66, and the `datac` row 8 -> 5 — the three fixtures that
+> left it are `box_recursive`, `box_empty_panic` and `box_owned_elements`, whose
+> first refusal used to name the `datac` holding the box. The `enum` row moved
+> 17 -> 18 for a reason that is an artefact of the classifier rather than of the
+> backend: with the `Box` out of the way, one fixture's first refusal is now an
+> `enum` two steps further in.
 >
 > The numbers do not match the hand tally two blockquotes up, and the reason is
 > the classifier rather than the backend: the tool reads the message a fixture
@@ -1169,7 +1252,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 3. **A register allocator. Done** (2026-09-19). Linear-scan over five callee-saved integer registers, for
    `i32`/`i64`/`bool`/`char` locals only — see item 3's blockquote above for the loop-widening correction and
    the bug it caught.
-4. **Aggregates by value. First five slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
+4. **Aggregates by value. First six slices done** (2026-09-19): a `datac` whose fields are all scalar and whose
    layout fits in eight bytes needs no SysV eightbyte classification at all — it is one eightbyte, so it moves
    through the same paths a `u64` already does, and only a field read or write needs the layout (see item 4's
    blockquote above). The second slice extends this to a `datac` nested by value inside another qualifying
@@ -1182,24 +1265,28 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    module accepts is `INTEGER`-classifiable by construction (see the third and fourth slices' blockquotes
    above). The fifth slice extends the *field* rule: a `datac` may now hold a `String` or `Bytes` field (or a
    nested `datac` of any size), which is an `INTEGER`-class aggregate like any other — see the heap-field
-   blockquote above, whose whole point is that no ABI code changed. What is left of this item is: `enum`
-   (tagged union) entirely; a `datac` holding a float, `List<T>`, `Map<K, V>` or `Box<T>` field anywhere in its
-   fields, at any size; `List<T>`, `Map<K, V>` and `Box<T>` themselves (`Bytes`, `String` and `View` are done —
-   see the heap blockquotes above, and `plan/heap-runtime.md`'s annex (§12) for the layouts, invariants,
-   runtime functions and drop orders the other three need, cited to the C they mirror); and a borrow of anything
-   whose address is not a slotted `datac` or one of its aggregate fields (a scalar, a `str`). Layout must
+   blockquote above, whose whole point is that no ABI code changed. The sixth adds `Box<T>` itself: one pointer,
+   one layout for every element type, seven generated routines and a drop — see the box blockquote above, which
+   also records the pre-existing assignment-evaluation-order bug the slice's own fixture found. What is left of
+   this item is: `enum` (tagged union) entirely; a `datac` holding a float, `List<T>` or `Map<K, V>` field
+   anywhere in its fields, at any size; `List<T>` and `Map<K, V>` themselves (`Bytes`, `String`, `View` and `Box`
+   are done — see the heap blockquotes above, and `plan/heap-runtime.md`'s annex (§12) for the layouts,
+   invariants, runtime functions and drop orders the other two need, cited to the C they mirror); and a borrow of
+   anything whose address is not a slotted `datac`, one of its aggregate fields, or a `Ref`-typed expression (a
+   scalar `&i32`, a `str`). Layout must
    match `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets.
-5. **Drop and ownership. Second slice done** (2026-09-19), for `Bytes`, `String` and every `datac` that holds
-   one: `borrowck.rs` already hands over a
+5. **Drop and ownership. Third slice done** (2026-09-19), for `Bytes`, `String`, every `datac` that holds
+   one, and `Box<T>`: `borrowck.rs` already hands over a
    `DropPlan` keyed by span, so the backend does not re-derive where drops go, only what a drop *is* in machine
    terms — `kelp_bytes_drop`/`kelp_string_drop` for the two builtins, which free the buffer and clear the
    pointer and length so a second drop frees nothing, and a generated `kelp_drop_<c_ident>` for a `datac`,
-   which drops each owning field in declaration order (see the heap-field blockquote above). The points are
+   which drops each owning field in declaration order (see the heap-field blockquote above), and a generated
+   `kelp_box_drop__<mangle>` per instantiation, which frees the element (if it owns) and the box. The points are
    `codegen_c.rs`'s four (block end, function body end, a `return`'s span, the old value
    of an assignment), a value produced before a drop is parked while the drops run, and a borrowed temporary is
-   freed after the call that borrowed it — the last of which now covers a borrowed *`datac`* temporary as well,
-   since a `datac` holding a `String` is an owner too. What is left of this item is every remaining owning type
-   (`List`, `Map`, `Box`, and an `enum` that holds one) plus the generated per-type drop
+   freed after the call that borrowed it — the last of which now covers a borrowed *`datac`* or *`Box`*
+   temporary as well, since either can own what it holds. What is left of this item is every remaining owning
+   type (`List`, `Map`, and an `enum` that holds one) plus the generated per-type drop
    functions they need — and, for a `pd` that owns, the process-exit handler the C backend gets from `atexit`,
    which this backend refuses by name for now (`ty_owns`, so the refusal still catches a `datac` that owns a
    `String`, not just a `Bytes`/`String` passdown).
@@ -1240,7 +1327,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
     of a row rather than a finished one.
 
-Definition of done: all 254 integration tests pass under `--backend=asm` with byte-identical stdout to
+Definition of done: all 255 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
