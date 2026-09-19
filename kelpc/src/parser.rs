@@ -1555,42 +1555,71 @@ impl Parser {
                 span: then_block.span,
             })
         };
-        self.if_lets += 1;
-        let tmp = format!("{}{}", IF_LET_PREFIX, self.if_lets - 1);
+        // See the long comment below for why a place gets no synthesized
+        // binding at all, and anything else still does.
+        let (scrutinee_stmt, scrutinee_ref): (Option<Stmt>, Expr) = if is_place(&scrutinee) {
+            (None, scrutinee)
+        } else {
+            self.if_lets += 1;
+            let tmp = format!("{}{}", IF_LET_PREFIX, self.if_lets - 1);
+            let stmt = Stmt::Let {
+                name: tmp.clone(),
+                mutable: false,
+                ty: None,
+                init: scrutinee,
+                span: scrutinee_span,
+            };
+            (Some(stmt), Expr::Ident(tmp, scrutinee_span))
+        };
+        let when_expr = Stmt::Expr {
+            expr: Expr::When {
+                scrutinee: Box::new(scrutinee_ref),
+                arms: vec![
+                    WhenArm {
+                        pattern: Some(pattern),
+                        body: Expr::Block(then_block),
+                        span,
+                    },
+                    WhenArm {
+                        pattern: None,
+                        body: else_expr,
+                        span,
+                    },
+                ],
+                span,
+            },
+            span,
+        };
         // The `when` is the block's last statement, which is what makes it the
         // block's value (statements are positional in this language — there is
         // no `tail` field to set).
-        Ok(Expr::Block(Block {
-            stmts: vec![
-                Stmt::Let {
-                    name: tmp.clone(),
-                    mutable: false,
-                    ty: None,
-                    init: scrutinee,
-                    span: scrutinee_span,
-                },
-                Stmt::Expr {
-                    expr: Expr::When {
-                        scrutinee: Box::new(Expr::Ident(tmp, scrutinee_span)),
-                        arms: vec![
-                            WhenArm {
-                                pattern: Some(pattern),
-                                body: Expr::Block(then_block),
-                                span,
-                            },
-                            WhenArm {
-                                pattern: None,
-                                body: else_expr,
-                                span,
-                            },
-                        ],
-                        span,
-                    },
-                    span,
-                },
-            ],
-            span,
-        }))
+        //
+        // A scrutinee that is already a *place* (`if let Ok(v) = r`) is used
+        // directly, with no synthesized binding at all — exactly what a bare
+        // `when r { ... }` already does (6.1's own note: "a bare `when` needs
+        // a place, since a payload borrow has to outlive the arm", and
+        // matching a place never moves it, only a field of it). This is what
+        // makes an `else if let PAT2 = r { ... }` chained after `if let PAT1
+        // = r { ... }` legal: each link only *reads* `r` to test its tag, so
+        // reading it twice is fine, the same way `when`'s own multi-arm form
+        // reads its one scrutinee once and tests it repeatedly. Binding it to
+        // a fresh `val #iflet0 = r` first — every earlier version of this
+        // desugaring did that unconditionally — makes the *first* `if let`
+        // look like it moves `r` into the temporary, and the next `else if
+        // let`'s own re-evaluation of the same source expression then reads
+        // an already-moved place. A scrutinee that is *not* a place (a call's
+        // result, a literal) still needs the temporary, because `when`
+        // requires one and there is nothing else to borrow through.
+        match scrutinee_stmt {
+            Some(stmt) => Ok(Expr::Block(Block {
+                stmts: vec![stmt, when_expr],
+                span,
+            })),
+            None => Ok(Expr::Block(Block {
+                stmts: vec![when_expr],
+                span,
+            })),
+        }
     }
 
     /// Parses both forms of `when`:

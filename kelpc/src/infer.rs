@@ -2170,6 +2170,27 @@ fn char_integer_hint(found: &Ty, expected: &Ty) -> String {
     }
 }
 
+/// The direction 5.1 does *not* make implicit: a `str`/`View` becomes an
+/// owned `String`/`Bytes` automatically, but the reverse needs an explicit
+/// `.as_str()`/`.view()` — `print` and `.as_str()` on a bound `String` both
+/// look like the conversion happens for free, so a caller who has only met
+/// those two reasonably expects `str.concat(a_string, ...)` to work the same
+/// way, and the type-mismatch alone (`'String'`, expected 'str'`) does not
+/// say why one direction is free and the other is not.
+fn str_view_hint(found: &Ty, expected: &Ty) -> String {
+    if !matches!(found, Ty::String) {
+        return String::new();
+    }
+    let method = match expected {
+        Ty::Str => "as_str()",
+        Ty::View => "view()",
+        _ => return String::new(),
+    };
+    format!(
+        " — there is no implicit conversion this direction (5.1 only goes the other way, 'str'/'View' to an owned 'String'); call `.{method}` to borrow it"
+    )
+}
+
 /// Whether the character literal `cp` can be a value of the integer type
 /// `ty`. A character literal takes whatever integer type its context asks
 /// for, and this is the one thing that can go wrong with that: `'中'` is a
@@ -3878,8 +3899,11 @@ fn is_tir_place(expr: &tir::Expr) -> bool {
     )
 }
 
+/// `ast::is_place`, kept callable under its old local name at every existing
+/// call site — the definition itself now lives in `ast.rs` so `parser.rs` can
+/// share it (see `parse_if_let`).
 fn is_ast_place(expr: &ast::Expr) -> bool {
-    matches!(expr, ast::Expr::Ident(..) | ast::Expr::FieldAccess { .. } | ast::Expr::Deref { .. })
+    ast::is_place(expr)
 }
 
 /// Whether a checked place-expression's storage is currently writable:
@@ -6450,7 +6474,7 @@ fn require_place_for_borrowed_arg(
     if !is_tir_place(inner) {
         return Err(TypeError {
             message: format!(
-                "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field — a temporary would be freed before the borrow could be used",
+                "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field — a temporary would be freed before the borrow could be used; bind it to a local first (`val tmp = <the expression>`) and pass `tmp` instead",
                 params[idx].0
             ),
             span,
@@ -6493,10 +6517,11 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             }
             return Err(TypeError {
                 message: format!(
-                    "argument {pname} has type '{}', expected '{}'{}",
+                    "argument {pname} has type '{}', expected '{}'{}{}",
                     checked.ty.display(),
                     pty.display(),
-                    char_integer_hint(&checked.ty, pty)
+                    char_integer_hint(&checked.ty, pty),
+                    str_view_hint(&checked.ty, pty)
                 ),
                 span: arg_expr.span(),
             });
@@ -6542,10 +6567,11 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
         other => Err(TypeError {
             message: closure_kind_mismatch(pty, other).unwrap_or_else(|| {
                 format!(
-                    "argument {pname} has type '{}', expected '{}'{}",
+                    "argument {pname} has type '{}', expected '{}'{}{}",
                     other.display(),
                     pty.display(),
-                    char_integer_hint(other, pty)
+                    char_integer_hint(other, pty),
+                    str_view_hint(other, inner)
                 )
             }),
             span: arg_expr.span(),

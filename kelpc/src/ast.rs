@@ -401,6 +401,18 @@ pub struct CallArg {
     pub value: Expr,
 }
 
+/// A "place": an expression with stable storage that can be borrowed,
+/// assigned into, or matched without moving what it names — an `Ident`, a
+/// `.field` chain rooted in one, or a dereferenced borrow (`*p`, `(*p).field`).
+/// Shared between `parser.rs` (which uses it to decide whether `if let`'s
+/// desugared scrutinee needs a fresh owning temporary — see `parse_if_let`)
+/// and `infer.rs` (which uses it for the same question about an explicit
+/// `&expr`/method-borrow argument), so the definition of "a place" cannot
+/// drift between the two.
+pub fn is_place(expr: &Expr) -> bool {
+    matches!(expr, Expr::Ident(..) | Expr::FieldAccess { .. } | Expr::Deref { .. })
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     IntLit(i64, Span),

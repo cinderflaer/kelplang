@@ -1434,6 +1434,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // moved through `?`, and a frame that owns a local it propagates a
         // failure past (`?`'s early return must free the frame).
         "if_let_basic",
+        "if_let_chain_same_scrutinee",
         "try_operator",
         "try_drops_frame",
         "stdlib_option_result",
@@ -2553,6 +2554,14 @@ fn if_let_binds_one_variant_and_else_covers_the_rest() {
     assert_compiles_and_runs(
         "tests/fixtures/if_let_basic.kp",
         "2.000000\n0.000000\n0.000000\n4\n0\n3.000000\n-1.000000\n6.000000\n5.000000\n7.000000\n",
+    );
+}
+
+#[test]
+fn if_let_else_chain_reads_its_scrutinee_more_than_once() {
+    assert_compiles_and_runs(
+        "tests/fixtures/if_let_chain_same_scrutinee.kp",
+        "12.566360\n2\n2.000000\n2\n",
     );
 }
 

@@ -1,0 +1,49 @@
+// A real bug this fixture pins: `if let PAT1 = x { .. } else if let PAT2 = x
+// { .. }` used to desugar each `if let` link to its *own* fresh binding of
+// the scrutinee (`val #iflet0 = x`), so the first link looked like it moved
+// `x` into a temporary and the second link's own re-evaluation of `x` then
+// read an already-moved place — "use of moved value 'x'" even though nothing
+// in the chain actually moves `x` (matching only ever borrows a field of it,
+// or copies one). 6.1's own worked example is exactly this shape and did not
+// compile before the fix.
+enum Shape {
+    Rect(val w: f64, val h: f64)
+    Circle(val r: f64)
+    Empty
+}
+
+enum Token {
+    Word(val text: String)
+    Blank
+}
+
+fun main() {
+    // 6.1's own example, verbatim: a `Copy`-payload enum, still non-`Copy`
+    // itself (every `Ty::Struct` is), read by two links of the same chain.
+    val shape = Shape.Circle(r = 2.0)
+    if let Rect(w, h) = shape {
+        print(w * h)
+    } else if let Circle(r) = shape {
+        print(3.14159 * r * r)
+    } else {
+        print(0.0)
+    }
+
+    // A third link, and an owned (non-`Copy`) payload, so the fix is not
+    // accidentally only correct for scalars.
+    val tok = Token.Word(text = String.from_str(s = "hi"))
+    if let Blank = tok {
+        print(0)
+    } else if let Word(text) = tok {
+        print(text.len())
+    }
+
+    // `shape`/`tok` are still live after the chain — the whole point is that
+    // reading a place to test its tag does not consume it.
+    if let Circle(r) = shape {
+        print(r)
+    }
+    if let Word(text) = tok {
+        print(text.len())
+    }
+}
