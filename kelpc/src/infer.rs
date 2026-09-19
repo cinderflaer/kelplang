@@ -2076,7 +2076,67 @@ pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
 /// return the other; whether a *borrowed* return is reachable is the borrow
 /// checker's call, not the type's (see `borrowck::check_return_borrow`).
 fn str_view_compatible(actual: &Ty, declared: &Ty) -> bool {
-    actual == declared || (is_str_like(actual) && is_str_like(declared))
+    join_value_type(actual, declared).is_some()
+}
+
+/// Whether a tail expression diverges, so the function never returns through
+/// it and it satisfies any declared return type — including a borrowed one.
+/// This is the `panic` ending every payload reader has:
+///
+/// ```kelp
+/// fun as_str(v: &Json).R: &str {
+///     if let Str(s) = v {
+///         return s.as_str()
+///     }
+///     panic("json.as_str: value is not a string")
+/// }
+/// ```
+///
+/// `infer.rs` has had this rule since `Option`/`Result` shipped ("a body whose
+/// tail is a `panic` diverges, so it satisfies any declared return type"). The
+/// borrow checker's tail check did not, so it read the `panic` as the returned
+/// value and refused it for not being derived from a reference parameter. One
+/// predicate, both callers: two passes disagreeing about which expression is
+/// the returned value is not a bug either pass can see on its own.
+pub fn tail_diverges(expr: &tir::Expr) -> bool {
+    matches!(&expr.kind, tir::ExprKind::Call { callee, .. } if callee == "panic")
+}
+
+/// The type two values of these types have in common, or `None` when they do
+/// not agree: `==`, with the one relaxation `str` and `&str` get.
+///
+/// `is_str_like` is the language's own statement that those two are one type —
+/// `str.eq`, `print`, `str.len`, a `str` parameter and a `&str` return all take
+/// either, because both are the same C value (`const char*`). Returns already
+/// said so (`str_view_compatible`), but arm unification compared them by
+/// identity, so ordinary code was refused:
+///
+/// ```kelp
+/// fun f(v: &J).R: &str = when v {
+///     S(s) -> s.as_str()
+///     N -> "n"
+/// }
+/// // error: 'when' arms have different types: '&str' and 'str'
+/// ```
+///
+/// The join is the **borrow**, not the bare `str`: the borrow checker
+/// understands `Ty::Ref` — it pins the owner and it drives the elision rule —
+/// and does not understand `Ty::Str`, so a value that might be a view of
+/// somebody else's text has to be typed as one. The two are the same C value,
+/// so nothing else about the program changes. An *exclusive* `&mut str` is not
+/// joined, so this cannot quietly downgrade one to a shared view.
+fn join_value_type(left: &Ty, right: &Ty) -> Option<Ty> {
+    if left == right {
+        return Some(left.clone());
+    }
+    let exclusive = |ty: &Ty| matches!(ty, Ty::Ref { mutable: true, .. });
+    if is_str_like(left) && is_str_like(right) && !exclusive(left) && !exclusive(right) {
+        return Some(Ty::Ref {
+            mutable: false,
+            inner: Box::new(Ty::Str),
+        });
+    }
+    None
 }
 
 /// Whether a type is `str` or a borrow of one — the two spellings of the
@@ -4023,7 +4083,7 @@ fn check_function(
     let tail_diverges = body
         .tail
         .as_ref()
-        .is_some_and(|e| matches!(&e.kind, tir::ExprKind::Call { callee, .. } if callee == "panic"));
+        .is_some_and(|e| tail_diverges(e));
     if sig.ret != Ty::Unit
         && body.tail.is_some()
         && !tail_diverges
@@ -5892,19 +5952,23 @@ fn check_when(
         }
         let body = check_expr(&arm.body, ctx, expected.or(arm_ty.as_ref()))?;
         ctx.scopes.pop();
-        match &arm_ty {
-            Some(t) if *t != body.ty => {
-                return Err(TypeError {
-                    message: format!(
-                        "'when' arms have different types: '{}' and '{}'",
-                        t.display(),
-                        body.ty.display()
-                    ),
-                    span: arm.span,
-                })
-            }
+        match arm_ty.clone() {
+            // `str` and `&str` arms agree, and join to the borrow (see
+            // `join_value_type`); anything else has to match exactly.
+            Some(t) => match join_value_type(&t, &body.ty) {
+                Some(joined) => arm_ty = Some(joined),
+                None => {
+                    return Err(TypeError {
+                        message: format!(
+                            "'when' arms have different types: '{}' and '{}'",
+                            t.display(),
+                            body.ty.display()
+                        ),
+                        span: arm.span,
+                    })
+                }
+            },
             None => arm_ty = Some(body.ty.clone()),
-            _ => {}
         }
         checked.push((
             variant,
@@ -7519,19 +7583,14 @@ fn check_if(
     };
 
     let ty = match &else_t {
-        Some(e) => {
-            if then_t.ty() != e.ty() {
-                return Err(TypeError {
-                    message: format!(
-                        "if/else branches have different types: '{}' and '{}'",
-                        then_t.ty().display(),
-                        e.ty().display()
-                    ),
-                    span,
-                });
-            }
-            then_t.ty()
-        }
+        Some(e) => join_value_type(&then_t.ty(), &e.ty()).ok_or_else(|| TypeError {
+            message: format!(
+                "if/else branches have different types: '{}' and '{}'",
+                then_t.ty().display(),
+                e.ty().display()
+            ),
+            span,
+        })?,
         None => {
             if then_t.ty() != Ty::Unit {
                 return Err(TypeError {

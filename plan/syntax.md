@@ -532,7 +532,7 @@ fun sum_to(n: i32).R: i32 {
 
 `return` with no value is allowed in a function with no `.R: T`. An expression-bodied function (see 7.1) does not use `return`.
 
-A block whose **last statement is `panic(...)`** diverges, so it satisfies any declared return type:
+A block whose **last statement is `panic(...)`** diverges, so it satisfies any declared return type — including a borrowed one, where it matters twice over: the `panic` is not the returned value, so the elision rule has nothing to say about it.
 
 ```kelp
 fun unwrap<T>(o: &Option<T>).R: T {
@@ -541,7 +541,16 @@ fun unwrap<T>(o: &Option<T>).R: T {
     }
     panic("Option.unwrap: value is None")
 }
+
+fun as_str(v: &Json).R: &str {
+    if let Str(s) = v {
+        return s.as_str()
+    }
+    panic("json.as_str: value is not a string")
+}
 ```
+
+This is the shape every accessor over an owned payload ends with, and it is the one deliberate piece of divergence analysis in the language (an `if` arm cannot be a `panic`).
 
 That is the whole of the divergence rule: it applies to a function body's tail and nowhere else, so a `panic` cannot be the arm of an `if`/`when` used as a value. It exists because it is what makes a "this cannot happen" accessor expressible at all (`std/option`'s `unwrap` is the first one).
 
@@ -945,11 +954,12 @@ print((*r).count)     // dereference, then read a field
 
 Rules the checker enforces:
 
-- A borrow lives until the end of its scope, not until its last use. Two borrows in the same block overlap, so a shared borrow must be in an inner block before an exclusive one is taken.
+- A borrow lives until the end of its scope, not until its last use — with one statement-sized exception: a borrow taken **inside an initializer** ends with that statement, because the bound value does not borrow it. `val back = str.parse_i64(cand.as_str())` borrows `cand` for the length of one call and keeps nothing of it, so `return cand` a few lines later is fine. A binding that *is* the borrow (`val v = l.get(0)`) still pins its owner for as long as `v` lives.
 - While a value is borrowed exclusively, nothing else may borrow it and the owner may not be assigned or moved.
-- While a value is borrowed shared, it cannot be borrowed exclusively, and it cannot be assigned or moved.
+- While a value is borrowed shared, it cannot be borrowed exclusively, and it cannot be assigned or moved — but a **`Copy`** value can always be read, because reading one is a copy rather than a move. `self` inside `fun mut T.m()` is a `&mut T`: a pointer, and `Copy`, so naming a field and then calling another method on `self` is legal.
 - Dereferencing a `&mut` borrow gives write access; dereferencing a `&` does not.
-- A function whose `.R: T` is a borrow must return something derived from its first reference parameter. There is no lifetime syntax to say otherwise: `fun f(a: &str, b: &str).R: &str` may only return a view of `a`.
+- A function whose `.R: T` is a borrow must return something derived from its first reference parameter, and **a payload bound by a pattern counts as derived from the scrutinee it came out of**: `if let Str(s) = v { return s.as_str() }` returns a view of `v`, exactly as `v.x.as_str()` does. One caveat, from the same rule: when a whole `when` is the returned value, the arm bindings are out of scope before the merged root is computed, so return *from inside the arm* (`if let S(s) = v { return s.as_str() }`) rather than returning the `when`.
+- Arms that differ only in the `str`/`&str` spelling are one type, so `when v { S(s) -> s.as_str()  N -> "n" }` and `if c { name(v) } else { "none" }` type-check; a branch whose value is a `str` literal has static storage, so it needs no owner pinned either.
 - A borrow cannot be stored: no reference fields in a `datac`, no references as `List` elements or `Map` values.
 - A call that returns a borrow of its receiver needs the receiver to be a variable or a field, not a temporary:
 

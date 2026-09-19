@@ -1186,6 +1186,14 @@ fn bitwise_operators_on_bool_are_rejected() {
 }
 
 #[test]
+fn a_view_keeps_its_provenance_through_a_pattern_binding() {
+    assert_compiles_and_runs(
+        "tests/fixtures/borrow_provenance_and_arms.kp",
+        "hello\ntrue\nfalse\nfalse\nhello\nnone\n42\ntrue\nfalse\n",
+    );
+}
+
+#[test]
 fn character_literals_take_the_type_their_context_asks_for() {
     assert_compiles_and_runs(
         "tests/fixtures/char_literals.kp",

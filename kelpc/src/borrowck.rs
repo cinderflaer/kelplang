@@ -156,6 +156,10 @@ struct VarState {
     ty: Ty,
     moved_at: Option<Span>,
     borrow: BorrowKind,
+    /// The place root this binding's value came from, when the binding *is* a
+    /// borrow — the provenance a pattern binding would otherwise lose. See
+    /// `set_origin`.
+    origin: Option<String>,
 }
 
 /// An owned local declared in some scope, tracked for the drop plan.
@@ -189,7 +193,15 @@ impl Scope {
             // its own scope-durable borrows before this runs), so what's
             // left on either side is whatever state existed going in,
             // which is identical on both sides by construction.
-            vars.insert(name, VarState { ty: va.ty.clone(), moved_at, borrow: va.borrow });
+            vars.insert(
+                name,
+                VarState {
+                    ty: va.ty.clone(),
+                    moved_at,
+                    borrow: va.borrow,
+                    origin: va.origin.clone(),
+                },
+            );
         }
         // Owned locals declared in *this* scope survive the merge (an `if`
         // arm or loop body is always its own block, so nothing here was
@@ -290,8 +302,55 @@ impl Ctx {
                 ty: ty.clone(),
                 moved_at: None,
                 borrow: BorrowKind::None,
+                origin: None,
             },
         );
+    }
+
+    /// Records that `name` holds a value derived from the place rooted at
+    /// `origin`, when the binding is a borrow. `borrow_root` follows these, and
+    /// that is what lets a binding introduced by a pattern keep its
+    /// provenance:
+    ///
+    /// ```kelp
+    /// fun as_str(v: &Json).R: &str {
+    ///     if let Str(s) = v {
+    ///         return s.as_str()      // `s` *is* derived from `v`
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// `v.x.as_str()` — the same borrow written out — is already accepted, so
+    /// refusing the pattern form was a missed edge and not a soundness rule:
+    /// the payload binding is a shared borrow of `v`'s payload, and returning a
+    /// view of it is exactly as safe as returning a view of a field of `v`.
+    ///
+    /// **Only borrow-typed bindings are recorded.** A binding of an owned type
+    /// is a *move*, and tracing a root through one would let a view of a local
+    /// masquerade as a view of the parameter:
+    ///
+    /// ```kelp
+    /// fun f(x: String).R: &str {
+    ///     val y = x            // an owned move, not a borrow
+    ///     return y.as_str()    // must stay refused: `y` dies with this frame
+    /// }
+    /// ```
+    fn set_origin(&mut self, name: &str, origin: Option<String>) {
+        if let Some(state) = self.lookup_mut(name) {
+            state.origin = origin;
+        }
+    }
+
+    /// The place root `name` is derived from, if it is a borrow of one.
+    /// Innermost scope wins, and a name nothing is recorded for is its own
+    /// root — which is what `borrow_root` falls back to.
+    fn origin_of(&self, name: &str) -> Option<String> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(state) = scope.vars.get(name) {
+                return state.origin.clone();
+            }
+        }
+        None
     }
 
     /// Registers an owned local so its drop point can be planned.
@@ -328,6 +387,24 @@ impl Ctx {
         let Some(v) = self.lookup_mut(name) else {
             return Ok(()); // infer.rs already validated every identifier
         };
+        // A `Copy` value is never moved, so neither check below applies: a
+        // read of one is a copy, and copying a pointer while a borrow of it is
+        // live is exactly what a borrow is for. Checking the borrow first made
+        // the diagnostic a lie — it reported "cannot move 'self' while it is
+        // borrowed" about a `&mut Parser`, which is not moved by the read at
+        // all, and it did so for the ordinary shape of a receiver method that
+        // names a field:
+        //
+        // ```kelp
+        // fun mut Parser.keyword(word: &str).R: Result<i64, Err> {
+        //     val text0 = text.as_str()      // borrows `self`
+        //     ...
+        //     return self.err("bad")         // reads `self`, which is Copy
+        // }
+        // ```
+        if v.ty.is_copy() {
+            return Ok(());
+        }
         if v.moved_at.is_some() {
             return Err(BorrowError {
                 message: format!("use of moved value {}", display_root(name)),
@@ -447,6 +524,23 @@ impl Ctx {
 
     fn register_scope_borrow(&mut self, root: &str) {
         self.scopes.last_mut().unwrap().scope_borrows.push(root.to_string());
+    }
+
+    /// Releases every scope-durable borrow recorded in the current scope from
+    /// index `at` onwards. `at` is a length taken before a statement was
+    /// checked, so this is "the borrows that statement took". A mark may be
+    /// past the end by the time it is used (a branch merge rebuilds the scope
+    /// and drops its borrow list), so it is clamped — releasing only what is
+    /// still recorded is the honest answer.
+    fn release_borrows_since(&mut self, at: usize) {
+        let Some(scope) = self.scopes.last_mut() else {
+            return;
+        };
+        let at = at.min(scope.scope_borrows.len());
+        let released: Vec<String> = scope.scope_borrows.split_off(at);
+        for root in released {
+            self.end_borrow(&root);
+        }
     }
 
     /// The parameter index a callee's returned borrow is elided from, for a
@@ -580,7 +674,12 @@ const STATIC_ROOT: &str = "<static>";
 fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
     match &expr.kind {
         tir::ExprKind::StringLit(_) => Some(STATIC_ROOT.to_string()),
-        tir::ExprKind::Ident(name) => Some(name.clone()),
+        // A binding that *is* a borrow carries the root it was made from, so a
+        // name introduced by a pattern resolves back through it to the place
+        // the payload came from (`set_origin` has the reasoning).
+        tir::ExprKind::Ident(name) => {
+            Some(ctx.origin_of(name).unwrap_or_else(|| name.clone()))
+        }
         tir::ExprKind::FieldAccess { base, .. }
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
@@ -589,11 +688,14 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
             let idx = ctx.borrow_root_param_of(callee)?;
             borrow_root(args.get(idx)?, ctx)
         }
-        // `if`/`when` in value position: every branch has to agree, or the
-        // value has no single owner — which is exactly why
-        // `fun classify(n: i32).R: &str = when { ... "pos" ... }` works
-        // (all branches are literals) and a branch mixing a parameter with a
-        // literal does not.
+        // `if`/`when` in value position: the branches have to agree on the
+        // owner, with the one exception `merge_roots` describes — a branch
+        // whose value is a `str` literal has static storage and needs nobody
+        // to pin it. That is what
+        // `fun f(v: &J).R: &str = when v { S(s) -> s.as_str()  N -> "n" }`
+        // needs: one owner (`v`) and one static string, which used to be
+        // refused for the two roots not being equal — even after arm typing
+        // learned that `str` and `&str` are one type.
         tir::ExprKind::Block(b) => block_tail_root(b, ctx),
         tir::ExprKind::If {
             then_block,
@@ -602,11 +704,7 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
         } => {
             let then_root = block_tail_root(then_block, ctx)?;
             let else_root = block_tail_root(else_block.as_ref()?, ctx)?;
-            if then_root == else_root {
-                Some(then_root)
-            } else {
-                None
-            }
+            merge_roots(&then_root, &else_root)
         }
         _ => None,
     }
@@ -614,6 +712,31 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
 
 fn block_tail_root(block: &tir::Block, ctx: &Ctx) -> Option<String> {
     borrow_root(block.tail.as_deref()?, ctx)
+}
+
+/// The one root a value has when it may come from either of two branches: the
+/// branches have to agree, **except** that a `str` literal's storage is static
+/// (`STATIC_ROOT`), so a branch whose value is a literal needs no owner pinned
+/// and does not conflict with a branch that borrows one.
+///
+/// ```kelp
+/// fun f(v: &J).R: &str = when v {
+///     S(s) -> s.as_str()   // borrows `v`
+///     N -> "n"             // static: needs no owner
+/// }
+/// ```
+///
+/// One owner plus a literal is a value with a single owner. Two different
+/// non-static roots still have no single owner, and are still refused — as is a
+/// view of a local in a function with no reference parameter to root it in.
+fn merge_roots(left: &str, right: &str) -> Option<String> {
+    match (left == STATIC_ROOT, right == STATIC_ROOT) {
+        (false, false) if left == right => Some(left.to_string()),
+        (false, false) => None,
+        (true, false) => Some(right.to_string()),
+        (false, true) => Some(left.to_string()),
+        (true, true) => Some(STATIC_ROOT.to_string()),
+    }
 }
 
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
@@ -692,9 +815,14 @@ fn check_function(
     check_block(&f.body, &mut ctx)?;
 
     // A tail expression is the function's returned value, so it is bound by
-    // the same elision rule an explicit `return` is.
+    // the same elision rule an explicit `return` is — unless it diverges, in
+    // which case the function does not return through it at all. `infer.rs`
+    // has always said so for the *type*; this is the same predicate, so the
+    // two passes cannot disagree about which expression is the returned value.
     if let Some(tail) = &f.body.tail {
-        ctx.check_return_borrow(tail)?;
+        if !crate::infer::tail_diverges(tail) {
+            ctx.check_return_borrow(tail)?;
+        }
     }
 
     // Anything still owned in the frame at the end belongs to the function
@@ -724,8 +852,39 @@ fn check_block(block: &tir::Block, ctx: &mut Ctx) -> Result<()> {
 fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
     match stmt {
         tir::Stmt::Let { name, ty, init } => {
-            check_let_init(init, ctx)?;
+            // A borrow taken *inside* the initializer is dead once the value is
+            // bound — unless the bound value **is** the borrow. `val back =
+            // str.parse_f64(cand.as_str())` borrows `cand` for the length of
+            // one call and keeps nothing of it (`Result<f64, _>` owns all its
+            // data), so the borrow must end with the statement; holding it to
+            // the end of the block is what made `return cand` a few lines
+            // later fail with "cannot move 'cand' while it is borrowed".
+            //
+            // `val v = l.get(0)`, by contrast, binds the borrow itself, and
+            // the caller has to keep the owner pinned for as long as `v`
+            // lives — so the distinction is the *binding's* type, not the
+            // initializer's shape. This is deliberately the same rule the
+            // `Stmt::Expr` arm below applies to a statement's temporary, one
+            // level up: lexical lifetimes with a statement-sized exception for
+            // borrows that provably do not escape.
+            let mark = ctx.scopes.len();
+            let at = ctx.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
+            let result = check_let_init(init, ctx);
+            result?;
             ctx.define(name, ty);
+            // A borrow-typed binding keeps its provenance, so `borrow_root`
+            // can follow a pattern binding back to the place its payload came
+            // from. Recorded *after* `define` (the entry has to exist) and only
+            // for borrows (see `set_origin` for why an owned binding must not
+            // be traced).
+            let binds_a_borrow =
+                crate::infer::is_borrowed_value(ty) || matches!(ty, Ty::Str);
+            if binds_a_borrow {
+                let origin = borrow_root(init, ctx);
+                ctx.set_origin(name, origin);
+            } else if ctx.scopes.len() == mark {
+                ctx.release_borrows_since(at);
+            }
             if crate::types::needs_drop(ty, &ctx.owned_structs) {
                 ctx.define_owned(name, ty);
             }
@@ -754,25 +913,13 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
             // ordinary list code fail (`print(l.get(0)); l.push(x)` would
             // conflict with a view that is already dead). A *bound* borrow
             // (`val p = l.get(0)`) still lives as long as its binding, because
-            // a `Let` is not this arm.
+            // a `Let` is not this arm — it is the arm above, which applies the
+            // same rule to the borrows an initializer takes.
             let mark = ctx.scopes.len();
             let at = ctx.scopes.last().map(|s| s.scope_borrows.len()).unwrap_or(0);
             let checked = check_value(e, ctx);
             if ctx.scopes.len() == mark {
-                let scope = ctx
-                    .scopes
-                    .last_mut()
-                    .expect("the scope stack is never empty inside a function");
-                // A branch merge (`if`) rebuilds the scope and deliberately
-                // drops its borrow list, since both arms' scope-durable
-                // borrows are released as their own blocks pop — so a mark
-                // taken before the statement can be past the end afterwards.
-                // Releasing only what is still recorded is the honest answer.
-                let at = at.min(scope.scope_borrows.len());
-                let released: Vec<String> = scope.scope_borrows.split_off(at);
-                for root in released {
-                    ctx.end_borrow(&root);
-                }
+                ctx.release_borrows_since(at);
             }
             checked
         }
@@ -996,6 +1143,14 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                 _ => false,
             };
             check_assign_target(target, ctx)?;
+            // A `var` borrow that is reassigned points somewhere else now, so
+            // its recorded provenance is stale. Dropping it is the safe
+            // direction: a later view of it falls back to the binding's own
+            // name as its root, which the elision check then refuses rather
+            // than wrongly accepting.
+            if let tir::ExprKind::Ident(name) = &target.kind {
+                ctx.set_origin(name, None);
+            }
             // Assigning a fresh value into an owned binding frees the old one
             // (it has no other owner and v1 has no user destructors, so
             // nothing could observe it either way — freeing it is simply the
