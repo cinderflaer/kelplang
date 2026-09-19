@@ -481,6 +481,38 @@ fn box_layout() -> StructLayout {
     }
 }
 
+/// The key `struct_layout` looks every `Ty::List<T>` up under. **One key for
+/// every element type**, `BOX_LAYOUT_KEY`'s sibling and for the same reason:
+/// `kelp_List__<mangle>` is 24 bytes whatever it holds (only the *pointee*
+/// type of `data` changes), so `types::list_c_type`'s per-instantiation name is
+/// needed for the *functions* and not for the layout. Keeping one key is what
+/// lets a `List` field be placed inside a `datac` without the element's own
+/// layout being available — and the element's layout is deliberately not
+/// required there, exactly as a `Box` field's element is not: `List<Shape>`
+/// over an `enum` is a 24-byte list the ABI handles fine, and what a program
+/// cannot do with it (push, get, drop) is refused where it is done, by name.
+const LIST_LAYOUT_KEY: &str = "$List";
+
+/// The C layout of `kelp_List__*` (`codegen_c.rs:1096-1101`): `data` at 0,
+/// `len` at 8, `cap` at 16, size 24, align 8 — byte for byte the `Bytes`/
+/// `String` layout, because the C typedef is the same three fields with a
+/// different pointee. Three INTEGER eightbytes, so **MEMORY** class: a `List`
+/// local, parameter, argument and return travel exactly the way a `Bytes` one
+/// already does, and the fourth item-4 slice's `MEMORY`-class argument area is
+/// what passes one by value. `cap == 0` implies `data == NULL`; `len <= cap`;
+/// the buffer is `cap * sizeof(elem)` bytes, and it is the list's own to free.
+fn list_layout() -> StructLayout {
+    StructLayout {
+        entries: vec![
+            FieldEntry::Scalar("data".to_string(), 0, Width::W8, false),
+            FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
+            FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
+        ],
+        size: 24,
+        align: 8,
+    }
+}
+
 /// The C layout of `kelp_String` (`codegen_c.rs:316-321`): the same
 /// `{data, len, cap}` the `Bytes` layout is, so a `String` local, parameter,
 /// argument and return travel exactly the way a `Bytes` one does.
@@ -663,6 +695,13 @@ enum Routine {
     StrFromF64Raw,
     FmtHexRaw,
     FmtBytesRaw,
+    /// MK7 §5's list slice: the one piece of a `List<T>`'s function set that is
+    /// **not** per-instantiation. `codegen_c.rs` monomorphizes `__reserve`
+    /// because the element type is baked into its C signature; here the element
+    /// size is just a third argument (`rdi` = the list, `rsi` = the wanted
+    /// length, `rdx` = `sizeof(elem)`), so one copy serves every instantiation —
+    /// the only arithmetic that actually differs between them.
+    ListReserve,
 }
 
 impl Routine {
@@ -717,6 +756,7 @@ impl Routine {
             Routine::StrFromF64Raw => "kelp_rt$str_from_f64_raw",
             Routine::FmtHexRaw => "kelp_rt$fmt_hex_raw",
             Routine::FmtBytesRaw => "kelp_rt$fmt_bytes_raw",
+            Routine::ListReserve => "kelp_rt$list_reserve",
         }
     }
 }
@@ -1055,6 +1095,7 @@ fn layout_key(ty: &Ty) -> Option<String> {
         Ty::String => Some(STRING_LAYOUT_KEY.to_string()),
         Ty::View => Some(VIEW_LAYOUT_KEY.to_string()),
         Ty::Box(_) => Some(BOX_LAYOUT_KEY.to_string()),
+        Ty::List(_) => Some(LIST_LAYOUT_KEY.to_string()),
         _ => None,
     }
 }
@@ -1069,6 +1110,16 @@ fn elem_size(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>)
         return Some(layout.size);
     }
     int_ty(ty).map(|(width, _)| width.bytes())
+}
+
+/// The element's SysV class as a *by-value* element: a scalar is `One` (the
+/// transport of a pointer or an integer), and every aggregate is whatever its
+/// own size says. The mirror of `emit_box_routine`'s `class`, repeated for the
+/// list routines because both need it and neither is the other's owner.
+fn elem_class(elem: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> AggClass {
+    struct_layout(elem, layouts)
+        .map(|l| l.class())
+        .unwrap_or(AggClass::One)
 }
 
 /// The symbol one `Box<T>` routine is emitted (and called) under. Kept
@@ -1128,6 +1179,94 @@ impl BoxFn {
     }
 }
 
+/// The symbol one `List<T>` routine is emitted (and called) under — kept
+/// identical to `codegen_c.rs::write_list`'s generated names
+/// (`types::list_c_type` plus the operation), for the same reason `BoxFn`'s
+/// are: `nm`, a stack trace and a differential run all have to name the same
+/// thing. As with `BoxFn`, `drop_fn_name`'s own spelling is used for the drop
+/// rather than a second convention being invented here.
+///
+/// The set is this slice's deliberate scope: the eight operations a list needs
+/// to be a list plus the four S1 ones that are pure element-size arithmetic
+/// (`reverse`, `insert`, `remove`, and `bounds`, which they share). `sort`,
+/// `contains` and `slice` are **not** here — each needs an element-level
+/// comparison or clone the backend has no way to express yet — and a call to
+/// one is refused by name at the call site (`Gen::call`'s `List#` dispatch),
+/// which keeps the gap visible instead of linking against a symbol nothing
+/// emits.
+#[derive(Clone, PartialEq, Eq)]
+enum ListFn {
+    Empty(Ty),
+    Of(Ty),
+    Len(Ty),
+    IsEmpty(Ty),
+    Push(Ty),
+    Bounds(Ty),
+    /// `__get` when the element comes back by value (in `rax`, or `rax`/`rdx`
+    /// for a pair) and `__get_const` when a pointer to it does. The flag is
+    /// decided at the call site from the call's own result type — a `&T`
+    /// result is the borrowing form — which is exactly how `codegen_c.rs`
+    /// decides it (`matches!(ret, Ty::Ref { .. })`), and how `BoxFn::Get`
+    /// already does.
+    Get(Ty, bool),
+    Set(Ty),
+    Pop(Ty),
+    Clear(Ty),
+    Insert(Ty),
+    Remove(Ty),
+    Reverse(Ty),
+    Drop(Ty),
+}
+
+impl ListFn {
+    fn elem(&self) -> &Ty {
+        match self {
+            ListFn::Empty(e)
+            | ListFn::Of(e)
+            | ListFn::Len(e)
+            | ListFn::IsEmpty(e)
+            | ListFn::Push(e)
+            | ListFn::Bounds(e)
+            | ListFn::Get(e, _)
+            | ListFn::Set(e)
+            | ListFn::Pop(e)
+            | ListFn::Clear(e)
+            | ListFn::Insert(e)
+            | ListFn::Remove(e)
+            | ListFn::Reverse(e)
+            | ListFn::Drop(e) => e,
+        }
+    }
+
+    fn label(&self) -> String {
+        let base = format!("kelp_List__{}", crate::types::ty_mangle(self.elem()));
+        match self {
+            ListFn::Empty(_) => format!("{base}__empty"),
+            ListFn::Of(_) => format!("{base}__of"),
+            ListFn::Len(_) => format!("{base}__len"),
+            ListFn::IsEmpty(_) => format!("{base}__is_empty"),
+            ListFn::Push(_) => format!("{base}__push"),
+            ListFn::Bounds(_) => format!("{base}__bounds"),
+            ListFn::Get(_, by_value) => {
+                if *by_value {
+                    format!("{base}__get")
+                } else {
+                    format!("{base}__get_const")
+                }
+            }
+            ListFn::Set(_) => format!("{base}__set"),
+            ListFn::Pop(_) => format!("{base}__pop"),
+            ListFn::Clear(_) => format!("{base}__clear"),
+            ListFn::Insert(_) => format!("{base}__insert"),
+            ListFn::Remove(_) => format!("{base}__remove"),
+            ListFn::Reverse(_) => format!("{base}__reverse"),
+            // `types::drop_fn_name`'s spelling, which is not the
+            // `kelp_List__*__<op>` shape the rest of the set uses.
+            ListFn::Drop(e) => format!("kelp_list_drop__{}", crate::types::ty_mangle(e)),
+        }
+    }
+}
+
 fn align_up(cursor: i32, align: i32) -> i32 {
     (cursor + align - 1) / align * align
 }
@@ -1141,6 +1280,11 @@ fn align_up(cursor: i32, align: i32) -> i32 {
 fn ty_owns(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Box(_) => true,
+        // A `List<T>` always owns its buffer, whatever it holds — `empty()` is
+        // the only list with nothing allocated, and it still has a header to
+        // free (`free(NULL)`). This is why `drop_site_for` must never answer
+        // `None` for one: there is no list that needs no drop.
+        Ty::List(_) => true,
         Ty::Struct(name) => datac_owns_in(name, layouts, &mut std::collections::HashSet::new()),
         _ => false,
     }
@@ -1159,7 +1303,7 @@ fn datac_owns_in(
     };
     layout.entries.iter().any(|e| match e {
         FieldEntry::Aggregate(_, _, _, ty) => match ty {
-            Ty::Bytes | Ty::String | Ty::Box(_) => true,
+            Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) => true,
             Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
             _ => false,
         },
@@ -1323,6 +1467,9 @@ fn build_layouts(structs: &[crate::types::StructDef]) -> std::collections::HashM
     // MK7 §5's box slice: one entry covers every `Box<T>` (see
     // `BOX_LAYOUT_KEY`).
     out.insert(BOX_LAYOUT_KEY.to_string(), box_layout());
+    // MK7 §5's list slice: same shape of shortcut — one entry covers every
+    // `List<T>` (see `LIST_LAYOUT_KEY`).
+    out.insert(LIST_LAYOUT_KEY.to_string(), list_layout());
     for _ in 0..=structs.len() {
         let mut changed = false;
         for s in structs {
@@ -1353,6 +1500,7 @@ fn struct_layout<'a>(
         Ty::String => layouts.get(STRING_LAYOUT_KEY),
         Ty::View => layouts.get(VIEW_LAYOUT_KEY),
         Ty::Box(_) => layouts.get(BOX_LAYOUT_KEY),
+        Ty::List(_) => layouts.get(LIST_LAYOUT_KEY),
         _ => None,
     }
 }
@@ -1748,6 +1896,21 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         emitted_boxes.push(f.label());
         g.emit_box_routine(&f);
     }
+    // MK7 §5's list slice: one routine set per `List<T>` instantiation this
+    // program needs. Emitted after the box routines (a list's drop can call a
+    // box's drop) and read to a fixpoint for the same reason the other two are:
+    // a `List<List<T>>`'s drop calls the inner list's drop.
+    let mut emitted_lists: Vec<String> = Vec::new();
+    loop {
+        let next = g
+            .list_fns
+            .iter()
+            .find(|f| !emitted_lists.contains(&f.label()))
+            .cloned();
+        let Some(f) = next else { break };
+        emitted_lists.push(f.label());
+        g.emit_list_routine(&f)?;
+    }
     // MK7 §5 item 8: the panic routine, after every function and before the
     // data section `finish` writes. One copy per program, and only for a
     // program that can reach it.
@@ -1881,10 +2044,12 @@ impl LiveAnalysis {
         // one of its five registers. `Box` joined the list with the box slice:
         // it is eight bytes and *could* live in a register, but `&b`/`&mut b`
         // is how every method on it is called, and a borrowed local has to
-        // have an address.
+        // have an address. `List` joined it with the list slice, for the first
+        // of those reasons (24 bytes, `eval_struct_into`/`emit_copy` only) and
+        // because every method on one takes `&self`/`&mut self`.
         self.is_agg.push(matches!(
             ty,
-            Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::View | Ty::Box(_)
+            Ty::Struct(_) | Ty::Bytes | Ty::String | Ty::View | Ty::Box(_) | Ty::List(_)
         ));
         self.scopes
             .last_mut()
@@ -2401,6 +2566,11 @@ struct Gen {
     /// dedupes; the count is bounded by the instantiation count, and `emit`
     /// re-reads it to a fixpoint (`Box<Box<T>>`'s drop calls another box's).
     box_fns: Vec<BoxFn>,
+    /// MK7 §5's list slice: the `List<T>` routines this program needs, under
+    /// the same discipline as `box_fns` — labelled by `ListFn::label`, emitted
+    /// after the box set, and re-read to a fixpoint so a `List<List<T>>`'s drop
+    /// (which calls the inner list's drop) is emitted too.
+    list_fns: Vec<ListFn>,
 }
 
 /// One owned type's drop, as a symbol this module can `call`.
@@ -2419,6 +2589,12 @@ enum DropSite {
     /// `Gen::emit_box_routine` like the rest of the box set. Carries the
     /// element so the generator knows which instantiation to write.
     Box(Ty),
+    /// A per-instantiation `List<T>` drop, `kelp_list_drop__<mangle>` —
+    /// `types::drop_fn_name`'s spelling for `Ty::List`, emitted by
+    /// `Gen::emit_list_routine`. Unlike a box, a list **always** owns its
+    /// buffer, so this is the one site that can never be skipped when it
+    /// applies.
+    List(Ty),
 }
 
 impl DropSite {
@@ -2427,6 +2603,7 @@ impl DropSite {
             DropSite::Routine(r) => r.label().to_string(),
             DropSite::Datac(name) => format!("kelp_drop_{}", crate::types::c_ident(name)),
             DropSite::Box(elem) => BoxFn::Drop(elem.clone()).label(),
+            DropSite::List(elem) => ListFn::Drop(elem.clone()).label(),
         }
     }
 }
@@ -2927,6 +3104,19 @@ impl Gen {
                 self.require_datac_drop(name);
                 Some(DropSite::Datac(name.clone()))
             }
+            // A `List<T>` owns its buffer unconditionally, so this arm is
+            // reached for every list a program drops. The element's own size
+            // is required first — a routine for a `List<Shape>` over an `enum`
+            // has no `sizeof(elem)` to allocate with — and an element this
+            // backend cannot lay out comes back as `None`, which is *not* a
+            // silent skip: `emit_drop` refuses by name on it, and
+            // `emit_datac_drop` guards the field case explicitly, the way the
+            // box slice guards a `Box` field.
+            Ty::List(elem) => {
+                elem_size(elem, &self.layouts)?;
+                self.require_list_fn(ListFn::Drop((**elem).clone()));
+                Some(DropSite::List((**elem).clone()))
+            }
             _ => None,
         }
     }
@@ -2948,12 +3138,66 @@ impl Gen {
                 // Registering the element's own drop is the whole point of this
                 // arm: `drop_site_for` records whatever that site needs
                 // (a `Bytes`/`String` routine, a `datac`'s generated drop, or
-                // another box's) before the routine snapshot is taken.
-                self.drop_site_for(&elem);
+                // another box's) before the routine snapshot is taken — and
+                // for the two fixed routines it only *names* the site, so
+                // naming it here is what puts it in the snapshot, exactly as
+                // `require_datac_drop` does.
+                if let Some(site) = self.drop_site_for(&elem) {
+                    if let DropSite::Routine(r) = site {
+                        self.require_routine(r);
+                    }
+                }
             }
             _ => {}
         }
         self.box_fns.push(f);
+    }
+
+    /// Records that one `List<T>` routine is needed, along with everything its
+    /// body calls. Same before-the-snapshot rule as `require_box_fn`: the
+    /// routine set is emitted from a snapshot, so a call registered while a
+    /// body is being written would link against a symbol nothing emitted.
+    ///
+    /// The dependencies, read off the C bodies one for one:
+    /// `of`/`push`/`insert` grow the buffer (`Routine::ListReserve`), `get`,
+    /// `get_const` and `set` bounds-check (`ListFn::Bounds`), `drop` clears
+    /// first, and `set`/`clear`/`drop` free the element they overwrite or
+    /// remove — which is `drop_site_for`'s job to resolve (a `Bytes`/`String`
+    /// routine, a generated `datac` drop, another box, or another list). A
+    /// `Drop` also depends on `Clear`, which is emitted as its own routine
+    /// rather than inlined so the two cannot drift.
+    fn require_list_fn(&mut self, f: ListFn) {
+        if self.list_fns.iter().any(|x| x.label() == f.label()) {
+            return;
+        }
+        match &f {
+            ListFn::Of(_) | ListFn::Push(_) | ListFn::Insert(_) => {
+                self.require_routine(Routine::ListReserve);
+            }
+            ListFn::Get(_, _) | ListFn::Set(_) => {
+                self.require_list_fn(ListFn::Bounds(f.elem().clone()));
+            }
+            ListFn::Drop(elem) => {
+                let elem = elem.clone();
+                self.require_list_fn(ListFn::Clear(elem));
+            }
+            _ => {}
+        }
+        if matches!(f, ListFn::Set(_) | ListFn::Clear(_) | ListFn::Drop(_)) {
+            // The element's own drop, recorded here rather than at emission
+            // time, for the same reason `require_box_fn` records its own: it is
+            // `drop_site_for` that decides *which* call that is — and, when it
+            // answers with one of the fixed `Bytes`/`String` routines, this is
+            // also what puts that routine in the snapshot (`drop_site_for`
+            // itself only names it; registering it is the caller's job, exactly
+            // as `require_datac_drop` does for the same two routines).
+            if let Some(site) = self.drop_site_for(f.elem()) {
+                if let DropSite::Routine(r) = site {
+                    self.require_routine(r);
+                }
+            }
+        }
+        self.list_fns.push(f);
     }
 
     /// Whether a `datac` owns anything, read off the layouts: a `String` or
@@ -2991,6 +3235,19 @@ impl Gen {
                     }
                     Ty::String => {
                         self.require_routine(Routine::StringDrop);
+                    }
+                    // MK7 §5's list slice: a `datac` holding a `List` field is
+                    // dropped by the list's generated drop, so that one (and
+                    // its element's drop, and the growth helper) has to be
+                    // registered before the routine snapshot — the same rule
+                    // the two routines above and the box below follow. The
+                    // element's own size is required first, for the reason
+                    // `drop_site_for`'s list arm gives; the guard in
+                    // `emit_datac_drop` turns the refusal into a named message.
+                    Ty::List(elem) => {
+                        if elem_size(elem, &self.layouts).is_some() {
+                            self.require_list_fn(ListFn::Drop((**elem).clone()));
+                        }
                     }
                     // MK7 §5's box slice: a `datac` holding a `Box` field is
                     // dropped by calling the box's generated drop, so that one
@@ -3060,6 +3317,14 @@ impl Gen {
                 if elem_size(elem, &self.layouts).is_none() {
                     return Err(unsupported(&format!(
                         "the `Box<{}>` field of `{name}`",
+                        elem.display()
+                    )));
+                }
+            }
+            if let Ty::List(elem) = ty {
+                if elem_size(elem, &self.layouts).is_none() {
+                    return Err(unsupported(&format!(
+                        "the `List<{}>` field of `{name}`",
                         elem.display()
                     )));
                 }
@@ -3303,6 +3568,429 @@ impl Gen {
         }
     }
 
+    /// `r11 = self->data + i * size` — the address of element `i`, the one piece
+    /// of arithmetic every list routine that touches an element shares. `self`
+    /// is reloaded from its frame slot and `i` is read from `ireg`; `rax` is
+    /// scratch. Nothing else is touched, so a caller may keep a value in any
+    /// other register across this (but not across the `call`s around it).
+    fn emit_elem_addr(&mut self, ireg: &str, size: i32, slot_self: i32) {
+        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+        self.out.push_str("    mov r11, QWORD PTR [r11]\n");
+        let _ = writeln!(self.out, "    mov rax, {ireg}");
+        let _ = writeln!(self.out, "    imul rax, {size}");
+        self.out.push_str("    add r11, rax\n");
+    }
+
+    /// Returns the element sitting at `[addr]` the way its SysV class says to:
+    /// `rax` (or `rax`/`rdx`) for a register-classed element, and a copy through
+    /// the hidden return pointer for a `MEMORY`-class one — which is what
+    /// `List<String>.pop()` is, and why `pop`/`remove` have to know where the
+    /// hidden pointer landed. A scalar element is loaded at its own width and
+    /// extended, exactly as a local's read is, so a `List<u8>` cannot return
+    /// eight bytes of its neighbour.
+    fn emit_elem_return(&mut self, elem: &Ty, size: i32, class: AggClass, addr: &str, slot_ret: i32) {
+        match class {
+            AggClass::One => {
+                if let Some((width, signed)) = int_ty(elem) {
+                    let _ = writeln!(self.out, "    mov {}, {} [{addr}]", width.rax(), width.mem());
+                    self.out.push_str(&width.extend(signed));
+                } else {
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [{addr}]");
+                }
+            }
+            AggClass::Two => {
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [{addr}]");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [{addr}+8]");
+            }
+            AggClass::Mem => {
+                // The destination is the caller's slot, reached through the
+                // hidden return pointer; the source stays in its own register,
+                // so the two cannot be the same one (`r10` rather than `r11`,
+                // which is where every caller of this helper leaves the source
+                // address). `emit_copy` touches only `rax`.
+                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
+                emit_copy(&mut self.out, "r10", 0, addr, 0, size);
+                self.out.push_str("    mov rax, r10\n");
+            }
+        }
+    }
+
+    /// One `List<T>` instantiation's function set, transliterated from
+    /// `codegen_c.rs::write_list` and `write_list_s1`. The list is the same
+    /// `{data, len, cap}` header a `Bytes`/`String` is, so a list *value*
+    /// travels through paths `Bytes` already uses (a `MEMORY`-class local,
+    /// parameter, argument and return — the fourth item-4 slice's outgoing
+    /// argument area and hidden return pointer); what is new here is the
+    /// per-instantiation routine set over an element that can itself own.
+    ///
+    /// The frame is fixed for every routine: the receiver at `rbp-8`, the
+    /// hidden return pointer at `rbp-16`, two index slots, and a staging buffer
+    /// for one element below them, with `k = align_up(size + 48, 16)` so `rsp`
+    /// is still sixteen-byte aligned at every `call`. Nothing is kept in a
+    /// register across a `call` — `realloc`, `free` and an element's own drop
+    /// are all entitled to clobber every caller-saved register, and this
+    /// backend's generated functions pin their locals to `rbx`/`r12`-`r15`, so
+    /// a runtime routine leaves those alone. That is the whole reason `len` and
+    /// `cap` are re-read from memory after a call instead of being cached.
+    ///
+    /// Everything a body calls was registered by `require_list_fn` before the
+    /// routine snapshot was taken, so nothing here has to remember a dependency
+    /// at emission time.
+    fn emit_list_routine(&mut self, f: &ListFn) -> Result<(), String> {
+        let elem = f.elem().clone();
+        let size = elem_size(&elem, &self.layouts).ok_or_else(|| {
+            unsupported(&format!(
+                "the `List<{}>` behind `{}` (the element has no size this backend can allocate)",
+                elem.display(),
+                f.label()
+            ))
+        })?;
+        let class = elem_class(&elem, &self.layouts);
+        let label = f.label();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        let k = align_up(size + 48, 16);
+        let buf = -k;
+        let slot_self = -8;
+        let slot_ret = -16;
+        let slot_i = -24;
+        let slot_j = -32;
+        let prologue = format!("    push rbp\n    mov rbp, rsp\n    sub rsp, {k}\n");
+        let epilogue = "    mov rsp, rbp\n    pop rbp\n    ret\n";
+        let reserve = Routine::ListReserve.label();
+        let bounds = ListFn::Bounds(elem.clone()).label();
+        // The element's own drop, if it has one. Resolved through
+        // `drop_site_for` so a `String`, a `Bytes`, a generated `datac` drop, a
+        // box and a nested list are all the same call the rest of this module
+        // makes — and registered before the snapshot by `require_list_fn`, so a
+        // body here can never name a symbol nothing emitted.
+        let elem_drop = self.drop_site_for(&elem);
+        match f {
+            // `List l; l.data = NULL; l.len = 0; l.cap = 0; return l;` — the
+            // list is `MEMORY` class, so it is built straight into the caller's
+            // return slot and `rdi` is the hidden pointer, not the receiver.
+            ListFn::Empty(_) => {
+                self.out.push_str(
+                    "    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n    mov QWORD PTR [rdi+16], 0\n    mov rax, rdi\n    ret\n",
+                );
+            }
+            // `l = empty(); reserve(&l, 1); l.data[0] = v; l.len = 1;` with `l`
+            // built directly in the return slot.
+            ListFn::Of(_) => {
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                self.marshal_elem(class, size, buf, "rsi", "rdx");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str(
+                    "    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n    mov QWORD PTR [rdi+16], 0\n",
+                );
+                self.out.push_str("    mov esi, 1\n");
+                let _ = writeln!(self.out, "    mov edx, {size}");
+                let _ = writeln!(self.out, "    call {reserve}");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str("    mov r11, QWORD PTR [rdi]\n");
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str("    mov QWORD PTR [rdi+8], 1\n");
+                self.out.push_str(epilogue);
+            }
+            ListFn::Len(_) => {
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n    ret\n");
+            }
+            ListFn::IsEmpty(_) => {
+                self.out
+                    .push_str("    cmp QWORD PTR [rdi+8], 0\n    sete al\n    movzx eax, al\n    ret\n");
+            }
+            // `if (i >= self->len) panic("List.get: index out of bounds");` —
+            // the C message, because this is the check `get`/`get_const`/`set`
+            // share in the C backend; `insert`/`remove` have their own below.
+            ListFn::Bounds(_) => {
+                let msg = self.bytes_label(b"List.get: index out of bounds");
+                let ok = self.label("list_bounds_ok");
+                self.out.push_str("    cmp rsi, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    jb {ok}");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+                let _ = writeln!(self.out, "{ok}:\n    ret");
+            }
+            // `reserve(self, self->len + 1); self->data[self->len++] = v;` —
+            // the element is staged in the frame buffer first, because
+            // `realloc` may move the buffer and is free to clobber the register
+            // the element arrived in.
+            ListFn::Push(_) => {
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                self.marshal_elem(class, size, buf, "rsi", "rdx");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rsi, QWORD PTR [rdi+8]\n    add rsi, 1\n");
+                let _ = writeln!(self.out, "    mov edx, {size}");
+                let _ = writeln!(self.out, "    call {reserve}");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                self.emit_elem_addr("rax", size, slot_self);
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str(
+                    "    mov rax, QWORD PTR [rdi+8]\n    add rax, 1\n    mov QWORD PTR [rdi+8], rax\n",
+                );
+                self.out.push_str(epilogue);
+            }
+            // `bounds(self, i); return self->data[i];` — a `Copy` element by
+            // value, or (the borrowing form) a pointer to the element in place.
+            // Which one is the call's own result type, never a guess, exactly
+            // as `codegen_c.rs::write_list` splits on `elem.is_copy()`.
+            ListFn::Get(_, by_value) => {
+                if *by_value && class == AggClass::Mem {
+                    return Err(unsupported(&format!(
+                        "reading a `{}` out of a `List<{}>` by value",
+                        elem.display(),
+                        elem.display()
+                    )));
+                }
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
+                let _ = writeln!(self.out, "    call {bounds}");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                self.emit_elem_addr("rsi", size, slot_self);
+                if *by_value {
+                    self.emit_elem_return(&elem, size, class, "r11", slot_ret);
+                } else {
+                    self.out.push_str("    mov rax, r11\n");
+                }
+                self.out.push_str(epilogue);
+            }
+            // `bounds(self, i); drop(&self->data[i]); self->data[i] = v;`
+            ListFn::Set(_) => {
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
+                self.marshal_elem(class, size, buf, "rdx", "rcx");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    call {bounds}");
+                if let Some(site) = &elem_drop {
+                    let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                    self.emit_elem_addr("rsi", size, slot_self);
+                    self.out.push_str("    mov rdi, r11\n");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                }
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                self.emit_elem_addr("rsi", size, slot_self);
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                self.out.push_str(epilogue);
+            }
+            // `if (self->len == 0) panic("List.pop: the list is empty");
+            //  return self->data[--self->len];` — nothing is dropped, because
+            // the element is leaving with the caller.
+            ListFn::Pop(_) => {
+                let ret_mem = class == AggClass::Mem;
+                let self_reg = if ret_mem { "rsi" } else { "rdi" };
+                let msg = self.bytes_label(b"List.pop: the list is empty");
+                let ok = self.label("list_pop_ok");
+                self.out.push_str(&prologue);
+                if ret_mem {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                }
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], {self_reg}");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [{self_reg}+8]");
+                self.out.push_str("    test rax, rax\n");
+                let _ = writeln!(self.out, "    jne {ok}");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+                let _ = writeln!(self.out, "{ok}:");
+                self.out.push_str("    sub rax, 1\n");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [rdi+8], rax\n");
+                self.emit_elem_addr("rax", size, slot_self);
+                self.emit_elem_return(&elem, size, class, "r11", slot_ret);
+                self.out.push_str(epilogue);
+            }
+            // `for (i = 0; i < self->len; i++) drop(&self->data[i]);
+            //  self->len = 0;` — the loop exists only when the element owns
+            // something, which is exactly what `elem_drop` being `Some` means.
+            ListFn::Clear(_) => {
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                if let Some(site) = &elem_drop {
+                    let top = self.label("list_clear_loop");
+                    let done = self.label("list_clear_done");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                    let _ = writeln!(self.out, "{top}:");
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                    self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                    let _ = writeln!(self.out, "    cmp QWORD PTR [rbp{slot_i}], rax");
+                    let _ = writeln!(self.out, "    jae {done}");
+                    let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                    self.emit_elem_addr("rsi", size, slot_self);
+                    self.out.push_str("    mov rdi, r11\n");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                    let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                    let _ = writeln!(self.out, "    jmp {top}");
+                    let _ = writeln!(self.out, "{done}:");
+                }
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [rdi+8], 0\n");
+                self.out.push_str(epilogue);
+            }
+            // `if (i > self->len) panic("List.insert: index out of bounds");
+            //  reserve(self, self->len + 1);
+            //  for (j = len; j > i; j--) data[j] = data[j-1];
+            //  data[i] = v; self->len++;` — the shift is byte copies, which is
+            // the same instruction sequence for a scalar element as for a
+            // `String`, so nothing here has to know the element's class.
+            ListFn::Insert(_) => {
+                let msg = self.bytes_label(b"List.insert: index out of bounds");
+                let ok = self.label("list_insert_ok");
+                let top = self.label("list_insert_loop");
+                let done = self.label("list_insert_done");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
+                self.marshal_elem(class, size, buf, "rdx", "rcx");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    cmp QWORD PTR [rbp{slot_i}], rax");
+                let _ = writeln!(self.out, "    jbe {ok}");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+                let _ = writeln!(self.out, "{ok}:");
+                self.out.push_str("    mov rsi, rax\n    add rsi, 1\n");
+                let _ = writeln!(self.out, "    mov edx, {size}");
+                let _ = writeln!(self.out, "    call {reserve}");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rax");
+                let _ = writeln!(self.out, "{top}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    cmp rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    jbe {done}");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov r11, QWORD PTR [r11]\n");
+                self.out.push_str("    mov r9, rax\n");
+                let _ = writeln!(self.out, "    imul r9, {size}");
+                self.out.push_str("    add r9, r11\n    mov r8, r9\n");
+                let _ = writeln!(self.out, "    sub r8, {size}");
+                emit_copy(&mut self.out, "r9", 0, "r8", 0, size);
+                let _ = writeln!(self.out, "    sub QWORD PTR [rbp{slot_j}], 1");
+                let _ = writeln!(self.out, "    jmp {top}");
+                let _ = writeln!(self.out, "{done}:");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                self.emit_elem_addr("rsi", size, slot_self);
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str(
+                    "    mov rax, QWORD PTR [rdi+8]\n    add rax, 1\n    mov QWORD PTR [rdi+8], rax\n",
+                );
+                self.out.push_str(epilogue);
+            }
+            // `if (i >= self->len) panic("List.remove: index out of bounds");
+            //  v = self->data[i];
+            //  for (j = i; j + 1 < len; j++) data[j] = data[j+1];
+            //  self->len--; return v;` — `v` is parked in the frame buffer
+            // first, because the shift is free to overwrite the slot it came
+            // from (its last iteration always does).
+            ListFn::Remove(_) => {
+                let ret_mem = class == AggClass::Mem;
+                let self_reg = if ret_mem { "rsi" } else { "rdi" };
+                let i_reg = if ret_mem { "rdx" } else { "rsi" };
+                let msg = self.bytes_label(b"List.remove: index out of bounds");
+                let ok = self.label("list_remove_ok");
+                let top = self.label("list_remove_loop");
+                let done = self.label("list_remove_done");
+                self.out.push_str(&prologue);
+                if ret_mem {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                }
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], {self_reg}");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], {i_reg}");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [{self_reg}+8]");
+                let _ = writeln!(self.out, "    cmp {i_reg}, rax");
+                let _ = writeln!(self.out, "    jb {ok}");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+                let _ = writeln!(self.out, "{ok}:");
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
+                self.emit_elem_addr("rsi", size, slot_self);
+                emit_copy(&mut self.out, "rbp", buf, "r11", 0, size);
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rax");
+                let _ = writeln!(self.out, "{top}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_j}]");
+                self.out.push_str("    add rcx, 1\n");
+                let _ = writeln!(self.out, "    cmp rcx, rax");
+                let _ = writeln!(self.out, "    jae {done}");
+                self.out.push_str("    mov r11, QWORD PTR [rdi]\n");
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    imul r8, {size}");
+                self.out.push_str("    add r8, r11\n    mov r9, r8\n");
+                let _ = writeln!(self.out, "    add r9, {size}");
+                emit_copy(&mut self.out, "r8", 0, "r9", 0, size);
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_j}], 1");
+                let _ = writeln!(self.out, "    jmp {top}");
+                let _ = writeln!(self.out, "{done}:");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str(
+                    "    mov rax, QWORD PTR [rdi+8]\n    sub rax, 1\n    mov QWORD PTR [rdi+8], rax\n",
+                );
+                // `buf` already holds `v`; hand it back the way its class says.
+                let _ = writeln!(self.out, "    lea r11, [rbp{buf}]");
+                self.emit_elem_return(&elem, size, class, "r11", slot_ret);
+                self.out.push_str(epilogue);
+            }
+            // `i = 0; j = self->len; while (i + 1 < j) { j--;
+            //  t = data[i]; data[i] = data[j]; data[j] = t; i++; }` — the swap
+            // goes through the frame buffer, which is what makes it work for an
+            // element of any size without a second temporary slot.
+            ListFn::Reverse(_) => {
+                let top = self.label("list_reverse_loop");
+                let done = self.label("list_reverse_done");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rax");
+                let _ = writeln!(self.out, "{top}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    add rax, 1\n");
+                let _ = writeln!(self.out, "    cmp rax, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    jae {done}");
+                let _ = writeln!(self.out, "    sub QWORD PTR [rbp{slot_j}], 1");
+                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov r10, QWORD PTR [r10]\n");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    imul rax, {size}");
+                self.out.push_str("    add rax, r10\n    mov r8, rax\n");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    imul rax, {size}");
+                self.out.push_str("    add rax, r10\n    mov r9, rax\n");
+                emit_copy(&mut self.out, "rbp", buf, "r8", 0, size);
+                emit_copy(&mut self.out, "r8", 0, "r9", 0, size);
+                emit_copy(&mut self.out, "r9", 0, "rbp", buf, size);
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    jmp {top}");
+                let _ = writeln!(self.out, "{done}:");
+                self.out.push_str(epilogue);
+            }
+            // `clear(self); free(self->data); self->data = NULL;
+            //  self->cap = 0;` — `clear` resets `len`, so all three fields end
+            // up exactly as a fresh `empty()` has them.
+            ListFn::Drop(_) => {
+                let clear = ListFn::Clear(elem.clone()).label();
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    call {clear}");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rdi, QWORD PTR [rdi]\n    call free@PLT\n");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+16], 0\n");
+                self.out.push_str(epilogue);
+            }
+        }
+        Ok(())
+    }
+
     /// Records that a routine, and everything it calls, has to be emitted.
     fn require_routine(&mut self, r: Routine) {
         match r {
@@ -3413,6 +4101,23 @@ impl Gen {
                 }
                 self.require_box_fn(BoxFn::Drop((**elem).clone()));
                 DropSite::Box((**elem).clone())
+            }
+            // MK7 §5's list slice: the same shape as the box above, one
+            // aggregate wider — `show(List.of(1))` where `show` takes the list
+            // by borrow has to free the list's buffer (and everything in it)
+            // after the call. A list always owns its buffer, so this arm is
+            // reached for *every* element type; what can still be refused is the
+            // element's own size, and it is refused by name rather than staged
+            // without a drop.
+            Ty::List(elem) => {
+                if elem_size(elem, &self.layouts).is_none() {
+                    return Err(unsupported(&format!(
+                        "a borrow of the temporary `List<{}>`",
+                        elem.display()
+                    )));
+                }
+                self.require_list_fn(ListFn::Drop((**elem).clone()));
+                DropSite::List((**elem).clone())
             }
             _ => return Ok(None),
         };
@@ -4543,19 +5248,33 @@ impl Gen {
             // MK7 §5's box slice: a base whose own value *is* the address —
             // `list.next.get().value`, where `Box#get` returned a `&Node`. Any
             // `Ref`-typed expression evaluates to the pointer in `rax`, so the
-            // address is already there; everything else (a `datac` temporary
-            // used by value, which would need a slot of its own) stays refused.
+            // address is already there.
+            //
+            // MK7 §5's list slice adds the *by-value* counterpart, which is what
+            // `List#pop`/`List#remove` hand back: `xs.pop().a`. A `datac`
+            // temporary has no address of its own, so it gets a fresh
+            // `Frame::scratch` slot built through the same `eval_struct_into` a
+            // `let` initializer uses, and the address is a `lea` of that slot —
+            // the fourth item-4 slice's mechanism for a borrowed temporary,
+            // reused because it is the same problem. The layout comes from the
+            // tail of this function either way, since a by-value base's own
+            // type *is* the struct type.
             _ => {
-                let Ty::Ref { inner, .. } = &base.ty else {
+                if let Ty::Ref { inner, .. } = &base.ty {
+                    if struct_layout(inner, &self.layouts).is_none() {
+                        return Err(unsupported(&format!("the type `{}`", base.ty.display())));
+                    }
+                    self.expr(base, frame)?;
+                    self.out.push_str("    mov r11, rax\n");
+                } else if let Some(size) = struct_layout(&base.ty, &self.layouts).map(|l| l.size) {
+                    let slot = frame.scratch(align_up(size, 8));
+                    self.eval_struct_into(base, frame, Dest::Direct(slot))?;
+                    let _ = writeln!(self.out, "    lea r11, [rbp{slot}]");
+                } else {
                     return Err(unsupported(
                         "a field access on anything but a local or `*local`",
                     ));
-                };
-                if struct_layout(inner, &self.layouts).is_none() {
-                    return Err(unsupported(&format!("the type `{}`", base.ty.display())));
                 }
-                self.expr(base, frame)?;
-                self.out.push_str("    mov r11, rax\n");
             }
         }
         // Re-derive the layout from `base.ty` (stripping one `Ref`, the way
@@ -4943,6 +5662,60 @@ impl Gen {
             };
             let label = f.label();
             self.require_box_fn(f);
+            label
+        } else if let Some(op) = callee.strip_prefix("List#") {
+            // MK7 §5's list slice: the `List<T>` surface this slice covers,
+            // monomorphized the way `codegen_c.rs::write_list` does it. The
+            // element type comes from whichever of the three places it can:
+            // the argument itself for the associated `List.of(v)`, the call's
+            // own result type for `List.empty()`, and the receiver for every
+            // method (through `types::list_elem_of`, which looks through the
+            // `&List<T>` a method receiver is). Only the *layout* has to exist
+            // here — a `List` value is a 24-byte header whatever it points at —
+            // while the element's own size is what the routines need, so it is
+            // checked too and refused by name.
+            let elem = match op {
+                "of" => args.first().map(|a| a.ty.clone()),
+                "empty" => crate::types::list_elem_of(ret_ty).cloned(),
+                _ => args.first().and_then(|a| crate::types::list_elem_of(&a.ty)).cloned(),
+            }
+            .ok_or_else(|| {
+                unsupported(&format!("the method `{}`", callee.replace('#', ".")))
+            })?;
+            if elem_size(&elem, &self.layouts).is_none() {
+                return Err(unsupported(&format!(
+                    "the `List<{}>` ahead of `{}`",
+                    elem.display(),
+                    callee.replace('#', ".")
+                )));
+            }
+            let f = match op {
+                "empty" => ListFn::Empty(elem),
+                "of" => ListFn::Of(elem),
+                "len" => ListFn::Len(elem),
+                "is_empty" => ListFn::IsEmpty(elem),
+                "push" => ListFn::Push(elem),
+                "get" => ListFn::Get(elem, !matches!(ret_ty, Ty::Ref { .. })),
+                "set" => ListFn::Set(elem),
+                "pop" => ListFn::Pop(elem),
+                "clear" => ListFn::Clear(elem),
+                "insert" => ListFn::Insert(elem),
+                "remove" => ListFn::Remove(elem),
+                "reverse" => ListFn::Reverse(elem),
+                // `sort`, `contains` and `slice` are the three S1 methods this
+                // slice leaves out on purpose: each needs an element-level
+                // comparison or clone the backend has no way to express yet.
+                // Naming them is what keeps the gap visible — the alternative
+                // is a call to a symbol nothing emits.
+                _ => {
+                    return Err(unsupported(&format!(
+                        "the method `{}` on a `List`",
+                        callee.replace('#', ".")
+                    )))
+                }
+            };
+            let label = f.label();
+            self.require_list_fn(f);
             label
         } else if callee.starts_with("Bytes#")
             || callee.starts_with("String#")
@@ -5730,6 +6503,48 @@ impl Gen {
                 self.out.push_str("    add rsp, 40\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
                 self.out.push_str(".Lbytes_raw_utf8:\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{utf8}]");
+                self.call_panic();
+            }
+            // MK7 §5's list slice, and the one routine in it that is not
+            // per-instantiation:
+            //
+            // ```c
+            // static void reserve(List* self, size_t want, size_t elem) {
+            //   if (want <= self->cap) return;
+            //   size_t cap = self->cap == 0 ? 4 : self->cap;
+            //   while (cap < want) cap *= 2;
+            //   void* p = realloc(self->data, cap * elem);
+            //   if (p == NULL) kelp_panic("out of memory");
+            //   self->data = p; self->cap = cap;
+            // }
+            // ```
+            //
+            // `codegen_c.rs` writes one of these per element type because the
+            // element is baked into its C signature. Here it is a third
+            // argument, which makes it the *only* list routine that does not
+            // need monomorphizing — the one place the two backends' symbol sets
+            // deliberately differ. The frame is four slots (`self`, `want`, the
+            // element size, and the doubled capacity while `realloc` runs),
+            // which keeps everything live across the call in memory rather than
+            // in a caller-saved register `realloc` is entitled to clobber.
+            Routine::ListReserve => {
+                let oom = self.bytes_label(b"out of memory");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 32\n");
+                self.out.push_str(
+                    "    mov QWORD PTR [rbp-8], rdi\n    mov QWORD PTR [rbp-16], rsi\n    mov QWORD PTR [rbp-24], rdx\n",
+                );
+                self.out.push_str("    mov rax, QWORD PTR [rdi+16]\n");
+                self.out.push_str("    cmp rsi, rax\n    jbe .Llist_reserve_done\n");
+                self.out.push_str("    test rax, rax\n    jne .Llist_reserve_grow\n    mov eax, 4\n");
+                self.out.push_str(".Llist_reserve_grow:\n    cmp rax, rsi\n    jae .Llist_reserve_alloc\n    add rax, rax\n    jmp .Llist_reserve_grow\n");
+                self.out.push_str(".Llist_reserve_alloc:\n    mov QWORD PTR [rbp-32], rax\n    imul rax, rdx\n    mov rsi, rax\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbp-8]\n    mov rdi, QWORD PTR [rdi]\n    call realloc@PLT\n");
+                self.out.push_str("    test rax, rax\n    je .Llist_reserve_oom\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbp-8]\n    mov QWORD PTR [rdi], rax\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-32]\n    mov QWORD PTR [rdi+16], rax\n");
+                self.out.push_str(".Llist_reserve_done:\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Llist_reserve_oom:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{oom}]");
                 self.call_panic();
             }
         }
