@@ -111,6 +111,50 @@ with the backend as the only variable.
 
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
+> **Status: first slice landed** (`codegen_asm.rs`, 977 lines). `kelpc build
+> --backend=asm` emits x86-64 assembly itself and finishes with `as` and `ld`,
+> with no C compiler in the chain. Measured: **100 of 235 end-to-end tests
+> pass**, and the C backend passes all 235 — so the differential gate is live
+> (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number can
+> only rise from here.
+>
+> Covered: every integer width, `bool`, `char`, all unary and binary operators
+> including short-circuiting `&&`/`||`, `if`/`else` in statement and value
+> position, `while`, assignment, calls with up to six integer arguments,
+> recursion, and `print`/`print!` of integers, characters and booleans.
+>
+> Three deliberate first-slice choices, each a thing later work replaces:
+> a **stack machine** rather than a register allocator (item 3 below), **assembly
+> text** rather than machine code (tier 2), and **refusal over silence** — every
+> uncovered construct is reported by name, so the suite measures coverage instead
+> of hiding miscompiles. Capability-gated calls are refused rather than emitted
+> unchecked: that is the one place an unimplemented feature would be a security
+> hole rather than a wrong number.
+>
+> **Where the next 135 failures rank**, measured by aggregating what the backend
+> refuses across the fixtures the C backend builds:
+>
+> | blocker | fixtures |
+> | --- | --- |
+> | `extern fun std.mem.alloc_raw` — i.e. the runtime, §8 | 36 |
+> | string values | 7 |
+> | `List<T>` / `Map<K, V>` | 9 |
+> | `datac` / `enum` aggregates | 24 |
+> | capability-gated calls | 7 |
+> | numeric conversions, printing `str`/`f64`, closures, the rest | ~20 |
+>
+> The first row is the argument for §8 being a *parallel* track: the single
+> biggest unlock is the runtime, not the code generator, and the runtime is the
+> half of this work that is backend-independent.
+>
+> Two bugs the differential suite found, kept as evidence the gate works:
+> comparisons took their operand width from the `bool` result type (so every
+> `i32` comparison compared only its low bytes), and a load used `mov rax, DWORD
+> PTR [...]`, which is not an instruction. One bug the design caused and the
+> suite caught as a segfault: the call-site stack save used `r11`, which is
+> caller-saved, so `printf` clobbered it — invisible in a function that printed
+> once, because the epilogue reloads `rsp` from `rbp`.
+
 The first working own backend. Emits **x86-64 assembly text** and shells out to `as` and `ld` instead of `cc`.
 This drops the C compiler from the dependency chain while keeping libc, and it is deliberately the tier with
 the best value-per-line: the assembler does instruction encoding, so the hand-written part is lowering,
