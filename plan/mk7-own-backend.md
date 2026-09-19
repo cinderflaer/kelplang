@@ -42,8 +42,14 @@ builds, and detailed in §5):
 
 1. **The runtime** — 36 fixtures are blocked by `extern fun std.mem.alloc_raw` alone. This is the §8 track
    arriving on schedule: the biggest single unlock is not the code generator. Its first two pieces — the
-   capability matcher and the path normalizer — landed in `1071ead` and unblock no fixture by themselves;
-   the allocator is the one that does, and it is the next item in §8's order.
+   capability matcher and the path normalizer — landed in `1071ead` and unblock no fixture by themselves.
+   **Correction (2026-09-19): the allocator does not unblock these 36 either, on its own.**
+   `codegen_asm.rs::generate` refuses any program containing *any* `extern fun` before codegen starts — it is
+   not specific to `alloc_raw` — so unblocking these fixtures needs the asm backend to call a hand-written
+   assembly routine for allocation (PLT-called, the way it presumably will for other libc calls), which in
+   turn needs aggregate-by-value return (§5 item 4, `Bytes` is a struct) landed first. The §8 allocator item is
+   further blocked on its own terms — see §8's note below — so it is **not** next; see the corrected order
+   there.
 2. **Aggregates** — `datac`/`enum` by value, 24 fixtures, and the ABI work the risk register calls the place
    silent miscompiles live.
 3. **`List`/`Map`** — 9 fixtures, and they need both the runtime and aggregates.
@@ -365,6 +371,35 @@ nothing or is not needed; `bench/speed/` checksums match and the runtime is no w
 > Kelp first, the C kept as the reference, a corpus that compares them — and the
 > pieces that stay C longest by design are the ones that are I/O (`kelp_cap_deny`,
 > `printf`), because §7 owns that boundary.
+>
+> **The allocator does not fit that pattern, and this was checked before writing
+> any code (2026-09-19).** The matcher and normalizer moved because both operate
+> purely over `&str`/`Bytes` at the safe level — no case they handle needs a
+> pointer Kelp cannot already express. An allocator's actual bookkeeping (an
+> intrusive free list, a header written into raw memory, following a link to the
+> next free block) needs raw pointer manipulation, and `unsafe`/raw pointers are
+> listed in §11 as **not on this branch** (deferred to backlog B-1/B-2/B-3). So
+> "the allocator, in Kelp" is blocked on a language capability this branch has
+> explicitly ruled out, not just unwritten.
+>
+> There is a second gap underneath that one: `std/mem.kp` declares exactly one
+> extern, `alloc_raw`, and says so on purpose ("There is deliberately no
+> `mem.free`") — drop-generated `free()` calls and `String`/`List` growth's
+> `realloc()` calls are emitted directly by `codegen_c.rs` today and are invisible
+> to Kelp source entirely. Swapping `alloc_raw`'s body alone would not even be
+> safe in isolation: a buffer it hands out could still be freed or grown by a
+> mismatched allocator on the C side.
+>
+> **What is actually available now, and is real progress without pretending to
+> be a from-scratch allocator:** expose `realloc_raw`/`free_raw` as externs
+> alongside `alloc_raw`, and move the *policy* around them — the zero-fill
+> contract, the `cap + 1`/NUL invariant, the OOM-panics-not-fails contract — into
+> reviewable Kelp functions that call thin C-backed terminal primitives (the same
+> shape `alloc_raw` already has). That is a real, testable, byte-exact-with-C
+> step; it is not the allocator Stage 3 §7.2 describes ("`malloc`/`realloc`/`free`
+> over `mmap` or `brk`"), which stays blocked on raw pointers until B-1/B-2/B-3
+> land. Until then, §8's order should treat the allocator as **blocked**, not
+> next, and pull the formatter forward in its place.
 
 The important structural observation of this plan: **most of Tier 3 is backend-independent.** The allocator,
 the formatter, the error table, the path normalizer, the capability matcher and the DNS resolver are the same
