@@ -463,16 +463,15 @@ const BYTES_LAYOUT_KEY: &str = "$Bytes";
 /// because the two backends agreeing on this struct's *offsets* is the same
 /// promise the fixture suite makes for every `datac` typedef.
 fn bytes_layout() -> StructLayout {
-    StructLayout {
-        entries: vec![
+    scalar_layout(
+        vec![
             FieldEntry::Scalar("data".to_string(), 0, Width::W8, false),
             FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
             FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
         ],
-        size: 24,
-        align: 8,
-        variants: None,
-    }
+        24,
+        8,
+    )
 }
 
 /// The key `struct_layout` looks `Ty::String` up under — `$Bytes`'s sibling,
@@ -498,12 +497,11 @@ const BOX_LAYOUT_KEY: &str = "$Box";
 /// exactly as the third and fourth item-4 slices promised a heap type would.
 /// `NULL` means empty, which is the whole of the type's representation.
 fn box_layout() -> StructLayout {
-    StructLayout {
-        entries: vec![FieldEntry::Scalar("value".to_string(), 0, Width::W8, false)],
-        size: 8,
-        align: 8,
-        variants: None,
-    }
+    scalar_layout(
+        vec![FieldEntry::Scalar("value".to_string(), 0, Width::W8, false)],
+        8,
+        8,
+    )
 }
 
 /// The key `struct_layout` looks every `Ty::List<T>` up under. **One key for
@@ -527,16 +525,15 @@ const LIST_LAYOUT_KEY: &str = "$List";
 /// what passes one by value. `cap == 0` implies `data == NULL`; `len <= cap`;
 /// the buffer is `cap * sizeof(elem)` bytes, and it is the list's own to free.
 fn list_layout() -> StructLayout {
-    StructLayout {
-        entries: vec![
+    scalar_layout(
+        vec![
             FieldEntry::Scalar("data".to_string(), 0, Width::W8, false),
             FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
             FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
         ],
-        size: 24,
-        align: 8,
-        variants: None,
-    }
+        24,
+        8,
+    )
 }
 
 /// The key `struct_layout` looks every `Ty::Map<K, V>` up under. **One key for
@@ -559,8 +556,8 @@ const MAP_LAYOUT_KEY: &str = "$Map";
 /// either is. The header does **not** depend on `K`/`V` — that is the whole
 /// reason one key serves every instantiation.
 fn map_layout() -> StructLayout {
-    StructLayout {
-        entries: vec![
+    scalar_layout(
+        vec![
             FieldEntry::Scalar("entries".to_string(), 0, Width::W8, false),
             FieldEntry::Scalar("entry_count".to_string(), 8, Width::W8, false),
             FieldEntry::Scalar("entry_cap".to_string(), 16, Width::W8, false),
@@ -569,10 +566,9 @@ fn map_layout() -> StructLayout {
             FieldEntry::Scalar("index_cap".to_string(), 40, Width::W8, false),
             FieldEntry::Scalar("index_used".to_string(), 48, Width::W8, false),
         ],
-        size: 56,
-        align: 8,
-        variants: None,
-    }
+        56,
+        8,
+    )
 }
 
 /// One `kelp_Map__K__V_entry`'s layout, which **does** depend on the key type:
@@ -604,16 +600,15 @@ fn map_entry(key: &Ty, layouts: &std::collections::HashMap<String, StructLayout>
 /// `{data, len, cap}` the `Bytes` layout is, so a `String` local, parameter,
 /// argument and return travel exactly the way a `Bytes` one does.
 fn string_layout() -> StructLayout {
-    StructLayout {
-        entries: vec![
+    scalar_layout(
+        vec![
             FieldEntry::Scalar("data".to_string(), 0, Width::W8, false),
             FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
             FieldEntry::Scalar("cap".to_string(), 16, Width::W8, false),
         ],
-        size: 24,
-        align: 8,
-        variants: None,
-    }
+        24,
+        8,
+    )
 }
 
 /// The C layout of `kelp_View` (`codegen_c.rs:115-118`): `ptr` at 0, `len` at
@@ -622,15 +617,14 @@ fn string_layout() -> StructLayout {
 /// `rax`/`rdx` out) rather than through the hidden pointer, which is the path
 /// item 4's third slice built and no heap type had exercised until now.
 fn view_layout() -> StructLayout {
-    StructLayout {
-        entries: vec![
+    scalar_layout(
+        vec![
             FieldEntry::Scalar("ptr".to_string(), 0, Width::W8, false),
             FieldEntry::Scalar("len".to_string(), 8, Width::W8, false),
         ],
-        size: 16,
-        align: 8,
-        variants: None,
-    }
+        16,
+        8,
+    )
 }
 
 /// MK7 §5: one passdown's generated storage — the internal `pd#<qualified>`
@@ -1177,6 +1171,17 @@ struct StructLayout {
     /// unchanged. What is enum-specific is only ever a *field*: which
     /// variant's payload is live, and where inside it a payload field sits.
     variants: Option<Vec<EnumVariantLayout>>,
+    /// Every leaf `(offset, size, kind)` this layout expands to, with an
+    /// aggregate field's own atoms already folded in at its offset. `class`
+    /// is derived from these; a *parent* aggregate reads them to classify the
+    /// eightbytes this layout lands in, which is the one thing a size cannot
+    /// tell it (a mixed nested `datac` at a non-eightbyte-aligned offset
+    /// splits across the parent's eightbytes differently than its own do).
+    atoms: Vec<(i32, i32, Eb)>,
+    /// This layout's SysV classification — see `classify`. Stored rather than
+    /// recomputed because a call site consults it at every aggregate
+    /// boundary and the atoms it came from are the only input.
+    class: AggClass,
 }
 
 /// One variant's payload inside an `enum`'s union (MK7 §5's enum slice).
@@ -1210,9 +1215,22 @@ enum FieldEntry {
     /// `Ty` (rather than just a name to look a layout up by) is what lets
     /// `emit_datac_drop` ask `drop_site_for` what frees it.
     Aggregate(String, i32, String, Ty),
+    /// `(name, byte offset from the struct's base, width)` — an `f32`/`f64`
+    /// field (MK7 §5 item 4's float-in-aggregate slice). A float field is not
+    /// a `Scalar`: it lives in `xmm`, so every read, write and initializer
+    /// that touches it is a different instruction from the integer one. It is
+    /// what makes an eightbyte `SSE` in `classify`, and it is the only new
+    /// field kind a `datac` or `enum` can hold that this slice adds.
+    Float(String, i32, FWidth),
 }
 
 impl StructLayout {
+    /// This layout's SysV class — the stored `class` field, which every
+    /// aggregate boundary consults.
+    fn class(&self) -> AggClass {
+        self.class
+    }
+
     /// `Some` for an `enum` — which is also the test every enum-specific path
     /// uses to tell an `enum` from a `datac`, since both are keyed here by
     /// name and both are `Ty::Struct`.
@@ -1223,6 +1241,15 @@ impl StructLayout {
     fn scalar_field(&self, name: &str) -> Option<(i32, Width, bool)> {
         self.entries.iter().find_map(|e| match e {
             FieldEntry::Scalar(n, o, w, s) if n == name => Some((*o, *w, *s)),
+            _ => None,
+        })
+    }
+
+    /// `(byte offset, width)` for a float field — the `field_read`/
+    /// `field_assign` counterpart of `scalar_field`.
+    fn float_field(&self, name: &str) -> Option<(i32, FWidth)> {
+        self.entries.iter().find_map(|e| match e {
+            FieldEntry::Float(n, o, w) if n == name => Some((*o, *w)),
             _ => None,
         })
     }
@@ -1268,14 +1295,19 @@ fn elem_size(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>)
     int_ty(ty).map(|(width, _)| width.bytes())
 }
 
-/// The element's SysV class as a *by-value* element: a scalar is `One` (the
+/// The class of a scalar element: one `INTEGER` eightbyte. `elem_class` uses
+/// it as the default for a non-aggregate element, whose transport is exactly
+/// `One(Int)`'s (one integer register in, `rax` out).
+const INT_ONE: AggClass = AggClass::One(EbClass { kind: Eb::Int, size: 8 });
+
+/// The element's SysV class as a *by-value* element: a scalar is `INT_ONE` (the
 /// transport of a pointer or an integer), and every aggregate is whatever its
-/// own size says. The mirror of `emit_box_routine`'s `class`, repeated for the
-/// list routines because both need it and neither is the other's owner.
+/// own fields classify to. The mirror of `emit_box_routine`'s `class`, repeated
+/// for the list routines because both need it and neither is the other's owner.
 fn elem_class(elem: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> AggClass {
     struct_layout(elem, layouts)
         .map(|l| l.class())
-        .unwrap_or(AggClass::One)
+        .unwrap_or(INT_ONE)
 }
 
 /// The symbol one `Box<T>` routine is emitted (and called) under. Kept
@@ -1585,7 +1617,7 @@ fn datac_owns_in(
     };
     if layout.entries.iter().any(|e| match e {
         FieldEntry::Aggregate(_, _, _, ty) => owns(ty),
-        FieldEntry::Scalar(..) => false,
+        FieldEntry::Scalar(..) | FieldEntry::Float(..) => false,
     }) {
         return true;
     }
@@ -1596,41 +1628,171 @@ fn datac_owns_in(
             variants.iter().any(|v| {
                 v.entries.iter().any(|e| match e {
                     FieldEntry::Aggregate(_, _, _, ty) => owns(ty),
-                    FieldEntry::Scalar(..) => false,
+                    FieldEntry::Scalar(..) | FieldEntry::Float(..) => false,
                 })
             })
         })
 }
 
-/// MK7 §5 item 4, third slice: a top-level `datac`'s own SysV eightbyte class,
-/// derived purely from its size — sound *only* because every field this
-/// module accepts at all is `int_ty`-representable, a nested aggregate whose
-/// own eightbytes are the same thing by induction, or one of the heap
-/// layouts, whose three fields are a pointer and two `size_t`s. A real
-/// SysV classifier also has to consider whether each eightbyte is reachable
-/// only through float fields (making it `SSE` class); this module never
-/// builds a layout for a `datac` with a float field in the first place (see
-/// `try_build_layout`'s field loop — `Ty::F32`/`Ty::F64` fall through to
-/// `None`), so every eightbyte a layout here ever describes is `INTEGER`
-/// class, and the three-way split below is exactly "how many `INTEGER`
-/// eightbytes, and does the count still fit in registers" rather than a
-/// general classifier.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// The register file one eightbyte of an aggregate travels in: `SSE` if every
+/// field overlapping it is a float or a double, `INTEGER` otherwise (SysV
+/// merges `INTEGER` over `SSE`, so one non-float field in an eightbyte is
+/// enough to make the whole eightbyte `INTEGER`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Eb {
+    Int,
+    Sse,
+}
+
+/// One eightbyte's class and how many of its eight bytes the value actually
+/// occupies (1..=8). The size is only read for an `SSE` eightbyte, where it
+/// selects `movss` (four bytes, a lone `f32`) or `movsd` (eight, everything
+/// else); an `INTEGER` eightbyte is always moved as a whole 64-bit word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EbClass {
+    kind: Eb,
+    size: i32,
+}
+
+impl EbClass {
+    /// The `movss`/`movsd` width for an `SSE` eightbyte; `None` for an
+    /// `INTEGER` one (which is moved through `rax`/`rdx` instead).
+    fn float_width(self) -> Option<FWidth> {
+        match (self.kind, self.size) {
+            (Eb::Sse, 4) => Some(FWidth::F4),
+            (Eb::Sse, 8) => Some(FWidth::F8),
+            _ => None,
+        }
+    }
+}
+
+/// MK7 §5 item 4, the float-in-aggregate slice: a `datac`'s or `enum`'s own
+/// SysV eightbyte classes. This is the real classifier the third slice's
+/// size-only split deliberately was not (see that slice's commit message):
+/// for a value of at most sixteen bytes, each eightbyte is derived from the
+/// *fields* that overlap it — not from the total size — so an all-float
+/// `{f64}` is `One(Sse)` while a mixed `{i32, f64}` is `Two(Int, Sse)` and an
+/// `enum` whose union has a non-float or payload-less variant in an eightbyte
+/// merges that eightbyte back to `INTEGER` through the same rule.
+///
+/// Everything over sixteen bytes is `MEMORY` whatever its field types, which
+/// is why this classifier is total: `try_build_layout` refuses a field it
+/// cannot place, so a layout that exists has a class that exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AggClass {
-    /// ≤8 bytes: one opaque eightbyte, unchanged from the first two slices.
-    One,
-    /// 9-16 bytes: two `INTEGER` eightbytes, passed/returned in a pair of
-    /// integer registers (`rax`/`rdx` on return; two consecutive `ARG64`
-    /// slots as a by-value argument or parameter).
-    Two,
+    /// ≤8 bytes: one eightbyte.
+    One(EbClass),
+    /// 9-16 bytes: two eightbytes, in order.
+    Two(EbClass, EbClass),
     /// Over 16 bytes: SysV `MEMORY` class — returned through the hidden
     /// first-argument-pointer convention, and (as of the fourth slice) passed
     /// as a by-value argument or parameter **in memory**, in the caller's
     /// outgoing argument area, rather than in registers. There is no
-    /// register-*pair* shortcut for one and no register at all: `int_regs_for`
+    /// register-*pair* shortcut for one and no register at all: `int_regs`
     /// counts it as zero integer registers, which is what keeps the numbering
     /// of every other argument unaffected by it.
     Mem,
+}
+
+impl AggClass {
+    /// One `INTEGER` eightbyte — the only aggregate class that is a plain
+    /// value `rax` can hold whole (see `value_kind`). Every other class has
+    /// its own transport (`xmm`, a register pair, or the hidden pointer) and
+    /// is staged through a `Dest`.
+    fn is_int_one(self) -> bool {
+        matches!(self, AggClass::One(EbClass { kind: Eb::Int, .. }))
+    }
+
+    fn is_mem(self) -> bool {
+        matches!(self, AggClass::Mem)
+    }
+
+    /// The eightbyte at index `i`, or `None` past this class's arity.
+    fn eb(self, i: usize) -> Option<EbClass> {
+        match self {
+            AggClass::One(e) if i == 0 => Some(e),
+            AggClass::Two(a, _) if i == 0 => Some(a),
+            AggClass::Two(_, b) if i == 1 => Some(b),
+            _ => None,
+        }
+    }
+
+    /// How many integer argument/return registers this class consumes. The
+    /// integer and vector files are numbered independently, so this and
+    /// `sse_regs` are two separate budgets at every call site and parameter
+    /// list — the fact that made the third slice's single `int_regs_for`
+    /// insufficient the moment an eightbyte could be `SSE`.
+    fn int_regs(self) -> usize {
+        match self {
+            AggClass::One(e) => usize::from(e.kind == Eb::Int),
+            AggClass::Two(a, b) => {
+                usize::from(a.kind == Eb::Int) + usize::from(b.kind == Eb::Int)
+            }
+            AggClass::Mem => 0,
+        }
+    }
+
+    /// How many vector (`xmm`) argument/return registers this class consumes.
+    fn sse_regs(self) -> usize {
+        match self {
+            AggClass::One(e) => usize::from(e.kind == Eb::Sse),
+            AggClass::Two(a, b) => {
+                usize::from(a.kind == Eb::Sse) + usize::from(b.kind == Eb::Sse)
+            }
+            AggClass::Mem => 0,
+        }
+    }
+}
+
+/// Builds one of the synthesized heap layouts, whose fields are all scalars:
+/// the atoms and class are computed exactly as `try_build_layout` computes them
+/// for a `datac`, so a heap type and a user `datac` are classified by the same
+/// code.
+fn scalar_layout(entries: Vec<FieldEntry>, size: i32, align: i32) -> StructLayout {
+    let empty = std::collections::HashMap::new();
+    let mut atoms = Vec::new();
+    collect_atoms(&entries, 0, &empty, &mut atoms);
+    let class = classify(size, &atoms);
+    StructLayout { entries, size, align, variants: None, atoms, class }
+}
+
+/// The classifier itself, over a layout's leaf `(offset, size, kind)` atoms.
+/// Every eightbyte an atom overlaps is marked with that atom's kind; `INTEGER`
+/// wins a tie, and an eightbyte no atom reaches stays `INTEGER` (SysV's
+/// `NoClass` merges to nothing, and the only way that happens here is padding,
+/// which C also leaves as whatever the other eightbytes' classification says).
+/// A size over sixteen bytes is `MEMORY` regardless, which is the one case the
+/// atoms do not decide.
+fn classify(size: i32, atoms: &[(i32, i32, Eb)]) -> AggClass {
+    if size > 16 {
+        return AggClass::Mem;
+    }
+    let n_eb = if size <= 8 { 1 } else { 2 };
+    let mut has_int = [false; 2];
+    let mut has_sse = [false; 2];
+    for &(off, len, kind) in atoms {
+        if len <= 0 {
+            continue;
+        }
+        let first = (off / 8).clamp(0, 1) as usize;
+        let last = ((off + len - 1) / 8).clamp(0, 1) as usize;
+        for e in first..=last {
+            match kind {
+                Eb::Int => has_int[e] = true,
+                Eb::Sse => has_sse[e] = true,
+            }
+        }
+    }
+    let eb = |i: usize| {
+        let kind = if has_int[i] || !has_sse[i] { Eb::Int } else { Eb::Sse };
+        let size = if i == 0 { size.min(8) } else { size - 8 };
+        EbClass { kind, size }
+    };
+    if n_eb == 1 {
+        AggClass::One(eb(0))
+    } else {
+        AggClass::Two(eb(0), eb(1))
+    }
 }
 
 /// Every `MEMORY`-class value among `tys`, in declaration order, as
@@ -1656,7 +1818,7 @@ fn memory_arg_area<'a>(
         let Some(layout) = struct_layout(ty, layouts) else {
             continue;
         };
-        if layout.class() != AggClass::Mem {
+        if !layout.class().is_mem() {
             continue;
         }
         cursor = align_up(cursor, 8);
@@ -1666,20 +1828,55 @@ fn memory_arg_area<'a>(
     (out, align_up(cursor, 16))
 }
 
-fn agg_class(size: i32) -> AggClass {
-    if size <= 8 {
-        AggClass::One
-    } else if size <= 16 {
-        AggClass::Two
-    } else {
-        AggClass::Mem
+/// Expands an entry list into leaf atoms for `classify`, shifting an
+/// aggregate field's stored atoms by its own offset so a nested layout's
+/// per-eightbyte split survives into the parent. A field whose layout is
+/// missing contributes nothing — `try_build_layout` only builds an entry for
+/// a field it resolved, so that cannot happen for a layout that exists.
+fn collect_atoms(
+    entries: &[FieldEntry],
+    base: i32,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+    into: &mut Vec<(i32, i32, Eb)>,
+) {
+    for e in entries {
+        match e {
+            FieldEntry::Scalar(_, off, w, _) => {
+                into.push((base + off, w.bytes(), Eb::Int));
+            }
+            FieldEntry::Float(_, off, fw) => {
+                into.push((base + off, fw.bytes(), Eb::Sse));
+            }
+            FieldEntry::Aggregate(_, off, key, _) => {
+                if let Some(inner) = layouts.get(key) {
+                    for &(o, s, k) in &inner.atoms {
+                        into.push((base + off + o, s, k));
+                    }
+                }
+            }
+        }
     }
 }
 
-impl StructLayout {
-    fn class(&self) -> AggClass {
-        agg_class(self.size)
+/// The atoms of an `enum`'s layout: the four-byte tag, then every variant's
+/// payload entries, then — for each payload-less variant — the one `char` C
+/// writes at the union's own offset. That last atom is what makes the union
+/// merge work: it is `INTEGER` in the same eightbyte as a float payload of
+/// another variant, so `classify` merges that eightbyte back to `INTEGER`.
+fn enum_atoms(
+    variants: &[EnumVariantLayout],
+    payload_offset: i32,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Vec<(i32, i32, Eb)> {
+    let mut atoms = vec![(0, ENUM_TAG_WIDTH.bytes(), Eb::Int)];
+    for v in variants {
+        if v.entries.is_empty() {
+            atoms.push((payload_offset, 1, Eb::Int));
+        } else {
+            collect_atoms(&v.entries, 0, layouts, &mut atoms);
+        }
     }
+    atoms
 }
 
 /// One struct's layout, given every struct already decided (accepted or
@@ -1698,6 +1895,17 @@ fn try_build_layout(
             let align = width.bytes();
             cursor = align_up(cursor, align);
             entries.push(FieldEntry::Scalar(f.name.clone(), cursor, width, signed));
+            cursor += width.bytes();
+            max_align = max_align.max(align);
+        } else if let Some(width) = float_ty(&f.ty) {
+            // MK7 §5 item 4's float-in-aggregate slice: an `f32`/`f64` field is
+            // placed with its own natural alignment and recorded as a distinct
+            // `Float` entry, because every read, write and initializer that
+            // touches it moves through `xmm` rather than `rax`. Its alignment
+            // is 4 for an `f32` and 8 for an `f64`, exactly `FWidth::bytes`.
+            let align = width.bytes();
+            cursor = align_up(cursor, align);
+            entries.push(FieldEntry::Float(f.name.clone(), cursor, width));
             cursor += width.bytes();
             max_align = max_align.max(align);
         } else if let Some(inner) = struct_layout(&f.ty, out) {
@@ -1730,10 +1938,14 @@ fn try_build_layout(
     }
     let size = align_up(cursor, max_align);
     // MK7 §5 item 4, third slice: no size cutoff here any more — every size
-    // gets a layout, and `AggClass` (derived from `size` wherever a value is
-    // actually moved) is what decides whether it needs eightbyte-pair or
-    // hidden-pointer handling. Only a *nested* field (above) is still capped.
-    Some(StructLayout { entries, size, align: max_align, variants: None })
+    // gets a layout, &classify is what decides whether it needs eightbyte-pair
+    // or hidden-pointer handling. Float fields (above) are placed like any
+    // other; the classifier, not the field loop, is what turns them into an
+    // `SSE` eightbyte.
+    let mut atoms = Vec::new();
+    collect_atoms(&entries, 0, out, &mut atoms);
+    let class = classify(size, &atoms);
+    Some(StructLayout { entries, size, align: max_align, variants: None, atoms, class })
 }
 
 /// The width of an `enum`'s tag, which is also the width of the variant index
@@ -1795,6 +2007,17 @@ fn try_build_enum_layout(
                 entries.push(FieldEntry::Scalar(f.name.clone(), cursor, width, signed));
                 cursor += width.bytes();
                 max_align = max_align.max(align);
+            } else if let Some(width) = float_ty(&f.ty) {
+                // MK7 §5 item 4's float-in-aggregate slice: the same placement
+                // and the same `Float` entry a `datac` field gets. A float
+                // payload is what makes the union's eightbyte `SSE` — unless
+                // another variant or the payload-less `char` merges it back to
+                // `INTEGER`, which `enum_atoms`/`classify` decide.
+                let align = width.bytes();
+                cursor = align_up(cursor, align);
+                entries.push(FieldEntry::Float(f.name.clone(), cursor, width));
+                cursor += width.bytes();
+                max_align = max_align.max(align);
             } else if let Some(inner) = struct_layout(&f.ty, out) {
                 let key = layout_key(&f.ty).expect("a field with a layout has a layout key");
                 let align = inner.align;
@@ -1823,13 +2046,31 @@ fn try_build_enum_layout(
     for v in &mut variants {
         for entry in &mut v.entries {
             match entry {
-                FieldEntry::Scalar(_, offset, ..) | FieldEntry::Aggregate(_, offset, ..) => {
+                FieldEntry::Scalar(_, offset, ..)
+                | FieldEntry::Aggregate(_, offset, ..)
+                | FieldEntry::Float(_, offset, ..) => {
                     *offset += payload_offset;
                 }
             }
         }
     }
-    Some(StructLayout { entries: Vec::new(), size, align, variants: Some(variants) })
+    // The enum's own atoms, computed after the rebase so every offset is
+    // relative to the enum's base like the entries are. The tag is an
+    // `INTEGER` atom in eightbyte 0, and each payload-less variant contributes
+    // the one-byte `char` C puts at the union's offset — the atom that makes
+    // the union merge (`enum { C(f64), Empty }` is `INTEGER`/`INTEGER`, not
+    // `INTEGER`/`SSE`) fall out of the same classifier every other aggregate
+    // uses.
+    let atoms = enum_atoms(&variants, payload_offset, out);
+    let class = classify(size, &atoms);
+    Some(StructLayout {
+        entries: Vec::new(),
+        size,
+        align,
+        variants: Some(variants),
+        atoms,
+        class,
+    })
 }
 
 /// Computes `StructLayout` for every `datac` and `enum` that qualifies (see
@@ -1934,7 +2175,12 @@ fn value_kind(
         // `struct_layout`/`AggClass` directly, never through this function.
         .or_else(|| {
             struct_layout(ty, layouts)
-                .filter(|l| l.class() == AggClass::One)
+                .filter(|l| {
+                    matches!(
+                        l.class(),
+                        AggClass::One(EbClass { kind: Eb::Int, .. })
+                    )
+                })
                 .map(|_| (Width::W8, false))
         })
         .or_else(|| match ty {
@@ -1968,44 +2214,43 @@ fn value_kind(
         .or_else(|| if str_ty(ty) { Some((Width::W8, false)) } else { None })
 }
 
-/// How many consecutive *integer* argument/parameter registers a value of
-/// `ty` occupies, or `None` if `ty` cannot be passed by value at all (an
-/// `enum`, a closure, `unit` — every type this backend still refuses). A `MEMORY`-class `datac` is `Some(0)`: it *can* be
-/// passed by value, and the fourth slice passes it the way SysV says to, in
-/// memory rather than in any register — see `memory_arg_area`. That zero is
-/// what keeps a `Mem`-class argument from disturbing the numbering of the
-/// arguments around it, since the integer register file is numbered by how
-/// many registers each earlier argument took, and this one took none.
+/// How many *integer* and *SSE* argument/parameter registers a value of `ty`
+/// occupies, or `None` if `ty` cannot be passed by value at all (a closure,
+/// `unit`, a type with no layout). A `MEMORY`-class `datac` is `Some((0, 0))`:
+/// it *can* be passed by value, in memory rather than in any register — see
+/// `memory_arg_area` — and taking no register is what keeps it from disturbing
+/// the numbering of the arguments around it. A `float_ty` value is not covered
+/// here: every call site checks that first, since SysV classifies the vector
+/// and integer register files independently and a scalar float is `(0, 1)`.
 ///
-/// (The third slice drew the opposite conclusion — `None`, a flat refusal —
-/// because passing one that way needs the value staged somewhere addressable
-/// until the call executes. The fourth slice's `Frame::scratch` is exactly that
-/// storage, so the narrowing is gone.) `float_ty` values are not covered here —
-/// every call site checks that first, since SysV classifies the vector and
-/// integer register files independently.
-fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<usize> {
+/// MK7 §5 item 4's float-in-aggregate slice: this is the pair the third slice's
+/// single `int_regs_for` could not express. Once an eightbyte can be `SSE`, how
+/// many registers a value takes has to be counted per file, and the two
+/// registers of a mixed `{i32, f64}` argument are numbered independently
+/// (`edi` from the integer file, `xmm0` from the vector file).
+fn arg_regs_for(
+    ty: &Ty,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<(usize, usize)> {
     if let Some(layout) = struct_layout(ty, layouts) {
-        return match layout.class() {
-            AggClass::One => Some(1),
-            AggClass::Two => Some(2),
-            AggClass::Mem => Some(0),
-        };
+        let class = layout.class();
+        return Some((class.int_regs(), class.sse_regs()));
     }
     if int_ty(ty).is_some() {
-        return Some(1);
+        return Some((1, 0));
     }
     if str_ty(ty) {
-        return Some(1);
+        return Some((1, 0));
     }
     if let Ty::Ref { inner, .. } = ty {
         if struct_layout(inner, layouts).is_some() {
-            return Some(1);
+            return Some((1, 0));
         }
         // A `&mut f64` is the same one pointer as a `&mut i64`; MK7 §5's next
         // slice needs it because a `mut f64` out-parameter is declared that
         // way, and the pointer travels in one integer register.
         if int_ty(inner).is_some() || float_ty(inner).is_some() {
-            return Some(1);
+            return Some((1, 0));
         }
     }
     None
@@ -2164,9 +2409,19 @@ enum RetClass {
     Unit,
     Scalar,
     Float,
-    AggOne,
-    AggTwo,
-    AggMem,
+    /// An aggregate return, carrying its full `AggClass` so the epilogue and
+    /// every call site know which register file each eightbyte comes back in.
+    /// `Agg(AggClass::Mem)` is the hidden-pointer case; every other class is
+    /// one or two registers (`rax`/`rdx` and/or `xmm0`/`xmm1`).
+    Agg(AggClass),
+}
+
+impl RetClass {
+    /// The hidden-pointer return: the caller passed its destination in `rdi`
+    /// and the callee writes the value through it rather than returning one.
+    fn is_mem(self) -> bool {
+        matches!(self, RetClass::Agg(c) if c.is_mem())
+    }
 }
 
 /// Where a `Two`/`Mem`-class `datac` value is being written, for the sites
@@ -3323,7 +3578,7 @@ impl Gen {
             )));
         }
         for (name, ty) in &f.params {
-            if float_ty(ty).is_none() && int_regs_for(ty, &self.layouts).is_none() {
+            if float_ty(ty).is_none() && arg_regs_for(ty, &self.layouts).is_none() {
                 return Err(unsupported(&format!(
                     "the parameter `{name}: {}` of `{}`",
                     ty.display(),
@@ -3343,11 +3598,7 @@ impl Gen {
         } else if float_ty(&f.ret).is_some() {
             RetClass::Float
         } else if let Some(layout) = struct_layout(&f.ret, &self.layouts) {
-            match layout.class() {
-                AggClass::One => RetClass::AggOne,
-                AggClass::Two => RetClass::AggTwo,
-                AggClass::Mem => RetClass::AggMem,
-            }
+            RetClass::Agg(layout.class())
         } else if int_ty(&f.ret).is_some() {
             RetClass::Scalar
         } else if str_ty(&f.ret) {
@@ -3362,17 +3613,21 @@ impl Gen {
                 f.name
             )));
         };
-        // A qualifying `datac` parameter consumes one *integer* argument
-        // register if it is `One`- or `Two`-class... no, a `Two`-class value
-        // needs two consecutive registers (`int_regs_for`), and a `Mem`-class
-        // return reserves `rdi` for the hidden pointer before any real
-        // parameter is numbered — both have to be counted or a function
-        // could be wrongly accepted with more live integer registers than
-        // SysV actually has.
-        let mut int_regs_needed = if ret_class == RetClass::AggMem { 1 } else { 0 };
+        // A qualifying `datac` parameter consumes its own class's registers:
+        // one or two integer registers, one or two vector registers, or none
+        // (a `MEMORY`-class value goes in the outgoing area). A `MEMORY`-class
+        // *return* reserves `rdi` for the hidden pointer before any real
+        // parameter is numbered. Both files are counted, because SysV numbers
+        // them independently and a function with seven integer parameters
+        // plus two floats is fine while seven floats is not.
+        let mut int_regs_needed = if ret_class.is_mem() { 1 } else { 0 };
+        let mut sse_regs_needed = 0usize;
         for (_, ty) in &f.params {
-            if let Some(n) = int_regs_for(ty, &self.layouts) {
-                int_regs_needed += n;
+            if float_ty(ty).is_some() {
+                sse_regs_needed += 1;
+            } else if let Some((ints, sses)) = arg_regs_for(ty, &self.layouts) {
+                int_regs_needed += ints;
+                sse_regs_needed += sses;
             }
         }
         if int_regs_needed > ARG64.len() {
@@ -3381,9 +3636,9 @@ impl Gen {
                 f.name
             )));
         }
-        if f.params.iter().filter(|(_, ty)| float_ty(ty).is_some()).count() > FARG.len() {
+        if sse_regs_needed > FARG.len() {
             return Err(unsupported(&format!(
-                "`{}`, which takes more than eight float parameters",
+                "`{}`, which needs more than eight float argument registers",
                 f.name
             )));
         }
@@ -3411,12 +3666,14 @@ impl Gen {
         enum ParamSlot {
             Int(Loc, Width, bool, usize),
             Float(i32, FWidth, usize),
-            /// MK7 §5 item 4, third slice: a `Two`-class `datac` parameter —
-            /// `(frame offset, first eightbyte's `ARG64` index, second
-            /// eightbyte's)`. Always a stack slot (struct locals are never
-            /// register-allocated), never a single register the way a
-            /// `One`-class parameter's `Int` variant can be.
-            AggTwo(i32, usize, usize),
+            /// MK7 §5 item 4's float-in-aggregate slice: a by-value aggregate
+            /// parameter that is not `MEMORY`-class — `(frame offset, its
+            /// class, the first integer-register index, the first
+            /// vector-register index)`. Always a stack slot (struct locals are
+            /// never register-allocated). The two indices are where this
+            /// parameter's own eightbytes start in each file; which of them a
+            /// given eightbyte reads is `class.eb(k)`'s answer.
+            Agg(i32, AggClass, usize, usize),
             /// MK7 §5 item 4, fourth slice: a `MEMORY`-class `datac`
             /// parameter — `(frame offset, byte offset in the caller's
             /// outgoing argument area, size)`. No register is involved at
@@ -3433,35 +3690,29 @@ impl Gen {
         let (mem_params, _) = memory_arg_area(f.params.iter().map(|(_, ty)| ty), &self.layouts);
         // `rdi` (`ARG64[0]`) is the hidden return pointer for a `Mem`-class
         // return, so real parameter numbering starts one register later.
-        let mut int_idx = if ret_class == RetClass::AggMem { 1 } else { 0 };
-        let mut float_idx = 0usize;
+        let mut int_idx = if ret_class.is_mem() { 1 } else { 0 };
+        let mut sse_idx = 0usize;
         for (pos, (name, ty)) in f.params.iter().enumerate() {
             let loc = frame.declare(name, ty, &self.layouts)?;
             if let Some(width) = float_ty(ty) {
                 let offset = loc
                     .stack_offset()
                     .expect("float locals are never register-allocated");
-                params.push(ParamSlot::Float(offset, width, float_idx));
-                float_idx += 1;
+                params.push(ParamSlot::Float(offset, width, sse_idx));
+                sse_idx += 1;
             } else if let Some(layout) = struct_layout(ty, &self.layouts) {
-                match layout.class() {
-                    AggClass::One => {
-                        params.push(ParamSlot::Int(loc, Width::W8, false, int_idx));
-                        int_idx += 1;
-                    }
-                    AggClass::Two => {
-                        let off = loc.stack_offset().expect("agg locals are stack-only");
-                        params.push(ParamSlot::AggTwo(off, int_idx, int_idx + 1));
-                        int_idx += 2;
-                    }
-                    AggClass::Mem => {
-                        let off = loc.stack_offset().expect("agg locals are stack-only");
-                        let (_, stack_off, size) = *mem_params
-                            .iter()
-                            .find(|(i, _, _)| *i == pos)
-                            .expect("memory_arg_area covers every Mem-class parameter");
-                        params.push(ParamSlot::AggMem(off, stack_off, size));
-                    }
+                let class = layout.class();
+                let off = loc.stack_offset().expect("agg locals are stack-only");
+                if class.is_mem() {
+                    let (_, stack_off, size) = *mem_params
+                        .iter()
+                        .find(|(i, _, _)| *i == pos)
+                        .expect("memory_arg_area covers every Mem-class parameter");
+                    params.push(ParamSlot::AggMem(off, stack_off, size));
+                } else {
+                    params.push(ParamSlot::Agg(off, class, int_idx, sse_idx));
+                    int_idx += class.int_regs();
+                    sse_idx += class.sse_regs();
                 }
             } else {
                 let (width, signed) =
@@ -3493,16 +3744,38 @@ impl Gen {
         let frame_size = frame.size().max(16);
         let _ = writeln!(self.out, "    sub rsp, {frame_size}");
 
-        if ret_class == RetClass::AggMem {
+        if ret_class.is_mem() {
             let rp = frame.ret_ptr_slot;
             let _ = writeln!(self.out, "    mov QWORD PTR [rbp{rp}], rdi");
         }
         for p in &params {
             match p {
-                ParamSlot::AggTwo(off, idx0, idx1) => {
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], {}", ARG64[*idx0]);
-                    let off2 = off + 8;
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off2}], {}", ARG64[*idx1]);
+                ParamSlot::Agg(off, class, int0, sse0) => {
+                    // Each eightbyte of the parameter is stored from the
+                    // register its class names. An `INTEGER` eightbyte is
+                    // moved as a whole 64-bit word (the slot is
+                    // `align_up(size, 8)` bytes, so this is always contained);
+                    // an `SSE` one as `movss`/`movsd` at its own width.
+                    let (mut i, mut s) = (*int0, *sse0);
+                    for k in 0..2 {
+                        let Some(eb) = class.eb(k) else { break };
+                        let at = off + 8 * k as i32;
+                        match eb.float_width() {
+                            Some(w) => {
+                                let _ =
+                                    writeln!(self.out, "    {} [rbp{at}], {}", w.mov(), FARG[s]);
+                                s += 1;
+                            }
+                            None => {
+                                let _ = writeln!(
+                                    self.out,
+                                    "    mov QWORD PTR [rbp{at}], {}",
+                                    ARG64[i]
+                                );
+                                i += 1;
+                            }
+                        }
+                    }
                 }
                 ParamSlot::AggMem(off, stack_off, size) => {
                     // The caller's argument area starts at `[rbp+16]` — the
@@ -3552,20 +3825,42 @@ impl Gen {
         let return_label = self.return_label.clone();
         let _ = writeln!(self.out, "{return_label}:");
         match ret_class {
-            // MK7 §5 item 4, third slice: every `return`/tail site for this
-            // function already wrote the value into `agg_slot`
-            // (`RetClass::AggTwo`) or through the hidden pointer
-            // (`RetClass::AggMem`) — see `Gen::stmt`'s `Return` arm and
-            // `Gen::function_body`'s tail handling — so the one thing left is
-            // loading the SysV-mandated registers from that fixed location,
-            // once, regardless of which `return` actually ran.
-            RetClass::AggTwo => {
+            // MK7 §5 item 4's float-in-aggregate slice: every `return`/tail
+            // site for this function already wrote the value into `agg_slot`
+            // (`RetClass::Agg` for a register-class aggregate) or through the
+            // hidden pointer (`RetClass::Agg(AggClass::Mem)`) — see
+            // `Gen::stmt`'s `Return` arm and `Gen::function_body`'s tail
+            // handling — so the one thing left is loading the SysV-mandated
+            // registers from that fixed location, once, regardless of which
+            // `return` actually ran. The two register files are numbered
+            // independently and in eightbyte order: the first `INTEGER`
+            // eightbyte is `rax`, the second `rdx`; the first `SSE` eightbyte
+            // is `xmm0`, the second `xmm1`.
+            RetClass::Agg(class) if !class.is_mem() => {
                 let agg = frame.agg_slot;
-                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{agg}]");
-                let agg2 = agg + 8;
-                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{agg2}]");
+                let (mut i, mut s) = (0usize, 0usize);
+                for k in 0..2 {
+                    let Some(eb) = class.eb(k) else { break };
+                    let at = agg + 8 * k as i32;
+                    match eb.float_width() {
+                        Some(w) => {
+                            let _ = writeln!(
+                                self.out,
+                                "    {} {}, QWORD PTR [rbp{at}]",
+                                w.mov(),
+                                FARG[s]
+                            );
+                            s += 1;
+                        }
+                        None => {
+                            let reg = if i == 0 { "rax" } else { "rdx" };
+                            let _ = writeln!(self.out, "    mov {reg}, QWORD PTR [rbp{at}]");
+                            i += 1;
+                        }
+                    }
+                }
             }
-            RetClass::AggMem => {
+            RetClass::Agg(_) => {
                 let rp = frame.ret_ptr_slot;
                 let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{rp}]");
             }
@@ -3650,12 +3945,12 @@ impl Gen {
             // `Dest`-based staging `Stmt::Return` uses below, not a plain
             // `self.expr` that would leave it (wrongly) in `rax` alone.
             let parked = match frame.ret_class {
-                RetClass::AggTwo => {
+                RetClass::Agg(class) if !class.is_mem() => {
                     let agg = frame.agg_slot;
                     self.eval_struct_into(tail, frame, Dest::Direct(agg))?;
                     None
                 }
-                RetClass::AggMem => {
+                RetClass::Agg(_) => {
                     let rp = frame.ret_ptr_slot;
                     self.eval_struct_into(tail, frame, Dest::Indirect(rp))?;
                     None
@@ -4343,7 +4638,7 @@ impl Gen {
         // `AggClass::One`'s: one integer register in, `rax` out.
         let class = struct_layout(&elem, &self.layouts)
             .map(|l| l.class())
-            .unwrap_or(AggClass::One);
+            .unwrap_or(INT_ONE);
         let label = f.label();
         let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
         let k = align_up(size + 16, 16);
@@ -4405,7 +4700,7 @@ impl Gen {
                 let oom = self.label("box_of_oom");
                 let msg = self.bytes_label(b"out of memory");
                 self.out.push_str(&prologue);
-                self.marshal_elem(class, size, buf, "rdi", "rsi");
+                self.marshal_elem(class, size, buf, 0, 0);
                 let _ = writeln!(self.out, "    mov edi, {size}");
                 self.out.push_str("    call malloc@PLT\n    test rax, rax\n");
                 let _ = writeln!(self.out, "    je {oom}");
@@ -4424,7 +4719,7 @@ impl Gen {
                 let msg = self.bytes_label(b"out of memory");
                 self.out.push_str(&prologue);
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
-                self.marshal_elem(class, size, buf, "rsi", "rdx");
+                self.marshal_elem(class, size, buf, 1, 0);
                 self.out.push_str("    mov r11, QWORD PTR [rdi]\n    test r11, r11\n");
                 let _ = writeln!(self.out, "    je {alloc}");
                 // The slot is reused: the value it held is freed, the box is
@@ -4458,8 +4753,8 @@ impl Gen {
                 // A `MEMORY`-class return takes `rdi` for the hidden pointer
                 // *before* the first real argument, so the box comes in `rsi`
                 // there and in `rdi` everywhere else.
-                let self_reg = if class == AggClass::Mem { "rsi" } else { "rdi" };
-                if class == AggClass::Mem {
+                let self_reg = if class.is_mem() { "rsi" } else { "rdi" };
+                if class.is_mem() {
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
                 }
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], {self_reg}");
@@ -4472,31 +4767,11 @@ impl Gen {
                 self.out.push_str("    mov rdi, r11\n    call free@PLT\n");
                 let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
                 self.out.push_str("    mov QWORD PTR [r11], 0\n");
-                match class {
-                    AggClass::One => {
-                        if let Some((width, signed)) = int_ty(&elem) {
-                            let _ = writeln!(
-                                self.out,
-                                "    mov {}, {} [rbp{buf}]",
-                                width.rax(),
-                                width.mem()
-                            );
-                            self.out.push_str(&width.extend(signed));
-                        } else {
-                            let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{buf}]");
-                        }
-                    }
-                    AggClass::Two => {
-                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{buf}]");
-                        let buf2 = buf + 8;
-                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{buf2}]");
-                    }
-                    AggClass::Mem => {
-                        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_ret}]");
-                        emit_copy(&mut self.out, "r11", 0, "rbp", buf, size);
-                        self.out.push_str("    mov rax, r11\n");
-                    }
-                }
+                // The value is parked in this routine's own buffer, so hand it
+                // back through the same class-driven return helper every other
+                // element-returning routine uses.
+                let _ = writeln!(self.out, "    lea r11, [rbp{buf}]");
+                self.emit_elem_return(&elem, size, class, "r11", slot_ret);
                 self.out.push_str(epilogue);
                 let _ = writeln!(self.out, "{empty}:");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
@@ -4522,27 +4797,45 @@ impl Gen {
         }
     }
 
+    /// Writes each of `class`'s eightbytes from the argument registers it
+    /// arrives in into the frame buffer at `buf`: an `INTEGER` eightbyte from
+    /// the next `ARG64` register, an `SSE` one from the next `FARG` register.
+    /// `int0`/`sse0` are where the element's own registers start in each file —
+    /// a routine whose receiver, index or key takes an earlier register starts
+    /// the element one (or more) along in the integer file, and the two files
+    /// are independent, so an `SSE` element always starts at `xmm0` no matter
+    /// how many integer arguments precede it.
+    fn store_arg_ebs(&mut self, class: AggClass, buf: i32, int0: usize, sse0: usize) {
+        let (mut i, mut s) = (int0, sse0);
+        for k in 0..2 {
+            let Some(eb) = class.eb(k) else { break };
+            let at = buf + 8 * k as i32;
+            match eb.float_width() {
+                Some(w) => {
+                    let _ = writeln!(self.out, "    {} [rbp{at}], {}", w.mov(), FARG[s]);
+                    s += 1;
+                }
+                None => {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{at}], {}", ARG64[i]);
+                    i += 1;
+                }
+            }
+        }
+    }
+
     /// The element argument of `__of`/`__set` into the routine's own buffer, by
-    /// SysV class: `rdi` (or `rdi`/`rsi`) for a register-classed element, and
-    /// the caller's outgoing argument area — whose first byte is `[rbp+16]` at
-    /// a callee's entry — for a `MEMORY`-class one. The `QWORD` store for the
-    /// register case is deliberately wider than some elements; the buffer is
-    /// `size + 16` bytes rounded up to sixteen, so it cannot reach either slot
-    /// or the caller's frame, and the *allocation* copy below uses the exact
-    /// size.
-    fn marshal_elem(&mut self, class: AggClass, size: i32, buf: i32, first: &str, second: &str) {
-        match class {
-            AggClass::One => {
-                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{buf}], {first}");
-            }
-            AggClass::Two => {
-                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{buf}], {first}");
-                let buf2 = buf + 8;
-                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{buf2}], {second}");
-            }
-            AggClass::Mem => {
-                emit_copy(&mut self.out, "rbp", buf, "rbp", 16, size);
-            }
+    /// SysV class: the element's registers for a register-classed element — see
+    /// `store_arg_ebs` — and the caller's outgoing argument area, whose first
+    /// byte is `[rbp+16]` at a callee's entry, for a `MEMORY`-class one. The
+    /// `QWORD` store for an `INTEGER` eightbyte is deliberately wider than some
+    /// elements; the buffer is `size + 16` bytes rounded up to sixteen, so it
+    /// cannot reach either slot or the caller's frame, and the *allocation*
+    /// copy below uses the exact size.
+    fn marshal_elem(&mut self, class: AggClass, size: i32, buf: i32, int0: usize, sse0: usize) {
+        if class.is_mem() {
+            emit_copy(&mut self.out, "rbp", buf, "rbp", 16, size);
+        } else {
+            self.store_arg_ebs(class, buf, int0, sse0);
         }
     }
 
@@ -4567,37 +4860,48 @@ impl Gen {
     /// extended, exactly as a local's read is, so a `List<u8>` cannot return
     /// eight bytes of its neighbour.
     fn emit_elem_return(&mut self, elem: &Ty, size: i32, class: AggClass, addr: &str, slot_ret: i32) {
-        match class {
-            AggClass::One => {
-                if let Some((width, signed)) = int_ty(elem) {
-                    let _ = writeln!(self.out, "    mov {}, {} [{addr}]", width.rax(), width.mem());
-                    self.out.push_str(&width.extend(signed));
-                } else {
-                    // An aggregate element at this class is `size` bytes wide
-                    // and the address is a heap element's own address, so the
-                    // load has to be exactly that wide — see
-                    // `load_agg_bytes`. A scalar element took the branch above.
-                    load_agg_bytes(&mut self.out, RAX, addr, 0, size);
+        if class.is_mem() {
+            // The destination is the caller's slot, reached through the
+            // hidden return pointer; the source stays in its own register,
+            // so the two cannot be the same one (`r10` rather than `r11`,
+            // which is where every caller of this helper leaves the source
+            // address). `emit_copy` touches only `rax`.
+            let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
+            emit_copy(&mut self.out, "r10", 0, addr, 0, size);
+            self.out.push_str("    mov rax, r10\n");
+            return;
+        }
+        // MK7 §5 item 4's float-in-aggregate slice: an `INTEGER` eightbyte
+        // loads into `rax` then `rdx`, an `SSE` one into `xmm0` then `xmm1`.
+        // A scalar element is loaded at its own width and extended, exactly as
+        // a local's read is, so a `List<u8>` cannot return eight bytes of its
+        // neighbour; an aggregate eightbyte is read with `load_agg_bytes` at
+        // exactly the eightbyte's own width, so a heap element narrower than
+        // eight bytes is never over-read.
+        let scalar_int = int_ty(elem);
+        let mut s = 0usize;
+        for k in 0..2 {
+            let Some(eb) = class.eb(k) else { break };
+            let off = 8 * k as i32;
+            match eb.float_width() {
+                Some(w) => {
+                    let _ = writeln!(
+                        self.out,
+                        "    {} {}, [{addr}{}]",
+                        w.mov(),
+                        FARG[s],
+                        off_str(off)
+                    );
+                    s += 1;
                 }
-            }
-            AggClass::Two => {
-                // The first eightbyte is a full eight bytes (this class starts
-                // at nine), but the second is only `size - 8` wide, and reading
-                // eight there crosses a heap element narrower than sixteen
-                // bytes — the same defect as the `One` arm above, one eightbyte
-                // up.
-                let _ = writeln!(self.out, "    mov rax, QWORD PTR [{addr}]");
-                load_agg_bytes(&mut self.out, RDX, addr, 8, size - 8);
-            }
-            AggClass::Mem => {
-                // The destination is the caller's slot, reached through the
-                // hidden return pointer; the source stays in its own register,
-                // so the two cannot be the same one (`r10` rather than `r11`,
-                // which is where every caller of this helper leaves the source
-                // address). `emit_copy` touches only `rax`.
-                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
-                emit_copy(&mut self.out, "r10", 0, addr, 0, size);
-                self.out.push_str("    mov rax, r10\n");
+                None => match (k, scalar_int) {
+                    (0, Some((width, signed))) => {
+                        let _ = writeln!(self.out, "    mov {}, {} [{addr}]", width.rax(), width.mem());
+                        self.out.push_str(&width.extend(signed));
+                    }
+                    (0, None) => load_agg_bytes(&mut self.out, RAX, addr, 0, eb.size),
+                    _ => load_agg_bytes(&mut self.out, RDX, addr, off, eb.size),
+                },
             }
         }
     }
@@ -4665,7 +4969,7 @@ impl Gen {
             ListFn::Of(_) => {
                 self.out.push_str(&prologue);
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
-                self.marshal_elem(class, size, buf, "rsi", "rdx");
+                self.marshal_elem(class, size, buf, 1, 0);
                 let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
                 self.out.push_str(
                     "    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n    mov QWORD PTR [rdi+16], 0\n",
@@ -4706,7 +5010,7 @@ impl Gen {
             ListFn::Push(_) => {
                 self.out.push_str(&prologue);
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
-                self.marshal_elem(class, size, buf, "rsi", "rdx");
+                self.marshal_elem(class, size, buf, 1, 0);
                 let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
                 self.out.push_str("    mov rsi, QWORD PTR [rdi+8]\n    add rsi, 1\n");
                 let _ = writeln!(self.out, "    mov edx, {size}");
@@ -4726,7 +5030,7 @@ impl Gen {
             // Which one is the call's own result type, never a guess, exactly
             // as `codegen_c.rs::write_list` splits on `elem.is_copy()`.
             ListFn::Get(_, by_value) => {
-                if *by_value && class == AggClass::Mem {
+                if *by_value && class.is_mem() {
                     return Err(unsupported(&format!(
                         "reading a `{}` out of a `List<{}>` by value",
                         elem.display(),
@@ -4751,7 +5055,7 @@ impl Gen {
                 self.out.push_str(&prologue);
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
-                self.marshal_elem(class, size, buf, "rdx", "rcx");
+                self.marshal_elem(class, size, buf, 2, 0);
                 let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
                 let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_i}]");
                 let _ = writeln!(self.out, "    call {bounds}");
@@ -4770,7 +5074,7 @@ impl Gen {
             //  return self->data[--self->len];` — nothing is dropped, because
             // the element is leaving with the caller.
             ListFn::Pop(_) => {
-                let ret_mem = class == AggClass::Mem;
+                let ret_mem = class.is_mem();
                 let self_reg = if ret_mem { "rsi" } else { "rdi" };
                 let msg = self.bytes_label(b"List.pop: the list is empty");
                 let ok = self.label("list_pop_ok");
@@ -4833,7 +5137,7 @@ impl Gen {
                 self.out.push_str(&prologue);
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
-                self.marshal_elem(class, size, buf, "rdx", "rcx");
+                self.marshal_elem(class, size, buf, 2, 0);
                 let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
                 self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
                 let _ = writeln!(self.out, "    cmp QWORD PTR [rbp{slot_i}], rax");
@@ -4877,7 +5181,7 @@ impl Gen {
             // first, because the shift is free to overwrite the slot it came
             // from (its last iteration always does).
             ListFn::Remove(_) => {
-                let ret_mem = class == AggClass::Mem;
+                let ret_mem = class.is_mem();
                 let self_reg = if ret_mem { "rsi" } else { "rdi" };
                 let i_reg = if ret_mem { "rdx" } else { "rsi" };
                 let msg = self.bytes_label(b"List.remove: index out of bounds");
@@ -5094,29 +5398,44 @@ impl Gen {
         size: i32,
         class: AggClass,
         src: &str,
-        slot_v: i32,
+        _slot_v: i32,
         slot_ret: i32,
     ) {
-        match class {
-            AggClass::One => {
-                if let Some((w, signed)) = int_ty(value) {
-                    let _ = writeln!(self.out, "    mov {}, {} [{src}]", w.rax(), w.mem());
-                    self.out.push_str(&w.extend(signed));
-                } else {
-                    self.out.push_str("    xor eax, eax\n");
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
-                    emit_copy(&mut self.out, "rbp", slot_v, src, 0, size);
-                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
+        if class.is_mem() {
+            let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
+            emit_copy(&mut self.out, "r10", 0, src, 0, size);
+            self.out.push_str("    mov rax, r10\n");
+            return;
+        }
+        // MK7 §5 item 4's float-in-aggregate slice: the same per-eightbyte
+        // return `emit_elem_return` produces, from a `malloc(sizeof(V))` block
+        // that is exactly as wide as the value — so an aggregate eightbyte is
+        // read with `load_agg_bytes` at its own width and never past the
+        // allocation.
+        let scalar_int = int_ty(value);
+        let mut s = 0usize;
+        for k in 0..2 {
+            let Some(eb) = class.eb(k) else { break };
+            let off = 8 * k as i32;
+            match eb.float_width() {
+                Some(w) => {
+                    let _ = writeln!(
+                        self.out,
+                        "    {} {}, [{src}{}]",
+                        w.mov(),
+                        FARG[s],
+                        off_str(off)
+                    );
+                    s += 1;
                 }
-            }
-            AggClass::Two => {
-                let _ = writeln!(self.out, "    mov rax, QWORD PTR [{src}]");
-                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [{src}+8]");
-            }
-            AggClass::Mem => {
-                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
-                emit_copy(&mut self.out, "r10", 0, src, 0, size);
-                self.out.push_str("    mov rax, r10\n");
+                None => match (k, scalar_int) {
+                    (0, Some((w, signed))) => {
+                        let _ = writeln!(self.out, "    mov {}, {} [{src}]", w.rax(), w.mem());
+                        self.out.push_str(&w.extend(signed));
+                    }
+                    (0, None) => load_agg_bytes(&mut self.out, RAX, src, 0, eb.size),
+                    _ => load_agg_bytes(&mut self.out, RDX, src, off, eb.size),
+                },
             }
         }
     }
@@ -5128,9 +5447,10 @@ impl Gen {
     /// the caller's outgoing argument area at `[rbp+16]`, which no call can
     /// invalidate, so no copy of it is made anywhere else.
     fn emit_map_store_value(&mut self, size: i32, class: AggClass, dst: &str, slot_v: i32) {
-        match class {
-            AggClass::Mem => emit_copy(&mut self.out, dst, 0, "rbp", 16, size),
-            _ => emit_copy(&mut self.out, dst, 0, "rbp", slot_v, size),
+        if class.is_mem() {
+            emit_copy(&mut self.out, dst, 0, "rbp", 16, size);
+        } else {
+            emit_copy(&mut self.out, dst, 0, "rbp", slot_v, size);
         }
     }
 
@@ -5404,18 +5724,14 @@ impl Gen {
                 self.out.push_str(&prologue);
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
                 let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rsi");
-                match value_class {
-                    AggClass::One => {
-                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rdx");
-                    }
-                    AggClass::Two => {
-                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rdx");
-                        let _ =
-                            writeln!(self.out, "    mov QWORD PTR [rbp{}], rcx", slot_v + 8);
-                    }
-                    // A `MEMORY`-class value is already in the caller's
-                    // outgoing argument area at `[rbp+16]`.
-                    AggClass::Mem => {}
+                // Stage the value's own registers into `slot_v` (a
+                // `MEMORY`-class value is already in the caller's outgoing
+                // argument area at `[rbp+16]`). The integer file starts at
+                // `rdx` — `rdi` is the receiver, `rsi` the key — while the
+                // vector file starts at `xmm0`, since the two are numbered
+                // independently.
+                if !value_class.is_mem() {
+                    self.store_arg_ebs(value_class, slot_v, 2, 0);
                 }
                 // Capacity check: `index_cap == 0` or the load factor would
                 // exceed three quarters on the next insert.
@@ -5551,7 +5867,7 @@ impl Gen {
                 self.emit_map_value_out(
                     &value,
                     value_size,
-                    AggClass::One,
+                    value_class,
                     "r11",
                     slot_v,
                     slot_ret,
@@ -5592,7 +5908,7 @@ impl Gen {
             MapFn::GetOr(..) => {
                 let absent = self.label("map_get_or_absent");
                 self.out.push_str(&prologue);
-                if value_class == AggClass::Mem {
+                if value_class.is_mem() {
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rdx");
@@ -5640,7 +5956,7 @@ impl Gen {
                 }
                 self.out.push_str(epilogue);
                 let _ = writeln!(self.out, "{absent}:");
-                if value_class == AggClass::Mem {
+                if value_class.is_mem() {
                     let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot_ret}]");
                     emit_copy(&mut self.out, "r10", 0, "rbp", 16, value_size);
                     self.out.push_str("    mov rax, r10\n");
@@ -5657,7 +5973,7 @@ impl Gen {
                 let missing = self.label("map_remove_missing");
                 let msg = self.bytes_label(b"Map.remove: key not found");
                 self.out.push_str(&prologue);
-                if value_class == AggClass::Mem {
+                if value_class.is_mem() {
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
                     let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_key}], rdx");
@@ -5680,38 +5996,22 @@ impl Gen {
                 // own drop are entitled to clobber `rax`/`rdx`.
                 let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
                 let _ = writeln!(self.out, "    mov r11, QWORD PTR [rdx+{value_offset}]");
-                match value_class {
-                    AggClass::Mem => self.emit_map_value_out(
+                // Stage the value before the `free`: a `MEMORY`-class one
+                // straight to the caller's return slot (it is wider than the
+                // routine's own staging block), every other class as a byte
+                // copy into `slot_v`, because both `free` and the key's own
+                // drop are entitled to clobber the registers it arrived in.
+                if value_class.is_mem() {
+                    self.emit_map_value_out(
                         &value,
                         value_size,
                         value_class,
                         "r11",
                         slot_v,
                         slot_ret,
-                    ),
-                    AggClass::Two => {
-                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [r11]");
-                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [r11+8]");
-                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
-                        let _ =
-                            writeln!(self.out, "    mov QWORD PTR [rbp{}], rdx", slot_v + 8);
-                    }
-                    AggClass::One => {
-                        if let Some((w, signed)) = int_ty(&value) {
-                            let _ = writeln!(
-                                self.out,
-                                "    mov {}, {} [r11]",
-                                w.rax(),
-                                w.mem()
-                            );
-                            self.out.push_str(&w.extend(signed));
-                            let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
-                        } else {
-                            self.out.push_str("    xor eax, eax\n");
-                            let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_v}], rax");
-                            emit_copy(&mut self.out, "rbp", slot_v, "r11", 0, value_size);
-                        }
-                    }
+                    );
+                } else {
+                    emit_copy(&mut self.out, "rbp", slot_v, "r11", 0, value_size);
                 }
                 let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{slot_e}]");
                 let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rdx+{value_offset}]");
@@ -5734,12 +6034,9 @@ impl Gen {
                     AggClass::Mem => {
                         let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_ret}]");
                     }
-                    AggClass::Two => {
-                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
-                        let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rbp{}]", slot_v + 8);
-                    }
-                    AggClass::One => {
-                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_v}]");
+                    _ => {
+                        let _ = writeln!(self.out, "    lea r11, [rbp{slot_v}]");
+                        self.emit_elem_return(&value, value_size, value_class, "r11", slot_ret);
                     }
                 }
                 self.out.push_str(epilogue);
@@ -6104,7 +6401,7 @@ impl Gen {
                 // nothing in that path needs the destination address ahead
                 // of time.
                 if let Some(layout) = struct_layout(ty, &self.layouts) {
-                    if layout.class() != AggClass::One {
+                    if !layout.class().is_int_one() {
                         // Staged in a scratch slot and copied home *after* the
                         // name is declared, not written straight into the
                         // local's own slot: an initializer that names the
@@ -6174,12 +6471,12 @@ impl Gen {
                 let drops = self.drops.at_return(&self.function, *span).to_vec();
                 let parked = match value {
                     Some(v) => match frame.ret_class {
-                        RetClass::AggTwo => {
+                        RetClass::Agg(class) if !class.is_mem() => {
                             let agg = frame.agg_slot;
                             self.eval_struct_into(v, frame, Dest::Direct(agg))?;
                             None
                         }
-                        RetClass::AggMem => {
+                        RetClass::Agg(_) => {
                             let rp = frame.ret_ptr_slot;
                             self.eval_struct_into(v, frame, Dest::Indirect(rp))?;
                             None
@@ -6443,7 +6740,7 @@ impl Gen {
                     // `*p = v`, so freeing here would be the two backends
                     // disagreeing about a program's output.
                     if let Some(layout) = struct_layout(&target.ty, &self.layouts) {
-                        if layout.class() != AggClass::One {
+                        if !layout.class().is_int_one() {
                             let size = layout.size;
                             self.expr(expr, frame)?;
                             self.out.push_str("    push rax\n");
@@ -6491,7 +6788,7 @@ impl Gen {
                     _ => return Err(unsupported("assignment to anything but a local")),
                 };
                 if let Some(layout) = struct_layout(&ty, &self.layouts) {
-                    if layout.class() != AggClass::One {
+                    if !layout.class().is_int_one() {
                         let off = loc.stack_offset().expect("agg locals are stack-only");
                         let size = layout.size;
                         // MK7 §5 item 5: overwriting an owned binding frees the
@@ -6716,6 +7013,7 @@ impl Gen {
                         {
                             let offset = match entry {
                                 FieldEntry::Scalar(_, offset, ..)
+                                | FieldEntry::Float(_, offset, ..)
                                 | FieldEntry::Aggregate(_, offset, ..) => *offset,
                             };
                             if offset != 0 {
@@ -7054,7 +7352,7 @@ impl Gen {
         // directly — so reaching here with a wider class would be this
         // module's own bug (a missed interception site), not a user program,
         // and the guard exists to fail loudly rather than truncate silently.
-        if layout.class() != AggClass::One {
+        if !layout.class().is_int_one() {
             return Err(unsupported(&format!(
                 "the datac `{name}` used as a plain value (it is over eight bytes; only a \
                  `let`, an assignment, a `return`, or a call argument may hold one directly)"
@@ -7095,7 +7393,9 @@ impl Gen {
         })?;
         for entry in &layout.entries {
             let fname = match entry {
-                FieldEntry::Scalar(n, ..) | FieldEntry::Aggregate(n, ..) => n,
+                FieldEntry::Scalar(n, ..)
+                | FieldEntry::Float(n, ..)
+                | FieldEntry::Aggregate(n, ..) => n,
             };
             let value = fields
                 .iter()
@@ -7108,6 +7408,14 @@ impl Gen {
                 FieldEntry::Scalar(_, foffset, fwidth, _) => {
                     self.expr(value, frame)?;
                     self.store_value(dest, *foffset, *fwidth);
+                }
+                // MK7 §5 item 4's float-in-aggregate slice: a float field's
+                // initializer leaves its value in `xmm0` (every float
+                // expression does), so it is stored with `movss`/`movsd`
+                // rather than through `rax`.
+                FieldEntry::Float(_, foffset, fwidth) => {
+                    self.expr(value, frame)?;
+                    self.store_float(dest, *foffset, *fwidth);
                 }
                 // MK7 §5's heap-field slice: an aggregate field — a `String`,
                 // a `Bytes`, or a nested `datac` — is staged in a scratch slot
@@ -7174,6 +7482,36 @@ impl Gen {
         }
     }
 
+    /// The float counterpart of `store_value`: stores `xmm0`'s low
+    /// `width` bytes at `offset` into `dest`. `f32`/`f64` values live in the
+    /// vector file, so a field initializer's store cannot go through `rax`.
+    fn store_float(&mut self, dest: Dest, offset: i32, width: FWidth) {
+        match dest {
+            Dest::Direct(base) => {
+                let addr = base + offset;
+                let _ = writeln!(self.out, "    {} [rbp{addr}], xmm0", width.mov());
+            }
+            Dest::Indirect(slot) => {
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                let _ = writeln!(
+                    self.out,
+                    "    {} [r11{}], xmm0",
+                    width.mov(),
+                    off_str(offset)
+                );
+            }
+            Dest::Global(index) => {
+                let label = self.pds[index].label.clone();
+                let _ = writeln!(
+                    self.out,
+                    "    {} [rip+{label}{}], xmm0",
+                    width.mov(),
+                    off_str(offset)
+                );
+            }
+        }
+    }
+
     /// Copies `size` bytes from the frame slot `src` to `dest + offset` — the
     /// aggregate half of `struct_lit_at`, and the shape `eval_struct_into`'s
     /// field-access arm writes an owned field through.
@@ -7227,7 +7565,7 @@ impl Gen {
         frame: &mut Frame,
     ) -> Result<(), String> {
         let layout = self.enum_layout(enum_name)?;
-        if layout.class() != AggClass::One {
+        if !layout.class().is_int_one() {
             return Err(unsupported(&format!(
                 "the enum `{enum_name}` used as a plain value (it is over eight bytes; only a \
                  `let`, an assignment, a `return`, or a call argument may hold one)"
@@ -7282,6 +7620,12 @@ impl Gen {
                     self.expr(value, frame)?;
                     self.store_value(dest, *offset, *width);
                 }
+                // MK7 §5 item 4's float-in-aggregate slice: a float payload is
+                // stored from `xmm0` exactly as a float `datac` field is.
+                FieldEntry::Float(_, offset, width) => {
+                    self.expr(value, frame)?;
+                    self.store_float(dest, *offset, *width);
+                }
                 // The same staging `struct_lit_at` uses for an aggregate field:
                 // a scratch slot of the field's own size, built through
                 // `eval_struct_into`, then copied into place. A shared slot
@@ -7333,6 +7677,13 @@ impl Gen {
                 self.out.push_str(&width.extend(signed));
                 Ok(())
             }
+            // MK7 §5 item 4's float-in-aggregate slice: a float payload is
+            // `Copy`, so this is the path `Digits(n) -> n` for an `f64` takes;
+            // it leaves the value in `xmm0` where every float read does.
+            FieldEntry::Float(_, offset, width) => {
+                let _ = writeln!(self.out, "    {} xmm0, [r11+{offset}]", width.mov());
+                Ok(())
+            }
             FieldEntry::Aggregate(..) => Err(unsupported(&format!(
                 "reading an aggregate payload of the enum `{}` as a plain value (bind it as a \
                  borrow, or pass it on)",
@@ -7364,9 +7715,17 @@ impl Gen {
                 }
                 Ok(())
             }
+            FieldEntry::Float(_, offset, width) => {
+                let addr = src_slot + offset;
+                let _ = writeln!(self.out, "    {} xmm0, [rbp{addr}]", width.mov());
+                if let Some(dest) = dest {
+                    self.store_float(dest, 0, *width);
+                }
+                Ok(())
+            }
             FieldEntry::Aggregate(_, offset, key, _) => {
                 let (size, one_class) = match self.layouts.get(key) {
-                    Some(l) => (l.size, l.class() == AggClass::One),
+                    Some(l) => (l.size, l.class().is_int_one()),
                     None => return Err(unsupported("the type a payload of this enum holds")),
                 };
                 let src = src_slot + offset;
@@ -7447,8 +7806,8 @@ impl Gen {
         // shared aggregate slot for a register-pair one, and `rax` otherwise).
         let target_layout = self.enum_layout(target)?;
         let ret_dst = match frame.ret_class {
-            RetClass::AggMem => Dest::Indirect(frame.ret_ptr_slot),
-            RetClass::AggTwo => Dest::Direct(frame.agg_slot),
+            RetClass::Agg(class) if !class.is_mem() => Dest::Direct(frame.agg_slot),
+            RetClass::Agg(_) => Dest::Indirect(frame.ret_ptr_slot),
             _ => {
                 let slot = frame.scratch(align_up(target_layout.size, 8));
                 Dest::Direct(slot)
@@ -7477,7 +7836,7 @@ impl Gen {
         // one of those: its value lives in `agg_slot`, which is where
         // `ret_dst` already put it.
         if let Dest::Direct(slot) = ret_dst {
-            if frame.ret_class != RetClass::AggTwo {
+            if !matches!(frame.ret_class, RetClass::Agg(_)) {
                 let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot}]");
             }
         }
@@ -7505,7 +7864,9 @@ impl Gen {
         enum_name: &str,
     ) -> Result<(), String> {
         let src_offset = match src_entry {
-            FieldEntry::Scalar(_, o, ..) | FieldEntry::Aggregate(_, o, ..) => *o,
+            FieldEntry::Scalar(_, o, ..)
+            | FieldEntry::Float(_, o, ..)
+            | FieldEntry::Aggregate(_, o, ..) => *o,
         };
         match (src_entry, dst_entry) {
             (FieldEntry::Scalar(_, _, width, signed), FieldEntry::Scalar(_, doff, _, _)) => {
@@ -7513,6 +7874,12 @@ impl Gen {
                 let _ = writeln!(self.out, "    mov {}, {} [rbp{addr}]", width.rax(), width.mem());
                 self.out.push_str(&width.extend(*signed));
                 self.store_value(dst, *doff, *width);
+                Ok(())
+            }
+            (FieldEntry::Float(_, _, width), FieldEntry::Float(_, doff, _)) => {
+                let addr = src_slot + src_offset;
+                let _ = writeln!(self.out, "    {} xmm0, [rbp{addr}]", width.mov());
+                self.store_float(dst, *doff, *width);
                 Ok(())
             }
             (FieldEntry::Aggregate(_, _, key, _), FieldEntry::Aggregate(_, doff, _, _)) => {
@@ -7776,6 +8143,14 @@ impl Gen {
     /// the address `addr_of_struct` computes into `r11`.
     fn field_read(&mut self, base: &Expr, field: &str, frame: &mut Frame) -> Result<(), String> {
         let layout = self.addr_of_struct(base, frame)?;
+        // MK7 §5 item 4's float-in-aggregate slice: a float field is read
+        // through `xmm0`, at its own width, from the address `addr_of_struct`
+        // already computed — no extension, because a float's bits are the
+        // value.
+        if let Some((foffset, width)) = layout.float_field(field) {
+            let _ = writeln!(self.out, "    {} xmm0, [r11+{foffset}]", width.mov());
+            return Ok(());
+        }
         let Some((foffset, width, signed)) = layout.scalar_field(field) else {
             // MK7 §5's heap-field slice: an *aggregate* field (`h.name`) is a
             // value wider than `rax`, so `expr` cannot leave one there. The
@@ -7800,7 +8175,7 @@ impl Gen {
                 // allocates `sizeof(Outer)`), so a plain `mov rax, QWORD PTR`
                 // of a three-byte field reads past the allocation — the
                 // defect `load_agg_bytes` exists to close.
-                let inner = self.layouts.get(key).filter(|l| l.class() == AggClass::One);
+                let inner = self.layouts.get(key).filter(|l| l.class().is_int_one());
                 if let Some(size) = inner.map(|l| l.size) {
                     load_agg_bytes(&mut self.out, RAX, "r11", offset, size);
                     return Ok(());
@@ -7834,6 +8209,15 @@ impl Gen {
         frame: &mut Frame,
     ) -> Result<(), String> {
         let layout = self.addr_of_struct(base, frame)?;
+        // MK7 §5 item 4's float-in-aggregate slice: `c.r = 2.0` stores from
+        // `xmm0`, where every float expression leaves its value.
+        if let Some((foffset, width)) = layout.float_field(field) {
+            self.out.push_str("    push r11\n");
+            self.expr(value, frame)?;
+            self.out.push_str("    pop r11\n");
+            let _ = writeln!(self.out, "    {} [r11+{foffset}], xmm0", width.mov());
+            return Ok(());
+        }
         let (foffset, width, _signed) = layout
             .scalar_field(field)
             .ok_or_else(|| unsupported(&format!("the field `{field}` of `{}`", base.ty.display())))?;
@@ -7946,11 +8330,14 @@ impl Gen {
         // here rather than silently losing everything past the first
         // eightbyte.
         let ret_class = struct_layout(ret_ty, &self.layouts).map(|l| l.class());
-        if matches!(ret_class, Some(AggClass::Two) | Some(AggClass::Mem)) && ret_dst.is_none() {
-            return Err(unsupported(
-                "a struct-returning call of more than eight bytes used as a plain value (only a \
-                 `let`, an assignment, a `return`, or a discarded statement may hold one)",
-            ));
+        if let Some(c) = ret_class {
+            if !c.is_int_one() && ret_dst.is_none() {
+                return Err(unsupported(
+                    "a struct-returning call of more than one eightbyte (or one whose eightbyte \
+                     is not INTEGER) used as a plain value (only a `let`, an assignment, a \
+                     `return`, or a discarded statement may hold one)",
+                ));
+            }
         }
 
         // SysV numbers the integer and vector argument registers
@@ -7961,11 +8348,13 @@ impl Gen {
         // way a `Mem`-class *parameter* shifts `Gen::function`'s own
         // numbering.
         enum ArgSlot {
-            Int(usize),
             Float(usize),
-            /// A `Two`-class by-value struct argument — both eightbytes'
-            /// `ARG64` indices.
-            IntPair(usize, usize),
+            /// A register-classed argument — a scalar, a pointer, a `str`, or
+            /// a by-value aggregate — as one entry per eightbyte, in order:
+            /// `(kind, register index in that file, bytes in the eightbyte)`.
+            /// A scalar is a single `INTEGER` entry; a mixed `Two`-class
+            /// aggregate is `INTEGER`/`SSE` or `SSE`/`INTEGER`.
+            Regs(Vec<(Eb, usize, i32)>),
             /// MK7 §5 item 4, fourth slice: a `Mem`-class by-value struct
             /// argument — its byte offset in the outgoing argument area.
             /// Nothing is popped for this slot: the value is placed in the
@@ -7979,46 +8368,68 @@ impl Gen {
         let (mem_args, area_size) =
             memory_arg_area(args.iter().map(|a| &a.ty), &self.layouts);
         let mut slots: Vec<ArgSlot> = Vec::with_capacity(args.len());
-        let mut int_idx = if ret_class == Some(AggClass::Mem) { 1 } else { 0 };
-        let mut float_idx = 0usize;
+        let mut int_idx = if ret_class.map_or(false, |c| c.is_mem()) { 1 } else { 0 };
+        let mut sse_idx = 0usize;
         for (pos, arg) in args.iter().enumerate() {
-            if float_ty(&arg.ty).is_some() {
-                if float_idx >= FARG.len() {
+            if let Some(_w) = float_ty(&arg.ty) {
+                if sse_idx >= FARG.len() {
                     return Err(unsupported(&format!(
                         "a call to `{callee}` with more than eight float arguments"
                     )));
                 }
-                slots.push(ArgSlot::Float(float_idx));
-                float_idx += 1;
+                slots.push(ArgSlot::Float(sse_idx));
+                sse_idx += 1;
                 continue;
             }
-            let need = int_regs_for(&arg.ty, &self.layouts).ok_or_else(|| {
+            let (ints, sses) = arg_regs_for(&arg.ty, &self.layouts).ok_or_else(|| {
                 unsupported(&format!(
                     "the type `{}` as an argument to `{callee}`",
                     arg.ty.display()
                 ))
             })?;
-            if int_idx + need > ARG64.len() {
+            if int_idx + ints > ARG64.len() {
                 return Err(unsupported(&format!(
                     "a call to `{callee}` with more than six integer argument registers"
                 )));
             }
-            match need {
-                2 => slots.push(ArgSlot::IntPair(int_idx, int_idx + 1)),
-                1 => slots.push(ArgSlot::Int(int_idx)),
-                // `need == 0`: a `MEMORY`-class value, which takes no integer
-                // register, so `int_idx` deliberately does not advance — an
-                // argument after it keeps the register it would have had
-                // anyway.
-                _ => {
-                    let (_, off, _) = *mem_args
-                        .iter()
-                        .find(|(i, _, _)| *i == pos)
-                        .expect("memory_arg_area covers every Mem-class argument");
-                    slots.push(ArgSlot::Stack(off));
-                }
+            if sse_idx + sses > FARG.len() {
+                return Err(unsupported(&format!(
+                    "a call to `{callee}` with more than eight float argument registers"
+                )));
             }
-            int_idx += need;
+            if ints == 0 && sses == 0 {
+                let (_, off, _) = *mem_args
+                    .iter()
+                    .find(|(i, _, _)| *i == pos)
+                    .expect("memory_arg_area covers every Mem-class argument");
+                slots.push(ArgSlot::Stack(off));
+            } else {
+                // The per-eightbyte schedule for this argument. A scalar
+                // (no layout) is one `INTEGER` entry; an aggregate takes its
+                // class's own kinds, in order, advancing each file's index by
+                // one per eightbyte of that kind.
+                let class = struct_layout(&arg.ty, &self.layouts)
+                    .map(|l| l.class())
+                    .unwrap_or(INT_ONE);
+                let mut ebs = Vec::new();
+                let (mut ii, mut si) = (int_idx, sse_idx);
+                for k in 0..2 {
+                    let Some(eb) = class.eb(k) else { break };
+                    match eb.kind {
+                        Eb::Int => {
+                            ebs.push((Eb::Int, ii, eb.size));
+                            ii += 1;
+                        }
+                        Eb::Sse => {
+                            ebs.push((Eb::Sse, si, eb.size));
+                            si += 1;
+                        }
+                    }
+                }
+                slots.push(ArgSlot::Regs(ebs));
+            }
+            int_idx += ints;
+            sse_idx += sses;
         }
         // Every argument is evaluated and pushed — one 8-byte stack slot for
         // a scalar/float/`One`-class value, two consecutive ones (built
@@ -8048,34 +8459,39 @@ impl Gen {
                 let width = float_ty(&arg.ty).expect("checked above");
                 self.out.push_str("    sub rsp, 8\n");
                 let _ = writeln!(self.out, "    {} [rsp], xmm0", width.mov());
-            } else if int_regs_for(&arg.ty, &self.layouts) == Some(2) {
-                // A slot of the argument's own — **not** the shared
-                // `agg_slot` this used to stage into. A `Two`-class argument
-                // is built field by field, and a field initializer can itself
-                // be an argument-bearing expression (`Box.of(Node(value = 2,
-                // next = Box.of(...)))`), whose own `Two`-class argument would
-                // then land in the same shared slot *while the outer value was
-                // half-written* — `generic_recursive`'s three-node chain read
-                // the middle node's `value` as the innermost node's (7 instead
-                // of 6) before this was a fresh slot per argument.
+            } else if let Some(class) = struct_layout(&arg.ty, &self.layouts) {
+                let class = class.class();
                 let size = struct_layout(&arg.ty, &self.layouts)
-                    .expect("a two-register argument is a struct with a layout")
+                    .expect("checked above")
                     .size;
-                let agg = frame.scratch(align_up(size, 8));
-                self.eval_struct_into(arg, frame, Dest::Direct(agg))?;
-                let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg}]");
-                let agg2 = agg + 8;
-                let _ = writeln!(self.out, "    push QWORD PTR [rbp{agg2}]");
-            } else if int_regs_for(&arg.ty, &self.layouts) == Some(0) {
-                let size = struct_layout(&arg.ty, &self.layouts)
-                    .expect("a zero-register argument is a Mem-class struct")
-                    .size;
-                let ArgSlot::Stack(off) = slots[pos] else {
-                    unreachable!("the classification above put this argument on the stack")
-                };
-                let staged = frame.scratch(align_up(size, 8));
-                self.eval_struct_into(arg, frame, Dest::Direct(staged))?;
-                mem_plan[pos] = Some((staged, off, size));
+                if class.is_mem() {
+                    let ArgSlot::Stack(off) = slots[pos] else {
+                        unreachable!("the classification above put this argument on the stack")
+                    };
+                    let staged = frame.scratch(align_up(size, 8));
+                    self.eval_struct_into(arg, frame, Dest::Direct(staged))?;
+                    mem_plan[pos] = Some((staged, off, size));
+                } else {
+                    // A slot of the argument's own — **not** the shared
+                    // `agg_slot` this used to stage into. A register-class
+                    // aggregate is built field by field, and a field
+                    // initializer can itself be an argument-bearing expression
+                    // (`Box.of(Node(value = 2, next = Box.of(...)))`), whose
+                    // own argument would then land in the same shared slot
+                    // *while the outer value was half-written* —
+                    // `generic_recursive`'s three-node chain read the middle
+                    // node's `value` as the innermost node's (7 instead of 6)
+                    // before this was a fresh slot per argument. Each eightbyte
+                    // is then pushed as a whole word, in order, and popped into
+                    // the register its kind names.
+                    let agg = frame.scratch(align_up(size, 8));
+                    self.eval_struct_into(arg, frame, Dest::Direct(agg))?;
+                    let n_eb = if class.eb(1).is_some() { 2 } else { 1 };
+                    for k in 0..n_eb {
+                        let at = agg + 8 * k as i32;
+                        let _ = writeln!(self.out, "    push QWORD PTR [rbp{at}]");
+                    }
+                }
             } else {
                 self.expr(arg, frame)?;
                 self.out.push_str("    push rax\n");
@@ -8083,19 +8499,33 @@ impl Gen {
         }
         for (arg, slot) in args.iter().zip(slots.iter()).rev() {
             match slot {
-                ArgSlot::Int(i) => {
-                    let _ = writeln!(self.out, "    pop {}", ARG64[*i]);
-                }
                 ArgSlot::Float(i) => {
                     let width = float_ty(&arg.ty).expect("classified as float above");
                     let _ = writeln!(self.out, "    {} {}, [rsp]", width.mov(), FARG[*i]);
                     self.out.push_str("    add rsp, 8\n");
                 }
-                ArgSlot::IntPair(i0, i1) => {
-                    // Pushed as (eightbyte 0, eightbyte 1) in that order, so
-                    // eightbyte 1 is on top and comes off first.
-                    let _ = writeln!(self.out, "    pop {}", ARG64[*i1]);
-                    let _ = writeln!(self.out, "    pop {}", ARG64[*i0]);
+                ArgSlot::Regs(ebs) => {
+                    // Pushed in eightbyte order, so the last is on top and
+                    // comes off first. An `INTEGER` eightbyte is a plain `pop`;
+                    // an `SSE` one is loaded into `xmm` at its own width and
+                    // the slot discarded.
+                    for (kind, idx, size) in ebs.iter().rev() {
+                        match kind {
+                            Eb::Int => {
+                                let _ = writeln!(self.out, "    pop {}", ARG64[*idx]);
+                            }
+                            Eb::Sse => {
+                                let w = if *size == 4 { FWidth::F4 } else { FWidth::F8 };
+                                let _ = writeln!(
+                                    self.out,
+                                    "    {} {}, [rsp]",
+                                    w.mov(),
+                                    FARG[*idx]
+                                );
+                                self.out.push_str("    add rsp, 8\n");
+                            }
+                        }
+                    }
                 }
                 // Already in the outgoing area — nothing was pushed for it.
                 ArgSlot::Stack(_) => {}
@@ -8109,7 +8539,7 @@ impl Gen {
         // than relying on the reader to check the numbering above. The
         // outgoing argument area is not part of that: it is memory, and every
         // copy into it is done by then.
-        if ret_class == Some(AggClass::Mem) {
+        if ret_class.map_or(false, |c| c.is_mem()) {
             match ret_dst.expect("checked above") {
                 Dest::Direct(off) => {
                     let _ = writeln!(self.out, "    lea rdi, [rbp{off}]");
@@ -8351,49 +8781,50 @@ impl Gen {
         }
         let _ = writeln!(self.out, "    call {symbol}");
         call_align_end(&mut self.out, frame.sp_slot);
-        if ret_class == Some(AggClass::Two) {
-            match ret_dst.expect("checked above") {
-                Dest::Direct(off) => {
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], rax");
-                    let off2 = off + 8;
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off2}], rdx");
-                }
-                Dest::Indirect(slot) => {
-                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
-                    self.out.push_str("    mov QWORD PTR [r11], rax\n");
-                    self.out.push_str("    mov QWORD PTR [r11+8], rdx\n");
-                }
-                Dest::Global(index) => {
-                    let label = self.pds[index].label.clone();
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
-                    let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}+8], rdx");
-                }
-            }
-        }
-        // MK7 §5 item 4, fourth slice: a `One`-class aggregate return needs
-        // its `Dest` honoured too, now that a call can *be* a borrowed
-        // temporary's initializer (`sum(make(7, 8))`) and so reach
-        // `eval_struct_into` with a destination. The value is one opaque
-        // eightbyte, exactly as `struct_lit` treats it, and every slot it can
-        // be written to is `align_up(size, 8)` bytes, so an eight-byte store
-        // is always contained in the slot it belongs to. Before this arm the
-        // destination was silently left untouched — the third slice's
-        // `Dest`-aware handling covered only the two wider classes, and no
-        // fixture had ever asked for a `One`-class call result to be written
-        // anywhere but `rax`.
-        if ret_class == Some(AggClass::One) {
-            if let Some(dest) = ret_dst {
-                match dest {
-                    Dest::Direct(off) => {
-                        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{off}], rax");
-                    }
-                    Dest::Indirect(slot) => {
+        // MK7 §5 item 4's float-in-aggregate slice: the returned registers are
+        // stored into `ret_dst` per eightbyte — `rax`/`rdx` for an `INTEGER`
+        // eightbyte, `xmm0`/`xmm1` for an `SSE` one — with the two files
+        // numbered independently. A `Mem`-class return needs nothing here: the
+        // callee already wrote through the pointer this site passed in `rdi`.
+        if let Some(class) = ret_class {
+            if !class.is_mem() {
+                if let Some(dest) = ret_dst {
+                    if let Dest::Indirect(slot) = dest {
                         let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
-                        self.out.push_str("    mov QWORD PTR [r11], rax\n");
                     }
-                    Dest::Global(index) => {
-                        let label = self.pds[index].label.clone();
-                        let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
+                    let n_eb = if class.eb(1).is_some() { 2 } else { 1 };
+                    let (mut int_n, mut sse_n) = (0usize, 0usize);
+                    for k in 0..n_eb {
+                        let eb = class.eb(k).expect("k is in range");
+                        let off = 8 * k as i32;
+                        let (reg, w) = match eb.float_width() {
+                            Some(w) => {
+                                let r = FARG[sse_n];
+                                sse_n += 1;
+                                (r, Some(w))
+                            }
+                            None => {
+                                let r = if int_n == 0 { "rax" } else { "rdx" };
+                                int_n += 1;
+                                (r, None)
+                            }
+                        };
+                        let mem = match dest {
+                            Dest::Direct(base) => format!("[rbp{}]", off_str(base + off)),
+                            Dest::Indirect(_) => format!("[r11{}]", off_str(off)),
+                            Dest::Global(index) => {
+                                let label = self.pds[index].label.clone();
+                                format!("[rip+{label}{}]", off_str(off))
+                            }
+                        };
+                        match w {
+                            Some(w) => {
+                                let _ = writeln!(self.out, "    {} {mem}, {reg}", w.mov());
+                            }
+                            None => {
+                                let _ = writeln!(self.out, "    mov QWORD PTR {mem}, {reg}");
+                            }
+                        }
                     }
                 }
             }
@@ -8413,7 +8844,7 @@ impl Gen {
         if !hoisted.is_empty() {
             let parked = if *ret_ty != Ty::Unit && ret_class.is_none() {
                 Some(self.park(float_ty(ret_ty), frame))
-            } else if ret_class == Some(AggClass::One) && ret_dst.is_none() {
+            } else if ret_class.map_or(false, |c| c.is_int_one()) && ret_dst.is_none() {
                 Some(self.park(None, frame))
             } else {
                 None
