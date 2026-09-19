@@ -561,6 +561,20 @@ fn a_pd_var_is_writable_from_a_function_and_from_main() {
 }
 
 #[test]
+fn passdown_storage_is_a_global_that_main_initializes() {
+    // MK7 §5: what the asm backend has to do instead of the C backend's
+    // hidden-argument plumbing — one `.bss` object per `pd`, assigned by a
+    // sequence at the top of `main`, and a hidden parameter whose value is that
+    // object's address. An initializer that reads an earlier passdown pins the
+    // initialization order, and `bump` pins the case where the caller has no
+    // hidden parameter and so passes the global's own address.
+    assert_compiles_and_runs(
+        "tests/fixtures/passdown_globals.kp",
+        "10 20 0\n1 2 3\n10 20 2\n1 2 3\n10 20 12\n1 2 3\n3\n",
+    );
+}
+
+#[test]
 fn writing_a_pd_val_inside_a_function_is_rejected() {
     assert_rejected("tests/fixtures/pd_val_write.kp");
 }
@@ -3280,6 +3294,10 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // counts vector registers. A literal that looks right in both backends
         // is exactly what this test exists to rule out.
         "asm_float_print",
+        // ...and a `pd` is the other other: the same identifier is a hidden
+        // parameter inside a function and a global in `main`, and getting that
+        // wrong reads the wrong storage rather than failing to build.
+        "passdown_globals",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();

@@ -1,0 +1,42 @@
+// MK7 §5 (the passdown slice): the shapes the older passdown fixtures do not
+// reach.
+//
+// A `pd` initializer can read an earlier `pd` (`doubled`), and a function that
+// names no passdown at all still has to hand one to a callee that reads it
+// (`bump` — it has no hidden parameter of its own, so what it passes is the
+// generated global's own address, while `add` receives a hidden parameter and
+// writes through it).
+pd val base = 10
+pd val doubled = base * 2
+pd var total = 0
+pd val origin = Point(x = 1, y = 2)
+
+datac Point(val x: i32, val y: i32)
+
+fun Point.sum().R: i32 = x + y
+
+// Receives `total` as a hidden parameter and writes through it.
+fun add(n: i32) {
+    total += n
+}
+
+// Names no passdown: it has no hidden parameter, so the address it hands
+// `add` is the generated global's.
+fun bump() {
+    add(1)
+}
+
+fun show() {
+    print("${base} ${doubled} ${total}")
+    print("${origin.x} ${origin.y} ${origin.sum()}")
+}
+
+fun main() {
+    show()
+    bump()
+    bump()
+    show()
+    add(base)
+    show()
+    print(origin.sum())
+}

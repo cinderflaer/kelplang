@@ -372,6 +372,49 @@ fn str_ty(ty: &Ty) -> bool {
         || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
 }
 
+/// MK7 §5: one passdown's generated storage — the internal `pd#<qualified>`
+/// name (which is also the name of the hidden parameter a referencing function
+/// receives), the symbol that storage is emitted under, and the passdown's own
+/// type. What the name *means* depends on where it resolves, and that is the
+/// whole of this slice: inside a function it resolves to the parameter, whose
+/// value is already the borrow; in `main` it resolves here, to the object
+/// itself.
+struct PdGlobal {
+    hidden: String,
+    label: String,
+    value_ty: Ty,
+}
+
+impl PdGlobal {
+    /// Whether a read of this passdown's name is the storage's *value* rather
+    /// than its *address*. True for a `str`, and only for a `str`: `&str` and
+    /// `str` are the same `const char*` (`types.rs`'s rule), so the global
+    /// holds the pointer and a borrow of it is that pointer, while every other
+    /// passdown is reached through its address — which is exactly the two
+    /// shapes `infer::PdInfo::arg` emits.
+    fn str_borrow(&self) -> bool {
+        str_ty(&self.value_ty)
+    }
+}
+
+/// How many bytes one passdown's storage needs, or `None` for a type this
+/// backend has no storage for at all. Every type it accepts is rounded up to
+/// eight bytes, the way a local's slot is: a passdown's storage is addressed
+/// by `lea` and copied whole, so there is no reason for it to be tighter, and
+/// a multiple of eight keeps every access naturally aligned.
+fn pd_storage_size(
+    ty: &Ty,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<i32> {
+    if let Some(layout) = struct_layout(ty, layouts) {
+        return Some(align_up(layout.size, 8));
+    }
+    if str_ty(ty) {
+        return Some(8);
+    }
+    int_ty(ty).map(|(width, _)| align_up(width.bytes(), 8))
+}
+
 /// Every uncovered construct reports through this, so the message shape — and
 /// therefore what a reader greps for — is uniform.
 fn unsupported(what: &str) -> String {
@@ -652,6 +695,12 @@ fn value_kind(
             Ty::Ref { inner, .. } if struct_layout(inner, layouts).is_some() => {
                 Some((Width::W8, false))
             }
+            // A reference to a *scalar* is the same one-word pointer, which is
+            // what makes a `pd var count = 0`'s hidden parameter (`&i32`) and
+            // the `Deref` that reads and writes it expressible at all (MK7 §5,
+            // the passdown slice). The pointer itself is the value here; what
+            // it points at is only ever touched through `ExprKind::Deref`.
+            Ty::Ref { inner, .. } if int_ty(inner).is_some() => Some((Width::W8, false)),
             _ => None,
         })
         // MK7 §5 item 8: a `str`/`&str` is a pointer, so it is a value this
@@ -693,6 +742,9 @@ fn int_regs_for(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayou
     }
     if let Ty::Ref { inner, .. } = ty {
         if struct_layout(inner, layouts).is_some() {
+            return Some(1);
+        }
+        if int_ty(inner).is_some() {
             return Some(1);
         }
     }
@@ -755,6 +807,31 @@ fn emit_copy(out: &mut String, dst_reg: &str, dst_off: i32, src_reg: &str, src_o
     }
 }
 
+fn emit_copy_to_global(out: &mut String, label: &str, src_reg: &str, src_off: i32, mut size: i32) {
+    let mut off = 0i32;
+    while size > 0 {
+        let (w, n) = if size >= 8 {
+            (Width::W8, 8)
+        } else if size >= 4 {
+            (Width::W4, 4)
+        } else if size >= 2 {
+            (Width::W2, 2)
+        } else {
+            (Width::W1, 1)
+        };
+        let _ = writeln!(
+            out,
+            "    mov {}, {} [{src_reg}{}]",
+            w.rax(),
+            w.mem(),
+            off_str(src_off + off)
+        );
+        let _ = writeln!(out, "    mov {} [rip+{label}{}], {}", w.mem(), off_str(off), w.rax());
+        off += n;
+        size -= n;
+    }
+}
+
 /// How a function's own return value leaves it — the return-side counterpart
 /// of `AggClass`, widened to also cover the non-aggregate cases so every
 /// function has exactly one of these rather than `AggClass` plus a separate
@@ -786,6 +863,13 @@ enum RetClass {
 enum Dest {
     Direct(i32),
     Indirect(i32),
+    /// MK7 §5 (the passdown slice): one passdown's generated storage, by index
+    /// into `Gen::pds` — a `pd` initializer writes straight to the global
+    /// rather than into a frame slot. An index rather than the label keeps this
+    /// enum `Copy`, which every `Dest`-threading site relies on. It is a
+    /// *direct* destination like `Direct` (the storage is at a fixed address),
+    /// just reached through `rip` instead of `rbp`.
+    Global(usize),
 }
 
 /// Generates assembly for `program`.
@@ -800,9 +884,6 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     if let Some(f) = program.functions.iter().find(|f| f.extern_) {
         return Err(unsupported(&format!("the `extern fun {}`", f.name)));
     }
-    if let Some(pd) = program.pds.first() {
-        return Err(unsupported(&format!("the passdown `pd {}`", pd.qualified)));
-    }
     if let Some(e) = program.enums.first() {
         return Err(unsupported(&format!("the enum `{}`", e.name)));
     }
@@ -815,6 +896,25 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     // program tries to move a value of that type, which names the offending
     // type instead of the mere presence of an unrelated declaration.
     g.layouts = build_layouts(&program.structs);
+    // MK7 §5: one file-scope storage location per passdown, in initialization
+    // order, plus the type each one holds — see `PdGlobal`. Every passdown is
+    // named by the same internal `pd#<qualified>` identifier its hidden
+    // parameter carries, so the parameter and the global are the same name
+    // resolved in two different places (`Gen::function`'s prologue binds the
+    // parameter; `Gen::expr`'s `Ident` arm falls back to the global).
+    for pd in &program.pds {
+        let label = Gen::symbol(&pd.name);
+        if pd_storage_size(&pd.value_ty, &g.layouts).is_none() {
+            return Err(unsupported(&format!(
+                "the passdown `pd {}` (its type is `{}`, and the asm backend has no storage \
+                 for one — see plan/mk7-own-backend.md §5)",
+                pd.qualified,
+                pd.value_ty.display()
+            )));
+        }
+        g.pds.push(PdGlobal { hidden: pd.name.clone(), label, value_ty: pd.value_ty.clone() });
+        g.pd_inits.push(pd.init.clone());
+    }
     // The gated-call table, so a call that the C backend would wrap in a
     // runtime capability check is refused rather than emitted unchecked. This
     // is the one place where an unimplemented feature would be a *security*
@@ -847,6 +947,20 @@ pub fn generate(program: &Program, _drops: &DropPlan, _sources: &SourceMap) -> R
     // program that can reach it.
     if g.needs_panic {
         g.emit_panic_routine();
+    }
+    // MK7 §5: the passdowns' storage, in `.bss` — zeroed and assigned by the
+    // sequence `Gen::function` puts at the top of `main`, exactly as the C
+    // backend's uninitialized `static` globals are assigned by its generated
+    // `kelp_init_pds`. A passdown that is read before its own initializer is
+    // refused by `infer.rs`, so nothing can observe the zero.
+    if !g.pds.is_empty() {
+        g.out.push_str("    .section .bss\n");
+        for pd in &g.pds {
+            let bytes = pd_storage_size(&pd.value_ty, &g.layouts)
+                .expect("checked when the table was built");
+            let label = pd.label.clone();
+            let _ = writeln!(g.out, "    .p2align 3\n{label}:\n    .zero {bytes}");
+        }
     }
     Ok(g.finish())
 }
@@ -1429,6 +1543,16 @@ struct Gen {
     /// hand-written `kelp_panic` routine is emitted at all — see
     /// `Gen::emit_panic_routine`.
     needs_panic: bool,
+    /// MK7 §5 (the passdown slice): every `pd`'s storage, in initialization
+    /// order, indexed by `Dest::Global`. Built once from `program.pds`; the
+    /// storage itself is emitted in `.bss` and assigned by the sequence
+    /// `Gen::function` puts at the top of `main`.
+    pds: Vec<PdGlobal>,
+    /// MK7 §5: every `pd`'s initializer, in the same order as `pds` —
+    /// `pd_init` runs them from `main`. Kept as a second vector rather than
+    /// inside `PdGlobal` so that `PdGlobal` stays a plain description of
+    /// storage, which is all `Dest::Global` needs.
+    pd_inits: Vec<Expr>,
 }
 
 impl Gen {
@@ -1757,6 +1881,20 @@ impl Gen {
     }
 
     fn function_body(&mut self, f: &Function, frame: &mut Frame) -> Result<(), String> {
+        // MK7 §5 (the passdown slice): `main` assigns every passdown before
+        // its own body runs, in declaration order — the same job the C
+        // backend's generated `kelp_init_pds()` does, and for the same reason:
+        // `main` is the one function that can have no hidden parameters, so it
+        // is the one place a passdown's storage can be filled from nothing.
+        // An initializer may read an earlier passdown (`pd val doubled = base
+        // * 2`), which works because this loop is in the same order
+        // `program.pds` is. A `pd` read before its own initializer is refused
+        // by `infer.rs`, so the order cannot be observed wrong.
+        if f.name == "main" {
+            for index in 0..self.pds.len() {
+                self.pd_init(index, frame)?;
+            }
+        }
         for stmt in &f.body.stmts {
             self.stmt(stmt, frame)?;
         }
@@ -1783,6 +1921,40 @@ impl Gen {
             }
         }
         Ok(())
+    }
+
+    /// MK7 §5: one passdown's initializer, run at the top of `main`. A struct
+    /// is built straight into the passdown's storage (`Dest::Global`, which
+    /// every `eval_struct_into` shape understands as a destination, so a
+    /// literal, a named local and a call all work); everything else evaluates
+    /// as an ordinary expression and is stored at its own width. The two paths
+    /// are the same split `Stmt::Let` makes, for the same reason: a value wider
+    /// than one eightbyte cannot travel through `rax`.
+    fn pd_init(&mut self, index: usize, frame: &mut Frame) -> Result<(), String> {
+        let init = self.pd_inits[index].clone();
+        let value_ty = self.pds[index].value_ty.clone();
+        let label = self.pds[index].label.clone();
+        if struct_layout(&value_ty, &self.layouts).is_some() {
+            return self.eval_struct_into(&init, frame, Dest::Global(index));
+        }
+        self.expr(&init, frame)?;
+        if str_ty(&value_ty) {
+            // A `str` passdown's storage holds the pointer itself.
+            let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
+            return Ok(());
+        }
+        let (width, _) = int_ty(&value_ty)
+            .ok_or_else(|| unsupported(&format!("the type `{}`", value_ty.display())))?;
+        let _ = writeln!(self.out, "    mov {} [rip+{label}], {}", width.mem(), width.rax());
+        Ok(())
+    }
+
+    /// Looks up a passdown's generated storage by its internal name — the
+    /// fallback for a name that is not a local, which is what makes the same
+    /// identifier mean "the hidden parameter" inside a function and "the
+    /// global" in `main` (and in a `pd` initializer).
+    fn pd_global(&self, name: &str) -> Option<usize> {
+        self.pds.iter().position(|pd| pd.hidden == name)
     }
 
     fn stmt(&mut self, stmt: &Stmt, frame: &mut Frame) -> Result<(), String> {
@@ -1922,9 +2094,33 @@ impl Gen {
                 Ok(())
             }
             ExprKind::Ident(name) => {
-                let (loc, ty) = frame
-                    .lookup(name)
-                    .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                // MK7 §5 (the passdown slice): a name that is not a local is a
+                // passdown's generated storage. `pd#x` cannot be a user
+                // identifier, so this cannot capture anything, and the
+                // parameter case never reaches here — a function that receives
+                // the passdown has it as an ordinary local, which is the lookup
+                // above.
+                let Some((loc, ty)) = frame.lookup(name) else {
+                    let index = self
+                        .pd_global(name)
+                        .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                    let pd = &self.pds[index];
+                    let label = pd.label.clone();
+                    if pd.str_borrow() {
+                        // A `str` passdown's storage *is* the pointer, so the
+                        // name means the pointer's value — which is also the
+                        // borrow `infer.rs` hands over (`&str` and `str` are
+                        // the same `const char*`).
+                        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rip+{label}]");
+                    } else {
+                        // Every other passdown is reached through its address:
+                        // `infer::PdInfo::arg` wraps this name in a `Ref` when
+                        // the global is what it names, and a `Ref` of the
+                        // storage is the storage's address.
+                        let _ = writeln!(self.out, "    lea rax, [rip+{label}]");
+                    }
+                    return Ok(());
+                };
                 if let Some(width) = float_ty(&ty) {
                     let offset = loc
                         .stack_offset()
@@ -2012,6 +2208,28 @@ impl Gen {
             ExprKind::Assign { target, value } => {
                 if let ExprKind::FieldAccess { base, field } = &target.kind {
                     return self.field_assign(base, field, value, frame);
+                }
+                // MK7 §5 (the passdown slice): an assignment *through* a
+                // borrow, which is what `pd var count` being writable from any
+                // function that references it compiles to (`assign` to `*` of
+                // the borrow). The pointer is pushed rather than kept in a
+                // register across the value's evaluation because the value can
+                // itself be a read through the same pointer (`count += 1`),
+                // and `addr_of_struct` would claim `r11` for its own address
+                // arithmetic on the way — a stack slot cannot be clobbered.
+                if let ExprKind::Deref { expr } = &target.kind {
+                    let (width, _) = int_ty(&target.ty).ok_or_else(|| {
+                        unsupported(&format!(
+                            "assignment through a reference to `{}`",
+                            target.ty.display()
+                        ))
+                    })?;
+                    self.expr(expr, frame)?;
+                    self.out.push_str("    push rax\n");
+                    self.expr(value, frame)?;
+                    self.out.push_str("    pop r11\n");
+                    let _ = writeln!(self.out, "    mov {} [r11], {}", width.mem(), width.rax());
+                    return Ok(());
                 }
                 let (loc, ty) = match &target.kind {
                     ExprKind::Ident(name) => frame.lookup(name).ok_or_else(|| {
@@ -2114,9 +2332,17 @@ impl Gen {
                 // MK7 §5 item 8: a `&str` is the pointer itself — there is
                 // nothing to take the address of, and `codegen_c.rs` makes the
                 // same exception (it passes a `str` view through rather than
-                // hoisting it the way it hoists a borrowed temporary).
+                // hoisting it the way it hoists a borrowed temporary). A `str`
+                // *passdown*'s borrow is the same `const char*` as its value.
                 if str_ty(&expr.ty) {
                     return self.expr(expr, frame);
+                }
+                // MK7 §5 (the passdown slice): `&*p` is `p`. This is how a
+                // method on a passdown-typed value is called
+                // (`origin.sum()` is `sum(&(*origin))`), and for a plain
+                // pointer the deref-then-borrow pair genuinely cancels.
+                if let ExprKind::Deref { expr: inner } = &expr.kind {
+                    return self.expr(inner, frame);
                 }
                 // MK7 §5 item 4, first slice: a borrow of a named `datac`
                 // local, which is what most of this item's gaps actually need
@@ -2125,15 +2351,26 @@ impl Gen {
                 // also what an explicit `&c` compiles to. No copy: the local's
                 // own slot already *is* the object.
                 if let ExprKind::Ident(name) = &expr.kind {
-                    let (loc, ty) = frame
-                        .lookup(name)
-                        .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
-                    if struct_layout(&ty, &self.layouts).is_some() {
-                        let off = loc
-                            .stack_offset()
-                            .expect("struct locals are never register-allocated");
-                        let _ = writeln!(self.out, "    lea rax, [rbp{off}]");
-                        return Ok(());
+                    if let Some((loc, ty)) = frame.lookup(name) {
+                        if struct_layout(&ty, &self.layouts).is_some() {
+                            let off = loc
+                                .stack_offset()
+                                .expect("struct locals are never register-allocated");
+                            let _ = writeln!(self.out, "    lea rax, [rbp{off}]");
+                            return Ok(());
+                        }
+                        if matches!(ty, Ty::Ref { .. }) {
+                            // The name is already a borrow — a hidden passdown
+                            // parameter is exactly this — so `&*it` is its own
+                            // value, and there is no address to take.
+                            return self.expr(expr, frame);
+                        }
+                    }
+                    // Not a local: a passdown's generated storage, whose
+                    // borrow is its address (`infer::PdInfo::arg`'s
+                    // `global` shape, which wraps the name in a `Ref`).
+                    if self.pd_global(name).is_some() {
+                        return self.expr(expr, frame);
                     }
                 }
                 // MK7 §5 item 4, fourth slice: a borrow of a *temporary* —
@@ -2157,7 +2394,38 @@ impl Gen {
                     "a borrow of anything but a named `datac` local or a `datac` temporary",
                 ))
             }
-            ExprKind::Deref { .. } => Err(unsupported("a dereference")),
+            ExprKind::Deref { expr } => {
+                // MK7 §5 (the passdown slice): a read *through* a borrow — the
+                // `*` in "a read of the passdown is `*` of the borrow".
+                //
+                // A `str` pointee is the identity: `types.rs`'s rule that a
+                // reference to an already-borrowed view is not a pointer to a
+                // pointer means `*` of a `&str` is the `str` it points at, and
+                // that is exactly how a `str` passdown is read (the C backend
+                // emits the name with no `*` for the same reason).
+                if str_ty(&e.ty) {
+                    return self.expr(expr, frame);
+                }
+                if struct_layout(&e.ty, &self.layouts).is_some() {
+                    // Field access through the pointer is what a `datac`
+                    // passdown is actually used for, and `addr_of_struct`
+                    // already resolves a `Deref` base; reading the whole value
+                    // *out* of the borrow needs a copy the fixtures do not ask
+                    // for, so it is refused by name rather than half-done.
+                    return Err(unsupported(
+                        "reading a `datac` out of a reference by value (read its fields, or \
+                         take it as a borrow)",
+                    ));
+                }
+                let (width, signed) = int_ty(&e.ty)
+                    .ok_or_else(|| unsupported(&format!("the type `{}`", e.ty.display())))?;
+                self.expr(expr, frame)?;
+                // `rax` holds the pointer; load the pointee at its own width
+                // and extend, exactly as a narrow local's read does.
+                let _ = writeln!(self.out, "    mov {}, {} [rax]", width.rax(), width.mem());
+                self.out.push_str(&width.extend(signed));
+                Ok(())
+            }
         }
     }
 
@@ -2482,6 +2750,20 @@ impl Gen {
                         fwidth.rax()
                     );
                 }
+                // MK7 §5 (the passdown slice): a `pd` initializer builds its
+                // fields straight into the passdown's own storage, no frame
+                // slot in between — `[rip+label+offset]` is the same field
+                // store as `Dest::Direct`'s, with a symbol instead of `rbp`.
+                Dest::Global(index) => {
+                    let label = self.pds[index].label.clone();
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {} [rip+{label}{}], {}",
+                        fwidth.mem(),
+                        off_str(foffset),
+                        fwidth.rax()
+                    );
+                }
             }
         }
         Ok(())
@@ -2519,6 +2801,10 @@ impl Gen {
                     Dest::Indirect(slot) => {
                         let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
                         emit_copy(&mut self.out, "r11", 0, "rbp", src_off, layout.size);
+                    }
+                    Dest::Global(index) => {
+                        let label = self.pds[index].label.clone();
+                        emit_copy_to_global(&mut self.out, &label, "rbp", src_off, layout.size);
                     }
                 }
                 Ok(())
@@ -2885,6 +3171,13 @@ impl Gen {
                 Dest::Indirect(slot) => {
                     let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot}]");
                 }
+                // MK7 §5 (the passdown slice): a `pd` whose type is
+                // `MEMORY`-class, initialized by a call — the hidden pointer
+                // is the passdown's own storage.
+                Dest::Global(index) => {
+                    let label = self.pds[index].label.clone();
+                    let _ = writeln!(self.out, "    lea rdi, [rip+{label}]");
+                }
             }
         }
         let symbol = Gen::symbol(callee);
@@ -2919,6 +3212,11 @@ impl Gen {
                     self.out.push_str("    mov QWORD PTR [r11], rax\n");
                     self.out.push_str("    mov QWORD PTR [r11+8], rdx\n");
                 }
+                Dest::Global(index) => {
+                    let label = self.pds[index].label.clone();
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}+8], rdx");
+                }
             }
         }
         // MK7 §5 item 4, fourth slice: a `One`-class aggregate return needs
@@ -2941,6 +3239,10 @@ impl Gen {
                     Dest::Indirect(slot) => {
                         let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
                         self.out.push_str("    mov QWORD PTR [r11], rax\n");
+                    }
+                    Dest::Global(index) => {
+                        let label = self.pds[index].label.clone();
+                        let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
                     }
                 }
             }
