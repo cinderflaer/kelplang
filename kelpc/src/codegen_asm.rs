@@ -7,15 +7,20 @@
 //!
 //! 1. **A stack machine, with a register allocator on top.** Every expression
 //!    evaluates into `rax`, and a binary operator spills the left operand to the
-//!    stack so the right one can be computed. On top of that, a local whose live
-//!    range fits is pinned to one of five callee-saved registers for the whole
-//!    function (`allocate_registers`), so a read or write of it is a
-//!    register-to-register `mov` with no memory traffic and no reloading across a
-//!    call. `f32`/`f64` locals are deliberately excluded — xmm live-range
-//!    allocation is separate work — and expression evaluation itself is
-//!    untouched, which is why this is *at or below* the `-O0` column the plan
-//!    gates on: correctness is checkable against the C backend before any
-//!    performance claim has to be made.
+//!    stack so the right one can be computed. On top of that, two register
+//!    pools (`allocate_registers`): a local whose live range fits is pinned to
+//!    one of five callee-saved integer registers, and an `f32`/`f64` local
+//!    whose live range is not overlapped by a call, a `print` or a drop site is
+//!    pinned to one of eight caller-saved `xmm` registers instead of a frame
+//!    slot. A float operator whose operand is already a place or a constant
+//!    names it as the instruction's second operand (`addsd xmm15, [rip+.LC0]`,
+//!    `mulsd xmm0, [rbp-16]`) rather than loading it into `xmm0` and spilling
+//!    across the other operand — see `binary_float`, and §5's float slice in
+//!    `plan/mk7-own-backend.md` for what each of those was worth. The integer
+//!    expression path is untouched, which is why this backend is at or below
+//!    the `-O0` column on `collatz` and `mix` (0.96 and 0.70) and above it on
+//!    `fib` (1.70), whose remaining cost is the call sequence rather than
+//!    arithmetic.
 //!
 //! 2. **Assembly text, not machine code.** The output goes to `as` and `ld`, so
 //!    instruction encoding and relocation stay somebody else's problem for now;
@@ -154,30 +159,71 @@ const CALLEE_SAVED: [[&str; 4]; 5] = [
 /// them it actually uses.
 const CALLEE_SAVED64: [&str; 5] = ["rbx", "r12", "r13", "r14", "r15"];
 
+/// The register pool a *float* local is handed out of. Unlike the integer
+/// pool these are **not** callee-saved — every one of the sixteen `xmm`
+/// registers is caller-saved under SysV — which is why `allocate_registers`
+/// refuses a float register to any local whose live range overlaps a call, a
+/// `print`, or a drop site: a value that has to survive one of those stays in
+/// its frame slot, exactly as every float local did before this item. The
+/// eight names are the top half of the vector file, which nothing else in
+/// this module uses: `xmm0`/`xmm1` are the expression machine's scratch, and
+/// `xmm0`-`xmm7` are the call and `printf` argument registers (`FARG`), so a
+/// pool register can never be one an argument marshalling is about to
+/// overwrite.
+const FLOAT_POOL: [&str; 8] = [
+    "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
+];
+
+/// The registers a float *constant* is held in when it has to survive the
+/// evaluation of the expression on the other side of a non-commutative
+/// operator (`1.0 / t` is the shape: the constant is the left operand, and
+/// the right one is a whole subexpression). `xmm0`/`xmm1` are the expression
+/// machine's own scratch and `xmm8`-`xmm15` are `FLOAT_POOL`, so these six
+/// are the registers nothing else in the module writes — a nested such hold
+/// takes the next one along, which is what `Gen::float_hold` counts. A value
+/// in one of these does not survive a `call` (every `xmm` register is
+/// caller-saved), so `binary_float` only uses the hold when the other side
+/// contains no call at all; see `xmm_clobbered_by`.
+const FLOAT_HOLD: [&str; 6] = ["xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"];
+
 /// Where one local variable lives for the whole of its function: a fixed
-/// callee-saved register, or (as every local got before this item) a frame
-/// slot. A local in `Reg` is read and written as a plain register-to-register
-/// `mov`; the width-normalized-to-64-bits invariant `Width::extend` already
-/// keeps for `rax` between operations applies to a pool register the same
-/// way, so no extension is needed at a read — only at the one place a value
-/// enters the register file narrower than 64 bits: a parameter arriving in an
-/// `ARG` register.
+/// callee-saved integer register, a fixed caller-saved `xmm` register, or (as
+/// every local got before item 3) a frame slot. A local in `Reg`/`FReg` is
+/// read and written as a register-to-register `mov`; the
+/// width-normalized-to-64-bits invariant `Width::extend` already keeps for
+/// `rax` between operations applies to an integer pool register the same way,
+/// so no extension is needed at a read — only at the one place a value enters
+/// the register file narrower than 64 bits: a parameter arriving in an `ARG`
+/// register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Loc {
     Reg(usize),
+    FReg(usize),
     Stack(i32),
 }
 
 impl Loc {
-    /// `None` for a register — the float path is the only caller, and floats
-    /// are never register-allocated by this item (see `allocate_registers`),
-    /// so a `Reg` here would be this module's own bug, not a user program.
+    /// `None` for either register pool — the callers are the paths that need
+    /// an address (a frame slot has one, a register does not), and they
+    /// refuse by name rather than mis-addressing.
     fn stack_offset(self) -> Option<i32> {
         match self {
             Loc::Stack(o) => Some(o),
             Loc::Reg(_) => None,
+            Loc::FReg(_) => None,
         }
     }
+}
+
+/// What `allocate_registers` decided for one declaration: a register from one
+/// of the two pools (their indices are independent — `IntReg(0)` is `rbx` and
+/// `FloatReg(0)` is `xmm8`), or no register at all, which is the frame-slot
+/// fallback every local had before the allocator existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Assigned {
+    Spill,
+    IntReg(usize),
+    FloatReg(usize),
 }
 
 impl Width {
@@ -2509,10 +2555,10 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
 /// loop's own widening in the same pass, with no fixed point needed.
 ///
 /// A local this item is not confident about does not get a register — see
-/// `allocate_registers`'s doc for what stays off the table entirely (`f32`/
-/// `f64`; nothing else is excluded, but nothing else is attempted either
-/// beyond the interval discipline above).
-struct LiveAnalysis {
+/// `allocate_registers`'s doc for what stays off the table entirely (an
+/// aggregate, a local whose address is taken, and a float local whose live
+/// range is overlapped by a `call` — see `clobbers`).
+struct LiveAnalysis<'a> {
     pos: usize,
     scopes: Vec<Vec<(String, usize)>>,
     /// Per declaration id, in the same order `Frame::declare` will hand them
@@ -2523,8 +2569,9 @@ struct LiveAnalysis {
     /// position 0) itself sits at — this is what "declared outside the loop"
     /// is tested against.
     decl_pos: Vec<usize>,
-    /// Per declaration id: whether it is a float, which this item never
-    /// register-allocates (see `allocate_registers`).
+    /// Per declaration id: whether it is a float. The float pool's candidate
+    /// filter is narrower than the integer pool's — see `allocate_registers`
+    /// and `clobbers`.
     is_float: Vec<bool>,
     /// Per declaration id: whether it is a `datac` (MK7 §5 item 4). Also
     /// never register-allocated: a struct local's only reader that needs its
@@ -2552,10 +2599,26 @@ struct LiveAnalysis {
     /// before its enclosing loop's, though nothing here depends on that
     /// order — `allocate_registers` sorts by span width itself).
     spans: Vec<(usize, usize)>,
+    /// One `(first, last)` position per region in which the emitter inserts a
+    /// `call` this function did not write — a call expression's whole
+    /// argument list (an inner call in an earlier argument clobbers the
+    /// registers before a later argument reads them), a `print`'s whole piece
+    /// list (`printf`), and every drop site (`free` and the generated drop
+    /// routines). Every one of those clobbers the caller-saved `xmm` file, so
+    /// a float local whose live range overlaps a span here is not a candidate
+    /// for `FLOAT_POOL` and keeps its frame slot. The integer pool needs none
+    /// of this: those five registers are callee-saved, which is the whole
+    /// reason they are the pool.
+    clobbers: Vec<(usize, usize)>,
+    /// The drop plan and the function whose body is being walked, cloned into
+    /// the analysis so the drop sites above can be found the same way the
+    /// emitter finds them (`DropPlan` is keyed by `(function, node)`).
+    drops: &'a DropPlan,
+    function: &'a str,
 }
 
-impl LiveAnalysis {
-    fn new() -> LiveAnalysis {
+impl<'a> LiveAnalysis<'a> {
+    fn new(drops: &'a DropPlan, function: &'a str) -> LiveAnalysis<'a> {
         LiveAnalysis {
             pos: 0,
             scopes: vec![Vec::new()],
@@ -2566,12 +2629,35 @@ impl LiveAnalysis {
             addr_taken: Vec::new(),
             already_a_pointer: Vec::new(),
             spans: Vec::new(),
+            clobbers: Vec::new(),
+            drops,
+            function,
         }
     }
 
     fn tick(&mut self) -> usize {
         self.pos += 1;
         self.pos
+    }
+
+    /// Opens a clobber region before a region whose evaluation the emitter
+    /// may interleave with a `call` — see `clobbers`. Pair it with
+    /// `clobber_end`.
+    fn clobber_begin(&mut self) -> usize {
+        self.tick()
+    }
+
+    fn clobber_end(&mut self, start: usize) {
+        let end = self.tick();
+        self.clobbers.push((start, end));
+    }
+
+    /// The single-position form, for a drop site: the emitter's `call` there
+    /// is not inside any expression the analysis walks, so there is no region
+    /// to open — one `tick` is the position the intervening call sits at.
+    fn clobber_point(&mut self) {
+        let p = self.tick();
+        self.clobbers.push((p, p));
     }
 
     /// Records a declaration and returns its id. Ids are handed out in
@@ -2682,6 +2768,11 @@ impl LiveAnalysis {
         if let Some(tail) = &f.body.tail {
             self.expr(tail);
         }
+        // `Gen::function_body` frees the body block's owned locals here, and
+        // a drop is a `call` — see `clobbers`.
+        if !self.drops.at_block_end(self.function, &f.body).is_empty() {
+            self.clobber_point();
+        }
     }
 
     fn stmt(&mut self, stmt: &Stmt) {
@@ -2696,12 +2787,17 @@ impl LiveAnalysis {
                 self.block(body);
                 self.spans.push((start, self.pos));
             }
-            Stmt::Return { value, .. } => match value {
-                Some(v) => self.expr(v),
-                None => {
-                    self.tick();
+            Stmt::Return { value, span } => {
+                match value {
+                    Some(v) => self.expr(v),
+                    None => {
+                        self.tick();
+                    }
                 }
-            },
+                if !self.drops.at_return(self.function, *span).is_empty() {
+                    self.clobber_point();
+                }
+            }
             Stmt::Expr(e) => self.expr(e),
         }
     }
@@ -2713,6 +2809,11 @@ impl LiveAnalysis {
         }
         if let Some(tail) = &block.tail {
             self.expr(tail);
+        }
+        // `Gen::block`/`Gen::block_into` free this block's owned locals at
+        // its end, and a drop is a `call` — see `clobbers`.
+        if !self.drops.at_block_end(self.function, block).is_empty() {
+            self.clobber_point();
         }
         self.pop_scope();
     }
@@ -2762,6 +2863,11 @@ impl LiveAnalysis {
                         self.tick();
                     }
                 }
+                // `Gen` frees the old value of an owned binding here, after
+                // the new one has been read — a `call`, see `clobbers`.
+                if !self.drops.at_assign(self.function, e.span).is_empty() {
+                    self.clobber_point();
+                }
             },
             ExprKind::If {
                 cond,
@@ -2775,18 +2881,30 @@ impl LiveAnalysis {
                 }
             }
             ExprKind::Block(block) => self.block(block),
+            // A call clobbers every caller-saved register, and so does a call
+            // *inside* an earlier argument, before a later argument is read —
+            // so the region the analysis has to treat as clobbering is the
+            // whole argument list, not just the `call` instruction at its
+            // end. See `clobbers`.
             ExprKind::Call { args, .. } => {
+                let start = self.clobber_begin();
                 for a in args {
                     self.expr(a);
                 }
-                self.tick();
+                self.clobber_end(start);
             }
+            // A `print`/`print!` is one `printf` call whose arguments are the
+            // interpolations, so it clobbers the same way a call does — and
+            // for the same reason the region covers the whole piece list: an
+            // interpolation is evaluated before the call that reads it.
             ExprKind::Template { pieces, .. } => {
+                let start = self.clobber_begin();
                 for p in pieces {
                     if let TemplatePiece::Value(v) = p {
                         self.expr(v);
                     }
                 }
+                self.clobber_end(start);
             }
             // MK7 §5 item 4, third slice: a struct literal's field
             // initializers are ordinary expressions and can read a plain
@@ -2835,8 +2953,15 @@ impl LiveAnalysis {
             ExprKind::EnumTag { expr, .. } => self.expr(expr),
             ExprKind::EnumField { base, .. } => self.expr(base),
             // `?` evaluates its operand (which is the only expression the node
-            // holds — the rebuilt failure is codegen's own construction).
-            ExprKind::Try { expr, .. } => self.expr(expr),
+            // holds — the rebuilt failure is codegen's own construction), and
+            // its failure arm frees the frame's owned locals before returning:
+            // a `call`, so a clobber site when the plan has drops there.
+            ExprKind::Try { expr, .. } => {
+                self.expr(expr);
+                if !self.drops.at_try(self.function, e.span).is_empty() {
+                    self.clobber_point();
+                }
+            }
             ExprKind::Ref { expr, .. } => self.address_of(expr),
             ExprKind::Deref { expr } => self.expr(expr),
             _ => {
@@ -2847,22 +2972,34 @@ impl LiveAnalysis {
 }
 
 /// Runs `LiveAnalysis` over `f`'s parameters and body, applies the loop
-/// widening, then a first-fit linear scan over `CALLEE_SAVED`. Returns one
-/// slot per declaration id, `Some(register index)` or `None` for a spill —
-/// `Frame::declare` consumes this vector id-by-id in the same order it was
-/// built in.
+/// widening, then a first-fit linear scan over each register pool. Returns
+/// one `Assigned` per declaration id — `Frame::declare` consumes this vector
+/// id-by-id in the same order it was built in.
 ///
-/// `f32`/`f64` locals are never assigned a register here: xmm live-range
-/// allocation is a second, separate piece of work (the plan explicitly notes
-/// item 2 kept float locals on the stack-machine, memory-backed discipline
-/// rather than pre-empting this item), and this function keeps that boundary
-/// by excluding every id `LiveAnalysis` marked `is_float` from the candidate
-/// list before the scan ever runs — a float id is `None` unconditionally. The
-/// same exclusion covers the aggregate kinds (`is_agg`) and, since the
-/// scalar-borrow slice, every local whose address is taken (`addr_taken`):
-/// both need an address, and a pool register has none.
-fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
-    let mut la = LiveAnalysis::new();
+/// Two pools, scanned independently and never shared:
+///
+/// - The integer/`bool`/`char`/pointer pool (`CALLEE_SAVED`, five
+///   callee-saved registers) takes every scalar local that is not a float,
+///   not an aggregate and never addressed. Caller-savedness does not matter
+///   to it because home is callee-saved: a local that spans a call is still
+///   in its register when the call returns.
+/// - The float pool (`FLOAT_POOL`, eight caller-saved `xmm` registers) takes
+///   an `f32`/`f64` local whose live range is not overlapped by a *clobber
+///   span* — `LiveAnalysis::clobbers`, which is every call expression's whole
+///   argument list, every `print`'s piece list and every drop site. All
+///   sixteen `xmm` registers are caller-saved, so a float local that has to
+///   survive a `call` cannot live in one of them: it keeps the frame slot
+///   item 2 gave it, which is exactly what every float local had before this
+///   item. That is a deliberate under-approximation — a live range that
+///   merely *might* cross a call is spilled rather than saved and restored,
+///   the same "spill rather than risk it" rule the integer pool follows
+///   when it runs out.
+///
+/// Both pools exclude the aggregate kinds (`is_agg`) and every local whose
+/// address is taken (`addr_taken`): both need an address, and no pool
+/// register has one.
+fn allocate_registers(f: &Function, drops: &DropPlan) -> Vec<Assigned> {
+    let mut la = LiveAnalysis::new(drops, &f.name);
     for (name, ty) in &f.params {
         la.declare(name, ty);
     }
@@ -2890,30 +3027,60 @@ fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
         }
     }
 
-    struct Interval {
-        id: usize,
-        start: usize,
-        end: usize,
-    }
-    let mut intervals: Vec<Interval> = (0..la.ranges.len())
+    let mut intervals: Vec<(usize, usize, usize)> = (0..la.ranges.len())
         .filter(|&id| !la.is_float[id] && !la.is_agg[id] && !la.addr_taken[id])
-        .map(|id| Interval {
-            id,
-            start: la.ranges[id].0,
-            end: la.ranges[id].1,
-        })
+        .map(|id| (id, la.ranges[id].0, la.ranges[id].1))
         .collect();
-    intervals.sort_by_key(|iv| iv.start);
+    intervals.sort_by_key(|&(_, start, _)| start);
 
-    let mut assign: Vec<Option<usize>> = vec![None; la.ranges.len()];
-    let mut free: Vec<usize> = (0..CALLEE_SAVED.len()).collect();
+    let mut assign = vec![Assigned::Spill; la.ranges.len()];
+    for (id, reg) in scan(&intervals, CALLEE_SAVED.len()) {
+        assign[id] = Assigned::IntReg(reg);
+    }
+
+    // The float pool: the same scan over the same intervals, minus every
+    // local whose live range is overlapped by a clobber span — see
+    // `LiveAnalysis::clobbers`.
+    let mut float_intervals: Vec<(usize, usize, usize)> = (0..la.ranges.len())
+        .filter(|&id| {
+            la.is_float[id]
+                && !la.is_agg[id]
+                && !la.addr_taken[id]
+                && !overlaps_clobber(&la.clobbers, la.ranges[id])
+        })
+        .map(|id| (id, la.ranges[id].0, la.ranges[id].1))
+        .collect();
+    float_intervals.sort_by_key(|&(_, start, _)| start);
+    for (id, reg) in scan(&float_intervals, FLOAT_POOL.len()) {
+        assign[id] = Assigned::FloatReg(reg);
+    }
+    assign
+}
+
+/// Whether `range` (inclusive) shares a position with any clobber span — see
+/// `LiveAnalysis::clobbers`. Spans and ranges are both tiny (a function's
+/// syntactic shapes, not its iterations), so this walks the spans.
+fn overlaps_clobber(clobbers: &[(usize, usize)], range: (usize, usize)) -> bool {
+    clobbers
+        .iter()
+        .any(|&(start, end)| start <= range.1 && end >= range.0)
+}
+
+/// First-fit linear scan over `pool` interchangeable registers: `intervals`
+/// is `(id, start, end)`, sorted by start, and the result is one `(id,
+/// register index)` pair per interval that found a register free. An interval
+/// that finds none is simply absent — the caller leaves it spilled, which is
+/// the same frame-slot path a local that cannot be allocated has always had.
+fn scan(intervals: &[(usize, usize, usize)], pool: usize) -> Vec<(usize, usize)> {
+    let mut free: Vec<usize> = (0..pool).collect();
     // `(end position, register)` for every interval currently holding a
     // register, so a later interval's start can expire whichever of these
     // are already over.
     let mut active: Vec<(usize, usize)> = Vec::new();
-    for iv in intervals {
-        active.retain(|&(end, reg)| {
-            if end < iv.start {
+    let mut out = Vec::new();
+    for &(id, start, end) in intervals {
+        active.retain(|&(e, reg)| {
+            if e < start {
                 free.push(reg);
                 false
             } else {
@@ -2922,22 +3089,19 @@ fn allocate_registers(f: &Function) -> Vec<Option<usize>> {
         });
         free.sort_unstable();
         if let Some(reg) = free.pop() {
-            assign[iv.id] = Some(reg);
-            active.push((iv.end, reg));
+            out.push((id, reg));
+            active.push((end, reg));
         }
-        // Else: no register free, `assign[iv.id]` stays `None` — the same
-        // frame-slot path every local used before this item, unchanged.
     }
-    assign
+    out
 }
 
 /// One function's frame: each local gets a location fixed when its
 /// declaration is reached (a `Let` initializer cannot name the binding being
-/// made, so no location is ever needed before it is assigned) — either one of
-/// the callee-saved registers `allocate_registers` handed it, or, as every
-/// local got before this item, a stack slot whose offset is likewise decided
-/// at that point and the body can be generated before the frame's size is
-/// known.
+/// made, so no location is ever needed before it is assigned) — a register
+/// from one of the two `allocate_registers` pools, or, as every local got
+/// before this item, a stack slot whose offset is likewise decided at that
+/// point and the body can be generated before the frame's size is known.
 struct Frame {
     /// Bytes reserved below `rbp`, grown one slot per *spilled* declaration
     /// (a register-allocated one costs nothing here). Starts at
@@ -2950,7 +3114,7 @@ struct Frame {
     /// `declare` is called — id `i` is `locs[i]`, and the call order here is
     /// guaranteed to match the order `LiveAnalysis` built it in because both
     /// walk the same function the same way (params, then body in preorder).
-    locs: Vec<Option<usize>>,
+    locs: Vec<Assigned>,
     next_id: usize,
     /// Where this function's call sites save `rsp` across a call — see the
     /// doc below. No longer a fixed `[rbp-8]`: MK7 §5 item 3 pushes this
@@ -3007,7 +3171,7 @@ const SP_SAVE_SIZE: i32 = 8;
 const AGG_SLOT_SIZE: i32 = 16;
 
 impl Frame {
-    fn new(locs: Vec<Option<usize>>, pushed_regs: usize, ret_class: RetClass) -> Frame {
+    fn new(locs: Vec<Assigned>, pushed_regs: usize, ret_class: RetClass) -> Frame {
         let sp_slot = -SP_SAVE_SIZE * (pushed_regs as i32 + 1);
         let agg_slot = sp_slot - AGG_SLOT_SIZE;
         let ret_ptr_slot = agg_slot - SP_SAVE_SIZE;
@@ -3059,8 +3223,9 @@ impl Frame {
         let assigned = self.locs[self.next_id];
         self.next_id += 1;
         let loc = match assigned {
-            Some(reg) => Loc::Reg(reg),
-            None => {
+            Assigned::IntReg(reg) => Loc::Reg(reg),
+            Assigned::FloatReg(reg) => Loc::FReg(reg),
+            Assigned::Spill => {
                 self.used += bytes;
                 Loc::Stack(-self.used)
             }
@@ -3124,6 +3289,90 @@ fn call_align_begin(out: &mut String, sp_slot: i32) {
 
 fn call_align_end(out: &mut String, sp_slot: i32) {
     let _ = writeln!(out, "    mov rsp, QWORD PTR [rbp{sp_slot}]");
+}
+
+/// One float operand that can be *named* as a single instruction operand —
+/// the second operand of an `addsd`/`mulsd`/`ucomisd` — instead of being
+/// computed into `xmm0` first. This is the difference between `mulsd xmm0,
+/// xmm15` and `movsd xmm0, xmm15; movsd xmm1, xmm0; …; mulsd xmm0, xmm1`,
+/// and it is where almost all of this backend's float instruction count went
+/// before it: every operand of every float operator was first loaded into
+/// `xmm0`, spilled across the other operand's evaluation and reloaded.
+///
+/// Only the two shapes an instruction can address are here. Anything else —
+/// a call, a nested operator, a conversion — has to be computed, and
+/// `binary_float`'s generic path still does exactly that.
+enum FloatOperand {
+    /// A place spelled the way an instruction operand is: a `FLOAT_POOL`
+    /// register (`xmm15`) or a frame slot (`[rbp-16]`).
+    Reg(String),
+    Slot(String),
+    /// A compile-time constant, as `(width, bits)`. It has no address of its
+    /// own until `Gen::float_operand_text` interns its bytes in `.rodata`,
+    /// which is deferred so that a constant that is only *tested* for
+    /// addressability (to choose between two paths) does not emit data it
+    /// never uses.
+    Const(FWidth, u64),
+}
+
+/// The one-operand spelling of `e`, or `None` when `e` has to be computed
+/// into `xmm0`. Deliberately narrow: a bare float local and a float literal,
+/// nothing else. A struct field, a dereference or a conversion is a real
+/// computation, not an operand, and taking the generic path for those keeps
+/// the two paths' results identical by construction.
+fn float_operand(e: &Expr, frame: &Frame) -> Option<FloatOperand> {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            let (loc, ty) = frame.lookup(name)?;
+            float_ty(&ty)?;
+            Some(match loc {
+                Loc::FReg(reg) => FloatOperand::Reg(FLOAT_POOL[reg].to_string()),
+                Loc::Stack(off) => FloatOperand::Slot(format!("[rbp{off}]")),
+                Loc::Reg(_) => return None,
+            })
+        }
+        ExprKind::FloatLit(v) => {
+            let width = float_ty(&e.ty)?;
+            let bits = match width {
+                FWidth::F4 => (*v as f32).to_bits() as u64,
+                FWidth::F8 => v.to_bits(),
+            };
+            Some(FloatOperand::Const(width, bits))
+        }
+        _ => None,
+    }
+}
+
+/// Whether evaluating `e` runs a `call` the float code generator did not
+/// write — a call expression, a `print` (`printf`), `?`'s failure arm when it
+/// drops, or a block/`if` in value position, whose statements can drop owned
+/// bindings. Every `xmm` register is caller-saved, so a value held in
+/// `FLOAT_HOLD` across any of these would be clobbered; `binary_float`
+/// refuses the hold when this is true and falls back to the stack spill,
+/// which is what every float operand did before this path existed.
+fn xmm_clobbered_by(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Call { .. }
+        | ExprKind::IndirectCall { .. }
+        | ExprKind::Template { .. }
+        | ExprKind::Try { .. }
+        | ExprKind::Block(_)
+        | ExprKind::If { .. } => true,
+        ExprKind::Unary { expr, .. } | ExprKind::Ref { expr, .. } | ExprKind::Deref { expr } => {
+            xmm_clobbered_by(expr)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => xmm_clobbered_by(lhs) || xmm_clobbered_by(rhs),
+        ExprKind::Assign { target, value } => {
+            xmm_clobbered_by(target) || xmm_clobbered_by(value)
+        }
+        ExprKind::FieldAccess { base, .. } => xmm_clobbered_by(base),
+        ExprKind::EnumTag { expr, .. } => xmm_clobbered_by(expr),
+        ExprKind::EnumField { base, .. } => xmm_clobbered_by(base),
+        ExprKind::StructLit { fields, .. } => fields.iter().any(|(_, v)| xmm_clobbered_by(v)),
+        ExprKind::EnumLit { fields, .. } => fields.iter().any(xmm_clobbered_by),
+        ExprKind::FnToClosure { func } => xmm_clobbered_by(func),
+        _ => false,
+    }
 }
 
 #[derive(Default)]
@@ -3216,6 +3465,12 @@ struct Gen {
     /// last (a map's `keys`/`values` call the list routines, and its drop calls
     /// the value's own drop), and re-read to a fixpoint for the same reason.
     map_fns: Vec<MapFn>,
+    /// How many `FLOAT_HOLD` registers are in use — a nesting depth, not a
+    /// mode, so the constant-hold fast path in `binary_float` can be nested
+    /// inside itself without two levels sharing one register. Reset at the
+    /// top of every function because a register held across a function
+    /// boundary would be a value nothing restores.
+    float_hold: usize,
 }
 
 /// One owned type's drop, as a symbol this module can `call`.
@@ -3283,6 +3538,22 @@ impl Gen {
         label
     }
 
+    /// Interns `bytes` as a raw constant and returns its label — the float
+    /// counterpart of `bytes_label`, with no trailing NUL because the bytes
+    /// *are* the value. Deduplicated against everything already interned, so
+    /// a constant inside a loop is emitted once however many times it is
+    /// written (this is the only way a float literal reaches memory: an
+    /// `addsd` can take a constant as its second operand, and there is no
+    /// `mov xmm, imm`).
+    fn const_bytes_label(&mut self, bytes: &[u8]) -> String {
+        if let Some((label, _)) = self.data.iter().find(|(_, existing)| existing == bytes) {
+            return label.clone();
+        }
+        let label = format!(".LC{}", self.data.len());
+        self.data.push((label.clone(), bytes.to_vec()));
+        label
+    }
+
     fn finish(self) -> String {
         let mut out = self.out;
         if !self.data.is_empty() {
@@ -3316,6 +3587,9 @@ impl Gen {
         // `DropPlan` is keyed by `(function, span)`, so every drop lookup
         // below needs the name of the function whose body is being written.
         self.function = f.name.clone();
+        // No `FLOAT_HOLD` register is live at a function boundary — see
+        // `Gen::float_hold`.
+        self.float_hold = 0;
         if f.env.is_some() {
             return Err(unsupported(&format!(
                 "the closure environment of `{}`",
@@ -3393,8 +3667,19 @@ impl Gen {
         // has to be fixed for the whole function, and the loop-widening
         // correction `allocate_registers` applies needs the *entire* body's
         // shape up front, not just what has been seen so far.
-        let assign = allocate_registers(f);
-        let mut used_regs: Vec<usize> = assign.iter().filter_map(|r| *r).collect();
+        // Only the *integer* pool's registers are pushed: they are
+        // callee-saved, so a function that uses one has to restore the
+        // caller's value. A `FLOAT_POOL` register is caller-saved and its
+        // local never spans a call, so there is nothing to save — see
+        // `allocate_registers`.
+        let assign = allocate_registers(f, &self.drops);
+        let mut used_regs: Vec<usize> = assign
+            .iter()
+            .filter_map(|a| match a {
+                Assigned::IntReg(reg) => Some(*reg),
+                _ => None,
+            })
+            .collect();
         used_regs.sort_unstable();
         used_regs.dedup();
 
@@ -3410,7 +3695,10 @@ impl Gen {
         // declaration order rather than one shared index.
         enum ParamSlot {
             Int(Loc, Width, bool, usize),
-            Float(i32, FWidth, usize),
+            /// A `f32`/`f64` parameter: its location (a `FLOAT_POOL` register
+            /// or a frame slot) and its index in the independent vector
+            /// argument file.
+            Float(Loc, FWidth, usize),
             /// MK7 §5 item 4, third slice: a `Two`-class `datac` parameter —
             /// `(frame offset, first eightbyte's `ARG64` index, second
             /// eightbyte's)`. Always a stack slot (struct locals are never
@@ -3438,10 +3726,7 @@ impl Gen {
         for (pos, (name, ty)) in f.params.iter().enumerate() {
             let loc = frame.declare(name, ty, &self.layouts)?;
             if let Some(width) = float_ty(ty) {
-                let offset = loc
-                    .stack_offset()
-                    .expect("float locals are never register-allocated");
-                params.push(ParamSlot::Float(offset, width, float_idx));
+                params.push(ParamSlot::Float(loc, width, float_idx));
                 float_idx += 1;
             } else if let Some(layout) = struct_layout(ty, &self.layouts) {
                 match layout.class() {
@@ -3537,13 +3822,22 @@ impl Gen {
                     let _ = writeln!(self.out, "    mov {}, {}", names[width.idx()], ARG[width.idx()][*idx]);
                     self.out.push_str(&width.extend_named(*signed, names));
                 }
-                ParamSlot::Float(offset, width, idx) => {
-                    let _ = writeln!(
-                        self.out,
-                        "    {} [rbp{offset}], {}",
-                        width.mov(),
-                        FARG[*idx]
-                    );
+                ParamSlot::Int(Loc::FReg(_), _, _, _) => {
+                    unreachable!("an integer parameter is never in the float pool")
+                }
+                ParamSlot::Float(loc, width, idx) => {
+                    // The incoming value is already exactly the parameter's
+                    // width — SysV passes an `f32` in the low four bytes of
+                    // an `xmm` and an `f64` in all eight — so there is no
+                    // extension step here, unlike the integer arm above.
+                    let dest = match loc {
+                        Loc::FReg(reg) => FLOAT_POOL[*reg].to_string(),
+                        Loc::Stack(offset) => format!("[rbp{offset}]"),
+                        Loc::Reg(_) => {
+                            unreachable!("a float parameter is never in the integer pool")
+                        }
+                    };
+                    let _ = writeln!(self.out, "    {} {dest}, {}", width.mov(), FARG[*idx]);
                 }
             }
         }
@@ -6125,10 +6419,19 @@ impl Gen {
                 self.expr(init, frame)?;
                 let loc = frame.declare(name, ty, &self.layouts)?;
                 if let Some(width) = float_ty(ty) {
-                    let offset = loc
-                        .stack_offset()
-                        .expect("float locals are never register-allocated");
-                    let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
+                    match loc {
+                        Loc::FReg(reg) => {
+                            let _ =
+                                writeln!(self.out, "    {} {}, xmm0", width.mov(), FLOAT_POOL[reg]);
+                        }
+                        Loc::Stack(offset) => {
+                            let _ =
+                                writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
+                        }
+                        Loc::Reg(_) => {
+                            unreachable!("a float local is never in the integer pool")
+                        }
+                    }
                     return Ok(());
                 }
                 let (width, _) = value_kind(ty, &self.layouts).expect("declare validated the type");
@@ -6149,6 +6452,9 @@ impl Gen {
                             width.mem(),
                             width.rax()
                         );
+                    }
+                    Loc::FReg(_) => {
+                        unreachable!("an integer local is never in the float pool")
                     }
                 }
                 Ok(())
@@ -6334,10 +6640,21 @@ impl Gen {
                     return Ok(());
                 };
                 if let Some(width) = float_ty(&ty) {
-                    let offset = loc
-                        .stack_offset()
-                        .expect("float locals are never register-allocated");
-                    let _ = writeln!(self.out, "    {} xmm0, [rbp{offset}]", width.mov());
+                    // A `FLOAT_POOL` register is read as a plain
+                    // register-to-register move; the width is the value's own
+                    // (the pool register holds it in its low bytes, and a
+                    // `movsd`/`movss` moves all it needs).
+                    match loc {
+                        Loc::FReg(reg) => {
+                            let _ = writeln!(self.out, "    {} xmm0, {}", width.mov(), FLOAT_POOL[reg]);
+                        }
+                        Loc::Stack(offset) => {
+                            let _ = writeln!(self.out, "    {} xmm0, [rbp{offset}]", width.mov());
+                        }
+                        Loc::Reg(_) => {
+                            unreachable!("a float local is never in the integer pool")
+                        }
+                    }
                     return Ok(());
                 }
                 let (width, signed) = value_kind(&ty, &self.layouts)
@@ -6364,6 +6681,9 @@ impl Gen {
                             width.mem()
                         );
                         self.out.push_str(&width.extend(signed));
+                    }
+                    Loc::FReg(_) => {
+                        unreachable!("an integer local is never in the float pool")
                     }
                 }
                 Ok(())
@@ -6490,6 +6810,17 @@ impl Gen {
                     })?,
                     _ => return Err(unsupported("assignment to anything but a local")),
                 };
+                // MK7 §5's float codegen slice: a float binding updated from
+                // its own value — `x = x + c`, which is what every loop
+                // accumulator is — writes the destination the local already
+                // lives in rather than materializing the value in `xmm0` and
+                // storing it back. Tried first, and the generic path below is
+                // what runs whenever the shape does not match.
+                if let ExprKind::Ident(name) = &target.kind {
+                    if let Some(()) = self.assign_float_in_place(name, value, frame)? {
+                        return Ok(());
+                    }
+                }
                 if let Some(layout) = struct_layout(&ty, &self.layouts) {
                     if layout.class() != AggClass::One {
                         let off = loc.stack_offset().expect("agg locals are stack-only");
@@ -6522,10 +6853,19 @@ impl Gen {
                 }
                 self.expr(value, frame)?;
                 if let Some(width) = float_ty(&ty) {
-                    let offset = loc
-                        .stack_offset()
-                        .expect("float locals are never register-allocated");
-                    let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
+                    match loc {
+                        Loc::FReg(reg) => {
+                            let _ =
+                                writeln!(self.out, "    {} {}, xmm0", width.mov(), FLOAT_POOL[reg]);
+                        }
+                        Loc::Stack(offset) => {
+                            let _ =
+                                writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
+                        }
+                        Loc::Reg(_) => {
+                            unreachable!("a float local is never in the integer pool")
+                        }
+                    }
                     // An assignment's value is the assigned value, so `xmm0`
                     // is already correct and is deliberately not reloaded.
                     return Ok(());
@@ -6543,6 +6883,9 @@ impl Gen {
                             width.mem(),
                             width.rax()
                         );
+                    }
+                    Loc::FReg(_) => {
+                        unreachable!("an integer local is never in the float pool")
                     }
                 }
                 // An assignment's value is the assigned value, so `rax` is
@@ -6929,6 +7272,16 @@ impl Gen {
     /// `rax`/`rcx` play for integers: `xmm0` ends up holding the left operand
     /// and `xmm1` the right, spilling the left across the right's evaluation
     /// the same way the integer path spills `rax` to the stack.
+    ///
+    /// That generic path is what this function *falls back* to. In front of it
+    /// are three operand fast paths, and they exist because a float operator
+    /// can name one of its operands directly — `mulsd xmm0, [rbp-16]`,
+    /// `addsd xmm15, [rip+.LC7]` — where the generic path has to load it into
+    /// `xmm0`, spill that across the other operand's evaluation and reload it.
+    /// Nothing about the arithmetic differs: the same mnemonic runs on the
+    /// same two values, so a shape that takes a fast path and the same shape
+    /// without one still compute the identical result. Every fast path is
+    /// guarded, and the guard failing is the old code.
     fn binary_float(
         &mut self,
         op: BinOp,
@@ -6939,6 +7292,66 @@ impl Gen {
         let width = float_ty(&lhs.ty)
             .or_else(|| float_ty(&rhs.ty))
             .expect("caller checked at least one operand is a float");
+
+        let lhs_operand = float_operand(lhs, frame);
+        let rhs_operand = float_operand(rhs, frame);
+
+        // Fast path 1: the *right* operand is already addressable, so the
+        // left one is evaluated into `xmm0` and stays there.
+        // `<`/`<=` compare with the operands reversed (see the generic path),
+        // which a memory operand cannot spell — `ucomisd` takes its memory
+        // operand second — so those two operators always take the generic
+        // path, exactly as they did before.
+        if let Some(operand) = &rhs_operand {
+            if !matches!(op, BinOp::Lt | BinOp::LtEq) {
+                let operand = self.float_operand_text(operand);
+                self.expr(lhs, frame)?;
+                return self.float_op_from_xmm0(op, width, &operand);
+            }
+        }
+
+        // Fast path 2: the *left* operand is the addressable one and the
+        // operator reads the same either way round, so the right side is
+        // evaluated first and the left becomes the instruction's second
+        // operand. `1.0 + x * x` is the shape this exists for. A frame slot
+        // is not eligible: a slot can belong to a local whose address escaped
+        // (that is why it is a slot), and reading it after the right side
+        // instead of before would be a reordering this path has no need to
+        // risk. A pool register cannot be written by an expression, so it is.
+        if matches!(op, BinOp::Add | BinOp::Mul | BinOp::Eq | BinOp::NotEq) {
+            let eligible = matches!(lhs_operand, Some(FloatOperand::Const(..)))
+                || (matches!(lhs_operand, Some(FloatOperand::Reg(_)))
+                    && !xmm_clobbered_by(rhs));
+            if eligible {
+                let operand = self.float_operand_text(lhs_operand.as_ref().expect("checked above"));
+                self.expr(rhs, frame)?;
+                return self.float_op_from_xmm0(op, width, &operand);
+            }
+        }
+
+        // Fast path 3: a constant that has to be the *left* operand of a
+        // non-commutative operator — `1.0 / t` is the shape — is held in a
+        // `FLOAT_HOLD` register across the right side's evaluation rather
+        // than spilled to the stack. Only safe when that evaluation contains
+        // no call, because every `xmm` register is caller-saved; and only for
+        // `-`/`/`, because `+`/`*` with a constant on the left took fast path
+        // 2 above.
+        if matches!(op, BinOp::Sub | BinOp::Div)
+            && matches!(lhs_operand, Some(FloatOperand::Const(..)))
+            && !xmm_clobbered_by(rhs)
+            && self.float_hold < FLOAT_HOLD.len()
+        {
+            let hold = FLOAT_HOLD[self.float_hold].to_string();
+            self.float_hold += 1;
+            let operand = self.float_operand_text(lhs_operand.as_ref().expect("checked above"));
+            let _ = writeln!(self.out, "    {} {hold}, {operand}", width.mov());
+            self.expr(rhs, frame)?;
+            self.float_hold -= 1;
+            let mnemonic = if op == BinOp::Sub { "sub" } else { "div" };
+            let _ = writeln!(self.out, "    {mnemonic}{} {hold}, xmm0", width.suffix());
+            let _ = writeln!(self.out, "    {} xmm0, {hold}", width.mov());
+            return Ok(());
+        }
 
         self.expr(lhs, frame)?;
         self.out.push_str("    sub rsp, 8\n");
@@ -6995,6 +7408,132 @@ impl Gen {
                 Ok(())
             }
             _ => Err(unsupported("this operator on a float")),
+        }
+    }
+
+    /// `xmm0 <op> operand`, the form the operand fast paths end in: the left
+    /// operand is already in `xmm0` and `operand` names the right one. The
+    /// operators whose flag reading keeps `xmm0` as the first operand are the
+    /// only ones here — see `binary_float` on why `<`/`<=` are not.
+    fn float_op_from_xmm0(&mut self, op: BinOp, width: FWidth, operand: &str) -> Result<(), String> {
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                let mnemonic = match op {
+                    BinOp::Add => "add",
+                    BinOp::Sub => "sub",
+                    BinOp::Mul => "mul",
+                    BinOp::Div => "div",
+                    _ => unreachable!("matched above"),
+                };
+                let _ = writeln!(self.out, "    {mnemonic}{} xmm0, {operand}", width.suffix());
+                Ok(())
+            }
+            BinOp::Gt | BinOp::GtEq => {
+                let _ = writeln!(self.out, "    {} xmm0, {operand}", width.ucomi());
+                let set = if op == BinOp::Gt { "seta" } else { "setae" };
+                let _ = writeln!(self.out, "    {set} al");
+                self.out.push_str("    movzx rax, al\n");
+                Ok(())
+            }
+            BinOp::Eq | BinOp::NotEq => {
+                let _ = writeln!(self.out, "    {} xmm0, {operand}", width.ucomi());
+                if op == BinOp::Eq {
+                    self.out.push_str("    sete al\n    setnp cl\n    and al, cl\n");
+                } else {
+                    self.out.push_str("    setne al\n    setp cl\n    or al, cl\n");
+                }
+                self.out.push_str("    movzx rax, al\n");
+                Ok(())
+            }
+            _ => Err(unsupported("this operator on a float")),
+        }
+    }
+
+    /// The instruction text for an addressable operand, interning a constant's
+    /// bytes in `.rodata` the first time it is emitted — the deferred half of
+    /// `FloatOperand`.
+    fn float_operand_text(&mut self, operand: &FloatOperand) -> String {
+        match operand {
+            FloatOperand::Reg(reg) => reg.clone(),
+            FloatOperand::Slot(operand) => operand.clone(),
+            FloatOperand::Const(width, bits) => {
+                let bytes = match width {
+                    FWidth::F4 => (*bits as u32).to_le_bytes().to_vec(),
+                    FWidth::F8 => bits.to_le_bytes().to_vec(),
+                };
+                format!("[rip+{}]", self.const_bytes_label(&bytes))
+            }
+        }
+    }
+
+    /// The in-place form of `x = x <op> operand`, or `None` when the shape
+    /// does not match and the generic assignment path should run instead.
+    ///
+    /// The two things it requires are the two things that make it sound. The
+    /// local being assigned has to be an operand of the value (the left one,
+    /// or — for `+`/`*`, which read the same either way round — the right
+    /// one), so the operation is the same arithmetic on the same values; and
+    /// the *other* operand has to be a single addressable one, so evaluating
+    /// it can neither read nor write the destination before the operator
+    /// runs. A pool register then takes the whole update as one instruction
+    /// (`addsd xmm15, [rip+.LC3]`); a spilled local takes load/operate/store,
+    /// which is still shorter than the generic path's trip through `xmm0`
+    /// plus the left-operand spill it would do for the same expression.
+    ///
+    /// The value is deliberately left in the destination and not copied into
+    /// `xmm0`: an assignment's own type is `unit` (`infer.rs`), so nothing
+    /// reads it.
+    fn assign_float_in_place(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        frame: &mut Frame,
+    ) -> Result<Option<()>, String> {
+        let ExprKind::Binary { op, lhs, rhs } = &value.kind else {
+            return Ok(None);
+        };
+        let mnemonic = match op {
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::Div => "div",
+            _ => return Ok(None),
+        };
+        let Some((loc, ty)) = frame.lookup(name) else {
+            return Ok(None);
+        };
+        let Some(width) = float_ty(&ty) else {
+            return Ok(None);
+        };
+        let is_self = |e: &Expr| matches!(&e.kind, ExprKind::Ident(n) if n == name);
+        let operand = if is_self(lhs) {
+            float_operand(rhs, frame)
+        } else if is_self(rhs) && matches!(op, BinOp::Add | BinOp::Mul) {
+            float_operand(lhs, frame)
+        } else {
+            None
+        };
+        let Some(operand) = operand else {
+            return Ok(None);
+        };
+        let operand = self.float_operand_text(&operand);
+        match loc {
+            Loc::FReg(reg) => {
+                let _ = writeln!(
+                    self.out,
+                    "    {mnemonic}{} {}, {operand}",
+                    width.suffix(),
+                    FLOAT_POOL[reg]
+                );
+                Ok(Some(()))
+            }
+            Loc::Stack(off) => {
+                let _ = writeln!(self.out, "    {} xmm0, [rbp{off}]", width.mov());
+                let _ = writeln!(self.out, "    {mnemonic}{} xmm0, {operand}", width.suffix());
+                let _ = writeln!(self.out, "    {} [rbp{off}], xmm0", width.mov());
+                Ok(Some(()))
+            }
+            Loc::Reg(_) => Ok(None),
         }
     }
 
@@ -7716,6 +8255,9 @@ impl Gen {
                         }
                         Loc::Stack(off) => {
                             let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{off}]");
+                        }
+                        Loc::FReg(_) => {
+                            unreachable!("a reference local is never in the float pool")
                         }
                     }
                 } else {

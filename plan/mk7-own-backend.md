@@ -26,7 +26,7 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **226 of 283** integration tests pass under `--backend=asm`; all 132 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 163 C and 132 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **226 of 283** integration tests pass under `--backend=asm`; all 132 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 163 C and 132 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit, and then the float codegen slice (below) — `f32`/`f64` locals in an `xmm` pool and float operands named directly instead of loaded — which is the first change on this branch that moves a `bench/speed` kernel rather than a fixture count: `float` goes from 4.14x the measured `-O0` column to 0.71x, `collatz` and `mix` stay under it at 0.96 and 0.70, and `fib` stays at 1.70 because it has no float local at all and its cost is the integer path's call sequence |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
@@ -1953,6 +1953,89 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     register is about, caught by an A/B build (fix reverted: `3,6` becomes `1,2`) rather than by a refusal, and
     the fixture is the regression test. The valgrind gate covers both: 259 runs, zero findings, and the owned
     passdowns free clean.
+
+**The float codegen slice — `f32`/`f64` locals in the `xmm` pool, and float
+operands named instead of loaded — is done (2026-09-21).** It is the first
+change on this branch that moves a `bench/speed` kernel's number rather than a
+fixture count, and the number it moved was 4.14x. Item 3's blockquote above
+named the exclusion — "`f32`/`f64` locals are excluded entirely" — and that
+exclusion turned out to be the *smaller* half of the gap. Measured on the four
+kernels (`bench/speed/speed.kp`'s bodies and constants verbatim, the clock calls
+removed, timed externally), interleaved round-robin so machine load hits every
+column equally, 9 runs each, medians in ms:
+
+| workload | `-O0` | `-O2` | asm before | asm after | after/`-O0` |
+| --- | --- | --- | --- | --- | --- |
+| `collatz` | 452.1 | 85.7 | 438.8 | 434.1 | 0.96 |
+| `float` | 260.0 | 114.9 | 1077.2 | 185.4 | **0.71** |
+| `mix` | 205.2 | 168.2 | 145.9 | 144.4 | 0.70 |
+| `fib` | 544.4 / 20 | 465.9 / 20 | 924.1 / 20 | 923.7 / 20 | 1.70 |
+
+What each half measured: giving every `f32`/`f64` local a `FLOAT_POOL` register
+(`xmm8`-`xmm15`) instead of a frame slot is worth 1077.2 → 822.0 — a quarter of
+the loop, nowhere near the 4.14x. The other three quarters are
+`Gen::binary_float`, which loaded *every* operand into `xmm0`, spilled the left
+one to `[rsp]` across the right one's evaluation and reloaded it: ~83
+instructions per iteration where clang `-O0` needs 25, which is worse code
+generation than `-O0` rather than merely unoptimized code. Two candidates the
+diagnosis ruled out by measurement instead of by reading: the left-operand spill
+is *not* the cost (hand-replacing all five `[rsp]` spill pairs with
+`xmm2`-`xmm7` holds, checksum unchanged, ran 18% **slower**), and the float
+constants were never `.rodata` loads (they were `mov rax, imm64; movq xmm0, rax`,
+two instructions each).
+
+What replaced them, all of it additive and all of it falling back to the path
+above when its guard does not hold: an operand that is already a place or a
+constant is named as the instruction's second operand (`mulsd xmm0, [rbp-16]`,
+`addsd xmm15, [rip+.LC0]`); a commutative operator whose *left* operand is
+addressable evaluates the right one first and uses the left as that operand
+(`1.0 + x * x`); a constant that has to be the left operand of a
+non-commutative one is held in `xmm2`-`xmm7` across the right side's evaluation
+(`1.0 / t`), refused when that side contains a call because every `xmm` register
+is caller-saved; and `x = x <op> v` updates the destination in place — one
+instruction when the local is in the pool, three when it is not. Float
+constants are interned in `.rodata` now, since an `addsd` can take one as an
+operand and there is no `mov xmm, imm`.
+
+The allocator's discipline is the part that keeps this correct, and it is
+narrower than the integer pool's on purpose: the five integer registers are
+callee-saved, so a local that spans a call still holds its value when the call
+returns, while all sixteen `xmm` registers are caller-saved. A float local is a
+`FLOAT_POOL` candidate only when no *clobber span* overlaps its live range —
+`LiveAnalysis::clobbers`, which is every call expression's whole argument list
+(an inner call in an earlier argument clobbers the registers before a later
+argument reads them), every `print`'s piece list, and every drop site, all of
+which the emitter can turn into a `call`. A float local that cannot be allocated
+keeps its frame slot, which is what every float local had before this slice. All
+226 integration tests the asm backend passed before it still pass, with the same
+names, and every fixture either backend builds still prints byte-identical
+stdout to the C backend.
+
+**Still excluded, and why the gate is not met everywhere.** The integer path is
+untouched, and for `float` it is now the *residual*: of the ~32 instructions the
+new loop still spends per iteration, 19 are integer loop control — the
+`i < iters` comparison and `i = i + 1` each round-trip their operands through
+the stack, and `*above = *above + 1` is twelve instructions taken 57.7M times.
+A hand-written version of the same kernel that fixes only that control runs
+109 ms, faster than `-O2`, so what is left is a bounded piece of work rather
+than a property of the architecture. `fib` is unchanged at 1.70x for the same
+reason from the other end: it has no float local at all, and its cost is 69
+instructions per call against clang `-O0`'s 34 — the prologue/epilogue around
+two pushed registers, the call-site `rsp` save at four instructions per call
+site, and the `mut i64` counter's twelve-instruction update. Hand-writing those
+three alone gets 30.9 ms against `-O0`'s 28.1, i.e. 1.10x. §3's claim that a
+competent allocator with no optimizer lands between the two columns survives
+this measurement for `collatz` (0.96), `mix` (0.70) and `float` (0.71), but not
+for `fib`, whose gap is call-sequence overhead rather than arithmetic.
+
+One measurement condition decides how a re-run should be read, and §13's annex
+already asks for it: `float`'s new loop is throughput-bound, so it is far more
+sensitive to co-running work than clang's `-O0` code is. On this machine its
+9-run median is 185 ms and its minimum 140 ms, but runs that overlapped another
+lane's compilation landed at 459-496 ms while the `-O0` and `-O2` columns stayed
+inside 3% of their own medians through the same window. The gate number is the
+uncontended one; a run on a loaded machine is not comparable, and the same
+caution applies to every slice that makes a kernel *faster*.
 
 Definition of done: all 280 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
