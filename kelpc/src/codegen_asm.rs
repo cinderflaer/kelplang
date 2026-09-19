@@ -3147,8 +3147,22 @@ impl Gen {
                     let _ = writeln!(self.out, "    div {}", width.rcx());
                 }
                 if op == BinOp::Mod {
-                    // The remainder is left in the high half of the dividend.
-                    let _ = writeln!(self.out, "    mov rax, {}", RDX[width.idx()]);
+                    // The remainder is left in the high half of the dividend —
+                    // the register `hi` above names — and it has to be moved
+                    // into `rax`'s own narrow register before the `extend`
+                    // below, which reads `rax`'s names (`al`/`ax`/`eax`). A
+                    // byte is the case worth spelling out: a byte dividend's
+                    // remainder lands in `ah`, not in `RDX`'s `dl`, so the two
+                    // ends of this move are not the same register table.
+                    //
+                    // Both ends must carry the *same* width — that is the whole
+                    // bug this fixes: `mov rax, edx` (a 64-bit destination and
+                    // a 32-bit source) is not an instruction, so `%` below
+                    // sixty-four bits failed to assemble rather than
+                    // miscompiling, and no fixture had ever used one that the
+                    // asm backend could reach.
+                    let rem = ["ah", "dx", "edx", "rdx"][width.idx()];
+                    let _ = writeln!(self.out, "    mov {}, {rem}", width.rax());
                 }
                 self.out.push_str(&width.extend(signed));
             }

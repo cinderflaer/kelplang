@@ -1,0 +1,53 @@
+// `%` at every integer width (MK7 §5). A division's remainder lands in the
+// *high* half of the dividend — `ah` for a byte, `dx` for a word, `edx` for a
+// dword — and the asm backend moved it into a sixty-four-bit destination,
+// which the assembler rejects outright. No asm-buildable fixture had ever
+// divided a narrow value, so the gap survived until the heap slice's own probe
+// found it: a loud `as` failure rather than a silent wrong number, but a
+// missing operation all the same.
+//
+// Every value below is chosen so that reading the wrong register, or leaving
+// the result unextended, prints a different number rather than failing to
+// assemble. The negatives pin the rule that a remainder follows its *dividend*
+// rather than its divisor, which is the part of `%` a sign-extension bug gets
+// wrong rather than losing entirely. (There is no signed 8- or 16-bit integer
+// type in v1 — only `u8` and `u16` are that narrow — so the two narrow widths
+// are exercised unsigned, which is also the only way they can be reached.)
+//
+// The wide cases use named locals rather than inline literals on purpose: a
+// literal wider than its own inferred type is folded differently by the two
+// backends today, which is a C-backend finding recorded in
+// `plan/mk7-own-backend.md` §5 rather than something this fixture should pin
+// either way. Every literal written below is exactly representable at its type.
+fun main() {
+    // i32: positive, both orders of negative, and a dividend whose remainder is
+    // wider than a byte.
+    print(7 % 3)
+    print(-7 % 3)
+    print(7 % -3)
+    print(-7 % -3)
+    var i: i32 = 1000
+    print(i % 7)
+
+    // u32, above 2^31 so a sign-extending load would print a negative number.
+    val u: u32 = 4000000000
+    print(u % 7)
+
+    // u8: the byte case, where the remainder really is in `ah`.
+    val b: u8 = 200
+    print(b % 7)
+    val b2: u8 = 255
+    print(b2 % 16)
+
+    // u16: the word case, `dx`.
+    val s: u16 = 40000
+    print(s % 7)
+    print(65535 % 1000)
+
+    // i64, which always worked, kept beside the narrow ones so a fix for the
+    // narrow widths cannot quietly change the wide one.
+    val big: i64 = 1000000000007
+    val m: i64 = 1000000007
+    print(big % m)
+    print(0 - big % m)
+}

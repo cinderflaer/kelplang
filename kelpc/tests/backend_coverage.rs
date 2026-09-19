@@ -64,10 +64,15 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 127 fixtures the C backend
-/// builds, 37 of them also built by the asm backend, 90 refused — which is the
-/// 135-of-248 integration-test ratio in the plan's §0 table, measured at the
-/// fixture level instead of the test level.
+/// The counts this list was recorded against: 128 fixtures the C backend
+/// builds, 48 of them also built by the asm backend, 80 refused — which is the
+/// 146-of-249 integration-test ratio in the plan's §0 table, measured at the
+/// fixture level instead of the test level. (Re-recorded for MK7 §5's first
+/// heap slice, which added `bytes_build`, `heap_branches`, `heap_bytes`,
+/// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
+/// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem`; the
+/// list was 37 entries at 135-of-248 before it. `int_mod_narrow` came with the
+/// `%` fix that slice's probe forced, in the same commit.)
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "asm_float_print",
@@ -77,6 +82,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "borrow_basic",
     "borrow_temp_arg",
     "borrow_temp_slots",
+    "bytes_build",
     "char_literals",
     "consts",
     "datac_basic",
@@ -88,9 +94,18 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "field_read_does_not_move",
     "float_conversions",
     "float_nonfinite_literal",
+    "heap_branches",
+    "heap_bytes",
+    "heap_drops_in_control_flow",
+    "heap_move_then_rebind",
+    "heap_param_borrow",
+    "heap_reassign",
+    "heap_returned",
+    "heap_scope_drop",
     "if_expr",
     "int_conversion_overflow",
     "int_conversions",
+    "int_mod_narrow",
     "move_then_reinit",
     "named_args",
     "nested_while_registers",
@@ -103,6 +118,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "pd_var_copy_read_twice",
     "pd_var_write",
     "stdlib_math",
+    "stdlib_mem",
     "when_expr",
     "when_in_args",
     "while_accumulator",

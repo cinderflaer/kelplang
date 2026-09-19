@@ -872,6 +872,19 @@ fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
     assert_fixture_panics("int_conversion_overflow", "i64.to_u8: value out of range");
 }
 
+/// MK7 §5: the remainder of a division at every integer width. This is the
+/// fixture that was missing when the asm backend moved a narrow remainder into
+/// a sixty-four-bit destination — a real `as` failure for `%` on `i32`/`u8`/
+/// `u16` that no fixture had ever reached, because the only fixtures dividing a
+/// narrow value were refused for other reasons first.
+#[test]
+fn remainder_works_at_every_integer_width() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_mod_narrow.kp",
+        "1\n-1\n1\n-1\n6\n3\n4\n15\n2\n535\n999993014\n-999993014\n",
+    );
+}
+
 #[test]
 fn a_failed_syscall_reports_errno_and_strerror() {
     // `ENOENT` is 2 on Linux, and glibc and musl both spell it this way; the
@@ -3313,6 +3326,23 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         "escapes",
         "char_literals",
         "stdlib_math",
+        // MK7 §5's first heap slice: a `Bytes` is a MEMORY-class aggregate that
+        // owns its buffer, so these four pin the two things a wrong
+        // implementation gets *quietly* wrong rather than loudly — the hidden
+        // return pointer and the caller's outgoing argument area on the ABI
+        // side, and where the `free` lands on the lifetime side. A leak prints
+        // nothing at all, which is why the fixture literals alone cannot see
+        // it; `valgrind` over the same binaries is the memory gate (see §5).
+        "heap_returned",
+        "heap_param_borrow",
+        "heap_drops_in_control_flow",
+        "heap_reassign",
+        "stdlib_mem",
+        // ...and the division the asm backend could not even assemble at
+        // narrow widths until this slice's probe found it: the remainder's
+        // register is the one place a hand-written `idiv`/`div` can read the
+        // wrong half of the dividend and print a plausible wrong number.
+        "int_mod_narrow",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();
