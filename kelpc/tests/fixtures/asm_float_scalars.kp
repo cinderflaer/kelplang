@@ -1,0 +1,41 @@
+// MK7 §5 item 2: f32/f64 scalar arithmetic on the `asm` backend. Printing a
+// float itself is still out of scope for this item (that is `fmt`/`Display`,
+// a separate long-tail gap), so every check here goes through a `bool`
+// result instead — the arithmetic and comparisons are what this fixture
+// pins, not float formatting.
+fun add(a: f64, b: f64).R: f64 = a + b
+
+// A mixed-class call: SysV numbers the integer and vector argument
+// registers independently, so `b`'s `f64` must land in `xmm0` even though it
+// is the second *argument overall*, and `a`/`c` must still land in `rdi`/
+// `rsi` rather than being pushed out to `rdi`/`rdx` by `b`'s position.
+fun mid(a: i32, b: f64, c: i32).R: i32 = a + c
+
+fun main() {
+    val x: f64 = 3.5
+    val y: f64 = 2.25
+    print(x + y > 5.0)
+    print(x - y < 2.0)
+    print(x * 2.0 == 7.0)
+    print(x / y != 1.0)
+
+    var z: f64 = -x
+    print(z < 0.0)
+    z = add(1.5, 2.5)
+    print(z == 4.0)
+    print(mid(1, 10.0, 2) == 3)
+
+    val f: f32 = 1.5
+    val g: f32 = 2.5
+    print(f + g == 4.0)
+
+    // Comparisons with NaN are unordered: every relational operator is
+    // `false` except `!=`, which is `true`.
+    val nan: f64 = 0.0 / 0.0
+    print(nan == nan)
+    print(nan != nan)
+    print(nan < 1.0)
+    print(nan > 1.0)
+    print(nan <= 1.0)
+    print(nan >= 1.0)
+}

@@ -1228,6 +1228,14 @@ fn bitwise_operators_on_bool_are_rejected() {
 }
 
 #[test]
+fn float_arithmetic_comparisons_and_unordered_nan() {
+    assert_compiles_and_runs(
+        "tests/fixtures/asm_float_scalars.kp",
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\nfalse\nfalse\nfalse\n",
+    );
+}
+
+#[test]
 fn a_view_keeps_its_provenance_through_a_pattern_binding() {
     assert_compiles_and_runs(
         "tests/fixtures/borrow_provenance_and_arms.kp",
@@ -3191,6 +3199,7 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         "if_expr",
         "named_args",
         "bitwise",
+        "asm_float_scalars",
     ] {
         let source = format!("tests/fixtures/{name}.kp");
         let mut outputs = Vec::new();

@@ -26,14 +26,14 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — first slice landed** | `codegen_asm.rs`, 977 lines; **100 of 235** integration tests pass under `--backend=asm`; commit `1cd4d42` |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, then f32/f64, landed** | `codegen_asm.rs`; **101 of 240** integration tests pass under `--backend=asm`; f32/f64 arithmetic (item 2) is the newest slice |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
-| **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is next |
+| **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
-The one number that matters most: **100 of 235 tests pass on the asm backend, and the C backend passes all
-235.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+The one number that matters most: **101 of 240 tests pass on the asm backend, and the C backend passes all
+240.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1).
 
@@ -173,17 +173,23 @@ with the backend as the only variable.
 
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
-> **Status: first slice landed** (`codegen_asm.rs`, 977 lines). `kelpc build
+> **Status: first slice landed, item 2 (f32/f64) now with it.** `kelpc build
 > --backend=asm` emits x86-64 assembly itself and finishes with `as` and `ld`,
-> with no C compiler in the chain. Measured: **100 of 235 end-to-end tests
-> pass**, and the C backend passes all 235 — so the differential gate is live
+> with no C compiler in the chain. Measured: **101 of 240 end-to-end tests
+> pass**, and the C backend passes all 240 — so the differential gate is live
 > (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number can
 > only rise from here.
 >
-> Covered: every integer width, `bool`, `char`, all unary and binary operators
+> Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
+> comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
+> `tests/fixtures/asm_float_scalars.kp`), all unary and binary operators
 > including short-circuiting `&&`/`||`, `if`/`else` in statement and value
-> position, `while`, assignment, calls with up to six integer arguments,
-> recursion, and `print`/`print!` of integers, characters and booleans.
+> position, `while`, assignment, calls with up to six integer *and* eight float
+> arguments classified independently per SysV, recursion, and `print`/`print!`
+> of integers, characters and booleans. **Not** covered yet: printing a float
+> itself — that is `fmt`'s `Display` machinery (shortest round-trip), a
+> separate gap from item 2's ABI/arithmetic scope, and still in the long-tail
+> row below.
 >
 > Three deliberate first-slice choices, each a thing later work replaces:
 > a **stack machine** rather than a register allocator (item 3 below), **assembly
@@ -191,9 +197,13 @@ with the backend as the only variable.
 > uncovered construct is reported by name, so the suite measures coverage instead
 > of hiding miscompiles. Capability-gated calls are refused rather than emitted
 > unchecked: that is the one place an unimplemented feature would be a security
-> hole rather than a wrong number.
+> hole rather than a wrong number. Item 2 kept the stack-machine discipline
+> rather than pre-empting item 3: `xmm0`/`xmm1` play the role `rax`/`rcx` play
+> for integers, spilling the left operand across the right's evaluation the
+> same way, so a real register allocator still replaces both paths at once
+> rather than the float path needing a second rewrite.
 >
-> **Where the next 135 failures rank**, measured by aggregating what the backend
+> **Where the next 139 failures rank**, measured by aggregating what the backend
 > refuses across the fixtures the C backend builds:
 >
 > | blocker | fixtures |
@@ -207,7 +217,10 @@ with the backend as the only variable.
 >
 > The first row is the argument for §8 being a *parallel* track: the single
 > biggest unlock is the runtime, not the code generator, and the runtime is the
-> half of this work that is backend-independent.
+> half of this work that is backend-independent — though as the correction
+> above (§0 item 1, and §8 below) records, the runtime landing in Kelp does not
+> by itself clear that row; the asm backend's blanket extern refusal has to move
+> too.
 >
 > Two bugs the differential suite found, kept as evidence the gate works:
 > comparisons took their operand width from the `bool` result type (so every
@@ -227,8 +240,12 @@ Scope, in build order. Each bullet is separately testable against the fixture su
 1. **Scalars.** `i32`/`i64`/`u32`/`u64`/`u8`/`u16`/`usize`/`isize`/`bool`/`char`, integer arithmetic,
    comparisons, `while`, `if`/`else`, `return`, function calls, and the `-fwrapv` contract expressed as
    explicit wrapping adds. `char` is `uint32_t` (a codepoint, not a byte) and must not be confused with `u8`.
-2. **f32/f64.** SSE2 scalar ops in `xmm`, including the SysV rule that a call's vector-register usage is
-   independent of the integer argument registers.
+2. **f32/f64. Done** (2026-09-19). SSE2 scalar ops in `xmm` — arithmetic, comparisons (`ucomiss`/`ucomisd`,
+   correct on the unordered/NaN case), unary negation (bit-flip through the integer file, since there is no
+   `neg` for `xmm` and a memory-operand `xorps`/`xorpd` mask would need 16-byte alignment) — and the SysV rule
+   that a call's vector-register usage is independent of the integer argument registers, verified both
+   directions (an `f64` argument in the middle of an integer arg list, and vice versa). Printing a float is
+   deliberately not part of this item; it stays refused until the formatter (§8) exists.
 3. **A register allocator.** Not necessarily a good one: a linear-scan allocator over the TIR block structure,
    falling back to spilling. This is the piece that decides the `-O0`-vs-`-O2` position, and it is better to
    write it once properly than to ship a stack machine and rewrite it at Stage 2.

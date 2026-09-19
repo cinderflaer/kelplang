@@ -27,11 +27,15 @@
 //!    covered, and that number rises by removing named gaps instead of by
 //!    hunting silent miscompiles.
 //!
-//! Covered: every integer width, `bool`, `char`, all unary and binary
+//! Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
+//! comparisons (including the unordered/NaN case), all unary and binary
 //! operators including short-circuiting `&&`/`||`, `if`/`else` in statement and
-//! value position, `while`, assignment, calls with up to six integer arguments,
-//! recursion, and `print`/`print!` of integers and characters through a single
-//! `printf`.
+//! value position, `while`, assignment, calls with up to six integer and eight
+//! float arguments classified independently per SysV, recursion, and
+//! `print`/`print!` of integers and characters through a single `printf`.
+//! Printing a float itself is not covered — that is `fmt`'s `Display`
+//! machinery, a separate gap from this item's ABI/arithmetic scope
+//! (`plan/mk7-own-backend.md` §5 item 2).
 //!
 //! # Calling convention
 //!
@@ -91,6 +95,13 @@ const ARG: [[&str; 6]; 4] = [
 /// The size directive a `mov` to a frame slot needs written out, since the
 /// slot is addressed as `[rbp-8]` with no register to infer a size from.
 const MEM: [&str; 4] = ["BYTE PTR", "WORD PTR", "DWORD PTR", "QWORD PTR"];
+/// The SysV vector argument registers, in order. Classified *independently*
+/// of `ARG64`: a call's Nth float argument goes in `FARG[k]` where `k` counts
+/// only the float arguments seen so far, not the argument's overall position —
+/// `f(1, 2.0, 3)` passes `2.0` in `xmm0`, not `xmm1`.
+const FARG: [&str; 8] = [
+    "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+];
 
 impl Width {
     fn idx(self) -> usize {
@@ -158,6 +169,64 @@ impl Width {
             _ => return None,
         })
     }
+}
+
+/// `f32`/`f64`, which live in the `xmm` registers rather than the integer
+/// file and therefore need their own mnemonics at every site an integer
+/// `Width` would otherwise be used. `F4`/`F8` name the *value's* size, not a
+/// register width — every `xmm` register is the same physical size regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FWidth {
+    F4,
+    F8,
+}
+
+impl FWidth {
+    fn bytes(self) -> i32 {
+        match self {
+            FWidth::F4 => 4,
+            FWidth::F8 => 8,
+        }
+    }
+
+    /// The scalar move mnemonic: `movss`/`movsd`, used for both loads/stores
+    /// and register-to-register copies since there is no separate "load"
+    /// opcode for a scalar `xmm` value.
+    fn mov(self) -> &'static str {
+        match self {
+            FWidth::F4 => "movss",
+            FWidth::F8 => "movsd",
+        }
+    }
+
+    /// The arithmetic mnemonic suffix (`add` + this = `addss`/`addsd`).
+    fn suffix(self) -> &'static str {
+        match self {
+            FWidth::F4 => "ss",
+            FWidth::F8 => "sd",
+        }
+    }
+
+    /// `ucomiss`/`ucomisd`, the only scalar float comparison this slice needs:
+    /// it sets the flags the same way an unsigned integer compare would,
+    /// which is what lets `Width::setcc`'s unsigned family (with reversed
+    /// operands for `<`/`<=`, see `Gen::binary_float`) read the result
+    /// correctly, including the unordered (NaN) case.
+    fn ucomi(self) -> &'static str {
+        match self {
+            FWidth::F4 => "ucomiss",
+            FWidth::F8 => "ucomisd",
+        }
+    }
+}
+
+/// `f32`/`f64` classification, the float-side counterpart of `int_ty`.
+fn float_ty(ty: &Ty) -> Option<FWidth> {
+    Some(match ty {
+        Ty::F32 => FWidth::F4,
+        Ty::F64 => FWidth::F8,
+        _ => return None,
+    })
 }
 
 /// A type this slice can lower, as `(width, signed)`.
@@ -306,9 +375,11 @@ impl Frame {
     /// Binds `name` to a fresh slot of `ty`'s size and returns the offset from
     /// `rbp`, always negative.
     fn declare(&mut self, name: &str, ty: &Ty) -> Result<i32, String> {
-        let (width, _) =
-            int_ty(ty).ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
-        self.used += width.bytes();
+        let bytes = int_ty(ty)
+            .map(|(w, _)| w.bytes())
+            .or_else(|| float_ty(ty).map(|w| w.bytes()))
+            .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
+        self.used += bytes;
         let offset = -self.used;
         self.scopes
             .last_mut()
@@ -419,14 +490,8 @@ impl Gen {
                 f.name
             )));
         }
-        if f.params.len() > ARG64.len() {
-            return Err(unsupported(&format!(
-                "`{}`, which takes more than six parameters",
-                f.name
-            )));
-        }
         for (name, ty) in &f.params {
-            if int_ty(ty).is_none() {
+            if int_ty(ty).is_none() && float_ty(ty).is_none() {
                 return Err(unsupported(&format!(
                     "the parameter `{name}: {}` of `{}`",
                     ty.display(),
@@ -434,10 +499,22 @@ impl Gen {
                 )));
             }
         }
-        if f.ret != Ty::Unit && int_ty(&f.ret).is_none() {
+        if f.ret != Ty::Unit && int_ty(&f.ret).is_none() && float_ty(&f.ret).is_none() {
             return Err(unsupported(&format!(
                 "the return type `{}` of `{}`",
                 f.ret.display(),
+                f.name
+            )));
+        }
+        if f.params.iter().filter(|(_, ty)| int_ty(ty).is_some()).count() > ARG64.len() {
+            return Err(unsupported(&format!(
+                "`{}`, which takes more than six integer parameters",
+                f.name
+            )));
+        }
+        if f.params.iter().filter(|(_, ty)| float_ty(ty).is_some()).count() > FARG.len() {
+            return Err(unsupported(&format!(
+                "`{}`, which takes more than eight float parameters",
                 f.name
             )));
         }
@@ -446,12 +523,28 @@ impl Gen {
         frame.push_scope();
         // Parameters are bound to the same slots a local would use; their
         // incoming registers are spilled in the prologue, which is written
-        // after the body because only the body knows the frame's size.
-        let mut params: Vec<(i32, Width)> = Vec::new();
+        // after the body because only the body knows the frame's size. An
+        // integer and a float parameter at the same *position* do not share a
+        // register: SysV classifies and numbers each register file
+        // independently, so two counters are threaded through in declaration
+        // order rather than one shared index.
+        enum ParamSlot {
+            Int(i32, Width, usize),
+            Float(i32, FWidth, usize),
+        }
+        let mut params: Vec<ParamSlot> = Vec::new();
+        let mut int_idx = 0usize;
+        let mut float_idx = 0usize;
         for (name, ty) in &f.params {
             let offset = frame.declare(name, ty)?;
-            let (width, _) = int_ty(ty).expect("checked above");
-            params.push((offset, width));
+            if let Some((width, _)) = int_ty(ty) {
+                params.push(ParamSlot::Int(offset, width, int_idx));
+                int_idx += 1;
+            } else {
+                let width = float_ty(ty).expect("checked above");
+                params.push(ParamSlot::Float(offset, width, float_idx));
+                float_idx += 1;
+            }
         }
 
         let saved = std::mem::take(&mut self.out);
@@ -467,13 +560,25 @@ impl Gen {
         self.out.push_str("    push rbp\n    mov rbp, rsp\n");
         let _ = writeln!(self.out, "    sub rsp, {}", frame.size().max(16));
 
-        for (i, (offset, width)) in params.iter().enumerate() {
-            let _ = writeln!(
-                self.out,
-                "    mov {} [rbp{offset}], {}",
-                width.mem(),
-                ARG[width.idx()][i]
-            );
+        for p in &params {
+            match p {
+                ParamSlot::Int(offset, width, idx) => {
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {} [rbp{offset}], {}",
+                        width.mem(),
+                        ARG[width.idx()][*idx]
+                    );
+                }
+                ParamSlot::Float(offset, width, idx) => {
+                    let _ = writeln!(
+                        self.out,
+                        "    {} [rbp{offset}], {}",
+                        width.mov(),
+                        FARG[*idx]
+                    );
+                }
+            }
         }
 
         self.out.push_str(&body);
@@ -509,6 +614,10 @@ impl Gen {
             Stmt::Let { name, ty, init } => {
                 self.expr(init, frame)?;
                 let offset = frame.declare(name, ty)?;
+                if let Some(width) = float_ty(ty) {
+                    let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
+                    return Ok(());
+                }
                 let (width, _) = int_ty(ty).expect("declare validated the type");
                 let _ = writeln!(
                     self.out,
@@ -589,6 +698,10 @@ impl Gen {
                 let (offset, ty) = frame
                     .lookup(name)
                     .ok_or_else(|| unsupported(&format!("a read of the name `{name}`")))?;
+                if let Some(width) = float_ty(&ty) {
+                    let _ = writeln!(self.out, "    {} xmm0, [rbp{offset}]", width.mov());
+                    return Ok(());
+                }
                 let (width, signed) = int_ty(&ty)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
                 // Load at the value's own width and extend, so a narrow local
@@ -607,6 +720,32 @@ impl Gen {
             }
             ExprKind::Unary { op, expr } => {
                 self.expr(expr, frame)?;
+                if let Some(width) = float_ty(&e.ty) {
+                    // `!x` and `~x` do not exist for a float, so `Neg` is the
+                    // only unary op infer.rs can have accepted here. There is
+                    // no `neg` instruction for `xmm`, so the sign bit is
+                    // flipped through the integer file instead: move the bits
+                    // out, `xor` the top bit, move them back. This sidesteps
+                    // the 16-byte alignment a memory-operand `xorps`/`xorpd`
+                    // would need for a mask constant.
+                    if *op != UnOp::Neg {
+                        return Err(unsupported("this unary operator on a float"));
+                    }
+                    match width {
+                        FWidth::F8 => {
+                            self.out.push_str("    movq rax, xmm0\n");
+                            self.out
+                                .push_str("    mov rcx, 0x8000000000000000\n    xor rax, rcx\n");
+                            self.out.push_str("    movq xmm0, rax\n");
+                        }
+                        FWidth::F4 => {
+                            self.out.push_str("    movd eax, xmm0\n");
+                            self.out.push_str("    xor eax, 0x80000000\n");
+                            self.out.push_str("    movd xmm0, eax\n");
+                        }
+                    }
+                    return Ok(());
+                }
                 let (width, signed) = int_ty(&e.ty)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", e.ty.display())))?;
                 match op {
@@ -636,6 +775,12 @@ impl Gen {
                     _ => return Err(unsupported("assignment to anything but a local")),
                 };
                 self.expr(value, frame)?;
+                if let Some(width) = float_ty(&ty) {
+                    let _ = writeln!(self.out, "    {} [rbp{offset}], xmm0", width.mov());
+                    // An assignment's value is the assigned value, so `xmm0`
+                    // is already correct and is deliberately not reloaded.
+                    return Ok(());
+                }
                 let (width, _) = int_ty(&ty)
                     .ok_or_else(|| unsupported(&format!("the type `{}`", ty.display())))?;
                 let _ = writeln!(
@@ -676,7 +821,27 @@ impl Gen {
             }
             ExprKind::Capture { .. } => Err(unsupported("a closure capture")),
             ExprKind::StringLit(_) => Err(unsupported("a string value")),
-            ExprKind::FloatLit(_) => Err(unsupported("a floating-point value")),
+            ExprKind::FloatLit(v) => {
+                // There is no `mov xmm, imm`: a float constant has to arrive
+                // through the integer file as its raw bit pattern and cross
+                // over with `movq`/`movd`, which is exactly what `codegen_c.rs`
+                // does not need to worry about but every assembler-level
+                // backend does.
+                let width = float_ty(&e.ty)
+                    .ok_or_else(|| unsupported(&format!("the type `{}`", e.ty.display())))?;
+                match width {
+                    FWidth::F8 => {
+                        let _ = writeln!(self.out, "    mov rax, {:#x}", v.to_bits());
+                        self.out.push_str("    movq xmm0, rax\n");
+                    }
+                    FWidth::F4 => {
+                        let bits = (*v as f32).to_bits();
+                        let _ = writeln!(self.out, "    mov eax, {bits:#x}");
+                        self.out.push_str("    movd xmm0, eax\n");
+                    }
+                }
+                Ok(())
+            }
             ExprKind::FieldAccess { .. } => Err(unsupported("a field read")),
             ExprKind::StructLit { .. } => Err(unsupported("a datac literal")),
             ExprKind::EnumLit { .. } => Err(unsupported("an enum literal")),
@@ -703,6 +868,12 @@ impl Gen {
         // short-circuiting, and would diverge where it must not.
         if op == BinOp::And || op == BinOp::Or {
             return self.short_circuit(op, lhs, rhs, frame);
+        }
+        // Comparisons produce `bool` regardless of the operand type, so the
+        // *result* type cannot be used to detect a float operation — only the
+        // operands can.
+        if float_ty(&lhs.ty).is_some() || float_ty(&rhs.ty).is_some() {
+            return self.binary_float(op, lhs, rhs, frame);
         }
 
         self.expr(lhs, frame)?;
@@ -798,6 +969,79 @@ impl Gen {
         Ok(())
     }
 
+    /// The float-operand counterpart of `binary`. `xmm0`/`xmm1` play the role
+    /// `rax`/`rcx` play for integers: `xmm0` ends up holding the left operand
+    /// and `xmm1` the right, spilling the left across the right's evaluation
+    /// the same way the integer path spills `rax` to the stack.
+    fn binary_float(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        let width = float_ty(&lhs.ty)
+            .or_else(|| float_ty(&rhs.ty))
+            .expect("caller checked at least one operand is a float");
+
+        self.expr(lhs, frame)?;
+        self.out.push_str("    sub rsp, 8\n");
+        let _ = writeln!(self.out, "    {} [rsp], xmm0", width.mov());
+        self.expr(rhs, frame)?;
+        let _ = writeln!(self.out, "    {} xmm1, xmm0", width.mov());
+        let _ = writeln!(self.out, "    {} xmm0, [rsp]", width.mov());
+        self.out.push_str("    add rsp, 8\n");
+
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                let mnemonic = match op {
+                    BinOp::Add => "add",
+                    BinOp::Sub => "sub",
+                    BinOp::Mul => "mul",
+                    BinOp::Div => "div",
+                    _ => unreachable!("matched above"),
+                };
+                let _ = writeln!(self.out, "    {mnemonic}{} xmm0, xmm1", width.suffix());
+                Ok(())
+            }
+            // `ucomi{ss,sd}` sets flags as an unsigned integer compare would,
+            // including the all-ones (unordered/NaN) case. `<`/`<=` compare
+            // with the operands reversed and read `above`/`above-or-equal`,
+            // which is `false` when unordered because that reading needs
+            // both CF=0 and ZF=0 — the standard trick for skipping an explicit
+            // parity check on those two operators. `==`/`!=` cannot use that
+            // trick (there is no reordering that makes "equal" a one-flag
+            // read) and check the parity flag directly instead.
+            BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
+                let (a, b) = match op {
+                    BinOp::Lt | BinOp::LtEq => ("xmm1", "xmm0"),
+                    _ => ("xmm0", "xmm1"),
+                };
+                let _ = writeln!(self.out, "    {} {a}, {b}", width.ucomi());
+                let set = match op {
+                    BinOp::Lt | BinOp::Gt => "seta",
+                    _ => "setae",
+                };
+                let _ = writeln!(self.out, "    {set} al");
+                self.out.push_str("    movzx rax, al\n");
+                Ok(())
+            }
+            BinOp::Eq => {
+                let _ = writeln!(self.out, "    {} xmm0, xmm1", width.ucomi());
+                self.out.push_str("    sete al\n    setnp cl\n    and al, cl\n");
+                self.out.push_str("    movzx rax, al\n");
+                Ok(())
+            }
+            BinOp::NotEq => {
+                let _ = writeln!(self.out, "    {} xmm0, xmm1", width.ucomi());
+                self.out.push_str("    setne al\n    setp cl\n    or al, cl\n");
+                self.out.push_str("    movzx rax, al\n");
+                Ok(())
+            }
+            _ => Err(unsupported("this operator on a float")),
+        }
+    }
+
     fn short_circuit(
         &mut self,
         op: BinOp,
@@ -855,23 +1099,62 @@ impl Gen {
                  backend cannot emit an unchecked call, so it refuses instead"
             )));
         }
-        if args.len() > ARG64.len() {
-            return Err(unsupported(&format!(
-                "a call to `{callee}` with {} arguments (six is the ceiling)",
-                args.len()
-            )));
+        // SysV numbers the integer and vector argument registers
+        // independently, so `f(1, 2.0, 3)` passes `2.0` in `xmm0` — the
+        // classification below counts each argument's own class, not its
+        // position in the list.
+        enum ArgSlot {
+            Int(usize),
+            Float(usize),
         }
-        // Every argument is evaluated and pushed, then popped into its
-        // register in reverse. Going through the stack rather than straight
-        // into the argument registers is what makes a nested call safe: an
-        // inner call cannot overwrite a register the outer one has not loaded
-        // yet, and its own pushes are popped before it returns.
+        let mut slots: Vec<ArgSlot> = Vec::with_capacity(args.len());
+        let mut int_idx = 0usize;
+        let mut float_idx = 0usize;
+        for arg in args {
+            if float_ty(&arg.ty).is_some() {
+                if float_idx >= FARG.len() {
+                    return Err(unsupported(&format!(
+                        "a call to `{callee}` with more than eight float arguments"
+                    )));
+                }
+                slots.push(ArgSlot::Float(float_idx));
+                float_idx += 1;
+            } else {
+                if int_idx >= ARG64.len() {
+                    return Err(unsupported(&format!(
+                        "a call to `{callee}` with more than six integer arguments"
+                    )));
+                }
+                slots.push(ArgSlot::Int(int_idx));
+                int_idx += 1;
+            }
+        }
+        // Every argument is evaluated and pushed (as one 8-byte stack slot
+        // either way), then popped into its register in reverse. Going
+        // through the stack rather than straight into the argument registers
+        // is what makes a nested call safe: an inner call cannot overwrite a
+        // register the outer one has not loaded yet, and its own pushes are
+        // popped before it returns.
         for arg in args {
             self.expr(arg, frame)?;
-            self.out.push_str("    push rax\n");
+            if let Some(width) = float_ty(&arg.ty) {
+                self.out.push_str("    sub rsp, 8\n");
+                let _ = writeln!(self.out, "    {} [rsp], xmm0", width.mov());
+            } else {
+                self.out.push_str("    push rax\n");
+            }
         }
-        for i in (0..args.len()).rev() {
-            let _ = writeln!(self.out, "    pop {}", ARG64[i]);
+        for (arg, slot) in args.iter().zip(slots.iter()).rev() {
+            match slot {
+                ArgSlot::Int(i) => {
+                    let _ = writeln!(self.out, "    pop {}", ARG64[*i]);
+                }
+                ArgSlot::Float(i) => {
+                    let width = float_ty(&arg.ty).expect("classified as float above");
+                    let _ = writeln!(self.out, "    {} {}, [rsp]", width.mov(), FARG[*i]);
+                    self.out.push_str("    add rsp, 8\n");
+                }
+            }
         }
         let symbol = Gen::symbol(callee);
         call_align_begin(&mut self.out);
