@@ -23,6 +23,27 @@ thirteen below build and that one does not; and the four float-payload fixture
 names in section D's split are exactly the four that remain, which is the one part
 of that split that held exactly.
 
+**Second addendum (2026-09-19, when section A's own slice landed).** A was taken
+next, in the form the brief defines it: the scalar borrow *and* the three `str`
+parsers together, since section A itself measures that the borrow alone reaches
+zero fixtures. The counts above are history now. The current numbers are **129
+built of the 160 fixtures the C backend builds, 31 refused**, the asm suite is
+**223 of 280**, and the ranking is `heap 13, enum 5, a `datac` holding a float
+field 2, closure 10, gated extern 1`. Section A's central measurement — that
+`stdlib_build`, `stdlib_parse` and `borrow_provenance_and_arms` all refuse first
+on `extern fun std.str.parse_i64_raw`, and that A alone reaches nothing — held
+exactly, as did its statement that all three also needed the `enum` slice (which
+had landed by then). What did **not** hold is its implicit reading of them as an
+undifferentiated three: `stdlib_build` and `borrow_provenance_and_arms` now build,
+and `stdlib_parse` is still refused, for `Result<f64, ParseErr>` — an `enum` whose
+payload is a float, which is neither section A's row nor D's. Section A also
+predicted this: its "Fixtures it is credited with but cannot reach" paragraph is
+the reason the slice was specified with the parsers attached, and the one fixture
+it did not foresee is the float payload behind the third. Section A's "Section 13
+gate" ordering is unchanged except that prerequisite 3 (the scalar borrow) is now
+done: `bench/speed/speed.kp` still refuses, now at the `std.time.now_mono_ns_raw`
+extern, and the capability check is still ahead of it.
+
 ---
 
 ## 0. The refusal ranking, verbatim

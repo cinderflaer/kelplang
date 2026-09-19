@@ -26,15 +26,15 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops** | `codegen_asm.rs`; **219 of 278** integration tests pass under `--backend=asm`; all 125 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value). The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 158 C and 125 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **223 of 280** integration tests pass under `--backend=asm`; all 129 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 160 C and 129 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
 | **9. Two-agent split** | not started | Stage 0 landed, so the tracks can now diverge |
 
 The one number that matters most, and corrected here because this sentence had gone stale at 195/272 while the
-ratchet beside it moved: **219 of 278 tests pass on the asm backend, and the C backend passes all
-278.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
+ratchet beside it moved: **223 of 280 tests pass on the asm backend, and the C backend passes all
+280.** The C backend is the oracle, so that ratio is a measurement of coverage rather than a claim about
 correctness — every fixture the asm backend builds is compared against what the C backend builds from the same
 source (§1.1). The register allocator (item 3) moved this by exactly one: it is a performance change, not a
 coverage one, and the one new fixture it added (`nested_while_registers.kp`) is a regression test for the
@@ -124,6 +124,17 @@ is that **the ABI needed nothing**: `$Map` is a `MEMORY`-class aggregate like `B
 already handled one handled it, and the one thing that finally depended on a type parameter was an entry's own
 offsets — which is the fifth time a heap type has slotted into the aggregate work unchanged.
 
+The enum slice (below) then moved it by nineteen at the test level and nineteen at the fixture level: the asm
+suite went 200 of 273 → 219 of 278 and the ratchet 106 built of 153 → 125 of 158, with 33 refused. The
+scalar-borrow slice (also below) has now moved it by four more — the asm suite is **223 of 280**, the fixture
+ratchet is **129 built of 160, 31 refused**, and valgrind is clean over all 160 C-backend and 129 asm-backend
+binaries. Two of those four are fixtures the plan had credited *this* slice with and it can finally reach
+(`stdlib_build`, `borrow_provenance_and_arms`, both refused first on `std.str.parse_i64_raw` and both reachable
+only because the enum slice had already landed behind it), and two are the fixtures the slice wrote
+(`scalar_borrow`, `scalar_borrow_f64`). `stdlib_parse`, the third fixture the plan credited it with, is
+**refused**: with the parsers lowerable its first refusal is `Result<f64, ParseErr>`, the float-aggregate row,
+and the correction is recorded in this section's list rather than quietly fixed.
+
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
 
@@ -147,7 +158,7 @@ landed, not a percentage that would imply more precision than the plan has:**
   (the externs whose bodies are the heap and the syscall layer, and the `List` S1 methods that need
   an element comparison or clone), plus items 6-7
   (closures, capabilities), are what stands between here and Stage
-  1's own definition of done: all 278 integration tests passing, `bench/speed` no worse than `-O0`, and a memory gate for
+  1's own definition of done: all 280 integration tests passing, `bench/speed` no worse than `-O0`, and a memory gate for
   the asm backend — which the heap slice supplied, in the form of a `valgrind` sweep over every fixture this
   backend builds, and which is documented rather than wired into the suite (see that blockquote for why).
 - **Stage 2** (machine code + own linker) and **Stage 3** (freestanding): not started; both are blocked on
@@ -160,23 +171,25 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (219/278) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (223/280) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
 builds, and detailed in §5):
 
-1. **The heap row, with the container question now settled** — 16 fixtures. `Map` landed, so what is left is no
+1. **The heap row, with the container question now settled** — 13 fixtures. `Map` landed, so what is left is no
    longer a row about a container, and no longer a row about `extern fun` declarations (the blanket refusal is
    gone; what remains names an extern only because the extern's own body needs the heap). Measured by building
    each one: **the `fs`/`io`/`net`/`path` extern bodies** (`fs_errno`, `io_stdio`, `io_streams`, `net_loopback`,
    `net_poll`, `net_resolve`, `net_timeout`, `path_normalize`, `process_spawn`) — 9; **the three `List` S1
    methods this backend refused by name** (`stdlib_sort`
-   needs `sort`, `list_slice_insert` needs both, `list_slice_bounds` needs `slice`) — 3; **the `str` parsers**,
-   whose `mut i64`/`f64` out-parameter needs a scalar borrow the backend cannot address yet (`stdlib_build`,
-   `stdlib_parse`, `borrow_provenance_and_arms`) — 3; and **an owned `String` interpolated into a template**
-   (`heap_temporary_print`) — 1. The three fixtures this row used to carry for an owning passdown are gone from
+   needs `sort`, `list_slice_insert` needs both, `list_slice_bounds` needs `slice`) — 3; and **an owned `String`
+   interpolated into a template** (`heap_temporary_print`) — 1. **The `str` parsers are gone from this row** — the
+   scalar-borrow slice lowered them, which built `stdlib_build` and `borrow_provenance_and_arms` — and
+   `stdlib_parse`, the third fixture this row carried for them, moved to row 2: with the parsers lowerable its
+   first refusal is `Result<f64, ParseErr>` rather than the extern. The three fixtures this row used to carry for
+   an owning passdown are gone from
    it (the passdown-drop slice built them), and so is the `str`-to-`String` coercion this row used to carry:
    `str_to_string_coercion` builds as of the enum slice, because the `if` in value position that stood in its way
    first needed the same destination-aware lowering an `enum` literal did. See §5's table.
@@ -184,7 +197,9 @@ builds, and detailed in §5):
    float field is 2 of them (`receiver_methods`, `templates`) and is the one shape item 4 still refuses outright;
    the other 4 are the `enum` fixtures whose *payload* is a float (`enum_basic`, `enum_container`, `if_let_basic`,
    `if_let_chain_same_scrutinee`), which the enum slice cannot reach for exactly that reason and which the brief
-   had already named as expected-blocked. Nothing else about an `enum` is missing: the tag/union layout,
+   had already named as expected-blocked. The scalar-borrow slice added a fifth, `stdlib_parse`, whose
+   `std.str.parse_f64` returns `Result<f64, ParseErr>` — the same row seen through a stdlib signature. Nothing
+   else about an `enum` is missing: the tag/union layout,
    `EnumLit`/`EnumTag`/`EnumField`, `?`, the generated tag-switching drop and the containers are all in (§5's
    enum blockquote), and the ABI work the risk register calls the place silent miscompiles live is complete for
    every shape this backend admits at all — the extern, heap-field, box, list, map and enum slices touched none
@@ -206,10 +221,12 @@ builds, and detailed in §5):
    measurement says it is not — its last function wraps the same `?` the rest of the fixture pins in a `fun`
    literal, so the closure is now its first refusal.
 
-Four corrections to this file's own text come from re-measuring it, and they are recorded rather than quietly
-fixed, because §9's first lesson is that this plan has now been wrong in the same direction four times. A borrow
-of a scalar reaches **0** fixtures, not the three named above, because all three refuse first on an `extern fun`
-and then need an `enum`. "Printing an owned `String`" is really interpolation into a template, since `print` of
+Five corrections to this file's own text come from re-measuring it, and they are recorded rather than quietly
+fixed, because §9's first lesson is that this plan has now been wrong in the same direction five times. A borrow
+of a scalar reaches **0** fixtures on its own, not the three named above, because all three refuse first on an
+`extern fun` and then need an `enum` — and with the three `str` parsers landed too it reaches **two** of the
+three, not three, because the third needs a float payload in an aggregate (`Result<f64, ParseErr>`), which is
+the next row rather than this one. "Printing an owned `String`" is really interpolation into a template, since `print` of
 an owned `String` already builds. The acceptance criterion that named `str_to_string_coercion` as must-pass
 for the map slice was wrong, and the enum slice is what finally built it — one slice later than the plan
 predicted, and not for the reason either of those measurements gave. And the enum slice's own acceptance list
@@ -348,22 +365,26 @@ with the backend as the only variable.
 > then passdowns, then the extern path, then an owned passdown's `atexit` drop
 > (the ninth, tenth and eleventh items — the first two added after the fact,
 > because each was a blanket refusal at the top of `generate` that kept the
-> feature out of codegen entirely).**
+> feature out of codegen entirely),
+> then a scalar borrow with the read and store through it, and the three `str`
+> parsers it was the last prerequisite for.**
 > `kelpc build --backend=asm` emits x86-64 assembly itself and finishes with `as`
-> and `ld`, with no C compiler in the chain. Measured: **219 of 278 end-to-end
-> tests pass**, and the C backend passes all 278 — so the differential gate is
+> and `ld`, with no C compiler in the chain. Measured: **223 of 280 end-to-end
+> tests pass**, and the C backend passes all 280 — so the differential gate is
 > live (`the_two_backends_agree_on_the_scalar_fixtures`) and the coverage number
 > can only rise from here. Every fixture the asm backend builds is compared
 > against the C backend's own binary — by the differential sweep in
 > `kelpc/tests/backend_coverage.rs` since §1.1's sweep landed, and by hand for the
 > first slice that had any fixture to compare — which is the check the fixture
-> literals cannot make: 125 fixtures, 125 identical stdout at this measurement.
+> literals cannot make: 129 fixtures, 129 identical stdout at this measurement.
 >
 > Covered: every integer width, `bool`, `char`, `f32`/`f64` arithmetic and
 > comparisons (`ucomiss`/`ucomisd`, including the unordered/NaN case — see
 > `tests/fixtures/asm_float_scalars.kp`), all unary and binary operators
 > including short-circuiting `&&`/`||`, `if`/`else` in statement and value
-> position, `while`, assignment, calls with up to six integer *and* eight float
+> position, `while`, assignment, a borrow of a named scalar local and the read
+> and store through it (`*p`/`*p = v` for an integer or float pointee), calls
+> with up to six integer *and* eight float
 > arguments classified independently per SysV, recursion, and `print`/`print!`
 > of integers, characters, booleans, strings and floats — the last two as of
 > item 8's first slice, whose blockquote records what printing a float turned
@@ -1483,19 +1504,20 @@ with the backend as the only variable.
 > one (`try_drops_frame`), and the heap row lost the `str`-coercion fixture the
 > `if`-in-value-position addition fixed.
 >
-> **Where the remaining refusals rank**, re-measured after the enum slice, and
+> **Where the remaining refusals rank**, re-measured after the scalar-borrow
+> slice, and
 > reproducible instead of hand-run: `kelpc/tests/backend_coverage.rs` sweeps
 > every fixture the C backend builds, refuses to let a refusal go unnamed, keeps
 > a ratchet on the set the asm backend builds, and prints this exact table under
 > `cargo test --test backend_coverage -- --ignored --nocapture`. The refused
-> count is 33 of the 158 fixtures the C backend builds (125 built, all agreeing
+> count is 31 of the 160 fixtures the C backend builds (129 built, all agreeing
 > byte for byte). The categories are the *feature* in the way, read off each
 > fixture's first refusal message:
 >
 > | blocker (the backend's first refusal) | fixture files |
 > | --- | --- |
-> | a heap type — an `fs`/`io`/`net`/`path` extern whose body needs the heap, a `List` S1 method, a `str` parser's `mut` out-parameter, or an owned `String` interpolated into a template | 16 |
-> | `enum` — the four fixtures whose *payload* is a float, which is the float-aggregate row seen from inside a tagged union | 4 |
+> | a heap type — an `fs`/`io`/`net`/`path` extern whose body needs the heap, a `List` S1 method, or an owned `String` interpolated into a template | 13 |
+> | `enum` — the fixtures whose *payload* is a float, which is the float-aggregate row seen from inside a tagged union (`stdlib_parse` joined the four when its `std.str.parse_f64` became reachable) | 5 |
 > | a closure or a function value | 10 |
 > | a `datac` holding a float field | 2 |
 > | a gated extern (`time.now_unix_raw`, refused for the gate rather than the symbol) | 1 |
@@ -1526,7 +1548,13 @@ with the backend as the only variable.
 > `List<closure>` fixture and its `Box<closure>` sibling, whose first refusal is
 > now the closure rather than the list), and `enum` unchanged at 18 — the one row
 > this slice did not touch, because an `enum` with an owning payload has no
-> routine set to inherit from a list.
+> routine set to inherit from a list. After the map slice it is refused 54 -> 48
+> and built 85 -> 97; after the enum slice, refused 48 -> 33 and built 97 -> 125;
+> and after the scalar-borrow slice, refused 33 -> 31, built 125 -> 129, the heap
+> row 16 -> 13 (the two fixtures it lowered, `stdlib_build` and
+> `borrow_provenance_and_arms`) and the `enum` row 4 -> 5, because `stdlib_parse`
+> now stops at `Result<f64, ParseErr>` instead of at the `str` parser in front
+> of it.
 >
 > The numbers do not match the hand tally two blockquotes up, and the reason is
 > the classifier rather than the backend: the tool reads the message a fixture
@@ -1611,6 +1639,84 @@ with the backend as the only variable.
 > call (libm, `strlen`, and whatever else a routine of its own fronts) are
 > reachable now, and the ones it cannot are the ones that need the heap first.
 >
+> **The scalar-borrow slice — a borrow of a scalar local, and the three `str`
+> parsers — is done (2026-09-19).** It is §5 item 4's last named gap that is not
+> a float ("a borrow of anything whose address is not a slotted `datac` ... (a
+> scalar `&i32`)") together with item 10's `str` parsers, which were waiting on
+> exactly that borrow. The two are one slice because neither is useful alone:
+> each parser's `out` is a `mut i64`/`u64`/`f64` parameter, and a `mut` scalar
+> parameter is a plain pointer whose caller's half is `&mut local`.
+>
+> **The borrow is a `lea`, and the one new thing is that the local has to have a
+> slot.** `ExprKind::Ref` needed no storage for it: a named scalar local is
+> addressed by `lea rax, [rbp+slot]`, the same instruction it already emitted
+> for a named `datac` local, and the value that comes back is an ordinary
+> integer-typed pointer, so the call marshalling needed no change at all. What
+> it did need is the other half of item 3's exclusion list — a pool register has
+> no address, so `LiveAnalysis` now records every local whose address is taken
+> and `allocate_registers` leaves it in a frame slot, the same treatment
+> `f32`/`f64` and the aggregate kinds already had. The store is the genuinely
+> new primitive, and it is the small kind of new: `*p = v` for an integer
+> pointee (a `datac` passdown already had the wide form), plus an `f64` pointee,
+> which needed `int_regs_for`/`value_kind` to accept a reference to a float so
+> that a `mut f64` parameter is one pointer like any other, and
+> `ExprKind::Deref`/`Assign` to know `movsd` where the integer path writes
+> `mov`. The read `*p` for a scalar pointee already existed for the passdown
+> slice.
+>
+> **The three parsers are `externs.rs` transliterated.** `strtoll`, `strtoull`
+> and `strtod` through the PLT behind the same empty-and-whitespace scan, the
+> same whole-string check and the same single store through the caller's out
+> pointer, with `parse_u64_raw`'s leading-`-` rejection and the `errno` pair
+> (`__errno_location`, zeroed before the conversion and read after it) that
+> makes an out-of-range number a failure instead of a saturated success —
+> without it `parse_i64("9223372036854775808")` would have returned
+> `Ok(INT64_MAX)` where the C backend returns `Err`. `alloc_raw` and
+> `from_f64_raw` were **not** needed: no fixture in this slice's acceptance set
+> reaches either, and neither was added.
+>
+> **Measured.** The C suite is 280; the asm suite is **223 of 280** (was 219 of
+> 278), with no test that passed at 219 failing now, and the two fixtures this
+> slice wrote are the only reason the denominator moved. The fixture ratchet is
+> **129 built of 160, 31 refused** (was 125/158/33), every one of the 129
+> compared against the C backend's own binary byte for byte, and
+> `cargo test --test memory_gate -- --ignored` is valgrind-clean over all 289
+> binaries — 160 C and 129 asm — with zero findings. Two credited fixtures
+> moved: `stdlib_build` and `borrow_provenance_and_arms`, both of which refuse
+> first on `std.str.parse_i64_raw` and were reachable only because the enum
+> slice had already landed behind it. Two are new: `scalar_borrow` (an integer
+> out-parameter, a `&mut i64` binding held across a call, and two live locals
+> around the store — the live-range probe, since a missed touch there hands the
+> pointer's register to the next local and the store writes through a wild
+> pointer) and `scalar_borrow_f64` (the same borrow with a float pointee, in the
+> differential gate because a wrong register file prints a plausible wrong
+> number rather than failing to build). The ranking moved `heap 16, enum 4,
+> datac 2, closure 10, gated 1` to `heap 13, enum 5, datac 2, closure 10, gated
+> 1`: the heap row lost the two this slice lowered and the `enum` row gained
+> `stdlib_parse`.
+>
+> **The measurement disagrees with the plan, again in the same direction, and
+> this one is the most instructive of the five.** `stdlib_parse` is the third
+> fixture §0 credited this slice with, and it is **refused**. With the parsers
+> lowerable its first refusal is the return type `std.result.Result<f64,
+> std.str.ParseErr>` of `std.str.parse_f64` — an `enum` whose `Ok` payload is an
+> `f64`, which is the float-aggregate row (§0's ranking 2), not this one. So of
+> the three, **two build and one is blocked by a float payload**: the borrow was
+> the last thing in any of their way, and it was not the only thing in the way
+> of all of them. That is exactly the error §9's first lesson names, and it is
+> recorded in §0's correction list rather than quietly fixed.
+>
+> **Deliberately still refused, and each by name:** a float payload in an
+> aggregate, which is what `stdlib_parse`, `enum_basic`, `enum_container`,
+> `if_let_basic`, `if_let_chain_same_scrutinee`, `receiver_methods` and
+> `templates` are all waiting on — the same row seen from a tagged union or from
+> a `datac` field; `alloc_raw` and the `fs`/`io`/`net`/`path`/`time` extern
+> bodies; `List.sort`/`contains`/`slice`; a capability-gated call; and closures.
+> `std.time.now_mono_ns_raw` is deliberately *not* added either: it is one of
+> `bench/speed`'s three prerequisites, but the gate also needs the capability
+> check that gates the same module, so the extern alone would only move the
+> refusal from the declaration to the gate.
+>
 > Two bugs the differential suite found, kept as evidence the gate works:
 > comparisons took their operand width from the `bool` result type (so every
 > `i32` comparison compared only its low bytes), and a load used `mov rax, DWORD
@@ -1659,15 +1765,16 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    `List<T>`: the same `{data, len, cap}` header `Bytes`/`String` are, one `$List` layout key for every element
    type, fifteen routines per instantiation plus a generated drop, and one growth helper that is deliberately
    *not* monomorphized — see the list blockquote above, which also records the register allocator's exclusion
-   list that had to learn the new type and the three plumbing bugs the slice's own probes found. What is left of
+   list that had to learn the new type and the three plumbing bugs the slice's own probes found. The tenth is
+   not an aggregate at all but the exclusion list this item's own prose kept naming: a borrow of a named
+   *scalar* local, which is a `lea` of that local's own frame slot and needs `LiveAnalysis` to keep every
+   addressed local out of the register pool — see the scalar-borrow blockquote below, which also carries the
+   `str` parsers' out-parameter, the shape that borrow exists for. What is left of
    this item is a `datac` holding a float field — `Map<K, V>` landed as the
    eighth slice of this item and `enum` as the ninth (`Bytes`, `String`, `View`, `Box`, `List`, `Map` and every
    aggregate shape an `enum` adds are done; see the heap
    blockquotes above and the map and enum blockquotes below, and §12 for the reading of the C they mirror —
-   layouts, invariants, runtime functions and drop orders); and a borrow of
-   anything whose address is not a slotted `datac`, one of its aggregate fields, an `enum` payload field, or a
-   `Ref`-typed expression (a
-   scalar `&i32`, a `str`). Layout must
+   layouts, invariants, runtime functions and drop orders). Layout must
    match `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets —
    which is why an `enum`'s union offset is `align_up(4, union_align)` and not the four bytes a reader would
    guess.
@@ -1726,8 +1833,10 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     builds. The second half is `live_functions`: only functions reachable from `main` (or a passdown
     initializer) are compiled at all, so a module's heap-typed functions stop refusing the programs that only
     import it. See the extern blockquote above. What is left of this item is the externs whose bodies are the
-    heap and the syscall layer: `alloc_raw` and the `str` parsers above all, which is why the item is one slice
-    of a row rather than a finished one.
+    heap and the syscall layer: `alloc_raw`, the `fs`/`io`/`net`/`path`/`time` families above all, which is why
+    the item is one slice of a row rather than a finished one. The `str` parsers joined the list in the
+    scalar-borrow slice below — they were the one group whose declared signature, a `mut` scalar out-parameter,
+    had no lowering at all.
 
 11. **An owned passdown, and the drop handler. Done** (2026-09-19), and it is the last thing the passdown row
     was carrying: `pd_owned`, `list_field` and `pd_argument_forwarding` needed exactly what the C backend gets
@@ -1758,13 +1867,13 @@ Scope, in build order. Each bullet is separately testable against the fixture su
     the fixture is the regression test. The valgrind gate covers both: 259 runs, zero findings, and the owned
     passdowns free clean.
 
-Definition of done: all 278 integration tests pass under `--backend=asm` with byte-identical stdout to
+Definition of done: all 280 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
 `bench/speed/` runs all four workloads with matching checksums and is **no worse than the `-O0` column**;
 `kelpc build` on `hello.kp` is comfortably under 40 ms (the `as`+`ld` share only); `cc` is not invoked. The
 memory gate this list has always asked for is `cargo test --test memory_gate -- --ignored`
 (`kelpc/tests/memory_gate.rs`, `0747195`): a `valgrind --leak-check=full` sweep over every fixture the C backend
-builds and every one the asm backend accepts — 158 and 125 today, zero findings — run when the heap or drop
+builds and every one the asm backend accepts — 160 and 129 today, zero findings — run when the heap or drop
 machinery changes. ASAN cannot serve, because it instruments generated C.
 
 ## 6. Stage 2 — machine-code bytes and our own linker
