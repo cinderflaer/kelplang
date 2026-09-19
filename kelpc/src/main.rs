@@ -29,14 +29,27 @@ const BIN_NAME: &str = "kelpc";
 /// compile time so it cannot drift from `Cargo.toml`.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The directory a build with no `-o` writes into, relative to the working
+/// directory. `kelpc build <file>.kp` used to write `<stem>` into the working
+/// directory itself, which meant a build run from a checkout littered the
+/// checkout: ten such binaries were committed to this repository's root across
+/// six commits before anyone noticed (`git log --diff-filter=A -- bitwise`),
+/// and the generated C beside each one was hidden by the `*.c` ignore rule. A
+/// build directory the tool owns is the fix; `.gitignore` ignores it too, so
+/// even the directory never has to be remembered.
+const BUILD_DIR: &str = "build";
+
 fn usage() {
     eprintln!(
         "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>]\n       \
          {BIN_NAME} run <file.{EXT}>\n       \
          {BIN_NAME} version\n\n\
          The backend may also be chosen with the KELPC_BACKEND environment\n\
-         variable; an explicit --backend wins over it. The default is 'c'.",
+         variable; an explicit --backend wins over it. The default is 'c'.\n\n\
+         With no -o, the binary and the C it was generated from are written to\n\
+         {BUILD_DIR}/<file stem>, which the compiler creates if it is missing.",
         BIN_NAME = BIN_NAME,
+        BUILD_DIR = BUILD_DIR,
         EXT = resolve::EXT
     );
 }
@@ -111,12 +124,19 @@ fn build(path: &str, out_path: &Path, backend: Backend) -> bool {
     true
 }
 
+/// Where a build with no `-o` writes: `build/<stem>`.
+///
+/// Relative to the working directory rather than to the source, because the
+/// artifact is a program to run rather than a file to keep, and the working
+/// directory is where the person who asked for it is standing. The stem keeps
+/// the old naming (`examples/hello.kp` is `build/hello`), so nothing about how
+/// a build is *named* changes — only where it lands.
 fn default_out_path(source_path: &str) -> PathBuf {
     let stem = Path::new(source_path)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "a.out".to_string());
-    PathBuf::from(stem)
+    Path::new(BUILD_DIR).join(stem)
 }
 
 fn main() -> ExitCode {
@@ -198,7 +218,18 @@ fn main() -> ExitCode {
         }
     };
 
+    // The default output path is a directory this tool owns, so it is created
+    // on demand; an explicit `-o` is a path the *caller* chose, and a missing
+    // parent directory there stays an error rather than a directory appearing
+    // somewhere nobody asked for.
+    let owned_dir = out.is_none();
     let out_path = out.unwrap_or_else(|| default_out_path(&path));
+    if owned_dir {
+        if let Err(e) = std::fs::create_dir_all(BUILD_DIR) {
+            eprintln!("error: could not create '{BUILD_DIR}': {e}");
+            return ExitCode::FAILURE;
+        }
+    }
 
     if !build(&path, &out_path, backend) {
         return ExitCode::FAILURE;

@@ -3370,6 +3370,66 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
     }
 }
 
+/// A build with no `-o` writes into `build/<stem>`, and creates that directory
+/// if it is missing.
+///
+/// This is a behaviour change with a history: the default used to be a bare
+/// `<stem>` **relative to the working directory**, so a build run from a
+/// checkout put the binary in the checkout's root. Ten of them were committed
+/// across six commits before anyone noticed, and the generated C beside each
+/// one was invisible because `*.c` is ignored — which is exactly the shape a
+/// test has to pin, because the output is only wrong somewhere no one looks.
+///
+/// Both halves matter: the artifact has to be *in* `build/`, and the working
+/// directory has to be left with no new file in it.
+#[test]
+fn a_build_with_no_output_path_lands_in_build() {
+    let cwd = out_path("default_out_dir");
+    let _ = std::fs::remove_dir_all(&cwd);
+    std::fs::create_dir_all(&cwd).expect("could not create the test's working directory");
+
+    let out = kelpc()
+        .args(["build"])
+        .arg(fixture("tests/fixtures/while_accumulator.kp"))
+        .current_dir(&cwd)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        out.status.success(),
+        "a build with no -o should succeed, got:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let built = cwd.join("build").join("while_accumulator");
+    assert!(
+        built.is_file(),
+        "expected the build to land at '{}', and it did not exist",
+        built.display()
+    );
+    let mode = std::fs::metadata(&built)
+        .expect("the built artifact should be stat-able")
+        .permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(
+            mode.mode() & 0o111 != 0,
+            "the artifact should be executable, mode was {:o}",
+            mode.mode()
+        );
+    }
+    // The generated C follows the artifact, so it is inside `build/` too
+    // rather than beside it in the working directory.
+    assert!(
+        built.with_extension("c").is_file(),
+        "expected the generated C beside the artifact"
+    );
+    assert!(
+        !cwd.join("while_accumulator").exists(),
+        "the build must not write the artifact into the working directory"
+    );
+}
+
 /// An explicit `--backend` must win, or a one-off override of a run whose
 /// environment already names another backend would be impossible.
 #[test]

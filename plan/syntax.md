@@ -23,7 +23,7 @@ cargo build --release -p kelpc  # produces target/release/kelpc
 `kelpc` takes three commands:
 
 ```sh
-kelpc build <file.kp|project-dir> [-o <output>]   # default output: the file stem
+kelpc build <file.kp|project-dir> [-o <output>]   # default output: build/<file stem>
 kelpc run   <file.kp|project-dir>                 # build, then run
 kelpc version                                     # the compiler's version
 ```

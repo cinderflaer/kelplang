@@ -18,14 +18,14 @@
 !kelpc/runtime/*.c
 
 # Stray `kelpc build` output. With no `-o`, the driver writes the binary *and*
-# the emitted C into the working directory — the `.c` half is covered by `*.c`
-# above, and the binary half has no extension, so no pattern can match it.
-# These ten were committed across six commits (0.2.0 through the `View` work)
-# before anyone noticed. They are ignored by name so a rebuild cannot re-add
-# them; a *new* stray name still shows up as `??` in `git status` rather than
-# disappearing, which is why this is a list and not a blanket rule. The durable
-# fix is the default output path itself (a `kelpc build` run from a checkout
-# should not write into the checkout), not a longer list.
+# the emitted C into `build/` (as of `fc7a2bf`), which this file ignores — but
+# before that it wrote them into the working directory itself, and the `.c` half
+# was hidden by the `*.c` rule above while the binary half, having no extension,
+# was matched by nothing. Ten of them were committed across six commits (0.2.0
+# through the `View` work). They are ignored by name so that a build produced by
+# an older `kelpc` cannot re-add one; a *new* stray name still shows up as `??`
+# in `git status` rather than vanishing into a blanket rule.
+/build/
 /bitwise
 /borrow_provenance_and_arms
 /lit
