@@ -531,7 +531,7 @@ If only five things could be added to make Kelp useful and functional without be
 4. **Threads plus `Mutex` plus atomics.** Servers, workers, real parallelism; the precondition for anything network-serious.
 5. **`for`.** Makes ordinary code tolerable without touching the semantics.
 
-Everything else, JSON, regex, LSP, GUI, ML, Decimal, certification, WASM, a registry, is either a library (writable once views and generics exist), a target (it comes with the backend), or a deliberate non-decision.
+Everything else, JSON, regex, encodings, LSP, GUI, ML, Decimal, certification, WASM, a registry, is either a library (writable once views and generics exist), a target (it comes with the backend), or a deliberate non-decision.
 
 ### 4. The honest consequence
 
@@ -569,6 +569,8 @@ until something needs it.
 - **The `A`-`F` item lists**, which the roadmap used to carry inline: the language surface a self-hosted `kelpc` needs (A), the substrate deep-systems work needs (B), the capability-model gaps (C), the verification and semantics duty (D), a suggested order with the plan's cost calibration (E), and dependency and precedence notes (F). MK8, MK9, MK10 and MK11 promote parts of A-D to Marks; the items keep their `A-n`/`B-n`/`C-n`/`D-n` labels here as the detail.
 - **The `G` wants**, which are ergonomics rather than structural goals: a native UI library, multiple return values, `elif`, the capability clause without `with`, and a comment lint. None is a blocker, none is a reversal, and none has a milestone.
 - **The `H` list**, which is the whole set of rows the wiki's `Known issues` and `Pitfalls` pages carry, one item per row, with the work each row needs to stop being a workaround. The invariant: when H is worked off, no page needs a "Workarounds" paragraph and `Known issues` stays empty. Most H items overlap an A-item and name it; the ones nothing else covers are new.
+- **Encodings**, the alphabet-and-codec library want (`std/encoding`): named alphabet tables plus one codec each. It is the one entry in this Backlog that no language work blocks — see **Encodings and alphabets** below.
+- **`testkit`**, the self-test harness: the predicate half is writable now, the discovery half is A-15/Coral territory — see **`testkit`, the self-test harness** below.
 - **Coral**, the project-layer build tool and package manager, if open item 72 is ever answered yes.
 - **Regulated and financial domains**, if open item 71 is ever answered yes.
 
@@ -600,7 +602,7 @@ is read against a different goal again: the documentation's own workaround list,
 - **A-12. Traits/interfaces and dynamic dispatch.** Substitutable by enums for dispatch *if* A-1 exists, but not for destructors (a user `Drop`) and not for a pass abstraction ("a stage is a thing with a `run`").
 - **A-13. Visibility/privacy.** Every top-level item of a module is reachable as `alias.Item` (MK2-S1-M1) and nothing in the plan adds `pub`. A ~100k-line self-hosted compiler with a fully public surface is a structural problem, not a style one.
 - **A-14. Compilation at scale.** Separate compilation, incremental/query-based compilation, a cross-build cache, and a reserved internal-library location (today `impl` is local-files-only and `std/...` is the *compiler's* namespace). The measured baseline makes this a requirement rather than a nicety: ~95% of `kelpc build` is `cc`'s fixed overhead and Kelp's own pipeline is 3–4 ms (MK7's table), while a self-hosted `kelpc` is roughly an order of magnitude more Kelp source so MK7's own backend is a precondition for a tolerable self-hosted toolchain, not just a performance project.
-- **A-15. Tooling.** A test framework (an explicit non-goal today), `kelpc fmt` (shipped — item 13, with its three recorded limits), a lint pass with the configurable naming option (item 23), and a documentation generator with doc-comment extraction.
+- **A-15. Tooling.** A test framework (an explicit non-goal today) — the library half of that want is recorded as **`testkit`, the self-test harness** in the Backlog part below, `kelpc fmt` (shipped — item 13, with its three recorded limits), a lint pass with the configurable naming option (item 23), and a documentation generator with doc-comment extraction.
 - **A-16. Diagnostics and debuggability.** `#line` was never emitted (item 20), so generated code carries no source mapping; a real backend needs DWARF and a location story. Also an own tracing/profiling hook set, so a self-hosted compiler can be profiled without the C toolchain's help.
 - **A-17. A bootstrap milestone, which this plan does not have at all.** Build `kelpc` in Kelp, compare stage0 (Rust `kelpc`) against stage1 (Kelp `kelpc`) on the whole fixture suite, then check the fixpoint (stage1 builds stage2, behaviourally or byte-identical). Without that test, "the compiler is written in Kelp" is a claim rather than a result the same standard the verification section already holds memory safety to.
 
@@ -708,6 +710,193 @@ and Known issues is empty. Every H item names the existing item it overlaps, or 
 **Rows that stay, because they are the design rather than a workaround.** `use of moved value 'a'` and `cannot move out of a borrow` are ownership working; `operator requires matching integer operands` is item 54's decision; `the character '中' (U+4E2D) does not fit in 'u8'` is a correct compile error (H-11 changes the spelling, not the rule); `cannot find module`, a relative or `..` capability pattern, a gated call refused, and an `impl` after a declaration are all deliberate; `*x` on a closure parameter is what `Copy` means; and the `asm` backend refusing a construct by name is its documented design. Those rows are rules for the Pitfalls page to keep, and the page's wording should say so rather than offering a workaround.
 
 **Keeping Known issues empty.** The three reports on that page (BUG-1, BUG-2, BUG-3) are fixed, each with a fixture, and no H item is needed for them. What the page's own record leaves behind is three rules any future change must not break: a desugaring pass must key a block's drops by the block's identity and never by a span (BUG-1), a type spelling emitted before the `datac`s must walk through a borrow to the forward-declared tag (BUG-2), and codegen must not wrap a group a second time or emit a bound the source range rules out (BUG-3). The fixtures stay in the suite; a new desugar or a new early typedef is the change most likely to re-open one.
+
+### Encodings and alphabets: a std library of tables and codecs (want)
+
+*A library want, not a language want. Nothing in the plan blocks it, and it blocks
+nothing else. It is recorded because the same handful of encoders has now been
+hand-written three times and a fourth is about to be, and because the alphabet
+tables themselves are the part worth writing down once.*
+
+**What the repository already proves.** `fpl/encoding` implements standard base64
+and RFC 3986 percent-encoding in today's Kelp — 6-bit masking, `u8` pushes, a
+`DecodeErr` enum, over `Bytes`/`String`/`Option`/`Result` — using no language
+feature that MK8-S2-M1 did not already ship. `fpl/httpx` cannot reuse it (a folder
+in `fpl` has to stand alone, so a consumer fetches only the folder it named) and
+carries its own **private copies** of the base64 and percent encoders, which its own
+documentation states outright. And `std/http`'s chunked-body decoder hand-decodes
+hex byte by byte, because `str.parse_u64` is decimal-only (open item 58). Three
+copies, one of them in the compiler's own stdlib.
+
+**The shape wanted.** One ungated module, `std/encoding`, holding the alphabets as
+named `const` tables plus a codec per alphabet, so a caller writes
+`encoding.base64_encode(&data)` and never spells an alphabet inline:
+
+```kelp
+const B64_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+```
+
+Ungated by the same argument `mem`/`str`/`math` are ungated: an alphabet table and a
+6-bit shift are authority over nothing shared, so the module takes no
+`stdlib::domain_of` row and `with caps(encoding = [...])` stays rejected as "not a
+capability domain".
+
+**The alphabets, as many as are real.** Every row below is a published table with a
+named source, which is the test for belonging here. "Similar types" is the point:
+this is one family of tables, not one feature.
+
+| Constant | Table | Source |
+| --- | --- | --- |
+| `B64_ALPHABET` | `A-Za-z0-9+/`, `=` padding | RFC 4648 §4 |
+| `B64URL_ALPHABET` | `A-Za-z0-9-_` | RFC 4648 §5; URLs, JWT |
+| `B64URL_UNPADDED` | the same, no `=` | RFC 4648 §5; JWT's actual spelling |
+| `B32_ALPHABET` | `A-Z2-7`, `=` padding | RFC 4648 §6 |
+| `B32HEX_ALPHABET` | `0-9A-V` | RFC 4648 §7; `base32hex`, DNS labels |
+| `HEX_LOWER` | `0123456789abcdef` | convention; `fmt.hex`'s output |
+| `HEX_UPPER` | `0123456789ABCDEF` | `percent_encode`'s escapes |
+| `B58_ALPHABET` | Bitcoin's 58 | Base58Check addresses |
+| `B58_FLICKR_ALPHABET` | Flickr's 58 | short-URL spelling |
+| `B58_RIPPLE_ALPHABET` | Ripple's 58 | XRP addresses |
+| `Z85_ALPHABET` | ZeroMQ's 85 | RFC 32 / Z85 |
+| `B85_ALPHABET` | RFC 1924's 85 | `base85` |
+| `ASCII85_ALPHABET` | `!` through `u`, Adobe form | PDF/PostScript `A85` |
+| `CRYPT_B64_ALPHABET` | `./0-9A-Za-z` | `crypt(3)`; `bcrypt` |
+| `PERCENT_UNRESERVED` | `A-Za-z0-9-._~` | RFC 3986 §2.3 |
+
+**The other constants of the same shape.** An alphabet alone is not a codec; each one
+needs the block arithmetic and the inverse table, and those are constants too:
+
+- **Block arithmetic, per family**: bits per character, the mask, characters per
+  block, and the padding character — `B64_BITS`/`B64_MASK`/`B64_BLOCK`/`B64_PAD`, and
+  the base32 set (`5`/`31`/`8`/`=`). A codec is then a table plus these numbers, rather
+  than the hand-written range tests `fpl/encoding`'s `b64_value` and `hex_value` use
+  today.
+- **The derived decode table**: byte -> value, with an out-of-alphabet sentinel. The
+  entry records the decision that `std` derives it from the alphabet `const` instead of
+  writing the encoder and the decoder as two independent pieces of arithmetic, which is
+  where a typo hides.
+- **The byte-level entry points share the codec**: `hex_value`/`hex_upper` are already
+  written inside `fpl/encoding`'s percent codec, and they are the same two functions hex
+  decoding and `std/http`'s chunk size line want.
+
+**The codecs.** `base64_`/`base64url_encode|decode`, `base32_`/`base32hex_encode|decode`,
+`hex_encode|decode` (lower and upper), `percent_encode|decode`, and the 58/85 family, each
+with the in-place shape `recv_into`/`read_into`/`read_line_into` already use
+(`*_encode_into(buf, out)`, `*_decode_into(text, out)`) so a large payload lands in a
+buffer the caller sized, plus one shared `DecodeErr` in the error-`datac` convention
+(stdlib decision 2) with the reason split out (`Invalid`, `Length`, `Trailing`,
+`UnexpectedPad`) rather than one error type per codec.
+
+**Sub-questions for whoever promotes it.**
+
+1. **One module or two?** `hex_encode`/`hex_decode` are arguably `std/fmt`'s other half
+   (`fmt.hex` prints a `u64`; a hex codec works on `Bytes`). Either the hex pair moves
+   into `fmt` and `std/encoding` owns the rest, or `fmt.hex` stays the printing shortcut
+   and `std/encoding` owns both. Two modules would also let `std/http` take the hex
+   decoder without carrying the 85-family tables.
+2. **The `const` type spelling.** `fpl/encoding` writes `const B64_ALPHABET: &str` and
+   `std/http` writes `const DEFAULT_SCHEME: str`; both compile today, and `syntax.md` is
+   the authority on which spelling a *shipped* module uses.
+3. **`const` tables or a generated include?** A fourteen-row alphabet family is a table
+   either way, and the compiler already generates its 64 integer conversions rather
+   than hand-writing a matrix.
+4. **Replacement, which is the reason to do it.** When it ships, `std/http`'s chunked
+   hex loop (open item 58) and `fpl/httpx`'s private copies should go, and `fpl/encoding`
+   becomes a thin re-export or is retired — that last part is an `fpl` decision, not a
+   compiler one.
+
+**What it does not need: anything in blocks A-H.** A-9 shipped (the bitwise operators
+*are* the masking), `char` shipped, the `Bytes`/`String`/`Option`/`Result` surface
+shipped, and `fpl/encoding` is the existence proof. This is the one entry in this Backlog
+whose remaining work is scheduling and a module boundary rather than a language change.
+
+### `testkit`, the self-test harness: what "more" would take (want)
+
+*A library want. `fpl/testkit` is 88 lines: a `Report(passed, failed, failures)` tally, one
+`check(mut Report, bool, name)`, six typed `check_eq_*` (i64, u64, usize, f64, bool, str), and
+`failure_list`/`all_passed`/`summary`. It is honest about being a counter and a printer. This
+entry records what the next version should be, split by what actually blocks each part —
+because that split is the whole finding, not the wish list.*
+
+**The three facts that shape any change.** They are in the library's own header and they are
+not negotiable:
+
+- **The tally must be passed, not held.** A passdown belongs to the module that declares it, so
+a library can never keep the caller's state in a module-scope `pd var`. `mut Report` is what
+crosses the module boundary, and `wiki/language/passdowns.md` uses this library as the worked
+example. **Consequence: test discovery and auto-registration are impossible for a library**, not
+merely unimplemented — a test writer must hand the counter in. That is why the discovery half
+of "a test framework" is A-15/Coral territory, and only the predicate half is `testkit`'s.
+- **No overloading in user code** (`syntax.md` §7.2 is stdlib-only), which is why the checks are
+spelled per type. A single `check_eq<T>` needs either a comparator function value (A-4 shipped,
+so `check_eq_by(r, a, b, eq, name)` is writable today) or H-14's user-overload rule.
+- **Every check prints as it happens.** A run's output is a log, not a final count, and a failure
+is one line: `FAIL <name>`. Nothing else is known at that point.
+
+#### Writable now, with no language work
+
+- **`Option`/`Result` predicates — the sharpest gap.** MK5-S6-M1 migrated every stdlib error
+`datac` to one of the two, and `fpl`'s libraries return them, but `testkit` has no helper: a test
+must write `check(result.is_ok(r), "name")` and loses both the error payload and the reason. A
+`check_ok`/`check_err` pair that takes the enum, asserts the variant, and prints the payload on
+failure is pure Kelp over what already shipped.
+- **`check_ne_*` and the ordered comparisons** (`lt`/`le`/`gt`/`ge`) for the integer types, and
+`check_eq_bytes(actual: &Bytes, expected: &Bytes)` — `Bytes` has no `==` (H-5), so the current
+option is a length check plus a byte loop in every test that compares binary output.
+- **`check_close(actual: f64, expected: f64, eps: f64, name: &str)`.** `check_eq_f64` is exact
+equality on a `f64`; every float test today either picks an exact value on purpose or fails
+sporadically, and the library offers nothing in between.
+- **Expected and actual in the failure line.** The data is already in the caller's hand at the
+`check_eq_*` call site, so `FAIL <name>: expected <e>, got <a>` is a formatting change. What is
+*not* available is the call's location: a Kelp library has no source-location primitive, so
+`at file:line` stays A-16's (open item 20) — worth writing down so nobody re-asks for it here.
+- **A `Failure` record instead of a `List<String>`**: `Failure(kind, name, expected, actual)` so
+`failure_list` renders it, a summary can group it, and a machine-readable line
+(`FAIL\t<name>\t<expected>\t<actual>`) becomes possible without a `json` library that does not
+exist. `Report(failures: List<Failure>)` is a `datac` change and stays source-compatible if
+`failure_list` keeps its signature.
+- **`skip(r, name)` and a skip count.** A check that is not run is not a pass, and today the only
+way to say "not applicable" is to not call `check` — which silently makes the summary lie.
+- **`exit_code(r) -> i32`**, so the caller writes `process.exit(testkit.exit_code(&report))`.
+The library must not exit the process itself: `process.exit` needs the `process` domain, authority
+is per module, and the empty-pattern grant (open item 39) is the caller's to declare. The helper
+keeps the two-line idiom the docs already require down to one line without moving authority into
+the library.
+- **Suites and grouping**: `suite(r, "name")` pushing onto a `List<String>` path, with the path
+prefixed in the log. Cheap, and it is what makes a 300-line test file's output navigable.
+- **`benchkit`'s overlap**: `fpl/benchkit` already measures; a `timed(r, name, ...)` in `testkit`
+would duplicate it. Decide which one owns the clock rather than adding a third.
+
+#### Blocked, and on what
+
+- **`check_fails`/`xfail` (a check that the code *fails*)** and any wrapper taking a closure that
+mutates the report: the closure would capture a `mut Report` **by borrow**, which is refused
+today (H-16, work A-11). It is expressible only by passing the report in as a second argument.
+- **Setup/teardown around a group, and a `defer`-shaped cleanup**: no user `Drop` and no `defer`
+(B-8). A test that opens a temp dir cleans up by hand, in every test.
+- **Timing** (`time.now_ms`) lives in gated `std/time`, so a timed run makes `testkit` a gated
+module (open item 45's neighbour). `testkit` is ungated today; that trade is a decision, not a
+tweak.
+- **Parallel runs** need threads (MK6-S1-M1), and a `Report` shared across threads needs a
+`Mutex` and a `Send`-shaped rule (B-4/B-5). Do not design around it now.
+
+#### The half that is not `testkit`'s
+
+Golden/fixture testing — compile, run, diff stdout, assert the exit code, expect a
+compile *failure* — is what this repository's own suite needs, and it is the farthest from what a
+counter can do. It is already hand-written **twice**: `kelpc/tests/compile_and_run.rs`
+reimplements discovery, per-fixture flags, expected output and an AddressSanitizer pass, and
+`bench/speed/run.sh` is a 120-line shell program with its own flag assembly and table formatting.
+The Coral design already cites both as the tasks it exists to absorb. A Kelp-side version is
+writable today (`process.run` for the child, a temp dir under an `fs` grant, `testkit` for the
+assertions) but it is a **task** with its own grants, not a library, and discovery stays
+`kelpc test`-shaped — which is A-15's explicit non-goal.
+
+**Do not forget the docs when any of this lands.** The claim "no filtering, no parallel runs, no
+timing" is written in `wiki/getting-started/testing.md`, and the function table is duplicated in
+`fpl/docs/testkit.md`, `fpl/README.md`, `wiki/libraries/testkit.md`, `wiki/libraries/catalogue.md`
+and `fpl/index.toml`'s description. Five copies of the same API list is the reason the wish is
+worth writing down before the code.
 
 ### Coral: the build tool and package manager (roadmap open item 72)
 
