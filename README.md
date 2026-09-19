@@ -96,7 +96,8 @@ cargo build --release -p kelpc
 ```
 
 With no `-o`, the binary and the generated C (or assembly) land in `build/`
-beside the working directory. A directory with a `coral.toml` in it — `name`,
+beside the working directory. A directory with a
+[`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it — `name`,
 `version`, `entry` — builds the same way: `kelpc build myproject`.
 
 Two code generators are selectable, with `--backend=` or `KELPC_BACKEND`:
@@ -150,6 +151,16 @@ cargo test --test cap_matcher    -- --ignored                 # the capability m
 ```
 
 `bench/speed/run.sh` times the four workloads and checks their checksums.
+
+## Related repositories
+
+Kelp is one of three repositories on the same server. `kelpc` is the language and
+the compiler; these two are the tooling around it.
+
+| repository | what it is |
+| --- | --- |
+| **[Coral](https://homelabone.xenoo.dev/gittea/Juniper/coral)** | the build tool and package manager (`plan/roadmap.md` open item 72). `kelpc` stays the compiler; Coral owns the project — the `coral.toml` manifest, tasks, build cache and dependencies — and calls `kelpc` as a subprocess, never the reverse. |
+| **[Lighthouse](https://homelabone.xenoo.dev/gittea/Juniper/lighthouse)** | IDE support: Kelp's LSP/editor tooling — completion, hover, go-to-definition, signature help, symbols, references, rename, folding, inlay hints, auto-import and quick fixes, plus diagnostics from `kelpc` itself. |
 
 ## Documentation
 
