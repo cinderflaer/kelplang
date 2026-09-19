@@ -2252,7 +2252,12 @@ sweep of the same four columns at load 2.13 put 14 of its 15 merge runs between
 258.3 ms — 0.55x. The gate number is the uncontended one, **0.54x to 0.55x**
 here; the 185 ms this slice reported at its own base is the same loop with its
 median landing in the contended mode (that run's minimum was 140 ms), not a
-slower compiler.
+slower compiler. A third 9-run sweep of the same four columns, on the final
+fixture-fix commit (`58ec97f`), with every kernel binary `md5sum`-identical to
+the ones above, gave `collatz` 0.96, `float` **0.57**, `mix` 0.70 and `fib`
+1.68 with the same checksums — the same binaries and the same fast mode
+(134-146 ms), differing only in how many contended runs the median had to
+include, which is the spread this paragraph is about.
 
 **What the merge had to leave untouched, re-checked on `7594b25`.**
 `KELPC_BACKEND=asm cargo test --release --test compile_and_run` is **241 passed
