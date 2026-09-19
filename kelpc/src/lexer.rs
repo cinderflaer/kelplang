@@ -34,6 +34,12 @@ pub enum TokenKind {
     /// makes `c == '"'` work when `c` is a `u8` byte.
     CharLit(u32),
     Ident(String),
+    /// `// ...`, up to (not including) the line terminator. Produced only by
+    /// [`Lexer::tokenize_with_trivia`]: [`Lexer::tokenize`] skips comments, so
+    /// the parser, the preprocess pass and every existing diagnostic never see
+    /// one. The variant exists for the formatter, which has to reproduce every
+    /// comment verbatim and cannot do that from an AST with no comment node.
+    Comment(String),
 
     // string-template pieces (`"a$b${c}"`), all emitted in one flat run:
     // `TemplateStart StrChunk("a") ExprStart Ident(b) ExprEnd
@@ -177,6 +183,11 @@ pub struct Lexer<'a> {
     /// a whole token run, and `next_token` drains the run before reading
     /// more source.
     pending: VecDeque<Token>,
+    /// When true, `//...` is returned as a `TokenKind::Comment` token instead
+    /// of being skipped, and a newline run is not allowed to swallow one. Off
+    /// by default, so the token stream every other caller sees is unchanged;
+    /// see [`Lexer::tokenize_with_trivia`].
+    keep_comments: bool,
 }
 
 #[derive(Debug)]
@@ -194,6 +205,7 @@ impl<'a> Lexer<'a> {
             paren_depth: 0,
             brace_parens: Vec::new(),
             pending: VecDeque::new(),
+            keep_comments: false,
         }
     }
 
@@ -211,29 +223,60 @@ impl<'a> Lexer<'a> {
         Some(b)
     }
 
-    /// Skips spaces/tabs/comments (never newlines — those are handled by
-    /// the caller, since whether they're significant depends on
+    /// Skips spaces, tabs and carriage returns — the trivia a token never
+    /// starts with. A newline is *not* skipped: whether it is significant
+    /// depends on `paren_depth`, so the caller handles it.
+    fn skip_ws(&mut self) {
+        while matches!(self.peek(), Some(b' ') | Some(b'\t') | Some(b'\r')) {
+            self.pos += 1;
+        }
+    }
+
+    /// Consumes `//...` up to (not including) the line terminator. A trailing
+    /// CR is part of the terminator, not the comment, so a CRLF file does not
+    /// carry a stray CR into the comment's text or span.
+    fn consume_comment(&mut self) {
+        while let Some(b) = self.peek() {
+            if b == b'\n' || b == b'\r' {
+                break;
+            }
+            self.pos += 1;
+        }
+    }
+
+    /// Skips spaces/tabs/CRs and comments (never newlines — those are handled
+    /// by the caller, since whether they're significant depends on
     /// `paren_depth`).
     fn skip_trivia(&mut self) {
         loop {
+            self.skip_ws();
             match self.peek() {
-                Some(b' ') | Some(b'\t') | Some(b'\r') => {
-                    self.pos += 1;
-                }
-                Some(b'/') if self.peek_at(1) == Some(b'/') => {
-                    while let Some(b) = self.peek() {
-                        if b == b'\n' {
-                            break;
-                        }
-                        self.pos += 1;
-                    }
-                }
+                Some(b'/') if self.peek_at(1) == Some(b'/') => self.consume_comment(),
                 _ => break,
             }
         }
     }
 
+    /// Lexes the whole source. Comments are skipped, exactly as they always
+    /// have been — the parser's token stream is this one, and it does not
+    /// change.
     pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
+        self.keep_comments = false;
+        self.run()
+    }
+
+    /// `tokenize`, but comments are returned as `TokenKind::Comment`
+    /// tokens instead of being skipped, and a run of newlines stops at one.
+    /// Everything else — token text, spans, the collapse of a blank-line run
+    /// into a single `Newline` — is identical, which is what lets the
+    /// formatter reconstruct the source while nothing else in the compiler
+    /// changes.
+    pub fn tokenize_with_trivia(mut self) -> Result<Vec<Token>, LexError> {
+        self.keep_comments = true;
+        self.run()
+    }
+
+    fn run(&mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         loop {
             match self.next_token()? {
@@ -260,14 +303,30 @@ impl<'a> Lexer<'a> {
             if let Some(t) = self.pending.pop_front() {
                 return Ok(Some(t));
             }
-            self.skip_trivia();
+            if self.keep_comments {
+                self.skip_ws();
+                if self.peek() == Some(b'/') && self.peek_at(1) == Some(b'/') {
+                    let start = self.pos;
+                    self.consume_comment();
+                    return Ok(Some(Token {
+                        kind: TokenKind::Comment(self.src[start..self.pos].to_string()),
+                        span: Span::new(start, self.pos),
+                    }));
+                }
+            } else {
+                self.skip_trivia();
+            }
             let start = self.pos;
 
             if self.peek() == Some(b'\n') {
                 let nl_start = self.pos;
                 while self.peek() == Some(b'\n') {
                     self.pos += 1;
-                    self.skip_trivia();
+                    if self.keep_comments {
+                        self.skip_ws();
+                    } else {
+                        self.skip_trivia();
+                    }
                 }
                 // Significant at the top level, and inside a block whose own
                 // braces were opened inside parens — otherwise parens win.
@@ -949,6 +1008,64 @@ mod tests {
                 TokenKind::Eof
             ]
         );
+    }
+
+    /// The formatter needs the comments the parser never sees. The default
+    /// stream is unchanged — this is the whole point of keeping the change
+    /// additive — and the trivia stream interleaves the comment in source
+    /// order.
+    #[test]
+    fn trivia_retention_keeps_comments_without_changing_the_default_stream() {
+        let src = "1 // c\n2";
+        assert_eq!(
+            kinds(src),
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Newline,
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+        let trivia: Vec<TokenKind> = Lexer::new(src)
+            .tokenize_with_trivia()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect();
+        assert_eq!(
+            trivia,
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Comment("// c".to_string()),
+                TokenKind::Newline,
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    /// A comment must not change how a blank-line run collapses in the default
+    /// stream: `1\n\n// c\n2` still has a single `Newline` token.
+    #[test]
+    fn a_comment_between_newlines_leaves_the_default_stream_alone() {
+        assert_eq!(
+            kinds("1\n\n// c\n2"),
+            vec![
+                TokenKind::IntLit(1),
+                TokenKind::Newline,
+                TokenKind::IntLit(2),
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    /// CR is a line terminator, not part of the comment, so a CRLF file does
+    /// not carry a stray CR into the comment's text.
+    #[test]
+    fn a_carriage_return_is_not_part_of_a_comment() {
+        let tokens = Lexer::new("// x\r\ny").tokenize_with_trivia().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Comment("// x".to_string()));
+        assert_eq!(tokens[0].span, Span::new(0, 4));
     }
 
     #[test]

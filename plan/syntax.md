@@ -1859,14 +1859,26 @@ panic: String.from_bytes: input is not valid utf-8
 
 - 4 spaces, no tabs. Hard limit 100 columns.
 - One blank line between top-level declarations, and between functions.
-- Canonical file order: `impl`, then `const`/`pd`, then `datac`, then `fun` (13.2).
+- File order: `impl`, then `const`, then `pd`, then `datac`/`enum`/`fun` (13.2). The parser enforces every step but the order inside the last group: an `impl` written after any declaration, a `const` written after a `pd`, `datac`, `enum` or `fun`, and a `pd` written after a `datac`, `enum` or `fun` are parse errors. Whether a `datac` or an `enum` comes before a `fun` remains a review convention.
 - No semicolons. Do not wrap an expression across lines unless the wrap is inside parentheses or an argument list.
 - Standard library modules, functions and datac fields are `snake_case` (`fs.read_text`, `str.is_empty`, `Line.text`), and types are `PascalCase` (`String`, `Bytes`, `Box`, `Metadata`, `Url`).
 - User code case is not enforced. The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
 - Comments are `//`, written as full sentences when they explain a decision and never to restate the next line.
 
-No formatter ships yet. `kelpc` currently has no `fmt` or `lint` command, so these rules are a review convention rather than a check.
+`kelpc fmt` enforces the indentation, spacing, trailing-whitespace, newline and
+comment rules of this section and nothing else: it caps a run of blank lines
+between top-level declarations at one but never inserts a blank line the author
+did not write, it preserves the author's own line wrapping instead of
+re-wrapping to the 100-column limit, and the 100-column limit itself, the order
+inside the last group and the naming/case rules remain review conventions that
+need a lint, not a formatter (`kelpc` has no `lint` command). It holds four
+invariants: formatting is **idempotent** (formatting a formatted file changes
+nothing), **token-faithful** (no token's text is ever rewritten, so the formatted
+file is the same program), **comment-preserving** (every comment survives
+verbatim), and it **never writes a file it refuses** (a file that does not parse
+is reported, not reformatted). `kelpc/src/fmt.rs` lists, as data, every rule it
+enforces and every reason it refuses a file.
 
 ## 20. Grammar summary
 
