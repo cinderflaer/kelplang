@@ -4,5 +4,15 @@
 
 # `kelpc build`/`kelpc run` write the emitted C and the binary into the
 # working directory when no `-o` is given. Build output, not source: the
-# compiler is Rust and the stdlib is `.kp`, so no tracked file ends in `.c`.
+# compiler is Rust and the stdlib is `.kp`, so a `.c` file outside
+# `kelpc/runtime/` is build output.
 *.c
+
+# `kelpc/runtime/` is the one exception, and it is a staging post rather than a
+# destination (MK7 §8). It holds the C the compiler still emits as its runtime,
+# now kept as reviewed files instead of Rust string literals, because the
+# runtime track is replacing each piece with Kelp and the differential test for
+# a replacement has to compile the C it is comparing against — which needs a
+# file with a path, not a `const` inside the compiler binary.
+!kelpc/runtime/
+!kelpc/runtime/*.c
