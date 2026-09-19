@@ -3115,6 +3115,54 @@ fn the_c_backend_is_selectable_by_flag_environment_and_default() {
     }
 }
 
+/// The differential gate, at the level the whole MK7 argument rests on: the
+/// same fixture built by both backends must print the same bytes.
+///
+/// This is the one test that would catch a miscompile the fixture assertions
+/// cannot, because those compare against a *literal* an author wrote — a wrong
+/// literal and a wrong backend agree with each other. Comparing the two
+/// backends against each other is what makes the C backend an oracle rather
+/// than a second opinion, and it is why `codegen_c.rs` is never deleted
+/// (`plan/mk7-own-backend.md` §1.1).
+///
+/// The fixture list is deliberately scalar programs: it grows as the asm
+/// backend covers more, and a fixture that the asm backend still refuses makes
+/// this test fail, which is the intended signal — the list is a coverage
+/// assertion, not a wish list.
+#[test]
+fn the_two_backends_agree_on_the_scalar_fixtures() {
+    for name in [
+        "while_accumulator",
+        "if_expr",
+        "named_args",
+        "bitwise",
+    ] {
+        let source = format!("tests/fixtures/{name}.kp");
+        let mut outputs = Vec::new();
+        for backend in ["c", "asm"] {
+            let bin = out_path(&format!("differential_{backend}_{name}"));
+            let build = Command::new(kelpc_bin())
+                .args(["build", &format!("--backend={backend}")])
+                .arg(fixture(&source))
+                .arg("-o")
+                .arg(&bin)
+                .output()
+                .expect("failed to spawn kelpc");
+            assert!(
+                build.status.success(),
+                "the '{backend}' backend could not build '{source}':\n{}",
+                String::from_utf8_lossy(&build.stderr)
+            );
+            let run = Command::new(&bin).output().expect("failed to run the binary");
+            outputs.push(String::from_utf8_lossy(&run.stdout).to_string());
+        }
+        assert_eq!(
+            outputs[0], outputs[1],
+            "the 'c' and 'asm' backends disagree on '{source}'"
+        );
+    }
+}
+
 /// An explicit `--backend` must win, or a one-off override of a run whose
 /// environment already names another backend would be impossible.
 #[test]
@@ -3158,10 +3206,13 @@ fn an_unknown_backend_is_rejected_and_a_planned_one_says_so() {
     // The suggestion must not name a backend that cannot be selected. The names
     // are quoted so that "unknown" cannot satisfy the check by containing
     // "own".
-    assert!(stderr.contains("expected one of: c"), "{stderr}");
-    assert!(!stderr.contains("'asm'") && !stderr.contains("'own'"), "{stderr}");
+    assert!(stderr.contains("expected one of:"), "{stderr}");
+    assert!(!stderr.contains("'own'"), "{stderr}");
 
-    for planned in ["asm", "own"] {
+    // Only the tiers that are genuinely still ahead are reserved now that
+    // `asm` is selectable: a reserved name is a roadmap item, and reporting an
+    // implemented one that way would be as wrong as calling a typo planned.
+    for planned in ["own"] {
         let out = build_with(planned);
         assert!(!out.status.success(), "'{planned}' is not implemented yet");
         let stderr = String::from_utf8_lossy(&out.stderr);

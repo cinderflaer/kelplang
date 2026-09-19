@@ -16,19 +16,18 @@
 //! and a suite that cannot be pointed at a second backend cannot validate one.
 
 /// A code generator `kelpc` can lower a typed program with.
-///
-/// One variant today. The planned backends (`plan/mk7-own-backend.md` tiers 1
-/// and 2) are named in `RESERVED` so that asking for one is a clear "not built
-/// yet" rather than an "unknown backend" that reads like a typo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     /// Transpile to C, then hand the source to `cc`. The original backend, and
     /// the one the whole test suite is written against.
     C,
+    /// Emit x86-64 assembly text, then hand it to `as` and `ld`. MK7 tier 1:
+    /// this drops the C compiler from the chain while still linking libc.
+    Asm,
 }
 
 /// Names a later tier will claim. Recognized, deliberately not selectable.
-const RESERVED: &[&str] = &["asm", "own"];
+const RESERVED: &[&str] = &["own"];
 
 impl Backend {
     /// What `--backend` and `KELPC_BACKEND` mean when neither is given.
@@ -41,11 +40,12 @@ impl Backend {
 
     /// Every backend that can actually be selected. The integration suite
     /// loops over this to run the fixtures once per backend.
-    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C];
+    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C, Backend::Asm];
 
     pub fn name(self) -> &'static str {
         match self {
             Backend::C => "c",
+            Backend::Asm => "asm",
         }
     }
 
@@ -66,6 +66,7 @@ impl Backend {
     pub fn parse(name: &str) -> Result<Backend, String> {
         match name {
             "c" => Ok(Backend::C),
+            "asm" => Ok(Backend::Asm),
             reserved if RESERVED.contains(&reserved) => Err(format!(
                 "backend '{reserved}' is planned but not implemented yet \
                  (see plan/mk7-own-backend.md); {}",
@@ -126,20 +127,26 @@ mod tests {
     /// different things, and only one of them is the user's mistake.
     #[test]
     fn a_reserved_backend_says_planned_instead_of_unknown() {
-        let e = resolve(Some("asm"), None).unwrap_err();
+        let e = resolve(Some("own"), None).unwrap_err();
         assert!(e.contains("planned but not implemented"), "{e}");
-        let e = resolve(None, Some("own")).unwrap_err();
-        assert!(e.contains("planned but not implemented"), "{e}");
+        assert!(!e.contains("unknown"), "{e}");
     }
 
     #[test]
     fn an_unknown_backend_lists_the_implemented_ones() {
         let e = resolve(Some("llvm"), None).unwrap_err();
-        assert!(e.contains("unknown backend 'llvm'"), "{e}");
-        assert!(e.contains("c"), "{e}");
-        // Naming a reserved backend here would be suggesting a name that
-        // cannot work.
-        assert!(!e.contains("asm"), "{e}");
+        // Exact equality, not a search. Comparing the whole message is what
+        // makes this a real assertion: `contains("own")` would match the word
+        // "unknown", which is how this test first went wrong, and no
+        // subtraction over `RESERVED` avoids the same trap for short names.
+        let offered: Vec<&str> = Backend::IMPLEMENTED.iter().map(|b| b.name()).collect();
+        assert_eq!(
+            e,
+            format!(
+                "unknown backend 'llvm'; expected one of: {}",
+                offered.join(", ")
+            )
+        );
     }
 
     #[test]

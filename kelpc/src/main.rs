@@ -1,6 +1,7 @@
 mod ast;
 mod backend;
 mod borrowck;
+mod codegen_asm;
 mod codegen_c;
 mod diag;
 mod driver;
@@ -77,14 +78,30 @@ fn build(path: &str, out_path: &Path, backend: Backend) -> bool {
         }
     };
 
-    // The backend seam (MK7 stage 1). One arm today. A second backend adds its
-    // own arm here, and the fixture suite already knows how to validate it: it
-    // is backend-agnostic by construction, so a second run with
-    // `KELPC_BACKEND=<name>` exercises the same 248 fixtures against it.
+    // The backend seam (MK7 stage 1). A second backend adds its own arm here,
+    // and the fixture suite already knows how to validate it: it is
+    // backend-agnostic by construction, so a second run with
+    // `KELPC_BACKEND=<name>` exercises the same fixtures against it.
     match backend {
         Backend::C => {
             let c_source = codegen_c::generate(&typed, &drops, &sources);
             if let Err(e) = driver::compile_c(&c_source, out_path) {
+                eprintln!("error: {}", e.message);
+                return false;
+            }
+        }
+        Backend::Asm => {
+            // A refusal from the generator is a normal compile error, printed
+            // the same way a frontend diagnostic is: an uncovered construct
+            // must fail the build, never produce a binary that is wrong.
+            let asm_source = match codegen_asm::generate(&typed, &drops, &sources) {
+                Ok(source) => source,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return false;
+                }
+            };
+            if let Err(e) = driver::assemble_and_link(&asm_source, out_path) {
                 eprintln!("error: {}", e.message);
                 return false;
             }
