@@ -44,6 +44,24 @@ gate" ordering is unchanged except that prerequisite 3 (the scalar borrow) is no
 done: `bench/speed/speed.kp` still refuses, now at the `std.time.now_mono_ns_raw`
 extern, and the capability check is still ahead of it.
 
+**Third addendum (2026-09-20, when the float-aggregate slice landed).** The row
+section D expected-blocked and section A could not reach is closed, and with it
+the last shape item 4 names: a `datac` field or `enum` payload may now be an
+`f32`/`f64`. The classifier is per-eightbyte (`INTEGER`/`SSE`, `MEMORY` over
+sixteen bytes, an `enum`'s payload through its union), because the measurement in
+§1's trap — that all seven reachable fixtures would build with the size-only
+classifier — is exactly the self-consistent wrong ABI the plan's §10 warns about.
+The current numbers are **144 built of the 168 fixtures the C backend builds, 24
+refused**, the asm suite is **240 of 289**, and the ranking is `heap 13, enum 0, a
+`datac` holding a float or heap field 0, closure 10, gated extern 1`. The seven
+this brief named must-pass — `enum_basic`, `enum_container`, `if_let_basic`,
+`if_let_chain_same_scrutinee`, `receiver_methods`, `templates`, `stdlib_parse` —
+all build, run and print the C backend's bytes exactly, which is one more than the
+brief's own count of six plus `stdlib_parse`: it measured the reachable set as
+exactly those seven and it was right. Everything else in this file is history and
+kept as such; the counts it measures differently from the plan are recorded in
+`plan/mk7-own-backend.md`'s blockquotes.
+
 ---
 
 ## 0. The refusal ranking, verbatim

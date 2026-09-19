@@ -26,7 +26,7 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, nine slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, and `enum`, which closes the aggregate *set* except for a `datac` holding a float field), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **226 of 283** integration tests pass under `--backend=asm`; all 132 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), and then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 163 C and 132 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, ten slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, `enum`, and then a float field in an aggregate, the real per-eightbyte SysV classifier that closes item 4 outright), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **240 of 289** integration tests pass under `--backend=asm`; all 144 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), then a float field in an aggregate (a per-eightbyte classifier over `INTEGER`/`SSE`, `xmm` transport through every boundary, and the union merge that makes two same-size enums differ only in register file — see §5's blockquote), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 168 C and 144 asm, zero findings — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
@@ -131,31 +131,38 @@ ratchet 129 built of 160, 31 refused — and the enum slice's own defect fix (al
 denominators by three more without unblocking a refusal: the asm suite is **226 of 283**, the fixture
 ratchet is **132 built of 163, 31 refused**, and valgrind is clean over all 163 C-backend and 132 asm-backend
 binaries. The fix's three fixtures are new (`heap_narrow_fields`, `list_narrow_element_pop`,
-`try_narrow_payload`), so they move the denominator rather than the ratio, and two of the scalar-borrow
+`try_narrow_payload`), so they move the denominator rather than the ratio. The float-in-aggregate slice
+(below) has now moved both counts again: its five new fixtures and the `.s`-level ABI test move the
+denominator, all seven fixtures it had been waiting on stop refusing, and the current numbers are the **asm
+suite 240 of 289**, the **fixture ratchet 144 built of 168, 24 refused**, valgrind clean over all 168
+C-backend and 144 asm-backend binaries, and a refusal ranking of **heap 13, `enum` 0, a `datac` holding a
+float or heap field 0, closure 10, a gated extern 1**. Two of the scalar-borrow
 slice's four are fixtures the plan had credited *that* slice with and it could finally reach
 (`stdlib_build`, `borrow_provenance_and_arms`, both refused first on `std.str.parse_i64_raw` and both reachable
 only because the enum slice had already landed behind it), and two are the fixtures the slice wrote
-(`scalar_borrow`, `scalar_borrow_f64`). `stdlib_parse`, the third fixture the plan credited it with, is
-**refused**: with the parsers lowerable its first refusal is `Result<f64, ParseErr>`, the float-aggregate row,
-and the correction is recorded in this section's list rather than quietly fixed.
+(`scalar_borrow`, `scalar_borrow_f64`). `stdlib_parse`, the third fixture the plan credited it with, was
+**refused** at that point: with the parsers lowerable its first refusal was `Result<f64, ParseErr>`, the
+float-aggregate row — and the float-in-aggregate slice has now built it, which is the correction recorded in
+§0's list rather than quietly fixed.
 
 **How much of the whole plan is done, stated the same way the rest of this file measures things — in what
 landed, not a percentage that would imply more precision than the plan has:**
 
 - **Stage 0** (backend boundary): done.
 - **Stage 1** (x86-64 assembly): 3 of its original 8 build-order items (§5) are done outright — scalars,
-  `f32`/`f64`, the register allocator — plus a 4th (aggregates) with nine of its slices landed (a `datac` by
+  `f32`/`f64`, the register allocator — plus a 4th (aggregates) **with all of its slices landed** (a `datac` by
   value, a nested `datac`, the wider SysV classes, a `MEMORY`-class argument and a borrowed temporary, an owned
-  heap field, `Box<T>`, `List<T>`, `Map<K, V>`, and `enum`), the first
+  heap field, `Box<T>`, `List<T>`, `Map<K, V>`, `enum`, and a float field in an aggregate — the per-eightbyte
+  classifier that closes item 4 outright), the first
   half of item 8 (`print`/`print!` of `str` and the floats), passdowns (§5's ninth item, added after the fact:
   `pd` is M5.2's language feature, and the asm backend's second self-contained piece of codegen after the
   `datac` work), the extern path (§5's tenth item, added for the same reason): calls to `extern fun`s this
   backend can lower now go through the PLT or to a routine it owns, and functions nothing can reach are not
   compiled, and the owned-passdown drop (§5's eleventh item): an owning `pd` is freed from a generated
   `kelp_drop_pds` that `main` registers with `atexit`, which is what closes the passdown row. That is where the
-  219/278 fixture number comes from. The remaining part of item 4 is a `datac` holding a float field alone —
-  `enum` landed with the enum slice below, and `String`/`Bytes`/`List`/`Map` fields and `Box<T>` itself are
-  covered
+  240/289 fixture number comes from. Item 4 has nothing left to name: `enum` landed with the enum slice below,
+  the float field with the float-in-aggregate slice below, and `String`/`Bytes`/`List`/`Map` fields and
+  `Box<T>` itself are covered
   (see the heap-field, box, list and map slices' blockquotes, and the fourth slice's, which covers what "by
   value" means end to end) — the rest of item 8 (an owned `String`/`View` interpolated into a template, which is
   what that row really is: `print` of an owned `String` already builds), the rest of items 5 and 10
@@ -175,7 +182,7 @@ landed, not a percentage that would imply more precision than the plan has:**
 
 So: **one of four backend stages done, the second about halfway through its own item list, the third and
 fourth not begun**, plus the runtime track's two lowest-risk pieces landed and its costliest piece (DNS) not
-touched. Read the fixture ratio (223/280) as the honest single number if one number is wanted; it already
+touched. Read the fixture ratio (240/289) as the honest single number if one number is wanted; it already
 accounts for every one of these except the two things it structurally cannot measure — `bench/speed` and the
 memory gate — which is why both are called out separately above and in §5's definition of done.
 
@@ -197,17 +204,19 @@ builds, and detailed in §5):
    it (the passdown-drop slice built them), and so is the `str`-to-`String` coercion this row used to carry:
    `str_to_string_coercion` builds as of the enum slice, because the `if` in value position that stood in its way
    first needed the same destination-aware lowering an `enum` literal did. See §5's table.
-2. **A float payload in an aggregate** — 6 fixtures, and the row `enum` handed over to. A `datac` holding a
-   float field is 2 of them (`receiver_methods`, `templates`) and is the one shape item 4 still refuses outright;
-   the other 4 are the `enum` fixtures whose *payload* is a float (`enum_basic`, `enum_container`, `if_let_basic`,
-   `if_let_chain_same_scrutinee`), which the enum slice cannot reach for exactly that reason and which the brief
-   had already named as expected-blocked. The scalar-borrow slice added a fifth, `stdlib_parse`, whose
-   `std.str.parse_f64` returns `Result<f64, ParseErr>` — the same row seen through a stdlib signature. Nothing
-   else about an `enum` is missing: the tag/union layout,
-   `EnumLit`/`EnumTag`/`EnumField`, `?`, the generated tag-switching drop and the containers are all in (§5's
-   enum blockquote), and the ABI work the risk register calls the place silent miscompiles live is complete for
-   every shape this backend admits at all — the extern, heap-field, box, list, map and enum slices touched none
-   of it.
+2. **A float payload in an aggregate** — **done** (the float-in-aggregate slice below). All six fixtures build
+   and agree with the C backend byte for byte, plus `stdlib_parse`, the fifth this row acquired when the
+   scalar-borrow slice lowered the `str` parsers: `receiver_methods`, `templates` (a `datac` holding a float
+   field), `enum_basic`, `enum_container`, `if_let_basic`, `if_let_chain_same_scrutinee` (an `enum` whose
+   *payload* is a float) and `stdlib_parse` (`Result<f64, ParseErr>`). The slice replaced the size-only
+   classifier with a per-eightbyte one — `INTEGER`/`SSE`, `MEMORY` over sixteen bytes, an `enum`'s payload
+   classified through its union — and gave every boundary (`xmm` parameters and returns, mixed register pairs,
+   and the hand-written `Box`/`List`/`Map` element marshalling) the vector-register arm it needed. The ABI work
+   the risk register calls the place silent miscompiles live was **not** complete before this slice, contrary
+   to what the previous version of this paragraph asserted: it was complete for every shape the backend
+   admitted, and an eightbyte reachable only through float fields was exactly the shape it did not admit. That
+   is now true again, and a `.s`-level test asserts the register each row travels in, because a self-consistent
+   wrong split is invisible to the differential sweep.
 3. **A passdown (`pd`)** — **done**, including the owned ones: an owning passdown is freed from the generated
    `kelp_drop_pds` that `main` registers with `atexit`, the same handler the C backend gets for free, so
    `pd_owned`, `list_field` and `pd_argument_forwarding` build. See §5's passdown blockquotes.
@@ -360,11 +369,12 @@ with the backend as the only variable.
 ## 5. Stage 1 — x86-64, assembly text, `as` + `ld`
 
 > **Status: first slice landed, then f32/f64, then a register allocator (item
-> 3), then nine slices of item 4's aggregates (a `datac` by value, nesting, the
+> 3), then ten slices of item 4's aggregates (a `datac` by value, nesting, the
 > wider SysV classes, a `MEMORY`-class argument, owned heap fields, `Box<T>`,
 > `List<T>` — the first container whose element can itself own — `Map<K, V>`,
-> which closes the container set, and `enum`, which closes the aggregate set
-> except for a `datac` holding a float field),
+> which closes the container set, `enum`, which closes the aggregate set
+> except for a `datac` holding a float field, and then that float field,
+> whose per-eightbyte `INTEGER`/`SSE` classifier closes item 4 outright),
 > then the first half of item 8,
 > then passdowns, then the extern path, then an owned passdown's `atexit` drop
 > (the ninth, tenth and eleventh items — the first two added after the fact,
@@ -1811,7 +1821,144 @@ with the backend as the only variable.
 > is not dropped when a panic unwinds — `kelp_panic` prints and calls `exit(1)`
 > in both backends, so no local drop runs and the process exit reclaims the
 > memory (valgrind counts it as still-reachable glibc memory, not a finding).
-
+>
+> **The float-in-aggregate slice — the last shape item 4 names, and the real
+> per-eightbyte classifier (2026-09-20).** A `datac` field or an `enum` payload
+> may now be an `f32`/`f64`, and every site that moves such a value derives its
+> SysV class per eightbyte rather than from the size. What that replaced is
+> worth stating plainly, because the third slice's prose said it out loud and
+> was right at the time: `AggClass` was `One`/`Two`/`Mem` *by size*, sound only
+> because no layout with a float field existed. The size-only classifier would
+> in fact have built all seven fixtures this slice had been waiting on — a
+> sixteen-byte enum's union merges its payload eightbyte to `INTEGER`, so
+> sizes 8/16/24 happen to map to the right transport — which is exactly the
+> silent miscompile §10 warns about, and why this slice did the real
+> classification rather than taking the seven as a sign that none was needed.
+>
+> **The classifier, as it now exists.** `EbClass { kind, size }` is one
+> eightbyte: `INTEGER` or `SSE`, and how many of its bytes the value occupies
+> (only read for `SSE`, to choose `movss` for a lone `f32` and `movsd`
+> otherwise). `AggClass` is `One(EbClass)`, `Two(EbClass, EbClass)` or `Mem`,
+> with `int_regs`/`sse_regs` counting each register file independently. The
+> class is computed once at layout time from the layout's leaf *atoms* —
+> `(offset, size, kind)` — and stored on `StructLayout`, because every call
+> site consults it. A field's own atoms are folded in at its offset, so a
+> nested `datac` that straddles the parent's eightbyte boundary splits
+> correctly instead of being merged as a unit. `INTEGER` wins a tie, an
+> eightbyte no atom reaches is `INTEGER`, and a value over sixteen bytes is
+> `MEMORY` regardless, as `{f64, String}` (32 bytes) is. `FieldEntry::Float`
+> is the one new field kind; `try_build_layout` and `try_build_enum_layout`
+> place it with its natural alignment (4 for `f32`, 8 for `f64`).
+>
+> **The union merge is the subtlety, and it is measured.** An `enum`'s payload
+> eightbytes are classified through the union, so a variant with no payload (or
+> one with a non-float field) in the same eightbyte merges it back to
+> `INTEGER`. `enum_atoms` supplies that missing atom: the four-byte tag, then
+> every variant's payload entries, then — for each payload-less variant — the
+> one `char` C writes at the union's own offset. Two sixteen-byte enums that
+> differ only in the register file are the pin, and a fixture asserts both at
+> the `.s` level (see below): `Pure { D(f64) }` is `INTEGER`/`SSE` (`rdi` +
+> `xmm0`), `Merge { C(f64), Empty }` is `INTEGER`/`INTEGER` (`rdi` + `rsi`)
+> because `Empty`'s `char` shares the payload eightbyte.
+>
+> **The measured table, every row reproduced from the C backend's own binary
+> and cross-checked by `objdump`ing it** (the asm side was built, run and
+> disassembled the same way; the shapes below are the fixture's own
+> declarations):
+>
+> | shape | size | eightbytes | parameter | return |
+> | --- | --- | --- | --- | --- |
+> | `{f64}` | 8 | SSE | `xmm0` | `xmm0` |
+> | `{f32}` | 4 | SSE | `xmm0` (`movss`) | `xmm0` |
+> | `{f32,f32}` | 8 | SSE | `xmm0` (one eightbyte) | `xmm0` (`movsd`) |
+> | `{i32,f32}` | 8 | INTEGER (mixed eightbyte) | `rdi` | `rax` |
+> | `{f64,f64}` | 16 | SSE, SSE | `xmm0`,`xmm1` | `xmm0`,`xmm1` |
+> | `{f32,f32,f32}` | 12 | SSE, SSE | `xmm0`,`xmm1` | `xmm0` (`movsd`), `xmm1` (`movss`) |
+> | `{i64,f64}` | 16 | INTEGER, SSE | `rdi`,`xmm0` | `rax`,`xmm0` |
+> | `{f64,i64}` | 16 | SSE, INTEGER | `xmm0`,`rdi` | `xmm0`,`rax` |
+> | `{f64,f64,f64}` | 24 | MEMORY | outgoing area `[rbp+16]` | hidden pointer |
+> | `{f64, String}` | 32 | MEMORY | area (self too) | hidden pointer (`rdi`) |
+> | `enum { D(f64) }` | 16 | INTEGER, SSE | `rdi`,`xmm0` | `rax`,`xmm0` |
+> | `enum { C(f64), Empty }` | 16 | INTEGER, INTEGER (union) | `rdi`,`rsi` | `rax`,`rdx` |
+> | `enum Shape { Circle(f64), Rect(2×f64), Empty }` | 24 | MEMORY | area | hidden pointer |
+>
+> **What had to change, by mechanism.** `arg_regs_for` replaced the third
+> slice's `int_regs_for`, returning both register counts, so a parameter list
+> and a call site number the two files independently. `Gen::function` binds a
+> by-value aggregate with `store_arg_ebs`: each eightbyte from the `ARG64` or
+> `FARG` register its class names, a `movss`/`movsd` for an `SSE` one. Its
+> epilogue loads the return registers from `agg_slot` the same way, and every
+> `return`/tail site routes a register-class aggregate there. `Gen::call`
+> classifies each argument into an `ArgSlot::Regs` schedule, pushes each
+> eightbyte, and pops it into the right file; the return store writes each
+> returned eightbyte into its `Dest` at its own width. `value_kind` no longer
+> answers for a `One(SSE)` aggregate — it is not a plain value `rax` can hold
+> — so a `let`, an assignment, a return and a call argument all stage it
+> through `Dest` exactly as a `Two`/`Mem` value already was. `field_read`,
+> `field_assign`, `struct_lit_at`, `enum_lit_at`, `enum_field_read`,
+> `payload_out` and `move_payload` gained the `Float` arm, each a `movss`/
+> `movsd` where the integer arm was a `mov`. `marshal_elem`,
+> `emit_elem_return` and `emit_map_value_out` gained the same per-eightbyte
+> arms, which is what keeps `Box<Vec2>`, `List<Vec2>` and a `Map<i64, Vec2>`
+> correct *by construction* rather than refused: `elem_size` starts returning
+> `Some` for a float `datac` the moment it has a layout, and a hand-written
+> routine disagreeing with the generated caller about an `SSE` element is the
+> one place a wrong split *is* visible in stdout, so the fixtures cross that
+> boundary and compare with the C backend's output.
+>
+> **The refusal sites are gone, not moved.** `try_build_layout` and
+> `try_build_enum_layout` (`Ty::F32`/`Ty::F64` no longer fall through to
+> `None`), and with them the `struct_lit`/`struct_lit_at`
+> "holds a field this backend cannot lower yet" arm, `enum_layout`,
+> `require_enum_layout`, `enum_lit`, `enum_field_read` and `Gen::function`'s
+> parameter/return checks, none of which can fire on a float field any more.
+> All seven fixtures that named them build, run and print the C backend's
+> bytes exactly: `enum_basic`, `enum_container`, `if_let_basic`,
+> `if_let_chain_same_scrutinee`, `receiver_methods`, `templates` and
+> `stdlib_parse`. A shape still out of scope keeps an honest refusal: a
+> closure or function value, the `fs`/`io`/`net`/`path` extern bodies,
+> `List.sort`/`contains`/`slice`, a capability-gated call, and an owned
+> `String` interpolated into a template.
+>
+> **A self-consistent wrong ABI is invisible to the differential sweep, so the
+> slice adds the test kind that pins it.** Both ends of every generated call
+> are this backend, so putting a value in the wrong register *consistently*
+> still prints the right number. `assemble_and_link` keeps `<out>.s`, and
+> `the_classifier_puts_each_aggregate_eightbyte_in_its_own_register_file`
+> reads it: one representative of each row above, asserting the exact
+> parameter store and the exact return load, including the union-merge pair.
+> It is asm-only and reports itself so under the C backend, the way the
+> AddressSanitizer gate reports itself as C-only. A scratch build with
+> `classify` forced to `INTEGER` makes it fail (`mov QWORD PTR …, rdi` where
+> the assertion wants `movsd …, xmm0`), which is how the test proves it can
+> fail rather than merely passing.
+>
+> **Fixtures, five, and the valgrind they are in.** `float_datac_boundary`
+> (each row of the table, passed and returned by value, every value printed
+> after crossing a call), `float_datac_memory` (a `{f64, String}` passed and
+> returned, valgrind-clean), `float_enum_register_file` (the union-merge
+> pair), `float_datac_containers` (`Box#of`/`set`/`take`, `List#push`/`get`/
+> `pop`, `Map#insert` over an `SSE` element), and `float_field_write` (a
+> `mut`-method write and a plain `c.r = v` on a mixed `INTEGER`/`SSE` value).
+> Measured: the asm suite is **240 of 289** (was 226 of 283; the failing set
+> is unchanged, every name still a closure or a capability row), the fixture
+> ratchet is **144 built of 168, 24 refused** (was 132/163/31), and valgrind is
+> clean over all 168 C-backend and 144 asm-backend binaries — zero findings.
+> The refusal ranking is now **heap 13, `enum` 0, a `datac` holding a float or
+> heap field 0, closure 10, a gated extern 1**: the two rows this slice owned
+> are empty, and the float-aggregate gap item 4 named is closed.
+>
+> **One pre-existing bug this slice's probes found, recorded rather than
+> fixed.** A *field read of an owned temporary* — `print(mkName().r)` where
+> `mkName() -> Named` owns a `String` — leaks the temporary in this backend.
+> It is not float-specific: the same program with an `i64` field leaks
+> identically, and the pinned pre-slice compiler (`md5
+> db2fbf48de9505bd35b606db01845b09`) reproduces it, so it predates this
+> slice. The C backend frees the temporary. The new fixtures do not read a
+> field of an owned temporary for this reason; the bug is a separate slice
+> (the temporary's drop is not keyed at a field-access statement), not a
+> half-working shape this one introduced.
+>
 The first working own backend. Emits **x86-64 assembly text** and shells out to `as` and `ld` instead of `cc`.
 This drops the C compiler from the dependency chain while keeping libc, and it is deliberately the tier with
 the best value-per-line: the assembler does instruction encoding, so the hand-written part is lowering,
@@ -1856,11 +2003,14 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    not an aggregate at all but the exclusion list this item's own prose kept naming: a borrow of a named
    *scalar* local, which is a `lea` of that local's own frame slot and needs `LiveAnalysis` to keep every
    addressed local out of the register pool — see the scalar-borrow blockquote below, which also carries the
-   `str` parsers' out-parameter, the shape that borrow exists for. What is left of
-   this item is a `datac` holding a float field — `Map<K, V>` landed as the
-   eighth slice of this item and `enum` as the ninth (`Bytes`, `String`, `View`, `Box`, `List`, `Map` and every
-   aggregate shape an `enum` adds are done; see the heap
-   blockquotes above and the map and enum blockquotes below, and §12 for the reading of the C they mirror —
+   `str` parsers' out-parameter, the shape that borrow exists for. **The item is now closed** by the
+   float-in-aggregate slice: a `datac` field or `enum` payload may be an `f32`/`f64`, and `AggClass` is the
+   real per-eightbyte classifier (`INTEGER`/`SSE`, `MEMORY` over sixteen bytes, an `enum`'s payload through its
+   union) rather than the third slice's size-only split — `Map<K, V>` landed as the eighth slice of this item
+   and `enum` as the ninth, the float field as the tenth (`Bytes`, `String`, `View`, `Box`, `List`, `Map` and
+   every aggregate shape an `enum` or a float field adds are done; see the heap
+   blockquotes above and the map, enum and float-in-aggregate blockquotes below, and §12 for the reading of the
+   C they mirror —
    layouts, invariants, runtime functions and drop orders). Layout must
    match `codegen_c.rs`'s `typedef`s exactly or the two backends will not agree on a `List`'s field offsets —
    which is why an `enum`'s union offset is `align_up(4, union_align)` and not the four bytes a reader would
