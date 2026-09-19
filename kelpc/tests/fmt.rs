@@ -359,7 +359,7 @@ fn enumerated_refusal_names() -> Vec<String> {
     names
 }
 
-/// The header of this file names every refusal reason the formatter enumerates.
+/// The header of this file names each refusal bullet `kelpc/src/fmt.rs` lists.
 /// What this proves is that the names agree, not that any condition is worded
 /// correctly (see the module header). The header used to call an
 /// unresolvable alias one of the shapes a *valid* Kelp program is declined in —

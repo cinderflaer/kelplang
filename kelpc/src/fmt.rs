@@ -480,10 +480,10 @@ const REFUSALS: &[Refusal] = &[
 
 /// One reason `fmt` declines a file, as an enumeration.
 ///
-/// The formatter names one of these variants when it declines a file, and
-/// [`REFUSALS`] carries one entry per variant, in this order. The matches below
-/// have no wildcard, so a new variant stops the compiler until `name` and `next`
-/// name it; the unit test `the_refusal_enumeration_and_the_refusal_data_agree`
+/// The formatter names one of these variants when it declines a file. The
+/// matches below have no wildcard, so a new variant stops the compiler until
+/// `name` and `next` name it; the unit test
+/// `the_refusal_enumeration_and_the_refusal_data_agree`
 /// compares [`RefusalKind::all`] — the chain `next` walks — against [`REFUSALS`],
 /// so an entry `REFUSALS` omits for a variant on that chain, or an entry for no
 /// such variant, is a test failure. A variant `next` leaves off the chain is not
@@ -544,7 +544,8 @@ impl RefusalKind {
         }
     }
 
-    /// Every variant, in `REFUSALS` order, built by walking [`RefusalKind::next`].
+    /// The variants the `next` chain reaches, in `REFUSALS` order, built by
+    /// walking [`RefusalKind::next`] from the first variant.
     #[allow(dead_code)]
     fn all() -> Vec<RefusalKind> {
         let mut kinds = vec![RefusalKind::NotARegularFile];
@@ -554,9 +555,7 @@ impl RefusalKind {
         kinds
     }
 
-    /// Pairs this kind with the text a refusal of it prints, so a refusal cannot
-    /// enter the code as a bare string: the site must name a variant, and the
-    /// variant must be one [`REFUSALS`] documents.
+    /// Pairs this kind with the text a refusal of it prints.
     pub fn message(self, message: impl Into<String>) -> String {
         debug_assert!(
             REFUSALS.iter().any(|refusal| refusal.kind == self),
@@ -576,9 +575,8 @@ const FMT_MODULE: &str = "<fmt>";
 /// handed in, so the caller can render `file:line:col`.
 #[derive(Debug)]
 pub struct FmtError {
-    /// The reason, from the closed enumeration [`RefusalKind`]. Every error the
-    /// formatter builds names one, so a refusal cannot be added here as a bare
-    /// message that no list carries.
+    /// The reason, from [`RefusalKind`]. Every error the formatter builds names
+    /// one.
     #[allow(dead_code)]
     pub kind: RefusalKind,
     pub message: String,
@@ -586,8 +584,7 @@ pub struct FmtError {
 }
 
 impl FmtError {
-    /// Builds an error for a reason from [`RefusalKind`]. Naming the kind is what
-    /// keeps every refusal inside the closed enumeration.
+    /// Builds an error for a reason from [`RefusalKind`].
     fn refusal(kind: RefusalKind, message: String, span: Span) -> FmtError {
         FmtError { kind, message, span }
     }
@@ -1688,11 +1685,11 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
-    /// The refusal enumeration and the refusal data are one list: same names,
-    /// same order, same count. The enumeration is [`RefusalKind::all`], built by
-    /// walking [`RefusalKind::next`] (a wildcard-free match), so a variant cannot
-    /// be missing from it; every entry of [`REFUSALS`] carries a kind. A new
-    /// variant, or an entry for no variant, fails here.
+    /// The refusal enumeration and the refusal data agree in name, order and
+    /// count, over the variants that chain reaches. [`RefusalKind::all`] is built
+    /// by walking [`RefusalKind::next`] (a wildcard-free match), so the comparison
+    /// reads only the variants on that chain. Every entry of [`REFUSALS`] carries
+    /// a kind, and no kind appears twice.
     #[test]
     fn the_refusal_enumeration_and_the_refusal_data_agree() {
         let from_enum: Vec<&str> = RefusalKind::all().iter().map(|kind| kind.name()).collect();
