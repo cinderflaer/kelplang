@@ -225,18 +225,19 @@ fn process_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
 /// `fs`'s resource arguments. Nearly every `str` argument is a path
 /// (`rename`, `copy` and `symlink` have two), but `open`'s second argument is a
 /// mode (`"r"`/`"w"`/`"a"`/`"rw"`) and must not be normalised and matched as
-/// one. This is the same shape `net` needed: the call's own name decides.
+/// one, and `try_open` has the same signature. This is the same shape `net`
+/// needed: the call's own name decides.
 ///
 /// `symlink` is the one call where checking both ends is a *design* choice
 /// rather than an obvious one: the link's own path is what a caller creates,
 /// and the target could be checked alone, since every later access through the
 /// link resolves it first and is denied if it points outside. Checking the
-/// target too keeps an `fs` grant **closed under link creation** — a module
-/// can only create a link whose target it could also name — which is what
+/// target too keeps an `fs` grant **closed under link creation** (a module
+/// can only create a link whose target it could also name), which is what
 /// stops a tree inside a grant from containing a link out of it (the case
 /// `fs.remove_all` refuses to walk, and now says so).
 fn fs_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
-    if callee == "open" {
+    if callee == "open" || callee == "try_open" {
         return first_str_arg(arg_is_str)
             .map(|i| vec![CapCheck::Path(i)])
             .unwrap_or_default();

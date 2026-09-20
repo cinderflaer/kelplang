@@ -1,0 +1,59 @@
+// MISSING-d6Qy1: the fallible twins of `read`/`read_text`/`open`, for a tree the
+// caller did not author. A failure is an `io.IoErr` value carrying the errno and
+// its text, not a panic.
+impl "std/fs"
+impl "std/mem"
+impl "std/result"
+
+fun main() {
+    val text_path = "/tmp/kelp_fs_try_read.txt"
+    val bin_path = "/tmp/kelp_fs_try_read.bin"
+    fs.write_text(text_path, "hello\n")
+
+    // A byte that is not valid UTF-8, so `try_read_text` can be shown failing
+    // without a syscall failing.
+    var raw = mem.alloc(1)
+    raw.set(0, 255)
+    fs.write(bin_path, raw)
+
+    val ok = fs.try_read(text_path)
+    if let Ok(data) = ok {
+        print(data.as_str())
+    }
+
+    val missing = fs.try_read("/tmp/kelp_fs_no_such_dir/probe")
+    if let Err(e) = missing {
+        print(e.errno.to_i64())
+        print(e.message)
+    }
+
+    val text = fs.try_read_text(text_path)
+    if let Ok(t) = text {
+        print(t.as_str())
+    }
+
+    val binary = fs.try_read_text(bin_path)
+    if let Err(e) = binary {
+        print(e.errno.to_i64())
+        print(e.message)
+    }
+
+    val opened = fs.try_open(text_path, "r")
+    if let Ok(file) = opened {
+        print(file.is_open())
+        file.close()
+    }
+
+    val bad_mode = fs.try_open(text_path, "q")
+    if let Err(e) = bad_mode {
+        print(e.errno.to_i64())
+    }
+
+    val no_file = fs.try_open("/tmp/kelp_fs_no_such_dir/probe", "r")
+    if let Err(e) = no_file {
+        print(e.errno.to_i64())
+    }
+
+    fs.remove(text_path)
+    fs.remove(bin_path)
+}

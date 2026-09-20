@@ -1,6 +1,7 @@
 impl "std/str"
 impl "std/path"
 impl "std/io"
+impl "std/result"
 
 /* std/fs — the gated filesystem namespace (M7).
 
@@ -50,6 +51,17 @@ extern fun is_symlink_raw(path: &str).R: bool
 extern fun read_link_raw(path: &str).R: String
 extern fun cwd_raw().R: String
 
+// The fallible twins of `read_raw`/`open_raw`. Neither panics: the failure is
+// written through `err` (0 on success) and the return value is whatever shape
+// "no value" takes (`try_read_raw` returns an empty `Bytes`, `try_open_raw` a
+// negative descriptor), so the caller has one value to drop on either path.
+extern fun try_read_raw(path: &str, err: mut i32).R: Bytes
+extern fun try_open_raw(path: &str, mode: &str, err: mut i32).R: i32
+
+// Whether `data` is valid UTF-8. The same check `String.from_bytes` runs (and
+// panics on), exposed so a fallible reader can ask before it copies.
+extern fun utf8_valid_raw(data: &Bytes).R: bool
+
 // A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
 // bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
 // on.
@@ -59,9 +71,38 @@ datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, v
 // Panics: if the file cannot be read.
 fun read(path: &str).R: Bytes = read_raw(path)
 
+// The whole file, as owned bytes, or the reason it cannot be read: the
+// fallible twin of `read` for a path the caller did not author — a scanner, an
+// indexer or a backup tool that skips what it may not read instead of ending
+// the run on the first such file. The error carries the POSIX `errno` and its
+// text (`io.IoErr`).
+fun try_read(path: &str).R: result.Result<Bytes, io.IoErr> {
+    var err: i32 = 0
+    val data = try_read_raw(path, &mut err)
+    if err == 0 {
+        return result.Result.Ok(value = data)
+    }
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+}
+
 // The whole file, as owned text.
 // Panics: if the file cannot be read, or is not valid utf-8.
 fun read_text(path: &str).R: String = String.from_bytes(read_raw(path))
+
+// The whole file as text, or the reason it cannot be read. A file that is not
+// valid UTF-8 is a failure too: its `errno` is 0, because no syscall failed,
+// and `message` says so.
+fun try_read_text(path: &str).R: result.Result<String, io.IoErr> {
+    var err: i32 = 0
+    val data = try_read_raw(path, &mut err)
+    if err != 0 {
+        return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
+    }
+    if !utf8_valid_raw(data) {
+        return result.Result.Err(error = io.IoErr(errno = 0, message = "fs.try_read_text: input is not valid utf-8"))
+    }
+    return result.Result.Ok(value = String.from_bytes(data))
+}
 
 // Writing takes the bytes or the text by value: the data is handed over, not
 // borrowed, since the call consumes nothing else of it.
@@ -284,6 +325,18 @@ fun touch(path: &str) {
 // Panics: if the mode is unknown or the file cannot be opened.
 fun open(path: &str, mode: &str).R: io.File {
     return io.File(fd = open_raw(path, mode))
+}
+
+// A `File` over `path`, or the reason it cannot be opened: the fallible twin of
+// `open`, with the same modes and the same error type as `try_read`. An unknown
+// mode is a failure with `errno` `EINVAL` (22) rather than a panic.
+fun try_open(path: &str, mode: &str).R: result.Result<io.File, io.IoErr> {
+    var err: i32 = 0
+    val fd = try_open_raw(path, mode, &mut err)
+    if err == 0 {
+        return result.Result.Ok(value = io.File(fd = fd))
+    }
+    return result.Result.Err(error = io.IoErr(errno = err, message = io.errno_text(err)))
 }
 
 // Every line of a text file, without the line endings and without the empty

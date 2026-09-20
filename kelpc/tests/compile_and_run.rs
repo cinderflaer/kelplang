@@ -1221,6 +1221,24 @@ fn a_failed_syscall_reports_errno_and_strerror() {
 }
 
 #[test]
+fn fs_has_fallible_read_and_open() {
+    // MISSING-d6Qy1: a failure is an `io.IoErr` value (errno plus text) rather
+    // than a panic, and the invalid-UTF-8 case carries errno 0 because no
+    // syscall failed. `try_open`'s mode is not a path argument: the `"r"`
+    // below would be denied by the capability check if it were.
+    for stale in [
+        "/tmp/kelp_fs_try_read.txt",
+        "/tmp/kelp_fs_try_read.bin",
+    ] {
+        let _ = std::fs::remove_file(stale);
+    }
+    assert_compiles_and_runs(
+        "tests/fixtures/fs_fallible.kp",
+        "hello\n\n2\nNo such file or directory\nhello\n\n0\nfs.try_read_text: input is not valid utf-8\ntrue\n22\n2\n",
+    );
+}
+
+#[test]
 fn owned_datac_fields_are_dropped_with_the_struct() {
     assert_compiles_and_runs(
         "tests/fixtures/string_field.kp",

@@ -39,6 +39,18 @@ extern fun close_raw(fd: i32)
 extern fun set_nonblocking_raw(fd: i32, on: bool)
 extern fun wait_readable_raw(fd: i32, timeout_ms: u64).R: bool
 extern fun wait_writable_raw(fd: i32, timeout_ms: u64).R: bool
+extern fun errno_text_raw(errno: i32).R: String
+
+// A failed syscall, as a value: the POSIX `errno` and its text. This is what a
+// fallible call hands back instead of panicking, so a caller can branch on the
+// cause (`errno`) or show it (`message`). `errno` is 0 when the failure is not a
+// syscall at all, and `message` is then the whole story.
+datac IoErr(val errno: i32, val message: String)
+
+// The text of a POSIX `errno`: `errno_text(13)` is `"Permission denied"`. Any
+// number is accepted; an unknown one gives the libc fallback text, never a
+// panic.
+fun errno_text(errno: i32).R: String = errno_text_raw(errno)
 
 // A descriptor. Not `Copy` (no `datac` is), so handing one to a function is a
 // borrow and there is never a silent second close.

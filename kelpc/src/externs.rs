@@ -268,6 +268,21 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "    char buf[PATH_MAX];\n    if (getcwd(buf, sizeof buf) == NULL) {\n        kelp_panic_errno(\"fs.cwd: cannot read the current directory\");\n    }\n    return kelp_String__from_str(buf);\n",
     ),
     (
+        "std/fs",
+        "try_read_raw",
+        "    *kelp_err = 0;\n    FILE* f = fopen(kelp_path, \"rb\");\n    if (f == NULL) {\n        *kelp_err = errno;\n        return kelp_bytes_alloc_raw(0);\n    }\n    if (fseek(f, 0, SEEK_END) != 0) {\n        int e = errno;\n        fclose(f);\n        *kelp_err = e;\n        return kelp_bytes_alloc_raw(0);\n    }\n    long n = ftell(f);\n    if (n < 0) {\n        int e = errno;\n        fclose(f);\n        *kelp_err = e;\n        return kelp_bytes_alloc_raw(0);\n    }\n    rewind(f);\n    kelp_Bytes b = kelp_bytes_alloc_raw((size_t)n);\n    if (n > 0 && fread(b.data, 1, (size_t)n, f) != (size_t)n) {\n        int e = errno;\n        fclose(f);\n        kelp_bytes_drop(&b);\n        *kelp_err = e != 0 ? e : EIO;\n        return kelp_bytes_alloc_raw(0);\n    }\n    fclose(f);\n    return b;\n",
+    ),
+    (
+        "std/fs",
+        "try_open_raw",
+        "    int flags;\n    if (strcmp(kelp_mode, \"r\") == 0) {\n        flags = O_RDONLY;\n    } else if (strcmp(kelp_mode, \"w\") == 0) {\n        flags = O_WRONLY | O_CREAT | O_TRUNC;\n    } else if (strcmp(kelp_mode, \"a\") == 0) {\n        flags = O_WRONLY | O_CREAT | O_APPEND;\n    } else if (strcmp(kelp_mode, \"rw\") == 0) {\n        flags = O_RDWR | O_CREAT;\n    } else {\n        *kelp_err = EINVAL;\n        return -1;\n    }\n    int fd = open(kelp_path, flags, 0666);\n    if (fd < 0) {\n        *kelp_err = errno;\n        return -1;\n    }\n    *kelp_err = 0;\n    return fd;\n",
+    ),
+    (
+        "std/fs",
+        "utf8_valid_raw",
+        "    return kelp_utf8_valid(kelp_data->data, kelp_data->len);\n",
+    ),
+    (
         "std/time",
         "now_unix_raw",
         "    struct timespec ts;\n    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {\n        kelp_panic_errno(\"time.now_unix: clock_gettime failed\");\n    }\n    return (int64_t)ts.tv_sec;\n",
@@ -373,6 +388,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "std/io",
         "wait_writable_raw",
         "    struct pollfd p;\n    p.fd = kelp_fd;\n    p.events = POLLOUT;\n    p.revents = 0;\n    int t = kelp_timeout_ms > 2147483647ULL ? -1 : (int)kelp_timeout_ms;\n    int r;\n    do {\n        r = poll(&p, 1, t);\n    } while (r < 0 && errno == EINTR);\n    if (r < 0) {\n        kelp_panic_errno(\"io.wait_writable: poll failed\");\n    }\n    return r > 0 && (p.revents & (POLLOUT | POLLHUP | POLLERR)) != 0;\n",
+    ),
+    (
+        "std/io",
+        "errno_text_raw",
+        "    return kelp_String__from_str(strerror(kelp_errno));\n",
     ),
     // ---- std/process (S2) --------------------------------------------------
     (
