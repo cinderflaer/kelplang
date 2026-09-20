@@ -1493,11 +1493,26 @@ fn function_value_at(
         }
         // A gated item named as a value is a *name* like any other, so the
         // domain half of the gate applies here exactly as it does at a call
-        // site: without the capability the name does not resolve at all. The
-        // pattern half cannot be emitted here, because a function value is
-        // not a call site (`check_capability`'s caller enforces it where the
-        // resource argument is visible).
+        // site: without the capability the name does not resolve at all.
         ctx.check_capability(key, span)?;
+        // Holding the domain is not enough. The pattern half of the gate is
+        // emitted from the *call's* own callee key (`codegen_c.rs::cap_plan`),
+        // and a call through a function value names the pointer, not the
+        // gated item: the check would be skipped and the pointer would reach
+        // the resource on the domain gate's say-so alone, which makes a
+        // narrowed grant advisory for this one shape. A value cannot carry
+        // the naming module's patterns, and the resource argument position is
+        // a property of the callee's signature, so no check can follow the
+        // pointer. Refuse the value, the way the domain half refuses the
+        // ungranted name.
+        if let Some(domain) = ctx.gated.get(key) {
+            return Err(TypeError {
+                message: format!(
+                    "'{written}' is a gated function ('{domain}' capability), so it cannot be a function value: a call through the pointer is not a call site, and the '{domain}' check on its resource argument cannot be emitted there; call it directly instead"
+                ),
+                span,
+            });
+        }
         return Ok(Some((key.to_string(), fn_value_ty(&sig))));
     }
     if ctx.fns.templates.contains_key(key) {

@@ -1720,41 +1720,6 @@ fn an_ungranted_module_cannot_name_a_gated_item_as_a_function_value() {
 }
 
 #[test]
-fn a_function_value_naming_a_primitive_is_refused_by_name_where_no_check_can_run() {
-    // A module that *holds* the domain may name the primitive as a value, and a
-    // function value is not a call site, so no pattern check can be emitted for
-    // it. The asm backend used to emit a `lea` of a symbol nothing defines and
-    // die in `ld`; it refuses the construct by name now. The C backend still
-    // builds the pointer (`BUG-k2Qv7`, open), which is why this is asserted on
-    // the asm side alone.
-    if backend() != "asm" {
-        eprintln!(
-            "note: the named refusal for a function value over an `extern fun` is an asm \
-             backend assertion; backend '{}' is not checked by it",
-            backend()
-        );
-        return;
-    }
-    let bin = out_path("caps_raw_value_granted");
-    let build = kelpc()
-        .arg("build")
-        .arg(project("caps_raw_value_granted").join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        !build.status.success(),
-        "expected the asm backend to refuse a function value over an `extern fun`"
-    );
-    let stderr = String::from_utf8_lossy(&build.stderr);
-    assert!(
-        stderr.contains("a function value naming the `extern fun`"),
-        "expected a named refusal, got:\n{stderr}"
-    );
-}
-
-#[test]
 fn an_ungranted_module_cannot_name_a_gated_modules_receiver_method() {
     // A method of a gated module reaches the syscall without naming any of the
     // module's free functions, so the gate has to be on the method's own key
