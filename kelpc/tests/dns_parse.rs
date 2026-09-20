@@ -10,15 +10,28 @@
 //!
 //! The two implementations:
 //!
-//!   * `kelpc/runtime/dns_parse_ref.c` — the C reference. Nothing includes it
+//!   * `kelpc/runtime/dns_parse_ref.c`: the C reference. Nothing includes it
 //!     but this test, which compiles it directly.
-//!   * `kelpc/runtime/dns_parse.kp` — the same parser in Kelp, compiled by the
+//!   * `kelpc/runtime/dns_parse.kp`: the same parser in Kelp, compiled by the
 //!     C backend. It is not a std module and is not shipped yet.
 //!
 //! Both are fed the same corpus and each prints one line per case; the test
 //! compares the two line streams exactly (same count, same text, same order).
 //! Every case contributes exactly one line, so a mismatch is the case at that
 //! index.
+//!
+//! # What agreement here does and does not prove
+//!
+//! **Both implementations were written from the same rule choices, by the same
+//! author, in the same session.** The corpus therefore proves that the Kelp
+//! port and the C reference *agree*; it does not prove that either is right
+//! about the DNS wire format. Measured on this corpus: of the 1990 cases only
+//! 24 carry an expectation at all, 22 of them an absolute line and 2 only the
+//! `ok ` prefix, and those 24 are checked against the C reference rather than
+//! against an external authority. The other 1966 cases assert only that the two
+//! implementations agree, so a rule both share and both get wrong is invisible
+//! here. The four recorded responses are the only externally sourced inputs
+//! either of the two corpora has, and they are compared differentially too.
 //!
 //! # The covered contract
 //!
