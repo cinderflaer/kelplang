@@ -101,6 +101,7 @@
 use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{DropPlan, DropTarget};
 use crate::diag::SourceMap;
+use crate::lexer::Span;
 use crate::tir::*;
 use crate::types::Ty;
 use std::fmt::Write as _;
@@ -829,6 +830,11 @@ enum Extern {
 /// the two cannot drift.
 const RT_PATH_NORMALIZE: &str = "std.rt.path_normalize";
 
+/// The `std/rt` function the two capability checks of MK7 §5 item 7's step 1
+/// call: the path matcher behind `fs`'s path checks and `env`'s name checks.
+/// One spelling for every mention, `RT_PATH_NORMALIZE`'s rule.
+const RT_GLOB_MATCH: &str = "std.rt.glob_match";
+
 /// One routine this backend owns, emitted once per program that needs it
 /// (`Gen::emit_routine`). Named by an enum rather than a string so the set of
 /// them is closed and a typo is a compile error rather than a missing symbol.
@@ -993,6 +999,20 @@ enum Routine {
     FsListRaw,
     FsSymlinkRaw,
     FsReadLinkRaw,
+    /// MK7 §5 item 7, step 1: the capability check's own half, transliterated
+    /// from `kelpc/runtime/cap_glue.c`. `CapDeny` is the deny path (`fprintf`
+    /// plus `exit(1)`) and is required by every check routine, so a program
+    /// that checks something can never link against it without emitting it.
+    /// `ResolvePath` is `kelp_resolve_path`, the recursive symlink resolution
+    /// the path check matches against; it is still C in the other backend
+    /// because `realpath` is a libc call and `std/rt` has no way to reach one
+    /// (see `cap_glue.c`'s own note). `CapCheckPath`/`CapCheckName` are the two
+    /// check kinds this step implements: the allowlist loop around
+    /// `std.rt.path_normalize`/`glob_match`, which is the Kelp half.
+    CapDeny,
+    ResolvePath,
+    CapCheckPath,
+    CapCheckName,
 }
 
 impl Routine {
@@ -1085,6 +1105,10 @@ impl Routine {
             Routine::FsListRaw => "kelp_rt$fs_list_raw",
             Routine::FsSymlinkRaw => "kelp_rt$fs_symlink_raw",
             Routine::FsReadLinkRaw => "kelp_rt$fs_read_link_raw",
+            Routine::CapDeny => "kelp_rt$cap_deny",
+            Routine::ResolvePath => "kelp_rt$resolve_path",
+            Routine::CapCheckPath => "kelp_rt$cap_check_path",
+            Routine::CapCheckName => "kelp_rt$cap_check_name",
         }
     }
 }
@@ -1218,8 +1242,8 @@ fn extern_target(key: &str) -> Option<Extern> {
         // `externs.rs` body transliterated; the time routines are the two
         // `clock_gettime` calls and the `nanosleep` retry loop, and the rand
         // pair is `fopen`/`fread`/`fclose` over `/dev/urandom`. None of the
-        // five takes a named resource, so `cap_check_refusal` has no check to
-        // emit for them (measured controls: the `time`/`rand` calls in
+        // five takes a named resource, so `cap_decision` has no check to emit
+        // for them (measured controls: the `time`/`rand` calls in
         // `caps_time_rand` build with no gate).
         "std.time.now_unix_raw" => Extern::Routine(Routine::TimeNowUnixRaw),
         "std.time.now_mono_ns_raw" => Extern::Routine(Routine::TimeNowMonoNsRaw),
@@ -1268,34 +1292,89 @@ fn extern_target(key: &str) -> Option<Extern> {
     })
 }
 
-/// The capability-check refusal for `callee`, or `None` when the call has no
-/// check to emit.
+/// The symbol one (module, domain) grant is compiled in under.
 ///
-/// MK7 §5 item 7: this backend refuses a call the C backend wraps in a runtime
-/// capability check, because a grant that is never checked is a grant that is
-/// not there. Which calls those are is `stdlib::checked_args`'s answer, the
-/// same one `codegen_c.rs::cap_checked_call` reads: a gated call whose resource
-/// arguments are all non-`str` (`fs.cwd`, `time.*`, `rand.*`) has no check set
-/// and no check to emit, so it is emitted exactly as the C backend emits it.
-/// Refusing it would over-refuse the oracle. `arg_is_str` is
-/// `stdlib::is_str_like_ty` per argument, the vector the C backend builds for
-/// the same reason.
+/// A copy of `codegen_c.rs::CapTable::symbol`, which is private to that file:
+/// the two must spell the same name, because the call site here writes a `lea`
+/// of it and `finish` writes the array under it. `c_ident` is what makes a
+/// stdlib module id (`std/http`) a legal symbol part.
+fn cap_table_symbol(module: &str, domain: &str) -> String {
+    format!(
+        "kelp_caps_{}_{}",
+        crate::types::c_ident(&module.replace('/', "_")),
+        domain
+    )
+}
+
+/// What one gated call site's capability check emits.
+struct CapPlan {
+    /// The domain the check reports, a string constant at the call site.
+    domain: String,
+    /// Which check kinds, in the order the C backend emits them.
+    checks: Vec<crate::stdlib::CapCheck>,
+    /// The calling module's pattern count, a literal at the call site.
+    patterns: usize,
+    /// `file:line:col` as the compiler was invoked with the file, or the
+    /// module id when the module's text was never registered. Taken from
+    /// `SourceMap::locate` and from nowhere else, because the denial's first
+    /// field is that exact string.
+    at: String,
+}
+
+/// Which check kinds a gated call names, or why this slice cannot emit them
+/// yet.
+#[derive(Debug)]
+enum CapDecision {
+    /// Not gated, or gated with no named resource: the plain call.
+    Plain,
+    /// The domain, and the check kinds to emit before the call.
+    Check(String, Vec<crate::stdlib::CapCheck>),
+    /// A gated call whose resource is one of `net`'s kinds, which step 1 does
+    /// not transliterate yet. A compile-time refusal, never an unchecked call.
+    Unsupported(String),
+}
+
+/// The capability decision for `callee`, at the level the unit tests can pin
+/// without a whole program.
+///
+/// MK7 §5 item 7: which calls carry a check is `stdlib::checked_args`'s answer,
+/// the same one `codegen_c.rs::cap_plan` reads. A gated call whose resource
+/// arguments are all non-`str` (`fs.cwd`, `time.*`, `rand.*`, `net.send`) has
+/// no check set and nothing to emit, so it is emitted exactly as the C backend
+/// emits it; refusing it would over-refuse the oracle, and widening the empty
+/// case to "emit nothing anyway" would leave a real resource unchecked, which
+/// is the one direction that is a security hole rather than a wrong number.
+/// `arg_is_str` is `stdlib::is_str_like_ty` per argument, the vector the C
+/// backend builds for the same reason.
 ///
 /// The compile-time half of the gate is `resolve.rs`'s and is shared by both
 /// backends: a module that cannot name the function never reaches this call.
-fn cap_check_refusal(
+fn cap_decision(
     gated: &std::collections::HashMap<String, String>,
     callee: &str,
     arg_is_str: &[bool],
-) -> Option<String> {
-    let domain = gated.get(callee)?;
-    // `codegen_c.rs::cap_checked_call` is handed the qualified key and looks
-    // the per-function table up under the bare name the author wrote.
+) -> CapDecision {
+    use crate::stdlib::CapCheck;
+
+    let Some(domain) = gated.get(callee) else {
+        return CapDecision::Plain;
+    };
+    // `codegen_c.rs` is handed the qualified key and looks the per-function
+    // table up under the bare name the author wrote.
     let bare = callee.rsplit('.').next().unwrap_or(callee);
-    if crate::stdlib::checked_args(domain, bare, arg_is_str).is_empty() {
-        return None;
+    let checked = crate::stdlib::checked_args(domain, bare, arg_is_str);
+    if checked.is_empty() {
+        return CapDecision::Plain;
     }
-    Some(domain.clone())
+    if checked.iter().any(|c| {
+        matches!(
+            c,
+            CapCheck::Host(_) | CapCheck::HostPort(_, _) | CapCheck::Port(_)
+        )
+    }) {
+        return CapDecision::Unsupported(domain.clone());
+    }
+    CapDecision::Check(domain.clone(), checked)
 }
 
 /// Every function key a program can actually reach.
@@ -3336,7 +3415,7 @@ enum TrampolineTarget {
 /// `Err` carries a complete diagnostic, printed the same way a frontend error
 /// is, so an uncovered construct fails the build instead of producing a binary
 /// that is quietly wrong.
-pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Result<String, String> {
+pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Result<String, String> {
     // MK7 §5: an `extern fun` is no longer a program-level refusal. Only the
     // ones a program can actually *call* matter, and only the ones this
     // backend can supply a body for build — see `extern_target`. A live extern
@@ -3435,6 +3514,12 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // that is not there, and silently dropping it would let a fixture pass
     // while the promise the language makes about capabilities stopped holding.
     g.gated = program.gated.clone();
+    // MK7 §5 item 7: the grants themselves, and the source map a denial's
+    // `at` comes from. Both are read at a gated call site: the symbol, the
+    // pattern count and the `module` argument from `caps`, and the location
+    // from `sources.locate`.
+    g.caps = program.caps.clone();
+    g.sources = Some(sources);
     // MK7 §5 item 6: every `fun` literal's environment, by the generated
     // function's own name. A closure *expression* names its literal's fields by
     // key (`ClosureLit`/`FnToClosure` carry `key`), while the literal's function,
@@ -3693,6 +3778,24 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
                 .expect("checked when the table was built");
             let label = pd.label.clone();
             let _ = writeln!(g.out, "    .p2align 3\n{label}:\n    .zero {bytes}");
+        }
+    }
+    // MK7 §5 item 7 step 1: the compiled-in allowlists, one `.quad` array per
+    // grant, with `codegen_c.rs::CapTable::symbol`'s own symbol rule and the
+    // C's layout (one pointer per pattern, `NULL`-terminated, even though the
+    // count is passed separately). Only for a program that gates something,
+    // which is `cap_needed` on the C side. The interning happens here rather
+    // than in `finish` because it needs the byte constants' labels, and
+    // `finish` has already given up the `&mut self` that interns them.
+    if !g.gated.is_empty() {
+        let grants = g.caps.clone();
+        for grant in &grants {
+            let symbol = cap_table_symbol(&grant.module, &grant.domain);
+            let mut labels = Vec::with_capacity(grant.patterns.len());
+            for pattern in &grant.patterns {
+                labels.push(g.bytes_label(pattern.as_bytes()));
+            }
+            g.cap_arrays.push((symbol, labels));
         }
     }
     Ok(g.finish())
@@ -4602,7 +4705,7 @@ fn xmm_clobbered_by(e: &Expr) -> bool {
 }
 
 #[derive(Default)]
-struct Gen {
+struct Gen<'a> {
     out: String,
     /// Byte-string constants, emitted at the end as `.byte` runs. Emitting a
     /// literal's bytes rather than quoting it into `.string` sidesteps escaping
@@ -4616,6 +4719,26 @@ struct Gen {
     /// without one: the check is the language's headline promise, and a backend
     /// that skipped it would be removing a guarantee rather than a feature.
     gated: std::collections::HashMap<String, String>,
+    /// MK7 §5 item 7: the module the function being generated was declared in.
+    /// The capability check keys its allowlist symbol, its `module` argument
+    /// and its `at` location on *that* module, exactly as `codegen_c.rs`'s own
+    /// `module` field does: a grant belongs to the code that wrote the call,
+    /// not to the module the gated function lives in.
+    module: String,
+    /// MK7 §5 item 7: the source map, so a denial names the same
+    /// `file:line:col` the C backend prints. `None` only for a `Gen` built by
+    /// hand (the unit tests below); `generate` is always given one, and a call
+    /// site with no map and a check to emit is a refusal rather than a guess.
+    sources: Option<&'a SourceMap>,
+    /// MK7 §5 item 7: the program's capability grants, one per (module,
+    /// domain) that holds one, in `program.caps` order. The pattern count the
+    /// check is handed and the `.quad` array it scans both come from here, so
+    /// the two cannot disagree.
+    caps: Vec<CapsGrant>,
+    /// MK7 §5 item 7: the allowlist arrays to write in `.rodata`, as (symbol,
+    /// pattern labels). Built in `generate` because interning the patterns
+    /// needs `&mut self`, and written by `finish` beside the byte runs.
+    cap_arrays: Vec<(String, Vec<String>)>,
     /// MK7 §5 item 4: every `datac` `build_layouts` accepted, keyed by name.
     layouts: std::collections::HashMap<String, StructLayout>,
     /// MK7 §5 item 8: whether anything in this program can panic (`panic`,
@@ -4817,7 +4940,7 @@ impl DropSite {
     }
 }
 
-impl Gen {
+impl<'a> Gen<'a> {
     fn label(&mut self, hint: &str) -> String {
         self.next_label += 1;
         format!(".L{hint}{}", self.next_label)
@@ -4862,6 +4985,19 @@ impl Gen {
                 }
             }
         }
+        // MK7 §5 item 7: the capability allowlists, after the byte runs they
+        // point at. The link is `EXEC` (non-PIE), so a `.quad` of a local
+        // label needs no dynamic relocation.
+        if !self.cap_arrays.is_empty() {
+            out.push_str("    .section .rodata\n");
+            for (symbol, labels) in &self.cap_arrays {
+                let _ = writeln!(out, "{symbol}:");
+                for label in labels {
+                    let _ = writeln!(out, "    .quad {label}");
+                }
+                let _ = writeln!(out, "    .quad 0");
+            }
+        }
         out
     }
 
@@ -4881,6 +5017,10 @@ impl Gen {
         // `DropPlan` is keyed by `(function, span)`, so every drop lookup
         // below needs the name of the function whose body is being written.
         self.function = f.name.clone();
+        // MK7 §5 item 7: the module whose grant a gated call in this body is
+        // checked against, and the key the denial's location is looked up
+        // under. `codegen_c.rs` does the same at its own function boundary.
+        self.module = f.module.clone();
         // No `FLOAT_HOLD` register is live at a function boundary — see
         // `Gen::float_hold`.
         self.float_hold = 0;
@@ -5338,7 +5478,17 @@ impl Gen {
                     None
                 }
                 _ => {
-                    self.expr(tail, frame)?;
+                    // A body whose tail is *discarded* — `main`'s
+                    // `{ fs.read(p) }`, where the value is dead because the
+                    // function is `unit` — is the one tail shape the generic
+                    // path cannot lower when the call returns a wide aggregate,
+                    // because such a call still needs storage for the callee to
+                    // write through. See `discard_expr`.
+                    if f.ret == Ty::Unit {
+                        self.discard_expr(tail, frame)?;
+                    } else {
+                        self.expr(tail, frame)?;
+                    }
                     if drops.is_empty() && self.borrowed_temporaries.len() == base {
                         None
                     } else {
@@ -8526,6 +8676,24 @@ impl Gen {
             Routine::FsCwdRaw => {
                 self.require_routine(Routine::StringFromStr);
             }
+            // MK7 §5 item 7 step 1: the two check routines and the path
+            // resolution they share. Every check denies through `CapDeny`, so
+            // requiring one of them is what makes the deny routine live — a
+            // program that checks can never link against a symbol nothing
+            // emitted. The two `std/rt` functions are the *Kelp* half of the
+            // check (the matcher and the lexical normalizer) and are ordinary
+            // program code, so they are recorded here for `generate` to read
+            // back as roots, exactly as `PathNormalizeRaw` records its own.
+            Routine::CapCheckPath => {
+                self.require_routine(Routine::CapDeny);
+                self.require_routine(Routine::ResolvePath);
+                self.rt_functions.insert(RT_PATH_NORMALIZE.to_string());
+                self.rt_functions.insert(RT_GLOB_MATCH.to_string());
+            }
+            Routine::CapCheckName => {
+                self.require_routine(Routine::CapDeny);
+                self.rt_functions.insert(RT_GLOB_MATCH.to_string());
+            }
             // MK7 §5's S2 slice: `read_raw` builds its return value with the
             // `Bytes` allocator (the only allocation in the family), and
             // `errno_text_raw` copies `strerror`'s static buffer into an owned
@@ -8861,7 +9029,7 @@ impl Gen {
                 let _ = writeln!(self.out, "    jmp {label}");
                 Ok(())
             }
-            Stmt::Expr(e) => self.expr(e, frame),
+            Stmt::Expr(e) => self.discard_expr(e, frame),
         }
     }
 
@@ -8930,6 +9098,44 @@ impl Gen {
         self.flush_borrowed_temporaries(frame, base)?;
         frame.pop_scope();
         Ok(())
+    }
+
+    /// An expression computed for its effects, its value dead: `Stmt::Expr`,
+    /// and a `unit` body's tail.
+    ///
+    /// Every expression computes into `rax` except one, and it is what a
+    /// discarded call needed here: a call returning more than one eightbyte
+    /// (or one eightbyte that is not INTEGER) is written by the callee through
+    /// a hidden pointer, so the caller has to supply the storage even when it
+    /// wants nothing back. The C backend passes a compiler temporary at every
+    /// such call site; a scratch slot is the same thing. Reaching the generic
+    /// `expr` path with such a call is a refusal (`Gen::call` cannot tell a
+    /// discarded value from a value used as an argument), which is what a
+    /// gated `fs.read(p)` as a `unit` body's tail hit once the capability
+    /// check stopped refusing the call first.
+    fn discard_expr(&mut self, e: &Expr, frame: &mut Frame) -> Result<(), String> {
+        let wide = struct_layout(&e.ty, &self.layouts)
+            .map(|l| !l.class().is_int_one())
+            .unwrap_or(false);
+        if !wide {
+            // A scalar, a `str`, or a `One`-class aggregate (which travels in
+            // `rax`): the generic path already lowers it.
+            return self.expr(e, frame);
+        }
+        let size = struct_layout(&e.ty, &self.layouts).expect("checked above").size;
+        let dest = Dest::Direct(frame.scratch(align_up(size, 8)));
+        match &e.kind {
+            ExprKind::Call { callee, args } => {
+                self.call(callee, args, e.span, &e.ty, Some(dest), None, frame)
+            }
+            ExprKind::IndirectCall { callee, args } => {
+                self.indirect_call(callee, args, e.span, &e.ty, Some(dest), frame)
+            }
+            // A wide value that is not a call (a block's or a `when`'s tail)
+            // is left to the generic path and its own message rather than
+            // silently dropped here.
+            _ => self.expr(e, frame),
+        }
     }
 
     fn expr(&mut self, e: &Expr, frame: &mut Frame) -> Result<(), String> {
@@ -9272,14 +9478,16 @@ impl Gen {
                 Ok(())
             }
             ExprKind::Block(block) => self.block(block, frame),
-            ExprKind::Call { callee, args } => self.call(callee, args, &e.ty, None, None, frame),
+            ExprKind::Call { callee, args } => {
+                self.call(callee, args, e.span, &e.ty, None, None, frame)
+            }
             ExprKind::Template { newline, pieces } => self.template(*newline, pieces, frame),
             // MK7 §5 item 6: a call through a function value. A closure
             // carries its environment, so the value is staged once and the
             // call passes the environment as the hidden first argument; a
             // plain function value is the code pointer itself.
             ExprKind::IndirectCall { callee, args } => {
-                self.indirect_call(callee, args, &e.ty, None, frame)
+                self.indirect_call(callee, args, e.span, &e.ty, None, frame)
             }
             // A fixed-size array (A-18) is a by-value struct the C backend
             // emits; here it is a synthesized layout like any other aggregate
@@ -10213,6 +10421,7 @@ impl Gen {
         &mut self,
         callee: &Expr,
         args: &[Expr],
+        span: Span,
         ret_ty: &Ty,
         ret_dst: Option<Dest>,
         frame: &mut Frame,
@@ -10243,7 +10452,7 @@ impl Gen {
                 slot
             }
         };
-        self.call("#indirect", args, ret_ty, ret_dst, Some((slot, kind)), frame)
+        self.call("#indirect", args, span, ret_ty, ret_dst, Some((slot, kind)), frame)
     }
 
     /// MK7 §5 item 4: `Name { field = expr, ... }`. Every field is evaluated
@@ -11128,7 +11337,9 @@ impl Gen {
                 })?;
                 self.array_repeat_at(elem, len, value, frame, dest)
             }
-            ExprKind::Call { callee, args } => self.call(callee, args, &expr.ty, Some(dest), None, frame),
+            ExprKind::Call { callee, args } => {
+                self.call(callee, args, expr.span, &expr.ty, Some(dest), None, frame)
+            }
             // MK7 §5 item 6: a named function used as a value, its code address
             // is the whole value, so the destination gets one `lea`.
             ExprKind::FnRef(key) => {
@@ -11173,7 +11384,7 @@ impl Gen {
             // A call through a function value whose result is wider than one
             // eightbyte: the same call, with `dest` receiving the return.
             ExprKind::IndirectCall { callee, args } => {
-                self.indirect_call(callee, args, &expr.ty, Some(dest), frame)
+                self.indirect_call(callee, args, expr.span, &expr.ty, Some(dest), frame)
             }
             _ => Err(unsupported(
                 "this struct-returning expression (only a struct literal, a named local, or a \
@@ -11411,6 +11622,7 @@ impl Gen {
         &mut self,
         callee: &str,
         args: &[Expr],
+        span: Span,
         ret_ty: &Ty,
         ret_dst: Option<Dest>,
         indirect: Option<(i32, IndirectKind)>,
@@ -11503,18 +11715,47 @@ impl Gen {
             let _ = writeln!(self.out, "{ok}:");
             return Ok(());
         }
-        // MK7 §5 item 7: a call the C backend wraps in a runtime capability
-        // check is refused rather than emitted unchecked; see
-        // `cap_check_refusal`, which is that decision, and `Gen::call`'s own
-        // unit test for it.
+        // MK7 §5 item 7 step 1: the runtime allowlist check the C backend
+        // wraps this call in, decided before any argument is evaluated so the
+        // check can read the value the call will actually pass. An unchecked
+        // gated call would be worse than an unimplemented feature, because a
+        // grant that is never checked is a grant that is not there, so a check
+        // kind this slice cannot emit is a compile-time refusal, and a gated
+        // call with no named resource (`fs.cwd`, `time.*`) is emitted plain,
+        // the way the C backend emits it.
         let arg_is_str: Vec<bool> =
             args.iter().map(|a| crate::stdlib::is_str_like_ty(&a.ty)).collect();
-        if let Some(domain) = cap_check_refusal(&self.gated, callee, &arg_is_str) {
-            return Err(unsupported(&format!(
-                "the capability check that gates `{callee}` (domain `{domain}`) — the asm \
-                 backend cannot emit an unchecked call, so it refuses instead"
-            )));
-        }
+        let cap_plan = match cap_decision(&self.gated, callee, &arg_is_str) {
+            CapDecision::Plain => None,
+            CapDecision::Unsupported(domain) => {
+                return Err(unsupported(&format!(
+                    "the capability check that gates `{callee}` (domain `{domain}`) for a \
+                     host or port"
+                )));
+            }
+            CapDecision::Check(domain, checks) => {
+                // `codegen_c.rs::cap_plan` emits no check at all when the
+                // calling module holds no grant entry for the domain, which
+                // cannot happen for a gated call; mirroring it keeps the two
+                // backends' `at` and count from drifting apart over a case
+                // neither can reach.
+                self.caps
+                    .iter()
+                    .find(|g| g.module == self.module && g.domain == domain)
+                    .map(|grant| CapPlan {
+                        domain,
+                        checks,
+                        patterns: grant.patterns.len(),
+                        // `SourceMap::locate` and nothing else: the denial's
+                        // first field is exactly this string, and re-deriving
+                        // it is a byte difference in the message.
+                        at: self
+                            .sources
+                            .and_then(|s| s.locate(&self.module, span))
+                            .unwrap_or_else(|| self.module.clone()),
+                    })
+            }
+        };
         // MK7 §5 item 4, third slice: a call's own return shape — see
         // `RetClass`'s sibling classification here (there is no `RetClass`
         // value for "not a struct", so this stays a plain `AggClass` lookup
@@ -11656,13 +11897,25 @@ impl Gen {
         // gets from hoisting the same temporary into a C variable. The drop
         // routine travels with the slot because a scratch slot carries no type.
         let mut hoisted: Vec<(i32, DropSite)> = Vec::new();
+        // MK7 §5 item 7: how many eight-byte slots each argument's value
+        // occupies on the stack while the capability check runs, so the check
+        // can address it: one for a scalar or a `str`, one or two for a
+        // register-class aggregate, one for a float, none for a `MEMORY`-class
+        // argument (that one is staged in the frame and copied into the
+        // outgoing area, so it is not on the stack at all). A resource
+        // argument is always one slot, because `is_str_like_ty` admits only a
+        // `str`, which is one bare pointer — and a shape that count cannot
+        // describe is refused rather than misread.
+        let mut slot_bytes: Vec<i32> = vec![0; args.len()];
         for (pos, arg) in args.iter().enumerate() {
             if let Some(slot) = self.hoist_owned_temporary(arg, frame)? {
                 hoisted.push(slot);
+                slot_bytes[pos] = 8;
                 self.out.push_str("    push rax\n");
             } else if float_ty(&arg.ty).is_some() {
                 self.expr(arg, frame)?;
                 let width = float_ty(&arg.ty).expect("checked above");
+                slot_bytes[pos] = 8;
                 self.out.push_str("    sub rsp, 8\n");
                 let _ = writeln!(self.out, "    {} [rsp], xmm0", width.mov());
             } else if let Some(class) = struct_layout(&arg.ty, &self.layouts) {
@@ -11693,6 +11946,7 @@ impl Gen {
                     let agg = frame.scratch(align_up(size, 8));
                     self.eval_struct_into(arg, frame, Dest::Direct(agg))?;
                     let n_eb = if class.eb(1).is_some() { 2 } else { 1 };
+                    slot_bytes[pos] = 8 * n_eb;
                     for k in 0..n_eb {
                         let at = agg + 8 * k as i32;
                         let _ = writeln!(self.out, "    push QWORD PTR [rbp{at}]");
@@ -11700,8 +11954,18 @@ impl Gen {
                 }
             } else {
                 self.expr(arg, frame)?;
+                slot_bytes[pos] = 8;
                 self.out.push_str("    push rax\n");
             }
+        }
+        // MK7 §5 item 7: the check runs here — every argument evaluated, no
+        // argument popped into its register yet. That is the C's order (check,
+        // call, then the frees), it reads the very storage the call is about
+        // to read, and for a resource argument whose expression has an effect
+        // it is the once-evaluated order: the check reads the pushed slot
+        // instead of rendering the expression a second time.
+        if let Some(plan) = &cap_plan {
+            self.emit_cap_checks(plan, &slot_bytes, frame)?;
         }
         for (arg, slot) in args.iter().zip(slots.iter()).rev() {
             match slot {
@@ -12149,6 +12413,69 @@ impl Gen {
             if let Some(p) = parked {
                 self.unpark(p);
             }
+        }
+        Ok(())
+    }
+
+    /// MK7 §5 item 7 step 1: one gated call site's runtime allowlist checks,
+    /// emitted after every argument is evaluated and before the first one is
+    /// popped into a register.
+    ///
+    /// The resource argument is read from the stack slot its own evaluation
+    /// left it in (`slot_bytes`), never re-rendered: the value the grant
+    /// admits is the value the call passes. That slot is addressed through
+    /// `rsp` at the moment the check is emitted, and the call sequence is
+    /// wrapped in the ordinary alignment discipline, which saves `rsp` and
+    /// restores it, so the pending argument pushes are untouched by the check.
+    ///
+    /// A kind or an argument shape this step cannot emit is a refusal, not a
+    /// skipped check: `cap_decision` already refused the `net` kinds, and a
+    /// resource argument that is not exactly one eightbyte is a shape the
+    /// count in `slot_bytes` does not describe.
+    fn emit_cap_checks(
+        &mut self,
+        plan: &CapPlan,
+        slot_bytes: &[i32],
+        frame: &Frame,
+    ) -> Result<(), String> {
+        use crate::stdlib::CapCheck;
+
+        // Interned once per call site, exactly as the C backend writes one
+        // string literal per check.
+        let domain = self.bytes_label(plan.domain.as_bytes());
+        let module_name = self.module.clone();
+        let module = self.bytes_label(module_name.as_bytes());
+        let at = self.bytes_label(plan.at.as_bytes());
+        let table = cap_table_symbol(&self.module, &plan.domain);
+        for check in &plan.checks {
+            let (routine, index) = match check {
+                CapCheck::Path(i) => (Routine::CapCheckPath, *i),
+                CapCheck::Name(i) => (Routine::CapCheckName, *i),
+                other => {
+                    return Err(unsupported(&format!(
+                        "the capability check `{other:?}`"
+                    )))
+                }
+            };
+            if slot_bytes.get(index).copied() != Some(8) {
+                return Err(unsupported(&format!(
+                    "the capability check on argument {index}, which is not one register wide"
+                )));
+            }
+            // The offset of this argument's slot below the top of the stack:
+            // every argument after it has been pushed on top of it.
+            let off: i32 = slot_bytes[index + 1..].iter().sum();
+            let _ = writeln!(self.out, "    mov r11, QWORD PTR [rsp+{off}]");
+            let _ = writeln!(self.out, "    lea rdi, [rip+{domain}]");
+            self.out.push_str("    mov rsi, r11\n");
+            let _ = writeln!(self.out, "    lea rdx, [rip+{table}]");
+            let _ = writeln!(self.out, "    mov ecx, {}", plan.patterns);
+            let _ = writeln!(self.out, "    lea r8, [rip+{module}]");
+            let _ = writeln!(self.out, "    lea r9, [rip+{at}]");
+            call_align_begin(&mut self.out, frame.sp_slot);
+            let _ = writeln!(self.out, "    call {}", routine.label());
+            call_align_end(&mut self.out, frame.sp_slot);
+            self.require_routine(routine);
         }
         Ok(())
     }
@@ -13614,6 +13941,141 @@ impl Gen {
                 let _ = writeln!(self.out, "    lea rdi, [rip+{long_msg}]");
                 self.call_panic();
             }
+            // ---- MK7 §5 item 7, step 1: the capability check --------------
+            //
+            // `cap_glue.c`'s `kelp_cap_deny`, transliterated. One routine, so
+            // the deny text has exactly one implementation, and it is reached
+            // from the check routines below rather than called at the call
+            // site. `exit(1)` never returns, so nothing restores the frame.
+            //
+            // `rbx`/`r12`/`r13` hold the pattern array, the count and the
+            // loop index across the `fprintf` calls; the six arguments are
+            // shuffled from the routine's own parameter registers into the
+            // variadic ones before the first `fprintf` (`at`, `path`, `domain`,
+            // `module`), with `r10`/`r11`/`rax` as the scratches that keeps
+            // that a rotation rather than a chain of clobbers.
+            Routine::CapDeny => {
+                let fmt = self.bytes_label(
+                    b"%s: panic: '%s' is outside the %s capability granted to module '%s'\n",
+                );
+                let fmt_nothing = self.bytes_label(b"  granted: (nothing)\n");
+                let fmt_granted = self.bytes_label(b"  granted:\n");
+                let fmt_pattern = self.bytes_label(b"    %s\n");
+                self.out.push_str(
+                    "    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n",
+                );
+                self.out.push_str("    mov r10, rdi\n    mov r11, rsi\n    mov rbx, rdx\n    mov r12, rcx\n");
+                self.out.push_str("    mov rax, r9\n    mov r9, r8\n    mov r8, r10\n    mov rcx, r11\n    mov rdx, rax\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{fmt}]");
+                self.out.push_str(
+                    "    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n    xor eax, eax\n    call fprintf@PLT\n",
+                );
+                let _ = writeln!(self.out, "    test r12, r12\n    jne .Lcap_deny_granted\n    lea rsi, [rip+{fmt_nothing}]");
+                self.out.push_str(
+                    "    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n    xor eax, eax\n    call fprintf@PLT\n    jmp .Lcap_deny_exit\n",
+                );
+                let _ = writeln!(self.out, ".Lcap_deny_granted:\n    lea rsi, [rip+{fmt_granted}]");
+                self.out.push_str(
+                    "    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n    xor eax, eax\n    call fprintf@PLT\n    xor r13d, r13d\n",
+                );
+                self.out.push_str(
+                    ".Lcap_deny_loop:\n    cmp r13, r12\n    jae .Lcap_deny_exit\n    mov rdx, QWORD PTR [rbx+r13*8]\n",
+                );
+                let _ = writeln!(self.out, "    lea rsi, [rip+{fmt_pattern}]");
+                self.out.push_str(
+                    "    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n    xor eax, eax\n    call fprintf@PLT\n    add r13, 1\n    jmp .Lcap_deny_loop\n",
+                );
+                self.out.push_str(".Lcap_deny_exit:\n    mov edi, 1\n    call exit@PLT\n");
+            }
+            // `cap_glue.c`'s `kelp_resolve_path`, transliterated. The three
+            // buffers and their sizes are the C's: `real`, `buf` and `parent`
+            // are each `PATH_MAX`, the last eight bytes of the frame hold the
+            // `strrchr` result across the recursive call, and the recursion is
+            // a `call` to this same routine. `rdi` is the path, `rsi` the
+            // destination and `rdx` its capacity; `rbx`/`r12`/`r13` hold the
+            // destination, the capacity and the path across the libc calls.
+            Routine::ResolvePath => {
+                let pct_s = self.bytes_label(b"%s");
+                let slash_s = self.bytes_label(b"%s/%s");
+                self.out.push_str(
+                    "    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 12296\n",
+                );
+                self.out.push_str("    mov rbx, rsi\n    mov r12, rdx\n    mov r13, rdi\n    mov rsi, rsp\n");
+                self.out.push_str("    call realpath@PLT\n    test rax, rax\n    je .Lcap_resolve_missing\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, r12\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_s}]\n    mov rcx, rsp");
+                self.out.push_str("    xor eax, eax\n    call snprintf@PLT\n    mov eax, 1\n    jmp .Lcap_resolve_done\n");
+                self.out.push_str(
+                    ".Lcap_resolve_missing:\n    lea rdi, [rsp+4096]\n    mov esi, 4096\n",
+                );
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_s}]\n    mov rcx, r13");
+                self.out.push_str(
+                    "    xor eax, eax\n    call snprintf@PLT\n    lea rdi, [rsp+4096]\n    mov esi, 47\n    call strrchr@PLT\n",
+                );
+                self.out.push_str("    test rax, rax\n    je .Lcap_resolve_false\n    lea rcx, [rsp+4096]\n    cmp rax, rcx\n    je .Lcap_resolve_false\n");
+                self.out.push_str("    mov QWORD PTR [rsp+12288], rax\n    mov BYTE PTR [rax], 0\n");
+                self.out.push_str("    lea rdi, [rsp+4096]\n    lea rsi, [rsp+8192]\n    mov edx, 4096\n");
+                let _ = writeln!(self.out, "    call {}", Routine::ResolvePath.label());
+                self.out.push_str("    test al, al\n    je .Lcap_resolve_false\n    mov rdi, rbx\n    mov rsi, r12\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{slash_s}]\n    lea rcx, [rsp+8192]");
+                self.out.push_str("    mov r8, QWORD PTR [rsp+12288]\n    add r8, 1\n    xor eax, eax\n    call snprintf@PLT\n    mov eax, 1\n");
+                self.out.push_str(".Lcap_resolve_done:\n    add rsp, 12296\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lcap_resolve_false:\n    xor eax, eax\n    jmp .Lcap_resolve_done\n");
+            }
+            // `cap_glue.c`'s `kelp_cap_check_path`, transliterated. The frame
+            // is the borrowed `Bytes` *view* the Kelp normalizer writes
+            // through, the six arguments saved for the deny call, the
+            // `PATH_MAX + 1` normalization buffer (one byte past, because the
+            // view's `len` is the capacity and `Bytes` keeps its NUL in the
+            // slot at `len`) and the `PATH_MAX` resolved string. The two
+            // readings that must not move: a `path_normalize` failure denies
+            // with the argument **as written**, a failed match denies with the
+            // **resolved** string, and a failed resolution matches the
+            // normalized string unresolved.
+            Routine::CapCheckPath => {
+                let pct_s = self.bytes_label(b"%s");
+                self.out.push_str(
+                    "    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8280\n",
+                );
+                self.out.push_str("    mov QWORD PTR [rsp+24], rdi\n    mov QWORD PTR [rsp+32], rsi\n    mov QWORD PTR [rsp+40], rdx\n");
+                self.out.push_str("    mov QWORD PTR [rsp+48], rcx\n    mov QWORD PTR [rsp+56], r8\n    mov QWORD PTR [rsp+64], r9\n");
+                self.out.push_str("    lea rax, [rsp+72]\n    mov QWORD PTR [rsp], rax\n    mov QWORD PTR [rsp+8], 4096\n    mov QWORD PTR [rsp+16], 4096\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rsp+32]\n    mov rsi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_PATH_NORMALIZE));
+                self.out.push_str("    test al, al\n    je .Lcap_path_norm_deny\n");
+                self.out.push_str("    lea rdi, [rsp+72]\n    lea rsi, [rsp+4176]\n    mov edx, 4096\n");
+                let _ = writeln!(self.out, "    call {}", Routine::ResolvePath.label());
+                self.out.push_str("    test al, al\n    jne .Lcap_path_loop\n");
+                self.out.push_str("    lea rdi, [rsp+4176]\n    mov esi, 4096\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_s}]\n    lea rcx, [rsp+72]");
+                self.out.push_str("    xor eax, eax\n    call snprintf@PLT\n");
+                self.out.push_str(".Lcap_path_loop:\n    mov rbx, QWORD PTR [rsp+40]\n    mov r12, QWORD PTR [rsp+48]\n    xor r13d, r13d\n");
+                self.out.push_str(".Lcap_path_next:\n    cmp r13, r12\n    jae .Lcap_path_match_deny\n    mov rdi, QWORD PTR [rbx+r13*8]\n    lea rsi, [rsp+4176]\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_GLOB_MATCH));
+                self.out.push_str("    test al, al\n    jne .Lcap_path_done\n    add r13, 1\n    jmp .Lcap_path_next\n");
+                self.out.push_str(".Lcap_path_norm_deny:\n    mov rdi, QWORD PTR [rsp+24]\n    mov rsi, QWORD PTR [rsp+32]\n    jmp .Lcap_path_deny_common\n");
+                self.out.push_str(".Lcap_path_match_deny:\n    mov rdi, QWORD PTR [rsp+24]\n    lea rsi, [rsp+4176]\n");
+                self.out.push_str(".Lcap_path_deny_common:\n    mov rdx, QWORD PTR [rsp+40]\n    mov rcx, QWORD PTR [rsp+48]\n    mov r8, QWORD PTR [rsp+56]\n    mov r9, QWORD PTR [rsp+64]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::CapDeny.label());
+                self.out.push_str(".Lcap_path_done:\n    add rsp, 8280\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `cap_glue.c`'s `kelp_cap_check_name`, transliterated: the same
+            // allowlist loop with no normalization, because a name has no path
+            // structure. `rbx`/`r12`/`r13` are the pattern array, the count and
+            // the index; the four arguments the deny needs are in the frame.
+            Routine::CapCheckName => {
+                self.out.push_str(
+                    "    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 40\n",
+                );
+                self.out.push_str("    mov QWORD PTR [rsp], rdi\n    mov QWORD PTR [rsp+8], rsi\n    mov QWORD PTR [rsp+16], r8\n    mov QWORD PTR [rsp+24], r9\n");
+                self.out.push_str("    mov rbx, rdx\n    mov r12, rcx\n    xor r13d, r13d\n");
+                self.out.push_str(".Lcap_name_loop:\n    cmp r13, r12\n    jae .Lcap_name_deny\n    mov rdi, QWORD PTR [rbx+r13*8]\n    mov rsi, QWORD PTR [rsp+8]\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_GLOB_MATCH));
+                self.out.push_str("    test al, al\n    jne .Lcap_name_done\n    add r13, 1\n    jmp .Lcap_name_loop\n");
+                self.out.push_str(".Lcap_name_deny:\n    mov rdi, QWORD PTR [rsp]\n    mov rsi, QWORD PTR [rsp+8]\n    mov rdx, rbx\n    mov rcx, r12\n    mov r8, QWORD PTR [rsp+16]\n    mov r9, QWORD PTR [rsp+24]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::CapDeny.label());
+                self.out.push_str(".Lcap_name_done:\n    add rsp, 40\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");
     }
@@ -14047,50 +14509,90 @@ impl Gen {
 
 #[cfg(test)]
 mod tests {
-    use super::cap_check_refusal;
+    use super::{cap_decision, CapDecision};
 
     /// The gated table as `resolve.rs` builds it, small enough to read:
-    /// `fs`'s `read` names a path, `fs`'s `cwd` names nothing, and `time`
-    /// names nothing in any call.
+    /// `fs`'s `read` names a path, `fs`'s `cwd` names nothing, `net`'s
+    /// `connect` names a host and a port, and `time` names nothing in any
+    /// call.
     fn gated() -> std::collections::HashMap<String, String> {
         std::collections::HashMap::from([
             ("std.fs.read".to_string(), "fs".to_string()),
             ("std.fs.cwd".to_string(), "fs".to_string()),
+            ("std.net.connect".to_string(), "net".to_string()),
             ("std.time.now_unix".to_string(), "time".to_string()),
         ])
     }
 
-    /// The one direction the narrowing must never lose: a gated call that
-    /// *does* name a resource has a check the C backend would emit, so it is
-    /// refused rather than emitted unchecked.
+    /// MK7 §5 item 7 step 1: a gated call that names a path now gets the path
+    /// check the C backend emits, rather than a refusal. The kind and the
+    /// argument index are `stdlib::checked_args`'s answer, so this is also the
+    /// assertion that the two backends read one decision.
     #[test]
-    fn a_gated_call_with_a_resource_argument_is_refused() {
-        assert_eq!(
-            cap_check_refusal(&gated(), "std.fs.read", &[true]).as_deref(),
-            Some("fs"),
-        );
+    fn a_gated_path_call_with_a_resource_argument_is_checked() {
+        match cap_decision(&gated(), "std.fs.read", &[true]) {
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "fs");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::Path(0)]);
+            }
+            other => panic!("expected a path check, got {other:?}"),
+        }
+    }
+
+    /// The other step 1 kind: an `env` name, matched as written.
+    #[test]
+    fn a_gated_env_call_with_a_resource_argument_is_checked_by_name() {
+        let mut table = gated();
+        table.insert("std.env.has".to_string(), "env".to_string());
+        match cap_decision(&table, "std.env.has", &[true]) {
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "env");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::Name(0)]);
+            }
+            other => panic!("expected a name check, got {other:?}"),
+        }
+    }
+
+    /// `net`'s three kinds are step 2, and a call that needs one is refused by
+    /// name: a grant that is never checked is a grant that is not there, so
+    /// this direction is a compile error rather than an unchecked call.
+    #[test]
+    fn a_gated_net_call_is_refused_while_the_net_checks_are_missing() {
+        match cap_decision(&gated(), "std.net.connect", &[true, true]) {
+            CapDecision::Unsupported(domain) => assert_eq!(domain, "net"),
+            other => panic!("expected a refusal for the net kind, got {other:?}"),
+        }
     }
 
     /// `fs.cwd` takes no argument, so `checked_args` names no resource and the
-    /// C backend's `cap_checked_call` emits the plain call: the asm backend
-    /// must emit the same thing rather than refuse it.
+    /// C backend emits the plain call: the asm backend must emit the same
+    /// thing rather than refuse it.
     #[test]
-    fn a_gated_call_with_no_resource_argument_is_not_refused() {
-        assert_eq!(cap_check_refusal(&gated(), "std.fs.cwd", &[]), None);
+    fn a_gated_call_with_no_resource_argument_is_plain() {
+        assert!(matches!(
+            cap_decision(&gated(), "std.fs.cwd", &[]),
+            CapDecision::Plain
+        ));
     }
 
     /// A call the gate does not cover at all is not this decision's business,
     /// whatever its arguments look like.
     #[test]
-    fn an_ungated_call_is_not_refused() {
-        assert_eq!(cap_check_refusal(&gated(), "std.str.len", &[true]), None);
+    fn an_ungated_call_is_plain() {
+        assert!(matches!(
+            cap_decision(&gated(), "std.str.len", &[true]),
+            CapDecision::Plain
+        ));
     }
 
     /// `time` and `rand` name no resource in any call, so `checked_args`
     /// returns nothing for them however the arguments are shaped (the
     /// `_ => Vec::new()` arm), and the C backend emits no check for one either.
     #[test]
-    fn a_gated_domain_with_no_checked_arguments_is_not_refused() {
-        assert_eq!(cap_check_refusal(&gated(), "std.time.now_unix", &[true]), None);
+    fn a_gated_domain_with_no_checked_arguments_is_plain() {
+        assert!(matches!(
+            cap_decision(&gated(), "std.time.now_unix", &[true]),
+            CapDecision::Plain
+        ));
     }
 }
