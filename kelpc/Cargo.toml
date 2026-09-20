@@ -1,6 +1,11 @@
 [package]
 name = "kelpc"
-version = "0.1.6"
+# Release name `26.09.0` (`YY.MM.N`, see AGENTS.md "Version scheme"). Cargo
+# refuses a leading zero in a version component, so the manifest carries the
+# semver-legal form and every human-facing spelling pads the month back:
+# `kelpc/src/main.rs::release_name` does that for `kelpc version`, and the tag,
+# the release asset and the changelog entry are written padded too.
+version = "26.9.0"
 edition = "2024"
 
 [[bin]]

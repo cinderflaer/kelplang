@@ -4190,9 +4190,10 @@ fn the_closure_type_and_its_limits_are_checked() {
 
 #[test]
 fn the_cli_reports_its_version() {
-    // `env!("CARGO_PKG_VERSION")` here is the same `[package] version` the
-    // compiler takes its own string from, so this cannot pass by the two
-    // drifting apart.
+    // The shape is what the scheme pins: `YY.MM.N`, with the month padded,
+    // which is what the tag and the release asset are written as. The number
+    // itself changes on every release, so asserting the shape keeps this test
+    // from going stale on the next bump.
     let out = kelpc()
         .arg("version")
         .output()
@@ -4202,9 +4203,18 @@ fn the_cli_reports_its_version() {
         "'kelpc version' should succeed, got:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        format!("kelpc {}\n", env!("CARGO_PKG_VERSION"))
+    let printed = String::from_utf8_lossy(&out.stdout).to_string();
+    let version = printed
+        .trim_end()
+        .strip_prefix("kelpc ")
+        .unwrap_or_else(|| panic!("'kelpc version' printed '{printed}'"));
+    let parts: Vec<&str> = version.split('.').collect();
+    assert_eq!(parts.len(), 3, "'{version}' is not YY.MM.N");
+    assert_eq!(parts[0].len(), 2, "'{version}' has a one-digit year");
+    assert_eq!(parts[1].len(), 2, "'{version}' has a one-digit month");
+    assert!(
+        parts[2].chars().all(|c| c.is_ascii_digit()) && !parts[2].is_empty(),
+        "'{version}' has no release number"
     );
     assert!(out.stderr.is_empty(), "'kelpc version' should not warn");
 }

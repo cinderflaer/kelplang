@@ -30,9 +30,33 @@ use std::process::{Command, ExitCode};
 /// crate's `[package] name` and `[[bin]] name` in `Cargo.toml`.
 const BIN_NAME: &str = "kelpc";
 
-/// The version `kelpc version` prints, taken from `[package] version` at
+/// The version this build was made from, taken from `[package] version` at
 /// compile time so it cannot drift from `Cargo.toml`.
+///
+/// A Cargo version cannot carry a leading zero in a component (Cargo refuses
+/// `26.09.0` with `invalid leading zero in minor version number`), and the
+/// release name can: releases are numbered `YY.MM.N`, so `Cargo.toml` writes
+/// the semver-legal `26.9.0` and every human-facing spelling goes through
+/// [`release_name`]. The tag (`v26.09.0`), the release asset
+/// (`kelpc-26.09.0-linux-x86_64`) and the string `kelpc version` prints are
+/// therefore one text, which is what lets Coral install an asset by tag.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `26.9.0` to `26.09.0`: the padded release name for a crate version.
+///
+/// Only the minor is padded, because only the month carries a zero in the
+/// scheme, and a version whose first component is not two digits (the old
+/// numbering, or anything else odd) is returned unchanged rather than mangled.
+fn release_name(crate_version: &str) -> String {
+    let parts: Vec<&str> = crate_version.split('.').collect();
+    let numeric = parts
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    if parts.len() == 3 && numeric && parts[0].len() == 2 {
+        return format!("{}.{:0>2}.{}", parts[0], parts[1], parts[2]);
+    }
+    crate_version.to_string()
+}
 
 /// The directory a build with no `-o` writes into, relative to the working
 /// directory. `kelpc build <file>.kp` used to write `<stem>` into the working
@@ -820,7 +844,7 @@ fn main() -> ExitCode {
         // `kelpc version` needs no further arguments, so it is answered before
         // the two commands that do.
         Some("version") => {
-            println!("{BIN_NAME} {VERSION}");
+            println!("{BIN_NAME} {}", release_name(VERSION));
             return ExitCode::SUCCESS;
         }
         Some("fmt") => return fmt_command(&args[2..]),
@@ -934,4 +958,40 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_crate_version_becomes_the_padded_release_name() {
+        assert_eq!(release_name("26.9.0"), "26.09.0");
+        assert_eq!(release_name("26.12.3"), "26.12.3");
+        assert_eq!(release_name("26.1.10"), "26.01.10");
+    }
+
+    #[test]
+    fn a_version_that_is_not_this_scheme_is_left_alone() {
+        // The numbering before `YY.MM.N`, and anything that is not three
+        // numeric parts, is passed through rather than padded into nonsense.
+        assert_eq!(release_name("0.1.6"), "0.1.6");
+        assert_eq!(release_name("nightly"), "nightly");
+        assert_eq!(release_name("26.9"), "26.9");
+    }
+
+    #[test]
+    fn this_builds_release_name_has_the_schemes_shape() {
+        // Durable across a version bump: the shape is what the scheme pins,
+        // not the number this tree happens to carry today.
+        let name = release_name(VERSION);
+        let parts: Vec<&str> = name.split('.').collect();
+        assert_eq!(parts.len(), 3, "'{name}' is not YY.MM.N");
+        assert_eq!(parts[0].len(), 2, "'{name}' has a one-digit year");
+        assert_eq!(parts[1].len(), 2, "'{name}' has a one-digit month");
+        assert!(
+            parts[2].chars().all(|c| c.is_ascii_digit()) && !parts[2].is_empty(),
+            "'{name}' has no release number"
+        );
+    }
 }
