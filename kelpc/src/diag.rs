@@ -300,8 +300,9 @@ fn json_string(s: &str) -> String {
 /// the literal or open an escape are escaped, and nothing else is. A `.kp` path
 /// holding a quote or a backslash is unusual but has to be right anyway, since
 /// the text of a `#line` directive is the same string literal a `printf` would
-/// take.
-fn c_string_body(path: &str) -> String {
+/// take. `codegen_c.rs` reaches for it too, for the `at` location, the module
+/// name and the domain a capability denial bakes into the generated C.
+pub(crate) fn c_string_body(path: &str) -> String {
     path.replace('\\', "\\\\").replace('"', "\\\"")
 }
 

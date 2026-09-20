@@ -3474,6 +3474,15 @@ impl<'a> Gen<'a> {
             return call;
         };
         let symbol = CapTable::symbol(&self.module, &domain);
+        // The `at` location, the module name and the domain all go into a C
+        // string literal, and a source path may hold a quote or a backslash:
+        // the quote would close the literal early and the backslash would open
+        // an escape the program never wrote. There is one escaper for a C
+        // string body in this crate (`diag::c_string_body`, the `#line` one),
+        // so they go through that rather than the raw text.
+        let at = crate::diag::c_string_body(&at);
+        let module = crate::diag::c_string_body(&self.module);
+        let domain = crate::diag::c_string_body(&domain);
         let mut checks = String::new();
         for check in checked {
             match check {
@@ -3483,8 +3492,7 @@ impl<'a> Gen<'a> {
                     let path = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_path(\"{domain}\", {path}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
-                        self.module
+                        "kelp_cap_check_path(\"{domain}\", {path}, {symbol}, {pattern_count}, \"{module}\", \"{at}\"); "
                     )
                     .unwrap();
                 }
@@ -3492,8 +3500,7 @@ impl<'a> Gen<'a> {
                     let name = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_name(\"{domain}\", {name}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
-                        self.module
+                        "kelp_cap_check_name(\"{domain}\", {name}, {symbol}, {pattern_count}, \"{module}\", \"{at}\"); "
                     )
                     .unwrap();
                 }
@@ -3501,8 +3508,7 @@ impl<'a> Gen<'a> {
                     let host = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_host(\"{domain}\", {host}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
-                        self.module
+                        "kelp_cap_check_host(\"{domain}\", {host}, {symbol}, {pattern_count}, \"{module}\", \"{at}\"); "
                     )
                     .unwrap();
                 }
@@ -3511,8 +3517,7 @@ impl<'a> Gen<'a> {
                     let port = &args_text[port_at];
                     write!(
                         checks,
-                        "kelp_cap_check_hostport(\"{domain}\", {host}, {port}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
-                        self.module
+                        "kelp_cap_check_hostport(\"{domain}\", {host}, {port}, {symbol}, {pattern_count}, \"{module}\", \"{at}\"); "
                     )
                     .unwrap();
                 }
@@ -3520,8 +3525,7 @@ impl<'a> Gen<'a> {
                     let port = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_port(\"{domain}\", {port}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
-                        self.module
+                        "kelp_cap_check_port(\"{domain}\", {port}, {symbol}, {pattern_count}, \"{module}\", \"{at}\"); "
                     )
                     .unwrap();
                 }
