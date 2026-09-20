@@ -264,6 +264,11 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// reach: an environment holding two captures of different alignments, and an
 /// indirect call whose callee carries an environment *and* returns a
 /// `MEMORY`-class value. The denominator is 205, 191 build and 14 are refused.
+/// MK7 §5's S1 slice (the clock and entropy externs) added one,
+/// `caps_time_rand`, so the measurement is 205 C / 192 asm / 13 refused and the
+/// gated-extern row is empty: the `time`/`rand` calls that fixture makes carry
+/// no named resource, so once their five extern bodies were lowered there was
+/// no gate left to refuse at.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "array_basic",
@@ -292,6 +297,11 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "box_recursive",
 "byte_literals",
 "bytes_build",
+    // MK7 §5's S1 slice: `std.time`'s `now_unix`/`now_mono_ns`/`sleep_ms` and
+    // `std.rand`'s `u64`/`bytes` call five externs, and none of them names a
+    // resource, so the backend has no check to refuse at and the fixture
+    // builds once the bodies are lowered.
+    "caps_time_rand",
     "char_literals",
     // MK7 §5 item 6: every fixture in the closure row the asm backend now
     // builds, a capturing literal, an owned capture, a closure in a `datac`

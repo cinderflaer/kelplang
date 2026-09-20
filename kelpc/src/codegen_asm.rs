@@ -939,6 +939,18 @@ enum Routine {
     MapHash,
     MapKeyEq,
     MapMix,
+    /// MK7 §5's S1 slice: the clock and entropy syscall bodies, transliterated
+    /// from their `externs.rs` bodies. `TimeNowUnixRaw`/`TimeNowMonoNsRaw` are
+    /// one `clock_gettime` each (with `tv_sec` alone, or `tv_sec * 1e9 +
+    /// tv_nsec`); `TimeSleepMsRaw` is the C body's own `nanosleep` retry loop;
+    /// `RandU64Raw`/`RandFillRaw` are the `fopen("/dev/urandom")`/`fread`/
+    /// `fclose` pair, the first into an eight-byte stack slot and the second
+    /// into the caller's `mut Bytes`.
+    TimeNowUnixRaw,
+    TimeNowMonoNsRaw,
+    TimeSleepMsRaw,
+    RandU64Raw,
+    RandFillRaw,
 }
 
 impl Routine {
@@ -1002,6 +1014,11 @@ impl Routine {
             Routine::MapHash => "kelp_rt$map_hash",
             Routine::MapKeyEq => "kelp_rt$map_key_eq",
             Routine::MapMix => "kelp_rt$map_mix",
+            Routine::TimeNowUnixRaw => "kelp_rt$time_now_unix_raw",
+            Routine::TimeNowMonoNsRaw => "kelp_rt$time_now_mono_ns_raw",
+            Routine::TimeSleepMsRaw => "kelp_rt$time_sleep_ms_raw",
+            Routine::RandU64Raw => "kelp_rt$rand_u64_raw",
+            Routine::RandFillRaw => "kelp_rt$rand_fill_raw",
         }
     }
 }
@@ -1131,6 +1148,18 @@ fn extern_target(key: &str) -> Option<Extern> {
         // name.
         "std.path.normalize_raw" => Extern::Routine(Routine::PathNormalizeRaw),
         "std.fs.cwd_raw" => Extern::Routine(Routine::FsCwdRaw),
+        // MK7 §5's S1 slice: the clock and entropy externs. Each is its
+        // `externs.rs` body transliterated; the time routines are the two
+        // `clock_gettime` calls and the `nanosleep` retry loop, and the rand
+        // pair is `fopen`/`fread`/`fclose` over `/dev/urandom`. None of the
+        // five takes a named resource, so `cap_check_refusal` has no check to
+        // emit for them (measured controls: the `time`/`rand` calls in
+        // `caps_time_rand` build with no gate).
+        "std.time.now_unix_raw" => Extern::Routine(Routine::TimeNowUnixRaw),
+        "std.time.now_mono_ns_raw" => Extern::Routine(Routine::TimeNowMonoNsRaw),
+        "std.time.sleep_ms_raw" => Extern::Routine(Routine::TimeSleepMsRaw),
+        "std.rand.u64_raw" => Extern::Routine(Routine::RandU64Raw),
+        "std.rand.fill_raw" => Extern::Routine(Routine::RandFillRaw),
         _ => return None,
     })
 }
@@ -12884,6 +12913,139 @@ impl Gen {
                 self.out.push_str("    mov rax, rdi\n    mov rcx, rax\n    shr rcx, 33\n    xor rax, rcx\n");
                 self.out.push_str("    movabs r8, 0xff51afd7ed558ccd\n    imul rax, r8\n");
                 self.out.push_str("    mov rcx, rax\n    shr rcx, 33\n    xor rax, rcx\n    ret\n");
+            }
+            // ---- MK7 §5's S1 slice: the clock and entropy bodies -----------
+            //
+            // `externs.rs`'s `now_unix_raw` body, transliterated:
+            //
+            // ```c
+            // struct timespec ts;
+            // if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+            //     kelp_panic_errno("time.now_unix: clock_gettime failed");
+            // }
+            // return (int64_t)ts.tv_sec;
+            // ```
+            //
+            // A sixteen-byte frame holds the `timespec` (`tv_sec` at 0,
+            // `tv_nsec` at 8); `CLOCK_REALTIME` is 0, and the result is the
+            // first field. `push rbp` plus the sixteen-byte subtract keeps
+            // `rsp` sixteen-byte aligned at the `call`, which is the only
+            // alignment rule the body has to honour.
+            Routine::TimeNowUnixRaw => {
+                let msg = self.bytes_label(b"time.now_unix: clock_gettime failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                self.out.push_str("    xor edi, edi\n    mov rsi, rsp\n");
+                self.out.push_str("    call clock_gettime@PLT\n    test eax, eax\n    jne .Lnow_unix_fail\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp]\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnow_unix_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // The same body with `CLOCK_MONOTONIC` (1) and the nanosecond sum
+            // `tv_sec * 1000000000 + tv_nsec` the C does in `int64_t`.
+            Routine::TimeNowMonoNsRaw => {
+                let msg = self.bytes_label(b"time.now_mono_ns: clock_gettime failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                self.out.push_str("    mov edi, 1\n    mov rsi, rsp\n");
+                self.out.push_str("    call clock_gettime@PLT\n    test eax, eax\n    jne .Lnow_mono_fail\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp]\n    movabs rcx, 1000000000\n    imul rax, rcx\n");
+                self.out.push_str("    add rax, QWORD PTR [rsp+8]\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnow_mono_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `externs.rs`'s `sleep_ms_raw` body:
+            //
+            // ```c
+            // struct timespec ts;
+            // ts.tv_sec = (time_t)(kelp_ms / 1000);
+            // ts.tv_nsec = (long)((kelp_ms % 1000) * 1000000);
+            // while (nanosleep(&ts, &ts) != 0) {
+            //     /* interrupted: finish the remainder */
+            // }
+            // ```
+            //
+            // `kelp_ms` arrives in `rdi`; one unsigned divide gives both
+            // fields, and the same `timespec` is both the requested and the
+            // remaining time, so a signal leaves the loop finishing the rest.
+            // The loop body is empty on purpose, matching the C: only a
+            // failure that keeps failing would spin, and the timespec is one
+            // `nanosleep` always accepts.
+            Routine::TimeSleepMsRaw => {
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                self.out.push_str("    mov rax, rdi\n    xor edx, edx\n    mov ecx, 1000\n    div rcx\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rax\n    imul rdx, rdx, 1000000\n    mov QWORD PTR [rsp+8], rdx\n");
+                self.out.push_str(".Lsleep_loop:\n    mov rdi, rsp\n    mov rsi, rsp\n    call nanosleep@PLT\n");
+                self.out.push_str("    test eax, eax\n    jne .Lsleep_loop\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            // `externs.rs`'s `u64_raw` body:
+            //
+            // ```c
+            // uint64_t v = 0;
+            // FILE* f = fopen("/dev/urandom", "rb");
+            // if (f == NULL) kelp_panic_errno("rand.u64: no entropy source");
+            // if (fread(&v, 1, sizeof v, f) != sizeof v) {
+            //     fclose(f);
+            //     kelp_panic("rand.u64: short read from /dev/urandom");
+            // }
+            // fclose(f);
+            // return v;
+            // ```
+            //
+            // `fopen` allocates, so `f` has to survive `fread` and reach
+            // `fclose` on both the short-read path and the success path; the
+            // one frame slot holds it, next to the eight-byte `v`. The panic
+            // is `kelp_panic` rather than the errno form on a short read,
+            // exactly as the C body has it.
+            Routine::RandU64Raw => {
+                let path = self.bytes_label(b"/dev/urandom");
+                let mode = self.bytes_label(b"rb");
+                let noent = self.bytes_label(b"rand.u64: no entropy source");
+                let short = self.bytes_label(b"rand.u64: short read from /dev/urandom");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{path}]");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode}]");
+                self.out.push_str("    call fopen@PLT\n    test rax, rax\n    je .Lrand_u64_noent\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rax\n    mov QWORD PTR [rsp+8], 0\n");
+                self.out.push_str("    lea rdi, [rsp+8]\n    mov esi, 1\n    mov edx, 8\n    mov rcx, rax\n");
+                self.out.push_str("    call fread@PLT\n    cmp rax, 8\n    jne .Lrand_u64_short\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rsp]\n    call fclose@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [rsp+8]\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lrand_u64_short:\n    mov rdi, QWORD PTR [rsp]\n    call fclose@PLT\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{short}]");
+                self.call_panic();
+                self.out.push_str(".Lrand_u64_noent:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{noent}]");
+                self.call_panic_errno();
+            }
+            // `externs.rs`'s `fill_raw` body: the same `fopen`/`fread`/
+            // `fclose`, into the caller's `mut Bytes` (`kelp_buf->data`,
+            // `kelp_buf->len`). A zero-length buffer skips the `fread`
+            // entirely, which is the `len > 0` short-circuit in the C, and the
+            // only allocation is `fopen`'s stream, so nothing here is owned by
+            // the callee's caller.
+            Routine::RandFillRaw => {
+                let path = self.bytes_label(b"/dev/urandom");
+                let mode = self.bytes_label(b"rb");
+                let noent = self.bytes_label(b"rand.bytes: no entropy source");
+                let short = self.bytes_label(b"rand.bytes: short read from /dev/urandom");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                self.out.push_str("    mov QWORD PTR [rsp+8], rdi\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{path}]");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode}]");
+                self.out.push_str("    call fopen@PLT\n    test rax, rax\n    je .Lrand_fill_noent\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rax\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rsp+8]\n    mov rdx, QWORD PTR [rcx+8]\n    test rdx, rdx\n    je .Lrand_fill_close\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rcx]\n    mov esi, 1\n    mov rcx, QWORD PTR [rsp]\n");
+                self.out.push_str("    call fread@PLT\n    mov rcx, QWORD PTR [rsp+8]\n    cmp rax, QWORD PTR [rcx+8]\n    jne .Lrand_fill_short\n");
+                self.out.push_str(".Lrand_fill_close:\n    mov rdi, QWORD PTR [rsp]\n    call fclose@PLT\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lrand_fill_short:\n    mov rdi, QWORD PTR [rsp]\n    call fclose@PLT\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{short}]");
+                self.call_panic();
+                self.out.push_str(".Lrand_fill_noent:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{noent}]");
+                self.call_panic_errno();
             }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");
