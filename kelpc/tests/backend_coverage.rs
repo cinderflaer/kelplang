@@ -65,14 +65,17 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// opposite direction.
 ///
 /// The counts this list was recorded against: 174 fixtures the C backend
-/// builds, 154 of them also built by the asm backend, 20 refused — which is the
-/// 241-of-290 integration-test ratio in the plan's §0 table, measured at the
+/// builds, 154 of them also built by the asm backend, 20 refused: which is the
+/// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
 /// The last re-recording is the sort/contains/slice slice: `stdlib_sort`,
 /// `list_slice_insert` and `list_slice_bounds` left the heap row (three of its
 /// twelve, now nine) and `list_sort_kinds` is new, so 173/150/23 ->
-/// 174/154/20.
+/// 174/154/20. That slice's own gate left one entry out and the sweep's note
+/// said so: `heap_temporary_print` builds since the print slice, and the
+/// supervisor recorded it here, which is the 153rd and 154th entry of this
+/// list.
 ///
 /// Before that, the print slice turned `heap_temporary_print` from a refusal
 /// into a built fixture (the heap row went 13 -> 12) and added
@@ -232,6 +235,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "heap_reassign",
     "heap_returned",
     "heap_scope_drop",
+    "heap_temporary_print",
     "if_expr",
     "if_let_basic",
     "if_let_chain_same_scrutinee",
