@@ -37,6 +37,26 @@ projected.*
 > baseline does not name yet: `borrow_two_phase`. Everything this section says below about `283 of 329`,
 > `240 of 289`, `144 built of 168`, `175 fixtures`, `168 C and 144 asm` or `24 refused` is the measurement
 > of the slice it sits beside, kept as the record; the numbers in this blockquote are the tip's.
+>
+> **Re-measured 2026-09-20 at `caeb98d` (now `8d86d8e`), which supersedes the `c3a8759` blockquote
+> above; that one stays as the record of its own commit.** The fixture ratchet is **178 built of the
+> 202 fixtures the C backend builds, 24 refused**; the asm suite is **288 of 336** with the C backend
+> passing all **336**; valgrind is clean over **380 runs / 358 fixtures** (`c: 202 checked, 0
+> findings`; `asm: 178 checked, 24 refused, 0 findings`); and the refusal ranking is **a heap type 13,
+> a fixed-size array 0, an `enum` 0, a `datac` holding a float or heap field 0, a closure or a
+> function value 10, a gated extern 1**. Three of the six rows are still empty, and the heap row is
+> still not one gap: 11 of its 13 name an `extern fun` body this backend has no routine for, one names
+> a borrow of a field chain, and one is this round's own `caps_gated_path`, the pin for the gated
+> `fs.read` a capability check has to reach. Two slices moved the numbers since `c3a8759`: `fdd3d38`
+> (an empty container takes its element from the first use, which recorded `container_element_from_use`,
+> 196/175/21) and `caeb98d` (this round: it compiles `std/rt` and lowers `std.path.normalize_raw` and
+> `std.fs.cwd_raw`, so `path_normalize` and `path_absolute` build, 202/178/24). The sweep's "builds but
+> is unrecorded" note is settled: `borrow_two_phase` is in `ASM_BUILT_BASELINE` now. Everything this
+> section says below about `285 of 336`, `176 of 201`, `377 runs over 357 fixtures`, `201 checked` or
+> `25 refused` is the measurement of the slice it sits beside, kept as the record; the numbers in this
+> blockquote are the tip's. Commands: `cargo test --test backend_coverage -- --ignored --nocapture`,
+> `cargo test --test compile_and_run` (and with `KELPC_BACKEND=asm`), and
+> `cargo test --test memory_gate -- --ignored --nocapture`.
 
 | stage | state | evidence |
 | --- | --- | --- |

@@ -80,6 +80,21 @@ Six rows are printed and three of them are empty, which is the part of this tabl
 first: a fixed-size array (0), an `enum` (0) and a `datac` holding a float or heap field (0) have left
 the ranking since the last brief. What remains is three rows, and the first of them is not one gap.
 
+> **Re-measured 2026-09-20 at `caeb98d` (now `8d86d8e`), after this brief was written; this
+> blockquote is the tip's state and §0 above is `c3a8759`'s, kept as the record.** The ranking is **24
+> fixtures refused of the 202 the C backend builds, 178 built**: a heap type 13, a fixed-size array 0,
+> an `enum` 0, a `datac` holding a float or heap field 0, a closure or a function value 10, a gated
+> extern 1. The heap row is where the movement is: `path_normalize` and `path_absolute` build now,
+> because this round compiles `std/rt` and lowers `std.path.normalize_raw` and `std.fs.cwd_raw`, and
+> `caps_gated_path` joins the row as the pin for the gated `fs.read` a capability check has to reach,
+> so 14 becomes 13. The note §0 quotes one paragraph up is settled: `borrow_two_phase` is recorded in
+> `ASM_BUILT_BASELINE`, so the sweep names no unrecorded build. The asm suite is **288 of 336** (the C
+> backend passes all 336), and valgrind is clean over **380 runs / 358 fixtures** (`c: 202 checked, 0
+> findings`; `asm: 178 checked, 24 refused, 0 findings`). The target set this brief measures is
+> therefore 24 fixtures rather than 25, and the heap row within it is 13 rather than 14. Commands:
+> `cargo test --test backend_coverage -- --ignored --nocapture`, `cargo test --test compile_and_run`
+> with `KELPC_BACKEND=asm`, and `cargo test --test memory_gate -- --ignored --nocapture`.
+
 ## 1. Each remaining refusal, reproduced by hand
 
 The command is the one at the top, once per fixture. **All 25 build under the C backend at this
