@@ -678,7 +678,7 @@ with the backend as the only variable.
 > put two of them in one function — both landed in `r15`, the prologue's second
 > `mov r15, rsi` overwriting the first `mov r15, rdi`, and the wrong answer was
 > `22` instead of `18`. The same gap was a real miscompile in
-> `tests/projects/alias`, whose `bumped(t: Tally, by: i32)` mixes a reference
+> `tests/projects/namespace`, whose `bumped(t: Tally, by: i32)` mixes a reference
 > parameter with a scalar one; fixing it unblocked that fixture too. The second
 > bug is on the `Dest` side: `Gen::call` honoured a caller-supplied destination
 > for the two wider aggregate classes only (the third slice's scope), so a

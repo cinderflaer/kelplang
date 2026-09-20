@@ -3,8 +3,9 @@
 //! Surface design (see the plan's "Imports & project structure"):
 //!
 //! - `impl "shapes/circle"` pulls in `src/shapes/circle.kp`. The last path
-//!   segment (`circle`) becomes the default alias; `impl "time" as t` picks
-//!   another. No `mod` declarations, no package registry.
+//!   segment (`circle`) is the namespace. No `mod` declarations, no package
+//!   registry. An `as name` clause cannot override it: it was removed, and the
+//!   parser refuses it by name.
 //! - v1 is local-files-only: paths are relative to `src/`, may not contain
 //!   `..`, and may not reach outside the project. `std/...` is recognized
 //!   but not implemented until M6/M7.
@@ -692,19 +693,7 @@ impl Loader<'_> {
                     id,
                 ));
             }
-            let alias = match &imp.alias {
-                Some(a) => {
-                    // Still accepted, no longer wanted: the module's own name
-                    // is the namespace (`deprecated.rs`).
-                    self.deprecations.push(crate::deprecated::finding(
-                        crate::deprecated::IMPL_AS,
-                        imp.alias_span.unwrap_or(imp.span),
-                        id,
-                    ));
-                    a.clone()
-                }
-                None => default_alias(&imp.path),
-            };
+            let alias = default_alias(&imp.path);
             validate_alias(&alias, imp.span, id)?;
             if !seen_aliases.insert(alias.clone()) {
                 return Err(Diagnostic::new(
@@ -773,15 +762,12 @@ impl Loader<'_> {
     }
 }
 
-/// The alias used when `as` is not written: the last path segment.
-/// The name a module is reached by when its `impl` line writes no `as`.
+/// The namespace a module is reached by: the last path segment.
 ///
-/// A module is reached by its own name, which is its last path segment:
 /// `impl "shapes/circle"` is `circle`, `impl "std/fs"` is `fs`.
 ///
-/// A **dependency's entry module** is the exception, and it is why the `as`
-/// clause is deprecated rather than simply deleted: Coral copies a dependency to
-/// `src/deps/<key>/` with `lib.kp` as the entry file, so a path ending in
+/// A **dependency's entry module** is the exception: Coral copies a dependency
+/// to `src/deps/<key>/` with `lib.kp` as the entry file, so a path ending in
 /// `/lib` under `deps/` is named after the directory it sits in, which is the
 /// `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse`) or, for a
 /// whole-repository dependency, the library's own folder inside it

@@ -53,18 +53,11 @@ pub struct PdDecl {
     pub span: Span,
 }
 
-/// One `impl "shapes/circle"` / `impl "time" as t` line, plus its optional
-/// `caps(...)` grants (M7).
+/// One `impl "shapes/circle"` line, plus its optional `caps(...)` grants (M7).
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
     /// The string literal's contents, verbatim (`shapes/circle` — no `.kp`).
     pub path: String,
-    /// `Some` only when written `as alias`.
-    pub alias: Option<String>,
-    /// The span of the `as` clause's own name, when there is one. A
-    /// deprecation names the clause rather than the line, so the reader's eye
-    /// lands on the token the fix deletes.
-    pub alias_span: Option<Span>,
     /// `caps(domain = [patterns...])` grants. Empty when the clause is
     /// absent. Two jobs in one syntax: it *delegates* the domain to the
     /// imported module, and it is how the importing module states which

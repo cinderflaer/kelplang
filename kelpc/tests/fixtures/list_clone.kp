@@ -4,7 +4,7 @@
 // what the fixture checks by mutating the original after the clone. It is in
 // the AddressSanitizer pass: a `List<String>` clone that shared a buffer would
 // double-free at scope end.
-impl "std/str" as str
+impl "std/str"
 
 fun main() {
     var xs: List<i32> = List.empty()

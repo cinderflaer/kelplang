@@ -1,5 +1,5 @@
 impl "std/process"
-impl "std/path" as p
+impl "std/path"
 impl "std/str"
 impl "std/option"
 
@@ -37,13 +37,13 @@ fun spawn_marker_code(dir: &str).R: i32 {
 // A `dir` the child cannot enter closes the child with 126 and a message on
 // its stderr, before any `exec`.
 fun bad_dir_code(dir: &str).R: i32 {
-    val bad = p.join(dir, "nope")
+    val bad = path.join(dir, "nope")
     val r = process.run_in(bad.as_str(), "/bin/sh", sh("true"))
     return r.code
 }
 
 fun bad_dir_message(dir: &str).R: bool {
-    val bad = p.join(dir, "nope")
+    val bad = path.join(dir, "nope")
     val r = process.run_in(bad.as_str(), "/bin/sh", sh("true"))
     val at = str.index_of(r.err.as_str(), "cannot enter")
     return option.is_some(at)
@@ -59,7 +59,7 @@ fun dir_outside_grant().R: String {
 // The public pre-check, on both sides of the answer: `/bin/sh` is a regular
 // executable file and the harness's 0644 file is not.
 fun executable_answers(dir: &str).R: bool {
-    val file = p.join(dir, "not-exec")
+    val file = path.join(dir, "not-exec")
     return process.executable("/bin/sh") && !process.executable(file.as_str())
 }
 
@@ -81,7 +81,7 @@ fun try_ok(dir: &str).R: String {
 // A path inside the grant that names nothing: the grant check passes, so the
 // pre-check is what decides.
 fun try_missing(dir: &str).R: String {
-    val absent = p.join(dir, "missing-tool")
+    val absent = path.join(dir, "missing-tool")
     val r = process.try_run(absent.as_str(), sh("x"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
@@ -92,7 +92,7 @@ fun try_missing(dir: &str).R: String {
 // The file the harness creates mode 0644: it exists, and `exec` would refuse
 // it.
 fun try_not_executable(dir: &str).R: String {
-    val file = p.join(dir, "not-exec")
+    val file = path.join(dir, "not-exec")
     val r = process.try_run(file.as_str(), sh("x"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())
@@ -101,7 +101,7 @@ fun try_not_executable(dir: &str).R: String {
 }
 
 fun try_dir_missing(dir: &str).R: String {
-    val bad = p.join(dir, "nope")
+    val bad = path.join(dir, "nope")
     val r = process.try_run_in(bad.as_str(), "/bin/sh", sh("true"))
     return when r {
         Ok(v) -> String.from_str(v.out.as_str())

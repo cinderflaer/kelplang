@@ -1,0 +1,9 @@
+impl "util"
+
+fun describe(t: util.Tally).R: i32 = util.bumped(t, 1)
+
+fun main() {
+    val t = util.Tally(label = 3)
+    print(util.bumped(t, 4))
+    print(describe(t))
+}

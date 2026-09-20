@@ -222,8 +222,8 @@ impl Parser {
         })
     }
 
-    /// `impl "shapes/circle"` / `impl "time" as t`, and the capability
-    /// grant `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (M7). The
+    /// `impl "shapes/circle"` and the capability grant
+    /// `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (M7). The
     /// `with caps(...)` spelling of the grant is still read, and it is
     /// registered as outdated rather than refused (`deprecated.rs`).
     fn parse_impl_decl(&mut self) -> PResult<ImplDecl> {
@@ -241,13 +241,19 @@ impl Parser {
                 })
             }
         };
-        let (alias, alias_span, end) = if self.check(&TokenKind::As) {
-            self.advance();
-            let (name, span) = self.expect_ident()?;
-            (Some(name), Some(span), span)
-        } else {
-            (None, None, path_span)
-        };
+        // `as name` was removed once a module's own name became its namespace
+        // (`syntax.md` 13.1). The token is still a keyword, so the old clause is
+        // refused here, where the path is in hand, rather than falling through
+        // to the generic "expected an item" error further up.
+        if self.check(&TokenKind::As) {
+            return Err(ParseError {
+                message: "`impl \"...\" as name` is gone: reach the module by its own name \
+                          (`std/path` is `path`, `shapes/circle` is `circle`, and a dependency's \
+                          entry module `deps/argparse/lib` is `argparse`)"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
         // `caps(domain = ["pattern", ...], ...)` — the capability grant
         // (M7). Domains and patterns are validated in `resolve.rs`, where the
         // module graph (and therefore the importer's own set) is known. The
@@ -323,11 +329,9 @@ impl Parser {
         };
         Ok(ImplDecl {
             path,
-            alias,
-            alias_span,
             caps,
             caps_with_span,
-            span: start.to(end),
+            span: start.to(path_span),
         })
     }
 
@@ -2650,13 +2654,22 @@ mod tests {
 
     #[test]
     fn parses_impl_lines_before_decls() {
-        let p = parse("impl \"shapes/circle\"\nimpl \"time\" as t\n\nfun main() {}");
+        let p = parse("impl \"shapes/circle\"\nimpl \"std/time\" caps(time = [\"/7d\"])\n\nfun main() {}");
         assert_eq!(p.impls.len(), 2);
         assert_eq!(p.impls[0].path, "shapes/circle");
-        assert_eq!(p.impls[0].alias, None);
-        assert_eq!(p.impls[1].path, "time");
-        assert_eq!(p.impls[1].alias.as_deref(), Some("t"));
+        assert_eq!(p.impls[1].path, "std/time");
+        assert_eq!(p.impls[1].caps[0].domain, "time");
         assert_eq!(p.functions.len(), 1);
+    }
+
+    #[test]
+    fn the_impl_as_clause_is_refused_by_name() {
+        let err = parse_err("impl \"time\" as t\n\nfun main() {}");
+        assert!(
+            err.message.contains("is gone: reach the module by its own name"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

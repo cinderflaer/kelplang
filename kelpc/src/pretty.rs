@@ -5,9 +5,6 @@ pub fn pretty_print(program: &Program) -> String {
     let mut out = String::new();
     for i in &program.impls {
         write!(out, "impl \"{}\"", i.path).unwrap();
-        if let Some(alias) = &i.alias {
-            write!(out, " as {alias}").unwrap();
-        }
         out.push('\n');
     }
     if !program.impls.is_empty() {

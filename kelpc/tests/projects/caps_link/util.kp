@@ -1,12 +1,12 @@
 impl "std/fs"
-impl "std/path" as p
+impl "std/path"
 
 // This module holds `fs` because `main.kp` delegated it, so every path below
 // is checked against the patterns it received.
 fun build() {
     val dir = "/tmp/kelp_caps_link"
-    val target = p.join(dir, "target.txt")
-    val link = p.join(dir, "link.txt")
+    val target = path.join(dir, "target.txt")
+    val link = path.join(dir, "link.txt")
     fs.write_text(target.as_str(), String.from_str("hello link"))
     fs.symlink(target.as_str(), link.as_str())
 

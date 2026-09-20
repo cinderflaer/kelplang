@@ -500,9 +500,11 @@ fn manifest_less_sibling_import_runs() {
 }
 
 #[test]
-fn import_alias_reference_runs() {
-    // `impl "util" as u` plus a qualified type in a signature (`u.Tally`).
-    assert_project_runs("alias", &project("alias"), "7\n4\n");
+fn import_namespace_reference_runs() {
+    // `impl "util"` plus a qualified type in a signature (`util.Tally`): the
+    // namespace is the module's own name, which is the spelling the `as` clause
+    // used to override.
+    assert_project_runs("namespace", &project("namespace"), "7\n4\n");
 }
 
 #[test]

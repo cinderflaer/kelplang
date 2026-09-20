@@ -3,7 +3,7 @@
 // `.as_str()` first. What goes to `kelp_panic` is the buffer's data pointer,
 // from an owned temporary here and from a binding in
 // `panic_bound_message.kp`.
-impl "std/fmt" as fmt
+impl "std/fmt"
 
 fun main() {
     print("before")

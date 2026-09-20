@@ -1459,7 +1459,7 @@ impl "std/time"
 
 - The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.kp` extension is not written.
 - `impl` lines come first in the file.
-- The namespace is the module's own name: the last path segment, so `impl "shapes/circle"` gives `circle.area(...)` and `impl "std/fs"` gives `fs.read(...)`. A **dependency's entry module** is named after the directory Coral fetched it into: a path ending in `/lib` under `deps/` takes the name of its folder, which is the `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse.parse(...)`) or, for a whole-repository dependency, the library's own folder inside it (`impl "deps/fpl/json/lib"` is `json.write(...)`). Everything else under `deps/` is an internal module with its own name. `as name` overrides it, and it is **outdated** (`23`): the clause names something the path already says, and it is removed on the next development cycle.
+- The namespace is the module's own name: the last path segment, so `impl "shapes/circle"` gives `circle.area(...)` and `impl "std/fs"` gives `fs.read(...)`. A **dependency's entry module** is named after the directory Coral fetched it into: a path ending in `/lib` under `deps/` takes the name of its folder, which is the `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse.parse(...)`) or, for a whole-repository dependency, the library's own folder inside it (`impl "deps/fpl/json/lib"` is `json.write(...)`). Everything else under `deps/` is an internal module with its own name. `as name`, which used to override this, is **removed**: `impl "std/path" as p` is a parse error naming the fix, and the name to change is the one at the call sites.
 - Imports are transitive: a file that imports a module also loads what that module imports.
 - Import cycles and missing modules are errors, and the missing-module message names the file it expected.
 - Only the entry module has unprefixed names. Every other module is reached through its namespace.
@@ -2135,8 +2135,8 @@ directory walk are printed as raw strings and are not in that data.
 program      := line* EOF
 line         := impl | const | pd | datac | enum | fun
 
-impl         := "impl" string [ "as" ident ] [ "with" "caps" "(" grant ("," grant)* ")" ]
-                // the `as` clause is outdated (23): it still parses, and a build warns about it
+impl         := "impl" string [ "with" "caps" "(" grant ("," grant)* ")" ]
+                // `as name` was removed (13.1): the parser refuses it, and `as` stays a keyword
 grant        := ident "=" "[" string ("," string)* "]"
 const        := "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
@@ -2514,8 +2514,6 @@ compiler keeps a register of those spellings (`kelpc/src/deprecated.rs`), and
 `kelpc build` and `kelpc run` print one finding for each one a program uses:
 
 ```
-outdated: `impl "..." as name` is outdated and will be removed in the next development cycle: a module is reached by its own name (`deps/argparse/lib` is `argparse`, `std/path` is `path`, `shapes/circle` is `circle`), so drop the clause and use that name
-  --> src/main.kp:1:16
 outdated: `impl "..." with caps(...)` is outdated and will be removed in the next development cycle: drop the `with`: the grant is `impl "std/fs" caps(fs = ["/var/log/**"])`, and the patterns, the domains and the no-escalation rule are exactly the same
   --> src/main.kp:2:13
 ```
@@ -2537,5 +2535,8 @@ that reading is deduplicated at the end of it.
 
 | id | Outdated | Write instead |
 | --- | --- | --- |
-| `impl-as` | `impl "path" as name` | `impl "path"`, and reach the module by its own name: the last path segment, or, for a module whose path ends in `/lib` under `deps/`, the name of the directory it sits in (`deps/argparse/lib` is `argparse`, `deps/fpl/json/lib` is `json`). A name the module does not have (`impl "std/path" as p`) is the namespace to change, not the import to keep. |
 | `caps-with` | `impl "path" with caps(...)` | `impl "path" caps(...)`, with the same domains and the same patterns: `impl "std/fs" caps(fs = ["/var/log/**"])`. |
+
+The first entry was `impl-as` (`impl "path" as name`), and it is **retired**: the
+clause is gone from the parser, so it is refused rather than warned about. Its fix
+lives in 13.1, and a stale clause is a parse error that names it.

@@ -108,7 +108,9 @@ pub enum TokenKind {
     /// `impl "path/to/module"` — the import keyword (`plan/syntax.md` §8;
     /// `impl` method blocks do not exist, receivers replaced them).
     Impl,
-    /// `impl "path" as alias`.
+    /// The `as` keyword. Nothing accepts it: `impl "path" as name` was removed
+    /// (`plan/syntax.md` 13.1), and the `impl` parser refuses the clause by name
+    /// rather than letting a stale one read as something else.
     As,
     /// `const NAME: T = expr` — a top-level compile-time constant (M6.3).
     Const,

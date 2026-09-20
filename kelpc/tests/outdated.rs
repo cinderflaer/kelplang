@@ -13,10 +13,12 @@
 //!   4. a program with no outdated syntax prints nothing at all, so the flag
 //!      and the warning do not become background noise.
 //!
-//! The one register entry is `impl "..." as name`, so the fixtures import a
-//! module the old way. The new way is in the last test here: a dependency path
-//! is reached by the name under `deps/`. The second entry, `with caps(...)`,
-//! has its own case below.
+//! The register holds one entry, `impl "..." with caps(...)`, so the fixtures
+//! here import with the keyword. The other entry, `impl "..." as name`, was
+//! retired rather than migrated: the clause is gone from the parser, and the
+//! last case below is the refusal a program still carrying it meets. A
+//! dependency path reached by the name under `deps/` is the spelling the
+//! register pointed at while the clause existed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -61,20 +63,9 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).to_string()
 }
 
-/// A two-module project whose import uses the outdated clause, with `util.kp`
-/// beside the entry file so no manifest is needed.
-fn outdated_project(dir: &Path) -> PathBuf {
-    write(dir, "src/util.kp", "fun answer().R: i32 = 42\n");
-    write(
-        dir,
-        "src/main.kp",
-        "impl \"util\" as u\n\nfun main() {\n    print(u.answer())\n}\n",
-    )
-}
-
-/// The same project with the other outdated spelling: a real `fs` delegation
-/// written with the `with` keyword, so the case is about the keyword rather
-/// than about a clause the resolver skips.
+/// A two-module project whose import uses the outdated spelling: a real `fs`
+/// delegation written with the `with` keyword, so the case is about the
+/// keyword rather than about a clause the resolver skips.
 fn caps_with_project(dir: &Path) -> PathBuf {
     write(dir, "src/util.kp", "fun answer().R: i32 = 42\n");
     write(
@@ -82,50 +73,6 @@ fn caps_with_project(dir: &Path) -> PathBuf {
         "src/main.kp",
         "impl \"util\" with caps(fs = [\"/tmp/**\"])\n\nfun main() {\n    print(util.answer())\n}\n",
     )
-}
-
-#[test]
-fn outdated_syntax_warns_and_the_build_succeeds() {
-    let dir = scratch("warn");
-    let source = outdated_project(&dir);
-    let out = dir.join("prog");
-
-    let result = build(&source, &out, false);
-    assert!(
-        result.status.success(),
-        "outdated syntax must still compile, got {:?}:\n{}",
-        result.status.code(),
-        stderr(&result)
-    );
-    let text = stderr(&result);
-    assert!(
-        text.contains("outdated: `impl \"...\" as name` is outdated"),
-        "the finding is not labelled `outdated:`:\n{text}"
-    );
-    assert!(
-        text.contains("will be removed in the next development cycle"),
-        "the warning does not name the removal:\n{text}"
-    );
-    assert!(
-        text.contains("drop the clause"),
-        "the warning does not name the fix:\n{text}"
-    );
-    assert!(
-        text.contains(&format!("{}:1:16", source.display())),
-        "the warning does not point at the clause it is about:\n{text}"
-    );
-    // One load, two passes (discovery, then strict): the finding is a fact
-    // about the source, so it is reported once, not once per pass.
-    assert_eq!(
-        text.matches("outdated:").count(),
-        1,
-        "the finding is printed once, not once per load pass:\n{text}"
-    );
-
-    // And the program the warning was printed for is a working binary.
-    let ran = Command::new(&out).output().expect("run the built program");
-    assert!(ran.status.success());
-    assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n");
 }
 
 #[test]
@@ -145,6 +92,10 @@ fn the_with_caps_spelling_warns_and_the_build_succeeds() {
     assert!(
         text.contains("outdated: `impl \"...\" with caps(...)` is outdated"),
         "the finding is not labelled `outdated:`:\n{text}"
+    );
+    assert!(
+        text.contains("will be removed in the next development cycle"),
+        "the warning does not name the removal:\n{text}"
     );
     assert!(
         text.contains("drop the `with`"),
@@ -169,7 +120,7 @@ fn the_with_caps_spelling_warns_and_the_build_succeeds() {
 #[test]
 fn deny_outdated_turns_the_finding_into_an_error_and_writes_nothing() {
     let dir = scratch("deny");
-    let source = outdated_project(&dir);
+    let source = caps_with_project(&dir);
     let out = dir.join("prog");
 
     let result = build(&source, &out, true);
@@ -180,7 +131,7 @@ fn deny_outdated_turns_the_finding_into_an_error_and_writes_nothing() {
     );
     let text = stderr(&result);
     assert!(
-        text.contains("error: `impl \"...\" as name` is outdated"),
+        text.contains("error: `impl \"...\" with caps(...)` is outdated"),
         "the finding is not reported as an error:\n{text}"
     );
     assert!(
@@ -192,7 +143,7 @@ fn deny_outdated_turns_the_finding_into_an_error_and_writes_nothing() {
 #[test]
 fn run_deny_outdated_refuses_to_run_the_program() {
     let dir = scratch("run-deny");
-    let source = outdated_project(&dir);
+    let source = caps_with_project(&dir);
 
     let result = kelpc()
         .arg("run")
@@ -232,6 +183,40 @@ fn a_program_with_no_outdated_syntax_prints_nothing() {
     // The same source under the flag: nothing to deny.
     let denied = build(&source, &out, true);
     assert!(denied.status.success(), "{}", stderr(&denied));
+}
+
+#[test]
+fn the_impl_as_clause_is_gone() {
+    // The retired entry: not a warning, a refusal that names the fix, because
+    // the register only holds spellings that still compile.
+    let dir = scratch("impl-as");
+    write(&dir, "src/util.kp", "fun answer().R: i32 = 42\n");
+    let source = write(
+        &dir,
+        "src/main.kp",
+        "impl \"util\" as u\n\nfun main() {\n    print(u.answer())\n}\n",
+    );
+    let out = dir.join("prog");
+
+    let result = build(&source, &out, false);
+    assert!(
+        !result.status.success(),
+        "the clause is removed, so the build must fail:\n{}",
+        stderr(&result)
+    );
+    let text = stderr(&result);
+    assert!(
+        text.contains("`impl \"...\" as name` is gone: reach the module by its own name"),
+        "the refusal does not name the fix:\n{text}"
+    );
+    assert!(
+        !text.contains("outdated:"),
+        "a removed spelling is not a deprecation:\n{text}"
+    );
+    assert!(
+        !out.exists(),
+        "a refused build must not generate an artifact"
+    );
 }
 
 #[test]
