@@ -1,0 +1,434 @@
+impl "std/result"
+impl "std/str"
+
+/* dns_parse — the message-parsing half of the stub resolver (MK7 §7 item 6,
+   §8), written in Kelp.
+
+   This is *not* a std module: it is not shipped, and the resolver does not
+   call it yet. It is the port half of a differential pair whose other half is
+   `kelpc/runtime/dns_parse_ref.c`, and `kelpc/tests/dns_parse.rs` runs a corpus
+   through both and compares every rendered line. §8's contract is "Kelp first,
+   the C kept as the reference, prove it with a corpus", and this is the piece
+   §7 calls the most likely to be deferred and the hardest to get right: name
+   compression, truncation and malformed input.
+
+   Bytes in, a parsed result out. No sockets, no files, no I/O of any kind: a
+   resolver's *transport* (UDP/TCP, `/etc/hosts`, `/etc/resolv.conf`, retries,
+   timeouts, TCP fallback, search domains) is a later lane and out of scope
+   here, and the corpus doc says so too.
+
+   The parsed result is a `DnsMessage`: the header counts, the questions, and
+   the resource records of all three sections. `parse` returns it or a
+   `DnsErr`; `line` renders it as the one canonical text line the corpus
+   compares. Nothing here panics on a malformed message: every read past the
+   end of the slice is a named `DnsErr`, because a stub resolver that a
+   hostile reply can crash is the failure this lane exists to prevent.
+
+   Coverage and the exact rules: the module doc of `kelpc/tests/dns_parse.rs`
+   is the contract, and it is the same text the C reference follows. */
+
+// Why a message was refused. One variant per rejection class the corpus
+// exercises; `reason` is the single place the wire name is spelled.
+enum DnsErr {
+    ShortHeader
+    CountOutOfRange
+    Truncated
+    BadLabel
+    LabelOutOfBounds
+    PointerOutOfBounds
+    PointerNotBackward
+    NameTooLong
+    ClassNotIn
+    RdlengthMismatch
+    RdataOutOfBounds
+}
+
+// A name, decompressed, with the offset just past it *in its own section* (the
+// offset of the first pointer's second byte, or the terminator's, whichever the
+// name used).
+datac DnsName(val text: String, val next: usize)
+
+// One question: the name plus its type and class.
+datac DnsQuestion(val name: String, val qtype: u16, val qclass: u16)
+
+// One resource record. `section` is 0 for answer, 1 for authority, 2 for
+// additional. `rdata` is the rendered payload for A/AAAA and `-` for every
+// other type, which is skipped by RDLENGTH and reported by number.
+datac DnsRecord(
+    val section: u8,
+    val name: String,
+    val rtype: u16,
+    val rclass: u16,
+    val ttl: u32,
+    val rdata: String,
+)
+
+// A whole parsed message.
+datac DnsMessage(
+    val id: u16,
+    val flags: u16,
+    val qd: u16,
+    val an: u16,
+    val ns: u16,
+    val ar: u16,
+    val questions: List<DnsQuestion>,
+    val records: List<DnsRecord>,
+)
+
+// Whether `n` more bytes can be read at `off`.
+fun fits(data: &Bytes, off: usize, n: usize).R: bool = off + n <= data.len()
+
+// A big-endian `u16` at `off`. The caller has checked `fits(data, off, 2)`.
+fun be_u16(data: &Bytes, off: usize).R: u16 {
+    val hi = data.get(off).to_u16()
+    val lo = data.get(off + 1).to_u16()
+    return hi * 256 + lo
+}
+
+// A big-endian `u32` at `off`. The caller has checked `fits(data, off, 4)`.
+fun be_u32(data: &Bytes, off: usize).R: u32 {
+    val b0 = data.get(off).to_u32()
+    val b1 = data.get(off + 1).to_u32()
+    val b2 = data.get(off + 2).to_u32()
+    val b3 = data.get(off + 3).to_u32()
+    return b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
+}
+
+// One lowercase hex digit (`48` is `0`, `87` is `a` minus ten).
+fun hex_digit(n: u8).R: u8 {
+    if n < 10 {
+        return n + 48
+    }
+    return n + 87
+}
+
+// `n` appended in decimal. `str.from_u64` returns a `String`; binding it first
+// keeps the borrow off a temporary.
+fun push_dec(out: mut String, n: u64) {
+    val text = str.from_u64(n)
+    out.push_str(text.as_str())
+}
+
+// The name at `start`, decompressed. A label is appended as its bytes in
+// lowercase hex, so a name that carries a newline or any other control byte
+// cannot break the one-line-per-case shape of the corpus. Labels are joined
+// with `.`; the root name is `-`.
+//
+// Compression rules, the whole of them: a two-octet pointer has the top two
+// bits set and must point strictly backwards (a self or forward pointer is
+// rejected before it can be followed, which is what makes a loop impossible
+// rather than merely unlikely); a pointer target past the end is a rejection; a
+// label length octet with either reserved top bit set (`64..191`) is a
+// rejection; and a name whose decompressed length would exceed 255 octets,
+// terminator included, is a rejection.
+fun read_name(data: &Bytes, start: usize).R: result.Result<DnsName, DnsErr> {
+    val dlen = data.len()
+    var pos = start
+    var next = start
+    var jumped = false
+    var total: usize = 0
+    var hops: usize = 0
+    var text = String.empty()
+    var done = false
+    while !done {
+        if pos >= dlen {
+            return result.Result.Err(error = DnsErr.Truncated)
+        }
+        val b = data.get(pos)
+        if (b & 192) == 192 {
+            if pos + 1 >= dlen {
+                return result.Result.Err(error = DnsErr.Truncated)
+            }
+            val target = (b & 63).to_usize() * 256 + data.get(pos + 1).to_usize()
+            if target >= dlen {
+                return result.Result.Err(error = DnsErr.PointerOutOfBounds)
+            }
+            if target >= pos {
+                return result.Result.Err(error = DnsErr.PointerNotBackward)
+            }
+            if !jumped {
+                next = pos + 2
+                jumped = true
+            }
+            // Strictly-backward pointers cannot cycle, so this bound is never
+            // reached; it is the guard that keeps that claim true if the rule
+            // above is ever loosened.
+            hops = hops + 1
+            if hops > 128 {
+                return result.Result.Err(error = DnsErr.PointerNotBackward)
+            }
+            pos = target
+        } elif (b & 192) != 0 {
+            return result.Result.Err(error = DnsErr.BadLabel)
+        } elif b == 0 {
+            if !jumped {
+                next = pos + 1
+            }
+            done = true
+        } else {
+            val l = b.to_usize()
+            if pos + 1 + l > dlen {
+                return result.Result.Err(error = DnsErr.LabelOutOfBounds)
+            }
+            total = total + l + 1
+            if total + 1 > 255 {
+                return result.Result.Err(error = DnsErr.NameTooLong)
+            }
+            if text.len() > 0 {
+                text.push(46)
+            }
+            var k: usize = 0
+            while k < l {
+                val octet = data.get(pos + 1 + k)
+                text.push(hex_digit(octet >> 4))
+                text.push(hex_digit(octet & 15))
+                k = k + 1
+            }
+            pos = pos + 1 + l
+        }
+    }
+    if text.len() == 0 {
+        text.push(45)
+    }
+    return result.Result.Ok(value = DnsName(text = text, next = next))
+}
+
+// The address bytes at `off`, rendered: a dotted quad for A, eight groups of
+// four hex digits separated by `:` for AAAA. `rdlen` has already been checked
+// against the type, so 4 or 16 bytes are there.
+fun render_address(data: &Bytes, off: usize, rtype: u16).R: String {
+    var out = String.empty()
+    if rtype == 1 {
+        var k: usize = 0
+        while k < 4 {
+            if k > 0 {
+                out.push(46)
+            }
+            push_dec(out, data.get(off + k).to_u64())
+            k = k + 1
+        }
+        return out
+    }
+    var g: usize = 0
+    while g < 8 {
+        if g > 0 {
+            out.push(58)
+        }
+        var h: usize = 0
+        while h < 2 {
+            val octet = data.get(off + g * 2 + h)
+            out.push(hex_digit(octet >> 4))
+            out.push(hex_digit(octet & 15))
+            h = h + 1
+        }
+        g = g + 1
+    }
+    return out
+}
+
+// `count` resource records starting at `start`, appended to `out`, returning
+// the offset just past them.
+//
+// A and AAAA RDATA is parsed into an address and the class must be IN (`1`); a
+// record of any other type, EDNS0 OPT (41) included, is skipped by RDLENGTH and
+// reported as its type number with no attempt to read its RDATA. An RDATA that
+// runs past the end of the message is a rejection, not a partial record.
+fun read_records(
+    data: &Bytes,
+    start: usize,
+    count: usize,
+    section: u8,
+    out: mut List<DnsRecord>,
+).R: result.Result<usize, DnsErr> {
+    var off = start
+    var i: usize = 0
+    while i < count {
+        val nm = read_name(data, off)?
+        off = nm.next
+        if !fits(data, off, 10) {
+            return result.Result.Err(error = DnsErr.Truncated)
+        }
+        val rtype = be_u16(data, off)
+        val rclass = be_u16(data, off + 2)
+        val ttl = be_u32(data, off + 4)
+        val rdlen = be_u16(data, off + 8).to_usize()
+        off = off + 10
+        if off + rdlen > data.len() {
+            return result.Result.Err(error = DnsErr.RdataOutOfBounds)
+        }
+        var rdata = String.empty()
+        if rtype == 1 || rtype == 28 {
+            if rclass != 1 {
+                return result.Result.Err(error = DnsErr.ClassNotIn)
+            }
+            if rtype == 1 && rdlen != 4 {
+                return result.Result.Err(error = DnsErr.RdlengthMismatch)
+            }
+            if rtype == 28 && rdlen != 16 {
+                return result.Result.Err(error = DnsErr.RdlengthMismatch)
+            }
+            rdata = render_address(data, off, rtype)
+        } else {
+            rdata.push(45)
+        }
+        out.push(DnsRecord(
+            section = section,
+            name = nm.text.as_str(),
+            rtype = rtype,
+            rclass = rclass,
+            ttl = ttl,
+            rdata = rdata,
+        ))
+        off = off + rdlen
+        i = i + 1
+    }
+    return result.Result.Ok(value = off)
+}
+
+// A whole DNS message, or the reason it is not one.
+fun parse(data: Bytes).R: result.Result<DnsMessage, DnsErr> {
+    val dlen = data.len()
+    if dlen < 12 {
+        return result.Result.Err(error = DnsErr.ShortHeader)
+    }
+    val id = be_u16(data, 0)
+    val flags = be_u16(data, 2)
+    val qd16 = be_u16(data, 4)
+    val an16 = be_u16(data, 6)
+    val ns16 = be_u16(data, 8)
+    val ar16 = be_u16(data, 10)
+    val qd = qd16.to_usize()
+    val an = an16.to_usize()
+    val ns = ns16.to_usize()
+    val ar = ar16.to_usize()
+    // A count the message cannot hold is rejected before a single entry is
+    // read, rather than by running off the end partway through. A question is
+    // at least 5 bytes (a root name, type, class) and a record at least 11
+    // (root name, type, class, TTL, RDLENGTH).
+    if 12 + qd * 5 + (an + ns + ar) * 11 > dlen {
+        return result.Result.Err(error = DnsErr.CountOutOfRange)
+    }
+    var off: usize = 12
+    var questions: List<DnsQuestion> = List.empty()
+    var i: usize = 0
+    while i < qd {
+        val nm = read_name(data, off)?
+        off = nm.next
+        if !fits(data, off, 4) {
+            return result.Result.Err(error = DnsErr.Truncated)
+        }
+        questions.push(DnsQuestion(
+            name = nm.text.as_str(),
+            qtype = be_u16(data, off),
+            qclass = be_u16(data, off + 2),
+        ))
+        off = off + 4
+        i = i + 1
+    }
+    var records: List<DnsRecord> = List.empty()
+    off = read_records(data, off, an, 0, records)?
+    off = read_records(data, off, ns, 1, records)?
+    off = read_records(data, off, ar, 2, records)?
+    // Trailing bytes are allowed: they are not part of the message this parser
+    // models, and a real reply can carry padding.
+    return result.Result.Ok(value = DnsMessage(
+        id = id,
+        flags = flags,
+        qd = qd16,
+        an = an16,
+        ns = ns16,
+        ar = ar16,
+        questions = questions,
+        records = records,
+    ))
+}
+
+// `an`/`ns`/`ar`, spelled for the corpus line.
+fun section_name(section: u8).R: &str {
+    if section == 0 {
+        return "an"
+    }
+    if section == 1 {
+        return "ns"
+    }
+    return "ar"
+}
+
+// The wire name of a reason: the token both implementations print, and the
+// whole of the rejection vocabulary.
+fun reason(e: &DnsErr).R: &str = when e {
+    ShortHeader -> "short-header"
+    CountOutOfRange -> "count-oob"
+    Truncated -> "truncated"
+    BadLabel -> "bad-label"
+    LabelOutOfBounds -> "label-oob"
+    PointerOutOfBounds -> "pointer-oob"
+    PointerNotBackward -> "pointer-backward"
+    NameTooLong -> "name-too-long"
+    ClassNotIn -> "class-not-in"
+    RdlengthMismatch -> "rdlength-mismatch"
+    RdataOutOfBounds -> "rdata-oob"
+}
+
+// The canonical line for a parsed message. Fixed header fields, then `q=` and
+// `rr=` with `,`-separated entries, so the line is one obvious thing to compare
+// and a diff says which field moved.
+fun render_message(m: &DnsMessage).R: String {
+    var out = String.with_capacity(64)
+    out.push_str("ok id=")
+    push_dec(out, m.id.to_u64())
+    out.push_str(" flags=")
+    push_dec(out, m.flags.to_u64())
+    out.push_str(" qd=")
+    push_dec(out, m.qd.to_u64())
+    out.push_str(" an=")
+    push_dec(out, m.an.to_u64())
+    out.push_str(" ns=")
+    push_dec(out, m.ns.to_u64())
+    out.push_str(" ar=")
+    push_dec(out, m.ar.to_u64())
+    out.push_str(" q=")
+    var i: usize = 0
+    while i < m.questions.len() {
+        if i > 0 {
+            out.push(44)
+        }
+        val q = m.questions.get(i)
+        out.push_str(q.name.as_str())
+        out.push(58)
+        push_dec(out, q.qtype.to_u64())
+        out.push(58)
+        push_dec(out, q.qclass.to_u64())
+        i = i + 1
+    }
+    out.push_str(" rr=")
+    var j: usize = 0
+    while j < m.records.len() {
+        if j > 0 {
+            out.push(44)
+        }
+        val r = m.records.get(j)
+        out.push_str(section_name(r.section))
+        out.push(58)
+        out.push_str(r.name.as_str())
+        out.push(58)
+        push_dec(out, r.rtype.to_u64())
+        out.push(58)
+        push_dec(out, r.rclass.to_u64())
+        out.push(58)
+        push_dec(out, r.ttl.to_u64())
+        out.push(58)
+        out.push_str(r.rdata.as_str())
+        j = j + 1
+    }
+    return out
+}
+
+// The one line for one message: the rendered message, or `reject <reason>`.
+fun line(data: Bytes).R: String {
+    val parsed = parse(data)
+    return when parsed {
+        Ok(m) -> render_message(m)
+        Err(e) -> str.concat("reject ", reason(e))
+    }
+}
