@@ -34,6 +34,40 @@ pub struct Diagnostic {
     pub notes: Vec<DiagnosticNote>,
 }
 
+/// What kind of finding a diagnostic is. The prose printer's three labels
+/// (`error: `/`warning: `/`outdated: `) are the three values, and `kelpc
+/// check --json` spells them the same way, so a consumer that reads only the
+/// machine form and one that reads only the prose agree about a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// The program does not compile.
+    Error,
+    /// A lint's finding. `kelpc lint` exits zero with warnings on stderr, so
+    /// a consumer has to classify rather than trust the exit code.
+    Warning,
+    /// A spelling on the register of outdated syntax: it still compiles, and
+    /// `--deny-outdated` is what makes it an error instead.
+    Outdated,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Outdated => "outdated",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Severity::Error => "error: ",
+            Severity::Warning => "warning: ",
+            Severity::Outdated => "outdated: ",
+        }
+    }
+}
+
 impl Diagnostic {
     pub fn new(message: String, span: Span, module: impl Into<String>) -> Self {
         Diagnostic {
@@ -119,26 +153,30 @@ impl SourceMap {
 
     /// Prints `error: ...` plus an `--> file:line:col` location to stderr.
     pub fn report(&self, d: &Diagnostic) {
-        eprintln!("{}", self.render(d));
+        self.report_as(d, Severity::Error);
     }
 
     /// The same, labelled `warning:`: a lint's finding is not a build failure,
     /// and the label is the whole difference between the two (`kelpc lint`).
     pub fn report_warning(&self, d: &Diagnostic) {
-        eprintln!("{}", self.render_labeled(d, "warning: "));
+        self.report_as(d, Severity::Warning);
     }
 
     /// A deprecation, labelled `outdated: `: the construct still compiles and
     /// the compiler still builds it, so this is not an error, but it is not a
     /// style opinion either (that is what `warning:` is for) and the label says
     /// which kind of finding a reader is looking at. `--deny-outdated` prints
-    /// the same diagnostics through `report`, as errors.
+    /// the same diagnostics through `report_as`, as errors.
     pub fn report_outdated(&self, d: &Diagnostic) {
-        eprintln!("{}", self.render_labeled(d, "outdated: "));
+        self.report_as(d, Severity::Outdated);
     }
 
-    pub fn render(&self, d: &Diagnostic) -> String {
-        self.render_labeled(d, "error: ")
+    /// Prints one finding under the label its kind carries. The three public
+    /// entry points above are this function with a kind, so a caller that has
+    /// the kind in hand (`kelpc check`) does not have to know which printer
+    /// belongs to which.
+    pub fn report_as(&self, d: &Diagnostic, severity: Severity) {
+        eprintln!("{}", self.render_labeled(d, severity.label()));
     }
 
     fn render_labeled(&self, d: &Diagnostic, label: &str) -> String {
@@ -168,6 +206,94 @@ impl SourceMap {
             None => format!("{label}{message}\n  --> <module '{module}'>"),
         }
     }
+
+    /// One finding as a JSON object, for `kelpc check --json` (MK13-S1-M3).
+    ///
+    /// The location is a *range*: `line`/`column` are 1-based and name the
+    /// first byte of the span, `end_line`/`end_column` are exclusive and name
+    /// the byte after its last, so a consumer can underline exactly what the
+    /// message is about instead of guessing a length from prose. The location
+    /// keys are absent when the module's text was never registered, which is
+    /// the one case the prose printer also has nothing to point at;
+    /// `"module"` is always there, because a span is a range inside *one*
+    /// file and the module id is what says which.
+    pub fn render_json(&self, severity: Severity, d: &Diagnostic) -> String {
+        let mut out = format!(
+            "{{\"severity\":{},\"message\":{},\"module\":{}",
+            json_string(severity.as_str()),
+            json_string(&d.message),
+            json_string(&d.module),
+        );
+        out.push_str(&self.json_location(d.span, &d.module));
+        out.push_str(",\"notes\":[");
+        for (i, note) in d.notes.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"message\":{},\"module\":{}",
+                json_string(&note.message),
+                json_string(&note.module),
+            ));
+            out.push_str(&self.json_location(note.span, &note.module));
+            out.push('}');
+        }
+        out.push_str("]}");
+        out
+    }
+
+    /// The whole document `kelpc check --json` writes: `ok`, and every finding
+    /// in the order it was produced, each with the kind it is. `ok` is the job
+    /// the exit status does for a shell, spelled out for a consumer that reads
+    /// one stream and never looks at a status.
+    pub fn render_findings_json(&self, findings: &[(Severity, &Diagnostic)], ok: bool) -> String {
+        let mut out = format!("{{\"schema\":1,\"ok\":{ok},\"diagnostics\":[");
+        for (i, (severity, d)) in findings.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&self.render_json(*severity, d));
+        }
+        out.push_str("]}\n");
+        out
+    }
+
+    /// The `,\"file\":...` tail of a finding's location, or nothing when the
+    /// module's text is unknown.
+    fn json_location(&self, span: Span, module: &str) -> String {
+        let Some(f) = self.files.get(module) else {
+            return String::new();
+        };
+        let (line, column) = line_col(&f.text, span.start);
+        let (end_line, end_column) = line_col(&f.text, span.end);
+        format!(
+            ",\"file\":{},\"line\":{line},\"column\":{column},\"end_line\":{end_line},\"end_column\":{end_column}",
+            json_string(&f.path.to_string_lossy()),
+        )
+    }
+}
+
+/// A string as a JSON string literal. Everything a consumer would mis-read is
+/// escaped: the quote, the backslash, and every control character (the three
+/// that have a short form, and `\u00XX` for the rest). Text above the ASCII
+/// range is written through as UTF-8, which JSON allows and which keeps a
+/// message written in another script readable.
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// A path as the contents of a C string literal: the two bytes that would end

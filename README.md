@@ -93,6 +93,8 @@ can be acquired.
 cargo build --release -p kelpc
 ./target/release/kelpc run examples/hello.kp
 ./target/release/kelpc build examples/download.kp      # artifact in build/download
+./target/release/kelpc check examples/hello.kp        # compiles? no artifact written
+./target/release/kelpc check --json examples/hello.kp # the same, as one JSON object
 ./target/release/kelpc fmt -w examples/hello.kp       # format in place (also: --check)
 ```
 
@@ -110,6 +112,28 @@ Two code generators are selectable, with `--backend=` or `KELPC_BACKEND`:
 The C backend is the reference: every fixture is built by both and the two
 binaries' stdout is compared, so a construct the `asm` backend does not lower
 yet is refused by name rather than silently miscompiled.
+
+`kelpc check` runs everything a build runs except code generation — the same
+modules, the same type check, the same borrow check — so it answers whether a
+program compiles without writing an artifact. It exits nonzero only for an
+error: an outdated-syntax finding on its own exits zero, the rule `kelpc lint`
+follows. `--json` prints the findings on stdout as one document instead of prose
+on stderr, which is the form an editor or a build tool reads:
+
+```json
+{"schema":1,"ok":false,"diagnostics":[
+  {"severity":"error","message":"...","module":"main",
+   "file":"src/main.kp","line":3,"column":11,"end_line":3,"end_column":19,
+   "notes":[]}
+]}
+```
+
+`line`/`column` are 1-based and name the first byte of the finding's span;
+`end_line`/`end_column` are exclusive. The location keys are absent when there is
+no file to point at (a path the compiler could not read), and `module` is always
+there. `severity` is `error`, `warning` or `outdated`. The front end stops at the
+first error, so `diagnostics` carries one error plus whatever findings came
+before it.
 
 `kelpc fmt` formats `.kp` source to the style rules in `plan/syntax.md` §19:
 `kelpc fmt FILE` writes to stdout, `-w` rewrites in place, and `--check` exits

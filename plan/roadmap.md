@@ -1014,7 +1014,7 @@ coral clean
 | --- | --- | --- | --- |
 | **MK13-S1 Project model and tasks** | MK13-S1-M1 | `coral init` scaffolding and layout conventions (`src/`, `tests/`, `tasks/`, `build/`), manifest sections, `coral build`/`run`/`check`/`clean`, the task graph, `coral task <name>` | One command per project instead of one shell script per project |
 | | MK13-S1-M2 | Profiles (`dev`, `release`), per-profile flags, artifact naming and placement, argv and exit-code passing for `coral run` | The same project builds two ways without editing files |
-| | MK13-S1-M3 | The compiler interface Coral depends on: `kelpc check --json` diagnostics, a per-module dependency list, a documented CLI contract | A build tool that reports and caches instead of scraping stderr |
+| | MK13-S1-M3 | The compiler interface Coral depends on: `kelpc check --json` diagnostics (**shipped 2026-09-20**: `check [--json]`, one severity and one 1-based range per finding), a per-module dependency list, a documented CLI contract | A build tool that reports and caches instead of scraping stderr |
 | **MK13-S2 Incremental builds and caching** | MK13-S2-M1 | Fingerprints (source bytes, flags, profile, compiler version), module-granular recompilation, `build/cache` layout, the invalidation rule written down | A one-file change rebuilds in seconds |
 | | MK13-S2-M2 | Cache reuse across branches and worktrees, `coral build --explain` naming the fingerprint that invalidated, cache export/import for CI | CI reuses what a laptop already built |
 | | MK13-S2-M3 | Separate compile and link steps (`kelpc --emit-obj`, `kelpc link`), which is also the base for libraries and cross-compilation | Link-only rebuilds; one pipeline serving three later needs |
@@ -1037,7 +1037,7 @@ coral clean
 
 **What Coral needs from elsewhere.**
 
-- **From the compiler**: machine-readable diagnostics, a module dependency list, separate compile and link steps, and a stable CLI contract (MK13-S1-M3). Today `kelpc build`/`kelpc run`, `kelpc version` (added with the 0.1.1 release) and prose diagnostics are all a build tool has to work with.
+- **From the compiler**: machine-readable diagnostics, a module dependency list, separate compile and link steps, and a stable CLI contract (MK13-S1-M3). **The diagnostics half shipped** (2026-09-20): `kelpc check <file.kp|dir> [--json]` runs the front end with no code generation and prints one document — `{"schema":1,"ok":...,"diagnostics":[...]}`, each finding with its severity (`error`/`warning`/`outdated`), message, module and a 1-based range in the file it points at — which is what the `lighthouse` language server reads instead of prose from stderr. What is still open is the per-module dependency list and the CLI contract written down as a contract.
 - **From MK5-S2-M1 (done)**: `process.spawn`, argv, captured output and exit codes, which Coral and every non-trivial task need.
 - **From MK8-S1/S2, only if Coral is written in Kelp**: generics, `Option`/`Result`, function values and containers — **all four shipped** (A-2 as MK8-S1-M1 part 2, `Option`/`Result` as MK5-S6-M1, containers as MK3, function values and closures as MK8-S1-M2 phases A-F), so the language half of open item 67 is met. Until Coral is ported it is a Rust program that drives `kelpc`.
 - **From MK9-S4-M2**: cross-compilation and library output, which MK13-S4-M2/M3 extend rather than invent.

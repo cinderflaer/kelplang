@@ -20,7 +20,7 @@ mod tir;
 mod types;
 
 use backend::Backend;
-use diag::{Diagnostic, SourceMap};
+use diag::{Diagnostic, Severity, SourceMap};
 use fmt::RefusalKind;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,6 +72,7 @@ fn usage() {
     eprintln!(
         "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>] [--deny-outdated]\n       \
          {BIN_NAME} run <file.{EXT}> [--deny-outdated]\n       \
+         {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
@@ -87,6 +88,15 @@ fn usage() {
          on the list.\n\n\
          With no -o, the binary and the C it was generated from are written to\n\\
          {BUILD_DIR}/<file stem>, which the compiler creates if it is missing.\n\n\
+         check runs everything a build runs except code generation: the same\n\
+         modules, the same type check and the same borrow check, so it answers\n\
+         whether the program compiles without writing an artifact. --json\n\
+         prints the findings as one JSON object on stdout instead of prose on\n\
+         stderr: {{\"schema\":1,\"ok\":...,\"diagnostics\":[...]}}, each finding\n\
+         with its severity (error, warning or outdated), its message, and a\n\
+         1-based [line:column, end_line:end_column) range inside its file. The\n\
+         exit status is nonzero only for an error: a warning or an outdated\n\
+         finding on its own exits zero, the rule lint already follows.\n\n\
          fmt prints formatted source to stdout; -w rewrites in place, and\n\
          --check exits nonzero without writing when a file is not already\n\
          formatted. A path may be a .{EXT} file or a directory (recursing\n\
@@ -108,6 +118,113 @@ fn usage() {
          read or a file it could not lex. It never writes to a file.",
         EXT = resolve::EXT
     );
+}
+
+/// The front end of a build: modules loaded, types checked, borrows checked,
+/// with the findings *collected* rather than printed.
+///
+/// Codegen is the whole difference between this and `build`, which is why
+/// `kelpc check` can answer whether a program compiles without writing an
+/// artifact. The front end is fail-fast: the first error is the last finding
+/// produced, so a program with four independent mistakes reports one.
+///
+/// `ok` is false when any finding is an error, which is the same question the
+/// exit status answers. Outdated syntax is a finding rather than a failure
+/// unless `deny_outdated` asks otherwise, matching `build`.
+fn front_end(
+    path: &str,
+    deny_outdated: bool,
+    sources: &mut SourceMap,
+) -> (Vec<(Severity, Diagnostic)>, bool) {
+    let mut findings: Vec<(Severity, Diagnostic)> = Vec::new();
+
+    let loaded = match resolve::load(Path::new(path), sources) {
+        Ok(l) => l,
+        Err(d) => {
+            findings.push((Severity::Error, d));
+            return (findings, false);
+        }
+    };
+    for d in loaded.deprecations {
+        let severity = if deny_outdated {
+            Severity::Error
+        } else {
+            Severity::Outdated
+        };
+        findings.push((severity, d));
+    }
+    if !findings.is_empty() {
+        return (findings, !deny_outdated);
+    }
+
+    let typed = match infer::check_program(&loaded.program, &loaded.project) {
+        Ok(p) => p,
+        Err(d) => {
+            findings.push((Severity::Error, d));
+            return (findings, false);
+        }
+    };
+
+    if let Err(d) = borrowck::check_program(&typed) {
+        findings.push((Severity::Error, d));
+        return (findings, false);
+    }
+
+    (findings, true)
+}
+
+/// `kelpc check <path> [--json] [--deny-outdated]`: whether the program
+/// compiles, without an artifact.
+///
+/// `--json` is the machine-readable contract Coral and `lighthouse` read
+/// (MK13-S1-M3): one JSON object on stdout, the prose form on stderr
+/// otherwise. A caller that reads the JSON never has to parse a message to
+/// find out which file and which range it is about, which is the whole reason
+/// the form exists.
+fn check_command(args: &[String]) -> ExitCode {
+    let mut json = false;
+    let mut deny_outdated = false;
+    let mut path: Option<String> = None;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            "--deny-outdated" => deny_outdated = true,
+            other if other.starts_with('-') && other != "-" => {
+                eprintln!("error: unknown flag '{other}'; expected one of: --json, --deny-outdated");
+                return ExitCode::FAILURE;
+            }
+            other if path.is_none() => path = Some(other.to_string()),
+            other => {
+                eprintln!("error: unexpected argument '{other}'");
+                usage();
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(path) = path else {
+        eprintln!("error: 'check' needs a .{EXT} file or a project directory", EXT = resolve::EXT);
+        usage();
+        return ExitCode::FAILURE;
+    };
+
+    let mut sources = SourceMap::new();
+    let (findings, ok) = front_end(&path, deny_outdated, &mut sources);
+    if json {
+        let borrowed: Vec<(Severity, &Diagnostic)> = findings
+            .iter()
+            .map(|(severity, d)| (*severity, d))
+            .collect();
+        print!("{}", sources.render_findings_json(&borrowed, ok));
+    } else {
+        for (severity, d) in &findings {
+            sources.report_as(d, *severity);
+        }
+    }
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// Runs the full pipeline (load modules, typecheck, borrowcheck, codegen,
@@ -849,6 +966,7 @@ fn main() -> ExitCode {
         }
         Some("fmt") => return fmt_command(&args[2..]),
         Some("lint") => return lint_command(&args[2..]),
+        Some("check") => return check_command(&args[2..]),
         Some(c @ ("build" | "run")) => c,
         _ => {
             usage();
