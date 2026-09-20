@@ -3420,6 +3420,22 @@ fn a_block_comment_spans_and_nests_and_an_escape_writes_several_lines() {
 }
 
 #[test]
+fn a_documentation_comment_is_a_comment_to_the_compiler() {
+    // `//!` starts a documentation block (`plan/syntax.md` §2.1). The compiler
+    // reads it as a comment, so the fixture has to build and run like any
+    // other program; what is refused is the trailing spelling, below.
+    assert_compiles_and_runs("tests/fixtures/documentation_comment.kp", "7\n");
+}
+
+#[test]
+fn a_documentation_comment_after_code_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/doc_comment_trailing.kp",
+        "must start a line",
+    );
+}
+
+#[test]
 fn an_unknown_string_escape_is_rejected_by_name() {
     // The old fallback made `"\q"` mean `"q"`: a typo was silently a different
     // string. It is now a diagnostic that names the supported set.

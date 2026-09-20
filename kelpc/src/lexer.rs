@@ -304,7 +304,9 @@ impl<'a> Lexer<'a> {
         }
         match self.peek_at(1) {
             Some(b'/') => {
+                let start = self.pos;
                 self.consume_comment();
+                self.refuse_a_trailing_doc_comment(start)?;
                 Ok(true)
             }
             Some(b'*') => {
@@ -315,7 +317,32 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Skips spaces/tabs/CRs and comments (never newlines — those are handled
+    /// A `//!` opens a documentation block, so it has to start a line: the
+    /// block form is what makes a run of them one foldable unit above the
+    /// declaration it documents. A `//!` with code before it on the same line
+    /// is inside a statement, so it documents nothing and is reliably a
+    /// mistake; `//` is the spelling for a note beside code.
+    fn refuse_a_trailing_doc_comment(&self, start: usize) -> Result<(), LexError> {
+        if !self.src[start..].starts_with("//!") {
+            return Ok(());
+        }
+        let line_start = self.src[..start].rfind('\n').map_or(0, |i| i + 1);
+        if self.src[line_start..start]
+            .bytes()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\r'))
+        {
+            return Ok(());
+        }
+        Err(LexError {
+            message: "'//!' is a documentation comment and must start a line: a '//!' after \
+                      code on the same line documents nothing and is refused; write '//' for a \
+                      note beside the code"
+                .to_string(),
+            span: Span::new(start, self.pos),
+        })
+    }
+
+    /// Skips spaces/tabs/CRs and comments (never newlines: those are handled
     /// by the caller, since whether they're significant depends on
     /// `paren_depth`).
     fn skip_trivia(&mut self) -> Result<(), LexError> {
@@ -1544,7 +1571,7 @@ mod tests {
     }
 
     /// The delimiters are text inside a string, and a `//` or a `/*` inside a
-    /// block comment is text too — only the caller's own delimiters apply.
+    /// block comment is text too, since only the caller's own delimiters apply.
     #[test]
     fn comment_delimiters_inside_a_string_or_a_comment_are_text() {
         assert_eq!(
@@ -1555,6 +1582,37 @@ mod tests {
                 TokenKind::Eof
             ]
         );
+    }
+
+    /// `//!` starts a documentation block, so a `//!` that starts its line is
+    /// an ordinary comment: the token stream it produces is the one an
+    /// ordinary `//` produces, indentation included.
+    #[test]
+    fn a_doc_comment_that_starts_a_line_is_a_comment() {
+        for src in ["//! the module header", "    //! indented, and still first on its line"] {
+            let doc = Lexer::new(&format!("{src}\n1")).tokenize_with_trivia().unwrap();
+            assert_eq!(doc[0].kind, TokenKind::Comment(src.trim_start().to_string()));
+            assert_eq!(
+                kinds(&format!("{src}\n1")),
+                kinds(&format!("{}\n1", src.replacen("//!", "//", 1)))
+            );
+        }
+    }
+
+    /// A `//!` with code before it on the same line documents nothing, so it
+    /// is refused rather than skipped. `//` beside code stays legal.
+    #[test]
+    fn a_doc_comment_after_code_is_refused() {
+        let err = Lexer::new("fun main() { print(1) } //! not documentation")
+            .tokenize()
+            .unwrap_err();
+        assert!(
+            err.message.contains("must start a line"),
+            "unexpected message: {}",
+            err.message
+        );
+        assert_eq!(err.span, Span::new(24, 45));
+        assert!(Lexer::new("fun main() { print(1) } // a note").tokenize().is_ok());
     }
 
     /// The formatter copies a block comment verbatim, so the token has to hold

@@ -166,7 +166,7 @@ val limit = 10   // a trailing comment is the same kind of thing
 
 A block comment ends at its own `*/`, and block comments **nest**: an inner `/*`
 needs its own `*/`, so a region that already contains a block comment can be
-commented out as a unit. C's rule — the first `*/` wins — is what turns that case
+commented out as a unit. C's rule (the first `*/` wins) is what turns that case
 into a parse error somewhere further down the file, which is the failure mode
 this rule exists to remove; nested comments are also what Rust and Kotlin do. The
 cost of nesting is that an extra `*/` no longer "closes twice" silently: an
@@ -177,6 +177,71 @@ Neither form is a token. Both are trivia, so a comment may sit wherever
 whitespace may, and `kelpc fmt` copies it verbatim (19). A `//` inside a block
 comment is text, and delimiters inside a string or character literal are text
 too (`"a/*b*/c"` is the bytes `a/*b*/c`).
+
+**Documentation comments.** `//!` and `///` are documentation comments: they
+document the declaration that follows them (a `fun`, a `datac`, an `enum`, an
+`extern fun`, a `const`, a `datac` field or an `enum` variant), and a run of
+them before the first declaration documents the file itself. A `//!` is read as
+the header of a block, so it has to start a line: consecutive `//!` lines are
+one foldable unit, and a `//!` with code before it on the same line documents
+nothing and is a **compiler error** rather than a silent comment:
+
+```kelp
+//! The buffer owns its bytes and frees them once, at the end of the owning
+//! scope. Nothing here is a view: every getter copies.
+datac Buffer(val bytes: Bytes)
+
+val n = 1   //! error: a '//!' is a documentation comment and must start a line
+```
+
+Nothing else reads a documentation comment: the marker is trivia to the token
+stream, and the parser has no doc-comment node, so the language half is the
+rule above and the head below. The tooling reads them: `coral docs get`
+renders one file's documentation with the declaration each block documents,
+`coral docs list` prints every documented thing in a project, and
+`coral docs search` finds one by name or by prose.
+
+**Naming what a block documents.** A block documents the declaration below it,
+which is what most blocks need. A block that documents something else says so in
+a **head**: a line `[docs(<kind>: <name>)]`, the first line of the block, where
+`<kind>` is one of `module`, `fun`, `datac`, `enum`, `const`, `field`,
+`variant` and `title`. Every kind but `title` takes a name as written in the
+source; `title` takes a quoted string, and is the kind for prose that belongs to
+no declaration at all:
+
+```kelp
+//! [docs(title: "Error handling")]
+//! Every fallible call returns a Result: there is no panic path here.
+
+//! [docs(fun: Frame.decode)]
+//! The test function that checks a truncated frame is refused. The head is what
+//! lets this block sit next to the code it is about, or far away from it.
+```
+
+A head is one line. The closing `]` is what ends it, and a head written open
+across lines is closed by a `]` line of its own, which carries nothing and is
+dropped: the comment run is what ends the block either way, so the `]` is
+allowed and not required.
+
+A head is read by the tooling and never by the compiler. A head that cannot be
+read (an unknown kind, a `title:` without quotes, a name with a space in it) is
+a warning from `coral docs` with the file and line, and is not a compile error,
+because the compiler does not see inside a comment.
+
+**What a block documents without a head.** The key is derived from the block's
+place in the file:
+
+| Block sits above | Key |
+| --- | --- |
+| a `fun` (or an `extern fun`) | `fun:name` |
+| a `datac` / an `enum` | `datac:name` / `enum:name` |
+| a `const` | `const:NAME` |
+| a field (`val` / `var`) | `field:name` |
+| a variant | `variant:Name` |
+| the first declaration of a file, or its `impl` lines | `module:<file stem>` |
+
+Either way, a `//!` line is exempt from the comment-run rule (19) and does not
+count toward a plain `//` run: a run of doc lines is already one block.
 
 ### 2.2 Statements and whitespace
 
@@ -1948,7 +2013,7 @@ panic: String.from_bytes: input is not valid utf-8
 - Standard library modules, functions and datac fields are `snake_case` (`fs.read_text`, `str.is_empty`, `Line.text`), and types are `PascalCase` (`String`, `Bytes`, `Box`, `Metadata`, `Url`).
 - User code case is configurable rather than fixed: `kelpc lint` reports a declared name that is not the project's case, and either case keeps compiling (see below). The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
-- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code; a block comment nests, so a region that already contains one still works. Two or more consecutive `//` lines with no blank line and no code between them is the pattern this rule is about written the other way, so `kelpc lint` warns about it. The warning never guesses intent (the author may have meant every line), so it is a warning and not an error.
+- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code; a block comment nests, so a region that already contains one still works. Two or more consecutive `//` lines with no blank line and no code between them is the pattern this rule is about written the other way, so `kelpc lint` warns about it. The warning never guesses intent (the author may have meant every line), so it is a warning and not an error. A documentation comment (`//!`, `///`, 2.1) is not part of a run either: a run of doc lines is already one block, and a `//!` line does not count toward a plain `//` run.
 - A chain link is written `elif` (6.1). `else if` is the same link, stays legal and compiles identically; `kelpc lint` warns about it, and `kelpc fmt` never rewrites it.
 - The case of the project's own names is **configurable**, and it is the one style rule that has a setting: `coral.toml`'s `naming_case`, `0` for `camelCase` (the default) or `1` for `snake_case`. It is `kelpc lint`-only, so either case keeps compiling, and a file with no manifest to read gets the default. The rule reads the names a file **declares**: a `fun` name, a parameter, a `val`/`var`/`pd` binding, a `datac` field, an enum payload field, a loop binding, and a pattern binding (`if let Circle(r) = s`, `when s { Circle(r) -> .. }`). A name the project did not write is not its business, and that is the whole of the standard library's exception: the stdlib keeps its locked `snake_case`, so a `camelCase` project is never warned about its call into `str.is_empty` and a `snake_case` project is never warned about the stdlib's `fs.read_text` either, because a call is a use and this rule is about declarations. Type names stay `PascalCase` whatever the setting says, and a `const` name stays `UPPER_SNAKE`.
 

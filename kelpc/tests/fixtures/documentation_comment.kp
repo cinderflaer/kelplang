@@ -1,0 +1,9 @@
+//! A documentation block, above the declaration it documents. To the
+//! compiler it is an ordinary comment; the rule `kelpc` enforces is only
+//! that a `//!` has to start its line.
+datac Point(val x: i32)
+
+//! The entry point.
+fun main() {
+    print(Point(x = 7).x)
+}

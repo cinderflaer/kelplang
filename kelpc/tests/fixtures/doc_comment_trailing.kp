@@ -1,0 +1,5 @@
+// A `//!` after code documents nothing, so `kelpc` refuses it rather than
+// skipping it as a comment. This file has to fail to build for that reason.
+fun main() {
+    print(1) //! not documentation, and not a comment
+}
