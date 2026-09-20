@@ -33,7 +33,7 @@ pub enum TokenKind {
     /// literal takes the integer type its context asks for, which is what
     /// makes `c == '"'` work when `c` is a `u8` byte.
     CharLit(u32),
-    /// `b'x'`, `b'\n'`, `b'\xff'` — one byte, and a `u8` by construction
+    /// `b'x'`, `b'\n'`, `b'\xff'`: one byte, and a `u8` by construction
     /// (H-11). Distinct from `CharLit` because the two differ in exactly the
     /// places a byte-level program cares about: a byte literal never needs
     /// the type written on a binding (`val nl = b'\n'` is a `u8`), it is

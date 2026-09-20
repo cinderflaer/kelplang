@@ -434,7 +434,7 @@ pub enum Expr {
     /// the integer type its context asks for (so a `u8` byte comparison can
     /// write `c == '"'`) and `char` when nothing asks for one.
     CharLit(u32, Span),
-    /// `b'x'` — one byte, a `u8` by construction (H-11), so `infer.rs` gives it
+    /// `b'x'`: one byte, a `u8` by construction (H-11), so `infer.rs` gives it
     /// `u8` whatever the context asks for and refuses a wider one. It is what
     /// deletes the `val c: u8 = '"'` workaround.
     ByteLit(u8, Span),
