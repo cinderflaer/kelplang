@@ -64,8 +64,8 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 184 fixtures the C backend
-/// builds, 164 of them also built by the asm backend, 20 refused: which is the
+/// The counts this list was recorded against: 187 fixtures the C backend
+/// builds, 167 of them also built by the asm backend, 20 refused: which is the
 /// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level. (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
@@ -74,7 +74,16 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `panic_owned_message`) were recorded with it; see the re-recording notes
 /// below.)
 ///
-/// The last re-recording is the `isize` slice: `isize_kinds` covers every
+/// The last re-recording is the scrutinee-staging slice: `when` and `if let`
+/// now stage a temporary scrutinee, and the *root* of a field chain over one,
+/// into a local of its own, which is a plain `Stmt::Let` in TIR and so needs no
+/// backend work at all. `enum_temp_scrutinee` left the refusal column with it,
+/// and `scrutinee_field_of_temporary` is new: 184/164/20 -> 186/166/20. The
+/// same note had listed `documentation_comment`, which the documentation-comment
+/// slice built but did not record, so it is recorded here too and the counts
+/// move once more: 186/166/20 -> 187/167/20.
+///
+/// Before it, the last re-recording is the `isize` slice: `isize_kinds` covers every
 /// position the type can appear in, and both backends build it now that the C
 /// preamble includes `<stddef.h>`: 183/163/20 -> 184/164/20.
 ///
@@ -229,6 +238,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "datac_memory_class_by_value",
     "datac_owned_fields",
     "datac_two_eightbytes",
+    "documentation_comment",
     "else_if_let",
     "enum_basic",
     "enum_container",
@@ -237,6 +247,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "enum_liveness",
     "enum_owned",
     "enum_recursive",
+    "enum_temp_scrutinee",
     "escapes",
     "field_read_does_not_move",
     "float_conversions",
@@ -338,6 +349,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "recursive_datac",
     "scalar_borrow",
     "scalar_borrow_f64",
+    "scrutinee_field_of_temporary",
     "std_str_order",
     "stdlib_build",
     "stdlib_encoding",

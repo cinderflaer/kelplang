@@ -1,0 +1,59 @@
+// MK7 §5's temporary-staging work, at the last surface it did not reach: a
+// `when`/`if let` whose scrutinee is a *field* of a call's result. The stub
+// class in `check_when` used to refuse exactly this shape ("the scrutinee of a
+// pattern 'when' must be a place ... bind it to a 'val' first") and the `if
+// let` desugar bound the whole field, which `borrowck.rs` refused as a partial
+// move.
+//
+// Both halves now stage the temporary the same way a hand-written
+// `val h = mk()` does: the *root* call is bound to a local of its own and the
+// arm reads `#when0.t`. `Holder` therefore owns two `String`s while only `t` is
+// ever read, so freeing the field rather than the whole temporary would leak
+// `extra`: this fixture is in `heap_fixtures_are_double_free_and_leak_clean`
+// for that reason.
+enum Token {
+    Word(val text: String)
+    Blank
+}
+
+datac Holder(val t: Token, val extra: String)
+
+fun mk().R: Holder {
+    return Holder(t = Token.Word(text = String.from_str("four")), extra = String.from_str("xy"))
+}
+
+fun main() {
+    when mk().t {
+        Word(w) -> print(w.len())
+        Blank -> print(0)
+    }
+    if let Word(w) = mk().t {
+        print(w.len())
+    } else {
+        print(0)
+    }
+    // A chain of links, each one staging a temporary of its own.
+    if let Word(w) = mk().t {
+        print(w.len())
+    } elif let Word(v) = mk().t {
+        print(v.len())
+    } else {
+        print(0)
+    }
+    // The same scrutinee in expression position, where the value of the match
+    // is what the staged binding's block produces.
+    val n = when mk().t {
+        Word(w) -> w.len()
+        Blank -> 0
+    }
+    print(n)
+    // A nested match inside an arm, so the inner staging cannot resolve to the
+    // outer binding of the same shape.
+    when mk().t {
+        Word(w) -> print(when mk().t {
+            Word(v) -> v.len() + w.len()
+            Blank -> 0
+        })
+        Blank -> print(0)
+    }
+}

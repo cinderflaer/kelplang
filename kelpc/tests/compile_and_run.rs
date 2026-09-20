@@ -1900,6 +1900,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // ones. Every read has to free the whole temporary exactly once, so
         // this is the fixture the staged-and-freed path is leak-checked by.
         "heap_field_of_owned_temporary",
+        // The same staged-and-freed temporary as a `when`/`if let` scrutinee,
+        // where the field read is the *matched* one and a second owned field
+        // is never named at all, so only the staged root's own drop can free
+        // it.
+        "scrutinee_field_of_temporary",
         // MK7 §5's print slice: the same staged-and-freed temporary, but one
         // per buffer piece and with a scalar, a float and a second buffer
         // behind the first — the register-numbering case.
@@ -2430,10 +2435,11 @@ fn a_for_loop_walks_a_list_without_an_index() {
     // A-5: the parser desugars `for x in xs { }` to an index and a `while`, so
     // this pins the desugaring where a caller can see it — the element binding
     // (value for `Copy`, shared borrow for owned), a call iterable evaluated
-    // once, nesting, and a list a function only borrows.
+    // once, the same once for a *field* of a call, nesting, and a list a
+    // function only borrows.
     assert_compiles_and_runs(
         "tests/fixtures/for_loop.kp",
-        "6\n3\n7\n8\n9\na\nb\nc\n1 2 3 2 4 6 3 6 9 \n6\n",
+        "6\n3\n7\n8\n9\n4\n5\n1\na\nb\nc\n1 2 3 2 4 6 3 6 9 \n6\n",
     );
 }
 
@@ -3617,6 +3623,25 @@ fn when_arms_do_not_need_a_newline_inside_parentheses() {
 }
 
 #[test]
+fn when_a_temporary_scrutinee_is_staged_into_a_local() {
+    // A call's result is not a place, so it is bound to a local of its own and
+    // the arms match that: a payload binds as a borrow, and the borrow needs
+    // the temporary to outlive the arm.
+    assert_compiles_and_runs("tests/fixtures/enum_temp_scrutinee.kp", "0.000000\n");
+}
+
+#[test]
+fn when_a_field_of_a_temporary_is_staged_at_its_root() {
+    // `mk().t` stages `mk()` and matches `#when0.t` rather than staging the
+    // field itself, so the whole `Holder` is freed once, `extra` included.
+    // The same fixture covers the `if let` desugar and its `elif let` chain.
+    assert_compiles_and_runs(
+        "tests/fixtures/scrutinee_field_of_temporary.kp",
+        "4\n4\n4\n4\n8\n",
+    );
+}
+
+#[test]
 fn enum_misuse_is_rejected() {
     for name in [
         // Exhaustiveness, and arm/pattern shape.
@@ -3624,7 +3649,6 @@ fn enum_misuse_is_rejected() {
         "enum_unknown_variant",
         "enum_duplicate_arm",
         "enum_bind_count",
-        "enum_temp_scrutinee",
         "enum_datac_scrutinee",
         // Construction and access.
         "enum_ctor_name",

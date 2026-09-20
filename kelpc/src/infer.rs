@@ -146,6 +146,12 @@ struct FuncEnv {
 /// this turns that into a diagnostic instead of a hang.
 const MAX_FUNCTION_INSTANTIATIONS: usize = 2048;
 
+/// The name prefix of the local a `when` stages its scrutinee into when the
+/// scrutinee is a temporary. `#` cannot appear in a lexed identifier, so a
+/// synthesized name can never collide with one the user wrote: the same trick
+/// `parser::IF_LET_PREFIX` and a hidden passdown parameter use.
+const WHEN_TEMP_PREFIX: &str = "#when";
+
 /// The type parameters a function declaration introduces: its own for a free
 /// function, the receiver's for a method on a generic type.
 fn decl_type_params(f: &ast::FunctionDecl) -> &[String] {
@@ -296,6 +302,9 @@ struct Ctx {
     /// r` — no `self.` qualifier written, per `plan/syntax.md` §5's "no
     /// `self` keyword").
     receiver_struct: Option<String>,
+    /// How many scrutinee temporaries a `when` has staged, so each one's
+    /// synthesized binding has a name of its own (`infer::WHEN_TEMP_PREFIX`).
+    when_temps: usize,
 }
 
 /// One checked passdown (M5.2).
@@ -3801,6 +3810,7 @@ fn base_ctx(
         captures: Vec::new(),
         outer_receiver: None,
         receiver_struct: None,
+        when_temps: 0,
     }
 }
 
@@ -5388,8 +5398,53 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             scrutinee,
             arms,
             span,
-        } => check_when(scrutinee, arms, *span, ctx, expected),
+        } => check_when_scrutinee(scrutinee, arms, *span, ctx, expected),
     }
+}
+
+/// A pattern `when` whose scrutinee is a temporary stages it into a local of
+/// its own and matches the rebased place: `when mk().t { ... }` becomes
+/// `{ val #when0 = mk()  when #when0.t { ... } }`. The arms read their payloads
+/// through a borrow, so the scrutinee has to be a place that outlives them, and
+/// binding the *root* is what frees the whole temporary once, at the end of the
+/// block and after the last arm, rather than leaking every field the match
+/// did not read (`heap_field_of_owned_temporary.kp`).
+fn check_when_scrutinee(
+    scrutinee: &ast::Expr,
+    arms: &[ast::WhenArm],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let Some(root) = ast::temporary_root(scrutinee).cloned() else {
+        return check_when(scrutinee, arms, span, ctx, expected);
+    };
+    ctx.when_temps += 1;
+    let tmp = format!("{}{}", WHEN_TEMP_PREFIX, ctx.when_temps - 1);
+    let init = check_expr(&root, ctx, None)?;
+    let bind_ty = init.ty.clone();
+    let rebased = ast::rebase_root(scrutinee, &ast::Expr::Ident(tmp.clone(), span));
+    // The binding is visible to the arms and to nothing outside them: a
+    // `#when0` cannot collide with a written name, and popping the scope is
+    // what keeps a nested `when` from resolving its own temporary to this one.
+    ctx.scopes.push(HashMap::new());
+    ctx.define(&tmp, bind_ty.clone(), false);
+    let inner = check_when(&rebased, arms, span, ctx, expected);
+    ctx.scopes.pop();
+    let inner = inner?;
+    let ty = inner.ty.clone();
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Block(tir::Block {
+            stmts: vec![tir::Stmt::Let {
+                name: tmp,
+                ty: bind_ty,
+                init,
+            }],
+            tail: Some(Box::new(inner)),
+        }),
+        ty,
+        span,
+    })
 }
 
 /// The dotted path an expression names, if it is one: `Shape`, `shapes.Shape`,
@@ -6148,6 +6203,10 @@ fn check_enum_construction(
 /// parser, plus two node kinds (`EnumTag`, `EnumField`) that codegen emits as
 /// `.tag ==` and `.v.<Variant>.<field>`. No new statement machinery and no new
 /// drop plan are needed as a result.
+///
+/// `scrutinee` is always a place by the time this runs: `check_when_scrutinee`
+/// stages a temporary into a local of its own first. That is what makes the
+/// payload borrows below outlive their arms.
 fn check_when(
     scrutinee: &ast::Expr,
     arms: &[ast::WhenArm],
@@ -6155,16 +6214,6 @@ fn check_when(
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
-    // The scrutinee has to be a place: its payloads are copied or borrowed
-    // per arm, and a temporary would have to be evaluated once and kept alive
-    // behind the borrow checker's back. Binding it to a `val` first is the
-    // fix, and the message says so.
-    if !is_ast_place(scrutinee) {
-        return Err(TypeError {
-            message: "the scrutinee of a pattern 'when' must be a place (a binding, a field path, or a '*deref') — bind it to a 'val' first".to_string(),
-            span: scrutinee.span(),
-        });
-    }
     let scrut = check_expr(scrutinee, ctx, None)?;
     let Some(ename) = struct_name_of(&scrut.ty).map(|s| s.to_string()) else {
         return Err(TypeError {

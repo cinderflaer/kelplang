@@ -574,7 +574,7 @@ if let Circle(r) = shape {
 ```
 
 - It is exactly the pattern form of `when` (6.3) with a single arm and an `else`, which is why the arm rules are the same: the variant must exist, the number of bindings must match the payload, `_` ignores one, and a payload binds as a copy when it is `Copy` and as a shared borrow otherwise.
-- The scrutinee may be **any expression**, temporary or place. A *place* (a name, a `.field` chain, `*expr`) is matched directly, with nothing moved — the same rule a bare `when` follows (6.3). A *temporary* (a call's result, a literal) is bound to a local first, since `when`'s pattern form needs a place to borrow a payload through; that local is a fresh binding no other code can see, so it never collides with anything and there is nothing to reuse it across links of a chain.
+- The scrutinee may be **any expression**, temporary or place. A *place* (a name, a `.field` chain, `*expr`) is matched directly, with nothing moved, the same rule a bare `when` follows (6.3). A *temporary* (a call's result, a literal) is bound to a local first, since `when`'s pattern form needs a place to borrow a payload through; that local is a fresh binding no other code can see, so it never collides with anything and there is nothing to reuse it across links of a chain. A chain over a temporary stages its **root**: `if let Circle(r) = mk().shape` binds `mk()` and matches its `shape`, so the field is projected out of a place and the whole temporary, not the field alone, is freed when the block ends.
 - `elif let` and `else if let` chains are both allowed, and a plain `else if`/`elif` link may sit in the same chain; without any `else` the whole expression is `Unit`, the same as an `if` without one. Chaining on the *same place* (`if let A = x { .. } else if let B = x { .. }`) is legal for the reason above: neither link moves `x`, so the second link's own read of it is not a use of a moved value.
 - `let` is an ordinary identifier everywhere else in the language. It is read as the pattern form only directly after `if`, so a binding named `let` cannot be the condition of an `if` without parentheses.
 
@@ -631,7 +631,7 @@ fun area(s: &Shape).R: f64 = when s {
 }
 ```
 
-- The scrutinee must be a **place** (a name, a `.field` chain, `*expr`), never a temporary: a payload borrow has to outlive the arm it is bound in, and there is nothing to outlive if the scrutinee itself does not survive the match. `if let` (6.1) lifts this restriction by binding a temporary scrutinee to a local first; a place scrutinee is matched directly here too, with nothing moved — only the matched field is ever copied or borrowed.
+- The scrutinee is a **place** when it is one (a name, a `.field` chain, `*expr`): it is matched directly, with nothing moved, and only the matched field is ever copied or borrowed. A **temporary** (a call's result, a literal) is staged into a local of its own first, because a payload borrow has to outlive the arm it is bound in and there is nothing to outlive if the scrutinee does not survive the match; the staged local is freed at the end of the match. `if let` (6.1) stages its one scrutinee the same way. A chain over a temporary stages its **root**: `when mk().t { ... }` binds `mk()` and matches its `t`, never the field alone, so the whole temporary is freed exactly once.
 - The scrutinee's type is an `enum`, and every arm head is one of its variants (9.2). An `else ->` arm matches every variant not named above it.
 - Matching must be exhaustive: either every variant has an arm, or an `else` arm is present. A missing variant is a compile error that names it.
 - There are no guards, no literal patterns and no nested patterns in v1; an arm head is a variant name with one binding per payload field, and `_` ignores a payload.
@@ -934,7 +934,7 @@ fun label(s: &Shape).R: &str = when s {
 ```
 
 - A payload binds as a copy when it is `Copy` and as a shared borrow otherwise, so matching never partially moves the scrutinee: `r` above is an `f64`, and a `Word(val text: String)` payload would bind as `&String`.
-- The scrutinee must be a place (a binding, a field path, or a dereference) — not a call's result — because a payload that is not `Copy` binds as a borrow of it and that borrow has to outlive the arm's body. Bind the value to a `val` first when you have an expression.
+- The scrutinee is matched where it is when it is a place (a binding, a field path, or a dereference): `when s { ... }` reads through `s` and moves nothing. A temporary scrutinee (a call's result, a field of one, a literal) is staged into a local first, because a payload that is not `Copy` binds as a borrow of it and that borrow has to outlive the arm's body. A chain over a temporary stages its root, so `when mk().t { ... }` frees the whole `mk()` result once.
 - The number of bindings must equal the number of payload fields, and `_` ignores one.
 - Matching is exhaustive over the variants, or covered by an `else` arm (6.3).
 

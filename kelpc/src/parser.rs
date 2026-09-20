@@ -989,18 +989,28 @@ impl Parser {
         let idx_span = word_span;
 
         let mut stmts = Vec::new();
-        let iterable = if is_iteration_place(&iterable) {
-            iterable
-        } else {
-            let init_span = iterable.span();
-            stmts.push(Stmt::Let {
-                name: seq_name.clone(),
-                mutable: false,
-                ty: None,
-                init: iterable,
-                span: init_span,
-            });
-            Expr::Ident(seq_name.clone(), init_span)
+        let iterable = match temporary_root(&iterable).cloned() {
+            // A place is re-read as written on every iteration. It costs
+            // nothing, and binding one by value would *move* it: a parameter
+            // is a borrow, so the common `for x in xs` inside a function would
+            // move out of a borrow.
+            None => iterable,
+            // Anything else is evaluated once and bound first, so the loop
+            // walks the sequence the `for` line saw. A field chain over a
+            // temporary stages its *root*: `for x in mk().items` binds `mk()`
+            // once instead of calling it again for the condition and for every
+            // element.
+            Some(root) => {
+                let init_span = root.span();
+                stmts.push(Stmt::Let {
+                    name: seq_name.clone(),
+                    mutable: false,
+                    ty: None,
+                    init: root,
+                    span: init_span,
+                });
+                rebase_root(&iterable, &Expr::Ident(seq_name.clone(), init_span))
+            }
         };
         let seq_span = iterable.span();
 
@@ -1601,21 +1611,29 @@ impl Parser {
             })
         };
         // See the long comment below for why a place gets no synthesized
-        // binding at all, and anything else still does.
-        let (scrutinee_stmt, scrutinee_ref): (Option<Stmt>, Expr) = if is_place(&scrutinee) {
-            (None, scrutinee)
-        } else {
-            self.if_lets += 1;
-            let tmp = format!("{}{}", IF_LET_PREFIX, self.if_lets - 1);
-            let stmt = Stmt::Let {
-                name: tmp.clone(),
-                mutable: false,
-                ty: None,
-                init: scrutinee,
-                span: scrutinee_span,
+        // binding at all, and anything else still does. A field chain over a
+        // temporary stages its *root* (`mk().t` binds `mk()` and matches
+        // `#iflet0.t`), so the temporary is freed once, at the end of the
+        // desugared block, and the field is borrowed from a place that
+        // outlives the arm.
+        let (scrutinee_stmt, scrutinee_ref): (Option<Stmt>, Expr) =
+            match temporary_root(&scrutinee).cloned() {
+                Some(root) => {
+                    self.if_lets += 1;
+                    let tmp = format!("{}{}", IF_LET_PREFIX, self.if_lets - 1);
+                    let root_span = root.span();
+                    let stmt = Stmt::Let {
+                        name: tmp.clone(),
+                        mutable: false,
+                        ty: None,
+                        init: root,
+                        span: root_span,
+                    };
+                    let rebased = rebase_root(&scrutinee, &Expr::Ident(tmp, scrutinee_span));
+                    (Some(stmt), rebased)
+                }
+                None => (None, scrutinee),
             };
-            (Some(stmt), Expr::Ident(tmp, scrutinee_span))
-        };
         let when_expr = Stmt::Expr {
             expr: Expr::When {
                 scrutinee: Box::new(scrutinee_ref),
@@ -1822,19 +1840,6 @@ impl Parser {
             span: start.to(end),
         })
     }
-}
-
-/// Whether a `for` iterable may be read as written on every iteration. A place
-/// costs nothing to re-read, and binding one by value would *move* it — a
-/// parameter is a borrow, so the common `for x in xs` inside a function would
-/// move out of a borrow. Anything else (a call, a literal, a `when`) is bound
-/// to a temporary by `parse_for_stmt` instead, so it is evaluated once and
-/// freed with the desugared block.
-fn is_iteration_place(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Ident(..) | Expr::FieldAccess { .. } | Expr::Deref { .. }
-    )
 }
 
 #[cfg(test)]

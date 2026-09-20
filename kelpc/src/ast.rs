@@ -435,6 +435,44 @@ pub fn is_place(expr: &Expr) -> bool {
     }
 }
 
+/// The rvalue a field chain hangs off, when the chain is not rooted at a place
+/// at all: `None` for `c`, `c.f`, `*p`, and `Some(root)` for `mk().f`, or for
+/// anything that is not a place in the first place, `mk()` and `5` included
+/// (`root` is then the expression itself).
+///
+/// A pattern match reads its scrutinee once per arm and binds an owned payload
+/// as a borrow of it, so the scrutinee has to be a place that outlives the
+/// arms. A temporary is instead staged into a local of its own: the caller
+/// binds `root` and rewrites the chain over that binding with `rebase_root`,
+/// which is exactly what writing `val h = mk()` by hand does. The chain is
+/// staged at its root and never at the field, because the whole temporary is
+/// what owns the memory and what has to be freed.
+pub fn temporary_root(expr: &Expr) -> Option<&Expr> {
+    let mut cur = expr;
+    while let Expr::FieldAccess { base, .. } = cur {
+        cur = base;
+    }
+    if is_place(cur) {
+        None
+    } else {
+        Some(cur)
+    }
+}
+
+/// `expr` with its root temporary replaced by `base`, so `mk().t` becomes
+/// `#tmp.t` for the staged binding `#tmp`. Expression kinds other than a field
+/// chain are `base` itself: they are what `temporary_root` handed over.
+pub fn rebase_root(expr: &Expr, base: &Expr) -> Expr {
+    match expr {
+        Expr::FieldAccess { base: b, field, span } => Expr::FieldAccess {
+            base: Box::new(rebase_root(b, base)),
+            field: field.clone(),
+            span: *span,
+        },
+        _ => base.clone(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     IntLit(i64, Span),

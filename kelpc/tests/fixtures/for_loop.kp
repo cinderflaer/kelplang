@@ -5,6 +5,18 @@
 // borrows.
 impl "std/str"
 
+pd var bag_calls = 0
+
+datac Bag(val items: List<i32>)
+
+fun make_bag().R: Bag {
+    bag_calls += 1
+    var out: List<i32> = List.empty()
+    out.push(4)
+    out.push(5)
+    return Bag(items = out)
+}
+
 fun make().R: List<i32> {
     var out: List<i32> = List.empty()
     out.push(7)
@@ -41,6 +53,15 @@ fun main() {
     for x in make() {
         print(x)
     }
+
+    // A *field* of a call is the same rule one step in: the desugar stages the
+    // root, so `make_bag()` runs once for the whole loop, not again for the
+    // condition and for every element, and the whole bag is freed at the end
+    // of the block. `bag_calls` is what pins the once.
+    for x in make_bag().items {
+        print(x)
+    }
+    print(bag_calls)
 
     // An owned element binds as a shared borrow, exactly as `List.get` gives
     // it — hence the `.as_str()` (the open-item-21 wart, unchanged here).
