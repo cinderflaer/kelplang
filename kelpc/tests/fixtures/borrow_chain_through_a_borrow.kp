@@ -4,7 +4,7 @@
 // durable". The implementation asked the shallow AST question instead ("is
 // this expression syntactically a place?"), which answers no for anything
 // under a call, so this program was refused with `cannot borrow a temporary
-// value` while the plan said it was legal — and `fpl/config`'s own `get`
+// value` while the plan said it was legal, and `fpl/config`'s own `get`
 // (`&cfg.entries.get(i).value`) could not compile at all.
 //
 // The refusal still stands exactly where it belongs, one projection down: a

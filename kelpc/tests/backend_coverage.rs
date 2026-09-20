@@ -77,7 +77,7 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// The last re-recording is the borrow-of-a-durable-chain slice:
 /// `borrow_chain_through_a_borrow` is the C backend's fixture for an explicit
 /// `&` on a chain that steps through a borrow (`&xs.get(i).v`), which the asm
-/// backend refuses by name — its borrow support stops at a named local — so
+/// backend refuses by name: its borrow support stops at a named local, so
 /// the asm-built list is unchanged and the refused column grows: 187/167/20 ->
 /// 188/167/21.
 ///
