@@ -1442,7 +1442,7 @@ fun main() {
 - **`for` walks one**, exactly as it walks a `List`: the desugar is `.len()` and `.get(i)`, and both exist here (6.2).
 - A `datac` field may be one (`val entries: [Entry; 512]`), which is the shape a kernel's IDT or GDT has, and `Box<[T; N]>` holds one on the heap when it has to outlive its frame.
 
-An array parameter is borrowed by default like any owned type, so `fun total(xs: [i32; 3])` reads a borrow while `mut [T; N]` and `move [T; N]` are the writable and taking forms. An array returned from a function is copied out by value.
+A parameter follows the rule every other type follows (22.1): an array whose element owns something is an owner, so a plain parameter **borrows** it and the caller keeps its array, exactly as a `String` parameter does. A `Copy` array (`[i32; 3]`) is passed by value like a scalar, `mut [T; N]` is the writable form, and `move [T; N]` takes the value over. An array returned from a function is copied out by value.
 
 ## 13. Modules and imports
 
