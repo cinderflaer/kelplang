@@ -64,8 +64,8 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 187 fixtures the C backend
-/// builds, 167 of them also built by the asm backend, 20 refused: which is the
+/// The counts this list was recorded against: 188 fixtures the C backend
+/// builds, 167 of them also built by the asm backend, 21 refused: which is the
 /// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level. (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
@@ -74,7 +74,14 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `panic_owned_message`) were recorded with it; see the re-recording notes
 /// below.)
 ///
-/// The last re-recording is the scrutinee-staging slice: `when` and `if let`
+/// The last re-recording is the borrow-of-a-durable-chain slice:
+/// `borrow_chain_through_a_borrow` is the C backend's fixture for an explicit
+/// `&` on a chain that steps through a borrow (`&xs.get(i).v`), which the asm
+/// backend refuses by name — its borrow support stops at a named local — so
+/// the asm-built list is unchanged and the refused column grows: 187/167/20 ->
+/// 188/167/21.
+///
+/// Before it, the last re-recording is the scrutinee-staging slice: `when` and `if let`
 /// now stage a temporary scrutinee, and the *root* of a field chain over one,
 /// into a local of its own, which is a plain `Stmt::Let` in TIR and so needs no
 /// backend work at all. `enum_temp_scrutinee` left the refusal column with it,

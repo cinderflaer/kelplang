@@ -1905,6 +1905,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // is never named at all, so only the staged root's own drop can free
         // it.
         "scrutinee_field_of_temporary",
+        // A borrow of a chain that steps through a borrow: nothing is staged
+        // for it, so the only thing under test is that the pointee's own drop
+        // still frees the `String` exactly once.
+        "borrow_chain_through_a_borrow",
         // MK7 §5's print slice: the same staged-and-freed temporary, but one
         // per buffer piece and with a scalar, a float and a second buffer
         // behind the first — the register-numbering case.
@@ -2821,6 +2825,18 @@ fn an_explicit_borrow_of_a_field_of_a_temporary_is_rejected() {
     assert_rejected_with(
         "tests/fixtures/borrow_field_of_temp.kp",
         "cannot borrow a temporary value",
+    );
+}
+
+/// The other side of the same rule (`syntax.md` 10.2): a chain that steps
+/// through a *borrow* has storage that outlives the statement, so an explicit
+/// `&` on it is legal even though the call's own result is not a place. The
+/// shallow AST question refused this until the check became the typed one.
+#[test]
+fn an_explicit_borrow_of_a_field_of_a_borrow_is_accepted() {
+    assert_compiles_and_runs(
+        "tests/fixtures/borrow_chain_through_a_borrow.kp",
+        "42\nforty-two\n43\n7\n",
     );
 }
 

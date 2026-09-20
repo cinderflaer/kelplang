@@ -1,0 +1,40 @@
+// `&` on a chain that steps through a borrow. `syntax.md` 10.2 states the
+// rule: "a chain that steps through a borrow is not a temporary case at all:
+// `headers.get(i).name` lives in whatever `get` pointed at, so its address is
+// durable". The implementation asked the shallow AST question instead ("is
+// this expression syntactically a place?"), which answers no for anything
+// under a call, so this program was refused with `cannot borrow a temporary
+// value` while the plan said it was legal — and `fpl/config`'s own `get`
+// (`&cfg.entries.get(i).value`) could not compile at all.
+//
+// The refusal still stands exactly where it belongs, one projection down: a
+// chain rooted in a call's *result* rather than in a borrow has no storage to
+// point at (`borrow_field_of_temp.kp`). A function that *returns* a borrow of
+// a user type is the shape `pick` would have been, and the `asm` backend
+// refuses that one by name, so it is not this fixture's job.
+datac Holder(val v: i32, val name: String)
+
+datac Bag(val items: List<Holder>)
+
+fun main() {
+    var xs: List<Holder> = List.empty()
+    xs.push(Holder(v = 42, name = String.from_str("forty-two")))
+
+    // `List.get` hands back a borrow, so the field is the pointee's storage.
+    val v = &xs.get(i = 0).v
+    print(*v)
+    val name = &xs.get(i = 0).name
+    print(name.as_str())
+
+    // The bound borrow is an ordinary `&i32`: reading it again costs nothing
+    // and stages nothing.
+    print(*v + 1)
+
+    // One field further in: the root is a place, and the step that follows it
+    // is the borrow `get` returns, so the whole path is still durable.
+    var items: List<Holder> = List.empty()
+    items.push(Holder(v = 7, name = String.from_str("seven")))
+    var bag = Bag(items = items)
+    val from_bag = &bag.items.get(i = 0).v
+    print(*from_bag)
+}

@@ -1924,7 +1924,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot borrow 'c' as exclusive: already borrowed as shared` | end the earlier borrow (an inner block does it), because borrows last to the end of the scope |
 | `cannot borrow 'c': already borrowed exclusively` | same rule, other direction |
 | `this is a borrow of a borrow` (with the operand named) | a parameter is already a borrow (§10.2), so `&o` on one makes two: pass the parameter itself, `o` |
-| `cannot borrow a temporary value` | `&expr` needs a place, and a call's result is not one, nor is a field of one (`&mkName().name`); bind the call to a `val` and borrow the field of that (§10.2) |
+| `cannot borrow a temporary value` | `&expr` needs a place, and a call's result is not one, nor is a field of one (`&mkName().name`); bind the call to a `val` and borrow the field of that (§10.2). A chain that *steps through* a borrow is a place and needs neither: `&headers.get(i).name` is durable |
 | `operator requires matching numeric operands, found 'mut i64' and 'i32'` with the `write '*sink'` note | a `mut T` parameter is a borrow: read and write it through `*`, the same rule as §10's `*pos` |
 | `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding; a field of a returned `datac` (`mkName().name.as_str()`) is the same case one projection deeper (§10.2) |

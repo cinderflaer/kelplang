@@ -5276,13 +5276,20 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         }
         ast::Expr::Try { expr: sub, span } => check_try(sub, *span, ctx),
         ast::Expr::Ref { mutable, expr: sub, span } => {
-            if !is_ast_place(sub) {
+            let sub_t = check_expr(sub, ctx, None)?;
+            // The address has to outlive the statement the borrow is written
+            // in, and a field of a call's result does not: that temporary is
+            // staged for one call, not for a binding. `is_durable_place` is the
+            // typed form of the question, and the reason an explicit
+            // `&headers.get(i).name` is legal where `&mkName().name` is not:
+            // the chain steps through a borrow, so the storage is the
+            // pointee's (`syntax.md` 10.2).
+            if !is_durable_place(&sub_t) {
                 return Err(TypeError {
                     message: "cannot borrow a temporary value".to_string(),
                     span: *span,
                 });
             }
-            let sub_t = check_expr(sub, ctx, None)?;
             // A parameter of an owned type is already a borrow (`syntax.md`
             // 10.2), so `&o` on one is a borrow of a borrow. Left alone the
             // two references unify badly and the caller sees an inference
