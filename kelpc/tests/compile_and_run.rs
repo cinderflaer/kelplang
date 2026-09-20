@@ -1755,6 +1755,51 @@ fn a_function_value_naming_a_primitive_is_refused_by_name_where_no_check_can_run
 }
 
 #[test]
+fn an_ungranted_module_cannot_name_a_gated_modules_receiver_method() {
+    // A method of a gated module reaches the syscall without naming any of the
+    // module's free functions, so the gate has to be on the method's own key
+    // (`Type#method`). Before the fix there was no gate check on the method path
+    // at all, and `Child.kill(0)` ran a real `kill(2)` with no grant.
+    assert_project_rejected(
+        "caps_method_ungranted",
+        &project("caps_method_ungranted").join("main.kp"),
+        "needs the 'process' capability, which module 'util' was not granted",
+    );
+    // The same rule through another gated module's methods, so this is the gate
+    // table's answer and not a special case for `std/process`.
+    assert_project_rejected(
+        "caps_method_net_ungranted",
+        &project("caps_method_net_ungranted").join("main.kp"),
+        "needs the 'net' capability, which module 'util' was not granted",
+    );
+}
+
+#[test]
+fn a_granted_module_calls_a_gated_receiver_method_with_no_pattern() {
+    // The positive control: `caller` holds `process` with no program at all,
+    // because `Child.wait`/`Child.is_running` name no resource the grant
+    // governs. A false denial here would leave every tool that manages its own
+    // children unbuildable.
+    //
+    // C-only: both methods reach `reap_raw`, and the asm backend has no body
+    // for the `std/process` externs yet, so it refuses the program by name
+    // before any gate question is asked.
+    if backend() != "c" {
+        eprintln!(
+            "note: `Child.wait`/`Child.is_running` reach the `std/process` externs, which \
+             have no asm body yet; backend '{}' runs nothing here",
+            backend()
+        );
+        return;
+    }
+    assert_project_runs(
+        "caps_method_granted",
+        &project("caps_method_granted").join("main.kp"),
+        "true\n",
+    );
+}
+
+#[test]
 fn a_granted_module_creates_a_symlink_inside_its_grant() {
     // `fs.symlink` checks *both* of its paths, so a link can only be created
     // where the grant reaches and can only point where the grant reaches. The

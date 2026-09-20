@@ -1,0 +1,9 @@
+// The same route through `std/net`, so the rule is the gate table's and not a
+// special case for `std/process`: `Listener.port()` reads `local_port_raw` on
+// whatever descriptor the module wrote, and `net.Listener` is a public `datac`
+// whose `fd` anyone can forge.
+impl "util"
+
+fun main() {
+    print(util.probe())
+}

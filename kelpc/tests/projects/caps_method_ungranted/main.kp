@@ -1,0 +1,9 @@
+// The receiver-method route of `BUG-wQ9tL`: a method of a gated module reaches
+// the syscall without naming any of that module's free functions, so the gate
+// has to be on the method's own name (`Child#kill`). `util` holds no domain and
+// this built and ran `kill(1, 0)` before the fix.
+impl "util"
+
+fun main() {
+    print(util.probe())
+}

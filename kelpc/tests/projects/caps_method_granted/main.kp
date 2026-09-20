@@ -1,0 +1,9 @@
+// The positive control for the method route: `caller` holds `process` (with no
+// program at all, which is what `Child`'s own methods need) and calls two of
+// them. The domain gate admits the names and no resource pattern is consulted,
+// because a method names no resource the grant governs.
+impl "caller" caps(process = [])
+
+fun main() {
+    print(caller.probe())
+}

@@ -9447,6 +9447,13 @@ fn check_method_call(
         },
     };
 
+    // The capability gate applies to a *method* of a gated module exactly as
+    // it does to a free function of one: the key is `Type#method` with the
+    // receiver type's module prefix, and the gate table holds it. A method of
+    // a gated module reaches the resource without naming any of the module's
+    // free functions (`Child.kill` is `kill_raw` plus an error check), so a
+    // call that skipped this check reached the syscall with no grant at all.
+    ctx.check_capability(&key, span)?;
     let mut checked_args = Vec::with_capacity(sig.params.len());
     checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?);
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);
