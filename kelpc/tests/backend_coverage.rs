@@ -64,16 +64,20 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 172 fixtures the C backend
-/// builds, 148 of them also built by the asm backend, 24 refused — which is the
+/// The counts this list was recorded against: 173 fixtures the C backend
+/// builds, 150 of them also built by the asm backend, 23 refused — which is the
 /// 241-of-290 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// The last re-recording is the drop-plan defect's fix, which added
-/// `owned_conditional_move` and `owned_move_in_loop`: both are ordinary owned
-/// values moved on one path and not another, so both backends build them, and
-/// the denominator moved from 170 to 172 with the refused count unchanged at
-/// 24.
+/// The last re-recording is the print slice, which turned
+/// `heap_temporary_print` from a refusal into a built fixture (the heap row
+/// went 13 -> 12) and added `template_buffer_pieces` for the register
+/// numbering a `%.*s` interpolation needs: 172/148/24 -> 173/150/23.
+///
+/// Before that, the drop-plan defect's fix added `owned_conditional_move` and
+/// `owned_move_in_loop`: both are ordinary owned values moved on one path and
+/// not another, so both backends build them, and the denominator moved from
+/// 170 to 172 with the refused count unchanged at 24.
 ///
 /// (This paragraph said 153/106/47 while the list beneath it had grown to 129
 /// entries, which the plan's §5 blockquotes had already recorded as 160/129/31;
@@ -301,6 +305,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "string_view_basic",
     "string_views",
     "string_with_capacity_zero",
+    "template_buffer_pieces",
     "templates",
     "try_frame_drops",
     "try_narrow_payload",

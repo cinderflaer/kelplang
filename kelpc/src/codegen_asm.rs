@@ -10600,14 +10600,57 @@ impl Gen {
     /// `print`/`print!`: one `printf` with one generated format string, the
     /// same shape the C backend emits, so a fixture's bytes match across
     /// backends by construction rather than by coincidence.
+    ///
+    /// **A `%.*s` piece takes two variadic arguments, not one**, and that is
+    /// the one thing about this lowering that is not a copy of the C backend's
+    /// per-piece `printf_piece`: SysV numbers the variadic slots by position,
+    /// so a `Bytes`/`String`/`View` interpolation consumes *two* integer
+    /// registers — the `int` length and the `char*` data — and every later
+    /// piece is numbered behind both. The allocation below therefore counts
+    /// arguments per piece rather than one per value, which is what the
+    /// previous version could not express.
+    ///
+    /// Three shapes reach a buffer here, and they differ only in where the
+    /// length and the pointer come from and in whether anything has to be
+    /// freed:
+    ///
+    /// - an **owned** `Bytes`/`String` — `str.to_upper(s)` — is a temporary
+    ///   nothing else owns, so it is staged in a scratch slot, read out of
+    ///   it, and freed after the `printf`, exactly the lifetime
+    ///   `codegen_c.rs::call_value` gives the same value (`infer.rs` wraps a
+    ///   named place, so a local never arrives here);
+    /// - a **borrow** of one (`&Bytes`/`&String`) is the header's address, and
+    ///   owns nothing to free;
+    /// - a **`View`** is a `{ptr, len}` value with no header behind it, so its
+    ///   pointer is the first eightbyte rather than a field of something the
+    ///   pointer points at.
     fn template(
         &mut self,
         newline: bool,
         pieces: &[TemplatePiece],
         frame: &mut Frame,
     ) -> Result<(), String> {
+        /// Where one interpolation's arguments come from — the piece shapes
+        /// above, plus the scalar/`str`/`bool`/float case that is one argument.
+        enum Piece {
+            Plain,
+            Owned(DropSite),
+            Borrowed,
+            View,
+        }
+        /// One variadic slot, in the register file it has to be popped into.
+        /// The numbering is global across the whole template, since `printf`
+        /// reads one positional list.
+        #[derive(Clone, Copy)]
+        enum Slot {
+            Int(usize),
+            Float(usize),
+        }
+
         let mut fmt: Vec<u8> = Vec::new();
-        let mut values: Vec<&Expr> = Vec::new();
+        let mut plan: Vec<(&Expr, Piece, Vec<Slot>)> = Vec::new();
+        let mut int_slot = 0usize;
+        let mut float_slot = 0usize;
         for piece in pieces {
             match piece {
                 TemplatePiece::Text(text) => {
@@ -10621,71 +10664,139 @@ impl Gen {
                     }
                 }
                 TemplatePiece::Value(value) => {
-                    let spec = printable_ty(&value.ty).ok_or_else(|| {
-                        unsupported(&format!(
-                            "printing a value of type `{}`",
-                            value.ty.display()
-                        ))
-                    })?;
-                    fmt.extend_from_slice(spec.as_bytes());
-                    values.push(value);
+                    // A float is one slot of its own file; `str`, a scalar and a
+                    // `bool` are one integer slot; a buffer shape is two
+                    // integer slots (`%.*s`'s length and pointer).
+                    if float_ty(&value.ty).is_some() {
+                        plan.push((value, Piece::Plain, vec![Slot::Float(float_slot)]));
+                        fmt.extend_from_slice(
+                            printable_ty(&value.ty).expect("a float prints").as_bytes(),
+                        );
+                        float_slot += 1;
+                        continue;
+                    }
+                    let (kind, slots) = if matches!(value.ty, Ty::Bytes | Ty::String) {
+                        let site = self.drop_site_for(&value.ty).ok_or_else(|| {
+                            unsupported(&format!(
+                                "printing a temporary `{}` in a template (no drop rule)",
+                                value.ty.display()
+                            ))
+                        })?;
+                        (
+                            Piece::Owned(site),
+                            vec![Slot::Int(int_slot), Slot::Int(int_slot + 1)],
+                        )
+                    } else if matches!(&value.ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes | Ty::String))
+                    {
+                        (
+                            Piece::Borrowed,
+                            vec![Slot::Int(int_slot), Slot::Int(int_slot + 1)],
+                        )
+                    } else if view_ty(&value.ty) {
+                        (Piece::View, vec![Slot::Int(int_slot), Slot::Int(int_slot + 1)])
+                    } else {
+                        let spec = printable_ty(&value.ty).ok_or_else(|| {
+                            unsupported(&format!(
+                                "printing a value of type `{}`",
+                                value.ty.display()
+                            ))
+                        })?;
+                        fmt.extend_from_slice(spec.as_bytes());
+                        plan.push((value, Piece::Plain, vec![Slot::Int(int_slot)]));
+                        int_slot += 1;
+                        continue;
+                    };
+                    // A buffer piece: `%.*s`, with the length first and the
+                    // pointer second — the same specifier and order the C
+                    // backend's `printf_piece_with` emits.
+                    fmt.extend_from_slice(b"%.*s");
+                    int_slot += 2;
+                    plan.push((value, kind, slots));
                 }
             }
         }
         if newline {
             fmt.push(b'\n');
         }
-        // MK7 §5 item 8: the vector and integer argument files are numbered
-        // independently, so each interpolation's destination depends only on
-        // how many *of its own class* came before it — the same split a call's
-        // argument marshalling makes. `al` is set to the number of vector
-        // registers used, which is what a variadic call requires.
         let value_regs = ["rsi", "rdx", "rcx", "r8", "r9"];
-        let mut dests: Vec<usize> = Vec::with_capacity(values.len());
-        let mut int_slot = 0usize;
-        let mut float_slot = 0usize;
-        for value in &values {
-            if float_ty(&value.ty).is_some() {
-                dests.push(float_slot);
-                float_slot += 1;
-            } else {
-                dests.push(int_slot);
-                int_slot += 1;
-            }
-        }
         if int_slot > value_regs.len() {
-            return Err(unsupported("a print with more than five non-float interpolations"));
+            return Err(unsupported(
+                "a print with more than five non-float interpolation arguments",
+            ));
         }
         if float_slot > FARG.len() {
             return Err(unsupported("a print with more than eight float interpolations"));
         }
 
-        for value in &values {
-            self.expr(value, frame)?;
-            // A float's bits are what travels on the stack: `xmm0` is the
-            // stack machine's working register and a later interpolation's
-            // evaluation is free to overwrite it. Promoting `f32` to `double`
-            // *before* the push is what lets the pop be one `movq`.
-            if let Some(width) = float_ty(&value.ty) {
-                if width == FWidth::F4 {
-                    self.out.push_str("    cvtss2sd xmm0, xmm0\n");
+        // Every argument is evaluated and pushed in template order; the pops
+        // below run in reverse, which is what puts the first argument in the
+        // lowest-numbered register of its file. A `%.*s` piece pushes its
+        // length and then its pointer, so the pointer pops into the higher of
+        // its two registers.
+        let mut owned: Vec<(i32, DropSite)> = Vec::new();
+        for (value, kind, _) in &plan {
+            match kind {
+                Piece::Plain => {
+                    self.expr(value, frame)?;
+                    // A float's bits are what travels on the stack: `xmm0` is
+                    // the stack machine's working register and a later
+                    // interpolation's evaluation is free to overwrite it.
+                    // Promoting `f32` to `double` *before* the push is what
+                    // lets the pop be one `movq`.
+                    if let Some(width) = float_ty(&value.ty) {
+                        if width == FWidth::F4 {
+                            self.out.push_str("    cvtss2sd xmm0, xmm0\n");
+                        }
+                        self.out.push_str("    movq rax, xmm0\n");
+                    }
+                    self.out.push_str("    push rax\n");
                 }
-                self.out.push_str("    movq rax, xmm0\n");
+                Piece::Owned(site) => {
+                    let layout = struct_layout(&value.ty, &self.layouts)
+                        .expect("Bytes and String have synthesized layouts");
+                    let slot = frame.scratch(align_up(layout.size, 8));
+                    self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+                    let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
+                    self.out.push_str("    push QWORD PTR [rax+8]\n");
+                    self.out.push_str("    push QWORD PTR [rax]\n");
+                    owned.push((slot, site.clone()));
+                }
+                Piece::Borrowed => {
+                    self.expr(value, frame)?;
+                    self.out.push_str("    push QWORD PTR [rax+8]\n");
+                    self.out.push_str("    push QWORD PTR [rax]\n");
+                }
+                Piece::View => {
+                    let layout = struct_layout(&value.ty, &self.layouts)
+                        .expect("View has a synthesized layout");
+                    let slot = frame.scratch(align_up(layout.size, 8));
+                    self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+                    // `{ptr, len}`, so the pointer is the first eightbyte — the
+                    // length is pushed first because it pops into the lower of
+                    // the piece's two registers.
+                    let _ = writeln!(self.out, "    push QWORD PTR [rbp{}]", off_str(slot + 8));
+                    let _ = writeln!(self.out, "    push QWORD PTR [rbp{}]", off_str(slot));
+                }
             }
-            self.out.push_str("    push rax\n");
         }
         let fmt_label = self.bytes_label(&fmt);
-        for (i, dest) in dests.iter().enumerate().rev() {
-            if float_ty(&values[i].ty).is_some() {
-                self.out.push_str("    pop rax\n");
-                let _ = writeln!(self.out, "    movq {}, rax", FARG[*dest]);
-                continue;
-            }
-            let _ = writeln!(self.out, "    pop {}", value_regs[*dest]);
-            // A `bool` interpolated into a template needs its pointer built
-            // after the pop, in the register it landed in.
-            if values[i].ty == Ty::Bool {
-                self.bool_str(value_regs[*dest]);
+        for (value, _, slots) in plan.iter().rev() {
+            for slot in slots.iter().rev() {
+                match slot {
+                    Slot::Float(dest) => {
+                        self.out.push_str("    pop rax\n");
+                        let _ = writeln!(self.out, "    movq {}, rax", FARG[*dest]);
+                    }
+                    Slot::Int(dest) => {
+                        let _ = writeln!(self.out, "    pop {}", value_regs[*dest]);
+                        // A `bool` interpolated into a template needs its
+                        // pointer built after the pop, in the register it
+                        // landed in.
+                        if value.ty == Ty::Bool {
+                            self.bool_str(value_regs[*dest]);
+                        }
+                    }
+                }
             }
         }
         let _ = writeln!(self.out, "    lea rdi, [rip+{fmt_label}]");
@@ -10693,6 +10804,11 @@ impl Gen {
         call_align_begin(&mut self.out, frame.sp_slot);
         self.out.push_str("    call printf@PLT\n");
         call_align_end(&mut self.out, frame.sp_slot);
+        // The owned buffers staged above, freed only now that the `printf` has
+        // read them — the same order `print_buffer` uses for one.
+        for (slot, site) in owned {
+            self.emit_drop_slot(&site, slot, frame)?;
+        }
         Ok(())
     }
 }

@@ -886,6 +886,26 @@ fn printing_a_temporary_owned_buffer_works() {
     );
 }
 
+#[test]
+fn a_buffer_in_a_print_template_takes_two_argument_slots() {
+    // A `%.*s` interpolation is two variadic arguments (length, then pointer),
+    // so the register numbering counts arguments per piece — every piece after
+    // a buffer one sits behind both of its arguments, and the three buffer
+    // shapes (an owned temporary, a borrow of a name, a `View`) each supply
+    // them from somewhere different. `heap_temporary_print` above is the
+    // single-temporary case this slice was credited with; this fixture is the
+    // numbering case, with a scalar, a float and a second buffer behind the
+    // first buffer piece.
+    assert_compiles_and_runs(
+        "tests/fixtures/template_buffer_pieces.kp",
+        "1 owned=one scalar=7 float=1.500000\n\
+         2 borrowed=named after=9\n\
+         3 view=bcd tail=42\n\
+         4 bytes=by len=5\n\
+         5 two buffers=ABcd\n",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // M6.2: owned `String`, `extern fun`, the first stdlib module, owned `datac`
 // fields, and owned passdowns.
@@ -1626,6 +1646,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "path_parts",
         "view_released_at_scope_end",
         "heap_temporary_print",
+        // MK7 §5's print slice: the same staged-and-freed temporary, but one
+        // per buffer piece and with a scalar, a float and a second buffer
+        // behind the first — the register-numbering case.
+        "template_buffer_pieces",
         "list_basic",
         "list_owned",
         "list_field",

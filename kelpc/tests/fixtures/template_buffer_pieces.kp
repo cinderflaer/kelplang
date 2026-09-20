@@ -1,0 +1,27 @@
+// MK7 §5's print slice: a `%.*s` interpolation takes **two** variadic
+// arguments — the `int` length and the `char*` data — so the register
+// numbering has to count arguments per piece rather than one per value. A
+// buffer piece followed by anything is what makes that observable: every later
+// interpolation is numbered behind both of its arguments, and getting that
+// wrong prints the wrong bytes rather than failing to build.
+//
+// All three buffer shapes are here, because they differ only in where the two
+// arguments come from and in whether anything has to be freed:
+//
+// - an *owned* temporary (`String.from_str`/`Bytes.from_str`, `str.to_upper`)
+//   is staged in a scratch slot and freed after the `printf`;
+// - a *borrow* of a named buffer is the header's address and owns nothing;
+// - a *`View`* is a `{ptr, len}` value, so its pointer is the value's own
+//   first eightbyte rather than a field behind the pointer.
+impl "std/str"
+
+fun main() {
+    val named = String.from_str("named")
+    val view = "abcdef".view()
+
+    print("1 owned=${String.from_str("one")} scalar=${7} float=${1.5}")
+    print("2 borrowed=$named after=${9}")
+    print("3 view=${view.slice(1, 4)} tail=${42}")
+    print("4 bytes=${Bytes.from_str("by")} len=${named.len()}")
+    print("5 two buffers=${str.to_upper("ab")}${String.from_str("cd")}")
+}

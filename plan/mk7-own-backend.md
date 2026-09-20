@@ -26,7 +26,7 @@ projected.*
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
-| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, ten slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, `enum`, and then a float field in an aggregate, the real per-eightbyte SysV classifier that closes item 4 outright), item 8's `str`/float printing and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **244 of 293** integration tests pass under `--backend=asm`; all 148 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), then a float field in an aggregate (a per-eightbyte classifier over `INTEGER`/`SSE`, `xmm` transport through every boundary, and the union merge that makes two same-size enums differ only in register file — see §5's blockquote), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 168 C and 144 asm, zero findings — at that commit; the sweep was red at and after `e748b06` (one defect in the shared drop plan, §5), and the drop-plan slice's commit is what makes the row true again: **321 runs over 307 fixtures, `c: 172 checked, 0 findings`; `asm: 149 checked, 0 findings`** — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit, and then the float codegen slice (below) — `f32`/`f64` locals in an `xmm` pool and float operands named directly instead of loaded — which is the first change on this branch that moves a `bench/speed` kernel rather than a fixture count, and the first whose measured effect had to be re-derived after the classifier landed because the two slices share this file: on the merge result `float` goes from **4.16x** the measured `-O0` column to **0.54x**, with `collatz` 0.97, `mix` 0.70 and `fib` 1.66 (see §5's float blockquote for the table, the method and why `fib`'s number is a different slice's) |
+| **1. x86-64, assembly text, `as`+`ld`** | **in progress — scalars, f32/f64, a register allocator, ten slices of item 4's aggregates (the last five being `datac`s that own a heap field, `Box<T>`, `List<T>` — the first container whose element can itself own — `Map<K, V>`, which closed the container set, `enum`, and then a float field in an aggregate, the real per-eightbyte SysV classifier that closes item 4 outright), item 8's `str`/float printing (the print slice extends it: a `Bytes`/`String`/`View` interpolation is a `%.*s` *pair* of variadic arguments, so the template's register numbering counts arguments per piece rather than per value — see §5) and `kelp_panic`, passdowns' generated storage, extern calls through the PLT, then the owned `Bytes` buffer with drops, then a scalar borrow with the read and store through it, then the three `str` parsers** | `codegen_asm.rs`; **246 of 294** integration tests pass under `--backend=asm`; all 150 fixtures the asm backend builds print byte-identical stdout to the C backend, and five heap types are in: `Bytes` end to end (layout, `malloc`/`realloc`/`free` through the PLT, thirteen owned routines, printing `%.*s`, and item 5's drops), then `String` and `View` (a further 28 routines, and `View` as the first heap type on the `AggClass::Two` register pair, which needed no new marshalling code at all), then `Box<T>` (one layout for every element type, seven routines per instantiation, and the first type whose own layout has to resolve while the `datac` that holds it is still being placed), then `List<T>` (one `$List` key for every element type — the same `{data, len, cap}` header `Bytes`/`String` are — fifteen routines per instantiation plus a generated drop, and one growth helper, `kelp_rt$list_reserve`, that is deliberately *not* monomorphized because the element size is an argument), then `Map<K, V>` (one `$Map` key — a 56-byte `MEMORY`-class header, fifteen routines per instantiation, a generated drop and three shared key helpers — and the first thing in this backend whose *entry* layout depends on a type parameter, because the value pointer sits at `align_up(size_of(K), 8)` and the live byte follows it), then `enum` (a tag-and-union layout beside the `datac` ones, `EnumLit`/`EnumTag`/`EnumField`, `?`, and a generated drop that switches on the runtime tag — the first thing in this backend whose *drop* depends on a runtime value), then a float field in an aggregate (a per-eightbyte classifier over `INTEGER`/`SSE`, `xmm` transport through every boundary, and the union merge that makes two same-size enums differ only in register file — see §5's blockquote), and then a scalar borrow (`&mut x` as a `lea` of the local's own slot, with the live-range pass keeping every addressed local out of the register pool, and `*p`/`*p = v` for integer and float pointees) together with the three `str` parsers, which are `strtoll`/`strtoull`/`strtod` behind `externs.rs`'s own whitespace, whole-string and `errno` checks. The memory gate §5's definition of done had been missing is now a test rather than an argument: `kelpc/tests/memory_gate.rs` (`0747195`) runs `valgrind` over both backends' binaries — 168 C and 144 asm, zero findings — at that commit; the sweep was red at and after `e748b06` (one defect in the shared drop plan, §5), and the drop-plan slice's commit is what makes the row true again: **324 runs over 308 fixtures, `c: 173 checked, 0 findings`; `asm: 151 checked, 0 findings`** — because the AddressSanitizer gate instruments generated C and cannot see this backend. Two bugs this round's own fixtures turned up are fixed in `53ec30d`, and the enum slice's own two — one of them latent since the first slice — in this branch's `enum` commit; the enum slice's *third* defect, a wrong-width aggregate load the differential sweep could not see, is fixed and pinned by `heap_narrow_fields`/`list_narrow_element_pop`/`try_narrow_payload` in this commit, and then the float codegen slice (below) — `f32`/`f64` locals in an `xmm` pool and float operands named directly instead of loaded — which is the first change on this branch that moves a `bench/speed` kernel rather than a fixture count, and the first whose measured effect had to be re-derived after the classifier landed because the two slices share this file: on the merge result `float` goes from **4.16x** the measured `-O0` column to **0.54x**, with `collatz` 0.97, `mix` 0.70 and `fib` 1.66 (see §5's float blockquote for the table, the method and why `fib`'s number is a different slice's) |
 | **2. Machine code + own linker** | not started | tier 1 must pass the suite first (§1.4) |
 | **3. Freestanding (no libc)** | not started | blocked on tier 2 |
 | **8. Runtime decoupling (parallel)** | **in progress — the matcher and the normalizer are Kelp** | `std/rt.kp` + two differential corpora; commit `1071ead`; the allocator is blocked on raw pointers (§8's note below) |
@@ -2429,6 +2429,57 @@ of the merge**, and the merge changes nothing about it:
 > output for the rest of the corpus is unchanged except where a move site is now
 > cleared. `try_drops_frame` and the other closure fixtures stay refused for
 > their own reason (a function value), not because of this.
+
+> **The print slice: an owned buffer inside a `print` template.** `
+> heap_temporary_print` was refused with `printing a value of type \`String\`
+> yet`, and it was not the buffer that was missing: `print(s)` of an owned
+> `String` already built, and so did `print(str.to_upper(s))` — the single-value
+> `print_buffer` shape. What was missing was the *template*, where an owned
+> value is one interpolation among several.
+>
+> The work was not `%.*s` itself but the numbering around it. `template` numbered
+> one variadic register per interpolated **value**; a `%.*s` interpolation is
+> two integer arguments (the `int` length, then the `char*` data), so every
+> interpolation after a buffer one sat one register too low and printed the
+> wrong bytes — silently, since `printf` reads whatever is in `rsi`/`rdx`.
+> It now numbers one *argument* per slot: each piece contributes its own list of
+> slots and the pops run in reverse over the flattened list, so a buffer piece's
+> pointer lands behind its length and everything after it shifts by two. The
+> `int_slot > 5` refusal counts arguments too, and now names them
+> ("interpolation arguments").
+>
+> All three buffer shapes are lowered, mirroring `printf_piece_with`'s three:
+> an **owned** `Bytes`/`String` (only ever a temporary — `infer.rs` wraps a named
+> place, so a local arrives as a borrow) is staged in a `Frame::scratch` slot,
+> read out of it, and freed after the `printf`, exactly `print_buffer`'s
+> lifetime; a **borrow** (`&Bytes`/`&String`) is the header's address and frees
+> nothing; a **`View`** is a `{ptr, len}` value, so its pointer is the value's
+> own first eightbyte rather than a field behind the pointer. Two staged
+> temporaries in one template are two independent drop sites.
+>
+> **Measured.** `KELPC_BACKEND=asm cargo test --release --test compile_and_run`
+> goes from **244 passed / 49 failed of 293** to **246 passed / 48 failed of
+> 294**, and the failing set is the previous one minus exactly
+> `printing_a_temporary_owned_buffer_works` — `heap_temporary_print` builds and
+> prints byte-identically under both backends now. `backend_coverage --
+> --ignored --nocapture` moves from **24 refused of 172, 148 built** (heap 13)
+> to **23 refused of 173, 150 built** (heap 12): the heap row lost
+> `heap_temporary_print`, and the new `template_buffer_pieces` fixture is built
+> by both. `cargo test --release` is green, 294 of 294. `memory_gate --
+> --ignored --nocapture` stays green over 324 runs / 308 fixtures (`c: 173
+> checked, 0 findings`; `asm: 151 checked, 0 findings`) — the new fixture stages
+> two owned buffers and is valgrind-clean in both backends, as is
+> `heap_temporary_print`.
+>
+> `template_buffer_pieces` is the numbering fixture: an owned `String`, a
+> borrow of a name, a `View` and an owned `Bytes`, each followed by a scalar, a
+> float or another buffer, plus a two-buffer line (`AB` + `cd`). It is in
+> `compile_and_run.rs` with exact stdout and in the AddressSanitizer list.
+>
+> **Still refused in a template:** a `List`/`Map`/`Box`/`datac` interpolation
+> (no format for one, and `infer.rs` refuses it), a function value, and — by
+> name, not by a wrong register — more than five integer argument slots or more
+> than eight floats.
 
 Definition of done: all 280 integration tests pass under `--backend=asm` with byte-identical stdout to
 `--backend=c`;
