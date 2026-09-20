@@ -1,0 +1,39 @@
+// `isize` is `ptrdiff_t`, and the C backend emitted that name without
+// including `<stddef.h>`, so every shape of the type failed to compile there
+// while the assembly backend built all of them. One shape per way a type can
+// appear: a local, a parameter, a return, a `datac` field and a `List`
+// element.
+impl "std/option"
+
+datac Span(val start: isize, val len: isize)
+
+// A parameter and a return.
+fun shift(by: isize).R: isize = by + 1
+
+fun main() {
+    var i: isize = 0
+    var sum: isize = 0
+    while i < 4 {
+        sum = sum + i
+        i = i + 1
+    }
+    print(sum)
+    print(shift(by = 0 - 5))
+
+    val s = Span(start = 0 - 3, len = 10)
+    print(s.start)
+    print(s.start + s.len)
+
+    val xs: List<isize> = List.of(0 - 1)
+    print(xs.get(0))
+    print(xs.len())
+
+    // The conversions the type takes part in, both directions.
+    val n: isize = 0 - 7
+    print(n.to_i64())
+    print(option.is_none(o = n.try_to_u32()))
+    print(option.is_some(o = n.try_to_i32()))
+    val big: isize = 4000000000
+    print(option.is_none(o = big.try_to_i32()))
+    print(option.is_some(o = big.try_to_u64()))
+}

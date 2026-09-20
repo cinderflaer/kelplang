@@ -64,8 +64,8 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 183 fixtures the C backend
-/// builds, 163 of them also built by the asm backend, 20 refused: which is the
+/// The counts this list was recorded against: 184 fixtures the C backend
+/// builds, 164 of them also built by the asm backend, 20 refused: which is the
 /// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level. (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
@@ -74,7 +74,11 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `panic_owned_message`) were recorded with it; see the re-recording notes
 /// below.)
 ///
-/// The last re-recording is the fallible-conversion slice: `try_to_conversion`
+/// The last re-recording is the `isize` slice: `isize_kinds` covers every
+/// position the type can appear in, and both backends build it now that the C
+/// preamble includes `<stddef.h>`: 183/163/20 -> 184/164/20.
+///
+/// Before it, the last re-recording was the fallible-conversion slice: `try_to_conversion`
 /// is a plain Kelp module over `Option<u8>`/`i32`/`u32`/`u64`. `infer.rs`
 /// lowers the builtin into a `Block`/`If`/`EnumLit` shape, so both backends
 /// lower it with no conversion-specific code: 182/162/20 -> 183/163/20.
@@ -273,6 +277,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
 "int_literal_width",
 "int_literals",
     "int_mod_narrow",
+    "isize_kinds",
     "list_basic",
     "list_clone",
     "list_datac_element",

@@ -640,6 +640,9 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     out.push_str("#include <unistd.h>\n");
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
+    // `isize` is `ptrdiff_t` (`types.rs`), which is `stddef.h`'s and not
+    // brought in by any of the headers above or below.
+    out.push_str("#include <stddef.h>\n");
     out.push_str("#include <stdio.h>\n");
     out.push_str("#include <stdlib.h>\n");
     out.push_str("#include <string.h>\n\n");

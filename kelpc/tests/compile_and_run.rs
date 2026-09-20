@@ -1703,6 +1703,19 @@ fn byte_literals_are_u8_and_carry_hex_escapes() {
     );
 }
 
+/// `isize` is `ptrdiff_t`, and the C backend emitted that name without
+/// including `<stddef.h>`, so every shape of the type failed to compile there
+/// while the assembly backend built all of them. One shape per way a type can
+/// appear, which is why this is a fixture and not a one-line repro: a local, a
+/// parameter, a return, a `datac` field and a `List` element.
+#[test]
+fn isize_works_in_every_position_a_type_can_appear_in() {
+    assert_compiles_and_runs(
+        "tests/fixtures/isize_kinds.kp",
+        "6\n-4\n-3\n7\n-1\n1\n-7\ntrue\ntrue\ntrue\ntrue\n",
+    );
+}
+
 /// A byte literal is one ASCII character or a `\xNN` escape, it is a `u8` and
 /// not the type its context asks for, and the escape is exactly two hex
 /// digits in both literal forms.
@@ -4417,6 +4430,9 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // narrowed to an `i32` is the same two's-complement question
         // `int_literal_width` pins, one spelling further out.
         "int_literals",
+        // ...and `isize` in every position, where the two backends disagreed by
+        // construction rather than by arithmetic: only the C preamble was wrong.
+        "isize_kinds",
         // ...and the byte literals, which are `u8` values from the lexer and
         // so take the narrow-integer path through both backends, plus a string
         // with a hex escape, where the escape reaches code generation as an
