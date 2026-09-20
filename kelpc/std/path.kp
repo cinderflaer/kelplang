@@ -14,6 +14,21 @@ extern fun normalize_raw(s: &str).R: String
 
 fun normalize(s: &str).R: String = normalize_raw(s)
 
+// `p` as an absolute, normalized path: `p` alone when it is already absolute,
+// otherwise `base` with `p` appended, in both cases run through `normalize` so
+// that `.` and `..` are resolved before the result reaches a capability check
+// (which only accepts an absolute path free of `..`).
+//
+// `base` must be absolute, and the pair must not climb above `/`.
+// Panics: if `base` is not absolute, or the join escapes the filesystem root.
+fun absolute(base: &str, p: &str).R: String {
+    if is_absolute(p) {
+        return normalize(p)
+    }
+    val joined = join(base, p)
+    return normalize(joined.as_str())
+}
+
 // The byte index just past the last `/`, or 0 when the path has none. A
 // path with no separator has no directory part at all, so `file_name`
 // reports the whole string — which is what every other path library does.
@@ -133,11 +148,8 @@ fun parent(s: &str).R: String {
 
 // `a` joined with `b`, with exactly one `/` between them, and without
 // copying either side's bytes twice. An absolute `b` replaces `a`, which is
-// what every other path library does.
-//
-// `normalize` (lexical `//`, `.`, and `..` handling) is *not* here yet: it
-// is the same function the capability checker will use in M7, so it should
-// be written once, against the grant matcher, rather than twice.
+// what every other path library does. The result is not normalized; use
+// `absolute` when the caller needs one that a capability check will accept.
 fun join(a: &str, b: &str).R: String {
     if is_absolute(b) {
         return String.from_str(b)

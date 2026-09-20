@@ -1,0 +1,8 @@
+// MISSING-hW5rB: `util` holds one narrow `fs` pattern, and `fs.cwd` is
+// reachable with it. A call whose arguments name no resource is admitted by
+// the domain alone, so the pattern list constrains nothing here.
+impl "util" caps(fs = ["/tmp/kelp_caps_cwd/**"])
+
+fun main() {
+    print(util.where_is_absolute())
+}

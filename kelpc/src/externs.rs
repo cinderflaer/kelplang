@@ -253,6 +253,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "    struct stat st;\n    if (stat(kelp_path, &st) != 0) {\n        kelp_panic_errno(\"fs.metadata: cannot stat file\");\n    }\n    return (uint32_t)(st.st_mode & 07777);\n",
     ),
     (
+        "std/fs",
+        "cwd_raw",
+        "    char buf[PATH_MAX];\n    if (getcwd(buf, sizeof buf) == NULL) {\n        kelp_panic_errno(\"fs.cwd: cannot read the current directory\");\n    }\n    return kelp_String__from_str(buf);\n",
+    ),
+    (
         "std/time",
         "now_unix_raw",
         "    struct timespec ts;\n    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {\n        kelp_panic_errno(\"time.now_unix: clock_gettime failed\");\n    }\n    return (int64_t)ts.tv_sec;\n",

@@ -1,0 +1,17 @@
+// MISSING-hW5rB: `path.absolute` resolves a relative path against a base, and
+// `fs.cwd` supplies the base a command-line file tool actually has. The
+// resolved path is normalized, so it is what the capability check accepts.
+impl "std/path"
+impl "std/str"
+impl "std/fs"
+
+fun main() {
+    print(path.absolute("/a/b", "c.txt"))
+    print(path.absolute("/a/b", "../c.txt"))
+    print(path.absolute("/a/b", "/abs/./x"))
+
+    val here = fs.cwd()
+    print(path.is_absolute(here.as_str()))
+    val joined = path.absolute(here.as_str(), "notes.txt")
+    print(str.ends_with(joined.as_str(), "/notes.txt"))
+}

@@ -3020,6 +3020,27 @@ fn path_stem_extension_and_component_helpers() {
     );
 }
 
+#[test]
+fn path_absolute_resolves_a_relative_argument_against_a_base() {
+    // MISSING-hW5rB: `fs.cwd` is the base a command-line tool has, and the
+    // resolved path is normalized so the capability check accepts it. The
+    // absolute cases are compared to literals; the cwd-dependent ones assert
+    // the property instead, since the test's own directory is not fixed.
+    assert_compiles_and_runs(
+        "tests/fixtures/path_absolute.kp",
+        "/a/b/c.txt\n/a/c.txt\n/abs/x\ntrue\ntrue\n",
+    );
+}
+
+#[test]
+fn a_narrow_fs_grant_still_reaches_cwd() {
+    assert_project_runs(
+        "caps_cwd",
+        &project("caps_cwd").join("main.kp"),
+        "true\n",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // S2: `io` (the standard descriptors as streams, buffered line reading) and
 // `process` (argv, running a program, spawning one).

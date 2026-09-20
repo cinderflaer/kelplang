@@ -45,6 +45,7 @@ extern fun touch_raw(path: &str)
 extern fun temp_path_raw(prefix: &str).R: String
 extern fun mtime_raw(path: &str).R: i64
 extern fun mode_raw(path: &str).R: u32
+extern fun cwd_raw().R: String
 
 // A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
 // bits (`07777`), and `is_dir`/`is_file` are the two cases worth branching
@@ -70,6 +71,15 @@ fun write(path: &str, data: Bytes) {
 fun write_text(path: &str, text: String) {
     write_text_raw(path, text)
 }
+
+// The process's current working directory, absolute and free of `.`/`..`.
+//
+// Gated on `fs` like every other name here, but it matches no pattern: it is
+// the domain's own view of where the process stands, and a caller cannot ask
+// for a different one. Turning a relative argument into a path the capability
+// check will accept is `path.absolute(fs.cwd(), arg)`.
+// Panics: if the kernel cannot report it.
+fun cwd().R: String = cwd_raw()
 
 fun exists(path: &str).R: bool = exists_raw(path)
 fun is_file(path: &str).R: bool = is_file_raw(path)
