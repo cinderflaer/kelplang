@@ -3436,6 +3436,85 @@ check). So what stands between the gate artifact and a build is `std/time`'s thr
 capability check. The table, the method and the fairness conditions above are unchanged and remain this
 annex's measurement at `d0a485f`.)*
 
+*(Corrected 2026-09-20, at `4752ebb`: the gate artifact builds now, and its asm
+column exists. `bench/speed/speed.kp` builds under `--backend=asm` at `4752ebb`,
+and it also builds at `5958794`, which is the slice that lowered `std.time`'s
+clock extern; measured here by building `kelpc` at both commits and running the
+binary, which printed all four checksums and the `VALUE` line. So the headline
+above, and the `cannot build speed.kp` cells in the gate table, are no longer
+true, and item 1 of "What a follow-up must do" is met by the extern body alone.
+The capability check the c3a8759 correction puts behind the refusal was not a
+second blocker: `speed.kp` names only `time.now_mono_ns()`, which takes no
+resource argument, and `cap_check_refusal` returns `None` for a gated call whose
+checked-argument list is empty (`codegen_asm.rs`'s own unit test
+`a_gated_domain_with_no_checked_arguments_is_not_refused` asserts exactly this
+for `std.time.now_unix`). This is a new measurement, not a correction of the old
+one: the table above, the method and the fairness conditions stay as they were
+measured at `d0a485f`.)*
+
+*(Measured 2026-09-20 at `4752ebb`, this session, `kelpc` built `--release` from
+a detached worktree of that commit. Same four columns as the table above: `cc
+-O0 -fwrapv -lm` and `cc -O2 -fwrapv -lm` over the backend's generated C, and
+`--backend=asm`. One estimator for every column, the one item 4 above asks for:
+9 rounds interleaved round-robin, round 1 discarded, median of the 8 that remain,
+spread is min to max of those 8. `work_ns` is the program's own clock,
+external wall is `date +%s%N` around the whole process. Load average 2.54 to
+2.74 during the sweep, from another lane compiling. Every column printed the
+gate's checksums and the float `VALUE` line.)*
+
+| workload | `-O0` | `-O2` | asm | asm/`-O0` |
+| --- | --- | --- | --- | --- |
+| collatz | 446.5 (444.4-450.6) | 81.5 (80.7-82.8) | 430.5 (427.9-433.0) | 0.964 |
+| float | 254.8 (253.0-257.9) | 100.4 (98.7-103.0) | 151.5 (145.2-234.3) | 0.594 |
+| mix | 203.1 (199.9-204.2) | 165.2 (164.2-168.4) | 139.0 (138.0-140.8) | 0.684 |
+| fib | 26.7 (26.6-28.2) | 23.3 (23.0-24.1) | 46.1 (45.6-47.4) | 1.723 |
+
+*(The float `VALUE` line is `78539816.062926` in every column; the checksums are
+`collatz 131434424`, `float 57735026`, `mix 542344`, `fib 18454929` calls and
+`5702887`. Whole-process external wall clock, median of the same 8 rounds:
+`-O0` 933.0 ms, `-O2` 374.1 ms, asm 771.9 ms, which is 0.827 of `-O0`. A second
+sweep of the same columns, 15 rounds kept, pinned to one core with `taskset -c
+3`, load 2.13 to 3.13, gave collatz 0.969, float 0.696, mix 0.707, fib 1.727 and
+a whole-process wall ratio of 0.878, so the reading is stable.)*
+
+*(The concurrency caveat of item 5 above still holds and now has a number: the
+asm `float` column is bimodal. Its 8 kept runs spanned 145.2 to 234.3 ms here and
+137.3 to 502.8 ms in an earlier sweep this session, while `-O0` and `-O2` stayed
+inside about 2% of their own medians through the same window. So 0.594 is a
+median that includes contended runs and the uncontended ratio is nearer 0.55.
+Every other asm cell is tight (collatz 1.2% spread, mix 2.0%, fib 3.9%).)*
+
+*(The gate criterion has two readings here and they disagree. Read as one
+criterion over the artifact, the definition of done in section 5 is met: the
+whole-process external wall is 0.827, so `bench/speed` is no worse than the `-O0`
+column. Read per workload, the definition is met on three and unmet on one:
+collatz 0.964, float 0.594, mix 0.684, fib 1.723. The plan's own text supports
+the per-workload reading: section 5's status blockquote reports the ratio per
+workload and says the asm backend is "above it on `fib` (1.70)", and the float
+blockquote in section 5 ranks the four workloads the same way. So by the plan's
+own usage the gate is **unmet**, and **`fib` is the one failing workload**: it is
+the only cell above 1.0, in this sweep and in both earlier rounds (1.718 and
+2.605 against the same `-O0` column).)*
+
+*(Section 3's cost model is contradicted, and the measurement inverts it. Section
+3 says a backend with a competent register allocator and no optimizer lands
+between the two C columns and that "call-heavy code barely notices; branchy and
+floating-point code notices a lot". The measured ratios are the other way round:
+the call-heavy workload `fib` notices the most (1.723, and it is the worst cell
+in the sweep) while the branchy workload `collatz` (0.964) and the floating-point
+workload `float` (0.594) notice least and beat the `-O0` column outright. So the
+column that moves when call sequence overhead rises is the one section 3 called
+immune to it, and `plan/mk7-call-overhead.md` measures where that overhead goes:
+most of it is the per-argument push and pop of the marshalling loop, then the
+unconditional per-call stack alignment fixup, then the body's stack-machine
+traffic.)*
+
+*(Still unanswered from the follow-up list above: items 2 and 3 are satisfied by
+the run above (external wall was recorded, and the float `VALUE` line was
+asserted), item 4's estimator is the one used here, but item 5's "idle machine"
+is not met, which is why the float cell is reported with its spread and the
+bimodality above is spelled out rather than hidden behind the median.)*
+
 ### Machine, toolchain, and noise
 
 `AMD Ryzen 5 7600` (6C/12T, 30 GiB), Linux `6.18.52`, `clang 21.1.8` as `cc`,
