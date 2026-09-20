@@ -9011,8 +9011,8 @@ fn check_deciding_element(arg: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
 /// The container an open container's deciding call names, or `None` when the
 /// call is not one that decides anything.
 ///
-/// Every deciding argument is checked here, once, to learn its type — the same
-/// probe the receiver already goes through, and safe for the same reason:
+/// Every deciding argument is checked here, once, to learn its type. It is the
+/// same probe the receiver already goes through, and safe for the same reason:
 /// `check_expr` reads the context and reports, and the call's own argument
 /// check runs again below with the signature this produced.
 fn open_container_from_call(

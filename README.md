@@ -113,8 +113,8 @@ The C backend is the reference: every fixture is built by both and the two
 binaries' stdout is compared, so a construct the `asm` backend does not lower
 yet is refused by name rather than silently miscompiled.
 
-`kelpc check` runs everything a build runs except code generation — the same
-modules, the same type check, the same borrow check — so it answers whether a
+`kelpc check` runs everything a build runs except code generation: the same
+modules, the same type check, the same borrow check. It answers whether a
 program compiles without writing an artifact. It exits nonzero only for an
 error: an outdated-syntax finding on its own exits zero, the rule `kelpc lint`
 follows. `--json` prints the findings on stdout as one document instead of prose

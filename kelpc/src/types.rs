@@ -719,8 +719,9 @@ pub fn is_open_container(ty: &Ty) -> bool {
 /// The type an open container becomes once `from` says what it holds: `from`
 /// is the container a `push`/`insert`/`set` argument built, or the one a
 /// surrounding position expects. `None` when the two are not the same kind of
-/// container, or when what `from` holds is not something a container may hold
-/// — which leaves the open container open for the check that explains why.
+/// container, or when what `from` holds is not something a container may hold,
+/// so an open container whose element the caller cannot supply stays open for
+/// the check that explains why.
 ///
 /// A slot that is already decided keeps its type: an open container only ever
 /// has one, and a `Map` whose key came from the binding's written type keeps

@@ -5,10 +5,10 @@
 //! `SourceMap`, so what only a real invocation settles is the contract around
 //! it:
 //!
-//!   1. **it answers and writes nothing** — no artifact, no generated C;
-//!   2. **the exit status separates an error from a warning** — an outdated
+//!   1. **it answers and writes nothing**: no artifact, no generated C;
+//!   2. **the exit status separates an error from a warning**: an outdated
 //!      finding on its own exits zero, the rule `lint` follows;
-//!   3. **`--json` is a document a consumer reads without parsing a message** —
+//!   3. **`--json` is a document a consumer reads without parsing a message**:
 //!      severity, message, and a file with a 1-based range, on stdout, with
 //!      nothing on stderr to interleave with it.
 //!
