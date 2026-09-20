@@ -951,6 +951,26 @@ enum Routine {
     TimeSleepMsRaw,
     RandU64Raw,
     RandFillRaw,
+    /// MK7 §5's S2 slice: the eleven `std/io` descriptor bodies, transliterated
+    /// from their `externs.rs` bodies. `IoIsOpenRaw` is one `fcntl(F_GETFD)`;
+    /// `IoReadRaw` allocates a `Bytes` and shortens it; `IoReadIntoRaw` writes
+    /// into the caller's buffer without allocating; the three `IoWrite*Raw`
+    /// bodies flush the matching stdio stream and then run an `EINTR`-tolerant
+    /// `write` loop; `IoCloseRaw` is one `close`; `IoSetNonblockingRaw` is the
+    /// `fcntl(F_GETFL)`/`F_SETFL` pair; the two `IoWait*Raw` bodies are one
+    /// `pollfd` each in the C body's `EINTR` retry loop; `IoErrnoTextRaw` is
+    /// `strerror` into a `String`.
+    IoIsOpenRaw,
+    IoReadRaw,
+    IoReadIntoRaw,
+    IoWriteBytesRaw,
+    IoWriteTextRaw,
+    IoWriteStrRaw,
+    IoCloseRaw,
+    IoSetNonblockingRaw,
+    IoWaitReadableRaw,
+    IoWaitWritableRaw,
+    IoErrnoTextRaw,
 }
 
 impl Routine {
@@ -1019,6 +1039,17 @@ impl Routine {
             Routine::TimeSleepMsRaw => "kelp_rt$time_sleep_ms_raw",
             Routine::RandU64Raw => "kelp_rt$rand_u64_raw",
             Routine::RandFillRaw => "kelp_rt$rand_fill_raw",
+            Routine::IoIsOpenRaw => "kelp_rt$io_is_open_raw",
+            Routine::IoReadRaw => "kelp_rt$io_read_raw",
+            Routine::IoReadIntoRaw => "kelp_rt$io_read_into_raw",
+            Routine::IoWriteBytesRaw => "kelp_rt$io_write_bytes_raw",
+            Routine::IoWriteTextRaw => "kelp_rt$io_write_text_raw",
+            Routine::IoWriteStrRaw => "kelp_rt$io_write_str_raw",
+            Routine::IoCloseRaw => "kelp_rt$io_close_raw",
+            Routine::IoSetNonblockingRaw => "kelp_rt$io_set_nonblocking_raw",
+            Routine::IoWaitReadableRaw => "kelp_rt$io_wait_readable_raw",
+            Routine::IoWaitWritableRaw => "kelp_rt$io_wait_writable_raw",
+            Routine::IoErrnoTextRaw => "kelp_rt$io_errno_text_raw",
         }
     }
 }
@@ -1160,6 +1191,23 @@ fn extern_target(key: &str) -> Option<Extern> {
         "std.time.sleep_ms_raw" => Extern::Routine(Routine::TimeSleepMsRaw),
         "std.rand.u64_raw" => Extern::Routine(Routine::RandU64Raw),
         "std.rand.fill_raw" => Extern::Routine(Routine::RandFillRaw),
+        // MK7 §5's S2 slice: the `std/io` descriptor family, taken whole.
+        // `std/io` is not in `stdlib::domain_of`, so none of these carries a
+        // capability check and no gate work is needed. Two members
+        // (`write_bytes_raw`, `set_nonblocking_raw`) are reached by nothing in
+        // the corpus; they land with the family because the seam is the
+        // descriptor and a partial family leaves the next fixture inside it.
+        "std.io.is_open_raw" => Extern::Routine(Routine::IoIsOpenRaw),
+        "std.io.read_raw" => Extern::Routine(Routine::IoReadRaw),
+        "std.io.read_into_raw" => Extern::Routine(Routine::IoReadIntoRaw),
+        "std.io.write_bytes_raw" => Extern::Routine(Routine::IoWriteBytesRaw),
+        "std.io.write_text_raw" => Extern::Routine(Routine::IoWriteTextRaw),
+        "std.io.write_str_raw" => Extern::Routine(Routine::IoWriteStrRaw),
+        "std.io.close_raw" => Extern::Routine(Routine::IoCloseRaw),
+        "std.io.set_nonblocking_raw" => Extern::Routine(Routine::IoSetNonblockingRaw),
+        "std.io.wait_readable_raw" => Extern::Routine(Routine::IoWaitReadableRaw),
+        "std.io.wait_writable_raw" => Extern::Routine(Routine::IoWaitWritableRaw),
+        "std.io.errno_text_raw" => Extern::Routine(Routine::IoErrnoTextRaw),
         _ => return None,
     })
 }
@@ -8422,6 +8470,16 @@ impl Gen {
             Routine::FsCwdRaw => {
                 self.require_routine(Routine::StringFromStr);
             }
+            // MK7 §5's S2 slice: `read_raw` builds its return value with the
+            // `Bytes` allocator (the only allocation in the family), and
+            // `errno_text_raw` copies `strerror`'s static buffer into an owned
+            // `String`.
+            Routine::IoReadRaw => {
+                self.require_routine(Routine::BytesAllocRaw);
+            }
+            Routine::IoErrnoTextRaw => {
+                self.require_routine(Routine::StringFromStr);
+            }
             _ => {}
         }
         self.routines.insert(r);
@@ -12154,6 +12212,24 @@ impl Gen {
         self.out.push_str("    call kelp_panic_errno\n");
     }
 
+    /// The asm side of `kelp_io_flush_stdio` (`codegen_c.rs:89-95`): flush the
+    /// stdio stream a write descriptor shares number with, so the builtin
+    /// `print` and a raw `write` are observed in the order they were called.
+    /// `fd` names a 32-bit callee-saved register already holding the
+    /// descriptor; `fflush` clobbers `rdi`, so the routine's own copy of the
+    /// fd has to be somewhere `fflush` cannot reach. Does nothing for any
+    /// other descriptor, exactly as the C helper does.
+    fn emit_flush_stdio(&mut self, fd: &str) {
+        let one = self.label("flush_one");
+        let done = self.label("flush_done");
+        let _ = writeln!(self.out, "    cmp {fd}, 1\n    jne {one}");
+        self.out.push_str("    mov rdi, QWORD PTR stdout@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n    call fflush@PLT\n");
+        let _ = writeln!(self.out, "    jmp {done}\n{one}:");
+        let _ = writeln!(self.out, "    cmp {fd}, 2\n    jne {done}");
+        self.out.push_str("    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n    call fflush@PLT\n");
+        let _ = writeln!(self.out, "{done}:");
+    }
+
     /// MK7 §5 item 1: one of the routines this backend owns for an `extern
     /// fun` whose C body is more than a single library call — see
     /// `extern_target`.
@@ -13046,6 +13122,172 @@ impl Gen {
                 self.out.push_str(".Lrand_fill_noent:\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{noent}]");
                 self.call_panic_errno();
+            }
+            // ---- MK7 §5's S2 slice: the `std/io` descriptor family ---------
+            //
+            // Every body below is `externs.rs`'s, transliterated. The kernel
+            // calls take the descriptor in `edi` and the buffer and count in
+            // `rsi`/`rdx`; a routine whose return is a `Bytes` or a `String`
+            // takes the hidden return pointer in `rdi` first (SysV), which is
+            // why `read_raw`'s fd arrives in `esi` and `errno_text_raw`'s in
+            // `esi` too. A `Bytes`/`String` *argument* is `MEMORY` class and
+            // so sits in the caller's outgoing area at `[rbp+16]` after `push
+            // rbp`, which is where `write_bytes_raw`/`write_text_raw` read it.
+            // `EINTR` is 4 throughout, and `__errno_location` is how a value
+            // that may be `EINTR` is told from a real failure.
+            //
+            // `return fcntl(kelp_fd, F_GETFD) >= 0;` (`F_GETFD` is 1). No
+            // errno is read: an invalid descriptor is simply "not open".
+            Routine::IoIsOpenRaw => {
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    mov esi, 1\n    xor eax, eax\n    call fcntl@PLT\n");
+                self.out.push_str("    test eax, eax\n    setns al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            // `kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max); n = read(...);
+            //  b.len = n; b.data[b.len] = 0; return b;`, the one allocation
+            // in the family. `BytesAllocRaw` writes the 24 bytes into the
+            // caller's destination, so `read_raw` can hand it `rdi` directly
+            // and only has to shorten the result and re-terminate it.
+            Routine::IoReadRaw => {
+                let msg = self.bytes_label(b"io.read: read failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12d, esi\n    mov r13, rdx\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, r13\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    mov edi, r12d\n    mov rsi, QWORD PTR [rbx]\n    mov rdx, r13\n    call read@PLT\n");
+                self.out.push_str("    test rax, rax\n    js .Lio_read_fail\n");
+                self.out.push_str("    mov QWORD PTR [rbx+8], rax\n    mov rcx, QWORD PTR [rbx]\n    mov BYTE PTR [rcx+rax], 0\n");
+                self.out.push_str("    mov rax, rbx\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lio_read_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `read_into_raw`: no allocation at all. `room = at < len ?
+            // len - at : 0`, and `room == 0` returns 0 **before any
+            // syscall**, so errno is never touched on that path (a routine
+            // that read it unconditionally would panic on a stale value). The
+            // rest is one `read` into the caller's own buffer and a NUL at
+            // `at + n`; the buffer's length is deliberately left alone.
+            Routine::IoReadIntoRaw => {
+                let msg = self.bytes_label(b"io.read_into: read failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov ebx, edi\n    mov r12, rsi\n    mov r13, rdx\n");
+                self.out.push_str("    mov rax, QWORD PTR [r12+8]\n    xor ecx, ecx\n    cmp r13, rax\n    jae .Lio_into_room0\n");
+                self.out.push_str("    mov rcx, rax\n    sub rcx, r13\n.Lio_into_room0:\n    test rcx, rcx\n    je .Lio_into_zero\n");
+                self.out.push_str("    mov rsi, QWORD PTR [r12]\n    add rsi, r13\n    mov rdx, rcx\n    mov edi, ebx\n    call read@PLT\n");
+                self.out.push_str("    test rax, rax\n    js .Lio_into_fail\n");
+                self.out.push_str("    mov rcx, QWORD PTR [r12]\n    add rcx, r13\n    mov BYTE PTR [rcx+rax], 0\n");
+                self.out.push_str("    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n.Lio_into_zero:\n    xor eax, eax\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n.Lio_into_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `kelp_io_flush_stdio(fd)` then the short-write loop over
+            // `kelp_data->len`. `fd` lives in `ebx` (the flush needs it after
+            // `fflush` clobbers `rdi`), `off` in `r12`, and the buffer is the
+            // `MEMORY`-class argument at `[rbp+16]`.
+            Routine::IoWriteBytesRaw => {
+                let msg = self.bytes_label(b"io.write: write failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    mov ebx, edi\n");
+                self.emit_flush_stdio("ebx");
+                self.out.push_str("    xor r12d, r12d\n.Lio_wbytes_loop:\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp+24]\n    cmp r12, rax\n    jae .Lio_wbytes_done\n");
+                self.out.push_str("    mov rsi, QWORD PTR [rbp+16]\n    add rsi, r12\n    mov rdx, rax\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lio_wbytes_adv\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_wbytes_loop\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lio_wbytes_adv:\n    add r12, rax\n    jmp .Lio_wbytes_loop\n.Lio_wbytes_done:\n    mov rax, r12\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // The same loop over a `String`'s `len` bytes, with the C body's
+            // own message.
+            Routine::IoWriteTextRaw => {
+                let msg = self.bytes_label(b"io.write_text: write failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    mov ebx, edi\n");
+                self.emit_flush_stdio("ebx");
+                self.out.push_str("    xor r12d, r12d\n.Lio_wtext_loop:\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp+24]\n    cmp r12, rax\n    jae .Lio_wtext_done\n");
+                self.out.push_str("    mov rsi, QWORD PTR [rbp+16]\n    add rsi, r12\n    mov rdx, rax\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lio_wtext_adv\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_wtext_loop\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lio_wtext_adv:\n    add r12, rax\n    jmp .Lio_wtext_loop\n.Lio_wtext_done:\n    mov rax, r12\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // The `&str` form: a `strlen` first, and the pointer is a plain
+            // `INTEGER` argument in `rsi` (not a `MEMORY` one), so it lives in
+            // `r13` and the length in `r14`.
+            Routine::IoWriteStrRaw => {
+                let msg = self.bytes_label(b"io.write_str: write failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n    mov ebx, edi\n    mov r13, rsi\n");
+                self.emit_flush_stdio("ebx");
+                self.out.push_str("    mov rdi, r13\n    call strlen@PLT\n    mov r14, rax\n    xor r12d, r12d\n.Lio_wstr_loop:\n");
+                self.out.push_str("    cmp r12, r14\n    jae .Lio_wstr_done\n");
+                self.out.push_str("    mov rsi, r13\n    add rsi, r12\n    mov rdx, r14\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lio_wstr_adv\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_wstr_loop\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lio_wstr_adv:\n    add r12, rax\n    jmp .Lio_wstr_loop\n.Lio_wstr_done:\n    mov rax, r12\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `if (close(kelp_fd) != 0) kelp_panic_errno(...)`, the
+            // descriptor is already in `edi`.
+            Routine::IoCloseRaw => {
+                let msg = self.bytes_label(b"io.close: close failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    call close@PLT\n    test eax, eax\n    jne .Lio_close_fail\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n.Lio_close_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `fcntl(F_GETFL)` (`F_GETFL` is 3) then `fcntl(F_SETFL)`
+            // (`F_SETFL` is 4) with `O_NONBLOCK` (0x800) set or cleared. Both
+            // failures are the C body's one message.
+            Routine::IoSetNonblockingRaw => {
+                let msg = self.bytes_label(b"io.set_nonblocking: fcntl failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    mov ebx, edi\n    mov r12d, esi\n");
+                self.out.push_str("    mov edi, ebx\n    mov esi, 3\n    xor eax, eax\n    call fcntl@PLT\n    test eax, eax\n    js .Lio_snb_fail\n");
+                self.out.push_str("    test r12d, r12d\n    je .Lio_snb_clr\n    or eax, 0x800\n    jmp .Lio_snb_set\n.Lio_snb_clr:\n    and eax, 0xfffff7ff\n.Lio_snb_set:\n");
+                self.out.push_str("    mov edx, eax\n    mov edi, ebx\n    mov esi, 4\n    xor eax, eax\n    call fcntl@PLT\n    test eax, eax\n    jne .Lio_snb_fail\n");
+                self.out.push_str("    pop r12\n    pop rbx\n    pop rbp\n    ret\n.Lio_snb_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `wait_readable_raw`: one eight-byte `pollfd` on the frame, the
+            // `> INT_MAX ms is forever` mapping, and the C body's `do { poll }
+            // while (EINTR)` loop. Readable is `POLLIN|POLLHUP|POLLERR`
+            // (0x19): HUP and ERR mean "read now", because the read that
+            // follows returns 0.
+            Routine::IoWaitReadableRaw => {
+                let msg = self.bytes_label(b"io.wait_readable: poll failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                self.out.push_str("    mov DWORD PTR [rsp], edi\n    mov WORD PTR [rsp+4], 1\n    mov WORD PTR [rsp+6], 0\n");
+                self.out.push_str("    mov rax, rsi\n    movabs rcx, 2147483647\n    cmp rax, rcx\n    ja .Lio_wr_forever\n");
+                self.out.push_str("    mov DWORD PTR [rsp+8], eax\n    jmp .Lio_wr_poll\n.Lio_wr_forever:\n    mov DWORD PTR [rsp+8], -1\n.Lio_wr_poll:\n");
+                self.out.push_str("    mov rdi, rsp\n    mov esi, 1\n    mov edx, DWORD PTR [rsp+8]\n    call poll@PLT\n");
+                self.out.push_str("    test eax, eax\n    jns .Lio_wr_ok\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_wr_poll\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lio_wr_ok:\n    test eax, eax\n    jle .Lio_wr_false\n    movzx eax, WORD PTR [rsp+6]\n    and eax, 0x19\n    setne al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lio_wr_false:\n    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            // The same body with `POLLOUT` (4) and `POLLOUT|POLLHUP|POLLERR`
+            // (0x1c).
+            Routine::IoWaitWritableRaw => {
+                let msg = self.bytes_label(b"io.wait_writable: poll failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n");
+                self.out.push_str("    mov DWORD PTR [rsp], edi\n    mov WORD PTR [rsp+4], 4\n    mov WORD PTR [rsp+6], 0\n");
+                self.out.push_str("    mov rax, rsi\n    movabs rcx, 2147483647\n    cmp rax, rcx\n    ja .Lio_ww_forever\n");
+                self.out.push_str("    mov DWORD PTR [rsp+8], eax\n    jmp .Lio_ww_poll\n.Lio_ww_forever:\n    mov DWORD PTR [rsp+8], -1\n.Lio_ww_poll:\n");
+                self.out.push_str("    mov rdi, rsp\n    mov esi, 1\n    mov edx, DWORD PTR [rsp+8]\n    call poll@PLT\n");
+                self.out.push_str("    test eax, eax\n    jns .Lio_ww_ok\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_ww_poll\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lio_ww_ok:\n    test eax, eax\n    jle .Lio_ww_false\n    movzx eax, WORD PTR [rsp+6]\n    and eax, 0x1c\n    setne al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lio_ww_false:\n    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            // `kelp_String__from_str(strerror(kelp_errno))`: `strerror`
+            // returns a *static* buffer, so the `String` copy is what keeps the
+            // message from changing under a later `strerror`.
+            Routine::IoErrnoTextRaw => {
+                self.out.push_str("    push rbx\n    mov rbx, rdi\n    mov edi, esi\n    call strerror@PLT\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, rax\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+                self.out.push_str("    mov rax, rbx\n    pop rbx\n    ret\n");
             }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");

@@ -269,6 +269,11 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// gated-extern row is empty: the `time`/`rand` calls that fixture makes carry
 /// no named resource, so once their five extern bodies were lowered there was
 /// no gate left to refuse at.
+/// MK7 §5's S2 slice (the eleven `std/io` descriptor externs) added
+/// `io_stdio` and `io_streams`, so the measurement is 205 C / 194 asm / 11
+/// refused: the heap row drops to 11, and its heads move on three more
+/// fixtures (`fs_fallible` to `std.fs.write_raw`, `process_spawn` to
+/// `std.process.arg_count_raw`, `net_poll` to `std.net.connect_raw`).
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "array_basic",
@@ -385,6 +390,10 @@ const ASM_BUILT_BASELINE: &[&str] = &[
 "int_literal_width",
 "int_literals",
     "int_mod_narrow",
+    // MK7 §5's S2 slice: the eleven `std/io` externs, the whole descriptor
+    // family. `std/io` is ungated, so these two need no capability check.
+    "io_stdio",
+    "io_streams",
     "isize_kinds",
     "list_basic",
     "list_clone",
