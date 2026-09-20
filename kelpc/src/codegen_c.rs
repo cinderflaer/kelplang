@@ -2248,6 +2248,30 @@ impl<'a> Gen<'a> {
         }
     }
 
+    /// Emits the `#line` directive that maps the C below back to the `.kp` span
+    /// it came from (roadmap open item 20).
+    ///
+    /// Without it a `cc` diagnostic on the generated C names a line of
+    /// *generated* C: the whole reason `plan/architecture.md` records "generate
+    /// readable, `#line`-annotated C" and the reason a capability denial used to
+    /// carry its own baked-in `file:line:col` string. Every `tir` node carries
+    /// the span, so this is the mechanical half of a real source-mapping story
+    /// (A-16); the column a `#line` cannot express is what the capability denial
+    /// still asks `diag::SourceMap` for.
+    ///
+    /// The directive names a real `.kp` line or it emits nothing: there is no
+    /// guess to make, because `sources` either holds the module's text or it
+    /// does not. One marker per statement is what makes the *statement*, not
+    /// just the function, the resolution, which is the difference between
+    /// finding a miscompiled expression and bisecting the function it lives in.
+    fn write_line_marker(&mut self, span: Span, depth: usize) {
+        if let Some(directive) = self.sources.line_directive(&self.module, span) {
+            indent(&mut self.out, depth);
+            self.out.push_str(&directive);
+            self.out.push('\n');
+        }
+    }
+
     // ---- functions, blocks, statements ---------------------------------
 
     fn write_function(&mut self, f: &Function, init_pds: bool) {
@@ -2307,6 +2331,10 @@ impl<'a> Gen<'a> {
         }
         let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
+            // The tail is where a function's last expression is, so it gets a
+            // marker of its own: it is the line a miscompile in a returned or
+            // discarded value has to name.
+            self.write_line_marker(tail.span, depth);
             // A body whose tail is a `panic` diverges: `infer.rs` accepts it
             // against any declared return type, and here it is a plain
             // statement — `return kelp_panic(...)` would be a void expression
@@ -2340,6 +2368,7 @@ impl<'a> Gen<'a> {
             self.write_stmt(stmt, depth);
         }
         if let Some(tail) = &block.tail {
+            self.write_line_marker(tail.span, depth);
             self.write_stmt_like_expr(tail, depth);
         }
         let drops = self.drops_at_block_end(block);
@@ -2347,6 +2376,15 @@ impl<'a> Gen<'a> {
     }
 
     fn write_stmt(&mut self, stmt: &Stmt, depth: usize) {
+        // One marker per statement, from the span the statement itself carries:
+        // a `Let` is the initializer's span (its first token *is* the `val`),
+        // a `Return` carries its own, a `While` its condition's.
+        match stmt {
+            Stmt::Let { init, .. } => self.write_line_marker(init.span, depth),
+            Stmt::Return { span, .. } => self.write_line_marker(*span, depth),
+            Stmt::While { cond, .. } => self.write_line_marker(cond.span, depth),
+            Stmt::Expr(e) => self.write_line_marker(e.span, depth),
+        }
         match stmt {
             Stmt::Let { name, ty, init } => {
                 let value = self.expr_value(init);
@@ -3039,9 +3077,12 @@ impl<'a> Gen<'a> {
             return call;
         }
         let symbol = CapTable::symbol(&self.module, domain);
-        // The call site, as the author wrote it. The generated C carries no
-        // `#line` directives, so this is the only way a runtime denial can
-        // name a `.kp` location.
+        // The call site, as the author wrote it. The generated C carries a
+        // `#line` marker per statement now (`write_line_marker`), so this is no
+        // longer the only way a denial can name a `.kp` location: it is the
+        // way that also names the *column*, and the file path it prints is the
+        // one the compiler was invoked with rather than whatever the C
+        // preprocessor reports for a `#line`.
         let at = self
             .sources
             .locate(&self.module, span)

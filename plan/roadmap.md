@@ -289,7 +289,7 @@ And inside clang's share: cc1 startup plus system-header preprocessing ~38 ms (t
 4. **Move the non-trivial runtime out of C**: `externs.rs` (251 lines of C bodies) plus `PATH_RUNTIME`/`CAP_RUNTIME` (the glob matcher, the `..`-rejecting path normalizer, `realpath`-with-a-missing-tail). Two fiddly pieces to plan for: `print` currently goes through C's `printf`, and on x86-64 SysV calling a variadic function requires setting `AL` to the number of vector registers used; and the capability checker's matcher/normalizer are Kelp-visible behaviour that is currently C text.
 5. **Then decide.** Keep Cranelift, hand-write x86-64 (own register allocator, no optimizer), or go all the way to a static ELF with raw syscalls and our own runtime allocator, formatter, and `fs` which is the only path to a genuinely self-contained binary.
 
-Things that get *better* rather than worse on the way: GNU statement expressions and compound literals leave the strategy (a real backend handles value-position blocks natively), `-fwrapv` becomes explicit wrap semantics we control, and the `#line` gap (open item 20) stops being something we cannot do.
+Things that get *better* rather than worse on the way: GNU statement expressions and compound literals leave the strategy (a real backend handles value-position blocks natively), `-fwrapv` becomes explicit wrap semantics we control, and the `#line` markers the C backend already emits (item 20) are replaced by DWARF rather than added to.
 
 Gate it on `bench/speed/` (runtime parity, four workloads with cross-language checksums) plus a compile-time column that pair is the whole argument, and it is already in the repo.
 
@@ -349,7 +349,7 @@ Rejected numbering: an earlier revision of this file put moves and borrow checki
 | | MK11-S1-M2 | UB catalogue: overflow, uninitialised memory, provenance, FFI boundary, data races | D-2 |
 | **MK11-S2 Dynamic checking** | MK11-S2-M1 | A Miri-equivalent checker for the move/borrow/aliasing rules | D-3 |
 | **MK11-S3 Testing** | MK11-S3-M1 | Conformance corpus, differential backend testing, lexer/parser/checker fuzzing | D-4 |
-| **MK11-S4 Debug and sanitizers** | MK11-S4-M1 | DWARF emission, source mapping (closes the `#line` gap), a sanitizer story independent of clang | D-5 |
+| **MK11-S4 Debug and sanitizers** | MK11-S4-M1 | DWARF emission, source mapping (item 20 closed the C backend's `#line` half; DWARF is the rest), a sanitizer story independent of clang | D-5 |
 
 ## Dependency notes
 
@@ -386,7 +386,17 @@ Mark-level edges, and the reason for each. Item-level edges are in the open item
 
 19. **`env`'s real bodies.** *`io` and `process` shipped in MK5-S2-M1; `net` shipped in MK5-S3, and it was the one that needed a new idea rather than a new module host:port patterns and a socket type, which is open item 32 and is now resolved.* The gate mechanism is domain-generic and needed no change for any of them. **Resolved by MK5-S5**: `env`'s bodies are real (`getenv`/`setenv`/`unsetenv` behind four externs), `env.unset` shipped, and `caps_env` (read `HOME`, set/read/unset `KELP_ENV_PROBE`) plus `caps_env_denied` (a `PATH` grant denied a `HOME` query) pin the behaviour.
 
-20. **`#line`-annotated C was never actually emitted.** MK1-S2-M1's record claims it shipped "as planned", and the plan's Key-implementation-notes still recommends it for debugging the generated C but `codegen_c.rs` emits no `#line` directive at all, which is why MK4-S1-M1's capability denial passes a `file:line:col` string through `diag::SourceMap` instead of using `__FILE__`/`__LINE__`. Either implement the directive per statement (the span is on every `tir` node, so it is mechanical) or drop the claim; the honest state today is that a `panic:` in the generated C names a line of *generated* C unless the caller the compiler generated passed a source location explicitly.
+20. ~~**`#line`-annotated C was never actually emitted.**~~ Resolved. `codegen_c.rs`
+emits a `#line <n> "<path>"` directive before every statement it renders from
+`.kp`, from the span every `tir` node already carries and the `SourceMap` the
+diagnostics already index, so a `cc` diagnostic on the generated C names the
+`.kp` file **and the line the statement is written on** rather than a line of
+generated C. The capability denial still asks `diag::SourceMap` for its
+`file:line:col`: a `__FILE__`/`__LINE__` pair in the check would lose the
+column, and the denial names the module as well. `kelpc/tests/compile_and_run.rs`
+pins both the single-file and the multi-file case
+(`the_generated_c_maps_statements_back_to_their_kp_lines`), and the directive is
+the C backend's half of A-16; DWARF, which is the other half, is still A-16's.
 
 21. **A `String` is not a `str`.** *Half resolved in MK8-S2-M1.* The half that hurt was the other direction: a `str` (a string literal, a parameter, a slice) is now converted to an owned `String` implicitly wherever a `String` is expected — a call argument, a `datac` field, a `List` element, a `Map` key or value, a `let` with a written type, a `return`, an `if` branch, a `when` arm — so `String.from_str("...")` is no longer written at every owned site. What is **not** fixed is the direction this item was written about: an owned `String` where a `&str` is expected still needs `.as_str()`, because that conversion is a *borrow* with a lifetime rather than a copy, and an implicit one would run into the same temporary-receiver rule item 30 records. `syntax.md` §5.1 is the rule.
 
@@ -603,7 +613,13 @@ is read against a different goal again: the documentation's own workaround list,
 - **A-13. Visibility/privacy.** Every top-level item of a module is reachable as `alias.Item` (MK2-S1-M1) and nothing in the plan adds `pub`. A ~100k-line self-hosted compiler with a fully public surface is a structural problem, not a style one.
 - **A-14. Compilation at scale.** Separate compilation, incremental/query-based compilation, a cross-build cache, and a reserved internal-library location (today `impl` is local-files-only and `std/...` is the *compiler's* namespace). The measured baseline makes this a requirement rather than a nicety: ~95% of `kelpc build` is `cc`'s fixed overhead and Kelp's own pipeline is 3–4 ms (MK7's table), while a self-hosted `kelpc` is roughly an order of magnitude more Kelp source so MK7's own backend is a precondition for a tolerable self-hosted toolchain, not just a performance project.
 - **A-15. Tooling.** A test framework (an explicit non-goal today) — the library half of that want is recorded as **`testkit`, the self-test harness** in the Backlog part below, `kelpc fmt` (shipped — item 13, with its three recorded limits), a lint pass with the configurable naming option (item 23), and a documentation generator with doc-comment extraction.
-- **A-16. Diagnostics and debuggability.** `#line` was never emitted (item 20), so generated code carries no source mapping; a real backend needs DWARF and a location story. Also an own tracing/profiling hook set, so a self-hosted compiler can be profiled without the C toolchain's help.
+- **A-16. Diagnostics and debuggability.** The C backend maps its generated code back
+to the `.kp` one directive per statement (item 20, closed), so a `cc` diagnostic on
+it names a source line; what is still missing is DWARF and a location story for a
+real backend, plus a location primitive a *Kelp* source can write (which is why
+`testkit`'s failure line still has no `at file:line`). Also an own
+tracing/profiling hook set, so a self-hosted compiler can be profiled without the
+C toolchain's help.
 - **A-17. A bootstrap milestone, which this plan does not have at all.** Build `kelpc` in Kelp, compare stage0 (Rust `kelpc`) against stage1 (Kelp `kelpc`) on the whole fixture suite, then check the fixpoint (stage1 builds stage2, behaviourally or byte-identical). Without that test, "the compiler is written in Kelp" is a claim rather than a result the same standard the verification section already holds memory safety to.
 
 #### B. Substrate required for deep systems
@@ -849,7 +865,8 @@ sporadically, and the library offers nothing in between.
 - **Expected and actual in the failure line.** The data is already in the caller's hand at the
 `check_eq_*` call site, so `FAIL <name>: expected <e>, got <a>` is a formatting change. What is
 *not* available is the call's location: a Kelp library has no source-location primitive, so
-`at file:line` stays A-16's (open item 20) — worth writing down so nobody re-asks for it here.
+`at file:line` stays A-16's (item 20's `#line` maps *generated C*, which a Kelp
+library never sees); worth writing down so nobody re-asks for it here.
 - **A `Failure` record instead of a `List<String>`**: `Failure(kind, name, expected, actual)` so
 `failure_list` renders it, a summary can group it, and a machine-readable line
 (`FAIL\t<name>\t<expected>\t<actual>`) becomes possible without a `json` library that does not

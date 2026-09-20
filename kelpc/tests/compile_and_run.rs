@@ -174,6 +174,77 @@ fn when_desugars_to_if_else_chain() {
     assert_compiles_and_runs("tests/fixtures/when_expr.kp", "pos\nneg\nzero\n");
 }
 
+/// Source mapping is the one property of the C backend that only the *generated
+/// file* can answer: a `#line` marker is what the C compiler reads, so no
+/// program's stdout asserts it. Everything else in this file is asserted by
+/// running a program; this test reads `build/<name>.c` on purpose (roadmap open
+/// item 20, and A-16's source-mapping half).
+///
+/// A marker **per statement** is the point: it names the `.kp` file and the line
+/// the statement is written on, and a multi-file build names each module's own
+/// file rather than the entry module's.
+#[test]
+fn the_generated_c_maps_statements_back_to_their_kp_lines() {
+    // `--backend=c` explicitly: the file this reads is one only that backend
+    // writes, so the test must not follow `KELPC_BACKEND=asm`.
+    let source = fixture("tests/fixtures/when_expr.kp");
+    let bin = out_path("line_markers_single");
+    let build = kelpc()
+        .args(["build", "--backend=c"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'when_expr.kp' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    // Lines 8 and 10 are `print(classify(5))` and `print(classify(0))`; the
+    // marker has to name the statement's own line, which is the difference
+    // between "bisect the function" and "read the expression".
+    for line in [8, 10] {
+        let marker = format!("#line {line} \"{}\"", source.display());
+        assert!(
+            generated.contains(&marker),
+            "the generated C has no '{marker}' directive:\n{generated}"
+        );
+    }
+
+    // A multi-file build: `shapes` is `main.kp`, `geom.kp` and
+    // `shapes/circle.kp`, and a statement in each has to be mapped to the file
+    // it was written in.
+    let root = project("shapes").join("src");
+    let bin = out_path("line_markers_project");
+    let build = kelpc()
+        .args(["build", "--backend=c"])
+        .arg(root.join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the 'shapes' project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    for (module, line) in [("main.kp", 5usize), ("geom.kp", 1), ("shapes/circle.kp", 5)] {
+        let marker = format!("#line {line} \"{}\"", root.join(module).display());
+        assert!(
+            generated.contains(&marker),
+            "no '{marker}' directive: the imported module's statements are not \
+             mapped to '{module}'"
+        );
+    }
+}
+
 #[test]
 fn named_and_positional_args_match_correctly() {
     assert_compiles_and_runs("tests/fixtures/named_args.kp", "7\n7\n7\n");

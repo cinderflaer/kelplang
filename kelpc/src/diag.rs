@@ -88,12 +88,33 @@ impl SourceMap {
 
     /// `file:line:col` for a span in a module, when the module's text is
     /// known. Used by `codegen_c.rs` for capability denials, whose message has
-    /// to name the `.kp` call site at runtime (M7) — the generated C has no
-    /// `#line` directives of its own.
+    /// to name the `.kp` call site at runtime (M7). The generated C does carry
+    /// `#line` directives now (`line_directive` below), but this is still the
+    /// one that answers that call: a denial names the *column* as well, and it
+    /// is a compile-time constant rather than a runtime `__FILE__`/`__LINE__`
+    /// that would have to be formatted into a string before the panic.
     pub fn locate(&self, module: &str, span: Span) -> Option<String> {
         let f = self.files.get(module)?;
         let (line, col) = line_col(&f.text, span.start);
         Some(format!("{}:{line}:{col}", f.path.display()))
+    }
+
+    /// The `#line` directive that points the C compiler at `module`'s source at
+    /// `span` (roadmap open item 20), or `None` when the module's text was
+    /// never registered.
+    ///
+    /// `codegen_c.rs` emits one before the statements it renders from `.kp`, so
+    /// a diagnostic from `cc` on the generated C names the `.kp` file and line
+    /// the statement came from instead of a line of generated C. Source mapping
+    /// is worth only what it is exact about, so the line is the span's own;
+    /// codegen never guesses one.
+    pub fn line_directive(&self, module: &str, span: Span) -> Option<String> {
+        let f = self.files.get(module)?;
+        let (line, _) = line_col(&f.text, span.start);
+        Some(format!(
+            "#line {line} \"{}\"",
+            c_string_body(&f.path.to_string_lossy())
+        ))
     }
 
     /// Prints `error: ...` plus an `--> file:line:col` location to stderr.
@@ -128,6 +149,15 @@ impl SourceMap {
             None => format!("{label}{message}\n  --> <module '{module}'>"),
         }
     }
+}
+
+/// A path as the contents of a C string literal: the two bytes that would end
+/// the literal or open an escape are escaped, and nothing else is. A `.kp` path
+/// holding a quote or a backslash is unusual but has to be right anyway, since
+/// the text of a `#line` directive is the same string literal a `printf` would
+/// take.
+fn c_string_body(path: &str) -> String {
+    path.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn line_col(src: &str, offset: usize) -> (usize, usize) {

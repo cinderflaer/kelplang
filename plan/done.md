@@ -1626,3 +1626,40 @@ over 259 binaries — 153 C and 106 asm — with **zero findings** and zero lost
 says the new `atexit` handler frees the passdown rather than merely not crashing. Suite at this record: 112
 unit, 273 end-to-end, 57 formatter, 2 capability-matcher, 1 path-normalizer, 1 memory gate, plus the three
 `--ignored` backend_coverage tests.
+
+## C's own diagnostics name the `.kp` line: roadmap item 20 (DONE)
+
+`plan/architecture.md` has recommended "generate readable, `#line`-annotated C" since MK1, `plan/done.md`'s
+MK1-S2-M1 entry and both wiki codegen rows already claimed it shipped, and `codegen_c.rs` emitted no `#line`
+directive at all. Item 20 framed the choice as implement it or drop the claim; this implements it, which is
+also what the capability denial's baked-in `file:line:col` string was standing in for.
+
+**What is emitted, and from what.** `diag::SourceMap` gained `line_directive`, which turns a module id and a
+span into `#line <n> "<path>"` with the path escaped as a C string literal, and `codegen_c.rs`'s `write_stmt`
+writes one before each statement it renders from `.kp`: a `Let` from its initializer's span, a `Return` from
+its own, a `While` from its condition's, an expression statement from its expression's. The tail of a block or
+a function body gets a marker too, because that is where the last expression of a function lives. No span has
+to be invented anywhere: every `tir` node has carried one since the IR existed, the `SourceMap` already holds
+the text every span indexes into, and a module whose text is not registered emits nothing rather than a guess.
+
+**Why per statement rather than per function.** One directive per statement is what makes the *statement* the
+resolution. A miscompiled expression then names the line it is written on; a marker per function (the alternative) turns
+the same report into a bisect over the function. It is also what makes a multi-file build
+right: `shapes` (three modules) emits `geom.kp`'s marker for `geom.kp`'s statements and `main.kp`'s for
+`main.kp`'s, so the C compiler attributes each statement to the file its author wrote it in.
+
+**What it does not change.** `expr_value`'s output is unchanged and no run-time behaviour moves, so the
+whole fixture suite and both backends are untouched by design: the proof is that the suite went in green
+without a single expected output changing. The capability denial keeps passing `diag::SourceMap`'s
+`file:line:col`: a `__FILE__`/`__LINE__` pair at the check would lose the column, and the denial names the
+module as well as the site.
+
+**Tests**: `the_generated_c_maps_statements_back_to_their_kp_lines` in `kelpc/tests/compile_and_run.rs` is
+the one test in the language suite that reads the generated file, on purpose, because a `#line` marker has no
+run-time observable and nothing a program prints can assert it. It checks a single-file build for two exact
+markers (`when_expr.kp` lines 8 and 10) and the `shapes` project for one per module. `cap_matcher.rs`'s
+generated-C assertion is the same kind of exception; the wiki's test page now names both rather than claiming
+the suite never reads that file.
+
+Suite at this record: 308 end-to-end (the fixture suite plus this test), unchanged otherwise from the entry
+above.
