@@ -2090,6 +2090,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // one, with the original mutated after the clone, so a second handle
         // would free the buffer twice.
         "list_clone",
+        // MISSING-jL9tE: the derived deep copy, with the original cleared
+        // before the clone is read, so a shared buffer is a use-after-free and
+        // a shallow `sort` that lost an element's buffer is a leak. The enum
+        // half of the same fixture is the switch-on-tag clone.
+        "list_datac_clone_sort",
         // MK7 §5's sort/contains/slice slice: the element kinds neither of the
         // two above reaches — a signed and an unsigned integer and `Bytes`,
         // whose comparator is a length-aware `memcmp` — plus a slice of a
@@ -2597,10 +2602,24 @@ fn a_list_sorts_and_searches_every_element_kind_it_can_hold() {
 
 #[test]
 fn list_sort_and_slice_reject_what_they_cannot_do() {
-    // A `datac` element has no order, so `sort` names the reason rather than
-    // failing in codegen; a `slice` range past the end panics at runtime.
+    // A `datac`/`enum` gets its order and its copy from its fields, so an
+    // element that holds a `List` has neither and the diagnostic names that
+    // rather than failing in codegen; a `slice` range past the end panics at
+    // runtime.
     assert_rejected("tests/fixtures/list_unsortable_element.kp");
     assert_fixture_panics("list_slice_bounds", "List.slice: range out of bounds");
+}
+
+#[test]
+fn a_datac_or_enum_element_gets_a_derived_copy_and_order() {
+    // MISSING-jL9tE: `List<Digest>.clone()` and `List<Digest>.sort()` were both
+    // "not defined" because a `datac` element had neither. The copy is deep
+    // (the original is cleared first) and the order is field by field, with an
+    // `enum` ordering by tag before payload.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_datac_clone_sort.kp",
+        "3\nb\na\n1\n3\nb\n2\na\nempty\na\nb\n3\n",
+    );
 }
 
 #[test]

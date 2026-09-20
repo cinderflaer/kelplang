@@ -1,0 +1,61 @@
+// MISSING-jL9tE: a `datac`/`enum` element gets a derived deep copy and a derived
+// order from its fields, so `List<Digest>.clone()` and `List<Digest>.sort()`
+// both mean something. The copy is deep: the original is cleared before the
+// clone is read, so a shared buffer would be a use-after-free, and this fixture
+// is in the AddressSanitizer pass and under valgrind for exactly that.
+impl "std/str"
+
+datac Digest(val path: String, val size: u64)
+
+enum Mark {
+    Empty
+    Named(val label: String)
+}
+
+fun main() {
+    var xs: List<Digest> = List.empty()
+    xs.push(Digest(path = "b", size = 2))
+    xs.push(Digest(path = "a", size = 3))
+    xs.push(Digest(path = "a", size = 1))
+
+    var copy = xs.clone()
+    xs.clear()
+    print(copy.len())
+    // Read through a call argument, not a binding: a `val` that *is* a borrow
+    // would pin `copy` for the rest of the block and block the `sort` below.
+    print(copy.get(0).path.as_str())
+
+    // The derived order is field by field: path, then size.
+    copy.sort()
+    print(copy.get(0).path.as_str())
+    print(copy.get(0).size)
+    print(copy.get(1).size)
+    print(copy.get(2).path.as_str())
+
+    // `slice` is the same deep copy over a range.
+    val middle = copy.slice(1, 3)
+    print(middle.len())
+    print(middle.get(0).path.as_str())
+
+    // An `enum` orders by tag first, so every `Empty` sorts before every
+    // `Named`, and the live variant's payload decides within a tag.
+    var marks: List<Mark> = List.empty()
+    marks.push(Mark.Named(label = "b"))
+    marks.push(Mark.Empty)
+    marks.push(Mark.Named(label = "a"))
+    val marks_copy = marks.clone()
+    marks.sort()
+    when marks.get(0) {
+        Empty -> print("empty")
+        Named(l) -> print(l.as_str())
+    }
+    when marks.get(1) {
+        Empty -> print("empty")
+        Named(l) -> print(l.as_str())
+    }
+    when marks.get(2) {
+        Empty -> print("empty")
+        Named(l) -> print(l.as_str())
+    }
+    print(marks_copy.len())
+}

@@ -1345,6 +1345,8 @@ while !xs.is_empty() {
 
 The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice`, `clone` and `Map.values` are offered only for element types that support them.
 
+A `datac`/`enum` element takes a **derived deep copy and a derived order from its fields**. It is clonable (`clone`/`slice`) when every field it holds is, and sortable when every field has an order, so `datac Digest(val path: String, val size: u64)` gives `List<Digest>` both. The order is field by field in declaration order: a `String`/`Bytes` byte-wise (length-aware), an `enum` by tag and then by the live variant's payload. A `List`, `Box`, `Map` or owned-array field has neither, so a record that holds one is not clonable or sortable. `contains` still needs equality, which a `datac` does not have, and `Map`'s cloning operations (`get_or`, `values`) are still scalar-only.
+
 The element-wise methods above are builtin. The callback-shaped operations
 (`map`, `filter`, `each`, `find_index`, `any`, `all`) live in `std/list`,
 because a callback's result type cannot be generated per element type: see

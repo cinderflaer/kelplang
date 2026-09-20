@@ -19,7 +19,7 @@ use crate::borrowck::{DropPlan, DropTarget};
 use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::tir::*;
-use crate::types::{drop_fn_name, needs_drop, owned_types, EnumDef, StructDef, Ty};
+use crate::types::{clone_fn_name, cmp_fn_name, drop_fn_name, needs_drop, owned_types, EnumDef, StructDef, Ty};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -599,6 +599,14 @@ fn is_str_like_ty(ty: &Ty) -> bool {
 
 pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> String {
     let owned = owned_types(&program.structs, &program.enums);
+    // The user types with a derived deep copy and a derived order
+    // (MISSING-jL9tE): the least fixpoint over the declaration graph, computed
+    // once here for the same reasons `owned` is — `infer.rs` offers
+    // `List.clone`/`List.sort` for exactly the types these sets name, and if
+    // the two disagreed the checker would offer a signature with no body.
+    let type_decls = type_decls(&program.structs, &program.enums);
+    let clonable = crate::types::clonable_types(&type_decls);
+    let sortable = crate::types::sortable_types(&type_decls);
     let caps = CapTable {
         gated: program.gated.clone(),
         patterns: program
@@ -814,8 +822,8 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             emit_arrays_for(&mut out, ty, &mut emitted_arrays, &owned);
         }
         match decl {
-            Decl::Record(s) => write_struct(&mut out, s, &owned),
-            Decl::Sum(e) => write_enum(&mut out, e, &owned),
+            Decl::Record(s) => write_struct(&mut out, s, &owned, &clonable, &sortable),
+            Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable),
         }
     }
     if !decls.is_empty() {
@@ -835,7 +843,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 
     for ty in &containers {
         match ty {
-            Ty::List(elem) => write_list(&mut out, elem, &owned),
+            Ty::List(elem) => write_list(&mut out, elem, &owned, &clonable, &sortable),
             Ty::Box(elem) => write_box(&mut out, elem, &owned),
             Ty::Map(key, value) => write_map(&mut out, key, value, &owned),
             // A closure's shared function set is one drop: the `fn` member is
@@ -1027,10 +1035,74 @@ fn write_pd_globals(
 }
 
 /// One `datac`'s C typedef, plus its drop function when it owns heap memory
+/// The `(name, each field's type)` pairs of every declaration, for the derived
+/// clone/order fixpoints. A `datac` name and an `enum` name cannot collide, so
+/// an `enum` is listed once, by its payloads.
+fn type_decls(structs: &[StructDef], enums: &[EnumDef]) -> Vec<(String, Vec<Ty>)> {
+    let enum_names: HashSet<&str> = enums.iter().map(|e| e.name.as_str()).collect();
+    let mut out: Vec<(String, Vec<Ty>)> = Vec::new();
+    for s in structs {
+        if enum_names.contains(s.name.as_str()) {
+            continue;
+        }
+        out.push((s.name.clone(), s.fields.iter().map(|f| f.ty.clone()).collect()));
+    }
+    for e in enums {
+        out.push((
+            e.name.clone(),
+            e.variants
+                .iter()
+                .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                .collect(),
+        ));
+    }
+    out
+}
+
+/// One field's deep copy, as one C statement. `dst`/`src` are whole field
+/// expressions (`dst->kelp_text`), so the clone of an owned field is the
+/// runtime's own clone of it, and a nested `datac`/`enum` recurses into its
+/// generated clone.
+fn write_field_clone(out: &mut String, ty: &Ty, dst: &str, src: &str) {
+    match ty {
+        Ty::String => writeln!(out, "    {dst} = kelp_String__clone(&{src});").unwrap(),
+        Ty::Bytes => writeln!(out, "    {dst} = kelp_Bytes__clone(&{src});").unwrap(),
+        Ty::Struct(_) => writeln!(out, "    {}(&{src}, &{dst});", clone_fn_name(ty)).unwrap(),
+        _ => writeln!(out, "    {dst} = {src};").unwrap(),
+    }
+}
+
+/// One field's contribution to a derived order: return early on the first
+/// difference, so the fields are compared lexicographically in declaration
+/// order.
+fn write_field_cmp(out: &mut String, ty: &Ty, a: &str, b: &str) {
+    match ty {
+        Ty::String | Ty::Bytes => {
+            out.push_str("    {\n");
+            writeln!(out, "        size_t n = {a}.len < {b}.len ? {a}.len : {b}.len;").unwrap();
+            writeln!(out, "        if (n > 0) {{ int c = memcmp({a}.data, {b}.data, n); if (c != 0) {{ return c < 0 ? -1 : 1; }} }}").unwrap();
+            writeln!(out, "        if ({a}.len != {b}.len) {{ return {a}.len < {b}.len ? -1 : 1; }}").unwrap();
+            out.push_str("    }\n");
+        }
+        Ty::Struct(_) => {
+            writeln!(out, "    {{ int c = {}(&{a}, &{b}); if (c != 0) {{ return c; }} }}", cmp_fn_name(ty)).unwrap();
+        }
+        _ => {
+            writeln!(out, "    if ({a} != {b}) {{ return {a} < {b} ? -1 : 1; }}").unwrap();
+        }
+    }
+}
+
 /// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
 /// `datac`s, so a struct's drop function is always defined before the struct
 /// that calls it — no forward declarations needed.
-fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
+fn write_struct(
+    out: &mut String,
+    s: &StructDef,
+    owned: &HashSet<String>,
+    clonable: &HashSet<String>,
+    sortable: &HashSet<String>,
+) {
     // Tagged (M8), because a container typedef emitted *earlier* may hold a
     // pointer to this struct (`Box<Node>` inside `Node` itself), and a
     // forward declaration of the tag is what makes that legal C.
@@ -1061,6 +1133,49 @@ fn write_struct(out: &mut String, s: &StructDef, owned: &HashSet<String>) {
         }
         out.push_str("}\n");
     }
+    // A derived deep copy (MISSING-jL9tE). Emitted beside the typedef, so a
+    // field of an earlier `datac` already has a clone to call; `List`'s own
+    // `clone`/`slice` is what reaches this from a container.
+    if clonable.contains(&s.name) {
+        writeln!(
+            out,
+            "static void kelp_clone_{}(const {}* src, {}* dst) {{",
+            crate::types::c_ident(&s.name),
+            ty.c_type(),
+            ty.c_type()
+        )
+        .unwrap();
+        for f in &s.fields {
+            write_field_clone(
+                out,
+                &f.ty,
+                &format!("dst->{}", field_name(&f.name)),
+                &format!("src->{}", field_name(&f.name)),
+            );
+        }
+        out.push_str("}\n");
+    }
+    // A derived order, field by field in declaration order, which is what
+    // `List.sort` uses for a `datac` element.
+    if sortable.contains(&s.name) {
+        writeln!(
+            out,
+            "static int kelp_cmp_{}(const {}* a, const {}* b) {{",
+            crate::types::c_ident(&s.name),
+            ty.c_type(),
+            ty.c_type()
+        )
+        .unwrap();
+        for f in &s.fields {
+            write_field_cmp(
+                out,
+                &f.ty,
+                &format!("a->{}", field_name(&f.name)),
+                &format!("b->{}", field_name(&f.name)),
+            );
+        }
+        out.push_str("    return 0;\n}\n");
+    }
 }
 
 /// The generated C member name of one variant's payload struct inside an
@@ -1078,7 +1193,13 @@ fn variant_member(name: &str) -> String {
 /// A variant with no payload still gets a member with one `char` field: an
 /// empty struct is not valid C, and an empty union would be neither valid nor
 /// non-empty when every variant is payload-less (`enum Flag { On Off }`).
-fn write_enum(out: &mut String, e: &EnumDef, owned: &HashSet<String>) {
+fn write_enum(
+    out: &mut String,
+    e: &EnumDef,
+    owned: &HashSet<String>,
+    clonable: &HashSet<String>,
+    sortable: &HashSet<String>,
+) {
     write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&e.name)).unwrap();
     out.push_str("    int32_t kelp_tag;\n");
     out.push_str("    union {\n");
@@ -1131,6 +1252,57 @@ fn write_enum(out: &mut String, e: &EnumDef, owned: &HashSet<String>) {
         // compiler-visible hole, and every tag this program can produce is
         // one of the cases above.
         out.push_str("    }\n}\n");
+    }
+
+    // A derived deep copy: the tag, then the live variant's payload.
+    if clonable.contains(&e.name) {
+        writeln!(
+            out,
+            "static void kelp_clone_{}(const {}* src, {}* dst) {{",
+            crate::types::c_ident(&e.name),
+            ty.c_type(),
+            ty.c_type()
+        )
+        .unwrap();
+        out.push_str("    dst->kelp_tag = src->kelp_tag;\n    switch (src->kelp_tag) {\n");
+        for (i, v) in e.variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            writeln!(out, "    case {i}: {{").unwrap();
+            for f in &v.fields {
+                let at = format!("kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
+                write_field_clone(out, &f.ty, &format!("dst->{at}"), &format!("src->{at}"));
+            }
+            out.push_str("        break;\n    }\n");
+        }
+        out.push_str("    }\n}\n");
+    }
+
+    // A derived order: the tag first, so every value of one variant sorts
+    // together, then the live variant's payload field by field.
+    if sortable.contains(&e.name) {
+        writeln!(
+            out,
+            "static int kelp_cmp_{}(const {}* a, const {}* b) {{",
+            crate::types::c_ident(&e.name),
+            ty.c_type(),
+            ty.c_type()
+        )
+        .unwrap();
+        out.push_str("    if (a->kelp_tag != b->kelp_tag) {\n        return a->kelp_tag < b->kelp_tag ? -1 : 1;\n    }\n    switch (a->kelp_tag) {\n");
+        for (i, v) in e.variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            writeln!(out, "    case {i}: {{").unwrap();
+            for f in &v.fields {
+                let at = format!("kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
+                write_field_cmp(out, &f.ty, &format!("a->{at}"), &format!("b->{at}"));
+            }
+            out.push_str("        break;\n    }\n");
+        }
+        out.push_str("    }\n    return 0;\n}\n");
     }
 }
 
@@ -1785,7 +1957,13 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
 
 /// One `List<T>` instantiation's function set: a growable buffer plus the
 /// operations on it.
-fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
+fn write_list(
+    out: &mut String,
+    elem: &Ty,
+    owned: &HashSet<String>,
+    clonable: &HashSet<String>,
+    sortable: &HashSet<String>,
+) {
     let list = crate::types::list_c_type(elem);
     let elem_c = elem.c_type();
     let elem_drops = needs_drop(elem, owned);
@@ -1849,7 +2027,7 @@ fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     }
     out.push_str("    self->len = 0;\n}\n\n");
 
-    write_list_s1(out, elem, &list, &elem_c, owned);
+    write_list_s1(out, elem, &list, &elem_c, clonable, sortable);
 
     writeln!(out, "static void {}({list}* self) {{", crate::types::drop_fn_name(&Ty::List(Box::new(elem.clone())))).unwrap();
     writeln!(out, "    {list}__clear(self);\n    free(self->data);\n    self->data = NULL;\n    self->cap = 0;\n}}\n").unwrap();
@@ -1860,8 +2038,17 @@ fn write_list(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
 /// exist depends on the element type, exactly as `infer::list_sig` decides
 /// when it offers the signature — `types::list_sortable_elem` and its
 /// siblings are the single source of truth for both passes.
-fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: &HashSet<String>) {
-    if crate::types::list_sortable_elem(elem) {
+fn write_list_s1(
+    out: &mut String,
+    elem: &Ty,
+    list: &str,
+    elem_c: &str,
+    clonable: &HashSet<String>,
+    sortable: &HashSet<String>,
+) {
+    let elem_sortable = crate::types::value_is_sortable(elem, sortable);
+    let elem_clonable = crate::types::value_is_clonable(elem, clonable);
+    if elem_sortable {
         // One comparator per element kind, so the sort itself stays one
         // insertion sort. `String`/`Bytes` compare length-aware: `strcmp`
         // would stop at an embedded NUL and ignore everything after it.
@@ -1874,6 +2061,11 @@ fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: 
                 out.push_str("    size_t n = a->len < b->len ? a->len : b->len;\n");
                 out.push_str("    if (n > 0) {\n        int c = memcmp(a->data, b->data, n);\n        if (c != 0) {\n            return c < 0 ? -1 : 1;\n        }\n    }\n");
                 out.push_str("    return a->len < b->len ? -1 : (a->len > b->len ? 1 : 0);\n}\n\n");
+            }
+            // A `datac`/`enum` element orders by its derived comparison, which
+            // is field by field in declaration order (MISSING-jL9tE).
+            Ty::Struct(_) => {
+                writeln!(out, "    return {}(a, b);\n}}\n", cmp_fn_name(elem)).unwrap();
             }
             _ => {
                 out.push_str("    return (*a > *b) - (*a < *b);\n}\n\n");
@@ -1911,7 +2103,7 @@ fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: 
         writeln!(out, "    for (size_t i = 0; i < self->len; i++) {{\n        if ({eq}) {{\n            return true;\n        }}\n    }}\n    return false;\n}}\n").unwrap();
     }
 
-    if crate::types::list_clonable_elem(elem) {
+    if elem_clonable {
         writeln!(out, "static {list} {list}__slice(const {list}* self, size_t from, size_t to) {{").unwrap();
         out.push_str("    if (from > to || to > self->len) {\n        kelp_panic(\"List.slice: range out of bounds\");\n    }\n");
         writeln!(out, "    {list} out = {list}__empty();").unwrap();
@@ -1923,6 +2115,16 @@ fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: 
             }
             Ty::Bytes => {
                 writeln!(out, "        out.data[out.len++] = kelp_Bytes__clone(&self->data[i]);").unwrap();
+            }
+            // An owned `datac`/`enum` element is deep-copied into the new
+            // list's own storage, so the two lists share nothing.
+            Ty::Struct(_) => {
+                writeln!(
+                    out,
+                    "        {}(&self->data[i], &out.data[out.len]);\n        out.len++;",
+                    clone_fn_name(elem)
+                )
+                .unwrap();
             }
             _ => {
                 writeln!(out, "        out.data[out.len++] = self->data[i];").unwrap();

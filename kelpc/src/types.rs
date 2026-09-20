@@ -498,6 +498,85 @@ pub fn list_clonable_elem(ty: &Ty) -> bool {
     ty.is_copy() || matches!(ty, Ty::String | Ty::Bytes)
 }
 
+/// Whether one field, payload or `List` element of type `ty` can be deep-copied
+/// once its user types can. `clonable` holds the `datac`/`enum` names that can
+/// be (see `clonable_types`).
+pub fn value_is_clonable(ty: &Ty, clonable: &std::collections::HashSet<String>) -> bool {
+    ty.is_copy()
+        || matches!(ty, Ty::String | Ty::Bytes)
+        || matches!(ty, Ty::Struct(n) if clonable.contains(n))
+}
+
+/// Whether one field or payload of type `ty` has an order, once its user types
+/// have. `String`/`Bytes` compare byte-wise and length-aware; a `datac`/`enum`
+/// compares field by field in declaration order.
+pub fn value_is_sortable(ty: &Ty, sortable: &std::collections::HashSet<String>) -> bool {
+    ty.is_numeric()
+        || matches!(ty, Ty::Bool | Ty::Char | Ty::String | Ty::Bytes)
+        || matches!(ty, Ty::Struct(n) if sortable.contains(n))
+}
+
+/// The user types whose value can be deep-copied: the least fixpoint in which a
+/// `datac`/`enum` is clonable once every field or payload it holds is. `decls`
+/// is one `(name, each field's type)` per declaration, including generic
+/// instances.
+///
+/// A type that reaches itself by value stays out of the set, which is the
+/// honest answer: v1's declaration rule already forbids a directly recursive
+/// `datac`, and a recursion through a `Box`/`List` is not a shape a plain copy
+/// can follow without a decision about what the copy owns.
+pub fn clonable_types(decls: &[(String, Vec<Ty>)]) -> std::collections::HashSet<String> {
+    fixpoint(decls, value_is_clonable)
+}
+
+/// The same fixpoint for the order a `datac`/`enum` gets when it is sorted:
+/// fields in declaration order, a `String`/`Bytes` byte-wise, an `enum` by tag
+/// and then by the live variant's payload. A `List`/`Box`/`Map` field is not
+/// ordered, so a record that holds one is not sortable either.
+pub fn sortable_types(decls: &[(String, Vec<Ty>)]) -> std::collections::HashSet<String> {
+    fixpoint(decls, value_is_sortable)
+}
+
+fn fixpoint(
+    decls: &[(String, Vec<Ty>)],
+    ok: fn(&Ty, &std::collections::HashSet<String>) -> bool,
+) -> std::collections::HashSet<String> {
+    let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    loop {
+        let mut changed = false;
+        for (name, fields) in decls {
+            if set.contains(name) {
+                continue;
+            }
+            if fields.iter().all(|f| ok(f, &set)) {
+                set.insert(name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            return set;
+        }
+    }
+}
+
+/// The generated C function that deep-copies a `datac`/`enum` from `src` into
+/// `dst` (the caller's storage, which must not already own anything).
+pub fn clone_fn_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(name) => format!("kelp_clone_{}", c_ident(name)),
+        other => unreachable!("no clone rule for type '{}'", other.display()),
+    }
+}
+
+/// The generated C function that orders two values of a `datac`/`enum`: the
+/// sign of the difference, like `memcmp`.
+pub fn cmp_fn_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(name) => format!("kelp_cmp_{}", c_ident(name)),
+        other => unreachable!("no order rule for type '{}'", other.display()),
+    }
+}
+
 /// Whether a value of `ty` has to be freed — the builtin owned types, or a
 /// `datac` that (transitively) holds one.
 pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) -> bool {

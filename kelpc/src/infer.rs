@@ -676,6 +676,61 @@ impl Ctx {
         self.enums.contains_key(name) || self.env.instances.borrow().sums.contains_key(name)
     }
 
+    /// Every `datac`/`enum` declaration the checker knows, generic instances
+    /// included, as `(name, each field's type)` — what the derived
+    /// clone/order fixpoints (`types::clonable_types`) run over.
+    fn type_decls(&self) -> Vec<(String, Vec<Ty>)> {
+        let mut out: Vec<(String, Vec<Ty>)> = Vec::new();
+        let mut push = |name: &str, fields: Vec<Ty>| out.push((name.to_string(), fields));
+        // A name that is an `enum` also sits in `structs` as an empty record
+        // (one name-resolution path covers both kinds), so the enum table's
+        // entry is the one to keep.
+        for (name, s) in &self.structs {
+            if self.enums.contains_key(name) {
+                continue;
+            }
+            push(name, s.fields.iter().map(|f| f.ty.clone()).collect());
+        }
+        for (name, e) in &self.enums {
+            push(
+                name,
+                e.variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                    .collect(),
+            );
+        }
+        let st = self.env.instances.borrow();
+        for (name, s) in &st.records {
+            push(name, s.fields.iter().map(|f| f.ty.clone()).collect());
+        }
+        for (name, e) in &st.sums {
+            push(
+                name,
+                e.variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                    .collect(),
+            );
+        }
+        out
+    }
+
+    /// Whether `List<T>.clone`/`.slice` can be offered for a value of `ty`:
+    /// a scalar, `String`/`Bytes`, or a `datac`/`enum` all of whose fields can
+    /// be deep-copied.
+    fn value_clonable(&self, ty: &Ty) -> bool {
+        let set = crate::types::clonable_types(&self.type_decls());
+        crate::types::value_is_clonable(ty, &set)
+    }
+
+    /// Whether `List<T>.sort` can be offered for a value of `ty`, by the same
+    /// declaration-graph rule.
+    fn value_sortable(&self, ty: &Ty) -> bool {
+        let set = crate::types::sortable_types(&self.type_decls());
+        crate::types::value_is_sortable(ty, &set)
+    }
+
     /// Instantiates a generic template for one use site (A-2). Idempotent: a
     /// key that already exists is returned as-is, which is also what makes a
     /// recursive instantiation terminate.
@@ -2090,9 +2145,16 @@ fn box_element_error(ty: &Ty) -> String {
 /// - `push`/`set`/`pop` take and give the element by value, which is where a
 ///   move in or out of the list happens (M3's move tracking runs on the
 ///   ordinary call-argument path, so no new borrow rules were needed).
-fn container_sig(key: &str, elem: &Ty, map_key: &Ty, array_len: Option<u64>) -> Option<FnSig> {
+fn container_sig(
+    key: &str,
+    elem: &Ty,
+    map_key: &Ty,
+    array_len: Option<u64>,
+    elem_sortable: bool,
+    elem_clonable: bool,
+) -> Option<FnSig> {
     if key.starts_with("List#") {
-        list_sig(key, elem)
+        list_sig(key, elem, elem_sortable, elem_clonable)
     } else if key.starts_with("Map#") {
         map_sig(key, map_key, elem)
     } else if key.starts_with("Array#") {
@@ -2162,7 +2224,11 @@ fn box_sig(key: &str, elem: &Ty) -> Option<FnSig> {
     })
 }
 
-fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
+/// `sortable`/`clonable` are what `types::value_is_sortable` and
+/// `value_is_clonable` say about `elem` with `ctx`'s own declaration graph, so
+/// a `datac`/`enum` element whose fields are all copyable or all ordered
+/// reaches the same two methods a scalar does (MISSING-jL9tE).
+fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> Option<FnSig> {
     let list = Ty::List(Box::new(elem.clone()));
     let shared = Ty::Ref { mutable: false, inner: Box::new(list.clone()) };
     let exclusive = Ty::Ref { mutable: true, inner: Box::new(list.clone()) };
@@ -2193,7 +2259,7 @@ fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
         // element type falls through to the "no method" diagnostic rather
         // than getting a signature codegen cannot emit (see
         // `types::list_sortable_elem` and friends).
-        "List#sort" if crate::types::list_sortable_elem(elem) => {
+        "List#sort" if sortable => {
             FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit }
         }
         "List#reverse" => FnSig { params: vec![p("self", exclusive)], ret: Ty::Unit },
@@ -2201,7 +2267,7 @@ fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
             params: vec![p("self", shared), p("v", contains_param(elem))],
             ret: Ty::Bool,
         },
-        "List#slice" if crate::types::list_clonable_elem(elem) => FnSig {
+        "List#slice" if clonable => FnSig {
             params: vec![p("self", shared), p("from", Ty::Usize), p("to", Ty::Usize)],
             ret: list.clone(),
         },
@@ -2210,7 +2276,7 @@ fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
         // `list_clonable_elem` gate, so an element that cannot be copied
         // out gets the "no method" diagnostic rather than a signature
         // codegen has no body for.
-        "List#clone" if crate::types::list_clonable_elem(elem) => {
+        "List#clone" if clonable => {
             FnSig { params: vec![p("self", shared)], ret: list.clone() }
         }
         "List#insert" => FnSig {
@@ -9305,11 +9371,15 @@ fn check_method_call(
                 instantiate_function(ctx, &tmpl_key, &[], args, span, expected, Some(&probe.ty))?
             }
             None => match container_elem.as_ref().and_then(|e| {
+                let elem_sortable = ctx.value_sortable(e);
+                let elem_clonable = ctx.value_clonable(e);
                 container_sig(
                     &key,
                     e,
                     &container_key,
                     crate::types::array_len_of(&probe.ty),
+                    elem_sortable,
+                    elem_clonable,
                 )
             }) {
                 Some(s) => (key, s),
@@ -9325,17 +9395,13 @@ fn check_method_call(
                         && matches!(method, "sort" | "contains" | "slice" | "clone") =>
                 {
                     format!(
-                        "List<{}>.{method} is not defined: a 'datac' element has no {}, so it cannot be {} — use a scalar, 'String' or 'Bytes' element",
+                        "List<{}>.{method} is not defined: '{}' has no {}, and a 'datac'/'enum' takes one from its fields, so every field it holds has to have it too — use an element whose fields all do",
+                        e.display(),
                         e.display(),
                         match method {
                             "sort" => "order",
                             "contains" => "equality",
                             _ => "copy",
-                        },
-                        match method {
-                            "sort" => "sorted",
-                            "contains" => "searched for",
-                            _ => "copied into a new list",
                         }
                     )
                 }

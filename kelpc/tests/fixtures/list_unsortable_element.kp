@@ -1,9 +1,12 @@
-// A `datac` element has no order and no `==` in v1, so `sort`/`contains`/
-// `slice` are not defined for it — the diagnostic says which and why.
-datac Pair(val a: i32, val b: i32)
+// A `datac`/`enum` takes a derived order and a derived copy from its fields, so
+// `sort`/`clone` are offered exactly when every field has one. A `List` field
+// has neither, so this element is refused and the diagnostic names the reason
+// rather than failing in codegen.
+datac Bucket(val a: i32, val items: List<i32>)
 
 fun main() {
-    var ps: List<Pair> = List.empty()
-    ps.push(Pair(a = 1, b = 2))
-    ps.sort()
+    var items: List<i32> = List.empty()
+    var bs: List<Bucket> = List.empty()
+    bs.push(Bucket(a = 1, items = items))
+    bs.sort()
 }
