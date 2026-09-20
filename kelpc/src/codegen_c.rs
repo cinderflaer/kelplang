@@ -2991,7 +2991,7 @@ impl<'a> Gen<'a> {
             // hidden first argument; the callee is bound to a temporary
             // first, so a field or a dereference is evaluated once.
             ExprKind::IndirectCall { callee, args } => {
-                let (prelude, arg_texts, hoisted) = self.render_arguments(args);
+                let (prelude, arg_texts, hoisted) = self.render_arguments(args, &[]);
                 let arglist = arg_texts.join(", ");
                 match closure_access(&callee.ty) {
                     Some((fn_member, env_member)) => {
@@ -3402,30 +3402,34 @@ impl<'a> Gen<'a> {
         self.out.push('}');
     }
 
-    /// A gated call (M7): every resource argument is checked against the
-    /// calling module's compiled-in allowlist *before* the call runs, and the
-    /// whole thing is a statement expression so it works in value position
-    /// (`val b = fs.read(p)`) as well as statement position.
-    fn cap_checked_call(&self, callee: &str, call: String, args: &[Expr], span: Span) -> String {
+    /// The gated-call shape for one call site: the domain, its pattern count,
+    /// the call site as the author wrote it, and which arguments are resource
+    /// names. `None` when the call is not gated, the calling module holds no
+    /// grant for it, or the call names no resource at all.
+    ///
+    /// `call_value` and `cap_checked_call` both read this one answer, so the
+    /// argument the grant is checked against and the argument the call passes
+    /// cannot disagree.
+    fn cap_plan(
+        &self,
+        callee: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<(String, usize, String, Vec<crate::stdlib::CapCheck>)> {
         use crate::stdlib::CapCheck;
 
-        let Some(domain) = self.caps.gated.get(callee) else {
-            return call;
-        };
-        let Some(patterns) = self.caps.patterns_for(&self.module, domain) else {
-            return call;
-        };
+        let domain = self.caps.gated.get(callee)?;
+        let patterns = self.caps.patterns_for(&self.module, domain)?;
         let arg_is_str: Vec<bool> =
             args.iter().map(|a| crate::stdlib::is_str_like_ty(&a.ty)).collect();
-        // `cap_checked_call` is handed the call's key, which for an imported
-        // module is qualified (`std.net.connect`); the per-function table in
+        // The plan is built from the call's key, which for an imported module
+        // is qualified (`std.net.connect`); the per-function table in
         // `stdlib.rs` is keyed on the bare name the author wrote.
         let bare = callee.rsplit('.').next().unwrap_or(callee);
-        let checked = crate::stdlib::checked_args(domain, bare, &arg_is_str);
+        let checked: Vec<CapCheck> = crate::stdlib::checked_args(domain, bare, &arg_is_str);
         if checked.is_empty() {
-            return call;
+            return None;
         }
-        let symbol = CapTable::symbol(&self.module, domain);
         // The call site, as the author wrote it. The generated C carries a
         // `#line` marker per statement now (`write_line_marker`), so this is no
         // longer the only way a denial can name a `.kp` location: it is the
@@ -3436,58 +3440,77 @@ impl<'a> Gen<'a> {
             .sources
             .locate(&self.module, span)
             .unwrap_or_else(|| self.module.clone());
+        Some((domain.clone(), patterns.len(), at, checked))
+    }
+
+    /// A gated call (M7): every resource argument is checked against the
+    /// calling module's compiled-in allowlist *before* the call runs, and the
+    /// whole thing is a statement expression so it works in value position
+    /// (`val b = fs.read(p)`) as well as statement position.
+    ///
+    /// The check reads `args_text`, the same argument texts the call passes,
+    /// never a fresh render of the argument. An argument whose expression has
+    /// an effect is hoisted into a temporary exactly once, so the value the
+    /// grant admits is the value the call uses.
+    fn cap_checked_call(
+        &self,
+        plan: Option<(String, usize, String, Vec<crate::stdlib::CapCheck>)>,
+        call: String,
+        args_text: &[String],
+    ) -> String {
+        use crate::stdlib::CapCheck;
+
+        let Some((domain, pattern_count, at, checked)) = plan else {
+            return call;
+        };
+        let symbol = CapTable::symbol(&self.module, &domain);
         let mut checks = String::new();
         for check in checked {
             match check {
                 CapCheck::Path(i) => {
                     // A path is normalized lexically, then resolved through
                     // symlinks, and only then matched.
-                    let path = self.expr_value(&args[i]);
+                    let path = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_path(\"{domain}\", {path}, {symbol}, {}, \"{}\", \"{at}\"); ",
-                        patterns.len(),
+                        "kelp_cap_check_path(\"{domain}\", {path}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
                         self.module
                     )
                     .unwrap();
                 }
                 CapCheck::Name(i) => {
-                    let name = self.expr_value(&args[i]);
+                    let name = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_name(\"{domain}\", {name}, {symbol}, {}, \"{}\", \"{at}\"); ",
-                        patterns.len(),
+                        "kelp_cap_check_name(\"{domain}\", {name}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
                         self.module
                     )
                     .unwrap();
                 }
                 CapCheck::Host(i) => {
-                    let host = self.expr_value(&args[i]);
+                    let host = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_host(\"{domain}\", {host}, {symbol}, {}, \"{}\", \"{at}\"); ",
-                        patterns.len(),
+                        "kelp_cap_check_host(\"{domain}\", {host}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
                         self.module
                     )
                     .unwrap();
                 }
                 CapCheck::HostPort(host_at, port_at) => {
-                    let host = self.expr_value(&args[host_at]);
-                    let port = self.expr_value(&args[port_at]);
+                    let host = &args_text[host_at];
+                    let port = &args_text[port_at];
                     write!(
                         checks,
-                        "kelp_cap_check_hostport(\"{domain}\", {host}, {port}, {symbol}, {}, \"{}\", \"{at}\"); ",
-                        patterns.len(),
+                        "kelp_cap_check_hostport(\"{domain}\", {host}, {port}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
                         self.module
                     )
                     .unwrap();
                 }
                 CapCheck::Port(i) => {
-                    let port = self.expr_value(&args[i]);
+                    let port = &args_text[i];
                     write!(
                         checks,
-                        "kelp_cap_check_port(\"{domain}\", {port}, {symbol}, {}, \"{}\", \"{at}\"); ",
-                        patterns.len(),
+                        "kelp_cap_check_port(\"{domain}\", {port}, {symbol}, {pattern_count}, \"{}\", \"{at}\"); ",
                         self.module
                     )
                     .unwrap();
@@ -3580,7 +3603,16 @@ impl<'a> Gen<'a> {
         // call runs; hoisting it into the *argument* alone would not do,
         // because a GNU statement expression's temporaries die when it ends,
         // before the call it is an argument to.
-        let (prelude, args_text, hoisted) = self.render_arguments(args);
+        // Which arguments a capability check reads, decided before the
+        // arguments are rendered: a checked argument whose text has an effect
+        // is hoisted into a temporary so the check and the call read one
+        // evaluation of it.
+        let plan = self.cap_plan(callee, args, span);
+        let hoist: Vec<bool> = plan
+            .as_ref()
+            .map(|(_, _, _, checked)| checked_arg_flags(checked, args.len()))
+            .unwrap_or_default();
+        let (prelude, args_text, hoisted) = self.render_arguments(args, &hoist);
 
         let mut s = format!("{}({})", c_name(callee), args_text.join(", "));
         // Container methods are monomorphized: the C name carries the element
@@ -3670,7 +3702,7 @@ impl<'a> Gen<'a> {
                 s = format!("{base}__{suffix}({})", args_text.join(", "));
             }
         }
-        let call = self.cap_checked_call(callee, s, args, span);
+        let call = self.cap_checked_call(plan, s, &args_text);
         self.hoisted_call(prelude, call, &hoisted, ret)
     }
 
@@ -3754,8 +3786,19 @@ impl<'a> Gen<'a> {
     ///
     /// Returns `(prelude, argument text, owned temporaries)`. An argument that
     /// needs nothing comes back as its own C text with an empty prelude.
-    fn stage_argument(&self, arg: &Expr) -> (String, String, Vec<(String, Ty)>) {
+    ///
+    /// `hoist` forces an rvalue argument into a temporary (see
+    /// `checked_arg_needs_temp`): the text that comes back is the temporary,
+    /// so the caller reads one evaluation of the argument wherever it uses the
+    /// text. Nothing drops that temporary: the callee takes the value itself,
+    /// exactly as it did when the argument was the expression.
+    fn stage_argument(&self, arg: &Expr, hoist: bool) -> (String, String, Vec<(String, Ty)>) {
         let ExprKind::Ref { expr: sub, .. } = &arg.kind else {
+            if hoist {
+                let tmp = fresh_temp();
+                let prelude = format!("{} = {};\n", arg.ty.c_decl(&tmp), self.expr_value(arg));
+                return (prelude, tmp, Vec::new());
+            }
             return (String::new(), self.expr_value(arg), Vec::new());
         };
         if let Some(root) = temporary_root(sub) {
@@ -3782,13 +3825,19 @@ impl<'a> Gen<'a> {
 
     /// A call's arguments as C text, with each one's staged storage in the
     /// prelude and its owned temporaries in the third slot; see
-    /// `stage_argument`.
-    fn render_arguments(&self, args: &[Expr]) -> (String, Vec<String>, Vec<(String, Ty)>) {
+    /// `stage_argument`. `hoist` is per argument, `false` for any entry it does
+    /// not cover.
+    fn render_arguments(
+        &self,
+        args: &[Expr],
+        hoist: &[bool],
+    ) -> (String, Vec<String>, Vec<(String, Ty)>) {
         let mut prelude = String::new();
         let mut texts: Vec<String> = Vec::new();
         let mut staged: Vec<(String, Ty)> = Vec::new();
-        for a in args {
-            let (decls, text, owned) = self.stage_argument(a);
+        for (i, a) in args.iter().enumerate() {
+            let want = hoist.get(i).copied().unwrap_or(false) && checked_arg_needs_temp(a);
+            let (decls, text, owned) = self.stage_argument(a, want);
             prelude.push_str(&decls);
             texts.push(text);
             staged.extend(owned);
@@ -4017,6 +4066,48 @@ fn temporary_root(expr: &Expr) -> Option<&Expr> {
         }
     }
     if is_place(cur) { None } else { Some(cur) }
+}
+
+/// Which arguments a plan's capability checks read: `Path`, `Name`, `Host` and
+/// `Port` name one each, `HostPort` names two. The flags line up with the
+/// call's arguments, so `render_arguments` can hoist exactly those.
+fn checked_arg_flags(checked: &[crate::stdlib::CapCheck], arg_count: usize) -> Vec<bool> {
+    use crate::stdlib::CapCheck;
+
+    let mut flags = vec![false; arg_count];
+    for check in checked {
+        match *check {
+            CapCheck::Path(i) | CapCheck::Name(i) | CapCheck::Host(i) | CapCheck::Port(i) => {
+                flags[i] = true;
+            }
+            CapCheck::HostPort(host, port) => {
+                flags[host] = true;
+                flags[port] = true;
+            }
+        }
+    }
+    flags
+}
+
+/// Whether a checked resource argument has to be hoisted into a temporary so
+/// that the check and the call share one evaluation of it.
+///
+/// A durable place (a binding, a `datac` field of one, a dereferenced borrow)
+/// reads the same twice with no effect, and a literal has no evaluation to
+/// repeat, so those need nothing. Everything else, a call in particular, is
+/// evaluated exactly once. A `Ref` is left alone because `stage_argument`
+/// already gives a borrow stable text: it stages a temporary root itself, and
+/// a `&str` borrow is the pointer.
+fn checked_arg_needs_temp(arg: &Expr) -> bool {
+    match &arg.kind {
+        ExprKind::Ref { .. }
+        | ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_) => false,
+        _ => temporary_root(arg).is_some(),
+    }
 }
 
 /// Whether a borrow is a `&str`: the one borrow C spells as the pointer

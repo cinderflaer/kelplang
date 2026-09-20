@@ -1,0 +1,17 @@
+// Two calls, one grant, and the two halves of the fail-open report.
+//
+// `util.inside_once()` carries the resource argument from the report: `mk()`
+// names an in-grant path the first time it runs and `/etc/passwd` the second.
+// The C backend evaluates that argument once now, so the check admits the path
+// the call actually reads, which is the in-grant file. Before the fix the check
+// saw the first evaluation and the call read the second, so this program printed
+// the contents of `/etc/passwd` and exited 0.
+//
+// `util.outside()` is the control: out of the grant on every evaluation. It is
+// denied at runtime, and the denial names `util.kp` where it is written.
+impl "util" caps(fs = ["/tmp/kelp_caps_double_eval/**"])
+
+fun main() {
+    print(util.inside_once())
+    print(util.outside())
+}

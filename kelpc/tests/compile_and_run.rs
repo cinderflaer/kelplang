@@ -1502,6 +1502,71 @@ fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
 }
 
 #[test]
+fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
+    // The C backend's capability check used to re-evaluate the resource
+    // argument, so the check admitted one path and the call read another. This
+    // project pins both halves of that fix in one run.
+    //
+    // `util.inside_once()` is the fail-open shape: `mk()` names a path inside
+    // the grant the first time it runs and `/etc/passwd` the second, and it
+    // prints `SIDE` on every call. The argument is evaluated once now, so the
+    // stdout is one `SIDE` and the in-grant file's contents; before the fix it
+    // was two and the contents of `/etc/passwd`.
+    //
+    // `util.outside()` is the control, out of the grant on every evaluation,
+    // and its denial is asserted whole rather than by substring, so the path,
+    // the location, the `granted:` line and its indentation are all pinned.
+    if backend() != "c" {
+        // The asm backend refuses a gated call that carries a resource
+        // argument, so it cannot build this project at all; the property this
+        // test pins is the C emitter's.
+        eprintln!(
+            "note: this project is a gated call with a resource argument, which the \
+             asm backend refuses; backend '{}' is not checked by it",
+            backend()
+        );
+        return;
+    }
+    let dir = caps_scratch("double_eval");
+    std::fs::write(dir.join("a"), "FILECONTENT").unwrap();
+    let target = project("caps_double_eval").join("main.kp");
+    let bin = out_path("caps_double_eval");
+    let build = kelpc()
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected project 'caps_double_eval' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "SIDE\nFILECONTENT\n",
+        "the resource argument was not evaluated exactly once, or the call read \
+         a different path than the check admitted"
+    );
+    assert_eq!(run.status.code(), Some(1), "the control must be denied");
+    // `util.kp:23:27` is `fs.read_text("/etc/passwd")` in the control, as the
+    // compiler was invoked with the file.
+    let expected = format!(
+        "{}:23:27: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+         granted:\n    /tmp/kelp_caps_double_eval/**\n",
+        project("caps_double_eval").join("util.kp").display()
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        expected,
+        "the capability denial's text is not what the compiler writes"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_granted_module_creates_a_symlink_inside_its_grant() {
     // `fs.symlink` checks *both* of its paths, so a link can only be created
     // where the grant reaches and can only point where the grant reaches. The

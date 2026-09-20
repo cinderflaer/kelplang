@@ -1,0 +1,23 @@
+impl "std/fs"
+
+// The call counter decides which path the next call to `mk()` names, so the
+// program itself shows whether the argument was read once or twice.
+pd var n: i32 = 0
+
+// Prints on every call, so a stdout with one `SIDE` is proof that the argument
+// was evaluated once. Inside the grant the first time, `/etc/passwd` the second:
+// the two evaluations a check-then-call pair would make differ, and the second
+// is out of the grant.
+fun mk().R: str {
+    print("SIDE")
+    n = n + 1
+    if n == 1 {
+        return "/tmp/kelp_caps_double_eval/a"
+    }
+    return "/etc/passwd"
+}
+
+fun inside_once().R: String = fs.read_text(mk())
+
+// The control: a path out of the grant, the same on every evaluation.
+fun outside().R: String = fs.read_text("/etc/passwd")
