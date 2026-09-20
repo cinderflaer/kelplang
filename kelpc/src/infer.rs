@@ -5114,19 +5114,20 @@ fn scan_pd_uses(
 fn implicit_borrow_wrap(base: Ty, mut_marked: bool) -> Ty {
     if mut_marked {
         Ty::Ref { mutable: true, inner: Box::new(base) }
-    } else if matches!(
-        base,
-        Ty::Struct(_)
-            | Ty::Bytes
-            | Ty::String
-            | Ty::List(_)
-            | Ty::Box(_)
-            | Ty::Map(..)
-            | Ty::Closure { .. }
-    ) {
-        Ty::Ref { mutable: false, inner: Box::new(base) }
-    } else {
+    } else if base.is_copy() {
+        // A `Copy` value is passed by value: copying one is copying a scalar, a
+        // pair of words, or a pointer, so a borrow would only add an
+        // indirection. That is `str`, `View`, a function value and the scalars.
         base
+    } else {
+        // Everything that owns memory, so the caller keeps it. This is the whole
+        // list: `datac`/`enum`, `Bytes`, `String`, the containers, a closure —
+        // and a fixed-size array whose element owns something (A-18). Asking
+        // `is_copy` rather than listing the types is what keeps the two in step:
+        // an array of scalars is a value and is passed like one, while
+        // `[String; 2]` is an owner, so a plain parameter borrows it exactly as
+        // a `String` parameter does instead of consuming the caller's array.
+        Ty::Ref { mutable: false, inner: Box::new(base) }
     }
 }
 

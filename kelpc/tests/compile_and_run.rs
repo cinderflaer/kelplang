@@ -1861,9 +1861,11 @@ fn an_array_element_may_own_memory_a_datac_or_another_array() {
     // `[Gate; 4]` as a `datac` field is the IDT/GDT shape, `[String; 3]`
     // makes the array own its elements (so `set` frees the one it replaces,
     // and a `datac` holding one owns it transitively), a `mut` parameter writes
-    // through the borrow while a `move` one takes the value over, and
-    // `Box<[i32; 3]>` is a fixed-size buffer kept past its frame.
-    assert_c_only_fixture_runs("array_owned", "9 2\n6\nbee\n3\n9\n2\n9\n");
+    // through the borrow while a `move` one takes the value over, an
+    // owned-element array is borrowed by a plain parameter (so the caller's
+    // array survives the call), and `Box<[i32; 3]>` is a fixed-size buffer kept
+    // past its frame.
+    assert_c_only_fixture_runs("array_owned", "9 2\n6\nbee\n3\n2\n3\n9\n2\n9\n");
 }
 
 #[test]

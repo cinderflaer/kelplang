@@ -20,6 +20,8 @@ fun sum(xs: [i32; 3]).R: i32 {
 
 fun make().R: [i32; 3] = [1, 2, 3]
 
+fun first_of(names: [String; 2]).R: usize = names.get(i = 0).len()
+
 fun bump(buf: mut [u8; 2]) {
     buf.set(i = 0, v = 9)
 }
@@ -46,6 +48,11 @@ fun main() {
     var tagged = Names(items = ["aa", "bb"])
     tagged.items.set(i = 0, v = "ccc")
     print(tagged.items.get(i = 0).len())
+    // An owned element makes the array an owner, so a plain parameter borrows
+    // it: the caller's array is still here afterwards.
+    var pair: [String; 2] = ["aa", "bbb"]
+    print(first_of(pair))
+    print(pair.get(i = 1).len())
 
     // An array parameter is borrowed by default, `mut` writes through the
     // borrow, and `move` takes the value over.
