@@ -4533,6 +4533,7 @@ fn check_program_pass(
             qualified: pd.qualified.clone(),
             value_ty: pd.value_ty.clone(),
             init,
+            module: decl.module.clone(),
         });
     }
 

@@ -754,6 +754,11 @@ struct PdGlobal {
     hidden: String,
     label: String,
     value_ty: Ty,
+    /// Canonical id of the module that declared the passdown. Its initializer
+    /// runs inside `main`'s frame, so this is what a gated call in it is
+    /// checked against: the entry module's own `/**` allowlist would admit
+    /// what the declaring module's grant refuses.
+    module: String,
 }
 
 impl PdGlobal {
@@ -3503,7 +3508,12 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Res
         } else {
             None
         };
-        g.pds.push(PdGlobal { hidden: pd.name.clone(), label, value_ty: pd.value_ty.clone() });
+        g.pds.push(PdGlobal {
+            hidden: pd.name.clone(),
+            label,
+            value_ty: pd.value_ty.clone(),
+            module: pd.module.clone(),
+        });
         g.pd_inits.push(pd.init.clone());
         g.pd_drops.push(drop);
     }
@@ -5547,10 +5557,33 @@ impl<'a> Gen<'a> {
         let init = self.pd_inits[index].clone();
         let value_ty = self.pds[index].value_ty.clone();
         let label = self.pds[index].label.clone();
+        // The initializer runs at the top of `main`, but the grant a gated
+        // call in it is checked against is the *declaring* module's: a check
+        // emitted under `main` names the entry module and scans its `/**`
+        // allowlist, which admits exactly what the declaring module's own
+        // grant refuses. `self.module` is what both the decision and the
+        // emitted check read, so it is swapped for the initializer and put
+        // back on every path.
+        let saved = std::mem::replace(&mut self.module, self.pds[index].module.clone());
+        let result = self.pd_init_value(index, value_ty, label, &init, frame);
+        self.module = saved;
+        result
+    }
+
+    /// One passdown's initializer under the declaring module's own identity;
+    /// see `pd_init`, which owns the swap.
+    fn pd_init_value(
+        &mut self,
+        index: usize,
+        value_ty: Ty,
+        label: String,
+        init: &Expr,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
         if struct_layout(&value_ty, &self.layouts).is_some() {
-            return self.eval_struct_into(&init, frame, Dest::Global(index));
+            return self.eval_struct_into(init, frame, Dest::Global(index));
         }
-        self.expr(&init, frame)?;
+        self.expr(init, frame)?;
         // MK7 §5 item 6: a plain function value is one code pointer, so it is
         // stored like a scalar rather than through `int_ty` (which does not
         // name a function).

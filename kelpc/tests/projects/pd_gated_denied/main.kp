@@ -1,0 +1,10 @@
+// The `pd`-frame route of `BUG-wQ9tL`: the compile-time gate fires for an
+// initializer, and the *runtime* check has to be emitted too, keyed on the
+// module that declared the `pd` (`util`) and not on `main`, whose frame the
+// initializer runs in. The path is outside `util`'s grant, so this is denied
+// with `util`'s own allowlist in the message.
+impl "util" caps(fs = ["/tmp/kelp_caps_pd_gated_denied/**"])
+
+fun main() {
+    print(util.show())
+}

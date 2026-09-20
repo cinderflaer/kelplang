@@ -891,7 +891,15 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
     }
 
-    write_pd_globals(&mut out, &program.pds, &program.enums, drops, &owned, sources);
+    write_pd_globals(
+        &mut out,
+        &program.pds,
+        &program.enums,
+        drops,
+        &owned,
+        &caps,
+        sources,
+    );
 
     for f in &program.functions {
         if f.extern_ {
@@ -946,12 +954,20 @@ fn write_extern(out: &mut String, f: &Function) {
 /// inside such a function the parameter shadows its own global and both
 /// spell the same symbol in C — including inside `main`, which can take no
 /// parameters and therefore reads the globals directly.
+///
+/// A `pd` initializer *is* code that runs, so a gated call inside one is
+/// checked against the *declaring* module's grant, exactly as the same call
+/// would be inside a function of that module: `Pd::module` is what carries it
+/// (the initializer is not a function, so there is no other place the module
+/// could come from), and one `Gen` per initializer is what makes it the
+/// module the check names and the allowlist it scans.
 fn write_pd_globals(
     out: &mut String,
     pds: &[Pd],
     enums: &[EnumDef],
     drops: &DropPlan,
     owned: &HashSet<String>,
+    caps: &CapTable,
     sources: &SourceMap,
 ) {
     if pds.is_empty() {
@@ -960,23 +976,8 @@ fn write_pd_globals(
     // A `pd` initializer is not a function, so no drop point can be keyed to
     // it; an owned local inside one would leak. `infer.rs` rejects owned
     // locals in initializers, so this only affects an initializer that
-    // happens to build and discard one.
-    // A `pd` initializer is not a function, so it can hold no gated call
-    // either (a gated call needs the module's grants, and this emitter has
-    // no module); an empty table is the honest answer here.
-    let no_caps = CapTable {
-        gated: HashMap::new(),
-        patterns: HashMap::new(),
-    };
-    let g = Gen::new(
-        drops,
-        owned,
-        enums,
-        String::new(),
-        String::new(),
-        &no_caps,
-        sources,
-    );
+    // happens to build and discard one. The `function` name stays empty for
+    // the same reason: the drop plan has no entry keyed to a `pd`.
     out.push_str("// passdowns: assigned once by kelp_init_pds(), read-only afterwards\n");
     for pd in pds {
         writeln!(
@@ -1012,6 +1013,15 @@ fn write_pd_globals(
         out.push_str("    atexit(kelp_drop_pds);\n");
     }
     for pd in pds {
+        let g = Gen::new(
+            drops,
+            owned,
+            enums,
+            String::new(),
+            pd.module.clone(),
+            caps,
+            sources,
+        );
         writeln!(
             out,
             "    {} = {}; // pd {}",

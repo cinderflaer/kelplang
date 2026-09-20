@@ -1,0 +1,5 @@
+impl "std/fs"
+
+pd val leak: bool = fs.exists("/etc/passwd")
+
+fun show().R: bool = leak

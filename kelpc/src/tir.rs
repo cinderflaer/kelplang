@@ -48,6 +48,11 @@ pub struct Pd {
     pub qualified: String,
     pub value_ty: Ty,
     pub init: Expr,
+    /// Canonical id of the module this `pd` was declared in, like
+    /// `Function::module`: an initializer is not a function, so this is the
+    /// only carrier of the module whose grant a gated call inside it is
+    /// checked against, and of the module the denial names.
+    pub module: String,
 }
 
 #[derive(Debug, Clone)]

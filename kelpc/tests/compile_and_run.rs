@@ -1800,6 +1800,94 @@ fn a_granted_module_calls_a_gated_receiver_method_with_no_pattern() {
 }
 
 #[test]
+fn a_pd_initializer_outside_the_grant_is_denied_at_runtime() {
+    // The initializer is checked at compile time against its module's grant and
+    // has to be checked at run time against the same module's patterns: the C
+    // backend emitted no check at all, and the asm backend emitted one under
+    // `main`'s identity, which scans the entry module's `/**` allowlist and
+    // admits everything. Both halves are pinned whole here, including the
+    // module name and the `granted:` block from `util`'s own allowlist.
+    let target = project("pd_gated_denied").join("main.kp");
+    let bin = out_path("pd_gated_denied");
+    let build = kelpc()
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected project 'pd_gated_denied' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert_eq!(run.status.code(), Some(1), "the initializer must be denied");
+    let expected = format!(
+        "{}:3:21: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+         granted:\n    /tmp/kelp_caps_pd_gated_denied/**\n",
+        project("pd_gated_denied").join("util.kp").display()
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        expected,
+        "the `pd` initializer's capability denial is not what the compiler writes"
+    );
+}
+
+#[test]
+fn a_pd_initializer_inside_the_grant_still_runs() {
+    let dir = caps_scratch("pd_gated_granted");
+    std::fs::write(dir.join("note.txt"), "x").unwrap();
+    assert_project_runs(
+        "pd_gated_granted",
+        &project("pd_gated_granted").join("main.kp"),
+        "true\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_pd_frames_check_scans_the_pd_modules_own_allowlist() {
+    // Read back out of the assembly rather than argued: the check the emitted
+    // `main` runs for the initializer passes `kelp_caps_util_fs` in the
+    // allowlist register, and never `kelp_caps_main_fs`. Under the fail-open
+    // this pin exists for, both symbols are in the file (every grant's array
+    // is emitted) and only the register the check loads tells them apart.
+    if backend() != "asm" {
+        eprintln!(
+            "note: this assertion reads the emitted assembly, so it is asm-backend-only; \
+             backend '{}' is not checked by it",
+            backend()
+        );
+        return;
+    }
+    let bin = out_path("pd_gated_denied_asm_check");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("pd_gated_denied").join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected project 'pd_gated_denied' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let s = std::fs::read_to_string(bin.with_extension("s"))
+        .expect("the asm backend writes the assembly next to the binary");
+    assert!(
+        s.contains("lea rdx, [rip+kelp_caps_util_fs]"),
+        "the check for the `pd` initializer does not scan the declaring module's own allowlist"
+    );
+    assert!(
+        !s.contains("lea rdx, [rip+kelp_caps_main_fs]"),
+        "the check for the `pd` initializer scans the entry module's allowlist"
+    );
+}
+
+#[test]
 fn a_granted_module_creates_a_symlink_inside_its_grant() {
     // `fs.symlink` checks *both* of its paths, so a link can only be created
     // where the grant reaches and can only point where the grant reaches. The
