@@ -697,6 +697,59 @@ pub fn list_elem_of(ty: &Ty) -> Option<&Ty> {
     }
 }
 
+/// Whether this type is an *open* container: one a bare `List.empty()`,
+/// `Box.empty()` or `Map.new()` made, with no type written anywhere to say
+/// what it holds.
+///
+/// Such a container carries `Unit` in the slot its element type goes
+/// (`List<Unit>`, `Box<Unit>`, `Map<Unit, Unit>`). The marker cannot be
+/// confused with a type a program wrote: `is_list_element`, `is_box_element`
+/// and `is_map_key` all refuse `Unit`, so `resolve_type` has no way to build
+/// one from source. The first operation that has to know the element is
+/// therefore free to fill it in (see `fill_open_container`).
+pub fn is_open_container(ty: &Ty) -> bool {
+    match ty {
+        Ty::List(elem) | Ty::Box(elem) => **elem == Ty::Unit,
+        Ty::Map(key, value) => **key == Ty::Unit || **value == Ty::Unit,
+        Ty::Ref { inner, .. } => is_open_container(inner),
+        _ => false,
+    }
+}
+
+/// The type an open container becomes once `from` says what it holds: `from`
+/// is the container a `push`/`insert`/`set` argument built, or the one a
+/// surrounding position expects. `None` when the two are not the same kind of
+/// container, or when what `from` holds is not something a container may hold
+/// — which leaves the open container open for the check that explains why.
+///
+/// A slot that is already decided keeps its type: an open container only ever
+/// has one, and a `Map` whose key came from the binding's written type keeps
+/// that key.
+pub fn fill_open_container(open: &Ty, from: &Ty) -> Option<Ty> {
+    let (open, from) = match (open, from) {
+        (Ty::Ref { inner, .. }, _) => (inner.as_ref(), from),
+        (_, Ty::Ref { inner, .. }) => (open, inner.as_ref()),
+        _ => (open, from),
+    };
+    match (open, from) {
+        (Ty::List(_), Ty::List(elem)) if is_list_element(elem) => Some(Ty::List(elem.clone())),
+        (Ty::Box(_), Ty::Box(elem)) if is_box_element(elem) => Some(Ty::Box(elem.clone())),
+        (Ty::Map(open_key, open_value), Ty::Map(from_key, from_value)) => {
+            if !is_map_key(from_key) || !is_map_element(from_value) {
+                return None;
+            }
+            if **open_key != Ty::Unit && open_key != from_key {
+                return None;
+            }
+            if **open_value != Ty::Unit && open_value != from_value {
+                return None;
+            }
+            Some(Ty::Map(from_key.clone(), from_value.clone()))
+        }
+        _ => None,
+    }
+}
+
 /// As `list_elem_of`, for `Box<T>`.
 pub fn box_elem_of(ty: &Ty) -> Option<&Ty> {
     match ty {

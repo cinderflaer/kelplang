@@ -323,6 +323,14 @@ struct Ctx {
     /// How many scrutinee temporaries a `when` has staged, so each one's
     /// synthesized binding has a name of its own (`infer::WHEN_TEMP_PREFIX`).
     when_temps: usize,
+    /// Set only while the initializer of a `let` with no written type is being
+    /// checked. A bare `List.empty()`/`Box.empty()`/`Map.new()` there leaves
+    /// its element type open instead of failing at the declaration, for the
+    /// first `push`/`insert` on the binding to decide (: the marker and the
+    /// repair are `types::is_open_container` and `check_block`). Anywhere
+    /// else an empty container with no type to take its element from is a
+    /// declaration-time error, exactly as it always was.
+    defer_empty_container: bool,
 }
 
 /// One checked passdown (M5.2).
@@ -471,6 +479,19 @@ impl Ctx {
             }
         }
         None
+    }
+
+    /// Rewrites a binding's type in the scope that holds it. Used for one
+    /// thing only: an open container whose element type an operation decided
+    /// after the binding was declared, so every later statement (and the
+    /// emitted local) sees the real type rather than the marker.
+    fn set_binding_ty(&mut self, name: &str, ty: Ty) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(name) {
+                info.ty = ty;
+                return;
+            }
+        }
     }
 
     /// Looks up `name` as a field of the current receiver's `datac`, if
@@ -4875,6 +4896,7 @@ fn base_ctx(
         outer_receiver: None,
         receiver_struct: None,
         when_temps: 0,
+        defer_empty_container: false,
     }
 }
 
@@ -5519,6 +5541,13 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
     ctx.push_scope();
     let mut stmts = Vec::new();
     let mut tail = None;
+    // The open containers this block declared (`var xs = List.empty()` with no
+    // type written anywhere), and where each one's `let` sits in `stmts`. An
+    // operation later in the block, or in a block under it, decides the
+    // element type and rewrites the binding; the local emitted here has to be
+    // rewritten with it, because the struct and the routines the backend
+    // monomorphizes are chosen by the element type.
+    let mut open: Vec<OpenBinding> = Vec::new();
 
     for (i, stmt) in block.stmts.iter().enumerate() {
         let is_last = i + 1 == block.stmts.len();
@@ -5531,12 +5560,104 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
                 tail = Some(Box::new(check_expr(expr, ctx, expected_tail)?));
             }
         } else {
-            stmts.push(check_stmt(stmt, ctx)?);
+            let checked = check_stmt(stmt, ctx)?;
+            if let ast::Stmt::Let { name, ty: None, init, .. } = stmt {
+                let still_open = ctx
+                    .lookup(name)
+                    .map_or(false, |i| crate::types::is_open_container(&i.ty));
+                if still_open {
+                    open.push(OpenBinding {
+                        name: name.clone(),
+                        index: stmts.len(),
+                        span: init.span(),
+                        call: empty_container_call(init).map(|(c, m)| (c.to_string(), m.to_string())),
+                    });
+                }
+            }
+            stmts.push(checked);
         }
+        settle_open_bindings(&mut open, &mut stmts, ctx);
+    }
+    settle_open_bindings(&mut open, &mut stmts, ctx);
+
+    if let Some(still_open) = open.first() {
+        let ty = ctx.lookup(&still_open.name).map(|i| i.ty.clone()).unwrap_or(Ty::Unit);
+        let error = open_container_declaration_error(&ty, still_open);
+        ctx.pop_scope();
+        return Err(error);
     }
 
     ctx.pop_scope();
     Ok(tir::Block { stmts, tail })
+}
+
+/// One `let` in a block whose container started open and may still be open.
+struct OpenBinding {
+    name: String,
+    /// Where the `let` sits in the block's statement list.
+    index: usize,
+    /// The initializer's span, which is where the diagnostic points.
+    span: Span,
+    /// The `(Type, method)` the initializer was, when it was the associated
+    /// call this is all about: the diagnostic names the constructor that was
+    /// written rather than guessing between `Map.new()` and `Map.empty()`.
+    call: Option<(String, String)>,
+}
+
+/// Rewrites every binding an operation has since decided, and forgets it. The
+/// type an open container took is the one the scope now holds for the name,
+/// so `check_expr`'s repair is the same repair as a deciding call's: both
+/// `set_binding_ty` it, and this moves the result into the emitted local.
+fn settle_open_bindings(open: &mut Vec<OpenBinding>, stmts: &mut [tir::Stmt], ctx: &Ctx) {
+    open.retain(|binding| {
+        let Some(info) = ctx.lookup(&binding.name) else {
+            return false;
+        };
+        if crate::types::is_open_container(&info.ty) {
+            return true;
+        }
+        let ty = info.ty.clone();
+        if let Some(tir::Stmt::Let { ty: slot, init, .. }) = stmts.get_mut(binding.index) {
+            *slot = ty.clone();
+            init.ty = ty;
+        }
+        false
+    });
+}
+
+/// The `Type.empty()`/`Type.new()` call an initializer is, when it is one.
+/// Used only to name the constructor in a diagnostic: an open container that
+/// nothing ever decided is reported where it was written, saying which call
+/// left the element type out.
+fn empty_container_call(expr: &ast::Expr) -> Option<(&str, &str)> {
+    let ast::Expr::MethodCall { receiver, method, args, .. } = expr else {
+        return None;
+    };
+    if !args.is_empty() {
+        return None;
+    }
+    let ast::Expr::Ident(name, _) = receiver.as_ref() else {
+        return None;
+    };
+    matches!(name.as_str(), "List" | "Box" | "Map").then(|| (name.as_str(), method.as_str()))
+}
+
+/// The diagnostic an open container gets when nothing in its block decided
+/// what it holds: the same one a bare `List.empty()` was always refused with,
+/// so the fix a reader is told is still the binding.
+fn open_container_declaration_error(ty: &Ty, binding: &OpenBinding) -> TypeError {
+    let message = match (&binding.call, ty) {
+        (Some((container, method)), _) if container == "Map" => format!(
+            "cannot tell what 'Map.{method}()' holds, write the type on the binding ('var m: Map<String, i32> = Map.{method}()')"
+        ),
+        (Some((container, _)), _) => format!(
+            "cannot tell what '{container}.empty()' holds, write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
+        ),
+        (None, Ty::Map(..)) => "cannot tell what 'Map.new()' holds, write the type on the binding ('var m: Map<String, i32> = Map.new()')".to_string(),
+        (None, Ty::List(_)) => "cannot tell what 'List.empty()' holds, write the element type on the binding ('var xs: List<String> = List.empty()') or start from 'List.of(x)'".to_string(),
+        (None, _) => "cannot tell what 'Box.empty()' holds, write the element type on the binding ('var b: Box<String> = Box.empty()') or start from 'Box.of(x)'".to_string(),
+    };
+    TypeError { message, span: binding.span }
 }
 
 fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
@@ -5552,7 +5673,19 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                 Some(t) => Some(ctx.type_scope().resolve(t, false)?),
                 None => None,
             };
-            let init = check_expr(init, ctx, expected.as_ref())?;
+            // A `let` with no written type whose initializer *is* a bare
+            // `List.empty()`/`Box.empty()`/`Map.new()` is the one place an
+            // empty container may leave its element open for a later
+            // `push`/`insert` to decide. Anywhere else, including a call
+            // somewhere inside the initializer, an empty container with no
+            // type to take its element from is a declaration-time error,
+            // exactly as it always was.
+            let deferred = ty.is_none() && empty_container_call(init).is_some();
+            let outer_defer = ctx.defer_empty_container;
+            ctx.defer_empty_container = deferred;
+            let init = check_expr(init, ctx, expected.as_ref());
+            ctx.defer_empty_container = outer_defer;
+            let init = init?;
             let final_ty = expected.unwrap_or_else(|| init.ty.clone());
             if final_ty != init.ty {
                 return Err(TypeError {
@@ -6026,9 +6159,26 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         }),
         ast::Expr::Ident(name, span) => {
             if let Some(info) = ctx.lookup(name) {
+                // An open container takes its element from the type this
+                // position expects: `take(xs)` on a `fun take(xs: List<i32>)`
+                // decides `xs` the same way `xs.push(1)` does, and the repair
+                // is the same one (`check_block` rewrites the binding's local
+                // to match).
+                let ty = if crate::types::is_open_container(&info.ty) {
+                    let open = info.ty.clone();
+                    match expected.and_then(|exp| crate::types::fill_open_container(&open, exp)) {
+                        Some(filled) => {
+                            ctx.set_binding_ty(name, filled.clone());
+                            filled
+                        }
+                        None => open,
+                    }
+                } else {
+                    info.ty.clone()
+                };
                 return Ok(tir::Expr {
                     kind: tir::ExprKind::Ident(name.clone()),
-                    ty: info.ty.clone(),
+                    ty,
                     span: *span,
                 });
             }
@@ -8101,6 +8251,7 @@ fn require_place_for_borrowed_arg(
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
     let Ty::Ref { mutable, inner } = pty else {
         let checked = check_expr(arg_expr, ctx, Some(pty))?;
+        refuse_open_arg(&checked.ty, arg_expr)?;
         // A `&str` view and a `str` are the same value (both are the flat
         // borrowed view type), so a view satisfies a `str` parameter
         // directly — that is what makes `str.len(s.as_str())` work (M6.3).
@@ -8142,6 +8293,7 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
     };
 
     let checked = check_expr(arg_expr, ctx, Some(inner))?;
+    refuse_open_arg(&checked.ty, arg_expr)?;
     match &checked.ty {
         t if t == inner.as_ref() => {
             // A *shared* borrow may be taken of a temporary (`str.join(parts
@@ -8801,6 +8953,10 @@ fn check_template(
             }
             ast::TemplatePart::Expr(e) => {
                 let value = check_expr(e, ctx, None)?;
+                // The element type decides whether a container is printable at
+                // all, and an open container has not decided it yet: report
+                // that rather than spell the marker (`List<unit>`).
+                refuse_open_arg(&value.ty, e)?;
                 let value = borrow_for_print(value, "a string template", ctx)?;
                 let printable = value.ty.is_numeric()
                     || matches!(value.ty, Ty::Bool | Ty::Char)
@@ -8824,6 +8980,154 @@ fn check_template(
         ty: Ty::Unit,
         span,
     })
+}
+
+/// Whether this is a call that can say what an open container holds: the
+/// element `List`/`Box` hand in, or the value (and the key beside it) a map
+/// `insert` hands in. `List.insert` and `List.set` name theirs second, after
+/// the index.
+fn decides_container_element(ty: &Ty, method: &str) -> bool {
+    match ty {
+        Ty::List(_) => matches!(method, "push" | "insert" | "set"),
+        Ty::Box(_) => method == "set",
+        Ty::Map(..) => method == "insert",
+        _ => false,
+    }
+}
+
+/// Checks one deciding argument for the type it contributes to an open
+/// container. A `str` literal is checked again as the `String` a container
+/// element is: `xs.push("a")` builds a list of text, exactly as
+/// `List<String>.push("a")` does. A `str` *value* still has no element to be,
+/// and comes back the borrowed view it is for the element check to refuse.
+fn check_deciding_element(arg: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
+    let checked = check_expr(arg, ctx, None)?;
+    if matches!(checked.ty, Ty::Str) {
+        return check_expr(arg, ctx, Some(&Ty::String));
+    }
+    Ok(checked)
+}
+
+/// The container an open container's deciding call names, or `None` when the
+/// call is not one that decides anything.
+///
+/// Every deciding argument is checked here, once, to learn its type — the same
+/// probe the receiver already goes through, and safe for the same reason:
+/// `check_expr` reads the context and reports, and the call's own argument
+/// check runs again below with the signature this produced.
+fn open_container_from_call(
+    open: &Ty,
+    method: &str,
+    args: &[ast::CallArg],
+    ctx: &mut Ctx,
+) -> Result<Option<Ty>> {
+    match open {
+        Ty::List(_) => {
+            let arg = match method {
+                "push" => args.first(),
+                "insert" | "set" => args.get(1),
+                _ => return Ok(None),
+            };
+            let Some(arg) = arg else { return Ok(None) };
+            let value = check_deciding_element(&arg.value, ctx)?;
+            if !crate::types::is_list_element(&value.ty) {
+                return Err(TypeError {
+                    message: list_element_error(&value.ty),
+                    span: arg.value.span(),
+                });
+            }
+            Ok(crate::types::fill_open_container(
+                open,
+                &Ty::List(Box::new(value.ty)),
+            ))
+        }
+        Ty::Box(_) => {
+            if method != "set" {
+                return Ok(None);
+            }
+            let Some(arg) = args.first() else { return Ok(None) };
+            let value = check_deciding_element(&arg.value, ctx)?;
+            if !crate::types::is_box_element(&value.ty) {
+                return Err(TypeError {
+                    message: box_element_error(&value.ty),
+                    span: arg.value.span(),
+                });
+            }
+            Ok(crate::types::fill_open_container(
+                open,
+                &Ty::Box(Box::new(value.ty)),
+            ))
+        }
+        Ty::Map(..) => {
+            if method != "insert" {
+                return Ok(None);
+            }
+            let (Some(key_arg), Some(value_arg)) = (args.first(), args.get(1)) else {
+                return Ok(None);
+            };
+            let value = check_deciding_element(&value_arg.value, ctx)?;
+            if !crate::types::is_map_element(&value.ty) {
+                return Err(TypeError {
+                    message: map_element_error(&value.ty),
+                    span: value_arg.value.span(),
+                });
+            }
+            // The key is read through a `str` view for a `String` key, which
+            // is the one key type a call site cannot spell from the argument
+            // alone: a `String` key takes `"a"`, and `"a"` is a `str`.
+            let key = check_expr(&key_arg.value, ctx, None)?;
+            let key_ty = if is_str_like(&key.ty) {
+                Ty::String
+            } else if crate::types::is_map_key(&key.ty) {
+                key.ty.clone()
+            } else {
+                return Err(TypeError {
+                    message: map_key_error(&key.ty),
+                    span: key_arg.value.span(),
+                });
+            };
+            Ok(crate::types::fill_open_container(
+                open,
+                &Ty::Map(Box::new(key_ty), Box::new(value.ty)),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The diagnostic an open container gets at a use that neither decides what it
+/// holds nor is one of the two associated constructors that never knew: the
+/// element type is still missing, and saying so names the call that could have
+/// supplied it instead of the local that was declared without one.
+fn open_container_use_error(ty: &Ty, receiver: &ast::Expr, span: Span) -> TypeError {
+    let (binding, constructor, decider, example) = match ty {
+        Ty::List(_) => ("xs", "List.empty()", "xs.push(v)", "var xs: List<i32> = List.empty()"),
+        Ty::Box(_) => ("b", "Box.empty()", "b.set(v)", "var b: Box<i32> = Box.empty()"),
+        _ => ("m", "Map.new()", "m.insert(k, v)", "var m: Map<String, i32> = Map.new()"),
+    };
+    let named = match receiver {
+        ast::Expr::Ident(name, _) => format!("'{name}'"),
+        _ => format!("this container (the one bound as '{binding}')"),
+    };
+    TypeError {
+        message: format!(
+            "the element type of {named} is still open: nothing said what '{constructor}' holds, and '{decider}' is what decides it. Write it on the binding instead ('{example}')"
+        ),
+        span,
+    }
+}
+
+/// An open container handed to a call's argument has nobody left to decide it:
+/// a parameter that names a container element takes it (`fun take(xs:
+/// List<i32>)` repairs the binding on the way in), while a parameter that takes
+/// the container's own type (`fun show<T>(x: T)`) would carry the marker into
+/// the emitted program, where the element type is what every routine is named
+/// after.
+fn refuse_open_arg(ty: &Ty, arg: &ast::Expr) -> Result<()> {
+    if crate::types::is_open_container(ty) {
+        return Err(open_container_use_error(ty, arg, arg.span()));
+    }
+    Ok(())
 }
 
 /// `receiver.method(args)`: resolves `method` against the receiver
@@ -8958,12 +9262,36 @@ fn check_method_call(
         }
     }
     let key = format!("{owner}#{method}");
-    let container_elem = crate::types::list_elem_of(&probe.ty)
-        .or_else(|| crate::types::box_elem_of(&probe.ty))
-        .or_else(|| crate::types::map_elem_of(&probe.ty))
-        .or_else(|| crate::types::array_elem_of(&probe.ty))
+    // A container a bare `List.empty()`/`Box.empty()`/`Map.new()` left with no
+    // element type (`types::is_open_container`) is decided by the first call
+    // that has to know it. `push`, `insert` and `set` hand the element in, so
+    // the binding is repaired in place here and every later statement sees the
+    // real type. A call that does not decide it is refused: monomorphizing a
+    // `List<Unit>` routine names a routine nothing builds.
+    let decided = if crate::types::is_open_container(&probe.ty) {
+        match open_container_from_call(&probe.ty, method, args, ctx)? {
+            Some(filled) => {
+                if let ast::Expr::Ident(name, _) = receiver {
+                    if ctx.lookup(name).is_some() {
+                        ctx.set_binding_ty(name, filled.clone());
+                    }
+                }
+                filled
+            }
+            // A deciding method whose argument list is not the shape it needs:
+            // the ordinary arity check says more than this one could.
+            None if decides_container_element(&probe.ty, method) => probe.ty.clone(),
+            None => return Err(open_container_use_error(&probe.ty, receiver, span)),
+        }
+    } else {
+        probe.ty.clone()
+    };
+    let container_elem = crate::types::list_elem_of(&decided)
+        .or_else(|| crate::types::box_elem_of(&decided))
+        .or_else(|| crate::types::map_elem_of(&decided))
+        .or_else(|| crate::types::array_elem_of(&decided))
         .cloned();
-    let container_key = crate::types::map_key_of(&probe.ty)
+    let container_key = crate::types::map_key_of(&decided)
         .cloned()
         .unwrap_or(Ty::Unit);
     let (key, sig) = match ctx.sig_of(&key) {
@@ -9271,6 +9599,16 @@ fn check_container_associated(
         ),
         _ => Ty::Box(Box::new(elem)),
     };
+    // What a bare `List.empty()`/`Box.empty()`/`Map.new()` with no type to
+    // take its element from becomes: the container with `Unit` where the
+    // element goes, which no written type can spell, so a later `push` on the
+    // binding can fill it in (`types::is_open_container`). A map's key is
+    // open the same way when the binding named neither.
+    let open = || match container {
+        "List" => Ty::List(Box::new(Ty::Unit)),
+        "Map" => Ty::Map(Box::new(Ty::Unit), Box::new(Ty::Unit)),
+        _ => Ty::Box(Box::new(Ty::Unit)),
+    };
     // `Map.empty()` and `Map.new()` are one operation — a map starts empty —
     // so they lower to one key. They used to lower to two and codegen only
     // ever emitted `__new`, so `Map.empty()` compiled to a call to a function
@@ -9290,8 +9628,15 @@ fn check_container_associated(
                 });
             }
             let Some(value) = expected_elem else {
+                if ctx.defer_empty_container {
+                    return Ok(tir::Expr {
+                        kind: tir::ExprKind::Call { callee: key, args: vec![] },
+                        ty: open(),
+                        span,
+                    });
+                }
                 return Err(TypeError {
-                    message: "cannot tell what 'Map.new()' holds — write the type on the binding ('var m: Map<String, i32> = Map.new()'); there is no 'Map.of(x)' since a map starts empty".to_string(),
+                    message: "cannot tell what 'Map.new()' holds, write the type on the binding ('var m: Map<String, i32> = Map.new()'); there is no 'Map.of(x)' since a map starts empty".to_string(),
                     span,
                 });
             };
@@ -9309,11 +9654,18 @@ fn check_container_associated(
                 });
             }
             let Some(elem) = expected_elem else {
+                if ctx.defer_empty_container {
+                    return Ok(tir::Expr {
+                        kind: tir::ExprKind::Call { callee: key, args: vec![] },
+                        ty: open(),
+                        span,
+                    });
+                }
                 return Err(TypeError {
                     message: match container {
-                        "Map" => "cannot tell what 'Map.empty()' holds — write the type on the binding ('var m: Map<String, i32> = Map.empty()')".to_string(),
+                        "Map" => "cannot tell what 'Map.empty()' holds, write the type on the binding ('var m: Map<String, i32> = Map.empty()')".to_string(),
                         _ => format!(
-                            "cannot tell what '{container}.empty()' holds — write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
+                            "cannot tell what '{container}.empty()' holds, write the element type on the binding ('var xs: {container}<String> = {container}.empty()') or start from '{container}.of(x)'"
                         ),
                     },
                     span,

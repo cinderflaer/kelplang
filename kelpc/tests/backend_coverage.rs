@@ -271,6 +271,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     // call is an ordinary program for either backend.
     "const_fn",
     "consts",
+    "container_element_from_use",
     "datac_basic",
     "datac_embeds_datac",
     "datac_memory_class",

@@ -1106,7 +1106,7 @@ fn stdlib_parsing_rejects_anything_but_a_whole_number() {
 fn stdlib_fmt_formats_numbers_hex_padding_and_bytes() {
     assert_compiles_and_runs(
         "tests/fixtures/stdlib_fmt.kp",
-        "0\n-1234\n4294967295\n3.142\n1.5\n0\nff\nbeef\n007\nlong\n7..\n61 62\n\n007!\n",
+        "0\n-1234\n4294967295\n3.142\n1.5\n0\nff\nbeef\n007\nlong\n7..\n61 62\n\n007!\n0\n999\n1,000\n1,234,567\n18,446,744,073,709,551,615\n-1,234,567\n0 B\n1023 B\n1.00 KiB\n1.50 KiB\n1.00 TiB\n",
     );
 }
 
@@ -2705,6 +2705,18 @@ fn a_borrow_cannot_be_a_list_element() {
 #[test]
 fn an_empty_list_needs_its_element_type() {
     assert_rejected("tests/fixtures/list_no_element_type.kp");
+}
+
+#[test]
+fn an_empty_container_takes_its_element_from_the_first_use() {
+    // The same declaration compiles once something hands the element in: a
+    // `push`, a `push` in a nested block, a `push` under a `for`, a map's
+    // `insert`, a box's `set`, and a position that expects a container (a
+    // parameter, and a function's return type).
+    assert_compiles_and_runs(
+        "tests/fixtures/container_element_from_use.kp",
+        "4 6\n2 8\n9\n0\n0\n",
+    );
 }
 
 #[test]

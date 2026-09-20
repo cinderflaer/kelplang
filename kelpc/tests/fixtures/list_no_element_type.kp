@@ -1,6 +1,6 @@
-// `List.empty()` cannot name its own element type, and nothing here does.
+// `List.empty()` cannot name its own element type, and nothing here does:
+// a `push` would decide it, and this list is only measured.
 fun main() {
     var xs = List.empty()
-    xs.push(1)
     print(xs.len())
 }

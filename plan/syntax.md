@@ -1306,6 +1306,8 @@ fun parse(text: &str).R: Result<Json, ParseError> {
 
 ```kelp
 var xs: List<i32> = List.empty()      // element type from the annotation
+var zs = List.empty()                 // element type from the first `push`
+zs.push(1)                            // ... which is this one
 var ys = List.of(String.from_str("a"))   // element type from the argument
 
 xs.push(3)
@@ -1323,7 +1325,7 @@ while !xs.is_empty() {
 
 | Method | Takes | Returns |
 | --- | --- | --- |
-| `List.empty()` | nothing | empty list, element type from the context |
+| `List.empty()` | nothing | empty list, element type from the context or from the first `push`/`insert`/`set` |
 | `List.of(x)` | one value | list holding that value |
 | `len()` / `is_empty()` | shared | `usize` / `bool` |
 | `get(i)` | shared, `usize` | the element, or a borrow of it |
@@ -1373,7 +1375,7 @@ print(runs.get(key = 7))
 
 | Method | Takes | Returns |
 | --- | --- | --- |
-| `Map.new()` / `Map.empty()` | nothing | empty map, key and value types from the binding |
+| `Map.new()` / `Map.empty()` | nothing | empty map, key and value types from the binding or from the first `insert` |
 | `len()` / `is_empty()` | shared | `usize` / `bool` |
 | `has(key)` | shared | `bool` |
 | `get(key)` | shared | the value, or a borrow of it; panics when absent |
@@ -2057,7 +2059,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `this constant expression did not finish within 1000000 steps` | a `const` may call a `fun`, and that function has to terminate on the values the constant gives it (14.1) |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
-| `cannot tell what 'List.empty()' holds` | write the element type on the binding: `var xs: List<i32> = List.empty()` |
+| `cannot tell what 'List.empty()' holds` | write the element type on the binding (`var xs: List<i32> = List.empty()`), or let the first `push` decide it |
 | `'str' is a borrowed view` | an owned field, element or value is needed; use `String` |
 | `'View' is a borrowed view` | same: a `View` points at text somebody else owns, so it cannot be stored or be an element (11.5) |
 | `cannot find module 'x': expected '<path>'` | the `impl` path is wrong, or the file is missing |
@@ -2403,7 +2405,7 @@ counts.insert("a", 1)
 if counts.has("a") { print(counts.get("a")) }
 ```
 
-- `List.empty()` and `Map.new()` need the element type from somewhere: write it on the binding.
+- `List.empty()` and `Map.new()` need the element type from somewhere. Write it on the binding, or let the first `push`/`insert`/`set` decide it: `var xs = List.empty()` followed by `xs.push(1)` is a `List<i32>`.
 - `Map` keys are `String`, an integer or `bool`, and only those.
 - Both keep insertion order; `Map` has no `Map<String, Map<i32>>` or `List<List<i32>>` — elements are inline, so wrap a nested container in a `Box`.
 - `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index.
