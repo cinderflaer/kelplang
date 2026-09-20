@@ -170,6 +170,22 @@ pub enum CapCheck {
     Port(usize),
 }
 
+/// Whether a type is `str` or a borrow of one: the arguments a capability
+/// check treats as resource names, and so the input `checked_args` reads. It
+/// lives here rather than beside either caller because both backends ask the
+/// same question: `codegen_c.rs` builds the check from the answer, and
+/// `codegen_asm.rs` refuses exactly the calls the answer makes a check for.
+///
+/// `Ty` is named in full rather than imported: this module is otherwise about
+/// the shipped sources and the domains, not about the type checker.
+pub fn is_str_like_ty(ty: &crate::types::Ty) -> bool {
+    match ty {
+        crate::types::Ty::Str => true,
+        crate::types::Ty::Ref { inner, .. } => matches!(**inner, crate::types::Ty::Str),
+        _ => false,
+    }
+}
+
 /// Which of a gated call's arguments are *resource names* to be matched
 /// against the module's allowlist. `fs`'s paths are every `str` argument
 /// (`rename`, `copy` and `symlink` have two, and `open`'s mode is not one);

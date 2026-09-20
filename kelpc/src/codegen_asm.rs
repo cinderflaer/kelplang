@@ -756,6 +756,11 @@ enum Extern {
     Routine(Routine),
 }
 
+/// The `std/rt` function `Routine::PathNormalizeRaw` calls. One spelling for
+/// both the routine's body and the live-set root `require_routine` records, so
+/// the two cannot drift.
+const RT_PATH_NORMALIZE: &str = "std.rt.path_normalize";
+
 /// One routine this backend owns, emitted once per program that needs it
 /// (`Gen::emit_routine`). Named by an enum rather than a string so the set of
 /// them is closed and a typo is a compile error rather than a missing symbol.
@@ -840,6 +845,14 @@ enum Routine {
     StrFromF64Raw,
     FmtHexRaw,
     FmtBytesRaw,
+    /// MK7 §5 item 7: the two externs whose C bodies are the runtime's
+    /// `std/rt` half. `PathNormalizeRaw` is the `PATH_MAX`-plus-one buffer the
+    /// normalizer writes through, the call to `std.rt.path_normalize` that
+    /// moves this slice's runtime into a function this backend emits, and the
+    /// `String` built from those bytes; `FsCwdRaw` is `getcwd` into the same
+    /// sized buffer plus a `String` from it.
+    PathNormalizeRaw,
+    FsCwdRaw,
     /// MK7 §5's list slice: the one piece of a `List<T>`'s function set that is
     /// **not** per-instantiation. `codegen_c.rs` monomorphizes `__reserve`
     /// because the element type is baked into its C signature; here the element
@@ -915,6 +928,8 @@ impl Routine {
             Routine::StrFromF64Raw => "kelp_rt$str_from_f64_raw",
             Routine::FmtHexRaw => "kelp_rt$fmt_hex_raw",
             Routine::FmtBytesRaw => "kelp_rt$fmt_bytes_raw",
+            Routine::PathNormalizeRaw => "kelp_rt$path_normalize_raw",
+            Routine::FsCwdRaw => "kelp_rt$fs_cwd_raw",
             Routine::ListReserve => "kelp_rt$list_reserve",
             Routine::MapHash => "kelp_rt$map_hash",
             Routine::MapKeyEq => "kelp_rt$map_key_eq",
@@ -1041,8 +1056,45 @@ fn extern_target(key: &str) -> Option<Extern> {
         "std.str.parse_f64_raw" => Extern::Routine(Routine::StrParseF64Raw),
         "std.fmt.hex_raw" => Extern::Routine(Routine::FmtHexRaw),
         "std.fmt.bytes_raw" => Extern::Routine(Routine::FmtBytesRaw),
+        // MK7 §5 item 7: the two of the `fs`/`path` family whose bodies the
+        // runtime already holds in Kelp. `normalize_raw` is the buffer, the
+        // call and the `String`; `cwd_raw` is `getcwd` and the `String`. The
+        // rest of the family is still the syscall layer, and still refused by
+        // name.
+        "std.path.normalize_raw" => Extern::Routine(Routine::PathNormalizeRaw),
+        "std.fs.cwd_raw" => Extern::Routine(Routine::FsCwdRaw),
         _ => return None,
     })
+}
+
+/// The capability-check refusal for `callee`, or `None` when the call has no
+/// check to emit.
+///
+/// MK7 §5 item 7: this backend refuses a call the C backend wraps in a runtime
+/// capability check, because a grant that is never checked is a grant that is
+/// not there. Which calls those are is `stdlib::checked_args`'s answer, the
+/// same one `codegen_c.rs::cap_checked_call` reads: a gated call whose resource
+/// arguments are all non-`str` (`fs.cwd`, `time.*`, `rand.*`) has no check set
+/// and no check to emit, so it is emitted exactly as the C backend emits it.
+/// Refusing it would over-refuse the oracle. `arg_is_str` is
+/// `stdlib::is_str_like_ty` per argument, the vector the C backend builds for
+/// the same reason.
+///
+/// The compile-time half of the gate is `resolve.rs`'s and is shared by both
+/// backends: a module that cannot name the function never reaches this call.
+fn cap_check_refusal(
+    gated: &std::collections::HashMap<String, String>,
+    callee: &str,
+    arg_is_str: &[bool],
+) -> Option<String> {
+    let domain = gated.get(callee)?;
+    // `codegen_c.rs::cap_checked_call` is handed the qualified key and looks
+    // the per-function table up under the bare name the author wrote.
+    let bare = callee.rsplit('.').next().unwrap_or(callee);
+    if crate::stdlib::checked_args(domain, bare, arg_is_str).is_empty() {
+        return None;
+    }
+    Some(domain.clone())
 }
 
 /// Every function key a program can actually reach.
@@ -1068,10 +1120,23 @@ fn extern_target(key: &str) -> Option<Extern> {
 /// their keys name generated top-level functions, so a literal's body is live
 /// exactly when the expression naming it is.
 fn live_functions(program: &Program) -> std::collections::HashSet<String> {
-    let mut found: Vec<String> = vec!["main".to_string()];
+    let mut roots: Vec<String> = vec!["main".to_string()];
     for pd in &program.pds {
-        collect_calls_expr(&pd.init, &mut found);
+        collect_calls_expr(&pd.init, &mut roots);
     }
+    reachable_functions(program, roots)
+}
+
+/// The closure of `roots` over the call edges in the function bodies, which is
+/// what `live_functions` is: the roots are `main`, every passdown initializer,
+/// and any `std/rt` function a routine this backend owns names (see
+/// `Gen::rt_functions`, which only exists once a function body has been
+/// generated, so `generate` calls this again rather than doing it once).
+fn reachable_functions(
+    program: &Program,
+    roots: Vec<String>,
+) -> std::collections::HashSet<String> {
+    let mut found = roots;
     let mut live = std::collections::HashSet::new();
     while let Some(key) = found.pop() {
         if !live.insert(key.clone()) {
@@ -2966,15 +3031,16 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // MK7 §5: an `extern fun` is no longer a program-level refusal. Only the
     // ones a program can actually *call* matter, and only the ones this
     // backend can supply a body for build — see `extern_target`. A live extern
-    // with no entry is refused here, naming the declaration exactly as the
-    // blanket refusal used to, so nothing about the message shape changed for
-    // a program that really does call one.
-    let live = live_functions(program);
-    for f in program.functions.iter().filter(|f| f.extern_ && live.contains(&f.name)) {
-        if extern_target(&f.name).is_none() {
-            return Err(unsupported(&format!("the `extern fun {}`", f.name)));
-        }
-    }
+    // with no entry is refused by the loop below, naming the declaration
+    // exactly as the blanket refusal used to, so nothing about the message
+    // shape changed for a program that really does call one.
+    //
+    // The live set is the set of functions this program's code reaches, at
+    // function granularity; see `live_functions`. A routine this backend owns
+    // can name a `std/rt` function (item 7), which is an edge the Kelp call
+    // graph does not have, so that set can grow while the functions are being
+    // generated: the loop at the bottom of `generate` re-reads it.
+    let mut live = live_functions(program);
     // Program-level shapes this slice does not lower. Checking them up front
     // gives a message naming the *declaration* rather than whatever expression
     // happened to touch it first. An `enum` is deliberately no longer one of
@@ -2987,11 +3053,6 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // MK7 §5 item 5: the drop plan `borrowck.rs` handed over, so an owned
     // `Bytes` is freed at exactly the points the C backend frees one.
     g.drops = drops.clone();
-    for f in program.functions.iter().filter(|f| f.extern_ && live.contains(&f.name)) {
-        if let Some(target) = extern_target(&f.name) {
-            g.externs.insert(f.name.clone(), target);
-        }
-    }
     // MK7 §5 item 4, first slice: a `datac` is no longer refused outright — a
     // program keeps compiling as long as every `datac` it actually *uses* is
     // one `build_layouts` accepted (see `StructLayout`'s doc). A `datac` that
@@ -3071,29 +3132,47 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     g.out.push_str("    .section .note.GNU-stack,\"\",@progbits\n");
     g.out.push_str("    .text\n");
 
-    for f in &program.functions {
-        // The compiler's runtime module (`std/rt`, MK7 §8) is not defined here.
-        // Every function in it is Kelp that the C backend compiles in for its
-        // capability checks, and this backend refuses every gated call rather
-        // than emitting one unchecked — so nothing in this backend's output can
-        // reach the matcher, and defining it would replace the refusal that
-        // names the real gap with a refusal that names the runtime. A program
-        // that calls into the module itself is refused in `call`, so skipping
-        // the definitions cannot turn into an undefined symbol at link time.
-        if f.module == crate::stdlib::RT_MODULE {
-            continue;
+    // Everything the program can reach, plus everything a routine this backend
+    // owns reaches by symbol. The loop re-reads the live set after a pass
+    // because a routine is required by a *call site*, which is what the pass
+    // generates: `PathNormalizeRaw` (item 7) calls `std.rt.path_normalize`,
+    // and that function and everything it calls are program code too, so the
+    // first pass decides the routine and the second pass writes the runtime
+    // half. `emitted` is what keeps a function from being written twice.
+    let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+    loop {
+        // The lowering of every `extern fun` the current live set reaches. A
+        // live extern with no entry is refused here, naming the declaration
+        // exactly as the blanket refusal used to.
+        for f in program.functions.iter().filter(|f| f.extern_ && live.contains(&f.name)) {
+            let Some(target) = extern_target(&f.name) else {
+                return Err(unsupported(&format!("the `extern fun {}`", f.name)));
+            };
+            g.externs.insert(f.name.clone(), target);
         }
-        // An `extern fun` has no body to emit — a *call* to one names libc or
-        // one of this backend's own routines (`Gen::call`).
-        if f.extern_ {
-            continue;
+        for f in &program.functions {
+            // An `extern fun` has no body to emit: a *call* to one names libc
+            // or one of this backend's own routines (`Gen::call`).
+            if f.extern_ {
+                continue;
+            }
+            // Unreachable functions are not this program's code: see
+            // `live_functions`. This is also the whole of what keeps the
+            // compiler's runtime module (`std/rt`, MK7 §8) out of a program
+            // that does not reach it: its functions are ordinary Kelp, and a
+            // program that calls one gets it compiled like any other.
+            if !live.contains(&f.name) || !emitted.insert(f.name.clone()) {
+                continue;
+            }
+            g.function(f)?;
         }
-        // Unreachable functions are not this program's code: see
-        // `live_functions`.
-        if !live.contains(&f.name) {
-            continue;
+        let extra: Vec<String> = g.rt_functions.iter().cloned().collect();
+        if extra.iter().all(|key| live.contains(key)) {
+            break;
         }
-        g.function(f)?;
+        let mut roots: Vec<String> = live.iter().cloned().collect();
+        roots.extend(extra);
+        live = reachable_functions(program, roots);
     }
     // MK7 §5: the routines this backend owns for the externs it implements,
     // emitted once each, on demand. Before the panic routine because a routine
@@ -3216,6 +3295,13 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // program that can reach it.
     if g.needs_panic {
         g.emit_panic_routine();
+    }
+    // MK7 §5 item 7: the errno-carrying panic, the C runtime's
+    // `kelp_panic_errno`, for a routine whose failure is a failed syscall
+    // (`FsCwdRaw`'s `getcwd`). Emitted next to `kelp_panic` and on the same
+    // terms: once per program, and only for one that can reach it.
+    if g.needs_panic_errno {
+        g.emit_panic_errno_routine();
     }
     // MK7 §5: the passdowns' storage, in `.bss` — zeroed and assigned by the
     // sequence `Gen::function` puts at the top of `main`, exactly as the C
@@ -4133,6 +4219,10 @@ struct Gen {
     /// hand-written `kelp_panic` routine is emitted at all — see
     /// `Gen::emit_panic_routine`.
     needs_panic: bool,
+    /// Whether anything in this program reaches the errno-carrying panic
+    /// (`FsCwdRaw`'s `getcwd` failure, `kelp_panic_errno` in the C runtime),
+    /// which decides whether `Gen::emit_panic_errno_routine` writes it.
+    needs_panic_errno: bool,
     /// MK7 §5 (the passdown slice): every `pd`'s storage, in initialization
     /// order, indexed by `Dest::Global`. Built once from `program.pds`; the
     /// storage itself is emitted in `.bss` and assigned by the sequence
@@ -4162,6 +4252,11 @@ struct Gen {
     /// route that writes into `Gen::out` mid-function would put a routine
     /// inside a caller's body.
     routines: std::collections::HashSet<Routine>,
+    /// MK7 §5 item 7: the `std/rt` functions a routine this backend owns calls
+    /// by symbol (`PathNormalizeRaw` calls `std.rt.path_normalize`). The Kelp
+    /// call graph does not contain that edge, so `generate` reads this set back
+    /// and treats those functions as roots of their own; see the loop there.
+    rt_functions: std::collections::HashSet<String>,
     /// MK7 §5 item 5, first slice: where every owned `Bytes` is freed,
     /// decided by `borrowck.rs` and looked up by span exactly as
     /// `codegen_c.rs` does. Cloned into `Gen` rather than borrowed so the
@@ -5412,9 +5507,14 @@ impl Gen {
         // compiler in the chain). The value is a *label a handler belongs to*;
         // glibc's `exit` runs every registered handler regardless of it, so a
         // definition here is what `crtbegin.o` would have supplied.
+        //
+        // `.text` is restored because everything emitted after this routine is
+        // code: the panic routines come next, and `.data` is not executable in
+        // this backend's link (the `RW` segment of its ELF), so a panic routine
+        // left in it faults on the first call rather than printing anything.
         self.out.push_str(
             "    .section .data\n    .globl __dso_handle\n    .hidden __dso_handle\n\
-             __dso_handle:\n    .quad 0\n",
+             __dso_handle:\n    .quad 0\n    .text\n",
         );
     }
 
@@ -7760,6 +7860,18 @@ impl Gen {
                 self.routines.insert(Routine::Utf8Valid);
                 self.routines.insert(Routine::BytesAllocRaw);
                 self.routines.insert(Routine::StringEmpty);
+            }
+            // The two item 7 routines are the only ones that call a *Kelp*
+            // function of the runtime module, and the routine is emitted after
+            // the set of functions to compile has been decided, so the edge is
+            // recorded here and `generate` reads it back.
+            Routine::PathNormalizeRaw => {
+                self.require_routine(Routine::BytesAllocRaw);
+                self.require_routine(Routine::StringFromBytes);
+                self.rt_functions.insert(RT_PATH_NORMALIZE.to_string());
+            }
+            Routine::FsCwdRaw => {
+                self.require_routine(Routine::StringFromStr);
             }
             _ => {}
         }
@@ -10340,17 +10452,13 @@ impl Gen {
             let _ = writeln!(self.out, "{ok}:");
             return Ok(());
         }
-        // A call into the compiler's runtime module (`std/rt`, MK7 §8). Its
-        // definitions are skipped above, so this cannot be left to the linker:
-        // the refusal has to name the feature, not the missing symbol.
-        if callee.starts_with(&crate::stdlib::key_prefix(crate::stdlib::RT_MODULE)) {
-            return Err(unsupported(&format!(
-                "the runtime function `{}` — the 'asm' backend compiles no `{}` in yet",
-                callee.replace('.', "::"),
-                crate::stdlib::RT_MODULE
-            )));
-        }
-        if let Some(domain) = self.gated.get(callee) {
+        // MK7 §5 item 7: a call the C backend wraps in a runtime capability
+        // check is refused rather than emitted unchecked; see
+        // `cap_check_refusal`, which is that decision, and `Gen::call`'s own
+        // unit test for it.
+        let arg_is_str: Vec<bool> =
+            args.iter().map(|a| crate::stdlib::is_str_like_ty(&a.ty)).collect();
+        if let Some(domain) = cap_check_refusal(&self.gated, callee, &arg_is_str) {
             return Err(unsupported(&format!(
                 "the capability check that gates `{callee}` (domain `{domain}`) — the asm \
                  backend cannot emit an unchecked call, so it refuses instead"
@@ -11073,6 +11181,15 @@ impl Gen {
         self.out.push_str("    call kelp_panic\n");
     }
 
+    /// A call to the hand-written `kelp_panic_errno` routine, the C runtime's
+    /// syscall-failure panic: the same `panic: <msg>` line as `kelp_panic`,
+    /// then `  errno <n>: <strerror>`. `rdi` carries the message, and the
+    /// routine never returns.
+    fn call_panic_errno(&mut self) {
+        self.needs_panic_errno = true;
+        self.out.push_str("    call kelp_panic_errno\n");
+    }
+
     /// MK7 §5 item 1: one of the routines this backend owns for an `extern
     /// fun` whose C body is more than a single library call — see
     /// `extern_target`.
@@ -11693,6 +11810,70 @@ impl Gen {
                 let _ = writeln!(self.out, "    lea rdi, [rip+{utf8}]");
                 self.call_panic();
             }
+            // ---- MK7 §5 item 7: the two externs the runtime backs ----------
+            //
+            // `externs.rs`'s `normalize_raw` body, transliterated:
+            //
+            // ```c
+            // char buf[PATH_MAX + 1];
+            // kelp_Bytes view; view.data = buf; view.len = PATH_MAX; view.cap = PATH_MAX;
+            // if (!kelp_std__rt__path_normalize(kelp_s, &view)) {
+            //     kelp_panic("path.normalize: path must be absolute and must not escape its own root");
+            // }
+            // kelp_Bytes b = kelp_bytes_alloc_raw(strlen(buf));
+            // memcpy(b.data, buf, b.len);
+            // return kelp_String__from_bytes(b);
+            // ```
+            //
+            // The `String` return is a `MEMORY`-class one, so `rdi` is the
+            // destination the caller supplied and `rsi` is the path. The frame
+            // is the borrowed view at `[rsp]` (three eightbytes, which
+            // `path_normalize` writes through), the `PATH_MAX + 1` buffer above
+            // it, and the padding that keeps `rsp` sixteen-byte aligned at every
+            // call. `PATH_MAX` is 4096 here, as it is in the C. The view's slot
+            // is reused for `b` once the normalizer has returned, because that
+            // is where a `MEMORY`-class *argument* has to sit for
+            // `StringFromBytes`, whose body reads it at `[rbp+16]`.
+            Routine::PathNormalizeRaw => {
+                let msg = self.bytes_label(
+                    b"path.normalize: path must be absolute and must not escape its own root",
+                );
+                self.out.push_str("    push rbx\n    push r12\n    sub rsp, 4136\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12, rsi\n");
+                self.out.push_str("    lea rax, [rsp+24]\n    mov QWORD PTR [rsp], rax\n");
+                self.out.push_str("    mov QWORD PTR [rsp+8], 4096\n    mov QWORD PTR [rsp+16], 4096\n");
+                self.out.push_str("    mov rdi, r12\n    mov rsi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_PATH_NORMALIZE));
+                self.out.push_str("    test al, al\n    je .Lpath_norm_false\n");
+                self.out.push_str("    lea rdi, [rsp+24]\n    call strlen@PLT\n");
+                self.out.push_str("    mov rdi, rsp\n    mov rsi, rax\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    mov rdi, QWORD PTR [rsp]\n    lea rsi, [rsp+24]\n");
+                self.out.push_str("    mov rdx, QWORD PTR [rsp+8]\n    call memcpy@PLT\n");
+                self.out.push_str("    mov rdi, rbx\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromBytes.label());
+                self.out.push_str("    add rsp, 4136\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lpath_norm_false:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
+            }
+            // `std/fs.cwd_raw`'s body: `getcwd` into a `PATH_MAX` buffer, then
+            // a `String` from it. The failure is the C runtime's
+            // `kelp_panic_errno`, which is why this routine is what makes that
+            // one live (`Gen::call_panic_errno`). The `String` return is
+            // `MEMORY`-class again, and it is the routine's only argument, so
+            // the destination in `rdi` has to survive the `getcwd` call.
+            Routine::FsCwdRaw => {
+                let msg = self.bytes_label(b"fs.cwd: cannot read the current directory");
+                self.out.push_str("    push rbx\n    sub rsp, 4096\n");
+                self.out.push_str("    mov rbx, rdi\n    mov rdi, rsp\n    mov esi, 4096\n");
+                self.out.push_str("    call getcwd@PLT\n    test rax, rax\n    je .Lcwd_fail\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+                self.out.push_str("    add rsp, 4096\n    pop rbx\n    ret\n.Lcwd_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
             // MK7 §5's list slice, and the one routine in it that is not
             // per-instantiation:
             //
@@ -11797,6 +11978,32 @@ impl Gen {
         self.out.push_str("    call fprintf@PLT\n");
         self.out.push_str("    mov edi, 1\n    call exit@PLT\n");
         self.out.push_str("    .size kelp_panic, .-kelp_panic\n");
+    }
+
+    /// `kelp_panic_errno`: the same two lines the C runtime writes for a failed
+    /// syscall (`codegen_c.rs`'s `kelp_panic_at`), with the `errno` read here
+    /// rather than passed in, because a routine that calls the failing function
+    /// itself has nothing between the failure and this call. `rbx` holds the
+    /// message across the first `fprintf`, `r12` the code across `strerror`.
+    fn emit_panic_errno_routine(&mut self) {
+        let panic_fmt = self.bytes_label(b"panic: %s\n");
+        let errno_fmt = self.bytes_label(b"  errno %d: %s\n");
+        self.out.push_str("    .type kelp_panic_errno, @function\nkelp_panic_errno:\n");
+        self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n    mov rbx, rdi\n");
+        // `errno` first, because the C body passes it to `kelp_panic_at` at
+        // the call and a failed `fprintf` is entitled to overwrite it.
+        self.out.push_str("    call __errno_location@PLT\n    mov r12d, DWORD PTR [rax]\n");
+        self.out.push_str("    mov rdx, rbx\n");
+        let _ = writeln!(self.out, "    lea rsi, [rip+{panic_fmt}]");
+        self.out.push_str("    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n");
+        self.out.push_str("    xor eax, eax\n    call fprintf@PLT\n");
+        self.out.push_str("    mov edi, r12d\n    call strerror@PLT\n");
+        self.out.push_str("    mov rdx, r12\n    mov rcx, rax\n");
+        let _ = writeln!(self.out, "    lea rsi, [rip+{errno_fmt}]");
+        self.out.push_str("    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n");
+        self.out.push_str("    xor eax, eax\n    call fprintf@PLT\n");
+        self.out.push_str("    mov edi, 1\n    call exit@PLT\n");
+        self.out.push_str("    .size kelp_panic_errno, .-kelp_panic_errno\n");
     }
 
     /// Turns the 0/1 in `reg` into a pointer to `"true"` or `"false"`.
@@ -12171,5 +12378,55 @@ impl Gen {
             self.emit_drop_slot(&site, slot, frame)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cap_check_refusal;
+
+    /// The gated table as `resolve.rs` builds it, small enough to read:
+    /// `fs`'s `read` names a path, `fs`'s `cwd` names nothing, and `time`
+    /// names nothing in any call.
+    fn gated() -> std::collections::HashMap<String, String> {
+        std::collections::HashMap::from([
+            ("std.fs.read".to_string(), "fs".to_string()),
+            ("std.fs.cwd".to_string(), "fs".to_string()),
+            ("std.time.now_unix".to_string(), "time".to_string()),
+        ])
+    }
+
+    /// The one direction the narrowing must never lose: a gated call that
+    /// *does* name a resource has a check the C backend would emit, so it is
+    /// refused rather than emitted unchecked.
+    #[test]
+    fn a_gated_call_with_a_resource_argument_is_refused() {
+        assert_eq!(
+            cap_check_refusal(&gated(), "std.fs.read", &[true]).as_deref(),
+            Some("fs"),
+        );
+    }
+
+    /// `fs.cwd` takes no argument, so `checked_args` names no resource and the
+    /// C backend's `cap_checked_call` emits the plain call: the asm backend
+    /// must emit the same thing rather than refuse it.
+    #[test]
+    fn a_gated_call_with_no_resource_argument_is_not_refused() {
+        assert_eq!(cap_check_refusal(&gated(), "std.fs.cwd", &[]), None);
+    }
+
+    /// A call the gate does not cover at all is not this decision's business,
+    /// whatever its arguments look like.
+    #[test]
+    fn an_ungated_call_is_not_refused() {
+        assert_eq!(cap_check_refusal(&gated(), "std.str.len", &[true]), None);
+    }
+
+    /// `time` and `rand` name no resource in any call, so `checked_args`
+    /// returns nothing for them however the arguments are shaped (the
+    /// `_ => Vec::new()` arm), and the C backend emits no check for one either.
+    #[test]
+    fn a_gated_domain_with_no_checked_arguments_is_not_refused() {
+        assert_eq!(cap_check_refusal(&gated(), "std.time.now_unix", &[true]), None);
     }
 }

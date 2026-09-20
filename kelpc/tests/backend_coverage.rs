@@ -240,7 +240,15 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// the three fixtures that pin it — `heap_narrow_fields`,
 /// `list_narrow_element_pop` and `try_narrow_payload` — none of which any
 /// existing fixture covered, which is why the denominator moved to 163 and the
-/// refused count stayed at 31.
+/// refused count stayed at 31. MK7 §5 item 7 (this slice) added two of its own:
+/// `path_normalize`, whose `std/path.normalize_raw` body is the runtime's Kelp
+/// normalizer, and `path_absolute`, which reaches that plus `std/fs.cwd_raw`;
+/// `borrow_two_phase` was already building and the sweep's own note is what
+/// asked for it to be recorded. This slice also wrote `caps_gated_path`, which
+/// is **not** here and must not be: its gated `fs.read` of a path is refused
+/// today for the extern it reaches, and it becomes the capability-check pin the
+/// moment that extern's body is lowered. The denominator is 202, 178 build and
+/// 24 are refused.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "array_basic",
@@ -258,6 +266,10 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "borrow_returned",
     "borrow_temp_arg",
     "borrow_temp_slots",
+    // The sweep's other unrecorded find: the commit that added this fixture
+    // (`609d7df`) left this list alone, and the ratchet test's own note is what
+    // asks for the re-record.
+    "borrow_two_phase",
     "box_basic",
     "box_empty_panic",
     "box_field_take",
@@ -373,6 +385,12 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "passdown_datac",
     "passdown_globals",
     "passdowns",
+    // MK7 §5 item 7's own fixtures: `path_normalize` reaches
+    // `std/path.normalize_raw`, whose body is the runtime's Kelp normalizer, and
+    // `path_absolute` reaches that plus `std/fs.cwd_raw`, so both need the
+    // backend to compile `std/rt` and to lower those two routines.
+    "path_absolute",
+    "path_normalize",
     "path_parts",
     "path_polish",
     "pd_argument_forwarding",

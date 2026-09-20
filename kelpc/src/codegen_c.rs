@@ -587,16 +587,6 @@ impl CapTable {
     }
 }
 
-/// Whether a type is `str` or a borrow of one — the arguments a capability
-/// check treats as resource names.
-fn is_str_like_ty(ty: &Ty) -> bool {
-    match ty {
-        Ty::Str => true,
-        Ty::Ref { inner, .. } => matches!(**inner, Ty::Str),
-        _ => false,
-    }
-}
-
 pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> String {
     let owned = owned_types(&program.structs, &program.enums);
     // The user types with a derived deep copy and a derived order
@@ -3425,7 +3415,8 @@ impl<'a> Gen<'a> {
         let Some(patterns) = self.caps.patterns_for(&self.module, domain) else {
             return call;
         };
-        let arg_is_str: Vec<bool> = args.iter().map(|a| is_str_like_ty(&a.ty)).collect();
+        let arg_is_str: Vec<bool> =
+            args.iter().map(|a| crate::stdlib::is_str_like_ty(&a.ty)).collect();
         // `cap_checked_call` is handed the call's key, which for an imported
         // module is qualified (`std.net.connect`); the per-function table in
         // `stdlib.rs` is keyed on the bare name the author wrote.
