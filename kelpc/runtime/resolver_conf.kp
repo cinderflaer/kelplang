@@ -1,0 +1,896 @@
+impl "std/result"
+impl "std/str"
+
+/* resolver_conf: the configuration half of the stub resolver (MK7 §7 item 6,
+   §8), written in Kelp.
+
+   This is *not* a std module: it is not shipped, and the resolver does not
+   call it yet. It is the port half of a differential pair whose other half is
+   `kelpc/runtime/resolver_conf_ref.c`, and `kelpc/tests/resolver_conf.rs` runs
+   a corpus through both and compares every rendered line. §8's contract is
+   "Kelp first, the C kept as the reference, prove it with a corpus".
+
+   §7 names the resolver as the largest single non-codegen item and the one
+   most likely to be deferred. Its transport half (a socket, a retry, a
+   timeout) is blocked on the syscall externs, and its *configuration* half is
+   not: `/etc/hosts` and `/etc/resolv.conf` are text in, a parsed result out,
+   with no file read and no socket here. The corpus doc in
+   `kelpc/tests/resolver_conf.rs` is the contract for both halves, and it is the
+   same text the C reference follows.
+
+   Two entry points, one per format, because a resolver opens the two files by
+   name and never has to guess which it holds:
+
+     hosts_line(text)   -> `ok hosts e=<addr>|<name>,<name> ...`
+     resolv_line(text)  -> `ok ns=<list> nsdrop=<n> search=<list> ...`
+
+   A rejected input prints `reject <reason>` and nothing else. Nothing here
+   panics on a malformed file: every read is bounds-checked, because a config
+   file an attacker can write is a config file that must not be able to walk a
+   parser off its buffer.
+
+   Byte values are written instead of character literals (`35` is `#`, `59` is
+   `;`, `46` is `.`, `58` is `:`, `45` is `-`, `48` is `0`), the same style
+   `std/rt.kp` uses, because `Bytes.get` yields a `u8`. */
+
+// Why a `/etc/hosts` file was refused. One variant per class the corpus
+// exercises; `hosts_reason` is the single place the wire name is spelled.
+enum HostsErr {
+    BadAddress
+    NoName
+    BadName
+}
+
+// Why a `/etc/resolv.conf` file was refused.
+enum ResolvErr {
+    UnknownKeyword
+    MissingArgument
+    BadAddress
+    ExtraArgument
+    BadSearch
+    BadOption
+}
+
+// A half-open byte range inside the input.
+datac Span(val start: usize, val len: usize)
+
+// One token, and where the scan stopped. Returned rather than written through
+// a `mut` out-parameter: a scalar `mut` parameter cannot be assigned in Kelp
+// today, and a `datac`'s `val` field cannot be written through one either.
+datac Scan(val found: bool, val span: Span, val at: usize)
+
+// A decimal option value: `ok` is false when the text after the option's
+// prefix is not 1 to 3 digits with no leading zero.
+datac Number(val ok: bool, val value: u32)
+
+// One `/etc/hosts` line: the address, then its names in file order. The names
+// are lowercased, because a hosts lookup is case-insensitive.
+datac HostEntry(val addr: String, val names: List<String>)
+
+// A whole `/etc/hosts` file. Entries are kept in file order and duplicates are
+// kept, not merged: which of two addresses for one name wins is the lookup
+// policy's decision (glibc returns both), not the parser's.
+datac HostsFile(val entries: List<HostEntry>)
+
+// A whole `/etc/resolv.conf` file, with the defaults glibc's `res_init` starts
+// from (`ndots` 1, `timeout` 5, `attempts` 2, no rotation, no search list).
+// `ns_dropped` and `search_dropped` are the counts the glibc limits
+// (`MAXNS` 3, `MAXDNSRCH` 6) discard, so the truncation is visible in the line
+// rather than silent.
+datac ResolvConf(
+    val nameservers: List<String>,
+    val ns_dropped: usize,
+    val search: List<String>,
+    val search_dropped: usize,
+    val ndots: u8,
+    val timeout: u8,
+    val attempts: u8,
+    val rotate: bool,
+    val unknown: usize,
+)
+
+// ---- byte predicates --------------------------------------------------------
+
+// Space or tab, the two separators both formats use.
+fun is_blank(b: u8).R: bool = b == 32 || b == 9
+
+// `0`..`9`.
+fun is_digit(b: u8).R: bool = b >= 48 && b <= 57
+
+// `0`..`9`, `a`..`z`, `A`..`Z`.
+fun is_alnum(b: u8).R: bool = is_digit(b) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+
+// `0`..`9`, `a`..`f`, `A`..`F`.
+fun is_hex(b: u8).R: bool = is_digit(b) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70)
+
+// A hex digit's value. The caller has checked `is_hex`.
+fun hex_val(b: u8).R: u8 {
+    if b >= 48 && b <= 57 {
+        return b - 48
+    }
+    if b >= 97 && b <= 102 {
+        return b - 87
+    }
+    return b - 55
+}
+
+// The lowercase spelling of one nibble.
+fun hex_char(n: u8).R: u8 {
+    if n < 10 {
+        return n + 48
+    }
+    return n + 87
+}
+
+// ASCII lowercase, the only case folding both formats need.
+fun lower(b: u8).R: u8 {
+    if b >= 65 && b <= 90 {
+        return b + 32
+    }
+    return b
+}
+
+// `n` appended in decimal. The `String` is bound first because `str.from_u64`
+// returns one, and a borrow of a temporary is not something to rely on.
+fun push_dec(out: mut String, n: u64) {
+    val text = str.from_u64(n)
+    out.push_str(text.as_str())
+}
+
+// A `,`-joined list, or `-` when it is empty, so every rendered line has the
+// same shape whether a field was set or not.
+fun push_list(out: mut String, xs: &List<String>) {
+    if xs.len() == 0 {
+        out.push(45)
+        return
+    }
+    var i: usize = 0
+    while i < xs.len() {
+        if i > 0 {
+            out.push(44)
+        }
+        val s = xs.get(i)
+        out.push_str(s.as_str())
+        i = i + 1
+    }
+}
+
+// ---- lines and tokens -------------------------------------------------------
+
+// The end of the logical line that starts at `start`, whose newline (if any) is
+// at `nl`: the first comment introducer or `nl`, whichever comes first, with a
+// trailing carriage return dropped so a CRLF file parses exactly like an LF
+// one. `semi` admits `;` as a comment introducer, which `/etc/resolv.conf`
+// does and `/etc/hosts` does not.
+fun line_end(data: &Bytes, start: usize, nl: usize, semi: bool).R: usize {
+    var e = nl
+    var i = start
+    var done = false
+    while !done && i < e {
+        val b = data.get(i)
+        if b == 35 || (semi && b == 59) {
+            e = i
+            done = true
+        } else {
+            i = i + 1
+        }
+    }
+    if e > start && data.get(e - 1) == 13 {
+        e = e - 1
+    }
+    return e
+}
+
+// The next blank-separated token at or after `at`, inside `[at, end)`. An empty
+// token cannot be produced: runs of blanks are skipped, and a token ends at the
+// next blank or at `end`.
+fun scan(data: &Bytes, at: usize, end: usize).R: Scan {
+    var i = at
+    while i < end && is_blank(data.get(i)) {
+        i = i + 1
+    }
+    if i >= end {
+        return Scan(found = false, span = Span(start = end, len = 0), at = i)
+    }
+    val s = i
+    while i < end && !is_blank(data.get(i)) {
+        i = i + 1
+    }
+    return Scan(found = true, span = Span(start = s, len = i - s), at = i)
+}
+
+// Whether the token is exactly `word`. Keywords are matched case-sensitively,
+// which is what glibc's `strncmp` does.
+fun token_is(data: &Bytes, start: usize, len: usize, word: &str).R: bool {
+    if len != str.len(word) {
+        return false
+    }
+    var i: usize = 0
+    while i < len {
+        if data.get(start + i) != str.byte(word, i) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// Whether the token begins with `word`. The token may be exactly `word`: the
+// caller decides whether a missing remainder is a value error or not.
+fun token_has_prefix(data: &Bytes, start: usize, len: usize, word: &str).R: bool {
+    val n = str.len(word)
+    if len < n {
+        return false
+    }
+    var i: usize = 0
+    while i < n {
+        if data.get(start + i) != str.byte(word, i) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// The decimal number in the token after `prefix` bytes of it: 1 to 3 digits,
+// no leading zero on a multi-digit value and no sign, so a value that a config
+// writer and a reader could disagree about (`010`) is a rejection rather than a
+// guess.
+fun token_number(data: &Bytes, start: usize, len: usize, prefix: usize).R: Number {
+    if len <= prefix {
+        return Number(ok = false, value = 0)
+    }
+    val n = len - prefix
+    if n > 3 {
+        return Number(ok = false, value = 0)
+    }
+    if n > 1 && data.get(start + prefix) == 48 {
+        return Number(ok = false, value = 0)
+    }
+    var v: u32 = 0
+    var i: usize = 0
+    while i < n {
+        val b = data.get(start + prefix + i)
+        if !is_digit(b) {
+            return Number(ok = false, value = 0)
+        }
+        v = v * 10 + b.to_u32() - 48
+        i = i + 1
+    }
+    return Number(ok = true, value = v)
+}
+
+// ---- addresses --------------------------------------------------------------
+//
+// One parser for both files, because both carry an IP literal in the same two
+// shapes. The canonical spelling is written into `out`, which may hold a
+// partial rendering when the answer is false: a rejected case prints
+// `reject <reason>` and never the rendered line, so a partial rendering is
+// never observed.
+//
+// The rules are deliberately the strict ones: an address is either a dotted
+// quad of four 1-to-3-digit octets each at most 255 with no leading zero, or an
+// IPv6 address of eight groups written without an embedded IPv4 tail. `inet_aton`
+// reads `010.0.0.1` as octal and `1.2.3` as a class-A form; a resolver that
+// trusted that spelling would let a config file mean something its writer did
+// not, so this one refuses both. What is accepted is rendered canonically:
+// lowercase hex, no leading zeros, and `::` for the longest run of two or more
+// zero groups (the leftmost on a tie).
+
+// Whether the token holds an address, and its canonical spelling if it does.
+fun write_address(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+    if len == 0 {
+        return false
+    }
+    if has_colon(data, start, len) {
+        return write_ipv6(data, start, len, out)
+    }
+    return write_ipv4(data, start, len, out)
+}
+
+fun has_colon(data: &Bytes, start: usize, len: usize).R: bool {
+    var i = start
+    val end = start + len
+    while i < end {
+        if data.get(i) == 58 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// A dotted quad. `parts != 4` covers a short form (`1.2.3`) and an over-long
+// one (`1.2.3.4.5`), and `i != end` covers a trailing byte that is neither
+// digit nor dot.
+fun write_ipv4(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+    val end = start + len
+    var i = start
+    var parts: usize = 0
+    var ok = true
+    while ok && parts < 4 {
+        if parts > 0 {
+            if i >= end || data.get(i) != 46 {
+                ok = false
+            } else {
+                i = i + 1
+            }
+        }
+        if ok {
+            val s = i
+            while i < end && is_digit(data.get(i)) {
+                i = i + 1
+            }
+            val d = i - s
+            if d == 0 || d > 3 {
+                ok = false
+            } elif d > 1 && data.get(s) == 48 {
+                ok = false
+            } else {
+                var v: u32 = 0
+                var k = s
+                while k < i {
+                    v = v * 10 + data.get(k).to_u32() - 48
+                    k = k + 1
+                }
+                if v > 255 {
+                    ok = false
+                } else {
+                    if parts > 0 {
+                        out.push(46)
+                    }
+                    push_dec(out, v.to_u64())
+                    parts = parts + 1
+                }
+            }
+        }
+    }
+    if !ok || parts != 4 || i != end {
+        return false
+    }
+    return true
+}
+
+// An IPv6 address. One group is 1 to 4 hex digits, `::` appears at most once,
+// a single `:` must have a group on both sides, and after the gap is expanded
+// there must be exactly eight groups. A zone suffix (`%eth0`) and an embedded
+// IPv4 tail (`::ffff:1.2.3.4`) are refused: neither is a bare address this
+// resolver would compare against a peer's.
+fun write_ipv6(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+    val end = start + len
+    var groups: List<u16> = List.empty()
+    var gap_at: usize = 0
+    var seen_gap = false
+    var i = start
+    // `state` is 0 when a field is required here (the start of the address), 1
+    // when a separator is required (a field was just read) and 2 when a field is
+    // optional (a `::` was just read). A single `:` is only a separator between
+    // two fields, so a run of one colon at either end is what state 0 at the end
+    // of the walk refuses.
+    var state: u8 = 0
+    var ok = true
+    while ok && i < end {
+        if state == 1 {
+            if data.get(i) != 58 {
+                ok = false
+            } else {
+                i = i + 1
+                if i < end && data.get(i) == 58 && !seen_gap {
+                    seen_gap = true
+                    gap_at = groups.len()
+                    i = i + 1
+                    state = 2
+                } else {
+                    state = 0
+                }
+            }
+        } else {
+            var v: u32 = 0
+            var d: usize = 0
+            while i < end && d < 4 && is_hex(data.get(i)) {
+                v = v * 16 + hex_val(data.get(i)).to_u32()
+                i = i + 1
+                d = d + 1
+            }
+            if d > 0 {
+                if groups.len() >= 8 {
+                    ok = false
+                } else {
+                    groups.push(v.to_u16())
+                    state = 1
+                }
+            } elif state == 0 && i + 1 < end && data.get(i) == 58 && data.get(i + 1) == 58 && !seen_gap {
+                seen_gap = true
+                gap_at = groups.len()
+                i = i + 2
+                state = 2
+            } else {
+                ok = false
+            }
+        }
+    }
+    if state == 0 {
+        ok = false
+    }
+    var gap_len: usize = 0
+    if ok {
+        if seen_gap {
+            // `::` stands for at least one group; eight or more is a refusal,
+            // not an empty gap.
+            if groups.len() >= 8 {
+                ok = false
+            } else {
+                gap_len = 8 - groups.len()
+            }
+        } elif groups.len() != 8 {
+            ok = false
+        }
+    }
+    if !ok {
+        return false
+    }
+    var full: List<u16> = List.empty()
+    var j: usize = 0
+    while j < 8 {
+        if j < gap_at {
+            full.push(groups.get(j))
+        } elif j < gap_at + gap_len {
+            full.push(0)
+        } else {
+            full.push(groups.get(j - gap_len))
+        }
+        j = j + 1
+    }
+    // RFC 5952's compressible run: the longest run of two or more zero groups,
+    // and the leftmost one when two runs are the same length.
+    var best_at: usize = 8
+    var best_len: usize = 0
+    var run_at: usize = 0
+    var run_len: usize = 0
+    var k: usize = 0
+    while k < 8 {
+        if full.get(k) == 0 {
+            if run_len == 0 {
+                run_at = k
+            }
+            run_len = run_len + 1
+        } else {
+            if run_len > best_len {
+                best_len = run_len
+                best_at = run_at
+            }
+            run_len = 0
+        }
+        k = k + 1
+    }
+    if run_len > best_len {
+        best_len = run_len
+        best_at = run_at
+    }
+    // `sep` is whether a `:` is owed before whatever is written next: the
+    // first `:` of a `::` separates the same way a group separator does, so
+    // the group after a gap needs none.
+    var sep = false
+    var m: usize = 0
+    while m < 8 {
+        if m == best_at && best_len >= 2 {
+            out.push(58)
+            out.push(58)
+            sep = false
+            m = best_at + best_len
+        } else {
+            if sep {
+                out.push(58)
+            }
+            push_hex_group(out, full.get(m))
+            sep = true
+            m = m + 1
+        }
+    }
+    return true
+}
+
+// One group, lowercase, without leading zeros.
+fun push_hex_group(out: mut String, v: u16) {
+    var started = false
+    var i: usize = 0
+    while i < 4 {
+        val shift = ((3 - i) * 4).to_u16()
+        val nib = ((v >> shift) & 15).to_u8()
+        if nib != 0 {
+            started = true
+        }
+        if started {
+            out.push(hex_char(nib))
+        }
+        i = i + 1
+    }
+    if !started {
+        out.push(48)
+    }
+}
+
+// ---- hostnames --------------------------------------------------------------
+//
+// One name rule for both files. RFC 1123's preferred syntax, and no more: 1 to
+// 63 bytes per label of ASCII letters, digits and hyphen, a hyphen not first or
+// last in a label, at least one label, at most 255 bytes in all, and no
+// trailing dot. An underscore, a leading or trailing hyphen, a dot at either
+// end (`foo.`) and every non-ASCII byte are refusals, because a name that is
+// not one thing means a lookup that has more than one answer. A trailing dot is
+// DNS's spelling for "absolute"; v1 does not model a search suffix yet, so the
+// two spellings are not merged here.
+//
+// The lowercased name is written into `out`, which may hold a partial rendering
+// when the answer is false (see `write_address`).
+fun write_hostname(data: &Bytes, start: usize, len: usize, out: mut String).R: bool {
+    if len == 0 || len > 255 {
+        return false
+    }
+    val end = start + len
+    var i = start
+    var label: usize = 0
+    var ok = true
+    while ok && i < end {
+        val b = data.get(i)
+        if b == 46 {
+            if label == 0 || data.get(i - 1) == 45 {
+                ok = false
+            } else {
+                out.push(46)
+                label = 0
+            }
+        } elif is_alnum(b) || (b == 45 && label > 0) {
+            out.push(lower(b))
+            label = label + 1
+            if label > 63 {
+                ok = false
+            }
+        } else {
+            ok = false
+        }
+        i = i + 1
+    }
+    // A hyphen at either end of the whole name, and a label that ended with
+    // one before a dot, are refusals as much as a hyphen that starts a label is.
+    if !ok || label == 0 {
+        return false
+    }
+    if data.get(end - 1) == 45 {
+        return false
+    }
+    return true
+}
+
+// ---- /etc/hosts -------------------------------------------------------------
+
+// Every line of the file, refusing the first line that is not one. A blank line
+// and a comment-only line are not lines in this sense: they are skipped, and
+// they contribute nothing to the entry list.
+//
+// A bad line rejects the *file* rather than being skipped: a hosts file with a
+// mangled line is a hosts file whose author does not know what it says, and a
+// resolver that quietly ignores it answers a query with the wrong address.
+// The reason names the class of the first bad line, not which line it was: the
+// line number is a diagnostic concern and both implementations print the same
+// verdict for the same input.
+fun parse_hosts(data: Bytes).R: result.Result<HostsFile, HostsErr> {
+    var entries: List<HostEntry> = List.empty()
+    val n = data.len()
+    var pos: usize = 0
+    while pos <= n {
+        var nl = pos
+        var found = false
+        while !found && nl < n {
+            if data.get(nl) == 10 {
+                found = true
+            } else {
+                nl = nl + 1
+            }
+        }
+        val end = line_end(data, pos, nl, false)
+        val t0 = scan(data, pos, end)
+        if t0.found {
+            var addr = String.empty()
+            if !write_address(data, t0.span.start, t0.span.len, addr) {
+                return result.Result.Err(error = HostsErr.BadAddress)
+            }
+            val t1 = scan(data, t0.at, end)
+            if !t1.found {
+                return result.Result.Err(error = HostsErr.NoName)
+            }
+            var names: List<String> = List.empty()
+            var t = t1
+            while t.found {
+                var name = String.empty()
+                if !write_hostname(data, t.span.start, t.span.len, name) {
+                    return result.Result.Err(error = HostsErr.BadName)
+                }
+                names.push(name)
+                t = scan(data, t.at, end)
+            }
+            entries.push(HostEntry(addr = addr, names = names))
+        }
+        if found {
+            pos = nl + 1
+        } else {
+            pos = n + 1
+        }
+    }
+    return result.Result.Ok(value = HostsFile(entries = entries))
+}
+
+// ---- /etc/resolv.conf -------------------------------------------------------
+//
+// glibc's limits, because they are the limits a resolver's caller will see:
+// the first three `nameserver` lines are kept and later ones discarded, and a
+// search list is truncated to six domains. Both are counted in the rendered
+// line rather than dropped silently.
+fun max_nameservers().R: usize = 3
+
+fun max_search().R: usize = 6
+
+// `nameserver`, `domain`, `search` and `options`, in the order glibc's
+// `res_init` reads them. `domain` and `search` are the same field: the last
+// instance of either wins, whether the list has one element or six, which is
+// what resolv.conf(5) says and what glibc does.
+//
+// A line that is not one of the four keywords rejects the file. glibc ignores
+// an unknown directive; a resolver that skips a directive it does not
+// understand is a resolver whose behaviour nobody can predict from the file, so
+// this parser refuses instead. The same choice is what makes a mangled line
+// (`nameserverr 1.1.1.1`) a rejection.
+fun parse_resolv(data: Bytes).R: result.Result<ResolvConf, ResolvErr> {
+    var nameservers: List<String> = List.empty()
+    var ns_dropped: usize = 0
+    var search: List<String> = List.empty()
+    var search_dropped: usize = 0
+    var ndots: u8 = 1
+    var timeout: u8 = 5
+    var attempts: u8 = 2
+    var rotate = false
+    var unknown: usize = 0
+    val n = data.len()
+    var pos: usize = 0
+    while pos <= n {
+        var nl = pos
+        var found = false
+        while !found && nl < n {
+            if data.get(nl) == 10 {
+                found = true
+            } else {
+                nl = nl + 1
+            }
+        }
+        val end = line_end(data, pos, nl, true)
+        val t0 = scan(data, pos, end)
+        if t0.found {
+            val kw = t0.span.start
+            val klen = t0.span.len
+            if token_is(data, kw, klen, "nameserver") {
+                val t = scan(data, t0.at, end)
+                if !t.found {
+                    return result.Result.Err(error = ResolvErr.MissingArgument)
+                }
+                val more = scan(data, t.at, end)
+                if more.found {
+                    return result.Result.Err(error = ResolvErr.ExtraArgument)
+                }
+                var addr = String.empty()
+                if !write_address(data, t.span.start, t.span.len, addr) {
+                    return result.Result.Err(error = ResolvErr.BadAddress)
+                }
+                if nameservers.len() < max_nameservers() {
+                    nameservers.push(addr)
+                } else {
+                    ns_dropped = ns_dropped + 1
+                }
+            } elif token_is(data, kw, klen, "domain") {
+                val t = scan(data, t0.at, end)
+                if !t.found {
+                    return result.Result.Err(error = ResolvErr.MissingArgument)
+                }
+                val more = scan(data, t.at, end)
+                if more.found {
+                    return result.Result.Err(error = ResolvErr.ExtraArgument)
+                }
+                var name = String.empty()
+                if !write_hostname(data, t.span.start, t.span.len, name) {
+                    return result.Result.Err(error = ResolvErr.BadSearch)
+                }
+                search = List.empty()
+                search.push(name)
+                search_dropped = 0
+            } elif token_is(data, kw, klen, "search") {
+                var rest = scan(data, t0.at, end)
+                if !rest.found {
+                    return result.Result.Err(error = ResolvErr.MissingArgument)
+                }
+                search = List.empty()
+                search_dropped = 0
+                while rest.found {
+                    var name = String.empty()
+                    if !write_hostname(data, rest.span.start, rest.span.len, name) {
+                        return result.Result.Err(error = ResolvErr.BadSearch)
+                    }
+                    if search.len() < max_search() {
+                        search.push(name)
+                    } else {
+                        search_dropped = search_dropped + 1
+                    }
+                    rest = scan(data, rest.at, end)
+                }
+            } elif token_is(data, kw, klen, "options") {
+                var rest = scan(data, t0.at, end)
+                while rest.found {
+                    val what = write_option(data, rest.span.start, rest.span.len)
+                    if what == 1 {
+                        rotate = true
+                    } elif what == 2 {
+                        val num = token_number(data, rest.span.start, rest.span.len, 6)
+                        if !num.ok || num.value > 15 {
+                            return result.Result.Err(error = ResolvErr.BadOption)
+                        }
+                        ndots = num.value.to_u8()
+                    } elif what == 3 {
+                        val num = token_number(data, rest.span.start, rest.span.len, 8)
+                        if !num.ok || num.value < 1 || num.value > 30 {
+                            return result.Result.Err(error = ResolvErr.BadOption)
+                        }
+                        timeout = num.value.to_u8()
+                    } elif what == 4 {
+                        val num = token_number(data, rest.span.start, rest.span.len, 9)
+                        if !num.ok || num.value < 1 || num.value > 5 {
+                            return result.Result.Err(error = ResolvErr.BadOption)
+                        }
+                        attempts = num.value.to_u8()
+                    } else {
+                        // An option glibc does not know: skipped, and counted.
+                        // The count is all that is kept, so the parsed result
+                        // has no field whose size the file could make unbounded
+                        // (this is what lets the C reference use fixed
+                        // storage), and the corpus can still see that the
+                        // option was skipped and not refused.
+                        unknown = unknown + 1
+                    }
+                    rest = scan(data, rest.at, end)
+                }
+            } else {
+                return result.Result.Err(error = ResolvErr.UnknownKeyword)
+            }
+        }
+        if found {
+            pos = nl + 1
+        } else {
+            pos = n + 1
+        }
+    }
+    return result.Result.Ok(value = ResolvConf(
+        nameservers = nameservers,
+        ns_dropped = ns_dropped,
+        search = search,
+        search_dropped = search_dropped,
+        ndots = ndots,
+        timeout = timeout,
+        attempts = attempts,
+        rotate = rotate,
+        unknown = unknown,
+    ))
+}
+
+// Which known option the token is: 1 `rotate`, 2 `ndots:`, 3 `timeout:`,
+// 4 `attempts:`, 0 anything else. A known option whose value is malformed is a
+// rejection at the call site; an unknown one is skipped there.
+fun write_option(data: &Bytes, start: usize, len: usize).R: u8 {
+    if token_is(data, start, len, "rotate") {
+        return 1
+    }
+    if token_has_prefix(data, start, len, "ndots:") {
+        return 2
+    }
+    if token_has_prefix(data, start, len, "timeout:") {
+        return 3
+    }
+    if token_has_prefix(data, start, len, "attempts:") {
+        return 4
+    }
+    return 0
+}
+
+// ---- rendering --------------------------------------------------------------
+
+// The wire name of a `/etc/hosts` reason: the token both implementations print,
+// and the whole of that format's rejection vocabulary.
+fun hosts_reason(e: &HostsErr).R: &str = when e {
+    BadAddress -> "hosts-bad-address"
+    NoName -> "hosts-no-name"
+    BadName -> "hosts-bad-name"
+}
+
+// The wire name of a `/etc/resolv.conf` reason.
+fun resolv_reason(e: &ResolvErr).R: &str = when e {
+    UnknownKeyword -> "resolv-unknown-keyword"
+    MissingArgument -> "resolv-missing-argument"
+    BadAddress -> "resolv-bad-address"
+    ExtraArgument -> "resolv-extra-argument"
+    BadSearch -> "resolv-bad-search"
+    BadOption -> "resolv-bad-option"
+}
+
+// The canonical line for a hosts file: `ok hosts`, then one
+// ` e=<addr>|<name>,<name>` group per entry, in file order. `|` and `,` separate
+// the address from its names and the names from each other because neither can
+// appear in an address or a hostname, and an IPv6 address is full of `:`. There
+// is no entry count: the groups are the count, and the entries stream out as
+// they are parsed, which is what lets the C reference render a file of any size
+// without buffering it.
+fun render_hosts(f: &HostsFile).R: String {
+    var out = String.with_capacity(64)
+    out.push_str("ok hosts")
+    var i: usize = 0
+    while i < f.entries.len() {
+        val e = f.entries.get(i)
+        out.push_str(" e=")
+        out.push_str(e.addr.as_str())
+        out.push(124)
+        var k: usize = 0
+        while k < e.names.len() {
+            if k > 0 {
+                out.push(44)
+            }
+            out.push_str(e.names.get(k).as_str())
+            k = k + 1
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// The canonical line for a resolv.conf file. Fixed fields in a fixed order, so
+// a diff says which field moved instead of which byte.
+fun render_resolv(c: &ResolvConf).R: String {
+    var out = String.with_capacity(128)
+    out.push_str("ok ns=")
+    push_list(out, c.nameservers)
+    out.push_str(" nsdrop=")
+    push_dec(out, c.ns_dropped.to_u64())
+    out.push_str(" search=")
+    push_list(out, c.search)
+    out.push_str(" searchdrop=")
+    push_dec(out, c.search_dropped.to_u64())
+    out.push_str(" ndots=")
+    push_dec(out, c.ndots.to_u64())
+    out.push_str(" timeout=")
+    push_dec(out, c.timeout.to_u64())
+    out.push_str(" attempts=")
+    push_dec(out, c.attempts.to_u64())
+    out.push_str(" rotate=")
+    if c.rotate {
+        out.push_str("true")
+    } else {
+        out.push_str("false")
+    }
+    out.push_str(" unknown=")
+    push_dec(out, c.unknown.to_u64())
+    return out
+}
+
+// The one line for one `/etc/hosts` file: the rendered entries, or
+// `reject <reason>`.
+fun line_hosts(data: Bytes).R: String {
+    val parsed = parse_hosts(data)
+    return when parsed {
+        Ok(f) -> render_hosts(f)
+        Err(e) -> str.concat("reject ", hosts_reason(e))
+    }
+}
+
+// The one line for one `/etc/resolv.conf` file: the rendered configuration, or
+// `reject <reason>`.
+fun line_resolv(data: Bytes).R: String {
+    val parsed = parse_resolv(data)
+    return when parsed {
+        Ok(c) -> render_resolv(c)
+        Err(e) -> str.concat("reject ", resolv_reason(e))
+    }
+}
