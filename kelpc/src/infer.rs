@@ -5211,6 +5211,22 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 });
             }
             let sub_t = check_expr(sub, ctx, None)?;
+            // A parameter of an owned type is already a borrow (`syntax.md`
+            // 10.2), so `&o` on one is a borrow of a borrow. Left alone the
+            // two references unify badly and the caller sees an inference
+            // failure naming a type parameter instead of this rule.
+            if let Ty::Ref { .. } = sub_t.ty {
+                let written = match sub.as_ref() {
+                    ast::Expr::Ident(name, _) => format!("'&{name}'"),
+                    _ => "this borrow".to_string(),
+                };
+                return Err(TypeError {
+                    message: format!(
+                        "this is a borrow of a borrow: {written} borrows a value that is already a borrow, and Kelp has no '&&T'; pass the borrow itself"
+                    ),
+                    span: *span,
+                });
+            }
             if *mutable {
                 check_target_writable(&sub_t, ctx)?;
             }
@@ -5241,7 +5257,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // `print`/`print!` (that path is handled in `check_call`).
             let _ = (parts, span);
             Err(TypeError {
-                message: "a string template can only be printed — pass it to 'print(...)' or 'print!(...)'; v1 has no owned string type to build one with (that's M6)".to_string(),
+                message: "a string template can only be printed: pass it to 'print(...)' or 'print!(...)'; a template is not a value, so build the text with 'str.concat', 'fmt.*' or a 'String'".to_string(),
                 span: *span,
             })
         }
@@ -6507,6 +6523,28 @@ fn check_binary_operands(
     Ok((left, right))
 }
 
+/// When one operand of an arithmetic operator is an exclusive borrow, the
+/// operator is reading the *reference* rather than the value behind it. That
+/// happens with a `mut T` parameter, whose name inside the body is a borrow
+/// (`syntax.md` 10.2), and the documented spelling is `*sink`, not `sink`
+/// (§10's `*pos` rule). Name the operand and say so, because the bare
+/// `mut i64` in the type pair is otherwise a type no source can write.
+fn exclusive_borrow_hint(l: &tir::Expr, r: &tir::Expr) -> String {
+    let expr = match (&l.ty, &r.ty) {
+        (Ty::Ref { mutable: true, .. }, _) => l,
+        (_, Ty::Ref { mutable: true, .. }) => r,
+        _ => return String::new(),
+    };
+    let (written, fix) = match &expr.kind {
+        tir::ExprKind::Ident(n) => (format!("'{n}'"), format!("*{n}")),
+        _ => ("this operand".to_string(), "the dereferenced value".to_string()),
+    };
+    format!(
+        "; {written} is a borrow ('{}'), so the operator reads the reference itself; write '{fix}' to read through it",
+        expr.ty.display()
+    )
+}
+
 fn check_binary(
     op: BinOp,
     lhs: &ast::Expr,
@@ -6523,9 +6561,10 @@ fn check_binary(
             if !l.ty.is_numeric() || l.ty != r.ty {
                 return Err(TypeError {
                     message: format!(
-                        "operator requires matching numeric operands, found '{}' and '{}'",
+                        "operator requires matching numeric operands, found '{}' and '{}'{}",
                         l.ty.display(),
-                        r.ty.display()
+                        r.ty.display(),
+                        exclusive_borrow_hint(&l, &r),
                     ),
                     span,
                 });

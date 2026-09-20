@@ -1,0 +1,15 @@
+// A parameter of an owned type is already a borrow (`syntax.md` 10.2), so
+// `&o` on one is a borrow of a borrow. The compiler used to report this as a
+// failed type inference naming `is_none`'s type parameter `T`.
+impl "std/option" as option
+
+fun check(o: option.Option<i64>) {
+    if option.is_none(&o) {
+        print("none")
+    }
+}
+
+fun main() {
+    val x: option.Option<i64> = option.Option.None
+    check(x)
+}

@@ -220,6 +220,16 @@ fn writing_through_a_shared_borrow_is_rejected() {
 }
 
 #[test]
+fn a_borrow_of_a_borrow_is_reported_as_such() {
+    // Not an inference failure naming `is_none`'s `T`: the operand is already
+    // a borrow, and the rule is documented.
+    assert_rejected_with(
+        "tests/fixtures/borrow_of_a_borrow.kp",
+        "this is a borrow of a borrow",
+    );
+}
+
+#[test]
 fn moving_a_borrowed_value_is_rejected() {
     assert_rejected("tests/fixtures/move_while_borrowed.kp");
 }
@@ -232,6 +242,16 @@ fn receiver_methods_resolve_and_mutate_through_self() {
 #[test]
 fn mut_receiver_method_on_val_binding_is_rejected() {
     assert_rejected("tests/fixtures/receiver_mut_on_val.kp");
+}
+
+#[test]
+fn a_bare_mut_parameter_in_arithmetic_names_the_deref_fix() {
+    // `mut T` is a borrow, so `sink += 1` reads the reference. The error has
+    // to name the operand and `*sink`, not just print the `mut i64` type.
+    assert_rejected_with(
+        "tests/fixtures/mut_param_bare_read.kp",
+        "write '*sink' to read through it",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +713,12 @@ fn templates_print_literals_and_values() {
 
 #[test]
 fn a_template_outside_print_is_rejected() {
-    assert_rejected("tests/fixtures/template_not_printed.kp");
+    // The message may not claim a missing owned `String`: `String` shipped in
+    // MK5-S1, and `syntax.md` 2.5 names the ways to build one.
+    assert_rejected_with(
+        "tests/fixtures/template_not_printed.kp",
+        "a template is not a value",
+    );
 }
 
 #[test]
@@ -1246,6 +1271,17 @@ fn a_module_cannot_delegate_more_than_it_holds() {
         "caps_escalation",
         &project("caps_escalation").join("main.kp"),
         "can delegate less than it has, never more",
+    );
+}
+
+#[test]
+fn an_ungranted_importer_is_named_as_the_line_to_change() {
+    // `main` imports `store` with no `caps(...)`, so the error names `store`
+    // even though the grant that has to change is `main`'s bare `impl` line.
+    assert_project_rejected(
+        "caps_delegate_from_nothing",
+        &project("caps_delegate_from_nothing").join("main.kp"),
+        "'store' holds nothing here because the module that imports it wrote no",
     );
 }
 

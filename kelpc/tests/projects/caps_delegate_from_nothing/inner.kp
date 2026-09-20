@@ -1,0 +1,3 @@
+impl "std/fs"
+
+fun check().R: bool = fs.exists("/var/lib/kelp/caps_eligible")

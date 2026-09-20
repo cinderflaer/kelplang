@@ -1,0 +1,12 @@
+// `mut T` is a borrow (`syntax.md` 10.2), so the bare name is the reference,
+// not the value: the write is `*sink += 1`. The arithmetic error names the
+// operand and the fix, because `mut i64` is a type no source can write.
+fun bump(sink: mut i64) {
+    sink += 1
+}
+
+fun main() {
+    var n: i64 = 1
+    bump(n)
+    print(n)
+}

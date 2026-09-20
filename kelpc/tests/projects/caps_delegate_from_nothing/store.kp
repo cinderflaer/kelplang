@@ -1,0 +1,3 @@
+impl "inner" with caps(fs = ["/var/lib/**"])
+
+fun probe().R: bool = inner.check()

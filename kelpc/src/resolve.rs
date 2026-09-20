@@ -375,9 +375,21 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
                 .iter()
                 .any(|h| pattern_covered(h, pattern, &g.domain))
             {
+                // When the importer holds nothing, the message so far names
+                // *it* and leaves the reader looking at the wrong module: the
+                // line to change is the `impl` in whoever imported this
+                // module, which wrote no grant at all.
+                let missing = if held.is_empty() {
+                    format!(
+                        "; '{}' holds nothing here because the module that imports it wrote no 'caps({} = [...])' grant on that `impl` line",
+                        g.importer, g.domain
+                    )
+                } else {
+                    String::new()
+                };
                 return Err(Diagnostic::new(
                     format!(
-                        "module '{}' cannot grant '{}' access to '{}': it does not hold that pattern itself (held: {}) — a module can delegate less than it has, never more",
+                        "module '{}' cannot grant '{}' access to '{}': it does not hold that pattern itself (held: {}){}; a module can delegate less than it has, never more",
                         g.importer,
                         g.domain,
                         pattern,
@@ -385,7 +397,8 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
                             "none".to_string()
                         } else {
                             held.join(", ")
-                        }
+                        },
+                        missing
                     ),
                     g.span,
                     g.importer.clone(),

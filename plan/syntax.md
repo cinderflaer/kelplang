@@ -1814,6 +1814,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `use of moved value 'a'` | an owned value was moved earlier; reorder, or borrow instead |
 | `cannot borrow 'c' as exclusive: already borrowed as shared` | end the earlier borrow (an inner block does it), because borrows last to the end of the scope |
 | `cannot borrow 'c': already borrowed exclusively` | same rule, other direction |
+| `this is a borrow of a borrow` (with the operand named) | a parameter is already a borrow (§10.2), so `&o` on one makes two: pass the parameter itself, `o` |
+| `operator requires matching numeric operands, found 'mut i64' and 'i32'` with the `write '*sink'` note | a `mut T` parameter is a borrow: read and write it through `*`, the same rule as §10's `*pos` |
 | `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding |
 | `argument 'b' has type 'String', expected 'str'` | the parameter is `str` and the value is owned: `str.eq(a, b)`, `fs.write_text`, `path.join` and every other `str` parameter need a view — add `.as_str()` |
@@ -1851,7 +1853,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `a 'fun' literal cannot read passdown 'base'` | a passdown is a hidden argument; pass the value as a parameter |
 | `a 'fun' literal cannot return a borrow ('&str')` | an indirect call has no parameter an elided lifetime could bind to; return an owned value |
 | `a 'fun' literal needs a body` | write `= expr` or `{ ... }` |
-| `a string template can only be printed` | a template is not a value; build the text with `str.concat` or a `String` |
+| `a string template can only be printed` | a template is not a value; build the text with `str.concat`, `fmt.*` or a `String` |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
 | `cannot tell what 'List.empty()' holds` | write the element type on the binding: `var xs: List<i32> = List.empty()` |
