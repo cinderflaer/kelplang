@@ -136,10 +136,10 @@ version = "0.1.0"
 entry = "src/main.kp"
 
 [toolchain]                  # Coral's; kelpc stops at the '[' above
-kelp = "v0.2.0"             # the kelpc version this project builds with
+kelp = "v0.1.2"             # the kelpc version this project builds with
 ```
 
-Written by `coral toolchain kelp pin v0.2.0`, printed by `coral toolchain kelp pin`, removed by `--clear`. It is a line edit, so comments and section order survive, and a pinned version that is not installed yet is installed on the spot (`coral toolchain kelp install <ver>`, which prefers a release binary and falls back to clone-and-build). The store holds one version per component, so installing or using a version drops the others; a pin that is not the stored one is reinstalled the next time the project builds.
+Written by `coral toolchain kelp pin v0.1.2`, printed by `coral toolchain kelp pin`, removed by `--clear`. It is a line edit, so comments and section order survive, and a pinned version that is not installed yet is installed on the spot (`coral toolchain kelp install <ver>`, which prefers a release binary and falls back to clone-and-build). The store holds one version per component, so installing or using a version drops the others; a pin that is not the stored one is reinstalled the next time the project builds.
 
 Coral resolves the compiler in this order: `$KELPC`, then the project's pin, then `~/.coral/bin/kelpc`, then `PATH`. Two things follow, and both bite:
 
