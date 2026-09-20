@@ -3864,6 +3864,94 @@ fn a_net_pattern_that_is_not_a_host_is_rejected() {
     );
 }
 
+/// MK7 §5 item 7 step 2: the `net` host:port check, read back out of the
+/// assembly. The step 1 assertion's sibling for the one `net` kind whose call
+/// site passes its location on the stack, and the pin for the argument-position
+/// rule the plan names: the host is the call's argument 0 and the port argument
+/// 1, so the check reads each from its own pushed slot.
+#[test]
+fn the_asm_net_hostport_check_reads_the_host_and_port_arguments() {
+    if backend() != "asm" {
+        eprintln!(
+            "note: this assertion reads the emitted assembly, so it is \
+             asm-backend-only; backend '{}' is not checked by it",
+            backend()
+        );
+        return;
+    }
+    let bin = out_path("caps_net_denied_asm_check");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("caps_net_denied").join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the net-denied project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let s = std::fs::read_to_string(bin.with_extension("s"))
+        .expect("assemble_and_link keeps <out>.s beside the binary");
+
+    // The call site: the check first, then the call it gates, with the calling
+    // module's own allowlist and its pattern count.
+    let util = function_body_in_asm(&s, "kelp_util__connect_by_another_name");
+    let check = util
+        .find("call kelp_rt$cap_check_hostport")
+        .unwrap_or_else(|| panic!("no host:port check in `util`:\n{util}"));
+    let call = util
+        .find("call kelp_std__net__connect")
+        .unwrap_or_else(|| panic!("no gated call in `util`:\n{util}"));
+    assert!(
+        check < call,
+        "the check must run before the call it gates:\n{util}"
+    );
+    assert!(
+        util.contains("lea rcx, [rip+kelp_caps_util_net]"),
+        "the host:port check must scan the calling module's allowlist:\n{util}"
+    );
+    // The argument-position rule: both arguments are pushed before the check,
+    // so the port (argument 1) is nearest the top and the host (argument 0) is
+    // one slot below it. Reading them the other way round would format
+    // `<port>:<host>` and deny every well-formed call.
+    assert!(
+        util.contains("mov rsi, QWORD PTR [rsp+8]")
+            && util.contains("mov rdx, QWORD PTR [rsp+0]"),
+        "the host must be read from argument 0 and the port from argument 1:\n{util}"
+    );
+
+    // The check routine: match, then deny.
+    let body = function_body_in_asm(&s, "kelp_rt$cap_check_hostport");
+    let match_call = body
+        .find("call kelp_std__rt__host_match")
+        .unwrap_or_else(|| panic!("no host_match in the check:\n{body}"));
+    let deny = body
+        .find("call kelp_rt$cap_deny")
+        .unwrap_or_else(|| panic!("no deny path in the check:\n{body}"));
+    assert!(
+        match_call < deny,
+        "the check must match, then deny:\n{body}"
+    );
+}
+
+/// The denial's first field is `host:port` as the code wrote it, so the
+/// port half is the *call's* own argument rather than the peer's address. That
+/// string can only come out right when the host and the port were read from
+/// their own argument slots, which makes this the behavioural pin for the
+/// argument-position trap that `caps_net`'s admitted case cannot be (a swap
+/// there would deny a call the grant covers, and the failure would read as a
+/// missing grant rather than a misread argument).
+#[test]
+fn the_host_port_denial_names_the_host_as_written_and_its_own_port() {
+    assert_project_denied_at_runtime(
+        "caps_net_denied",
+        &project("caps_net_denied").join("main.kp"),
+        "'localhost:1' is outside the net capability granted to module 'util'",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // S4: `std/http`. The client blocks inside `send` until the response arrives,
 // so — unlike S3's `net` fixtures, which could be both ends in one process —

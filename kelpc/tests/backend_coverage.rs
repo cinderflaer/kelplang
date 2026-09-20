@@ -476,6 +476,13 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "named_args",
     "nested_literal_staging",
     "nested_while_registers",
+    // MK7 §5's S8 slice: the four `net` fixtures built once the socket bodies
+    // and the three `net` capability checks landed, so the baseline grew by
+    // four and the refusal ranking's heap row dropped to four.
+    "net_loopback",
+    "net_poll",
+    "net_resolve",
+    "net_timeout",
     "owned_conditional_move",
     "owned_move_in_loop",
     "panic_bound_message",
