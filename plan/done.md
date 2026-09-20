@@ -1254,7 +1254,7 @@ those drops inside the failure arm, after the payload is moved into the
 return value and before the `return`, which is the order `Stmt::Return` uses.
 Measured, not argued: the report's shape (a 64 KiB local, 40 000 iterations,
 2.5 GB if leaked) dies with `panic: out of memory` under `ulimit -v 1048576` on
-`v0.2.2` and prints `done` now.
+`v0.1.4` and prints `done` now.
 
 **2. A passdown was not forwarded by a caller that only *calls* a function
 reading it.** The generated hidden parameter and the generated global share one
@@ -1272,7 +1272,7 @@ on that list and the global's address otherwise. Two lines, because the two
 cases are genuinely different and the old flag conflated them with a third.
 
 *The report recorded this as fixed on `main`; it is not.* The repro fails
-identically at `d5be7f5`, at `cacd434` and on `v0.2.2`, and `hidden_args` has
+identically at `d5be7f5`, at `cacd434` and on `v0.1.4`, and `hidden_args` has
 carried `pd_global_borrow` unchanged since MK2-S2-M2. The fixture below is the
 shape from the report plus the two callers it does not cover — a chain
 (`deep -> relay -> bump`) and a function that both reads the passdown itself
@@ -1501,7 +1501,7 @@ The `pd` feature worked and nobody used it. The reason was written down in three
 places and was false: `wiki/docs/meta/known-issues.md` said a module-scope
 `pd var` "does not thread through a call chain", `wiki/docs/language/modules.md`
 carried it as a warning (the "`pd var` foot-gun"), and `testkit`'s source and
-docs justified their explicit `mut Report` with it. On 0.2.2 a chain
+docs justified their explicit `mut Report` with it. On 0.1.4 a chain
 (`main -> relay -> bump`) prints what it should, on both backends: what those
 notes were describing was the argument-forwarding codegen bug fixed earlier —
 a caller holding no hidden parameter passed the global by value, so the call
