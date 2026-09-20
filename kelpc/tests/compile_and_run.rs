@@ -1686,6 +1686,19 @@ fn a_view_keeps_its_provenance_through_a_pattern_binding() {
     );
 }
 
+/// A function that returns a borrow other than `&str` — a `datac`, a `String`,
+/// a `Bytes`, and a returned `if` whose arms both derive from the reference
+/// parameter. The assembly backend classified a returned pointer for `str`
+/// alone, so every one of these was refused by name; both backends build it
+/// now and have to agree byte for byte.
+#[test]
+fn a_function_may_return_a_borrow_of_any_type() {
+    assert_compiles_and_runs(
+        "tests/fixtures/borrow_returned.kp",
+        "3,4\n3\n4\nhello\n5\n3\n",
+    );
+}
+
 #[test]
 fn character_literals_take_the_type_their_context_asks_for() {
     assert_compiles_and_runs(
@@ -1834,28 +1847,15 @@ fn a_const_that_does_not_fold_is_rejected() {
 // A-18: a fixed-size, stack-allocated array; A-19: compile-time evaluation
 // ---------------------------------------------------------------------------
 
-/// Runs a fixture that only the C backend builds, because it uses a
-/// fixed-size array (A-18), which the asm backend refuses by name (the check
-/// `backend_coverage.rs` makes). Under that backend the test reports
-/// itself and passes, the way the AddressSanitizer gate does.
-fn assert_c_only_fixture_runs(name: &str, expected: &str) {
-    if backend() != "c" {
-        eprintln!(
-            "note: '{name}' uses a fixed-size array, which the 'asm' backend refuses by name \
-             (A-18); backend '{}' does not check it",
-            backend()
-        );
-        return;
-    }
-    assert_compiles_and_runs(&format!("tests/fixtures/{name}.kp"), expected);
-}
-
 #[test]
 fn a_fixed_size_array_is_a_value_and_its_length_is_in_its_type() {
     // `.len()` is the length the type already carries, `.get`/`.set` are
     // bounds-checked against it, a nested array is held inline, and `for`
     // walks one because its desugar is exactly `.len()` plus `.get(i)`.
-    assert_c_only_fixture_runs("array_basic", "3\n20\nfalse\n7\n6\n2\n2\n2\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/array_basic.kp",
+        "3\n20\nfalse\n7\n6\n2\n2\n2\n",
+    );
 }
 
 #[test]
@@ -1867,32 +1867,35 @@ fn an_array_element_may_own_memory_a_datac_or_another_array() {
     // owned-element array is borrowed by a plain parameter (so the caller's
     // array survives the call), and `Box<[i32; 3]>` is a fixed-size buffer kept
     // past its frame.
-    assert_c_only_fixture_runs("array_owned", "9 2\n6\nbee\n3\n2\n3\n9\n2\n9\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/array_owned.kp",
+        "9 2\n6\nbee\n3\n2\n3\n9\n2\n9\n",
+    );
+}
+
+/// A-18 with the two element kinds the scalar array fixtures do not reach: a
+/// float element (`[f64; 2]`, whose element classifier has to answer `SSE`
+/// rather than the heap routines' integer default) and an array wide enough to
+/// be `MEMORY` class in both directions (`[u8; 300]` as an argument and as a
+/// return), plus `[[i32; 5]; 2]`, whose twenty-byte *element* is `MEMORY` class
+/// itself and therefore comes back through the hidden pointer, and an
+/// owned-element array *literal* handed to a borrow parameter, which is the one
+/// drop site an array temporary reaches.
+#[test]
+fn a_float_element_and_a_memory_class_array_are_values_too() {
+    assert_compiles_and_runs(
+        "tests/fixtures/array_wide_and_float.kp",
+        "1.500000\n2.250000\n3.750000\n4.500000\n9\n9\n7\n10\n4\n3\n",
+    );
 }
 
 #[test]
 fn an_out_of_bounds_array_read_panics() {
-    if backend() != "c" {
-        eprintln!(
-            "note: 'array_bounds' uses a fixed-size array, which the 'asm' backend refuses by \
-             name (A-18); backend '{}' does not check it",
-            backend()
-        );
-        return;
-    }
     assert_fixture_panics("array_bounds", "Array.get: index out of bounds");
 }
 
 #[test]
 fn an_out_of_bounds_array_write_panics_before_the_store() {
-    if backend() != "c" {
-        eprintln!(
-            "note: 'array_bounds_set' uses a fixed-size array, which the 'asm' backend refuses \
-             by name (A-18); backend '{}' does not check it",
-            backend()
-        );
-        return;
-    }
     assert_fixture_panics("array_bounds_set", "Array.get: index out of bounds");
 }
 
@@ -2062,6 +2065,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // stack memory).
         "array_owned",
         "array_basic",
+        // A-18's float element and its `MEMORY`-class widths: the second is
+        // where a byte count that is off by one would read or write past the
+        // end of a frame slot, and it is a value that travels in memory rather
+        // than through a register, so ASAN can see it.
+        "array_wide_and_float",
         "path_polish",
         "box_basic",
         "box_recursive",

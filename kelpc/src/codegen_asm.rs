@@ -50,11 +50,15 @@
 //! parameter), calls with up to six integer and eight
 //! float arguments classified independently per SysV, recursion, `print`/`print!`
 //! of integers, characters, booleans, `str`, floats and an owned buffer, `datac`
-//! aggregates by value at any size (including a `MEMORY`-class one as an
+//! `aggregates by value at any size (including a `MEMORY`-class one as an
 //! argument), `enum` — the tagged union, its four node kinds, `?`, and a
 //! generated drop that switches on the runtime tag — `Bytes`, `String`, `View`,
 //! `Box<T>`, `List<T>` and `Map<K, V>`
-//! with their own free at every drop point, a `pd`'s generated storage, and
+//! with their own free at every drop point, `[T; N]` (A-18: a synthesized
+//! layout per element type and length, so it is a by-value aggregate like any
+//! other, with `len`/`is_empty` as constants, `get`/`set` over its stride and a
+//! per-element drop), a function that returns a borrow of anything (not just
+//! `&str`), a `pd`'s generated storage, and
 //! calls to the
 //! `extern fun`s whose bodies this backend owns or can forward to libc through
 //! the PLT. Printing through `fmt`'s `Display` machinery is not covered, and
@@ -1330,7 +1334,265 @@ fn layout_key(ty: &Ty) -> Option<String> {
         Ty::Box(_) => Some(BOX_LAYOUT_KEY.to_string()),
         Ty::List(_) => Some(LIST_LAYOUT_KEY.to_string()),
         Ty::Map(..) => Some(MAP_LAYOUT_KEY.to_string()),
+        // A-18: one key per element type *and length*, unlike the containers
+        // above whose header is the same whatever they hold. The length is part
+        // of the array's type, so `[i32; 3]` and `[i32; 4]` are different sizes
+        // and cannot share a layout; `ty_mangle` already spells an array the way
+        // `codegen_c.rs` names its wrapper struct, so the two backends' names
+        // stay related rather than inventing a second convention.
+        Ty::Array(elem, len) => Some(array_layout_key(elem, *len)),
         _ => None,
+    }
+}
+
+/// The key a `[T; N]`'s synthesized layout lives under in `Gen::layouts`. The
+/// leading `$` is `BYTES_LAYOUT_KEY`'s rule (no Kelp identifier can contain
+/// one), and the element and length are both in the name because both are part
+/// of the type.
+fn array_layout_key(elem: &Ty, len: u64) -> String {
+    format!("${}${len}", crate::types::ty_mangle(elem))
+}
+
+/// One array element's size, alignment and SysV atoms, at offset 0 —
+/// `sizeof(T)`, `_Alignof(T)` and the eightbyte class each of its bytes
+/// contributes. `elem_size` is deliberately not reused: it answers for a scalar
+/// or an aggregate but not for a float, and an `f64` element is an `SSE` atom,
+/// which is the whole difference between `[f64; 2]` and `[i64; 2]` on the ABI.
+///
+/// `None` for an element this backend cannot lay out, which is the same answer
+/// every other layout helper gives and what keeps an array of that element a
+/// refusal by name rather than an array of the wrong stride.
+fn array_elem_atoms(
+    elem: &Ty,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<(i32, i32, Vec<(i32, i32, Eb)>)> {
+    if let Some(layout) = struct_layout(elem, layouts) {
+        return Some((layout.size, layout.align, layout.atoms.clone()));
+    }
+    if let Some(width) = float_ty(elem) {
+        return Some((width.bytes(), width.bytes(), vec![(0, width.bytes(), Eb::Sse)]));
+    }
+    int_ty(elem).map(|(width, _)| {
+        (width.bytes(), width.bytes(), vec![(0, width.bytes(), Eb::Int)])
+    })
+}
+
+/// The C layout of one `[T; N]`: the same struct `codegen_c.rs::write_array`
+/// emits — `N` elements inline, naturally aligned, no header and no pointer —
+/// so the classifier sees the same eightbytes clang does and the two backends
+/// agree on how one is passed, returned and stored.
+///
+/// This is what makes an array a *value* rather than a pointer here too: a
+/// `[u8; 2]` is one `INTEGER` eightbyte and travels in `rax` exactly as a `u16`
+/// does, a `[i32; 3]` is a two-eightbyte (`rax:rdx` or `xmm`) aggregate, and a
+/// `[u8; 4096]` is `MEMORY`-class and goes through the hidden return pointer
+/// and the outgoing argument area like any other wide `datac`.
+///
+/// A zero-length array is `None` rather than a zero-byte layout: C spells it as
+/// an extension, and there is no value of one to move, so the element-based
+/// refusal is the honest answer.
+fn array_layout(
+    elem: &Ty,
+    len: u64,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<StructLayout> {
+    if len == 0 {
+        return None;
+    }
+    let (size, align, atoms) = array_elem_atoms(elem, layouts)?;
+    let stride = align_up(size, align);
+    let mut all = Vec::with_capacity(atoms.len() * len as usize);
+    for i in 0..len {
+        let base = stride * i as i32;
+        for &(off, bytes, kind) in &atoms {
+            all.push((base + off, bytes, kind));
+        }
+    }
+    let total = stride * len as i32;
+    let class = classify(total, &all);
+    Some(StructLayout {
+        // No field entries: an element is reached by index arithmetic, never
+        // by name, and nothing that walks `entries` (a `datac` literal, a
+        // generated drop) is ever handed an array's own layout.
+        entries: Vec::new(),
+        size: total,
+        align,
+        variants: None,
+        atoms: all,
+        class,
+    })
+}
+
+/// Every `[T; N]` a value of which the program can move, with a nested array
+/// before the array that holds it. One layout per element type *and length*
+/// means the set has to be known before a frame, a `datac` field, a `Box` cell
+/// or an argument can be placed — there is no way to answer for a type that was
+/// never registered — so this walks the whole program once and `build_layouts`'
+/// fixed point is then run over the arrays it found.
+///
+/// A type is collected from three places: a declaration (a parameter, a return,
+/// a `datac` field, an `enum` payload, a passdown), a local's written type, and
+/// every expression's own type, which is what catches the array behind a
+/// receiver (`xs.get(i)` takes a `&[T; N]`) and the element inside a container
+/// (`List<[i32; 4]>` needs the array's size to allocate an element).
+fn collect_array_tys(program: &Program) -> Vec<Ty> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for f in &program.functions {
+        for (_, ty) in &f.params {
+            note_array_ty(ty, &mut out, &mut seen);
+        }
+        note_array_ty(&f.ret, &mut out, &mut seen);
+        note_array_block(&f.body, &mut out, &mut seen);
+    }
+    for pd in &program.pds {
+        note_array_ty(&pd.value_ty, &mut out, &mut seen);
+        note_array_expr(&pd.init, &mut out, &mut seen);
+    }
+    for s in &program.structs {
+        for field in &s.fields {
+            note_array_ty(&field.ty, &mut out, &mut seen);
+        }
+    }
+    for e in &program.enums {
+        for v in &e.variants {
+            for field in &v.fields {
+                note_array_ty(&field.ty, &mut out, &mut seen);
+            }
+        }
+    }
+    out
+}
+
+/// Notes `ty` and everything inside it, deepest first: an element is pushed
+/// before the array that holds it, which is the order the layouts have to be
+/// built in.
+fn note_array_ty(
+    ty: &Ty,
+    out: &mut Vec<Ty>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    match ty {
+        Ty::Array(elem, _) | Ty::List(elem) | Ty::Box(elem) | Ty::Ref { inner: elem, .. } => {
+            note_array_ty(elem, out, seen)
+        }
+        Ty::Map(key, value) => {
+            note_array_ty(key, out, seen);
+            note_array_ty(value, out, seen);
+        }
+        _ => {}
+    }
+    if matches!(ty, Ty::Array(..)) {
+        let key = ty.display();
+        if seen.insert(key) {
+            out.push(ty.clone());
+        }
+    }
+}
+
+fn note_array_block(
+    block: &Block,
+    out: &mut Vec<Ty>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let { ty, init, .. } => {
+                note_array_ty(ty, out, seen);
+                note_array_expr(init, out, seen);
+            }
+            Stmt::While { cond, body } => {
+                note_array_expr(cond, out, seen);
+                note_array_block(body, out, seen);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    note_array_expr(v, out, seen);
+                }
+            }
+            Stmt::Expr(e) => note_array_expr(e, out, seen),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        note_array_expr(tail, out, seen);
+    }
+}
+
+fn note_array_expr(e: &Expr, out: &mut Vec<Ty>, seen: &mut std::collections::HashSet<String>) {
+    note_array_ty(&e.ty, out, seen);
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::FnRef(_)
+        | ExprKind::Capture { .. } => {}
+        ExprKind::Unary { expr, .. }
+        | ExprKind::Ref { expr, .. }
+        | ExprKind::Deref { expr }
+        | ExprKind::EnumTag { expr, .. }
+        | ExprKind::Try { expr, .. }
+        | ExprKind::FnToClosure { func: expr } => note_array_expr(expr, out, seen),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            note_array_expr(lhs, out, seen);
+            note_array_expr(rhs, out, seen);
+        }
+        ExprKind::Call { args, .. } => {
+            for a in args {
+                note_array_expr(a, out, seen);
+            }
+        }
+        ExprKind::IndirectCall { callee, args } => {
+            note_array_expr(callee, out, seen);
+            for a in args {
+                note_array_expr(a, out, seen);
+            }
+        }
+        ExprKind::FieldAccess { base, .. } | ExprKind::EnumField { base, .. } => {
+            note_array_expr(base, out, seen)
+        }
+        ExprKind::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                note_array_expr(v, out, seen);
+            }
+        }
+        ExprKind::EnumLit { fields, .. } => {
+            for v in fields {
+                note_array_expr(v, out, seen);
+            }
+        }
+        ExprKind::Assign { target, value } => {
+            note_array_expr(target, out, seen);
+            note_array_expr(value, out, seen);
+        }
+        ExprKind::If { cond, then_block, else_block } => {
+            note_array_expr(cond, out, seen);
+            note_array_block(then_block, out, seen);
+            if let Some(b) = else_block {
+                note_array_block(b, out, seen);
+            }
+        }
+        ExprKind::Block(block) => note_array_block(block, out, seen),
+        ExprKind::ClosureLit { captures, .. } => {
+            for c in captures {
+                note_array_expr(c, out, seen);
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for e in elems {
+                note_array_expr(e, out, seen);
+            }
+        }
+        ExprKind::ArrayRepeat { value } => note_array_expr(value, out, seen),
+        ExprKind::Template { pieces, .. } => {
+            for p in pieces {
+                if let TemplatePiece::Value(v) = p {
+                    note_array_expr(v, out, seen);
+                }
+            }
+        }
     }
 }
 
@@ -1536,6 +1798,102 @@ impl ListFn {
     }
 }
 
+/// An array *element*'s SysV class as a value the array's routines move. This is
+/// `elem_class` with one correction: a scalar float element is an `SSE`
+/// eightbyte, and `elem_class`'s `INT_ONE` fallback would put it in `rax` — the
+/// one place the two disagree, because every other caller of `elem_class` is a
+/// `List`/`Box` routine whose element size came from `elem_size`, which answers
+/// `None` for a float element and so refuses one before this could matter.
+fn array_elem_class(
+    elem: &Ty,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> AggClass {
+    if let Some(width) = float_ty(elem) {
+        return AggClass::One(EbClass { kind: Eb::Sse, size: width.bytes() });
+    }
+    elem_class(elem, layouts)
+}
+
+/// The symbol one `[T; N]` routine is emitted (and called) under — kept
+/// identical to `codegen_c.rs::write_array`'s generated names (`types::array_c_type`
+/// plus the operation, and `types::drop_fn_name`'s own spelling for the drop),
+/// for the same reason `BoxFn`'s and `ListFn`'s are: `nm`, a stack trace and a
+/// differential run all have to name the same thing.
+///
+/// The length is in the symbol *as well as* the element type, unlike every other
+/// routine set here: it is part of the array's type, so it is part of what the
+/// routine knows and what makes `__len` a constant rather than a load.
+#[derive(Clone, PartialEq, Eq)]
+enum ArrayFn {
+    Len(Ty, u64),
+    IsEmpty(Ty, u64),
+    /// `__get` when the element comes back by value and `__get_const` when a
+    /// pointer to it does — the call's own result type decides, exactly as
+    /// `ListFn::Get`/`BoxFn::Get` do.
+    Get(Ty, u64, bool),
+    Set(Ty, u64),
+    Drop(Ty, u64),
+}
+
+impl ArrayFn {
+    fn elem(&self) -> &Ty {
+        match self {
+            ArrayFn::Len(e, _)
+            | ArrayFn::IsEmpty(e, _)
+            | ArrayFn::Get(e, _, _)
+            | ArrayFn::Set(e, _)
+            | ArrayFn::Drop(e, _) => e,
+        }
+    }
+
+    fn len(&self) -> u64 {
+        match self {
+            ArrayFn::Len(_, n)
+            | ArrayFn::IsEmpty(_, n)
+            | ArrayFn::Get(_, n, _)
+            | ArrayFn::Set(_, n)
+            | ArrayFn::Drop(_, n) => *n,
+        }
+    }
+
+    fn label(&self) -> String {
+        let base = crate::types::array_c_type(self.elem(), self.len());
+        match self {
+            ArrayFn::Len(..) => format!("{base}__len"),
+            ArrayFn::IsEmpty(..) => format!("{base}__is_empty"),
+            ArrayFn::Get(_, _, by_value) => {
+                if *by_value {
+                    format!("{base}__get")
+                } else {
+                    format!("{base}__get_const")
+                }
+            }
+            ArrayFn::Set(..) => format!("{base}__set"),
+            ArrayFn::Drop(e, n) => {
+                format!("kelp_array_drop__{}__{n}", crate::types::ty_mangle(e))
+            }
+        }
+    }
+}
+
+/// One element's byte offset from the next, in this backend's array layout:
+/// the element's own size rounded up to its own alignment, which is the stride
+/// C's `T v[N]` gets from clang.
+fn array_stride(elem: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> Option<i32> {
+    let (size, align, _) = array_elem_atoms(elem, layouts)?;
+    Some(align_up(size, align))
+}
+
+/// An array type's element and length, for the nodes that carry the whole type
+/// (`ExprKind::ArrayLit`/`ArrayRepeat` are typed `[T; N]` by the checker, so
+/// nothing has to count the elements here).
+fn array_parts(ty: &Ty) -> Option<(&Ty, u64)> {
+    match ty {
+        Ty::Array(elem, len) => Some((elem.as_ref(), *len)),
+        _ => None,
+    }
+}
+
 /// The symbol one `Map<K, V>` routine is emitted (and called) under — kept
 /// identical to `codegen_c.rs::write_map`'s generated names
 /// (`types::map_c_type` plus the operation) and, for the three shared key
@@ -1670,6 +2028,11 @@ fn ty_owns(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -
         // is no map that needs no drop.
         Ty::Map(..) => true,
         Ty::Struct(name) => datac_owns_in(name, layouts, &mut std::collections::HashSet::new()),
+        // A-18: an array owns exactly what its element owns, the way a list
+        // does, and `[Gate; 4]` over two-scalar `datac`s owns nothing. This is
+        // the test `types::needs_drop` makes for the C backend's per-element
+        // drop loop.
+        Ty::Array(elem, _) => ty_owns(elem, layouts),
         _ => false,
     }
 }
@@ -1694,6 +2057,7 @@ fn datac_owns_in(
     let mut owns = |ty: &Ty| match ty {
         Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) | Ty::Map(..) => true,
         Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
+        Ty::Array(elem, _) => ty_owns(elem, layouts),
         _ => false,
     };
     if layout.entries.iter().any(|e| match e {
@@ -2166,6 +2530,7 @@ fn try_build_enum_layout(
 fn build_layouts(
     structs: &[crate::types::StructDef],
     enums: &[crate::types::EnumDef],
+    arrays: &[Ty],
 ) -> std::collections::HashMap<String, StructLayout> {
     let mut out = std::collections::HashMap::new();
     // MK7 §5's heap slice: `Bytes` is not a `datac` the program declared, but
@@ -2186,7 +2551,7 @@ fn build_layouts(
     // MK7 §5's map slice: one entry covers every `Map<K, V>` (see
     // `MAP_LAYOUT_KEY`).
     out.insert(MAP_LAYOUT_KEY.to_string(), map_layout());
-    for _ in 0..=(structs.len() + enums.len()) {
+    for _ in 0..=(structs.len() + enums.len() + arrays.len()) {
         let mut changed = false;
         for s in structs {
             if out.contains_key(&s.name) {
@@ -2206,6 +2571,24 @@ fn build_layouts(
             }
             if let Some(layout) = try_build_enum_layout(e, &out) {
                 out.insert(e.name.clone(), layout);
+                changed = true;
+            }
+        }
+        // A-18: an array is placed by the same fixed point, and in the same
+        // loop rather than after it, because the two depend on each other in
+        // both directions — a `[Gate; 4]` needs `Gate`'s layout, and `Idt`
+        // needs the array field's. `arrays` is deepest-first
+        // (`collect_array_tys`), so one pass places a nested array before the
+        // array holding it; a pass that places nothing anywhere is the fixed
+        // point that leaves the rest rejected.
+        for ty in arrays {
+            let Ty::Array(elem, len) = ty else { continue };
+            let key = array_layout_key(elem, *len);
+            if out.contains_key(&key) {
+                continue;
+            }
+            if let Some(layout) = array_layout(elem, *len, &out) {
+                out.insert(key, layout);
                 changed = true;
             }
         }
@@ -2233,6 +2616,9 @@ fn struct_layout<'a>(
         // `MAP_LAYOUT_KEY`). The entry's own layout is per-key-type, but an
         // entry is never a value the ABI moves — see `map_entry`.
         Ty::Map(..) => layouts.get(MAP_LAYOUT_KEY),
+        // A-18: one synthesized layout per element type and length (see
+        // `array_layout`).
+        Ty::Array(elem, len) => layouts.get(&array_layout_key(elem, *len)),
         _ => None,
     }
 }
@@ -2615,7 +3001,7 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // `enum` is placed by the same pass (MK7 §5's enum slice) and refused by
     // the same rule; `program.enums` is the table `tir.rs` carries so that a
     // `Ty::Struct` can be told apart from a `datac`.
-    g.layouts = build_layouts(&program.structs, &program.enums);
+    g.layouts = build_layouts(&program.structs, &program.enums, &collect_array_tys(program));
     // MK7 §5: one file-scope storage location per passdown, in initialization
     // order, plus the type each one holds — see `PdGlobal`. Every passdown is
     // named by the same internal `pd#<qualified>` identifier its hidden
@@ -2801,6 +3187,22 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         let Some(f) = next else { break };
         emitted_maps.push(f.label());
         g.emit_map_routine(&f)?;
+    }
+    // A-18: one routine set per `[T; N]` instantiation this program needs,
+    // emitted after every per-instance set above (an array's element drop can
+    // call any of them: a `Box`, a `List`, a `Map`, a generated `datac` or
+    // `enum` drop, or a nested array's) and read to a fixpoint for the same
+    // reason as the rest.
+    let mut emitted_arrays: Vec<String> = Vec::new();
+    loop {
+        let next = g
+            .array_fns
+            .iter()
+            .find(|f| !emitted_arrays.contains(&f.label()))
+            .cloned();
+        let Some(f) = next else { break };
+        emitted_arrays.push(f.label());
+        g.emit_array_routine(&f)?;
     }
     // MK7 §5: one `kelp_drop_pds` for the passdowns that own memory, emitted
     // after every drop routine it can call (`datac`, `Box`, `List`, `Map`) and
@@ -3811,6 +4213,12 @@ struct Gen {
     /// last (a map's `keys`/`values` call the list routines, and its drop calls
     /// the value's own drop), and re-read to a fixpoint for the same reason.
     map_fns: Vec<MapFn>,
+    /// A-18: the `[T; N]` routines this program needs, under the same discipline
+    /// as `list_fns` — labelled by `ArrayFn::label`, emitted after the map set
+    /// (an array's drop calls its element's own drop, which may be a box, a list
+    /// or a map), and re-read to a fixpoint for the same reason: `[[String; 2];
+    /// 3]`'s drop calls the inner array's.
+    array_fns: Vec<ArrayFn>,
     /// How many `FLOAT_HOLD` registers are in use — a nesting depth, not a
     /// mode, so the constant-hold fast path in `binary_float` can be nested
     /// inside itself without two levels sharing one register. Reset at the
@@ -3853,6 +4261,13 @@ enum DropSite {
     /// `Gen::emit_map_routine`. A map **always** owns its two arrays, so —
     /// like the list site — this one can never be skipped when it applies.
     Map(Ty, Ty),
+    /// A per-instantiation `[T; N]` drop, `kelp_array_drop__<mangle>__<N>` —
+    /// `types::drop_fn_name`'s spelling for `Ty::Array`, emitted by
+    /// `Gen::emit_array_routine`. Unlike a list or a map this one exists only
+    /// for an element that owns something: `[i32; 3]` needs no free at all, and
+    /// `ty_owns` answering `false` is what keeps a routine with an empty loop
+    /// from being emitted for every array in a program.
+    Array(Ty, u64),
 }
 
 impl DropSite {
@@ -3865,6 +4280,7 @@ impl DropSite {
             DropSite::Box(elem) => BoxFn::Drop(elem.clone()).label(),
             DropSite::List(elem) => ListFn::Drop(elem.clone()).label(),
             DropSite::Map(key, value) => MapFn::Drop(key.clone(), value.clone()).label(),
+            DropSite::Array(elem, len) => ArrayFn::Drop(elem.clone(), *len).label(),
         }
     }
 }
@@ -3970,6 +4386,15 @@ impl Gen {
             // MK7 §5 item 8: a returned `str` is a pointer in `rax`, which is
             // the same place a scalar returns — `Scalar` is about the
             // transport, not about the type being an integer.
+            RetClass::Scalar
+        } else if matches!(f.ret, Ty::Ref { .. }) {
+            // MK7 §5 item 8's other half: a borrow of *any* type is the same
+            // one pointer in `rax`, and `value_kind` is what decides whether
+            // the pointee has a layout this slice can address. Refusing the
+            // bare `str` case above was the only borrow shape a program could
+            // return; a `&datac`/`&String`/`&List<T>` was refused with the
+            // general message, which made returning a borrow a shape no
+            // `--backend=asm` program could have.
             RetClass::Scalar
         } else {
             return Err(unsupported(&format!(
@@ -4579,6 +5004,20 @@ impl Gen {
                 self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
                 Some(DropSite::Map((**key).clone(), (**value).clone()))
             }
+            // A-18: an array owns exactly what its element owns, so this arm
+            // answers `None` for `[i32; 3]` — the same answer `types::needs_drop`
+            // gives the C backend, and the reason no routine is emitted for
+            // one. An element this backend cannot lay out comes back as `None`
+            // too, which `emit_drop` refuses by name rather than skipping: a
+            // `[Box<List<i32>>; 2]` is refused, never leaked.
+            Ty::Array(elem, len) => {
+                if !ty_owns(elem, &self.layouts) {
+                    return None;
+                }
+                array_elem_atoms(elem, &self.layouts)?;
+                self.require_array_fn(ArrayFn::Drop((**elem).clone(), *len));
+                Some(DropSite::Array((**elem).clone(), *len))
+            }
             _ => None,
         }
     }
@@ -4796,6 +5235,26 @@ impl Gen {
             self.require_routine(Routine::StringDrop);
         }
         self.map_fns.push(f);
+    }
+
+    /// Records that one `[T; N]` routine is needed, along with everything its
+    /// body calls. Same before-the-snapshot rule as the three sets above: the
+    /// routine set is emitted from a snapshot, so the element's own drop has to
+    /// be registered here rather than where the body is written — and both
+    /// mutators that can free an element (`set`, and the array's own drop) need
+    /// it, which is the same pair `require_list_fn` guards.
+    fn require_array_fn(&mut self, f: ArrayFn) {
+        if self.array_fns.iter().any(|x| x.label() == f.label()) {
+            return;
+        }
+        if matches!(f, ArrayFn::Set(..) | ArrayFn::Drop(..)) {
+            if let Some(site) = self.drop_site_for(f.elem()) {
+                if let DropSite::Routine(r) = site {
+                    self.require_routine(r);
+                }
+            }
+        }
+        self.array_fns.push(f);
     }
 
     /// Whether a `datac` owns anything, read off the layouts: a `String` or
@@ -5143,28 +5602,33 @@ impl Gen {
             BoxFn::IsEmpty(_) => self.out.push_str(
                 "    cmp QWORD PTR [rdi], 0\n    sete al\n    movzx eax, al\n    ret\n",
             ),
-            // The `Copy`-element form: the value itself comes back in `rax`.
-            // `is_copy` is only ever true for a scalar here, so the width and
-            // the extension are the ones an ordinary scalar read uses — an
+            // The `Copy`-element form: the value itself comes back in `rax`,
+            // `rax:rdx` or `xmm0`, or through the hidden return pointer for a
+            // `MEMORY`-class one — `emit_elem_return` decides, and a scalar
+            // element is loaded at its own width and extended there (an
             // eight-byte load out of a four-byte allocation would be a real
-            // out-of-bounds read, which the memory gate would find. The two
+            // out-of-bounds read, which the memory gate would find). The two
             // `get` forms are told apart by `is_copy`, the same predicate
             // `codegen_c.rs::write_box` splits on and `BoxFn`'s label uses.
+            //
+            // The frame is entered for the `MEMORY`-class return, which takes
+            // `rdi` for the hidden pointer before the first real argument — so
+            // the box arrives in `rsi` there and in `rdi` everywhere else,
+            // exactly as `BoxFn::Take` reads it.
             BoxFn::Get(_, by_value) if *by_value => {
-                let (width, signed) = int_ty(&elem)
-                    .expect("the copying `get` form is only emitted for a Copy element");
                 let empty = self.label("box_get_empty");
                 let msg = self.bytes_label(b"Box.get: the box is empty");
-                self.out.push_str("    mov r11, QWORD PTR [rdi]\n    test r11, r11\n");
+                self.out.push_str(&prologue);
+                let self_reg = if class.is_mem() { "rsi" } else { "rdi" };
+                if class.is_mem() {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                }
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], {self_reg}");
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [{self_reg}]");
+                self.out.push_str("    test r11, r11\n");
                 let _ = writeln!(self.out, "    je {empty}");
-                let _ = writeln!(
-                    self.out,
-                    "    mov {}, {} [r11]",
-                    width.rax(),
-                    width.mem()
-                );
-                self.out.push_str(&width.extend(signed));
-                self.out.push_str("    ret\n");
+                self.emit_elem_return(&elem, size, class, "r11", slot_ret);
+                self.out.push_str(epilogue);
                 let _ = writeln!(self.out, "{empty}:");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
                 self.call_panic();
@@ -7119,6 +7583,152 @@ impl Gen {
         Ok(())
     }
 
+    /// One `[T; N]` instantiation's routine set, transliterated from
+    /// `codegen_c.rs::write_array`. There is no header here and no allocation:
+    /// the array's storage *is* the value, so the receiver a method call passes
+    /// is already the address of element 0 and every routine is index
+    /// arithmetic on it. That is also why the length is a constant baked into
+    /// the body rather than a loaded field — it is part of the type — and why
+    /// `__len`/`__is_empty` need no memory at all.
+    ///
+    /// The frame is the list routines' shape (the receiver, the hidden return
+    /// pointer, two index slots and a staging buffer), for the same reason: a
+    /// routine that calls the element's own drop has to keep every live value
+    /// on the frame rather than in a caller-saved register.
+    fn emit_array_routine(&mut self, f: &ArrayFn) -> Result<(), String> {
+        let elem = f.elem().clone();
+        let len = f.len();
+        let (size, _align, _) = array_elem_atoms(&elem, &self.layouts).ok_or_else(|| {
+            unsupported(&format!(
+                "the `[{}; {len}]` behind `{}` (the element has no size this backend can place)",
+                elem.display(),
+                f.label()
+            ))
+        })?;
+        let stride = array_stride(&elem, &self.layouts).expect("checked just above");
+        let class = array_elem_class(&elem, &self.layouts);
+        let label = f.label();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        let k = align_up(size + 48, 16);
+        let buf = -k;
+        let slot_self = -8;
+        let slot_ret = -16;
+        let slot_i = -24;
+        let prologue = format!("    push rbp\n    mov rbp, rsp\n    sub rsp, {k}\n");
+        let epilogue = "    mov rsp, rbp\n    pop rbp\n    ret\n";
+        let elem_drop = self.drop_site_for(&elem);
+        match f {
+            // `return N;` — the length is the type's own, so this is a
+            // constant rather than a load, exactly as `write_array`'s
+            // `__len` body is.
+            ArrayFn::Len(..) => {
+                let _ = writeln!(self.out, "    mov eax, {len}\n    ret");
+            }
+            // `return false;` — an array of a nonzero length is never empty,
+            // and a zero-length one has no value to call this on.
+            ArrayFn::IsEmpty(..) => {
+                self.out.push_str("    xor eax, eax\n    ret\n");
+            }
+            // `bounds(self, i); return self->v[i];` — by value for a `Copy`
+            // element, as a pointer to the element in place for an owned one.
+            ArrayFn::Get(_, _, by_value) => {
+                // A `MEMORY`-class element read by value is the same shape
+                // `ListFn::Pop`/`BoxFn::Take` have: the hidden return pointer
+                // takes `rdi` before any real argument, so the receiver comes in
+                // `rsi` and the index in `rdx` — and the pointer is parked in
+                // the frame because `emit_elem_return` has to read it back
+                // after the bounds check.
+                let ret_mem = *by_value && class.is_mem();
+                self.out.push_str(&prologue);
+                if ret_mem {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rdx");
+                    let _ = writeln!(self.out, "    mov rsi, rdx");
+                } else {
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
+                }
+                self.emit_array_bounds(len);
+                self.emit_array_elem_addr(stride, slot_self, slot_i);
+                if *by_value {
+                    self.emit_elem_return(&elem, size, class, "r11", slot_ret);
+                } else {
+                    self.out.push_str("    mov rax, r11\n");
+                }
+                self.out.push_str(epilogue);
+            }
+            // `bounds(self, i); drop(self->v[i]); self->v[i] = v;`
+            ArrayFn::Set(..) => {
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rsi");
+                self.marshal_elem(class, size, buf, 2, 0);
+                self.emit_array_bounds(len);
+                if let Some(site) = &elem_drop {
+                    self.emit_array_elem_addr(stride, slot_self, slot_i);
+                    self.out.push_str("    mov rdi, r11\n");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                }
+                self.emit_array_elem_addr(stride, slot_self, slot_i);
+                emit_copy(&mut self.out, "r11", 0, "rbp", buf, stride);
+                self.out.push_str(epilogue);
+            }
+            // `for (i = 0; i < N; i++) drop(self->v[i]);` — the loop exists
+            // only for an element that owns something, which is exactly what
+            // `elem_drop` being `Some` means.
+            ArrayFn::Drop(..) => {
+                self.out.push_str(&prologue);
+                if let Some(site) = &elem_drop {
+                    let top = self.label("array_drop_loop");
+                    let done = self.label("array_drop_done");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                    let _ = writeln!(self.out, "{top}:");
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                    let _ = writeln!(self.out, "    cmp rax, {len}");
+                    let _ = writeln!(self.out, "    jae {done}");
+                    self.emit_array_elem_addr(stride, slot_self, slot_i);
+                    self.out.push_str("    mov rdi, r11\n");
+                    let _ = writeln!(self.out, "    call {}", site.label());
+                    let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                    let _ = writeln!(self.out, "    jmp {top}");
+                    let _ = writeln!(self.out, "{done}:");
+                }
+                self.out.push_str(epilogue);
+            }
+        }
+        Ok(())
+    }
+
+    /// The index check every array routine that touches an element shares
+    /// (`write_array`'s generated `__bounds`): the index is already in `rsi`,
+    /// and the panic message is the C backend's, byte for byte, because the
+    /// fixture suite compares a panic's text as well as its exit status.
+    fn emit_array_bounds(&mut self, len: u64) {
+        let msg = self.bytes_label(b"Array.get: index out of bounds");
+        let ok = self.label("array_bounds_ok");
+        let _ = writeln!(self.out, "    cmp rsi, {len}");
+        let _ = writeln!(self.out, "    jb {ok}");
+        let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+        self.call_panic();
+        let _ = writeln!(self.out, "{ok}:");
+    }
+
+    /// `r11 = self + i * stride` — the address of element `i`, the one piece of
+    /// arithmetic every array routine shares. `self` is the receiver itself
+    /// (unlike `emit_elem_addr`, one indirection fewer, because an array has no
+    /// header to read a data pointer out of), the index comes from its own
+    /// frame slot exactly as the list routines read theirs.
+    fn emit_array_elem_addr(&mut self, stride: i32, slot_self: i32, slot_i: i32) {
+        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+        if stride != 1 {
+            let _ = writeln!(self.out, "    imul rax, {stride}");
+        }
+        self.out.push_str("    add r11, rax\n");
+    }
+
     /// Records that a routine, and everything it calls, has to be emitted.
     fn require_routine(&mut self, r: Routine) {
         match r {
@@ -7273,6 +7883,20 @@ impl Gen {
                 }
                 self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
                 DropSite::Map((**key).clone(), (**value).clone())
+            }
+            // A-18: an owned-element array temporary behind a borrow —
+            // `first_of(["a", "b"])`, where the parameter is the array's own
+            // borrow. A `Copy`-element array owns nothing and is the `_` arm
+            // below (the `Ref` arm in `expr` stages it with no drop).
+            Ty::Array(elem, len) if ty_owns(elem, &self.layouts) => {
+                if array_elem_atoms(elem, &self.layouts).is_none() {
+                    return Err(unsupported(&format!(
+                        "a borrow of the temporary `[{}; {len}]`",
+                        elem.display()
+                    )));
+                }
+                self.require_array_fn(ArrayFn::Drop((**elem).clone(), *len));
+                DropSite::Array((**elem).clone(), *len)
             }
             _ => return Ok(None),
         };
@@ -7862,10 +8486,11 @@ impl Gen {
             ExprKind::Template { newline, pieces } => self.template(*newline, pieces, frame),
             ExprKind::IndirectCall { .. } => Err(unsupported("a call through a function value")),
             // A fixed-size array (A-18) is a by-value struct the C backend
-            // emits and this one has no layout for yet; refusing it by name is
-            // what keeps a program from being silently miscompiled.
-            ExprKind::ArrayLit(_) => Err(unsupported("a fixed-size array")),
-            ExprKind::ArrayRepeat { .. } => Err(unsupported("a fixed-size array")),
+            // emits; here it is a synthesized layout like any other aggregate
+            // (see `array_layout`), so a literal is written into a slot and
+            // only a one-eightbyte array is a plain `rax` value.
+            ExprKind::ArrayLit(elems) => self.array_lit(&e.ty, elems, frame),
+            ExprKind::ArrayRepeat { value } => self.array_repeat(&e.ty, value, frame),
             ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } | ExprKind::ClosureLit { .. } => {
                 Err(unsupported("a function value"))
             }
@@ -8635,6 +9260,177 @@ impl Gen {
         Ok(())
     }
 
+    /// `[a, b, c]` as a plain value: the one-eightbyte case only, exactly as
+    /// `struct_lit` is for a `datac`. A wider array is intercepted by the four
+    /// sites that can hold one (`let`, an ident assignment, a `return`/tail and
+    /// a call argument) through `eval_struct_into`/`array_lit_at`, so reaching
+    /// here with a wider one is this module's own bug rather than a program's,
+    /// and the guard fails loudly rather than truncating silently.
+    fn array_lit(&mut self, ty: &Ty, elems: &[Expr], frame: &mut Frame) -> Result<(), String> {
+        let (elem, len) = array_parts(ty).ok_or_else(|| {
+            unsupported(&format!("an array literal of type `{}`", ty.display()))
+        })?;
+        let layout = self.array_ty_layout(elem, len)?;
+        if !layout.class().is_int_one() {
+            return Err(unsupported(&format!(
+                "the fixed-size array `{}` used as a plain value (it is over eight bytes; only a \
+                 `let`, an assignment, a `return`, or a call argument may hold one directly)",
+                ty.display()
+            )));
+        }
+        let slot = frame.scratch(align_up(layout.size, 8));
+        self.array_lit_at(elem, len, elems, frame, Dest::Direct(slot))?;
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot}]");
+        Ok(())
+    }
+
+    /// `[v; N]` as a plain value — `array_lit`'s repeat counterpart, with the
+    /// same one-eightbyte restriction for the same reason.
+    fn array_repeat(&mut self, ty: &Ty, value: &Expr, frame: &mut Frame) -> Result<(), String> {
+        let (elem, len) = array_parts(ty).ok_or_else(|| {
+            unsupported(&format!("a repeat literal of type `{}`", ty.display()))
+        })?;
+        let layout = self.array_ty_layout(elem, len)?;
+        if !layout.class().is_int_one() {
+            return Err(unsupported(&format!(
+                "the fixed-size array `{}` used as a plain value (it is over eight bytes; only a \
+                 `let`, an assignment, a `return`, or a call argument may hold one directly)",
+                ty.display()
+            )));
+        }
+        let slot = frame.scratch(align_up(layout.size, 8));
+        self.array_repeat_at(elem, len, value, frame, Dest::Direct(slot))?;
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot}]");
+        Ok(())
+    }
+
+    /// The class-agnostic core of `array_lit`: every element written at its own
+    /// offset in `dest`, in order. No trailing load into `rax` — the caller
+    /// decides what "the value" means for a wider-than-one-eightbyte result,
+    /// since `rax` alone cannot hold one.
+    fn array_lit_at(
+        &mut self,
+        elem: &Ty,
+        len: u64,
+        elems: &[Expr],
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        let stride = array_stride(elem, &self.layouts).ok_or_else(|| {
+            unsupported(&format!("a fixed-size array of `{}`", elem.display()))
+        })?;
+        for (i, value) in elems.iter().enumerate() {
+            self.store_array_elem(elem, stride * i as i32, value, frame, dest)?;
+        }
+        if elems.len() as u64 != len {
+            return Err(unsupported(&format!(
+                "an array literal of {} element(s) for `[{}; {len}]`",
+                elems.len(),
+                elem.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// The repeat literal's body: the value is produced **once**, into a
+    /// scratch slot of its own, and then copied into each element in a loop
+    /// whose destination walk is `dest_address`. One copy per element rather
+    /// than one evaluation per element is what makes `[mk(); 64]` a single call,
+    /// and it is what `codegen_c.rs::write_array`'s generated `__fill` helper
+    /// does — including its one observable consequence, that an element which
+    /// owns memory would be copied (not cloned) into every slot, which is why
+    /// `infer.rs` only offers the repeat form for an element that owns nothing.
+    fn array_repeat_at(
+        &mut self,
+        elem: &Ty,
+        len: u64,
+        value: &Expr,
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        let stride = array_stride(elem, &self.layouts).ok_or_else(|| {
+            unsupported(&format!("a fixed-size array of `{}`", elem.display()))
+        })?;
+        let stage = frame.scratch(align_up(stride, 8));
+        self.store_array_elem(elem, 0, value, frame, Dest::Direct(stage))?;
+        let base = self.dest_address(dest);
+        let top = self.label("array_fill_loop");
+        let done = self.label("array_fill_done");
+        self.out.push_str("    xor ecx, ecx\n");
+        let _ = writeln!(self.out, "{top}:");
+        let _ = writeln!(self.out, "    cmp rcx, {len}");
+        let _ = writeln!(self.out, "    jae {done}");
+        emit_copy(&mut self.out, base, 0, "rbp", stage, stride);
+        let _ = writeln!(self.out, "    add {base}, {stride}");
+        self.out.push_str("    add rcx, 1\n");
+        let _ = writeln!(self.out, "    jmp {top}");
+        let _ = writeln!(self.out, "{done}:");
+        Ok(())
+    }
+
+    /// One element of an array literal (or a repeat's value) written at `off`
+    /// in `dest`. A scalar or a float goes straight in at its own width; an
+    /// aggregate — a nested array, a `String`, a `datac` — is staged in a
+    /// scratch slot of its own and copied into place, exactly the split
+    /// `struct_lit_at` makes for a field and for the same reason: the value can
+    /// itself contain a nested literal, and one shared slot would overwrite an
+    /// element already written.
+    fn store_array_elem(
+        &mut self,
+        elem: &Ty,
+        off: i32,
+        value: &Expr,
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        if let Some(width) = float_ty(elem) {
+            self.expr(value, frame)?;
+            self.store_float(dest, off, width);
+            return Ok(());
+        }
+        if let Some((width, _)) = int_ty(elem) {
+            self.expr(value, frame)?;
+            self.store_value(dest, off, width);
+            return Ok(());
+        }
+        let (size, _, _) = array_elem_atoms(elem, &self.layouts).ok_or_else(|| {
+            unsupported(&format!("a fixed-size array of `{}`", elem.display()))
+        })?;
+        let slot = frame.scratch(align_up(size, 8));
+        self.eval_struct_into(value, frame, Dest::Direct(slot))?;
+        self.copy_into_dest(dest, off, slot, size);
+        Ok(())
+    }
+
+    /// `[elem; len]`'s synthesized layout, refused by name when the element has
+    /// none — the array's own type is what the message names, not whichever
+    /// expression happened to touch it first.
+    fn array_ty_layout(&self, elem: &Ty, len: u64) -> Result<StructLayout, String> {
+        self.layouts.get(&array_layout_key(elem, len)).cloned().ok_or_else(|| {
+            unsupported(&format!("a fixed-size array of `{}`", elem.display()))
+        })
+    }
+
+    /// A register holding `dest`'s own address, so a loop can walk it — the
+    /// only caller is the repeat literal's fill. `r10` is free here: `store_value`
+    /// and `emit_elem_return` are the two other users, and neither is live
+    /// across a loop body that makes no calls.
+    fn dest_address(&mut self, dest: Dest) -> &'static str {
+        match dest {
+            Dest::Direct(off) => {
+                let _ = writeln!(self.out, "    lea r10, [rbp{off}]");
+            }
+            Dest::Indirect(slot) => {
+                let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot}]");
+            }
+            Dest::Global(index) => {
+                let label = self.pds[index].label.clone();
+                let _ = writeln!(self.out, "    lea r10, [rip+{label}]");
+            }
+        }
+        "r10"
+    }
+
     /// Stores `rax`'s low `width` bytes at `offset` into `dest` — the scalar
     /// half of `struct_lit_at`, shared by all three `Dest` shapes.
     fn store_value(&mut self, dest: Dest, offset: i32, width: Width) {
@@ -9211,6 +10007,18 @@ impl Gen {
                     }
                 }
                 self.clear_if_move(expr, &ty, loc)
+            }
+            ExprKind::ArrayLit(elems) => {
+                let (elem, len) = array_parts(&expr.ty).ok_or_else(|| {
+                    unsupported(&format!("an array literal of type `{}`", expr.ty.display()))
+                })?;
+                self.array_lit_at(elem, len, elems, frame, dest)
+            }
+            ExprKind::ArrayRepeat { value } => {
+                let (elem, len) = array_parts(&expr.ty).ok_or_else(|| {
+                    unsupported(&format!("a repeat literal of type `{}`", expr.ty.display()))
+                })?;
+                self.array_repeat_at(elem, len, value, frame, dest)
             }
             ExprKind::Call { callee, args } => self.call(callee, args, &expr.ty, Some(dest), frame),
             _ => Err(unsupported(
@@ -9908,6 +10716,44 @@ impl Gen {
             };
             let label = f.label();
             self.require_list_fn(f);
+            label
+        } else if let Some(op) = callee.strip_prefix("Array#") {
+            // A-18: the `[T; N]` surface, monomorphized the way
+            // `codegen_c.rs::write_array` does it. Both the element type and
+            // the length come from the receiver (`&[T; N]`), and the length is
+            // what makes each routine instantiation-specific — `__len` is the
+            // constant rather than a load. The element's own size is required
+            // for the same reason the list routines require it: the routines
+            // index by it.
+            let elem = args.first().and_then(|a| crate::types::array_elem_of(&a.ty)).cloned();
+            let len = args.first().and_then(|a| crate::types::array_len_of(&a.ty));
+            let (Some(elem), Some(len)) = (elem, len) else {
+                return Err(unsupported(&format!(
+                    "the method `{}`",
+                    callee.replace('#', ".")
+                )));
+            };
+            if array_elem_atoms(&elem, &self.layouts).is_none() {
+                return Err(unsupported(&format!(
+                    "a fixed-size array of `{}` ahead of `{}`",
+                    elem.display(),
+                    callee.replace('#', ".")
+                )));
+            }
+            let f = match op {
+                "len" => ArrayFn::Len(elem, len),
+                "is_empty" => ArrayFn::IsEmpty(elem, len),
+                "get" => ArrayFn::Get(elem, len, !matches!(ret_ty, Ty::Ref { .. })),
+                "set" => ArrayFn::Set(elem, len),
+                _ => {
+                    return Err(unsupported(&format!(
+                        "the method `{}` on a fixed-size array",
+                        callee.replace('#', ".")
+                    )))
+                }
+            };
+            let label = f.label();
+            self.require_array_fn(f);
             label
         } else if let Some(op) = callee.strip_prefix("Map#") {
             // MK7 §5's map slice: the `Map<K, V>` surface, monomorphized the

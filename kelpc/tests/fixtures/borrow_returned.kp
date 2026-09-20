@@ -1,0 +1,41 @@
+// A function that hands back a borrow, for every kind of pointee the assembly
+// backend can address — a `datac`, an owned heap type, and an owned buffer.
+//
+// `str`/`&str` was the only borrow shape a return type could have under
+// `--backend=asm`: its return-class classification had a case for a pointer in
+// `rax` that named `str` exactly, so `&Point` and `&String` fell through to the
+// general refusal (`error: the 'asm' backend does not support the return type
+// `&String` of `text` yet`) and a program could not have a function that returns
+// a borrow at all. A borrow of any type is the same one pointer, and
+// `value_kind` already accepted one (`&datac`, `&scalar`, `&String`, `&Bytes`,
+// `&List<T>`), so the transport was never the missing piece.
+//
+// The rule `syntax.md` 10.2 states for a borrowed return is what the fixtures
+// below have to satisfy: the value has to derive from the first reference
+// parameter. `pick` is the one shape that puts the rule in the *value* position
+// of a returned `if`, where the merged root is computed from the two arms.
+datac Point(var x: i32, var y: i32)
+
+fun origin(p: &Point).R: &Point = p
+
+fun pick(p: &Point, c: bool).R: &Point = if c { p } else { p }
+
+fun text(s: &String).R: &String = s
+
+fun buf(b: &Bytes).R: &Bytes = b
+
+fun main() {
+    val p = Point(x = 3, y = 4)
+    val q = origin(p)
+    print("${q.x},${q.y}")
+    print(pick(p, c = true).x)
+    print(pick(p, c = false).y)
+
+    val s = String.from_str("hello")
+    print(text(s))
+    // The returned borrow is a real borrow: a method call goes through it.
+    print(text(s).len())
+
+    val b = Bytes.from_str("abc")
+    print(buf(b).len())
+}

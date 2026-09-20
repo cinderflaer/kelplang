@@ -64,22 +64,39 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The count at the last re-recording, which is this one: 193 fixtures the C
-/// backend builds, 168 of them also built by the asm backend, 25 refused. The
-/// array fixtures A-18 added are among the refused, which is the documented
-/// state of a construct this backend does not lower yet; `const_fn` is the one
-/// entry A-19 added to this list, because a folded `const` is a literal by the
-/// time either backend sees it. (The counts before this re-recording: 188 C /
-/// 167 asm / 21 refused, which was the 250-of-295 integration-test ratio in
-/// the plan's §0 table measured at the fixture level instead of the test
-/// level.) (174/154 before the
+/// The count at the last re-recording, which is this one: 195 fixtures the C
+/// backend builds, 174 of them also built by the asm backend, 21 refused.
+///
+/// The A-18 array slice is what moved it: `[T; N]` is a synthesized layout
+/// here now, one per element type and length, with `__len`/`__is_empty`
+/// constants (the length is the type's), `__get`/`__set` over a stride, and a
+/// per-element drop loop for an element that owns something. The four
+/// fixtures the refusal row held (`array_basic`, `array_bounds`,
+/// `array_bounds_set`, `array_owned`) all build and print the C backend's
+/// bytes, so the array row in the ranking below is empty, and the slice's own
+/// `array_wide_and_float` covers the two element kinds those four do not — a
+/// float element and an array wide enough to be `MEMORY` class in both
+/// directions: 194/169/25 -> 195/174/21.
+///
+/// Before it, the borrow-return slice moved it: `borrow_returned` covers a
+/// function that hands back a borrow of a `datac`, a `String` and a `Bytes`,
+/// which the return-class classification refused by name for every pointee but
+/// `str`: 193/168/25 -> 194/169/25.
+///
+/// Before that, the last re-recording was the A-18 array slice itself (the
+/// fixed-size array's four fixtures, all of them refused here, plus A-19's
+/// `const_fn`, which is the one entry it added to this list because a folded
+/// `const` is a literal by the time either backend sees it): 188 C / 167 asm /
+/// 21 refused -> 193/168/25. The 188 reading was the 250-of-295
+/// integration-test ratio in the plan's §0 table measured at the fixture level
+/// instead of the test level. (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
 /// C backend's built column and the four names the previous run's note listed
 /// (`else_if_let`, `list_clone`, `panic_bound_message`,
 /// `panic_owned_message`) were recorded with it; see the re-recording notes
 /// below.)
 ///
-/// The last re-recording is the borrow-of-a-durable-chain slice:
+/// Before it, the last re-recording was the borrow-of-a-durable-chain slice:
 /// `borrow_chain_through_a_borrow` is the C backend's fixture for an explicit
 /// `&` on a chain that steps through a borrow (`&xs.get(i).v`), which the asm
 /// backend refuses by name: its borrow support stops at a named local, so
@@ -226,6 +243,11 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// refused count stayed at 31.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
+    "array_basic",
+    "array_bounds",
+    "array_bounds_set",
+    "array_owned",
+    "array_wide_and_float",
     "asm_float_print",
     "asm_float_scalars",
     "assert_fail",
@@ -233,6 +255,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "block_comments",
     "borrow_basic",
     "borrow_provenance_and_arms",
+    "borrow_returned",
     "borrow_temp_arg",
     "borrow_temp_slots",
     "box_basic",
