@@ -13579,11 +13579,12 @@ impl<'a> Gen<'a> {
             // `rsi`/`rdx`; a routine whose return is a `Bytes` or a `String`
             // takes the hidden return pointer in `rdi` first (SysV), which is
             // why `read_raw`'s fd arrives in `esi` and `errno_text_raw`'s in
-            // `esi` too. A `Bytes`/`String` *argument* is `MEMORY` class and
-            // so sits in the caller's outgoing area at `[rbp+16]` after `push
-            // rbp`, which is where `write_bytes_raw`/`write_text_raw` read it.
-            // `EINTR` is 4 throughout, and `__errno_location` is how a value
-            // that may be `EINTR` is told from a real failure.
+            // `esi` too. A `Bytes`/`String` *argument* is a borrow in the next
+            // integer register, the way `infer.rs` spells a by-value owned
+            // aggregate (`const T*`), so `write_bytes_raw` and `write_text_raw`
+            // read the data through `rsi`. `EINTR` is 4 throughout, and
+            // `__errno_location` is how a value that may be `EINTR` is told
+            // from a real failure.
             //
             // `return fcntl(kelp_fd, F_GETFD) >= 0;` (`F_GETFD` is 1). No
             // errno is read: an invalid descriptor is simply "not open".
