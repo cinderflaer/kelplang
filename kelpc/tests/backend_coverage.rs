@@ -64,10 +64,15 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The count at the last re-recording, which is this one: 195 fixtures the C
-/// backend builds, 174 of them also built by the asm backend, 21 refused.
+/// The count at the last re-recording, which is this one: 202 fixtures the C
+/// backend builds, 178 of them also built by the asm backend, 24 refused. Two
+/// slices moved it since the A-18 re-recording below: the empty-container
+/// slice recorded `container_element_from_use` (196/175/21), and the MK7 §5
+/// item 7 slice added `path_normalize` and `path_absolute` and recorded the
+/// already-building `borrow_two_phase`, so 202/178/24 (that slice's own note
+/// is below).
 ///
-/// The A-18 array slice is what moved it: `[T; N]` is a synthesized layout
+/// Before it, the A-18 array slice moved it: `[T; N]` is a synthesized layout
 /// here now, one per element type and length, with `__len`/`__is_empty`
 /// constants (the length is the type's), `__get`/`__set` over a stride, and a
 /// per-element drop loop for an element that owns something. The four
