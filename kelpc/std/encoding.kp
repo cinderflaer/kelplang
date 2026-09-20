@@ -3,7 +3,7 @@ impl "std/option"
 impl "std/result"
 impl "std/fmt"
 
-/* std/encoding — base64, base32, base58, hex and percent encoding.
+/* std/encoding: base64, base32, base58, hex and percent encoding.
 
    Five alphabets, and nothing here touches the outside world, so the module
    is ungated. Every encoder takes `&Bytes` and returns `String`, every decoder
