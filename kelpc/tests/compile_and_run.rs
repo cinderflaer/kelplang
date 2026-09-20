@@ -1702,6 +1702,59 @@ fn a_primitive_checks_its_resource_argument_once() {
 }
 
 #[test]
+fn an_ungranted_module_cannot_name_a_gated_item_as_a_function_value() {
+    // A function value names the item without a call site, and before the fix
+    // `check_capability` was reached only from the direct-call arm, so both
+    // spellings built and read `/etc/hostname` with no grant. The domain gate
+    // is the half that can apply to a name, and it applies to both.
+    assert_project_rejected(
+        "caps_value_ungranted",
+        &project("caps_value_ungranted").join("main.kp"),
+        "needs the 'fs' capability, which module 'util' was not granted",
+    );
+    assert_project_rejected(
+        "caps_raw_value_ungranted",
+        &project("caps_raw_value_ungranted").join("main.kp"),
+        "needs the 'fs' capability, which module 'util' was not granted",
+    );
+}
+
+#[test]
+fn a_function_value_naming_a_primitive_is_refused_by_name_where_no_check_can_run() {
+    // A module that *holds* the domain may name the primitive as a value, and a
+    // function value is not a call site, so no pattern check can be emitted for
+    // it. The asm backend used to emit a `lea` of a symbol nothing defines and
+    // die in `ld`; it refuses the construct by name now. The C backend still
+    // builds the pointer (`BUG-k2Qv7`, open), which is why this is asserted on
+    // the asm side alone.
+    if backend() != "asm" {
+        eprintln!(
+            "note: the named refusal for a function value over an `extern fun` is an asm \
+             backend assertion; backend '{}' is not checked by it",
+            backend()
+        );
+        return;
+    }
+    let bin = out_path("caps_raw_value_granted");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("caps_raw_value_granted").join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected the asm backend to refuse a function value over an `extern fun`"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("a function value naming the `extern fun`"),
+        "expected a named refusal, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn a_granted_module_creates_a_symlink_inside_its_grant() {
     // `fs.symlink` checks *both* of its paths, so a link can only be created
     // where the grant reaches and can only point where the grant reaches. The

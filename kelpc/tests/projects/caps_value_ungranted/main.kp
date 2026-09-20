@@ -1,0 +1,10 @@
+// The naming-site half of the gate, wrapper spelling: `util` holds no domain
+// and names `std.fs.read` (the public wrapper) as a *value*. There is no call
+// site for the check to hang on, so the domain gate is what has to refuse it,
+// and before the fix this compiled and read `/etc/hostname` through the
+// function pointer with no grant.
+impl "util"
+
+fun main() {
+    print(util.leak_checked())
+}

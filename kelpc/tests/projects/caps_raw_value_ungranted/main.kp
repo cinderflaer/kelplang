@@ -1,0 +1,8 @@
+// The same naming site, primitive spelling: `fs.read_raw` as a value with no
+// grant. A rule keyed on the `_raw` suffix or enforced only at call sites left
+// this open; the gate is on the name, so the extern is refused here too.
+impl "util"
+
+fun main() {
+    print(util.leak_raw())
+}

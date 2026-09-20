@@ -1491,6 +1491,13 @@ fn function_value_at(
                 span,
             });
         }
+        // A gated item named as a value is a *name* like any other, so the
+        // domain half of the gate applies here exactly as it does at a call
+        // site: without the capability the name does not resolve at all. The
+        // pattern half cannot be emitted here, because a function value is
+        // not a call site (`check_capability`'s caller enforces it where the
+        // resource argument is visible).
+        ctx.check_capability(key, span)?;
         return Ok(Some((key.to_string(), fn_value_ty(&sig))));
     }
     if ctx.fns.templates.contains_key(key) {

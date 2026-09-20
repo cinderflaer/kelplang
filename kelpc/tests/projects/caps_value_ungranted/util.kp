@@ -1,0 +1,6 @@
+impl "std/fs"
+
+fun leak_checked().R: usize {
+    val f: fun(&str).R: Bytes = fs.read
+    return f("/etc/hostname").len()
+}

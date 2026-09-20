@@ -5013,6 +5013,23 @@ impl<'a> Gen<'a> {
         }
     }
 
+    /// The symbol a `FnRef` takes the address of, or the refusal that stands
+    /// in for it (MK7 §5 item 6). An `extern fun` has no function body under
+    /// its own key: this backend lowers it as a *call* (one of its own
+    /// routines, or a libc symbol), so a `lea` of that key would name a symbol
+    /// nothing defines and die in `ld` with no message a reader can act on.
+    /// Refused by name instead, which is also the honest answer for a gated
+    /// primitive: a function value is not a call site, so there is nowhere to
+    /// hang the pattern check the primitive owes.
+    fn fn_symbol(&self, key: &str) -> Result<String, String> {
+        if self.externs.contains_key(key) {
+            return Err(unsupported(&format!(
+                "a function value naming the `extern fun` `{key}`"
+            )));
+        }
+        Ok(Gen::symbol(key))
+    }
+
     fn function(&mut self, f: &Function) -> Result<(), String> {
         // `DropPlan` is keyed by `(function, span)`, so every drop lookup
         // below needs the name of the function whose body is being written.
@@ -9503,7 +9520,7 @@ impl<'a> Gen<'a> {
             // with `eval_struct_into` before reaching here, exactly as a wide
             // `datac` literal is intercepted.
             ExprKind::FnRef(key) => {
-                let symbol = Gen::symbol(key);
+                let symbol = self.fn_symbol(key)?;
                 let _ = writeln!(self.out, "    lea rax, [rip+{symbol}]");
                 Ok(())
             }
@@ -10356,6 +10373,7 @@ impl<'a> Gen<'a> {
             )));
         };
         if let ExprKind::FnRef(key) = &func.kind {
+            self.fn_symbol(key)?;
             let shim = coerce_shim_name(key, closure_ty);
             self.register_shim(key, closure_ty);
             let _ = writeln!(self.out, "    lea rax, [rip+{shim}]");
@@ -11343,7 +11361,7 @@ impl<'a> Gen<'a> {
             // MK7 §5 item 6: a named function used as a value, its code address
             // is the whole value, so the destination gets one `lea`.
             ExprKind::FnRef(key) => {
-                let symbol = Gen::symbol(key);
+                let symbol = self.fn_symbol(key)?;
                 let _ = writeln!(self.out, "    lea rax, [rip+{symbol}]");
                 self.store_value(dest, 0, Width::W8);
                 Ok(())
