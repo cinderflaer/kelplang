@@ -1165,6 +1165,32 @@ fn integer_conversions_widen_exactly_and_narrow_with_a_check() {
     assert_fixture_panics("int_conversion_overflow", "i64.to_u8: value out of range");
 }
 
+#[test]
+fn a_fallible_conversion_returns_an_option_instead_of_panicking() {
+    // MISSING-RbhdW: `try_to_<T>` is the twin of `to_<T>` for every pair whose
+    // plain conversion can lose a value. Both bounds of both sign directions
+    // are exercised, at the boundary and one past it, plus the receiver being
+    // read once (the count `noisy()` prints) and the result used through
+    // `if let`, `when` and `?`.
+    assert_compiles_and_runs(
+        "tests/fixtures/try_to_conversion.kp",
+        "255\ntrue\ntrue\n7\n-2147483648\ntrue\ntrue\ntrue\n7\ntrue\ntrue\n255\ntrue\ntrue\n7\n5\n5\n2\n255\nnone\n9\ntrue\n",
+    );
+    // There is no `try_to` where the plain conversion cannot fail: a widening
+    // is already exact, and the diagnostic says which method to write instead.
+    assert_rejected_with(
+        "tests/fixtures/try_to_widening.kp",
+        "a try_to_<T> twin of every conversion that can lose a value",
+    );
+    // The `Option` is the stdlib's own, so a program with no `std/option`
+    // anywhere in its graph is told to import it rather than getting an
+    // internal error about an unknown type.
+    assert_rejected_with(
+        "tests/fixtures/try_to_without_option.kp",
+        "add `impl \"std/option\"` to the file that writes the call",
+    );
+}
+
 /// MK7 §5: the remainder of a division at every integer width. This is the
 /// fixture that was missing when the asm backend moved a narrow remainder into
 /// a sixty-four-bit destination — a real `as` failure for `%` on `i32`/`u8`/

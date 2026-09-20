@@ -1,0 +1,9 @@
+// MISSING-RbhdW: `u8` fits in every other integer type, so no `to_` out of it
+// can lose a value and there is no `try_to_` either. The diagnostic has to name
+// the rule rather than only the method matrix.
+impl "std/option"
+
+fun main() {
+    val n: u8 = 3
+    print(n.try_to_u32())
+}

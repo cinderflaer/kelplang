@@ -1,0 +1,6 @@
+// MISSING-RbhdW: the `Option` a `try_to_<T>` hands back is `std/option`'s own
+// enum, so a program with that module nowhere in its graph is told to import it.
+fun main() {
+    val n: i64 = 300
+    print(n.try_to_u8())
+}

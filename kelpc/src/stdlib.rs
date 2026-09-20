@@ -19,6 +19,12 @@
 /// matcher directly to compare it against its C reference.
 pub const RT_MODULE: &str = "std/rt";
 
+/// The module that declares `Option<T>`. A compiler builtin that hands back an
+/// `Option` (`try_to_<T>`, `MISSING-RbhdW`) names the instance through
+/// `key_prefix` of this id, because a builtin has no declaration site for the
+/// resolver to qualify the type at.
+pub const OPTION_MODULE: &str = "std/option";
+
 /// The function-key prefix of a module id: `std/rt` is `std.rt.`. The two have
 /// to agree everywhere a key is built or recognized, so the rule lives here
 /// rather than being spelled out at each call site.

@@ -199,6 +199,26 @@ impl Ty {
         matches!(self, Ty::F32 | Ty::F64)
     }
 
+    /// The full range of an integer type, as `(min, max)`: `min` signed so a
+    /// signed type can express its own floor, `max` unsigned so `u64`/`usize`
+    /// can express theirs. `None` for anything that is not an integer.
+    ///
+    /// Two passes need this and they have to agree: `codegen_c.rs` uses it to
+    /// decide whether a `to_<T>` conversion needs a range check, and
+    /// `infer.rs` uses it to decide which conversions *have* a `try_to_<T>`
+    /// twin and what that twin tests.
+    pub fn int_bounds(ty: &Ty) -> Option<(i128, u128)> {
+        Some(match ty {
+            Ty::I32 => (i32::MIN as i128, i32::MAX as u128),
+            Ty::I64 | Ty::Isize => (i64::MIN as i128, i64::MAX as u128),
+            Ty::U8 => (0, u8::MAX as u128),
+            Ty::U16 => (0, u16::MAX as u128),
+            Ty::U32 => (0, u32::MAX as u128),
+            Ty::U64 | Ty::Usize => (0, u64::MAX as u128),
+            _ => return None,
+        })
+    }
+
     pub fn c_type(&self) -> String {
         match self {
             Ty::I32 => "int32_t".to_string(),

@@ -7678,6 +7678,16 @@ fn check_method_call(
             span,
         });
     };
+    // `n.try_to_u8()` (MISSING-RbhdW): the fallible twin of `n.to_u8()`. A
+    // builtin has no declaration to resolve its return type at, so the call is
+    // lowered here into a shape both backends already lower: the receiver
+    // bound once, the range test, and one arm per `Option` variant. It is
+    // resolved before the method tables because an integer has no table to
+    // search and no declaration ever names this method.
+    if let Some((src, dst)) = try_to_pair(&probe.ty, method) {
+        let value = check_call_arg("'self'", &src, receiver, ctx)?;
+        return lower_try_to(&src, &dst, value, span, ctx);
+    }
     // `cfg.on_event(x)` where the receiver has a *field* of function type
     // (A-4): the call syntax is a method's, the callee is a field, and the
     // field is a place holding a function value. A declared method of the
@@ -7769,7 +7779,7 @@ fn check_method_call(
                     e.display()
                 ),
                 (None, _) if probe.ty.is_integer() => format!(
-                    "type '{}' has no method '{method}' — an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64 and to_f32, and no other type converts",
+                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64 and to_f32, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
                     probe.ty.display()
                 ),
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
@@ -7800,6 +7810,179 @@ fn check_method_call(
     Ok(tir::Expr {
         kind: tir::ExprKind::Call { callee: key, args: checked_args },
         ty: sig.ret,
+        span,
+    })
+}
+
+/// The `(source, target)` pair a `try_to_<T>` method call names, or `None`
+/// when the receiver and the method do not spell one (MISSING-RbhdW).
+///
+/// Only the pairs whose plain `to_<T>` twin can lose a value have a twin at
+/// all: a widening cannot fail, so `u8.try_to_u64()` is deliberately not a
+/// method. `Ty::int_bounds` is the one place that decides, and it is the same
+/// bound table `codegen_c.rs` uses to decide whether `to_<T>` needs a check, so
+/// the two can never disagree about which conversions are fallible.
+fn try_to_pair(receiver: &Ty, method: &str) -> Option<(Ty, Ty)> {
+    let src = Ty::from_name(builtin_type_name(receiver)?)?;
+    let dst = Ty::from_name(method.strip_prefix("try_to_")?)?;
+    if !src.is_integer() || !dst.is_integer() {
+        return None;
+    }
+    let (s_min, s_max) = Ty::int_bounds(&src)?;
+    let (t_min, t_max) = Ty::int_bounds(&dst)?;
+    if s_min >= t_min && s_max <= t_max {
+        return None;
+    }
+    Some((src, dst))
+}
+
+/// Lowers `n.try_to_u8()` (MISSING-RbhdW) into the shape the language can
+/// already express: the receiver bound once, a test for each bound its source
+/// range cannot rule out, and one `Option` arm per outcome. Deliberately not a
+/// new `tir::ExprKind`: both backends already lower `Block`, `If` and `EnumLit`,
+/// so the fallible conversion is one pass's work with no conversion-specific
+/// code in either code generator.
+///
+/// The `Option` is the stdlib's own, found by the module id rather than by the
+/// enum's name, because a builtin call site has no declaration the resolver
+/// could have qualified the type at. A program with no `std/option` anywhere in
+/// its graph gets told to import it rather than an internal error.
+fn lower_try_to(src: &Ty, dst: &Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> Result<tir::Expr> {
+    let option_key = format!(
+        "{}Option",
+        crate::stdlib::key_prefix(crate::stdlib::OPTION_MODULE)
+    );
+    if !ctx.env.generics.contains_key(&option_key) {
+        return Err(TypeError {
+            message: format!(
+                "'{}.try_to_{}' hands back 'Option<{}>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
+                src.display(),
+                dst.display(),
+                dst.display(),
+                option_key,
+                crate::stdlib::OPTION_MODULE
+            ),
+            span,
+        });
+    }
+    let opt_ty = ctx.instantiate_type(&option_key, &[dst.clone()], span)?;
+    let opt_name = struct_name_of(&opt_ty)
+        .expect("an instantiation is a struct type")
+        .to_string();
+    let edef = ctx.enum_def(&opt_name).expect("just instantiated");
+    // Recognized by variant name and arity, never by the enum's own name, the
+    // same rule `?` uses (see `try_shape`).
+    let Some(shape) = try_shape(&edef).filter(|s| !s.err_has_payload) else {
+        return Err(TypeError {
+            message: format!(
+                "'{}' declares '{option_key}', and it is not the two-variant 'Some'/'None' shape this conversion hands back",
+                crate::stdlib::OPTION_MODULE
+            ),
+            span,
+        });
+    };
+    let src_name = builtin_type_name(src).expect("an integer has a name");
+    let dst_name = builtin_type_name(dst).expect("an integer has a name");
+    let (s_min, s_max) = Ty::int_bounds(src).expect("a try_to_ source is an integer");
+    let (t_min, t_max) = Ty::int_bounds(dst).expect("a try_to_ target is an integer");
+    // The receiver is read once, into a binding of its own: the test and the
+    // payload both read it, so `f().try_to_u8()` must not run `f` twice. The
+    // name carries a `.`, which no source identifier can contain, so it cannot
+    // shadow a binding the program wrote and no program can shadow it.
+    let held = format!("__try_to.{}", span.start);
+    let read = || tir::Expr {
+        kind: tir::ExprKind::Ident(held.clone()),
+        ty: src.clone(),
+        span,
+    };
+    let lit = |v: i128| tir::Expr {
+        kind: tir::ExprKind::IntLit(v as i64),
+        ty: src.clone(),
+        span,
+    };
+    let compare = |op: BinOp, rhs: i128| tir::Expr {
+        kind: tir::ExprKind::Binary {
+            op,
+            lhs: Box::new(read()),
+            rhs: Box::new(lit(rhs)),
+        },
+        ty: Ty::Bool,
+        span,
+    };
+    // Only the bounds the source's own range cannot rule out, exactly as
+    // `numeric_conversion` drops them: `u8.try_to_i32` has no upper test to
+    // write, and a test that cannot fail would be a tautology in the C.
+    let mut checks: Option<tir::Expr> = None;
+    for check in [
+        (s_min < t_min).then(|| compare(BinOp::Lt, t_min)),
+        (s_max > t_max).then(|| compare(BinOp::Gt, t_max as i128)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        checks = Some(match checks.take() {
+            None => check,
+            Some(prev) => tir::Expr {
+                kind: tir::ExprKind::Binary {
+                    op: BinOp::Or,
+                    lhs: Box::new(prev),
+                    rhs: Box::new(check),
+                },
+                ty: Ty::Bool,
+                span,
+            },
+        });
+    }
+    let cond = checks.expect("a try_to_ pair fails at least one bound");
+    let variant = |variant: usize, fields: Vec<tir::Expr>| tir::Expr {
+        kind: tir::ExprKind::EnumLit {
+            enum_name: opt_name.clone(),
+            variant,
+            fields,
+        },
+        ty: opt_ty.clone(),
+        span,
+    };
+    let none = variant(shape.err, Vec::new());
+    let some = variant(
+        shape.ok,
+        vec![tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: format!("{src_name}#to_{dst_name}"),
+                args: vec![read()],
+            },
+            ty: dst.clone(),
+            span,
+        }],
+    );
+    // An out-of-range pair is `None`, and the `Some` arm is the unchecked
+    // payload: the conversion inside it is the plain `to_<T>`, whose own range
+    // check the test above has already made unreachable.
+    let arms = tir::Expr {
+        kind: tir::ExprKind::If {
+            cond: Box::new(cond),
+            then_block: tir::Block {
+                stmts: Vec::new(),
+                tail: Some(Box::new(none)),
+            },
+            else_block: Some(tir::Block {
+                stmts: Vec::new(),
+                tail: Some(Box::new(some)),
+            }),
+        },
+        ty: opt_ty.clone(),
+        span,
+    };
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Block(tir::Block {
+            stmts: vec![tir::Stmt::Let {
+                name: held,
+                ty: src.clone(),
+                init: value,
+            }],
+            tail: Some(Box::new(arms)),
+        }),
+        ty: opt_ty,
         span,
     })
 }

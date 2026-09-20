@@ -3787,21 +3787,6 @@ fn c_name(name: &str) -> String {
     }
 }
 
-/// The full range of an integer type, as `(min, max)` — `min` signed so a
-/// signed type can express its own floor, `max` unsigned so `u64`/`usize` can
-/// express theirs. `None` for anything that is not an integer.
-fn int_bounds(ty: &Ty) -> Option<(i128, u128)> {
-    Some(match ty {
-        Ty::I32 => (i32::MIN as i128, i32::MAX as u128),
-        Ty::I64 | Ty::Isize => (i64::MIN as i128, i64::MAX as u128),
-        Ty::U8 => (0, u8::MAX as u128),
-        Ty::U16 => (0, u16::MAX as u128),
-        Ty::U32 => (0, u32::MAX as u128),
-        Ty::U64 | Ty::Usize => (0, u64::MAX as u128),
-        _ => return None,
-    })
-}
-
 fn signed_lit(v: i128) -> String {
     format!("{v}LL")
 }
@@ -3824,7 +3809,9 @@ fn unsigned_lit(v: u128) -> String {
 /// temporary, because the check and the cast both read it.
 fn numeric_conversion(callee: &str, from: &Ty, to: &Ty, value: &str) -> String {
     let target = to.c_type();
-    let (Some((s_min, s_max)), Some((t_min, t_max))) = (int_bounds(from), int_bounds(to)) else {
+    let (Some((s_min, s_max)), Some((t_min, t_max))) =
+        (crate::types::Ty::int_bounds(from), crate::types::Ty::int_bounds(to))
+    else {
         return format!("(({target})({value}))");
     };
     if s_min >= t_min && s_max <= t_max {
