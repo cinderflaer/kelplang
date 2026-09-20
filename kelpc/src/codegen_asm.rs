@@ -480,6 +480,14 @@ fn view_ty(ty: &Ty) -> bool {
     matches!(ty, Ty::View)
 }
 
+/// A plain function value (`Ty::Fn`): one code pointer with no environment.
+/// It is `Copy`, so it is a one-eightbyte scalar everywhere, a local, a
+/// parameter, a return, a `datac` field, a passdown, and calling one is an
+/// indirect call with no hidden argument, unlike a `Ty::Closure` (A-4).
+fn fn_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Fn { .. })
+}
+
 /// `codegen_c.rs::is_place`'s predicate: an expression that names storage an
 /// address can be taken of. Used to tell `&b` (a borrow of a local, no copy)
 /// from `&Bytes.from_str(..)` (a borrow of a temporary, which needs a slot of
@@ -487,7 +495,14 @@ fn view_ty(ty: &Ty) -> bool {
 fn is_place(expr: &Expr) -> bool {
     matches!(
         expr.kind,
-        ExprKind::Ident(_) | ExprKind::FieldAccess { .. } | ExprKind::Deref { .. }
+        ExprKind::Ident(_)
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::Deref { .. }
+            // MK7 §5 item 6: a capture is a place too, the enclosing
+            // closure's environment owns the value, so a borrow of one takes
+            // the field's own address rather than staging a temporary that the
+            // environment would then free a second time.
+            | ExprKind::Capture { .. }
     )
 }
 
@@ -621,6 +636,56 @@ fn map_layout() -> StructLayout {
     )
 }
 
+/// The key `struct_layout` looks every `Ty::Closure<..>` up under. **One key
+/// for every signature**, `LIST_LAYOUT_KEY`'s sibling: a closure value is a
+/// three-field fat pointer whatever it closes over, so `types::closure_c_type`'s
+/// per-signature name is needed for the generated function and its environment
+/// drop and not for the layout. Keeping one key is what lets a `datac` field
+/// hold a closure (`datac Holder(val cb: closure(i32).R: i32)`) without the
+/// value's own signature being known when the field is placed.
+const CLOSURE_LAYOUT_KEY: &str = "$Closure";
+
+/// The layout of a closure value, mirroring `codegen_c.rs::write_closure_typedef`:
+/// the code pointer at 0, the environment at 8, the environment's own drop at
+/// 16, size 24, align 8. Three INTEGER eightbytes, so **MEMORY** class: a
+/// closure travels by value through the `MEMORY`-class argument area and the
+/// hidden return pointer exactly as `List`/`Map`/`Bytes` already do, with no
+/// new ABI code anywhere.
+fn closure_layout() -> StructLayout {
+    scalar_layout(
+        vec![
+            FieldEntry::Scalar("fn".to_string(), 0, Width::W8, false),
+            FieldEntry::Scalar("env".to_string(), 8, Width::W8, false),
+            FieldEntry::Scalar("drop".to_string(), 16, Width::W8, false),
+        ],
+        24,
+        8,
+    )
+}
+
+/// The mangled signature fragment a widened (`FnToClosure`) closure is named
+/// by, shared by its thunk, its environment destructor and its shims, the
+/// same names `codegen_c.rs` gives them, for the same reason every generated
+/// symbol is spelled the same in both backends (MK7 §5 item 6).
+fn coerce_mangle(ty: &Ty) -> String {
+    match ty {
+        Ty::Closure { params, ret } => crate::types::closure_mangle(params, ret),
+        other => unreachable!("not a closure: {}", other.display()),
+    }
+}
+
+fn coerce_thunk_name(ty: &Ty) -> String {
+    format!("kelp_coerce__{}", coerce_mangle(ty))
+}
+
+fn coerce_drop_name(ty: &Ty) -> String {
+    format!("kelp_coerce_drop__{}", coerce_mangle(ty))
+}
+
+fn coerce_shim_name(key: &str, ty: &Ty) -> String {
+    format!("kelp_shim__{}__{}", crate::types::c_ident(key), coerce_mangle(ty))
+}
+
 /// One `kelp_Map__K__V_entry`'s layout, which **does** depend on the key type:
 /// `{K key; V* value; uint8_t live;}` (`codegen_c.rs:1121`), laid out by the
 /// same sequential, naturally-aligned rule clang applies to that struct. This
@@ -715,6 +780,9 @@ fn pd_storage_size(
         return Some(align_up(layout.size, 8));
     }
     if str_ty(ty) {
+        return Some(8);
+    }
+    if fn_ty(ty) {
         return Some(8);
     }
     int_ty(ty).map(|(width, _)| align_up(width.bytes(), 8))
@@ -1406,6 +1474,10 @@ fn layout_key(ty: &Ty) -> Option<String> {
         // `codegen_c.rs` names its wrapper struct, so the two backends' names
         // stay related rather than inventing a second convention.
         Ty::Array(elem, len) => Some(array_layout_key(elem, *len)),
+        // MK7 §5 item 6: one key for every closure signature, like a `Box` or
+        // a `List`, the value's layout does not depend on what it closes
+        // over, only on its three field kinds.
+        Ty::Closure { .. } => Some(CLOSURE_LAYOUT_KEY.to_string()),
         _ => None,
     }
 }
@@ -1672,6 +1744,51 @@ fn elem_size(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>)
         return Some(layout.size);
     }
     int_ty(ty).map(|(width, _)| width.bytes())
+}
+
+/// One value's size and alignment as an environment field, or `None` for a
+/// type this backend cannot store there (MK7 §5 item 6).
+fn field_size_align(
+    ty: &Ty,
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<(i32, i32)> {
+    if let Some(layout) = struct_layout(ty, layouts) {
+        return Some((layout.size, layout.align));
+    }
+    if let Some(width) = float_ty(ty) {
+        return Some((width.bytes(), width.bytes()));
+    }
+    if let Some((width, _)) = int_ty(ty) {
+        return Some((width.bytes(), width.bytes()));
+    }
+    // A `str`, a borrow and a plain function value are all one pointer.
+    if str_ty(ty) || matches!(ty, Ty::Ref { .. }) || fn_ty(ty) {
+        return Some((8, 8));
+    }
+    None
+}
+
+/// A `fun` literal's environment laid out the way clang lays out the
+/// `struct { T c0; T c1; ... }` the C backend emits: fields in declaration
+/// order at their own natural alignment, the struct aligned to its widest
+/// field. Returns `(byte offset, type)` per field and the struct's size, the
+/// offsets `ExprKind::Capture` and the environment's generated drop use, and
+/// the byte count `malloc` has to reserve (MK7 §5 item 6).
+fn env_field_offsets(
+    fields: &[(String, Ty)],
+    layouts: &std::collections::HashMap<String, StructLayout>,
+) -> Option<(Vec<(i32, Ty)>, i32)> {
+    let mut cursor: i32 = 0;
+    let mut max_align: i32 = 1;
+    let mut out = Vec::with_capacity(fields.len());
+    for (_, ty) in fields {
+        let (size, align) = field_size_align(ty, layouts)?;
+        cursor = align_up(cursor, align);
+        out.push((cursor, ty.clone()));
+        cursor += size;
+        max_align = max_align.max(align);
+    }
+    Some((out, align_up(cursor, max_align)))
 }
 
 /// The class of a scalar element: one `INTEGER` eightbyte. `elem_class` uses
@@ -2083,6 +2200,11 @@ fn align_up(cursor: i32, align: i32) -> i32 {
 fn ty_owns(ty: &Ty, layouts: &std::collections::HashMap<String, StructLayout>) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Box(_) => true,
+        // MK7 §5 item 6: a closure always owns the environment its captures
+        // were moved into (the `drop` member is how it is freed), so it is an
+        // owning type like the containers below. A `Ty::Fn` is a bare code
+        // pointer, so it owns nothing.
+        Ty::Closure { .. } => true,
         // A `List<T>` always owns its buffer, whatever it holds — `empty()` is
         // the only list with nothing allocated, and it still has a header to
         // free (`free(NULL)`). This is why `drop_site_for` must never answer
@@ -2121,6 +2243,10 @@ fn datac_owns_in(
     // once, where the drop *body* is chosen.
     let mut owns = |ty: &Ty| match ty {
         Ty::Bytes | Ty::String | Ty::Box(_) | Ty::List(_) | Ty::Map(..) => true,
+        // MK7 §5 item 6: a `datac` holding a closure field owns the
+        // environment that closure carries, exactly as one holding a `Box`
+        // owns what it points at.
+        Ty::Closure { .. } => true,
         Ty::Struct(inner) => datac_owns_in(inner, layouts, seen),
         Ty::Array(elem, _) => ty_owns(elem, layouts),
         _ => false,
@@ -2418,6 +2544,16 @@ fn try_build_layout(
             entries.push(FieldEntry::Float(f.name.clone(), cursor, width));
             cursor += width.bytes();
             max_align = max_align.max(align);
+        } else if fn_ty(&f.ty) {
+            // MK7 §5 item 6: a plain function value field
+            // (`datac Callbacks(val on_i32: fun(i32).R: i32)`) is one code
+            // pointer, placed as an ordinary eight-byte `INTEGER` scalar. It
+            // has no synthesized layout of its own (unlike a closure), so it
+            // is written here rather than through the aggregate branch below.
+            cursor = align_up(cursor, 8);
+            entries.push(FieldEntry::Scalar(f.name.clone(), cursor, Width::W8, false));
+            cursor += 8;
+            max_align = max_align.max(8);
         } else if let Some(inner) = struct_layout(&f.ty, out) {
             // MK7 §5's heap-field slice: any field whose own layout exists is
             // placed here with natural alignment. That covers a nested `datac`
@@ -2616,6 +2752,9 @@ fn build_layouts(
     // MK7 §5's map slice: one entry covers every `Map<K, V>` (see
     // `MAP_LAYOUT_KEY`).
     out.insert(MAP_LAYOUT_KEY.to_string(), map_layout());
+    // MK7 §5 item 6: one entry covers every closure signature (see
+    // `CLOSURE_LAYOUT_KEY`).
+    out.insert(CLOSURE_LAYOUT_KEY.to_string(), closure_layout());
     for _ in 0..=(structs.len() + enums.len() + arrays.len()) {
         let mut changed = false;
         for s in structs {
@@ -2684,6 +2823,9 @@ fn struct_layout<'a>(
         // A-18: one synthesized layout per element type and length (see
         // `array_layout`).
         Ty::Array(elem, len) => layouts.get(&array_layout_key(elem, *len)),
+        // MK7 §5 item 6: one key covers every closure signature (see
+        // `CLOSURE_LAYOUT_KEY`).
+        Ty::Closure { .. } => layouts.get(CLOSURE_LAYOUT_KEY),
         _ => None,
     }
 }
@@ -2744,6 +2886,9 @@ fn value_kind(
         // slot, pass as an argument and return — the only thing missing was
         // saying so. Both spellings, since they are the same C value.
         .or_else(|| if str_ty(ty) { Some((Width::W8, false)) } else { None })
+        // MK7 §5 item 6: a plain function value is one code pointer, the same
+        // `Width::W8` value a `str` or a pointer is.
+        .or_else(|| if fn_ty(ty) { Some((Width::W8, false)) } else { None })
 }
 
 /// How many *integer* and *SSE* argument/parameter registers a value of `ty`
@@ -2772,6 +2917,11 @@ fn arg_regs_for(
         return Some((1, 0));
     }
     if str_ty(ty) {
+        return Some((1, 0));
+    }
+    // MK7 §5 item 6: a plain function value is one pointer in one integer
+    // register.
+    if fn_ty(ty) {
         return Some((1, 0));
     }
     if let Ty::Ref { inner, .. } = ty {
@@ -3022,6 +3172,32 @@ struct Parked {
     xmm: Option<FWidth>,
 }
 
+/// How an `IndirectCall`'s callee reaches its code pointer (MK7 §5 item 6).
+/// `Gen::indirect_call` stages the value in a frame slot before evaluating any
+/// argument, so none of these reads a register a nested call could clobber.
+#[derive(Clone, Copy)]
+enum IndirectKind {
+    /// A closure value (24 bytes): the slot holds the fat pointer, its `fn`
+    /// member at offset 0 and its `env` at 8, and the environment is passed as
+    /// the hidden first argument.
+    ClosureValue,
+    /// A *borrow* of a closure (the parameter rule makes every closure
+    /// parameter one): the slot holds the pointer, and the code pointer and
+    /// environment are one dereference further.
+    ClosureRef,
+    /// A plain function value: the slot holds the code pointer itself and
+    /// there is no environment to pass.
+    Fn,
+}
+
+/// What a generated trampoline forwards to (MK7 §5 item 6): a shim calls a
+/// *known* function by symbol, a coerce thunk calls the code pointer its
+/// one-field environment holds.
+enum TrampolineTarget {
+    Static(String),
+    FromEnv,
+}
+
 /// Generates assembly for `program`.
 ///
 /// `Err` carries a complete diagnostic, printed the same way a frontend error
@@ -3126,6 +3302,16 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
     // that is not there, and silently dropping it would let a fixture pass
     // while the promise the language makes about capabilities stopped holding.
     g.gated = program.gated.clone();
+    // MK7 §5 item 6: every `fun` literal's environment, by the generated
+    // function's own name. A closure *expression* names its literal's fields by
+    // key (`ClosureLit`/`FnToClosure` carry `key`), while the literal's function,
+    // and therefore its field list, is emitted elsewhere, so the table is
+    // built once here, before any body is written.
+    for f in &program.functions {
+        if let Some(env) = &f.env {
+            g.envs.insert(f.name.clone(), env.clone());
+        }
+    }
     g.out.push_str("    .intel_syntax noprefix\n");
     // Without this the linker warns that the object implies an executable
     // stack. Nothing here needs one, so the object declares that it does not.
@@ -3163,6 +3349,25 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
             // program that calls one gets it compiled like any other.
             if !live.contains(&f.name) || !emitted.insert(f.name.clone()) {
                 continue;
+            }
+            // MK7 §5 item 6: a `fun` literal's environment needs its own
+            // destructor, and everything that destructor frees has to be
+            // registered while the routine set is still open. Both are recorded
+            // here, where the literal is emitted, rather than at the closure
+            // *expression*, which `generate` never revisits.
+            if let Some(env) = &f.env {
+                let drop_name = env.drop_name.clone();
+                let fields: Vec<Ty> = env.fields.iter().map(|(_, t)| t.clone()).collect();
+                let mut stack: Vec<String> = Vec::new();
+                for ty in &fields {
+                    g.require_owned_field(ty, &mut stack);
+                }
+                while let Some(name) = stack.pop() {
+                    g.require_aggregate_drop(&name);
+                }
+                if !g.env_drops.iter().any(|(k, _)| k == &f.name) {
+                    g.env_drops.push((f.name.clone(), drop_name));
+                }
             }
             g.function(f)?;
         }
@@ -3282,6 +3487,46 @@ pub fn generate(program: &Program, drops: &DropPlan, _sources: &SourceMap) -> Re
         let Some(f) = next else { break };
         emitted_arrays.push(f.label());
         g.emit_array_routine(&f)?;
+    }
+    // MK7 §5 item 6: one environment destructor per `fun` literal that captured
+    // something. Emitted *before* the closure drops below because `drop_site_for`
+    // registers a closure's signature while this loop writes the field it frees,
+    // and reading the set fresh is what keeps the loop a fixpoint. The generated
+    // routine calls its fields' own drops by symbol, so its position in the file
+    // is free.
+    let env_drops: Vec<(String, String)> = g.env_drops.clone();
+    for (key, drop_name) in &env_drops {
+        g.emit_env_drop(key, drop_name)?;
+    }
+    // MK7 §5 item 6: one drop routine per closure signature. Emitted after the
+    // environment drops (which register the signatures they free) and after
+    // every container set, for the same reason the other per-instance sets are
+    // ordered: no body is written in the middle of another.
+    let mut emitted_closures: Vec<String> = Vec::new();
+    loop {
+        let next = g
+            .closure_drops
+            .iter()
+            .find(|t| !emitted_closures.contains(&crate::types::drop_fn_name(t)))
+            .cloned();
+        let Some(ty) = next else { break };
+        emitted_closures.push(crate::types::drop_fn_name(&ty));
+        g.emit_closure_drop(&ty);
+    }
+    // MK7 §5 item 6: the trampolines a `FnToClosure` needs, one coerce thunk
+    // and one one-field environment destructor per signature, and one shim per
+    // (known function, signature) pair. Each is self-contained (a thunk calls
+    // through its environment, a shim names a program function), so no ordering
+    // constraint applies beyond being after the functions they name.
+    let coerce_sigs: Vec<Ty> = g.coerce_sigs.clone();
+    for ty in &coerce_sigs {
+        g.emit_coerce_drop(ty);
+        g.emit_trampoline(&coerce_thunk_name(ty), ty, &TrampolineTarget::FromEnv)?;
+    }
+    let shim_targets: Vec<(String, Ty)> = g.shim_targets.clone();
+    for (key, ty) in &shim_targets {
+        let label = coerce_shim_name(key, ty);
+        g.emit_trampoline(&label, ty, &TrampolineTarget::Static(Gen::symbol(key)))?;
     }
     // MK7 §5: one `kelp_drop_pds` for the passdowns that own memory, emitted
     // after every drop routine it can call (`datac`, `Box`, `List`, `Map`) and
@@ -3500,6 +3745,10 @@ impl<'a> LiveAnalysis<'a> {
                 | Ty::Box(_)
                 | Ty::List(_)
                 | Ty::Map(..)
+                // MK7 §5 item 6: a closure local is 24 bytes and only ever
+                // moved through `eval_struct_into`/`emit_copy`, so it needs a
+                // frame slot for the same reason the containers above do.
+                | Ty::Closure { .. }
         ));
         // A `str`/`&T` name is already the pointer a borrow of it would
         // produce (`Gen::expr`'s `Ref` arm returns the value for both), so an
@@ -3784,6 +4033,28 @@ impl<'a> LiveAnalysis<'a> {
                     self.clobber_point();
                 }
             }
+            // MK7 §5 item 6: an indirect call clobbers exactly as a direct one
+            // does, and its callee value is read *before* the arguments, so the
+            // region is the callee plus the whole argument list, for the same
+            // reason `Call`'s is. A closure *literal* reads the locals it
+            // captures, so it is walked too; leaving it to the catch-all would
+            // make a captured local look dead on declaration and hand its pool
+            // register to another one, the gap `StructLit` and `FieldAccess`
+            // were each added for.
+            ExprKind::IndirectCall { callee, args } => {
+                let start = self.clobber_begin();
+                self.expr(callee);
+                for a in args {
+                    self.expr(a);
+                }
+                self.clobber_end(start);
+            }
+            ExprKind::ClosureLit { captures, .. } => {
+                for c in captures {
+                    self.expr(c);
+                }
+            }
+            ExprKind::FnToClosure { func } => self.expr(func),
             ExprKind::Ref { expr, .. } => self.address_of(expr),
             ExprKind::Deref { expr } => self.expr(expr),
             _ => {
@@ -4320,6 +4591,31 @@ struct Gen {
     /// top of every function because a register held across a function
     /// boundary would be a value nothing restores.
     float_hold: usize,
+    /// MK7 §5 item 6: every `fun` literal's environment, keyed by the generated
+    /// function's own name. Built once from `program.functions` before any body
+    /// is emitted, because a closure *expression* names its literal's fields by
+    /// key while the literal's function is emitted elsewhere.
+    envs: std::collections::HashMap<String, crate::tir::ClosureEnv>,
+    /// The frame slot holding the current function's hidden environment
+    /// pointer, and each capture's field offset and type, set by
+    /// `Gen::function` for a `fun` literal and consulted by
+    /// `ExprKind::Capture`.
+    env_slot: Option<i32>,
+    env_fields: Vec<(i32, Ty)>,
+    /// The closure signatures whose generated drop routine
+    /// (`types::drop_fn_name`'s `kelp_closure_drop__<mangle>`) this program
+    /// needs, registered by `drop_site_for`.
+    closure_drops: Vec<Ty>,
+    /// The `fun` literals whose environment drop routine
+    /// (`kelp_env_drop__<cident>`) this program needs, as `(key, drop_name)`,
+    /// recorded where the literal's generated function is emitted.
+    env_drops: Vec<(String, String)>,
+    /// The closure signatures a plain function value is widened into
+    /// (`FnToClosure`), which need a generated thunk per signature; and the
+    /// `(function key, signature)` pairs widened from a *known* function,
+    /// which need a shim that calls it directly.
+    coerce_sigs: Vec<Ty>,
+    shim_targets: Vec<(String, Ty)>,
 }
 
 /// One owned type's drop, as a symbol this module can `call`.
@@ -4363,6 +4659,13 @@ enum DropSite {
     /// `ty_owns` answering `false` is what keeps a routine with an empty loop
     /// from being emitted for every array in a program.
     Array(Ty, u64),
+    /// MK7 §5 item 6: one closure signature's drop,
+    /// `kelp_closure_drop__<mangle>`, `types::drop_fn_name`'s spelling for
+    /// `Ty::Closure`, emitted by `Gen::emit_closure_drop`. It calls the
+    /// value's own `drop` member through its `env` pointer, so it is one body
+    /// per signature and needs no per-literal knowledge; `NULL` `env` (a
+    /// widened plain function value) frees nothing.
+    Closure(Ty),
 }
 
 impl DropSite {
@@ -4376,6 +4679,7 @@ impl DropSite {
             DropSite::List(elem) => ListFn::Drop(elem.clone()).label(),
             DropSite::Map(key, value) => MapFn::Drop(key.clone(), value.clone()).label(),
             DropSite::Array(elem, len) => ArrayFn::Drop(elem.clone(), *len).label(),
+            DropSite::Closure(ty) => crate::types::drop_fn_name(ty),
         }
     }
 }
@@ -4447,12 +4751,13 @@ impl Gen {
         // No `FLOAT_HOLD` register is live at a function boundary — see
         // `Gen::float_hold`.
         self.float_hold = 0;
-        if f.env.is_some() {
-            return Err(unsupported(&format!(
-                "the closure environment of `{}`",
-                f.name
-            )));
-        }
+        // MK7 §5 item 6: a `fun` literal that captured something is generated
+        // as an ordinary function whose hidden first argument is the
+        // environment pointer; `f.env` names it and its fields, and the body's
+        // `ExprKind::Capture` nodes read it. Both are cleared here so an
+        // unrelated function never sees the previous literal's environment.
+        self.env_fields.clear();
+        self.env_slot = None;
         for (name, ty) in &f.params {
             if float_ty(ty).is_none() && arg_regs_for(ty, &self.layouts).is_none() {
                 return Err(unsupported(&format!(
@@ -4473,6 +4778,11 @@ impl Gen {
             RetClass::Unit
         } else if float_ty(&f.ret).is_some() {
             RetClass::Float
+        } else if fn_ty(&f.ret) {
+            // MK7 §5 item 6: a plain function value returned in `rax`, the
+            // same transport a scalar uses. Checked before `struct_layout`
+            // because a `Ty::Fn` has no synthesized layout of its own.
+            RetClass::Scalar
         } else if let Some(layout) = struct_layout(&f.ret, &self.layouts) {
             RetClass::Agg(layout.class())
         } else if int_ty(&f.ret).is_some() {
@@ -4502,10 +4812,14 @@ impl Gen {
         // one or two integer registers, one or two vector registers, or none
         // (a `MEMORY`-class value goes in the outgoing area). A `MEMORY`-class
         // *return* reserves `rdi` for the hidden pointer before any real
-        // parameter is numbered. Both files are counted, because SysV numbers
-        // them independently and a function with seven integer parameters
-        // plus two floats is fine while seven floats is not.
+        // parameter is numbered, and a `fun` literal's hidden environment
+        // pointer reserves the next one (MK7 §5 item 6). Both files are
+        // counted, because SysV numbers them independently and a function with
+        // seven integer parameters plus two floats is fine while seven floats
+        // is not.
+        let env_param = f.env.is_some();
         let mut int_regs_needed = if ret_class.is_mem() { 1 } else { 0 };
+        int_regs_needed += usize::from(env_param);
         let mut sse_regs_needed = 0usize;
         for (_, ty) in &f.params {
             if float_ty(ty).is_some() {
@@ -4551,6 +4865,22 @@ impl Gen {
 
         let mut frame = Frame::new(assign, used_regs.len(), ret_class);
         frame.push_scope();
+        // MK7 §5 item 6: a `fun` literal that captured something receives its
+        // environment as the hidden integer argument after a `Mem`-class
+        // return pointer. It is kept in a `Frame::scratch` slot of its own
+        // (rather than in a pool register) so that `ExprKind::Capture` can
+        // reload it after any call, and so it costs no `LiveAnalysis`
+        // declaration, it is storage, not a name the program can read.
+        if let Some(env) = &f.env {
+            let (offsets, _size) = env_field_offsets(&env.fields, &self.layouts).ok_or_else(|| {
+                unsupported(&format!(
+                    "the closure environment of `{}` (a captured value has no layout here)",
+                    f.name
+                ))
+            })?;
+            self.env_slot = Some(frame.scratch(8));
+            self.env_fields = offsets;
+        }
         // Parameters are bound to the same locations a local would use;
         // their incoming registers are moved into place (spilled to a frame
         // slot, or moved into a pool register) in the prologue, which is
@@ -4591,8 +4921,11 @@ impl Gen {
         // function `Gen::call` uses — see `memory_arg_area`.
         let (mem_params, _) = memory_arg_area(f.params.iter().map(|(_, ty)| ty), &self.layouts);
         // `rdi` (`ARG64[0]`) is the hidden return pointer for a `Mem`-class
-        // return, so real parameter numbering starts one register later.
+        // return, so real parameter numbering starts one register later, and
+        // a `fun` literal's hidden environment pointer takes the next one
+        // (MK7 §5 item 6).
         let mut int_idx = if ret_class.is_mem() { 1 } else { 0 };
+        int_idx += usize::from(env_param);
         let mut sse_idx = 0usize;
         for (pos, (name, ty)) in f.params.iter().enumerate() {
             let loc = frame.declare(name, ty, &self.layouts)?;
@@ -4646,6 +4979,13 @@ impl Gen {
         if ret_class.is_mem() {
             let rp = frame.ret_ptr_slot;
             let _ = writeln!(self.out, "    mov QWORD PTR [rbp{rp}], rdi");
+        }
+        if let Some(slot) = self.env_slot {
+            // The environment pointer, in the integer register after the
+            // hidden return pointer. Nothing between here and the body's first
+            // `Capture` read touches this slot.
+            let idx = usize::from(ret_class.is_mem());
+            let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot}], {}", ARG64[idx]);
         }
         for p in &params {
             match p {
@@ -4911,6 +5251,13 @@ impl Gen {
             return self.eval_struct_into(&init, frame, Dest::Global(index));
         }
         self.expr(&init, frame)?;
+        // MK7 §5 item 6: a plain function value is one code pointer, so it is
+        // stored like a scalar rather than through `int_ty` (which does not
+        // name a function).
+        if fn_ty(&value_ty) {
+            let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
+            return Ok(());
+        }
         if str_ty(&value_ty) {
             // A `str` passdown's storage holds the pointer itself.
             let _ = writeln!(self.out, "    mov QWORD PTR [rip+{label}], rax");
@@ -5112,6 +5459,18 @@ impl Gen {
                 array_elem_atoms(elem, &self.layouts)?;
                 self.require_array_fn(ArrayFn::Drop((**elem).clone(), *len));
                 Some(DropSite::Array((**elem).clone(), *len))
+            }
+            // MK7 §5 item 6: a closure owns the environment its captures were
+            // moved into, so it always drops, through the per-signature
+            // routine, which calls the value's own `drop` member. Registering
+            // the signature here is what gets the routine emitted; the
+            // *environment*'s own drop is registered by the literal and lives
+            // in the value's `drop` member, so no per-literal name is needed.
+            Ty::Closure { .. } => {
+                if !self.closure_drops.iter().any(|t| t == ty) {
+                    self.closure_drops.push(ty.clone());
+                }
+                Some(DropSite::Closure(ty.clone()))
             }
             _ => None,
         }
@@ -5405,61 +5764,69 @@ impl Gen {
                 }
             }
             for ty in &fields {
-                match ty {
-                    Ty::Bytes => {
-                        self.require_routine(Routine::BytesDrop);
-                    }
-                    Ty::String => {
-                        self.require_routine(Routine::StringDrop);
-                    }
-                    // MK7 §5's list slice: a `datac` holding a `List` field is
-                    // dropped by the list's generated drop, so that one (and
-                    // its element's drop, and the growth helper) has to be
-                    // registered before the routine snapshot — the same rule
-                    // the two routines above and the box below follow. The
-                    // element's own size is required first, for the reason
-                    // `drop_site_for`'s list arm gives; the guard in
-                    // `emit_datac_drop` turns the refusal into a named message.
-                    Ty::List(elem) => {
-                        if elem_size(elem, &self.layouts).is_some() {
-                            self.require_list_fn(ListFn::Drop((**elem).clone()));
-                        }
-                    }
-                    // MK7 §5's box slice: a `datac` holding a `Box` field is
-                    // dropped by calling the box's generated drop, so that one
-                    // (and everything it calls) has to be registered here —
-                    // the same before-the-snapshot rule as the two routines
-                    // above. `try_build_layout` only accepted the field after
-                    // `elem_size` answered for its element, so this cannot
-                    // require a box this backend cannot write.
-                    Ty::Box(elem) => {
-                        if elem_size(elem, &self.layouts).is_some() {
-                            self.require_box_fn(BoxFn::Drop((**elem).clone()));
-                        }
-                    }
-                    // MK7 §5's map slice: a `datac` holding a `Map` field is
-                    // dropped by the map's generated drop, so that one (and
-                    // everything it calls, including the `List` routines a
-                    // `keys()` needs if a field of *that* datac asks for them)
-                    // has to be registered before the routine snapshot — the
-                    // same rule as the two containers above. Both type
-                    // arguments are required to have a size first; the guard in
-                    // `emit_datac_drop` turns the refusal into a named message.
-                    Ty::Map(key, value) => {
-                        if elem_size(key, &self.layouts).is_some()
-                            && elem_size(value, &self.layouts).is_some()
-                        {
-                            self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
-                        }
-                    }
-                    Ty::Struct(inner) => {
-                        if self.datac_owns(inner) {
-                            stack.push(inner.clone());
-                        }
-                    }
-                    _ => {}
+                self.require_owned_field(ty, &mut stack);
+            }
+        }
+    }
+
+    /// Registers the routine a field, capture or `List`/`Map` element of type
+    /// `ty` needs *before* the routine set is snapshotted, and pushes any
+    /// nested user type on `stack` so `require_aggregate_drop` keeps walking.
+    /// Shared by the generated `datac`/`enum` drops and the environment drops
+    /// of a `fun` literal's captures (MK7 §5 item 6), which have the same
+    /// dependencies one level down.
+    fn require_owned_field(&mut self, ty: &Ty, stack: &mut Vec<String>) {
+        match ty {
+            Ty::Bytes => {
+                self.require_routine(Routine::BytesDrop);
+            }
+            Ty::String => {
+                self.require_routine(Routine::StringDrop);
+            }
+            // MK7 §5's list slice: a field holding a `List` is dropped by the
+            // list's generated drop, so that one (and its element's drop, and
+            // the growth helper) has to be registered before the routine
+            // snapshot. The element's own size is required first, for the
+            // reason `drop_site_for`'s list arm gives; the guard in
+            // `emit_datac_drop` turns the refusal into a named message.
+            Ty::List(elem) => {
+                if elem_size(elem, &self.layouts).is_some() {
+                    self.require_list_fn(ListFn::Drop((**elem).clone()));
                 }
             }
+            // MK7 §5's box slice: a field holding a `Box` is dropped by
+            // calling the box's generated drop, so that one (and everything it
+            // calls) has to be registered here. `try_build_layout` only
+            // accepted the field after `elem_size` answered for its element,
+            // so this cannot require a box this backend cannot write.
+            Ty::Box(elem) => {
+                if elem_size(elem, &self.layouts).is_some() {
+                    self.require_box_fn(BoxFn::Drop((**elem).clone()));
+                }
+            }
+            // MK7 §5's map slice: a field holding a `Map` is dropped by the
+            // map's generated drop, so that one (and everything it calls,
+            // including the `List` routines a `keys()` needs) has to be
+            // registered before the routine snapshot. Both type arguments are
+            // required to have a size first.
+            Ty::Map(key, value) => {
+                if elem_size(key, &self.layouts).is_some()
+                    && elem_size(value, &self.layouts).is_some()
+                {
+                    self.require_map_fn(MapFn::Drop((**key).clone(), (**value).clone()));
+                }
+            }
+            // MK7 §5 item 6: a closure field is dropped by the per-signature
+            // closure drop, which `drop_site_for` registers when the site is
+            // asked for; nothing static is needed here beyond a walk on, so
+            // this arm exists only to make the omission deliberate.
+            Ty::Closure { .. } => {}
+            Ty::Struct(inner) => {
+                if self.datac_owns(inner) {
+                    stack.push(inner.clone());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -5516,6 +5883,159 @@ impl Gen {
             "    .section .data\n    .globl __dso_handle\n    .hidden __dso_handle\n\
              __dso_handle:\n    .quad 0\n    .text\n",
         );
+    }
+
+    /// One closure signature's generated drop,
+    /// `kelp_closure_drop__<mangle>`, `codegen_c.rs::write_closure`'s body,
+    /// transliterated (MK7 §5 item 6). `rdi` points at the value: `env` at
+    /// offset 8, the environment's own drop at 16. `env == NULL` is a widened
+    /// plain function value, which owns nothing, and the environment pointer is
+    /// cleared before the call so a value that is dropped twice frees its
+    /// environment once.
+    fn emit_closure_drop(&mut self, ty: &Ty) {
+        let label = crate::types::drop_fn_name(ty);
+        let done = self.label("closure_drop_done");
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        self.out.push_str("    push rbp\n    mov rbp, rsp\n");
+        self.out.push_str("    mov r11, rdi\n");
+        self.out.push_str("    mov rax, QWORD PTR [r11+8]\n");
+        self.out.push_str("    test rax, rax\n");
+        let _ = writeln!(self.out, "    je {done}");
+        self.out.push_str("    mov QWORD PTR [r11+8], 0\n");
+        self.out.push_str("    mov rcx, QWORD PTR [r11+16]\n");
+        self.out.push_str("    mov rdi, rax\n    call rcx\n");
+        let _ = writeln!(self.out, "{done}:");
+        self.out.push_str("    pop rbp\n    ret\n");
+    }
+
+    /// One `fun` literal's environment destructor,
+    /// `kelp_env_drop__<cident>`, `codegen_c.rs::write_env`'s body: each
+    /// owning capture in field order, then the environment itself. The value's
+    /// `drop` member is how it is reached, so both backends free the same bytes
+    /// in the same order (MK7 §5 item 6).
+    fn emit_env_drop(&mut self, key: &str, drop_name: &str) -> Result<(), String> {
+        let env = self
+            .envs
+            .get(key)
+            .cloned()
+            .ok_or_else(|| unsupported(&format!("the closure `{key}`")))?;
+        let (offsets, _) = env_field_offsets(&env.fields, &self.layouts)
+            .ok_or_else(|| unsupported(&format!("the environment of the closure `{key}`")))?;
+        let mut sites: Vec<(i32, String)> = Vec::new();
+        for (offset, ty) in &offsets {
+            if let Some(what) = self.field_drop_refusal(ty, key) {
+                return Err(unsupported(&what));
+            }
+            if let Some(site) = self.drop_site_for(ty) {
+                sites.push((*offset, site.label()));
+            }
+        }
+        let _ = writeln!(self.out, "    .type {drop_name}, @function\n{drop_name}:");
+        self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 8\n");
+        self.out.push_str("    mov rbx, rdi\n");
+        for (offset, site) in sites {
+            let _ = writeln!(self.out, "    lea rdi, [rbx{}]", off_str(offset));
+            let _ = writeln!(self.out, "    call {site}");
+        }
+        self.out.push_str("    mov rdi, rbx\n    call free@PLT\n");
+        self.out.push_str("    add rsp, 8\n    pop rbx\n    pop rbp\n    ret\n");
+        Ok(())
+    }
+
+    /// A generated trampoline that drops the closure ABI's hidden environment
+    /// argument before forwarding to its target (MK7 §5 item 6). The ABI puts
+    /// the environment in the first integer argument register after a
+    /// `Mem`-class return pointer, so every real parameter's *integer* register
+    /// shifts down by one, the vector file is untouched, because the
+    /// environment is an integer. A `MEMORY`-class parameter already sits in
+    /// the outgoing argument area at the same offset, so it is copied rather
+    /// than shifted.
+    ///
+    /// Both ends of this are generated here, so the shift is a property of this
+    /// backend's own convention rather than a bet on SysV's.
+    fn emit_trampoline(
+        &mut self,
+        label: &str,
+        ty: &Ty,
+        target: &TrampolineTarget,
+    ) -> Result<(), String> {
+        let Ty::Closure { params, ret } = ty else {
+            unreachable!("not a closure: {}", ty.display())
+        };
+        let ret_mem = struct_layout(ret, &self.layouts).is_some_and(|l| l.class().is_mem());
+        let (mem_args, area_size) = memory_arg_area(params.iter(), &self.layouts);
+        let start_in = usize::from(ret_mem) + 1;
+        let mut int_idx = start_in;
+        let mut int_regs: Vec<usize> = Vec::new();
+        let mut mems: Vec<(i32, i32)> = Vec::new();
+        for (pos, ty) in params.iter().enumerate() {
+            if float_ty(ty).is_some() {
+                // The vector file is numbered independently and the environment
+                // takes an integer register, so an SSE parameter's `xmm` is the
+                // same in the trampoline and in its target: nothing to shift.
+                continue;
+            }
+            let (ints, sses) = arg_regs_for(ty, &self.layouts).ok_or_else(|| {
+                unsupported(&format!(
+                    "the parameter type `{}` of a function value",
+                    ty.display()
+                ))
+            })?;
+            if ints == 0 && sses == 0 {
+                let (_, off, size) = *mem_args
+                    .iter()
+                    .find(|(i, _, _)| *i == pos)
+                    .expect("memory_arg_area covers every Mem-class parameter");
+                mems.push((off, size));
+                continue;
+            }
+            let class = struct_layout(ty, &self.layouts)
+                .map(|l| l.class())
+                .unwrap_or(INT_ONE);
+            for k in 0..2 {
+                let Some(eb) = class.eb(k) else { break };
+                if eb.kind == Eb::Int {
+                    int_regs.push(int_idx);
+                    int_idx += 1;
+                }
+            }
+        }
+        int_regs.sort_unstable();
+        int_regs.dedup();
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        self.out.push_str("    push rbp\n    mov rbp, rsp\n");
+        // Read the target before the shift overwrites the environment
+        // register, for the thunk whose target is the code pointer the
+        // environment holds.
+        if matches!(target, TrampolineTarget::FromEnv) {
+            let _ = writeln!(self.out, "    mov rax, {}", ARG64[start_in - 1]);
+            self.out.push_str("    mov r11, QWORD PTR [rax]\n");
+        }
+        // Ascending so each read happens before the register below it is
+        // overwritten.
+        for &i in &int_regs {
+            let _ = writeln!(self.out, "    mov {}, {}", ARG64[i - 1], ARG64[i]);
+        }
+        if area_size > 0 {
+            let _ = writeln!(self.out, "    sub rsp, {area_size}");
+            for (off, size) in mems {
+                emit_copy(&mut self.out, "rsp", off, "rbp", 16 + off, size);
+            }
+        }
+        if let TrampolineTarget::Static(symbol) = target {
+            let _ = writeln!(self.out, "    lea r11, [rip+{symbol}]");
+        }
+        self.out.push_str("    call r11\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+        Ok(())
+    }
+
+    /// The environment destructor for a widened plain function value: the
+    /// one-field environment holds nothing that owns memory, so freeing it is
+    /// the whole body (MK7 §5 item 6).
+    fn emit_coerce_drop(&mut self, ty: &Ty) {
+        let label = coerce_drop_name(ty);
+        let _ = writeln!(self.out, "    .type {label}, @function\n{label}:");
+        self.out.push_str("    jmp free@PLT\n");
     }
 
     /// One `datac`'s generated drop function: each owned field in declaration
@@ -8594,19 +9114,44 @@ impl Gen {
                 Ok(())
             }
             ExprKind::Block(block) => self.block(block, frame),
-            ExprKind::Call { callee, args } => self.call(callee, args, &e.ty, None, frame),
+            ExprKind::Call { callee, args } => self.call(callee, args, &e.ty, None, None, frame),
             ExprKind::Template { newline, pieces } => self.template(*newline, pieces, frame),
-            ExprKind::IndirectCall { .. } => Err(unsupported("a call through a function value")),
+            // MK7 §5 item 6: a call through a function value. A closure
+            // carries its environment, so the value is staged once and the
+            // call passes the environment as the hidden first argument; a
+            // plain function value is the code pointer itself.
+            ExprKind::IndirectCall { callee, args } => {
+                self.indirect_call(callee, args, &e.ty, None, frame)
+            }
             // A fixed-size array (A-18) is a by-value struct the C backend
             // emits; here it is a synthesized layout like any other aggregate
             // (see `array_layout`), so a literal is written into a slot and
             // only a one-eightbyte array is a plain `rax` value.
             ExprKind::ArrayLit(elems) => self.array_lit(&e.ty, elems, frame),
             ExprKind::ArrayRepeat { value } => self.array_repeat(&e.ty, value, frame),
-            ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } | ExprKind::ClosureLit { .. } => {
-                Err(unsupported("a function value"))
+            // MK7 §5 item 6: a named function used as a value is its own code
+            // address, one `lea`, because a plain function value carries no
+            // environment. A closure is a 24-byte `MEMORY`-class value and so
+            // cannot travel through `rax`; the four contexts that can hold one
+            // (`let`, an assignment, a `return`, a call argument) intercept it
+            // with `eval_struct_into` before reaching here, exactly as a wide
+            // `datac` literal is intercepted.
+            ExprKind::FnRef(key) => {
+                let symbol = Gen::symbol(key);
+                let _ = writeln!(self.out, "    lea rax, [rip+{symbol}]");
+                Ok(())
             }
-            ExprKind::Capture { .. } => Err(unsupported("a closure capture")),
+            ExprKind::ClosureLit { .. } | ExprKind::FnToClosure { .. } => Err(unsupported(
+                "a closure value as a plain expression (it is a 24-byte fat pointer, so only \
+                 a `let`, an assignment, a `return`, or a call argument may hold one directly)",
+            )),
+            // MK7 §5 item 6: a read of one field of the enclosing closure's
+            // environment. The environment pointer is the frame slot
+            // `Gen::function` bound; the field is at its own offset.
+            ExprKind::Capture { index } => {
+                let (offset, ty) = self.capture_field(*index)?;
+                self.load_capture(offset, &ty)
+            }
             ExprKind::FloatLit(v) => {
                 // There is no `mov xmm, imm`: a float constant has to arrive
                 // through the integer file as its raw bit pattern and cross
@@ -8758,6 +9303,16 @@ impl Gen {
                         }
                     }
                 }
+                // MK7 §5 item 6: a borrow of a capture, the environment owns
+                // the value, so the address is the field's own and no
+                // temporary is staged (staging one would hand the callee a
+                // fresh copy whose buffer the environment still frees).
+                if let ExprKind::Capture { index } = &expr.kind {
+                    let (offset, _) = self.capture_field(*index)?;
+                    self.capture_addr_into_r11(offset);
+                    self.out.push_str("    mov rax, r11\n");
+                    return Ok(());
+                }
                 // MK7 §5 item 4, fourth slice: a borrow of a *temporary* —
                 // `sum(Pair(a = 1, b = 2))`, or the same shape over a call that
                 // returns a `datac`. The temporary gets a slot of its own
@@ -8785,6 +9340,16 @@ impl Gen {
                 ))
             }
             ExprKind::Deref { expr } => {
+                // MK7 §5 item 6: a read *through* a borrow of a plain function
+                // value, the shape a `pd val f: fun(...)` has, since
+                // `infer::PdInfo::value` reads a passdown as `*` of its borrow.
+                // `expr` leaves the storage's address in `rax`, so the value is
+                // one load.
+                if fn_ty(&e.ty) {
+                    self.expr(expr, frame)?;
+                    self.out.push_str("    mov rax, QWORD PTR [rax]\n");
+                    return Ok(());
+                }
                 // MK7 §5 (the passdown slice): a read *through* a borrow — the
                 // `*` in "a read of the passdown is `*` of the borrow".
                 //
@@ -9248,6 +9813,279 @@ impl Gen {
         self.out.push_str("    test rax, rax\n    setne al\n    movzx rax, al\n");
         let _ = writeln!(self.out, "{end}:");
         Ok(())
+    }
+
+    /// One capture's field offset and type, given its index in the enclosing
+    /// `fun` literal's environment (MK7 §5 item 6). `Gen::function` recorded
+    /// both from `tir::ClosureEnv::fields`, so this cannot disagree with the
+    /// layout the generated drop uses.
+    fn capture_field(&self, index: usize) -> Result<(i32, Ty), String> {
+        self.env_fields
+            .get(index)
+            .cloned()
+            .ok_or_else(|| unsupported(&format!("a closure capture ({index})")))
+    }
+
+    /// The address of capture `offset` in the environment into `r11`, the
+    /// environment pointer the prologue bound, plus the field's own offset.
+    fn capture_addr_into_r11(&mut self, offset: i32) {
+        let slot = self
+            .env_slot
+            .expect("a capture node only exists inside a `fun` literal's own function");
+        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+        if offset != 0 {
+            let _ = writeln!(self.out, "    add r11, {offset}");
+        }
+    }
+
+    /// A captured value read whole in `rax` (or `xmm0` for a float): a load
+    /// from `[env+offset]` at its own width. A capture wide enough that `rax`
+    /// cannot hold it is refused by name, the same rule every wide value
+    /// follows, and one of the four `eval_struct_into` contexts is what handles
+    /// it where a destination exists.
+    fn load_capture(&mut self, offset: i32, ty: &Ty) -> Result<(), String> {
+        let slot = self
+            .env_slot
+            .expect("a capture node only exists inside a `fun` literal's own function");
+        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+        if let Some(width) = float_ty(ty) {
+            let _ = writeln!(self.out, "    {} xmm0, [r11{off}]", width.mov(), off = off_str(offset));
+            return Ok(());
+        }
+        if let Some((width, signed)) = value_kind(ty, &self.layouts) {
+            let _ = writeln!(
+                self.out,
+                "    mov {}, {} [r11{}]",
+                width.rax(),
+                width.mem(),
+                off_str(offset)
+            );
+            self.out.push_str(&width.extend(signed));
+            return Ok(());
+        }
+        if let Some(layout) = struct_layout(ty, &self.layouts) {
+            if layout.class().is_int_one() {
+                load_agg_bytes(&mut self.out, RAX, "r11", offset, layout.size);
+                return Ok(());
+            }
+        }
+        Err(unsupported(&format!(
+            "reading the captured `{}` by value (bind it, borrow it, or read a field of it)",
+            ty.display()
+        )))
+    }
+
+    /// Moves or copies one capture into its environment field: the field's own
+    /// address is computed into a scratch slot, then the value is written
+    /// there at its own size. The initializer is written in the *enclosing*
+    /// function's terms, a local by name, or a read of an enclosing closure's
+    /// environment, so this is the same evaluation a `let` of that type does,
+    /// and a moved local is cleared by the same `clear_if_move` the read
+    /// performs.
+    fn store_capture(
+        &mut self,
+        init: &Expr,
+        offset: i32,
+        ty: &Ty,
+        env_slot: i32,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        // The environment owns the value, so a capture that is itself an
+        // aggregate has a layout the destination arithmetic needs; a type with
+        // neither is refused by name before anything is written.
+        field_size_align(ty, &self.layouts)
+            .ok_or_else(|| unsupported(&format!("a captured value of type `{}`", ty.display())))?;
+        let ptr_slot = frame.scratch(8);
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{env_slot}]");
+        if offset != 0 {
+            let _ = writeln!(self.out, "    add rax, {offset}");
+        }
+        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{ptr_slot}], rax");
+        if struct_layout(ty, &self.layouts).is_some() {
+            return self.eval_struct_into(init, frame, Dest::Indirect(ptr_slot));
+        }
+        if let Some(width) = float_ty(ty) {
+            self.expr(init, frame)?;
+            let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{ptr_slot}]");
+            let _ = writeln!(self.out, "    {} [r11], xmm0", width.mov());
+            return Ok(());
+        }
+        let (width, _) = value_kind(ty, &self.layouts)
+            .ok_or_else(|| unsupported(&format!("a captured value of type `{}`", ty.display())))?;
+        self.expr(init, frame)?;
+        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{ptr_slot}]");
+        let _ = writeln!(self.out, "    mov {} [r11], {}", width.mem(), width.rax());
+        Ok(())
+    }
+
+    /// One capturing `fun` literal's value (MK7 §5 item 6): allocate its
+    /// environment on the heap (the PLT `malloc` the box slice already uses),
+    /// move each capture into its field in declaration order, then write the
+    /// fat pointer, the generated function, the environment, and the
+    /// environment's generated drop, into `dest`. The environment is staged in
+    /// a frame slot of its own so a capture initializer that itself allocates
+    /// (a nested closure) cannot lose it.
+    fn closure_lit_at(
+        &mut self,
+        key: &str,
+        captures: &[Expr],
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        let env = self
+            .envs
+            .get(key)
+            .cloned()
+            .ok_or_else(|| unsupported(&format!("the closure `{key}`")))?;
+        let (offsets, size) = env_field_offsets(&env.fields, &self.layouts)
+            .ok_or_else(|| unsupported(&format!("the environment of the closure `{key}`")))?;
+        if offsets.len() != captures.len() {
+            return Err(unsupported(&format!("the capture list of the closure `{key}`")));
+        }
+        let env_slot = frame.scratch(8);
+        call_align_begin(&mut self.out, frame.sp_slot);
+        let _ = writeln!(self.out, "    mov edi, {}", align_up(size, 8).max(8));
+        self.out.push_str("    call malloc@PLT\n");
+        call_align_end(&mut self.out, frame.sp_slot);
+        let ok = self.label("envok");
+        self.out.push_str("    test rax, rax\n");
+        let _ = writeln!(self.out, "    jne {ok}");
+        let msg = self.bytes_label(b"out of memory");
+        let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+        self.call_panic();
+        let _ = writeln!(self.out, "{ok}:");
+        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{env_slot}], rax");
+        for (i, init) in captures.iter().enumerate() {
+            let (offset, ty) = offsets[i].clone();
+            self.store_capture(init, offset, &ty, env_slot, frame)?;
+        }
+        let symbol = Gen::symbol(key);
+        let _ = writeln!(self.out, "    lea rax, [rip+{symbol}]");
+        self.store_value(dest, 0, Width::W8);
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{env_slot}]");
+        self.store_value(dest, 8, Width::W8);
+        let _ = writeln!(self.out, "    lea rax, [rip+{}]", env.drop_name);
+        self.store_value(dest, 16, Width::W8);
+        Ok(())
+    }
+
+    /// A plain function value widened into a closure (MK7 §5 item 6, the C
+    /// backend's `FnToClosure`). A value that *names* a function needs no
+    /// environment, its `fn` member is a generated shim that ignores the
+    /// hidden argument and calls the function directly, so nothing is
+    /// allocated. A value whose identity is not known until the call gets a
+    /// one-field heap environment holding the code pointer and a generated
+    /// thunk that calls through it.
+    fn fn_to_closure_at(
+        &mut self,
+        func: &Expr,
+        closure_ty: &Ty,
+        frame: &mut Frame,
+        dest: Dest,
+    ) -> Result<(), String> {
+        let Ty::Closure { .. } = closure_ty else {
+            return Err(unsupported(&format!(
+                "widening to the non-closure type `{}`",
+                closure_ty.display()
+            )));
+        };
+        if let ExprKind::FnRef(key) = &func.kind {
+            let shim = coerce_shim_name(key, closure_ty);
+            self.register_shim(key, closure_ty);
+            let _ = writeln!(self.out, "    lea rax, [rip+{shim}]");
+            self.store_value(dest, 0, Width::W8);
+            self.out.push_str("    xor eax, eax\n");
+            self.store_value(dest, 8, Width::W8);
+            self.out.push_str("    xor eax, eax\n");
+            self.store_value(dest, 16, Width::W8);
+            return Ok(());
+        }
+        self.register_coerce(closure_ty);
+        let env_slot = frame.scratch(8);
+        call_align_begin(&mut self.out, frame.sp_slot);
+        self.out.push_str("    mov edi, 8\n    call malloc@PLT\n");
+        call_align_end(&mut self.out, frame.sp_slot);
+        let ok = self.label("envok");
+        self.out.push_str("    test rax, rax\n");
+        let _ = writeln!(self.out, "    jne {ok}");
+        let msg = self.bytes_label(b"out of memory");
+        let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+        self.call_panic();
+        let _ = writeln!(self.out, "{ok}:");
+        let _ = writeln!(self.out, "    mov QWORD PTR [rbp{env_slot}], rax");
+        self.expr(func, frame)?;
+        let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{env_slot}]");
+        self.out.push_str("    mov QWORD PTR [r11], rax\n");
+        let _ = writeln!(self.out, "    lea rax, [rip+{}]", coerce_thunk_name(closure_ty));
+        self.store_value(dest, 0, Width::W8);
+        let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{env_slot}]");
+        self.store_value(dest, 8, Width::W8);
+        let _ = writeln!(self.out, "    lea rax, [rip+{}]", coerce_drop_name(closure_ty));
+        self.store_value(dest, 16, Width::W8);
+        Ok(())
+    }
+
+    /// Records one widened-from-a-known-function signature, so `generate`
+    /// emits its shim.
+    fn register_shim(&mut self, key: &str, ty: &Ty) {
+        if !self
+            .shim_targets
+            .iter()
+            .any(|(k, t)| k == key && t == ty)
+        {
+            self.shim_targets.push((key.to_string(), ty.clone()));
+        }
+    }
+
+    /// Records one widened signature, so `generate` emits its thunk and its
+    /// environment destructor.
+    fn register_coerce(&mut self, ty: &Ty) {
+        if !self.coerce_sigs.iter().any(|t| t == ty) {
+            self.coerce_sigs.push(ty.clone());
+        }
+    }
+
+    /// A call through a function value (MK7 §5 item 6): stage the callee in a
+    /// frame slot before any argument is evaluated, a callee that is a field
+    /// or a capture is a value, not a place, and an argument's evaluation may
+    /// call, then hand the staging slot to `Gen::call`, which marshals the
+    /// arguments and passes the environment as the hidden argument for a
+    /// closure.
+    fn indirect_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        ret_ty: &Ty,
+        ret_dst: Option<Dest>,
+        frame: &mut Frame,
+    ) -> Result<(), String> {
+        let kind = match &callee.ty {
+            Ty::Closure { .. } => IndirectKind::ClosureValue,
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => {
+                IndirectKind::ClosureRef
+            }
+            Ty::Fn { .. } => IndirectKind::Fn,
+            other => {
+                return Err(unsupported(&format!(
+                    "a call through the type `{}`",
+                    other.display()
+                )))
+            }
+        };
+        let slot = match kind {
+            IndirectKind::ClosureValue => {
+                let slot = frame.scratch(24);
+                self.eval_struct_into(callee, frame, Dest::Direct(slot))?;
+                slot
+            }
+            IndirectKind::ClosureRef | IndirectKind::Fn => {
+                self.expr(callee, frame)?;
+                let slot = frame.scratch(8);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot}], rax");
+                slot
+            }
+        };
+        self.call("#indirect", args, ret_ty, ret_dst, Some((slot, kind)), frame)
     }
 
     /// MK7 §5 item 4: `Name { field = expr, ... }`. Every field is evaluated
@@ -10132,7 +10970,53 @@ impl Gen {
                 })?;
                 self.array_repeat_at(elem, len, value, frame, dest)
             }
-            ExprKind::Call { callee, args } => self.call(callee, args, &expr.ty, Some(dest), frame),
+            ExprKind::Call { callee, args } => self.call(callee, args, &expr.ty, Some(dest), None, frame),
+            // MK7 §5 item 6: a named function used as a value, its code address
+            // is the whole value, so the destination gets one `lea`.
+            ExprKind::FnRef(key) => {
+                let symbol = Gen::symbol(key);
+                let _ = writeln!(self.out, "    lea rax, [rip+{symbol}]");
+                self.store_value(dest, 0, Width::W8);
+                Ok(())
+            }
+            // A capturing `fun` literal: allocate its environment, move each
+            // capture in, and write the fat pointer into `dest`.
+            ExprKind::ClosureLit { key, captures } => {
+                self.closure_lit_at(key, captures, frame, dest)
+            }
+            // A plain function value widened into a closure: a shim (no
+            // environment, no allocation) for a known function, or a one-field
+            // heap environment plus a generated thunk otherwise.
+            ExprKind::FnToClosure { func } => self.fn_to_closure_at(func, &expr.ty, frame, dest),
+            // A read of a captured value in one of the wide contexts, the
+            // same byte copy a field read does, from the environment at the
+            // capture's own offset.
+            ExprKind::Capture { index } => {
+                let (offset, _) = self.capture_field(*index)?;
+                let size = struct_layout(&expr.ty, &self.layouts)
+                    .map(|l| l.size)
+                    .ok_or_else(|| {
+                        unsupported(&format!("the captured type `{}`", expr.ty.display()))
+                    })?;
+                self.capture_addr_into_r11(offset);
+                match dest {
+                    Dest::Direct(off) => emit_copy(&mut self.out, "rbp", off, "r11", 0, size),
+                    Dest::Indirect(slot) => {
+                        let _ = writeln!(self.out, "    mov r10, QWORD PTR [rbp{slot}]");
+                        emit_copy(&mut self.out, "r10", 0, "r11", 0, size);
+                    }
+                    Dest::Global(index) => {
+                        let label = self.pds[index].label.clone();
+                        emit_copy_to_global(&mut self.out, &label, 0, "r11", 0, size);
+                    }
+                }
+                Ok(())
+            }
+            // A call through a function value whose result is wider than one
+            // eightbyte: the same call, with `dest` receiving the return.
+            ExprKind::IndirectCall { callee, args } => {
+                self.indirect_call(callee, args, &expr.ty, Some(dest), frame)
+            }
             _ => Err(unsupported(
                 "this struct-returning expression (only a struct literal, a named local, or a \
                  call are supported for a value over eight bytes wide)",
@@ -10212,6 +11096,14 @@ impl Gen {
             ExprKind::Deref { expr } => {
                 self.expr(expr, frame)?;
                 self.out.push_str("    mov r11, rax\n");
+            }
+            // MK7 §5 item 6: a capture, the environment owns the value, so
+            // the field's address is the environment pointer plus its offset.
+            // No staging and no borrowed temporary: nothing here owns the
+            // captured value but the environment.
+            ExprKind::Capture { index } => {
+                let (offset, _) = self.capture_field(*index)?;
+                self.capture_addr_into_r11(offset);
             }
             // MK7 §5's box slice: a base whose own value *is* the address —
             // `list.next.get().value`, where `Box#get` returned a `&Node`. Any
@@ -10363,6 +11255,7 @@ impl Gen {
         args: &[Expr],
         ret_ty: &Ty,
         ret_dst: Option<Dest>,
+        indirect: Option<(i32, IndirectKind)>,
         frame: &mut Frame,
     ) -> Result<(), String> {
         // `print`/`print!` are builtins rather than functions, and only a
@@ -10513,7 +11406,17 @@ impl Gen {
         let (mem_args, area_size) =
             memory_arg_area(args.iter().map(|a| &a.ty), &self.layouts);
         let mut slots: Vec<ArgSlot> = Vec::with_capacity(args.len());
+        // MK7 §5 item 6: a call through a closure passes its environment as
+        // the hidden integer argument after a `Mem`-class return pointer, so
+        // every real argument is numbered one register later, the mirror of
+        // what `Gen::function` does for the callee. A plain function value
+        // takes no hidden argument.
+        let leading = usize::from(matches!(
+            indirect,
+            Some((_, IndirectKind::ClosureValue)) | Some((_, IndirectKind::ClosureRef))
+        ));
         let mut int_idx = if ret_class.map_or(false, |c| c.is_mem()) { 1 } else { 0 };
+        int_idx += leading;
         let mut sse_idx = 0usize;
         for (pos, arg) in args.iter().enumerate() {
             if let Some(_w) = float_ty(&arg.ty) {
@@ -10701,7 +11604,39 @@ impl Gen {
                 }
             }
         }
-        let symbol = if let Some(r) = bytes_method(callee)
+        let symbol = if let Some((slot, kind)) = indirect {
+            // MK7 §5 item 6: the callee value was staged in a frame slot
+            // before any argument was evaluated, so it cannot be clobbered by
+            // a nested call. `r11` carries the code pointer to the `call` at
+            // the end of this function; `emit_copy` below touches only `rax`,
+            // and `call_align_begin` only `rsp`, so `r11` survives them. The
+            // environment register is set here too, for the same reason.
+            let env_idx = usize::from(ret_class.map_or(false, |c| c.is_mem()));
+            match kind {
+                IndirectKind::Fn => {
+                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                }
+                IndirectKind::ClosureValue => {
+                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {}, QWORD PTR [rbp{}]",
+                        ARG64[env_idx],
+                        off_str(slot + 8)
+                    );
+                }
+                IndirectKind::ClosureRef => {
+                    let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot}]");
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {}, QWORD PTR [r11+8]",
+                        ARG64[env_idx]
+                    );
+                    self.out.push_str("    mov r11, QWORD PTR [r11]\n");
+                }
+            }
+            "r11".to_string()
+        } else if let Some(r) = bytes_method(callee)
             .or_else(|| string_method(callee))
             .or_else(|| view_method(callee))
         {

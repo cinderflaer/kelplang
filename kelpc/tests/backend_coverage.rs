@@ -252,8 +252,18 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// asked for it to be recorded. This slice also wrote `caps_gated_path`, which
 /// is **not** here and must not be: its gated `fs.read` of a path is refused
 /// today for the extern it reaches, and it becomes the capability-check pin the
-/// moment that extern's body is lowered. The denominator is 202, 178 build and
-/// 24 are refused.
+/// moment that extern's body is lowered. MK7 §5 item 6 (closures and function
+/// values) added the last ten: `closure_basic`, `closure_datac_borrow_param`,
+/// `closure_move`, `fn_literal`, `fn_literal_capture`, `fn_value`,
+/// `stdlib_closure_callbacks`, `stdlib_combinators`, `stdlib_list_callbacks`
+/// and `try_drops_frame`, the whole closure row, which the asm backend now
+/// builds and prints the C backend's bytes for. The slice's own fixture
+/// `closure_value_widening` pins the two widening shapes a plain function value
+/// takes, and this round's two trap fixtures, `closure_two_captures` and
+/// `closure_env_wide_ret`, pin the two shapes the corpus did not otherwise
+/// reach: an environment holding two captures of different alignments, and an
+/// indirect call whose callee carries an environment *and* returns a
+/// `MEMORY`-class value. The denominator is 205, 191 build and 14 are refused.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "array_basic",
@@ -283,6 +293,23 @@ const ASM_BUILT_BASELINE: &[&str] = &[
 "byte_literals",
 "bytes_build",
     "char_literals",
+    // MK7 §5 item 6: every fixture in the closure row the asm backend now
+    // builds, a capturing literal, an owned capture, a closure in a `datac`
+    // and in a `Box`, a plain function value through a local, a field, a
+    // parameter and a passdown, the stdlib callbacks, and the `?`-inside-a-
+    // literal frame drop.
+    "closure_basic",
+    "closure_datac_borrow_param",
+    // MK7 §5 item 6's two trap pins: an environment with two captures of
+    // different alignments, and an indirect call whose callee carries an
+    // environment *and* returns a `MEMORY`-class value.
+    "closure_env_wide_ret",
+    "closure_move",
+    "closure_two_captures",
+    // The slice's own fixture for the two widening shapes a plain function
+    // value takes: a shim for a named one, a heap environment and a thunk for
+    // one whose identity is known only at the call.
+    "closure_value_widening",
     // A-19: a `const` is folded by the compiler (`infer.rs`'s const
     // evaluator), so a program that computes one with a loop and a recursive
     // call is an ordinary program for either backend.
@@ -315,6 +342,9 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "float_field_write",
     "float_integral_literal",
     "float_nonfinite_literal",
+    "fn_literal",
+    "fn_literal_capture",
+    "fn_value",
     "for_loop",
     "generic_explicit_args",
     "generic_function_basic",
@@ -415,9 +445,12 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "scrutinee_field_of_temporary",
     "std_str_order",
     "stdlib_build",
+    "stdlib_closure_callbacks",
+    "stdlib_combinators",
     "stdlib_encoding",
     "stdlib_fmt",
     "stdlib_list",
+    "stdlib_list_callbacks",
     "stdlib_math",
     "stdlib_mem",
     "stdlib_option_result",
@@ -434,6 +467,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "string_with_capacity_zero",
     "template_buffer_pieces",
     "templates",
+    "try_drops_frame",
     "try_frame_drops",
     "try_narrow_payload",
     "try_operator",

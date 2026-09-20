@@ -1,0 +1,45 @@
+// A-4 phase E, MK7 §5 item 6: a plain function value used where a closure is
+// expected is *widened*, and which of the two widening shapes it takes depends
+// on whether the compiler knows which function it is.
+//
+// A declared `fun` named directly (`apply(inc, 5)`) is widened through a
+// generated shim: the closure it becomes has no environment (`env == NULL`) and
+// nothing is allocated, because the code pointer is all the value carries. A
+// function value that only becomes known at the call (`apply(f, 10)`, where
+// `pick` chose one of two) gets a one-field heap environment holding the code
+// pointer, plus a thunk that reads it back and calls through.
+//
+// In the AddressSanitizer list: the thunk's environment is heap, so a missed
+// drop is a leak and a second one a double free, and neither prints anything.
+fun inc(x: i32).R: i32 = x + 1
+
+fun dec(x: i32).R: i32 = x - 1
+
+// A function value whose identity is not static: the caller cannot tell which
+// one this returns, so the widening cannot be a shim.
+fun pick(which: bool).R: fun(i32).R: i32 {
+    if which {
+        return inc
+    }
+    return dec
+}
+
+fun apply(f: closure(i32).R: i32, x: i32).R: i32 = f(x)
+
+fun main() {
+    // A known function: the shim, and nothing on the heap.
+    print(apply(inc, 5))
+
+    // The same signature with the identity known only at the call: the
+    // environment-and-thunk shape, which is the one a shim cannot serve.
+    val f = pick(true)
+    print(apply(f, 10))
+    val g = pick(false)
+    print(apply(g, 10))
+
+    // A widened value stored in a `datac` field and read back through a borrow.
+    val h = Holder(fn = pick(true))
+    print(h.fn(100))
+}
+
+datac Holder(val fn: fun(i32).R: i32)

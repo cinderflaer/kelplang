@@ -1,0 +1,24 @@
+// MK7 §5 item 6 trap 8: an indirect call whose callee returns a `Mem`-class
+// value **and** whose closure carries an environment, the one boundary shape
+// no other fixture reaches. The integer argument file is then numbered `rdi`
+// for the hidden return pointer, `rsi` for the environment, so a call that
+// numbered the environment `ARG64[0]` hands the callee's return pointer where
+// it expects its environment: a wrong-address call rather than a wrong number.
+//
+// `Wide` is three `i64`s, 24 bytes, so it is `MEMORY`-class; the literal
+// captures `k`, so its environment is heap.
+//
+// In the AddressSanitizer list: the environment is freed once, through the
+// per-signature closure drop.
+datac Wide(val a: i64, val b: i64, val c: i64)
+
+fun apply(f: closure().R: Wide).R: Wide = f()
+
+fun main() {
+    val k: i64 = 4
+    val f = fun() .R: Wide = Wide(a = k, b = k + 1, c = k + 2)
+    val w = apply(f)
+    print(w.a)
+    print(w.b)
+    print(w.c)
+}

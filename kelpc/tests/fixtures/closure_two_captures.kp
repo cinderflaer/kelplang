@@ -1,0 +1,22 @@
+// MK7 §5 item 6 trap 1: an environment with **two** captures of different
+// alignments, which no other fixture in the corpus has. `a` is an `i32` and
+// `b` an `i64` that C pads to offset 8, and `s` is an owned `String` at 16, so
+// a field walk that packed the captures instead of giving each one its own
+// natural alignment reads `b` out of `a`'s tail and `s` from nowhere. The
+// printed value names all three fields, so a wrong offset is a wrong number.
+//
+// In the AddressSanitizer list: `s` is moved into the environment and freed
+// once by the environment's generated drop, at its own offset.
+fun main() {
+    val a: i32 = 7
+    val b: i64 = 11
+    val s = String.from_str("abc")
+
+    val f = fun() .R: i64 = (a.to_i64() * 100) + b + (s.len().to_i64() * 1000)
+    print(f())
+
+    // Both `Copy` captures stay usable, so a copy into the environment is
+    // distinguishable from a move.
+    print(a)
+    print(b)
+}

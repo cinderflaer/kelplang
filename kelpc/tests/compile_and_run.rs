@@ -2201,7 +2201,13 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // points (block end, early `return`, one per loop iteration), and the
         // stdlib fixture hands environments to the shipped callbacks.
         "closure_basic",
+        // Trap 1 and trap 8 of MK7 §5 item 6: a two-field environment of
+        // differently aligned captures, and an indirect call whose callee
+        // returns a `MEMORY`-class value while carrying an environment.
+        "closure_env_wide_ret",
         "closure_move",
+        "closure_two_captures",
+        "closure_value_widening",
         "stdlib_closure_callbacks",
         // M6: the drop-plan defect's own two fixtures. A move only one path
         // takes used to remove the binding from every drop set, so the path
@@ -4346,6 +4352,35 @@ fn a_fun_literal_captures_rather_than_failing() {
     // Phase E replaced the "cannot capture yet" refusal: a name from the
     // enclosing scope is now the thing that makes the literal a closure.
     assert_compiles_and_runs("tests/fixtures/fn_literal_capture.kp", "10\n10\n");
+}
+
+#[test]
+fn a_plain_function_value_is_widened_into_a_closure() {
+    // Which of the two widening shapes is used depends on whether the compiler
+    // knows which function the value is: a named one gets a shim and allocates
+    // nothing, one chosen at the call gets a heap environment and a thunk.
+    assert_compiles_and_runs(
+        "tests/fixtures/closure_value_widening.kp",
+        "6\n11\n9\n101\n",
+    );
+}
+
+#[test]
+fn a_two_field_environment_reads_and_drops_each_capture_at_its_own_offset() {
+    // MK7 §5 item 6 trap 1: the only environment with more than one field in
+    // the corpus. `a` is an `i32` at offset 0, `b` an `i64` C pads to 8 and `s`
+    // an owned `String` at 16, so a packed field walk reads the wrong bytes,
+    // and the printed number names all three fields.
+    assert_compiles_and_runs("tests/fixtures/closure_two_captures.kp", "3711\n7\n11\n");
+}
+
+#[test]
+fn an_indirect_call_numbers_the_environment_after_a_mem_class_return_pointer() {
+    // MK7 §5 item 6 trap 8: the callee returns a 24-byte `MEMORY`-class `datac`
+    // *and* carries an environment, so both take a register in the same
+    // integer file, the hidden return pointer first. Numbering the environment
+    // `ARG64[0]` would hand it the return pointer instead.
+    assert_compiles_and_runs("tests/fixtures/closure_env_wide_ret.kp", "4\n5\n6\n");
 }
 
 #[test]
