@@ -302,6 +302,17 @@ row is not 7 fixtures: 10 of the 201 fixtures the C backend builds import a gate
 refusals name the check, which row 6 above now says. And §13's annex names the wrong second prerequisite for
 the gate artifact, which its own dated correction now says.)*
 
+> **2026-09-20, this round's three specifications.** The rows above were measured before this
+> round's specs and are unchanged; three new files decide them in detail, each at `bb2316e`.
+> `plan/mk7-extern-bodies.md` (MK7 §5 item 5 and the heap row's extern-headed members) decides
+> which `extern fun` bodies are this backend's own work, each body's shape, the ten slices and
+> each slice's acceptance target. `plan/mk7-closures.md` (MK7 §5 item 6) decides the lowering of
+> `FnRef`, `ClosureLit`, `Capture`, `FnToClosure` and `IndirectCall`, why the environment stays
+> heap, and the four slices that reach the row's ten fixtures. `plan/mk7-capability-check.md`
+> (MK7 §5 item 7) decides what a gated call site must emit, which assembly routines this backend
+> owns, the deny path's exact text, and that the three `net` checks stay deferred while a `net`
+> call keeps being refused.
+
 Those rows are re-measured against the current backend and rank rather than partition: a fixture counts once,
 under the *first* refusal its build hits, which is why the heap-type row below is larger than the container
 feature it names (`str` is counted separately, but a `String` that a `str` argument is converted into is
