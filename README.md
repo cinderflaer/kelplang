@@ -107,7 +107,9 @@ Two code generators are selectable, with `--backend=` or `KELPC_BACKEND`:
 
 - **`c`** (the default) transpiles to C and hands the file to `cc -O2 -fwrapv -lm`.
 - **`asm`** emits x86-64 assembly itself and finishes with `as` and `ld`. No C
-  compiler is in that chain.
+  compiler is in that chain. This backend is **retired as a direction**: the next
+  backend is LLVM IR (`plan/mk7-llvm-backend.md`), and `asm` is removed once that
+  backend passes the fixture corpus. It stays selectable until then.
 
 The C backend is the reference: every fixture is built by both and the two
 binaries' stdout is compared, so a construct the `asm` backend does not lower
@@ -160,7 +162,9 @@ directory is not followed.
 ## Requirements
 
 - Rust, 2024 edition (rustc 1.85 or newer), to build the compiler. There are no
-  third-party dependencies.
+  third-party dependencies today; the planned LLVM backend adds one (`llvm-sys`)
+  and a runtime `libLLVM` dependency, and `plan/mk7-llvm-backend.md` §1 is the
+  decision and its trade-offs.
 - The `c` backend: a C compiler and glibc.
 - The `asm` backend: `as` and `ld` (binutils) and the glibc it links against. If
   the library directory is not found automatically, set `KELPC_GLIBC_DIR` to the
@@ -207,6 +211,6 @@ the compiler; these two are the tooling around it.
 | `plan/architecture.md` | the design: compiler layout, the capability model, the v1 surface, and the standard library's decisions |
 | `plan/roadmap.md` | the plan: the marks, the open items, and the backlog in its last part |
 | `plan/done.md` | the milestone record of what has shipped |
-| `plan/mk7-own-backend.md` | the working plan for the compiler's own backend |
-| `plan/mk7-next-slice.md` | the measured brief for the next own-backend slice, with the fixture list each candidate could reach |
+| `plan/mk7-llvm-backend.md` | the plan of record for the compiler's next backend, LLVM IR |
+| `plan/asm-backend/` | the retired hand-written backend track: its plans, its call-overhead and call-cost measurements, and the encoder/ELF inventory |
 | `bench/speed/README.md` | what the benchmark measures and how |

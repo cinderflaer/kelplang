@@ -1,5 +1,10 @@
 # MK7: where `fib`'s call cost goes, measured
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** This is the measurement the LLVM decision rests
+> on: the `-O0` versus `-O2` columns below are the size of the optimizer a hand-written backend
+> would have had to build, and §1's table is the reason that work moved to LLVM
+> (`plan/mk7-llvm-backend.md` §0).
+
 This file is a measurement, not a plan proposal. It answers one question the
 gate raised: `bench/speed/speed.kp` builds under `--backend=asm` at HEAD
 `4752ebb`, and every workload except `fib` is at or below the `-O0` column while

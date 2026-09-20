@@ -1,9 +1,13 @@
 # MK7 extern gating: the raw primitive, the gate table, and the three naming sites
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** Written against the `asm` backend's naming
+> sites. The bug it records (`ISSUES.md`, `BUG-wQ9tL`) is a `codegen_asm.rs` defect and goes when
+> that file goes, not before.
+
 This is the specification lane for `KelpLANG/ISSUES.md` entry `BUG-wQ9tL`, "a `*_raw` extern
 bypasses the capability check". It is written at `0053bc2` ("feat: the asm backend lowers the
 std.fs path family (MK7 §5 item 5, slice S4)"), it changes no source, and it is the input to a fix
-lane that follows it. It sits beside `plan/mk7-capability-check.md` (MK7 §5 item 7, the check the
+lane that follows it. It sits beside `plan/asm-backend/capability-check.md` (MK7 §5 item 7, the check the
 asm backend must emit): both are security rows of the same model, and neither is on the
 `bench/speed` gate path.
 
@@ -30,7 +34,7 @@ line numbers were stable across the last three plan commits.
 ### One thing moved while this file was written
 
 `kelpc/src/codegen_asm.rs` is modified in this checkout by another lane implementing
-`plan/mk7-capability-check.md` (MK7 §5 item 7 step 1, the asm backend's own capability check). The
+`plan/asm-backend/capability-check.md` (MK7 §5 item 7 step 1, the asm backend's own capability check). The
 facts below are stated for two states, and every claim says which one it is:
 
 - **`0053bc2`, the committed HEAD**, which is what all of section 1 and the corpus counts in
@@ -55,7 +59,7 @@ emitted check the wrappers get, so rule (b) costs the corpus nothing on the asm 
 
 ## FILE
 
-`plan/mk7-extern-gating.md`, this file. One new file, no source changes, nothing else touched.
+`plan/asm-backend/extern-gating.md`, this file. One new file, no source changes, nothing else touched.
 
 ## THE BYPASS
 
@@ -200,7 +204,7 @@ narrowed grant in the issue's repro is a red herring about reach: the hole is wi
 narrowed grant is advisory". It is "a grant is advisory for a module that holds any grant, and
 absent for a module that holds none". The same held for the other five gated domains by
 construction (`gated` is built from the same loop for `fs`, `net`, `process`, `env`, `time`,
-`rand`), and `plan/mk7-extern-bodies.md` section 2.3 records the same design from the write side:
+`rand`), and `plan/asm-backend/extern-bodies.md` section 2.3 records the same design from the write side:
 "the externs are not gated; the wrappers are".
 
 Re-measured against the working tree above, where the asm backend does emit the check for gated
@@ -351,7 +355,7 @@ Twelve shipped modules declare `extern fun`: 97 declarations. Six are gated modu
 of them (`std/fs` 27, `std/net` 13, `std/process` 10, `std/env` 4, `std/time` 3, `std/rand` 2); six
 are ungated and declare 38 (`std/math` 16, `std/io` 11, `std/str` 7, `std/fmt` 2, `std/mem` 1,
 `std/path` 1). `std/rt`, `std/http`, `std/list`, `std/option`, `std/result` and `std/encoding`
-declare none. The 97 is the 71 of `plan/mk7-extern-bodies.md` section 0 plus `std/math`'s 16,
+declare none. The 97 is the 71 of `plan/asm-backend/extern-bodies.md` section 0 plus `std/math`'s 16,
 `std/str`'s 7, `std/fmt`'s 2 and `std/mem`'s 1, which that file scoped out as already lowerable.
 
 Every extern call site in the stdlib is **same-module**: 113 sites, each one a wrapper body calling
@@ -840,7 +844,7 @@ the suffix is either a new naming rule the language does not have, or a rule tha
 
 ## UNDETERMINED
 
-- **What the asm backend's check would cost at the primitive call sites.** `plan/mk7-capability-check.md`
+- **What the asm backend's check would cost at the primitive call sites.** `plan/asm-backend/capability-check.md`
   section 4 step 1 estimates the whole check at moderate size; this lane did not measure the
   marginal cost of the sites rule (b) adds (the same emission as a wrapper call, at more sites).
   Against HEAD, rule (b) moves `fs_path_family` from "builds and runs unchecked" to "refused by

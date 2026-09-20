@@ -1,6 +1,8 @@
 //! Which code generator `kelpc build` uses.
 //!
-//! This is the backend *seam* (MK7 stage 1, `plan/mk7-own-backend.md`). Until
+//! This is the backend *seam*, built by the retired hand-written track (MK7
+//! stage 1, `plan/asm-backend/plan.md`) and now the seam the LLVM backend
+//! (`plan/mk7-llvm-backend.md`) plugs into. Until
 //! there is a second backend there is nothing to abstract over, so this module
 //! deliberately holds only the selector: how a backend is named, which names
 //! exist, and how the choice is resolved from the command line and the
@@ -69,7 +71,7 @@ impl Backend {
             "asm" => Ok(Backend::Asm),
             reserved if RESERVED.contains(&reserved) => Err(format!(
                 "backend '{reserved}' is planned but not implemented yet \
-                 (see plan/mk7-own-backend.md); {}",
+                 (see plan/mk7-llvm-backend.md); {}",
                 Self::expected_list()
             )),
             other => Err(format!(

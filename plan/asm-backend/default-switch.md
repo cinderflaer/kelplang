@@ -1,5 +1,11 @@
 # MK7: moving the default backend off `C`
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** The target backend changed to LLVM IR, so the
+> flip this file sequences is not the one that will happen; `plan/mk7-llvm-backend.md` carries the
+> criteria that replaced §1. Its §1.5 process rule is the part that survives whole: `--backend=c`
+> and `KELPC_BACKEND=c` stay forever as the escape hatch and the oracle switch, and the C backend is
+> never deleted.
+
 *This is a proposed sequence, not a commitment and not a Mark. `roadmap.md` owns the Mark. This file
 exists because `Backend::DEFAULT` is `C` for the whole of MK7 by design (`kelpc/src/backend.rs`), and
 "the default stays C" has a reason (the differential oracle) that can be mistaken for "forever". What

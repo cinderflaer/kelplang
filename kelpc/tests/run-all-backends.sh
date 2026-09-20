@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs the end-to-end fixture suite once per implemented backend.
 #
-# This is the MK7 stage-1 gate (`plan/mk7-own-backend.md`): the suite is
+# This is the MK7 stage-1 gate (`plan/asm-backend/plan.md`): the suite is
 # backend-agnostic by construction — it compiles a fixture, runs the result and
 # compares stdout — so pointing `KELPC_BACKEND` at a second backend validates it
 # with no test edits. Running every backend on every change is what keeps the C

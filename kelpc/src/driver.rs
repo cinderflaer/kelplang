@@ -111,7 +111,7 @@ pub fn assemble_and_link(asm_source: &str, out_path: &Path) -> Result<(), Compil
     // `crt1.o` provides `_start`, which is what calls `main` after libc's own
     // initialization; `crti.o`/`crtn.o` bracket the constructor and destructor
     // sections. Skipping them would mean providing `_start` ourselves, which is
-    // tier 3's job (`plan/mk7-own-backend.md` §7 item 7), not this one's.
+    // tier 3's job (`plan/asm-backend/plan.md` §7 item 7), not this one's.
     let linked = Command::new("ld")
         .arg("-o")
         .arg(out_path)

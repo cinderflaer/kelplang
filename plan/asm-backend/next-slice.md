@@ -1,5 +1,9 @@
 # MK7 next slice: reconnaissance brief
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** There is no next slice of this track. Kept
+> because its per-fixture refusals and the differential-sweep method are what the LLVM backend's
+> coverage work reuses (`plan/mk7-llvm-backend.md` §6).
+
 Branch `mk7/own-backend`, HEAD `9c89b70` ("test: pin the asm capability check and re-record the asm
 baseline"), measured 2026-09-20. This brief measures the candidate slices below against the backend at
 that commit. It is a specification lane: it changes no source. Every refusal text below was reproduced
@@ -13,10 +17,10 @@ and the C backend was built for every fixture named reachable, because a fixture
 not a target. Every number in this file is `9c89b70`'s, measured in a detached worktree of this
 checkout (`git worktree add --detach /tmp/plan-refresh 9c89b70`), because other lanes were working in
 the shared checkout at the time; the worktree was removed afterwards. The plan is
-`plan/mk7-own-backend.md`, and this file is the reconnaissance its next round is chosen from.
+`plan/asm-backend/plan.md`, and this file is the reconnaissance its next round is chosen from.
 
 **Every number names its commit because a concurrent lane is rewriting the capability gate table, and
-that rewrite will move some of them.** The other lane is implementing `plan/mk7-extern-gating.md`'s
+that rewrite will move some of them.** The other lane is implementing `plan/asm-backend/extern-gating.md`'s
 rule (b), which stops `resolve.rs` excluding a gated module's `extern fun`s (and, as the rule, its
 receiver methods), and adds the missing `open_raw`/`try_open_raw`/`spawn_raw`/`connect_raw`/
 `listen_raw`/`resolve_raw` position entries to `stdlib.rs`. Both backends read those two files. What
@@ -275,7 +279,7 @@ grant in every program. It should not ride inside another slice for that reason.
 
 ## The §13 gate, restated at `9c89b70`
 
-The annex (`plan/mk7-own-backend.md` §13) had two prerequisites for the gate artifact and last
+The annex (`plan/asm-backend/plan.md` §13) had two prerequisites for the gate artifact and last
 measured its asm column at `4752ebb`. **Both are now behind it and the artifact builds.** Measured:
 
 ```
@@ -454,7 +458,7 @@ and the C backend was built for every fixture named reachable, because a fixture
 is not a target. Every number in this file is `c3a8759`'s, measured in a detached worktree of this
 checkout (`git worktree add --detach /tmp/mk7-meas-HEAD c3a8759`), because three other lanes were
 working in the shared checkout at the time; the worktree was removed afterwards. The plan is
-`plan/mk7-own-backend.md`, and this file is the reconnaissance its next round is chosen from.
+`plan/asm-backend/plan.md`, and this file is the reconnaissance its next round is chosen from.
 
 **The brief before this one measured a different backend, and its numbers are history.** It was
 written at `3a2f6f9` and addended three times, last at the float-aggregate slice, and it measured
@@ -571,7 +575,7 @@ closure_datac_borrow_param     error: the 'asm' backend does not support the par
 closure_move                   error: the 'asm' backend does not support a function value yet
 fn_literal                     error: the 'asm' backend does not support the parameter `f: fun(i32).R: i32` of `apply` yet
 fn_literal_capture             error: the 'asm' backend does not support a function value yet
-fn_value                       error: the 'asm' backend does not support the passdown `pd doubler` (its type is `fun(i32).R: i32`, and the asm backend has no storage for one - see plan/mk7-own-backend.md §5) yet
+fn_value                       error: the 'asm' backend does not support the passdown `pd doubler` (its type is `fun(i32).R: i32`, and the asm backend has no storage for one - see plan/asm-backend/plan.md §5) yet
 stdlib_closure_callbacks       error: the 'asm' backend does not support the return type `fun(i32).R: i32` of `pick` yet
 stdlib_combinators             error: the 'asm' backend does not support the type `&closure(&String).R: usize` as an argument to `std.option.map<String, usize>` yet
 stdlib_list_callbacks          error: the 'asm' backend does not support the type `&closure(i32).R: i32` as an argument to `std.list.map<i32, i32>` yet
@@ -586,7 +590,7 @@ caps_time_rand                 error: the 'asm' backend does not support the `ex
 
 Two quotations are written with a comma or a hyphen where the printed text carries an em dash,
 because this file carries no em dash: the sweep's `note:` line above, and `fn_value`'s message before
-"see plan/mk7-own-backend.md §5". Nothing else about either is changed.
+"see plan/asm-backend/plan.md §5". Nothing else about either is changed.
 
 The refusal sites, for the reader who wants to see how much of each gap is a refusal and how much is
 a missing body: the parameter check is `codegen_asm.rs:4364`, the return-type check `:4401`, the
@@ -784,7 +788,7 @@ or the pointee's own frame). Risk low.
 
 ### The §13 gate, restated at `c3a8759`
 
-The annex (`plan/mk7-own-backend.md` §13) was measured at `d0a485f` and names two prerequisites for
+The annex (`plan/asm-backend/plan.md` §13) was measured at `d0a485f` and names two prerequisites for
 the gate artifact. Measured now:
 
 ```
@@ -935,7 +939,7 @@ current numbers are **125 built of the 158 fixtures the C backend builds, 33
 refused**, the asm suite is **219 of 278**, and the ranking is `heap 16, enum 4,
 a `datac` holding a float field 2, closure 10, gated extern 1`. Two of this
 brief's measurements were corrected by measurement rather than by argument, and
-both are recorded in `plan/mk7-own-backend.md`'s enum blockquote: `try_drops_frame`
+both are recorded in `plan/asm-backend/plan.md`'s enum blockquote: `try_drops_frame`
 is **not** reachable by D, its last function wraps the same `?` in a `fun`
 literal, so the closure is its first refusal, which makes it a closures-row fixture
 and means that of the fourteen fixtures the slice's acceptance list spells out, the
@@ -980,7 +984,7 @@ all build, run and print the C backend's bytes exactly, which is one more than t
 brief's own count of six plus `stdlib_parse`: it measured the reachable set as
 exactly those seven and it was right. Everything else in this file is history and
 kept as such; the counts it measures differently from the plan are recorded in
-`plan/mk7-own-backend.md`'s blockquotes.
+`plan/asm-backend/plan.md`'s blockquotes.
 
 ---
 
@@ -1128,7 +1132,7 @@ enclosing statement, exactly what `borrowck.rs` already guarantees. The real
 risk is *crediting*: the plan has now credited this slice with three fixtures it
 cannot reach, the same error §9 lesson 1 records.
 
-**Section 13 gate.** The annex (`plan/mk7-own-backend.md:2153`) records
+**Section 13 gate.** The annex (`plan/asm-backend/plan.md:2153`) records
 `speed.kp` refusing on `extern fun std.time.now_mono_ns_raw`; measured again it
 is the same (`./target/release/kelpc build --backend=asm bench/speed/speed.kp`
 gives that error). So A unblocks **none of the gate artifact by itself**: the
@@ -1373,7 +1377,7 @@ pass. Estimated several hundred lines, the biggest of the four.
 
 ### Section 13 gate, stated fully
 
-The annex is explicit (`plan/mk7-own-backend.md:2153-2285`): the gate artifact
+The annex is explicit (`plan/asm-backend/plan.md:2153-2285`): the gate artifact
 `bench/speed/speed.kp` "does not build under `--backend=asm` at HEAD". Measured
 again at `3a2f6f9`, unchanged: refusal is `extern fun std.time.now_mono_ns_raw`.
 

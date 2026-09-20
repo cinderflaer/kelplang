@@ -1,8 +1,12 @@
 # MK7 extern bodies: the syscall surface the asm backend refuses
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** The `asm` backend's missing `extern fun`
+> routines never got written and now never will: under LLVM every `extern fun` is a declared call,
+> as it already is in the C backend. The inventory of the syscall surface is still useful.
+
 This is the specification lane for MK7 section 5 item 5 and the heap row of the ranking: the
 `extern fun` bodies this backend has no routine for. It is written at `bb2316e` ("plan: the MK7
-status at the post-`caeb98d` tip"), the checkout the brief `plan/mk7-next-slice.md` was last
+status at the post-`caeb98d` tip"), the checkout the brief `plan/asm-backend/next-slice.md` was last
 re-cut in, and it changes no source. Every refusal, every C-build and every "this call site
 reaches that extern" claim below was measured with the release binary at that commit; the places
 that are a source read rather than a measurement say so.
@@ -551,7 +555,7 @@ refusals are confirmed by hand.
 ### S3. The capability check (~300-500 lines, no extern bodies)
 
 The gate has its own specification, written in the same round against the same tip:
-`plan/mk7-capability-check.md` (the emitted shape at the call site, the grants table, the check
+`plan/asm-backend/capability-check.md` (the emitted shape at the call site, the grants table, the check
 routines, the deny path's exact text, and its own two-step order). This slice is the same seam seen
 from the extern side. Two facts it adds to that file's acceptance list: the condition that makes the
 emission match the oracle, and which fixtures and projects it turns into builds.

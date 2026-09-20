@@ -1,6 +1,11 @@
 # MK7 Stage 2: the encoder inventory
 
-`plan/mk7-own-backend.md` §6.1 lists the instruction families Stage 2 must encode, and it says so
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** Stage 2 (a hand-written instruction encoder and
+> ELF writer) is not happening: LLVM emits the object and the debug info. Kept because the encoder
+> inventory is the honest measure of how much machine-code surface a hand-written backend owes, and
+> because the capability-matcher and runtime notes in it are still accurate about tonight's C text.
+
+`plan/asm-backend/plan.md` §6.1 lists the instruction families Stage 2 must encode, and it says so
 plainly that the list comes from memory. This file replaces the guess with a table derived from the
 emitter that Stage 2 has to replace. It is an inventory, not a design: every number below came from a
 command recorded here, and anything that could not be pinned down is labelled undetermined in §7.

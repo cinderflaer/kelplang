@@ -1,5 +1,10 @@
 # MK7 §5 item 7: the capability check the asm backend must emit
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** The per-call-site allowlist check keeps its
+> shape under LLVM (a call into the runtime's matcher), so this file's account of which half is C,
+> which half is Kelp and what the deny path prints is still the brief for that work
+> (`plan/mk7-llvm-backend.md` §3).
+
 Specification lane: this file changes no source. It says what a gated call site in the `asm` backend
 must emit, which half of the C it replaces becomes an assembly routine this backend owns, which
 half is already a Kelp function in `std/rt`, which half stays C, the deny path's exact observable
@@ -9,7 +14,7 @@ re-deriving anything.
 Measured 2026-09-20 against the shared checkout of `kelp` (`main`, tip `bb2316e`, with
 `kelpc/src/codegen_asm.rs` modified in place by a concurrent lane), using `target/release/kelpc`.
 Every C or asm behaviour below was reproduced with a command in §0. The reconnaissance brief is
-`plan/mk7-next-slice.md` §C; the plan is `plan/mk7-own-backend.md` §5 item 7. Line numbers in
+`plan/asm-backend/next-slice.md` §C; the plan is `plan/asm-backend/plan.md` §5 item 7. Line numbers in
 `codegen_asm.rs` are the ones I read while that file was mid-edit, so the quoted text is the
 authority there and the line number is a hint.
 
@@ -53,7 +58,7 @@ readelf -h /tmp/probe/asm_caps_cwd
    test is `a_gated_domain_with_no_checked_arguments_is_not_refused`). Measured: `speed.kp` under
    `--backend=asm` refuses `the 'asm' backend does not support the `extern fun
    std.time.now_mono_ns_raw` yet`, which is the extern body and nothing else. This disagrees with
-   `plan/mk7-own-backend.md` §13's annex, which calls the check the gate artifact's second
+   `plan/asm-backend/plan.md` §13's annex, which calls the check the gate artifact's second
    prerequisite. The check is a prerequisite of the *dependency-gated* fixtures (§4), not of the
    gate artifact.
 6. **The C backend evaluates a resource argument twice.** A probe module `impl "std/fs"` with

@@ -1,6 +1,6 @@
 //! The valgrind memory gate for both backends (MK7 §5's definition of done).
 //!
-//! `plan/mk7-own-backend.md` §5's definition of done has always asked for a
+//! `plan/asm-backend/plan.md` §5's definition of done has always asked for a
 //! memory gate for the asm backend, and the AddressSanitizer gate in
 //! `compile_and_run.rs` (`heap_fixtures_are_double_free_and_leak_clean`)
 //! cannot supply one: it rebuilds the *generated C* with
@@ -35,7 +35,7 @@
 //!   allocated. AddressSanitizer could not see it — `_exit` bypasses
 //!   LeakSanitizer — and this gate did; it is fixed in `dbaabc2`.
 //!
-//! **Ground rule 1.5** (`plan/mk7-own-backend.md`): nothing may make the
+//! **Ground rule 1.5** (`plan/asm-backend/plan.md`): nothing may make the
 //! default `cargo test` slower or needier. A sweep builds ~130 fixtures and
 //! runs ~180 binaries under valgrind, which is about a minute — far too much
 //! for the default suite — and valgrind is not a declared dependency of this

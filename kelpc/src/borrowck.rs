@@ -83,7 +83,7 @@
 //!
 //! Without this, an owned local bound inside a loop body leaked whenever one
 //! path through the body moved it and another abandoned it — see §5 of
-//! `plan/mk7-own-backend.md` for the measurement, and
+//! `plan/asm-backend/plan.md` for the measurement, and
 //! `tests/fixtures/owned_conditional_move.kp` for the regression.
 //!
 //! Known, deliberately out-of-scope gap: `p = &c` *reassigning* an

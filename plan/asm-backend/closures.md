@@ -1,5 +1,9 @@
 # MK7: how the asm backend lowers closures and function values
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** This was the last refusal row of the `asm`
+> ranking. LLVM lowers function values and closures as ordinary indirect calls, so none of the
+> fat-pointer and ABI work below is ours any more.
+
 The MK7 §5 item 6 spec: `FnRef`, `ClosureLit`, `Capture`, `FnToClosure` and `IndirectCall`, the
 last row of the refusal ranking that is one mechanism rather than a library. This file is a
 specification lane: it changes no source, adds no fixture and commits nothing. Every claim below is
@@ -24,7 +28,7 @@ asm backend refusal ranking (24 fixtures refused of 202 the C backend builds, 17
 ```
 
 so the row this file specifies is exactly ten fixtures, and the brief it comes from is
-`plan/mk7-next-slice.md` §A (measured at `c3a8759`, whose row was the same ten).
+`plan/asm-backend/next-slice.md` §A (measured at `c3a8759`, whose row was the same ten).
 
 **Commands, once per fixture.**
 
@@ -299,7 +303,7 @@ first refusal **reproduced by hand at `bb2316e`** with
 | `closure_move` | capturing literals in a block, in a function with an early `return`, and in a loop body; an owned `String` capture each time; drop-per-path | no | `... a function value yet` |
 | `fn_literal` | no closure type at all: `fun(i32).R: i32` local/parameter/return/`datac` field, `FnRef`, an indirect call on a `Ty::Fn`, a literal with a `move String` parameter (a `Mem`-class argument through an indirect call), a literal inside a literal, `?` inside a literal | n/a | `... the parameter `f: fun(i32).R: i32` of `apply` yet` |
 | `fn_literal_capture` | one `Copy` capture (`k`), the binding still read after the literal is built, an indirect call | no | `... a function value yet` |
-| `fn_value` | `Ty::Fn` values only: a local, a parameter, a returned value, a `datac` field, a `mut`-borrow parameter, a `move String` parameter, assignment to a `var`, a module item as a value (`math.sqrt`), and a passdown `pd val doubler: fun(i32).R: i32` | n/a | `... the passdown `pd doubler` (its type is `fun(i32).R: i32`, and the asm backend has no storage for one, see plan/mk7-own-backend.md §5) yet` (the printed text carries an em dash before `see`; written here with a comma because this file carries none) |
+| `fn_value` | `Ty::Fn` values only: a local, a parameter, a returned value, a `datac` field, a `mut`-borrow parameter, a `move String` parameter, assignment to a `var`, a module item as a value (`math.sqrt`), and a passdown `pd val doubler: fun(i32).R: i32` | n/a | `... the passdown `pd doubler` (its type is `fun(i32).R: i32`, and the asm backend has no storage for one, see plan/asm-backend/plan.md §5) yet` (the printed text carries an em dash before `see`; written here with a comma because this file carries none) |
 | `stdlib_closure_callbacks` | capturing callbacks (a `Copy` capture and an owned `String` capture) passed as `&closure` to `std.list`/`std.option`/`std.result`, a declared function and a non-capturing literal widened by a shim, a runtime function value (`chosen = pick(true)`) widened by a coerce environment plus a thunk, `pick` returning `fun(i32).R: i32` | no (the `fun` return is environment-free; the coerce environment at `list.map(xs, chosen)` is heap but is created and freed inside the one statement) | `... the return type `fun(i32).R: i32` of `pick` yet` |
 | `stdlib_combinators` | **no captures at all**: every callback is a non-capturing literal or a declared function (`half`, `parse_positive`) widened into `&closure(&String)`, `&closure(&i32)`, `&closure()`; `option`/`result` combinator bodies | no | `... the type `&closure(&String).R: usize` as an argument to `std.option.map<String, usize>` yet` |
 | `stdlib_list_callbacks` | **no captures at all**: non-capturing literals widened into `&closure(i32)` / `&closure(&String)` for `list.map`/`filter`/`each`/`any`/`all`/`find_index`, an owned `String` element type | no | `... the type `&closure(i32).R: i32` as an argument to `std.list.map<i32, i32>` yet` |

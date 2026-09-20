@@ -1,5 +1,11 @@
 # MK7 working plan: Kelp's own backend
 
+> **ARCHIVED 2026-09-20. Superseded, not deleted.** The compiler's next backend is LLVM IR, not a
+> hand-written one; `plan/mk7-llvm-backend.md` is the plan of record. The `asm` tier this file
+> describes is retired, and its code goes when the LLVM backend passes the corpus. Kept because the
+> measurements and the fixture ranking are still history; `plan/asm-backend/README.md` says what each
+> archived file holds.
+
 *This is the execution plan for `roadmap.md`'s MK7 (`Own backend`, S1-S5, "very large"). The roadmap says
 **why**; this file says **what order** and **what proves each step**. It is written to be worked over days
 with two agents in parallel worktrees, and it is the only place the branch's staging is decided. Where this
@@ -15,7 +21,7 @@ starting, not the reason to finish.
 current toolchain does, we do. That is the expensive reading of "no LLVM no nothing", and it is the reading
 this branch takes.
 
-**Where the default moves:** `plan/mk7-default-switch.md` is the proposed sequence for making the `asm`
+**Where the default moves:** `plan/asm-backend/default-switch.md` is the proposed sequence for making the `asm`
 backend the default, and states what has to be true first and in what order. It is a proposal, not a
 commitment: this file's §0 stays the live state, and §1's ground rule 4 still decides when stage 2 may
 start.
@@ -30,7 +36,7 @@ projected.*
 
 > **Re-measured 2026-09-20 at `c3a8759`, the current tip, and this blockquote is the current state.**
 > Measured in a detached worktree of this checkout, because other lanes were working in the shared one at
-> the time; every number below is that commit's, and `plan/mk7-next-slice.md` is the brief that follows
+> the time; every number below is that commit's, and `plan/asm-backend/next-slice.md` is the brief that follows
 > from them. The fixture ratchet is **176 built of the 201 fixtures the C backend builds, 25 refused**;
 > the asm suite is **285 of 336** with the C backend passing all **336**; valgrind is clean over **377
 > runs / 357 fixtures** (`c: 201 checked, 0 findings`; `asm: 176 checked, 25 refused, 0 findings`); and
@@ -121,14 +127,14 @@ projected.*
 > --ignored --nocapture`. The session that produced this state, commit by commit, with the defects it
 > found, is the record in §14 at the end of this file.
 >
-> **This round's sibling spec is `plan/mk7-extern-gating.md`, and this blockquote points at it rather
+> **This round's sibling spec is `plan/asm-backend/extern-gating.md`, and this blockquote points at it rather
 > than summarizing it.** It is the specification lane for `KelpLANG/ISSUES.md` `BUG-wQ9tL`, "a `*_raw`
 > extern bypasses the capability check": the bypass repro, how the gate table is built in `resolve.rs`,
 > and three candidate rules with their costs. A lane is implementing its rule (b) now, which edits
 > `resolve.rs` and `stdlib.rs`, so the two numbers of the above that lane can move are the C-built
 > denominator (208) and the refusal *messages* of the six gated extern-body fixtures; the two non-gated
 > refusals (`list_datac_clone_sort`, `borrow_chain_through_a_borrow`) are not coupled to it.
-> `plan/mk7-next-slice.md` is the brief that follows from the numbers above.
+> `plan/asm-backend/next-slice.md` is the brief that follows from the numbers above.
 
 > **Correction recorded 2026-09-20: the `81e68e7` message's "byte-identical" claim is false.** Measured
 > over the 447 `.kp` targets under `tests/fixtures` and `tests/projects` at `81e68e7^` and `81e68e7`
@@ -318,7 +324,7 @@ memory gate now exists (see the blockquote at the top of this section) and `benc
 alone).
 
 **What is next, in the order the refusals rank themselves** (aggregated across the fixtures the C backend
-builds, re-measured at `c3a8759`, and detailed in `plan/mk7-next-slice.md`):
+builds, re-measured at `c3a8759`, and detailed in `plan/asm-backend/next-slice.md`):
 
 > **Re-measured 2026-09-20 at `926e33f`: the list below is the `c3a8759` ranking with a `9c89b70`
 > correction beside it, and at the tip it is three fixtures and three mechanisms.** Row 1 is
@@ -335,7 +341,7 @@ builds, re-measured at `c3a8759`, and detailed in `plan/mk7-next-slice.md`):
 > fixtures, not 14.** The heap row's twelve externs are six (`fs_fallible`, `process_spawn` and the four
 > `net` fixtures): the `fs` path family, the `io` descriptor family and the `time`/`rand` bodies have
 > landed since. Rows 2 and 3 are still landed, row 4's `str`-parser fixtures still build, and the
-> capability row is 0 rather than 7. `plan/mk7-next-slice.md` is the brief that follows from the `9c89b70`
+> capability row is 0 rather than 7. `plan/asm-backend/next-slice.md` is the brief that follows from the `9c89b70`
 > measurement.
 
 1. **The heap row, restated, because the measurement moved it** — 14 fixtures at `c3a8759`, and it is not
@@ -373,7 +379,7 @@ builds, re-measured at `c3a8759`, and detailed in `plan/mk7-next-slice.md`):
    `c3a8759` is the derived copy and order the newest commit gave a `datac`/`enum` element: the C backend
    emits `kelp_clone_<T>`/`kelp_cmp_<T>` beside every user type, and this backend's dispatch still gates on
    the element-only predicates, so `list_datac_clone_sort` refuses `List.clone` on a `datac` element. One
-   fixture; see `plan/mk7-next-slice.md` §D.
+   fixture; see `plan/asm-backend/next-slice.md` §D.
 5. **`Map`** — **done** (the map slice below). Its measurement worth keeping is that the ABI needed nothing:
    `$Map` is a `MEMORY`-class aggregate like `Bytes`, so every site that already handled one handled it, which is
    the fifth time a heap type has slotted into the aggregate work unchanged.
@@ -386,7 +392,7 @@ builds, re-measured at `c3a8759`, and detailed in `plan/mk7-next-slice.md`):
 7. **The long tail** — numeric conversions, printing `str`/`f64` and closures: the first two are gone as of item
    8's first slice, and closures are what is left (`FnRef`/`ClosureLit`/`IndirectCall`, 10 fixtures, plus the
    `stdlib_closure_callbacks`/`stdlib_list_callbacks` pair). The row grew by one with the enum slice, and the
-   entry is worth naming: `try_drops_frame` was counted as *reachable* by `plan/mk7-next-slice.md`'s brief, and
+   entry is worth naming: `try_drops_frame` was counted as *reachable* by `plan/asm-backend/next-slice.md`'s brief, and
    measurement says it is not — its last function wraps the same `?` the rest of the fixture pins in a `fun`
    literal, so the closure is now its first refusal. At `c3a8759` the row is exactly ten fixtures:
    `closure_basic`, `closure_datac_borrow_param`, `closure_move`, `fn_literal`, `fn_literal_capture`,
@@ -402,7 +408,7 @@ an owned `String` already builds. The acceptance criterion that named `str_to_st
 for the map slice was wrong, and the enum slice is what finally built it — one slice later than the plan
 predicted, and not for the reason either of those measurements gave. And the enum slice's own acceptance list
 named `try_drops_frame`, which measurement says is a closures row rather than an `enum` one. The measured brief
-for the next round, with the reachable fixture list for each candidate slice, is `plan/mk7-next-slice.md`.
+for the next round, with the reachable fixture list for each candidate slice, is `plan/asm-backend/next-slice.md`.
 
 *(Re-measured 2026-09-20 at `c3a8759`, and four more corrections come with it, recorded here in the same
 place and the same way. The current-tense numbers this section gave (`283 of 329`, `240 of 289`,
@@ -415,11 +421,11 @@ the gate artifact, which its own dated correction now says.)*
 
 > **2026-09-20, this round's three specifications.** The rows above were measured before this
 > round's specs and are unchanged; three new files decide them in detail, each at `bb2316e`.
-> `plan/mk7-extern-bodies.md` (MK7 §5 item 5 and the heap row's extern-headed members) decides
+> `plan/asm-backend/extern-bodies.md` (MK7 §5 item 5 and the heap row's extern-headed members) decides
 > which `extern fun` bodies are this backend's own work, each body's shape, the ten slices and
-> each slice's acceptance target. `plan/mk7-closures.md` (MK7 §5 item 6) decides the lowering of
+> each slice's acceptance target. `plan/asm-backend/closures.md` (MK7 §5 item 6) decides the lowering of
 > `FnRef`, `ClosureLit`, `Capture`, `FnToClosure` and `IndirectCall`, why the environment stays
-> heap, and the four slices that reach the row's ten fixtures. `plan/mk7-capability-check.md`
+> heap, and the four slices that reach the row's ten fixtures. `plan/asm-backend/capability-check.md`
 > (MK7 §5 item 7) decides what a gated call site must emit, which assembly routines this backend
 > owns, the deny path's exact text, and that the three `net` checks stay deferred while a `net`
 > call keeps being refused.
@@ -607,7 +613,7 @@ with the backend as the only variable.
 > is **a heap type 14, a fixed-size array 0, an `enum` 0, a `datac` holding a float or heap field 0, a
 > closure or a function value 10, a gated extern 1**. The recorded baseline in
 > `kelpc/tests/backend_coverage.rs` is one fixture behind the sweep, which reports `borrow_two_phase` as
-> built and unnamed. §0's blockquote carries the same measurement, and `plan/mk7-next-slice.md` is the
+> built and unnamed. §0's blockquote carries the same measurement, and `plan/asm-backend/next-slice.md` is the
 > brief that follows from it.)*
 >
 > **Item 3, the register allocator, is done for integer/`bool`/`char` locals
@@ -1862,7 +1868,7 @@ with the backend as the only variable.
 > keys on `std.time.now_unix_raw` alone, so "7 fixtures" is wrong at this commit in both readings.
 > Measured too: the matcher (`std/rt.kp`'s `glob_match`, `host_match` and `path_normalize`) lowers on this
 > backend today when copied into an ordinary module, so the missing work is the call-site check and its
-> glue (`runtime/cap_glue.c` is 182 lines of C), not the matcher. See `plan/mk7-next-slice.md` §C.)*
+> glue (`runtime/cap_glue.c` is 182 lines of C), not the matcher. See `plan/asm-backend/next-slice.md` §C.)*
 >
 > The first row is the argument for §8 being a *parallel* track: the single
 > biggest unlock is the runtime, not the code generator, and the runtime is the
@@ -2278,7 +2284,7 @@ Scope, in build order. Each bullet is separately testable against the fixture su
    path and name checks, the deny path and the compiled-in allowlists are emitted, and the gated-extern row
    of the refusal ranking is empty. **Step 2 (the `net` host/port kinds) is not done:** `cap_decision`
    refuses them, which is the second prerequisite of the four `net` fixtures; see
-   `plan/mk7-next-slice.md` §D.
+   `plan/asm-backend/next-slice.md` §D.
 8. **`print`/`print!`. Second half started** (2026-09-19): `str`/`&str` and `f32`/`f64` are printed, including the
    x86-64 details — a float argument goes in the `xmm` file rather than an integer register, `f32` is promoted to
    `double`, and a variadic call sets `AL` to the number of vector registers used, so a template interpolating
@@ -3567,7 +3573,7 @@ run would have to satisfy.)*
 > `VALUE` line, so the table below is confirmed rather than corrected; by §5's per-workload reading the
 > gate is unmet on `fib` alone, as the `4752ebb` blockquote already says. The sweep ran at load 4.08
 > from another lane, which is why `float`'s median is reported with its spread (138.8-199.8 ms); a gate
-> run on an idle machine is still owed. `plan/mk7-next-slice.md` carries the same table. The one number
+> run on an idle machine is still owed. `plan/asm-backend/next-slice.md` carries the same table. The one number
 > here the concurrent gate-table rewrite is expected to invalidate is none: the fix's own spec measures
 > `speed.kp`'s generated C unchanged under rule (b), because its gated call names no resource. A future
 > round that changes the estimator, the machine's idle state or a kernel does invalidate every cell,
@@ -3673,7 +3679,7 @@ the call-heavy workload `fib` notices the most (1.723, and it is the worst cell
 in the sweep) while the branchy workload `collatz` (0.964) and the floating-point
 workload `float` (0.594) notice least and beat the `-O0` column outright. So the
 column that moves when call sequence overhead rises is the one section 3 called
-immune to it, and `plan/mk7-call-overhead.md` measures where that overhead goes:
+immune to it, and `plan/asm-backend/call-overhead.md` measures where that overhead goes:
 most of it is the per-argument push and pop of the marshalling loop, then the
 unconditional per-call stack alignment fixup, then the body's stack-machine
 traffic.)*
@@ -3905,7 +3911,7 @@ interleaved round-robin, round 1 discarded, median of 8, twice, at load 20.7 and
   `String.as_str()` hoist the fix introduces. The claim was corrected by an empty commit carrying the
   measurement (`7cb41ec`) and a dated blockquote (`513527e`), not by rewriting history (lane `25f7607e`).
 
-**E. Where the asm backend's per-call cost goes** (`92d65f3` for `plan/mk7-call-overhead.md`, `7af207e`
+**E. Where the asm backend's per-call cost goes** (`92d65f3` for `plan/asm-backend/call-overhead.md`, `7af207e`
 for §13's annex).
 
 - Per call, with the loop cancelled by nesting: a flat one-argument call is 1.22 to 1.31 ns in asm
@@ -3922,7 +3928,7 @@ for §13's annex).
 - ratchet 191 to 192 to 194 built of 205, 14 to 13 to 11 refused; asm 303 of 340 to 304 to 307 of 340;
   C 340. The gate artifact built for the first time at `5958794`. Lane `725488ba`.
 
-**G. The extern-gating specification** (`a1b07bb`, `plan/mk7-extern-gating.md`).
+**G. The extern-gating specification** (`a1b07bb`, `plan/asm-backend/extern-gating.md`).
 
 - no code. It measured the bypass (a module with a narrowed grant reads `/etc/hostname` through
   `fs.read_raw` on both backends, and a module with no grant at all still compiles), three further
@@ -4089,12 +4095,12 @@ and every one of these was caught by measuring:
   check never refused it.
 - §0's capability row said 7 fixtures; measurement said 0 of 25 refusals named the check, with 10 of the
   201 C-built fixtures importing a gated module.
-- `plan/mk7-capability-check.md` predicted that step 1 would make nothing that builds today build.
+- `plan/asm-backend/capability-check.md` predicted that step 1 would make nothing that builds today build.
   Measurement moved 4 fixtures, 6 projects and 10 asm tests.
-- `plan/mk7-closures.md` §5.0 asked for one synthesized closure layout per signature; the landing uses
+- `plan/asm-backend/closures.md` §5.0 asked for one synthesized closure layout per signature; the landing uses
   one key, and the three-pointer shape cannot depend on the signature, so the collect pass it wanted is
   unnecessary.
-- `plan/mk7-extern-bodies.md` §3's S2 acceptance predicted `fs_fallible`'s next refusal would become
+- `plan/asm-backend/extern-bodies.md` §3's S2 acceptance predicted `fs_fallible`'s next refusal would become
   `std.fs.write_text_raw`; measurement says `std.fs.write_raw`, and the specification's own ordering
   rule agrees with the measurement.
 - The S4 brief's thirteen externs are not the specification's S4 thirteen (the brief's set is S4's
@@ -4104,7 +4110,7 @@ and every one of these was caught by measuring:
 - The capability check's brief named five fixtures as refused only on the check; `caps_gated_path` and
   `fs_errno` had a second refusal behind it (the discarded wide return), and `caps_link_denied` was
   missing from the list.
-- `plan/mk7-extern-gating.md`'s recommendation applies the domain half only at a function value, which
+- `plan/asm-backend/extern-gating.md`'s recommendation applies the domain half only at a function value, which
   leaves the cross-module route open; the review that found it also found the wiki sentence and the
   `plan/architecture.md` sentence that limit the exposure to the granting module. That review's own
   report is the correction, and the compiler now refuses the value outright.
@@ -4113,7 +4119,7 @@ and every one of these was caught by measuring:
 - This section's own predecessors: §0's current-tense numbers were the float-aggregate slice's twice,
   which is what the dated blockquotes are for, and every earlier blockquote is now marked as the record
   of its own commit rather than of the tip.
-- `plan/mk7-stage2-encoder.md` pinned its line numbers to an in-flight working tree (`sha256
+- `plan/asm-backend/encoder-inventory.md` pinned its line numbers to an in-flight working tree (`sha256
   ca476256…`, 12339 lines) rather than to a commit; the correction names `c3a8759` as the then-HEAD and
   adds the tip's numbers.
 
@@ -4171,7 +4177,7 @@ agreement between two implementations by one author, not that the rules they enc
    frontend and the C backend already carry the surface.
 3. **`borrow_chain_through_a_borrow`** (one fixture): a borrow of a field of a borrow; the refusal is at
    `codegen_asm.rs:9704` (the line the next-slice brief also names).
-4. **The `fib` marshalling slice, and the two further slices `plan/mk7-call-overhead.md` orders**: S1
+4. **The `fib` marshalling slice, and the two further slices `plan/asm-backend/call-overhead.md` orders**: S1
    marshalling (the per-argument push and pop, which is 62% of the gap; predicted 1.72 to about 1.11;
    correctness-sensitive, because the push and pop order is what makes a nested call safe; catch: the
    differential sweep, the ranking, the memory gate and a fixture with `f(g(x), h(y))`), then S2 body
@@ -4208,7 +4214,7 @@ In the order the tip's own measurements put the work:
 2. The `List` derived copy and order (`list_datac_clone_sort`): one fixture, and the surface already
    exists in the frontend and the C backend.
 3. The borrow of a field chain (`borrow_chain_through_a_borrow`): one fixture.
-4. `plan/mk7-call-overhead.md`'s S3 first (the alignment fixup only when the pending depth is odd), then
+4. `plan/asm-backend/call-overhead.md`'s S3 first (the alignment fixup only when the pending depth is odd), then
    S1 (marshalling) and S2 (body peepholes), which is what moves `fib` under 1.0 and closes §5's gate by
    the per-workload reading the plan uses.
 5. An idle-machine gate run with one estimator, which §13 has owed since it was written, as the gate for

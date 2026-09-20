@@ -1,6 +1,6 @@
 //! The differential corpus for the capability matcher (MK7 §8).
 //!
-//! `plan/mk7-own-backend.md` §8 moves the runtime from C text into Kelp, and its
+//! `plan/asm-backend/plan.md` §8 moves the runtime from C text into Kelp, and its
 //! risk register names what that costs when it goes wrong: the capability matcher
 //! is byte-exact security behavior, and "a lenient port widens every grant". The
 //! fixtures prove the grants still *work*; only a corpus proves the *verdicts*
