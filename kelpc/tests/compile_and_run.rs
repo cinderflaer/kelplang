@@ -1659,6 +1659,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "closure_datac_borrow_param",
         "stdlib_sort",
         "list_slice_insert",
+        // MK7 §5's sort/contains/slice slice: the element kinds neither of the
+        // two above reaches — a signed and an unsigned integer and `Bytes`,
+        // whose comparator is a length-aware `memcmp` — plus a slice of a
+        // `Copy` element and a slice of an owned one.
+        "list_sort_kinds",
         // MK7: the list paths a shift or a replacement could get wrong —
         // `insert`/`remove`/`reverse` over owned elements, six `realloc`s
         // that move every element, and `set` freeing the element it replaces.
@@ -2118,6 +2123,21 @@ fn sorting_and_slicing_a_list_of_owned_elements_moves_them_safely() {
     assert_compiles_and_runs(
         "tests/fixtures/list_slice_insert.kp",
         "apple\nfig\npear\ntrue\nfalse\n2\nfig\n4\nfig\napple\nfig\n3\npear\n",
+    );
+}
+
+#[test]
+fn a_list_sorts_and_searches_every_element_kind_it_can_hold() {
+    // MK7 §5's sort/contains/slice slice: each element kind reaches a different
+    // comparison (signed, unsigned, and a length-aware byte compare for the
+    // owned buffers) and the two slice paths differ (a plain copy for a `Copy`
+    // element, a clone for an owned one). A wrong element width or a
+    // cloned-twice element is a memory bug rather than a wrong number, so this
+    // fixture is also in the AddressSanitizer list and under valgrind.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_sort_kinds.kp",
+        "-7\n0\n3\ntrue\nfalse\n1\n-7\n3\n200\ntrue\nfalse\n\
+         apple\nfig\npear\ntrue\nfalse\n2\nfig\n3\n",
     );
 }
 

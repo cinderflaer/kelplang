@@ -1449,6 +1449,21 @@ enum ListFn {
     Insert(Ty),
     Remove(Ty),
     Reverse(Ty),
+    /// `kelp_List__<mangle>__sort` and the comparator it calls per element
+    /// pair, `…__cmp` — `codegen_c.rs`'s `write_list_s1` pair, and emitted as
+    /// one for the same reason: the element kind decides the comparison
+    /// (`String`/`Bytes` compare length-aware, never `strcmp`), and the sort
+    /// itself is one stable in-place insertion sort whatever the element is.
+    /// Both exist only where `types::list_sortable_elem` answers.
+    SortCmp(Ty),
+    Sort(Ty),
+    /// `…__contains`, gated on `types::list_comparable_elem` — the same
+    /// predicate `infer.rs` uses to offer the method, so the symbol and the
+    /// signature cannot disagree.
+    Contains(Ty),
+    /// `…__slice`, gated on `types::list_clonable_elem`: the copy out of the
+    /// list is a clone for an owned element and a plain copy for a `Copy` one.
+    Slice(Ty),
     Drop(Ty),
 }
 
@@ -1468,6 +1483,10 @@ impl ListFn {
             | ListFn::Insert(e)
             | ListFn::Remove(e)
             | ListFn::Reverse(e)
+            | ListFn::SortCmp(e)
+            | ListFn::Sort(e)
+            | ListFn::Contains(e)
+            | ListFn::Slice(e)
             | ListFn::Drop(e) => e,
         }
     }
@@ -1494,6 +1513,10 @@ impl ListFn {
             ListFn::Insert(_) => format!("{base}__insert"),
             ListFn::Remove(_) => format!("{base}__remove"),
             ListFn::Reverse(_) => format!("{base}__reverse"),
+            ListFn::SortCmp(_) => format!("{base}__cmp"),
+            ListFn::Sort(_) => format!("{base}__sort"),
+            ListFn::Contains(_) => format!("{base}__contains"),
+            ListFn::Slice(_) => format!("{base}__slice"),
             // `types::drop_fn_name`'s spelling, which is not the
             // `kelp_List__*__<op>` shape the rest of the set uses.
             ListFn::Drop(e) => format!("kelp_list_drop__{}", crate::types::ty_mangle(e)),
@@ -4601,6 +4624,25 @@ impl Gen {
             ListFn::Of(_) | ListFn::Push(_) | ListFn::Insert(_) => {
                 self.require_routine(Routine::ListReserve);
             }
+            // The sort calls its comparator, and the comparator is written
+            // before the sort for the same reason every other dependency here
+            // is registered at the call site: the routine set is snapshotted
+            // before any body is written.
+            ListFn::Sort(_) => {
+                self.require_list_fn(ListFn::SortCmp(f.elem().clone()));
+            }
+            // A slice grows its own list (`reserve`) and fills it by cloning
+            // each element — `write_list_s1`'s `out.data[out.len++] =
+            // kelp_String__clone(&self->data[i]);`. A `Copy` element is a
+            // plain copy and needs nothing.
+            ListFn::Slice(elem) => {
+                self.require_routine(Routine::ListReserve);
+                match elem {
+                    Ty::String => self.require_routine(Routine::StringClone),
+                    Ty::Bytes => self.require_routine(Routine::BytesClone),
+                    _ => {}
+                }
+            }
             ListFn::Get(_, _) | ListFn::Set(_) => {
                 self.require_list_fn(ListFn::Bounds(f.elem().clone()));
             }
@@ -5690,6 +5732,408 @@ impl Gen {
                 let _ = writeln!(self.out, "    jmp {top}");
                 let _ = writeln!(self.out, "{done}:");
                 self.out.push_str(epilogue);
+            }
+            // `a`/`b` are pointers to elements; the result is the C comparator's
+            // own `-1`/`0`/`1` in `eax` — the same contract `codegen_c.rs`'s
+            // `{list}__cmp` has, so the sort below reads one shape whatever the
+            // element is. Numerical elements compare by value at their own
+            // width and signedness; `bool` as 0/1; a float through its own
+            // `ucomiss`/`ucomisd` (with the unordered case answering 0, which is
+            // what C's `(*a > *b) - (*a < *b)` answers for a NaN); `String`
+            // and `Bytes` length-aware, never `strcmp` — a buffer may hold an
+            // embedded NUL, and the shorter one is a prefix of the longer.
+            // `a`/`b` are pointers to elements; the result is the C comparator's
+            // own `-1`/`0`/`1` in `eax` — the same contract `codegen_c.rs`'s
+            // `{list}__cmp` has, so the sort below reads one shape whatever the
+            // element is. Numerical elements compare by value at their own width
+            // and signedness; `bool` as 0/1; a float through its own SSE compare,
+            // with the unordered case answering 0, which is what C's
+            // `(*a > *b) - (*a < *b)` answers for a NaN; `String` and `Bytes`
+            // length-aware, never `strcmp` — a buffer may hold an embedded NUL,
+            // and the shorter one is a prefix of the longer.
+            // `a`/`b` are pointers to elements; the result is the C comparator's
+            // own `-1`/`0`/`1` in `eax` — the same contract `codegen_c.rs`'s
+            // `{list}__cmp` has, so the sort below reads one shape whatever the
+            // element is. Numerical elements compare by value at their own width
+            // and signedness; `bool` as 0/1; a float through its own SSE compare,
+            // with the unordered case answering 0, which is what C's
+            // `(*a > *b) - (*a < *b)` answers for a NaN; `String` and `Bytes`
+            // length-aware, never `strcmp` — a buffer may hold an embedded NUL,
+            // and the shorter one is a prefix of the longer.
+            //
+            // Only the buffer comparator takes a frame, because only it calls
+            // (`memcmp`, and every caller-saved register is fair game for libc);
+            // it builds its own return paths so no `ret` can leave the frame
+            // behind. The other two leave the result in `eax` and `ret`
+            // directly.
+            ListFn::SortCmp(_) => {
+                if let Some(width) = float_ty(&elem) {
+                    let gt = self.label("list_cmp_gt");
+                    let lt = self.label("list_cmp_lt");
+                    let eq = self.label("list_cmp_eq");
+                    let (mov, cmp) = match width {
+                        FWidth::F4 => ("movss", "ucomiss"),
+                        FWidth::F8 => ("movsd", "ucomisd"),
+                    };
+                    let _ = writeln!(self.out, "    {mov} xmm0, [rdi]");
+                    let _ = writeln!(self.out, "    {cmp} xmm0, [rsi]");
+                    // Unordered (a NaN on either side) answers "equal", which is
+                    // what the C comparator's `<`/`>` pair answers.
+                    let _ = writeln!(self.out, "    jp {eq}");
+                    let _ = writeln!(self.out, "    ja {gt}");
+                    let _ = writeln!(self.out, "    jb {lt}");
+                    let _ = writeln!(self.out, "{eq}:\n    xor eax, eax\n    ret");
+                    let _ = writeln!(self.out, "{gt}:\n    mov eax, 1\n    ret");
+                    let _ = writeln!(self.out, "{lt}:\n    mov eax, -1\n    ret");
+                } else if matches!(elem, Ty::String | Ty::Bytes) {
+                    let slot_a = -8i32;
+                    let slot_b = -16i32;
+                    let slot_len = -24i32;
+                    let by_len = self.label("list_cmp_len");
+                    let at_len = format!("{by_len}_cmp");
+                    let neg = self.label("list_cmp_neg");
+                    let zero = self.label("list_cmp_zero");
+                    let epilogue = "    mov rsp, rbp\n    pop rbp\n    ret\n";
+                    self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 32\n");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_a}], rdi");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_b}], rsi");
+                    self.out.push_str("    mov rax, QWORD PTR [rdi+8]\n");
+                    let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_len}], rax");
+                    self.out.push_str("    mov rcx, QWORD PTR [rsi+8]\n");
+                    // `n = min(a->len, b->len)`: `memcmp` over the longer one
+                    // would read bytes the shorter buffer may not own.
+                    self.out.push_str("    mov rdx, rax\n    cmp rdx, rcx\n");
+                    let _ = writeln!(self.out, "    jbe {by_len}");
+                    self.out.push_str("    mov rdx, rcx\n");
+                    let _ = writeln!(self.out, "{by_len}:");
+                    // A zero-length side compares equal to any zero-length side
+                    // and sorts first otherwise; `memcmp` with a zero length
+                    // would answer 0 and hide that.
+                    self.out.push_str("    test rdx, rdx\n");
+                    let _ = writeln!(self.out, "    je {at_len}");
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_a}]");
+                    self.out.push_str("    mov rdi, QWORD PTR [rdi]\n");
+                    let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_b}]");
+                    self.out.push_str("    mov rsi, QWORD PTR [rsi]\n");
+                    self.out.push_str("    call memcmp@PLT\n    test eax, eax\n");
+                    let _ = writeln!(self.out, "    je {at_len}");
+                    let _ = writeln!(self.out, "    js {neg}");
+                    self.out.push_str("    mov eax, 1\n");
+                    self.out.push_str(epilogue);
+                    let _ = writeln!(self.out, "{neg}:");
+                    self.out.push_str("    mov eax, -1\n");
+                    self.out.push_str(epilogue);
+                    let _ = writeln!(self.out, "{at_len}:");
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_len}]");
+                    let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_b}]");
+                    self.out.push_str("    mov rcx, QWORD PTR [rcx+8]\n    cmp rax, rcx\n");
+                    // The shorter one is a prefix, so it sorts first; equal
+                    // lengths are equal values.
+                    let _ = writeln!(self.out, "    jb {neg}");
+                    let _ = writeln!(self.out, "    je {zero}");
+                    self.out.push_str("    mov eax, 1\n");
+                    self.out.push_str(epilogue);
+                    let _ = writeln!(self.out, "{zero}:");
+                    self.out.push_str("    xor eax, eax\n");
+                    self.out.push_str(epilogue);
+                } else {
+                    // A numerical or `bool` element: load both at the element's
+                    // own width, extend, and compare. `bool` is one unsigned
+                    // byte, so `(a ? 1 : 0) - (b ? 1 : 0)`'s sign is `a > b`'s.
+                    let (width, signed) = if elem == Ty::Bool {
+                        (Width::W1, false)
+                    } else {
+                        int_ty(&elem)
+                            .expect("a sortable element is numeric, bool, String or Bytes")
+                    };
+                    let (a_reg, b_reg) = match width {
+                        Width::W8 => ("rax", "rcx"),
+                        Width::W4 => ("eax", "ecx"),
+                        Width::W2 => ("ax", "cx"),
+                        Width::W1 => ("al", "cl"),
+                    };
+                    let _ = writeln!(self.out, "    mov {}, {} [rdi]", a_reg, width.mem());
+                    // Both values are extended, so the compare is a 64-bit signed
+                    // (or unsigned) one at every element width. The *first* load
+                    // has to be extended explicitly: `mov eax, [rdi]` zeroes the
+                    // upper half, which would read a negative `i32` as a large
+                    // positive one.
+                    self.out.push_str(&width.extend(signed));
+                    let _ = writeln!(self.out, "    mov {}, {} [rsi]", b_reg, width.mem());
+                    // Both are the same type, so the second one extends the same
+                    // way the first one's own read does — `Width::extend`'s
+                    // mnemonics, spelled for `rcx` instead of `rax`.
+                    if width.bytes() < 8 {
+                        let mnemonic = if signed {
+                            match width {
+                                Width::W1 => "movsx rcx, cl",
+                                Width::W2 => "movsx rcx, cx",
+                                _ => "movsxd rcx, ecx",
+                            }
+                        } else {
+                            match width {
+                                Width::W1 => "movzx rcx, cl",
+                                Width::W2 => "movzx rcx, cx",
+                                _ => "mov ecx, ecx",
+                            }
+                        };
+                        let _ = writeln!(self.out, "    {mnemonic}");
+                    }
+                    let gt = self.label("list_cmp_gt");
+                    let lt = self.label("list_cmp_lt");
+                    let eq = self.label("list_cmp_eq");
+                    self.out.push_str("    cmp rax, rcx\n");
+                    if signed {
+                        let _ = writeln!(self.out, "    jg {gt}");
+                        let _ = writeln!(self.out, "    jl {lt}");
+                    } else {
+                        let _ = writeln!(self.out, "    ja {gt}");
+                        let _ = writeln!(self.out, "    jb {lt}");
+                    }
+                    let _ = writeln!(self.out, "{eq}:\n    xor eax, eax\n    ret");
+                    let _ = writeln!(self.out, "{gt}:\n    mov eax, 1\n    ret");
+                    let _ = writeln!(self.out, "{lt}:\n    mov eax, -1\n    ret");
+                }
+            }
+            ListFn::Sort(_) => {
+                let top = self.label("list_sort_top");
+                let inner = self.label("list_sort_inner");
+                let place = self.label("list_sort_place");
+                let done = self.label("list_sort_done");
+                let cmp = ListFn::SortCmp(elem.clone()).label();
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "{top}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rdi+8]\n");
+                self.out.push_str("    cmp rax, rcx\n");
+                let _ = writeln!(self.out, "    jae {done}");
+                // `v = data[i]` into the frame buffer: the shifts below
+                // overwrite `data[i]` on their first iteration, so the value
+                // has to be out of the buffer before they run.
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [rdi]");
+                let _ = writeln!(self.out, "    imul rax, {size}");
+                self.out.push_str("    add r8, rax\n");
+                emit_copy(&mut self.out, "rbp", buf, "r8", 0, size);
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rax");
+                let _ = writeln!(self.out, "{inner}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_j}]");
+                self.out.push_str("    test rax, rax\n");
+                let _ = writeln!(self.out, "    je {place}");
+                let _ = writeln!(self.out, "    mov r9, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov r9, QWORD PTR [r9]");
+                let _ = writeln!(self.out, "    imul rax, {size}");
+                self.out.push_str("    add r9, rax\n");
+                self.out.push_str("    mov rdi, r9\n");
+                let _ = writeln!(self.out, "    sub rdi, {size}");
+                let _ = writeln!(self.out, "    lea rsi, [rbp{buf}]");
+                let _ = writeln!(self.out, "    call {cmp}");
+                self.out.push_str("    test eax, eax\n");
+                let _ = writeln!(self.out, "    jle {place}");
+                // `data[j] = data[j-1]` — both addresses recomputed, because
+                // the comparator call above clobbered every caller-saved
+                // register, and both held in registers `emit_copy`'s own
+                // transfer register cannot be: it moves each chunk through
+                // `rax`.
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [r8]");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    imul rax, {size}");
+                self.out.push_str("    add rax, r8\n    mov r9, rax\n");
+                let _ = writeln!(self.out, "    sub r9, {size}");
+                let _ = writeln!(self.out, "    mov r10, rax");
+                emit_copy(&mut self.out, "r10", 0, "r9", 0, size);
+                let _ = writeln!(self.out, "    sub QWORD PTR [rbp{slot_j}], 1");
+                let _ = writeln!(self.out, "    jmp {inner}");
+                let _ = writeln!(self.out, "{place}:");
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [r8]");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    imul rax, {size}");
+                self.out.push_str("    add rax, r8\n    mov r9, rax\n");
+                emit_copy(&mut self.out, "r9", 0, "rbp", buf, size);
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_self}]");
+                let _ = writeln!(self.out, "    jmp {top}");
+                let _ = writeln!(self.out, "{done}:");
+                self.out.push_str(epilogue);
+            }
+            // `for (i = 0; i < self->len; i++) if (<eq>) return true;
+            //  return false;` — `write_list_s1`'s `contains`. A `Copy` element
+            // arrives by value in `rsi`; an owned one arrives as a *borrow*
+            // (`infer.rs`'s `contains_param`), so the needle is a pointer to
+            // the element and is compared field by field.
+            ListFn::Contains(_) => {
+                let top = self.label("list_contains_top");
+                let next = self.label("list_contains_next");
+                let found = self.label("list_contains_found");
+                let missing = self.label("list_contains_missing");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], 0");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rsi");
+                let _ = writeln!(self.out, "{top}:");
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov rax, QWORD PTR [r8+8]\n");
+                let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_i}]");
+                self.out.push_str("    cmp rcx, rax\n");
+                let _ = writeln!(self.out, "    jae {missing}");
+                let _ = writeln!(self.out, "    mov r8, QWORD PTR [r8]");
+                let _ = writeln!(self.out, "    imul rcx, {size}");
+                self.out.push_str("    add r8, rcx\n");
+                if matches!(elem, Ty::String | Ty::Bytes) {
+                    // `self->data[i].len == v->len && (v->len == 0 ||
+                    //  memcmp(self->data[i].data, v->data, v->len) == 0)` —
+                    // length first, so a prefix cannot pass, and never
+                    // `strcmp`, because a buffer may hold an embedded NUL.
+                    let _ = writeln!(self.out, "    mov rax, QWORD PTR [r8+8]");
+                    let _ = writeln!(self.out, "    mov rcx, QWORD PTR [rbp{slot_j}]");
+                    self.out.push_str("    mov rcx, QWORD PTR [rcx+8]\n    cmp rax, rcx\n");
+                    let _ = writeln!(self.out, "    jne {next}");
+                    self.out.push_str("    test rax, rax\n");
+                    let _ = writeln!(self.out, "    je {found}");
+                    self.out.push_str("    mov rdx, rax\n");
+                    let _ = writeln!(self.out, "    mov rdi, QWORD PTR [r8]");
+                    let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_j}]");
+                    self.out.push_str("    mov rsi, QWORD PTR [rsi]\n");
+                    self.out.push_str("    call memcmp@PLT\n    test eax, eax\n");
+                    let _ = writeln!(self.out, "    je {found}");
+                } else if float_ty(&elem).is_some() {
+                    let (mov, cmp) = match float_ty(&elem).expect("checked") {
+                        FWidth::F4 => ("movss", "ucomiss"),
+                        FWidth::F8 => ("movsd", "ucomisd"),
+                    };
+                    let _ = writeln!(self.out, "    {mov} xmm0, [r8]");
+                    let _ = writeln!(self.out, "    {cmp} xmm0, [rbp{slot_j}]");
+                    // `==` is false for a NaN, which is why the parity flag is
+                    // tested before the equality one.
+                    let _ = writeln!(self.out, "    jp {next}");
+                    let _ = writeln!(self.out, "    je {found}");
+                } else {
+                    let (width, signed) = if elem == Ty::Bool {
+                        (Width::W1, false)
+                    } else {
+                        int_ty(&elem).expect("a comparable element is numeric, bool, String or Bytes")
+                    };
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {}, {} [r8]",
+                        width.rax(),
+                        width.mem()
+                    );
+                    self.out.push_str(&width.extend(signed));
+                    let (b_reg, b_mem) = match width {
+                        Width::W8 => ("rcx", "QWORD PTR"),
+                        Width::W4 => ("ecx", "DWORD PTR"),
+                        Width::W2 => ("cx", "WORD PTR"),
+                        Width::W1 => ("cl", "BYTE PTR"),
+                    };
+                    let _ = writeln!(
+                        self.out,
+                        "    mov {b_reg}, {b_mem} [rbp{slot_j}]"
+                    );
+                    // The needle is loaded at the element's own width and
+                    // extended the same way the element was, so the compare is
+                    // the C byte-for-byte one at every element size.
+                    if width.bytes() < 8 {
+                        let mnemonic = if signed {
+                            match width {
+                                Width::W1 => "movsx rcx, cl",
+                                Width::W2 => "movsx rcx, cx",
+                                _ => "movsxd rcx, ecx",
+                            }
+                        } else {
+                            match width {
+                                Width::W1 => "movzx rcx, cl",
+                                Width::W2 => "movzx rcx, cx",
+                                _ => "mov ecx, ecx",
+                            }
+                        };
+                        let _ = writeln!(self.out, "    {mnemonic}");
+                    }
+                    self.out.push_str("    cmp rax, rcx\n");
+                    let _ = writeln!(self.out, "    je {found}");
+                }
+                let _ = writeln!(self.out, "{next}:");
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    jmp {top}");
+                let _ = writeln!(self.out, "{found}:\n    mov eax, 1");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{missing}:\n    xor eax, eax");
+                self.out.push_str(epilogue);
+            }
+            // `if (from > to || to > self->len) panic("List.slice: range out
+            //  of bounds"); out = empty(); reserve(&out, to - from);
+            //  for (i = from; i < to; i++) out.data[out.len++] = clone(data[i]);`
+            // — `write_list_s1`'s `slice`, including the clone: a `String`
+            // element is a fresh buffer, and a `Copy` one is the value itself.
+            // The result is a `MEMORY`-class list header, so `rdi` is the
+            // caller's hidden return pointer and every argument is one register
+            // along.
+            ListFn::Slice(_) => {
+                let panic = self.label("list_slice_panic");
+                let top = self.label("list_slice_top");
+                let done = self.label("list_slice_done");
+                let msg = self.bytes_label(b"List.slice: range out of bounds");
+                self.out.push_str(&prologue);
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_ret}], rdi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_self}], rsi");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_i}], rdx");
+                let _ = writeln!(self.out, "    mov QWORD PTR [rbp{slot_j}], rcx");
+                let _ = writeln!(self.out, "    cmp rdx, rcx");
+                let _ = writeln!(self.out, "    ja {panic}");
+                self.out.push_str("    mov rax, QWORD PTR [rsi+8]\n    cmp rcx, rax\n");
+                let _ = writeln!(self.out, "    ja {panic}");
+                // `out = empty()`: the header the caller's slot gets, built in
+                // place — the same three zeroed words `ListFn::Empty` writes.
+                let _ = writeln!(self.out, "    mov rdi, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str(
+                    "    mov QWORD PTR [rdi], 0\n    mov QWORD PTR [rdi+8], 0\n    mov QWORD PTR [rdi+16], 0\n",
+                );
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    sub rsi, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    mov edx, {size}");
+                let _ = writeln!(self.out, "    call {reserve}");
+                let _ = writeln!(self.out, "{top}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_i}]");
+                let _ = writeln!(self.out, "    cmp rax, QWORD PTR [rbp{slot_j}]");
+                let _ = writeln!(self.out, "    jae {done}");
+                // `&self->data[i]` into `r11`, `&out.data[out.len]` into `r9`.
+                let _ = writeln!(self.out, "    mov r11, QWORD PTR [rbp{slot_self}]");
+                self.out.push_str("    mov r11, QWORD PTR [r11]\n    imul rax, ");
+                let _ = writeln!(self.out, "{size}");
+                self.out.push_str("    add r11, rax\n");
+                let _ = writeln!(self.out, "    mov r9, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str("    mov rcx, QWORD PTR [r9+8]\n    mov r9, QWORD PTR [r9]\n");
+                let _ = writeln!(self.out, "    imul rcx, {size}");
+                self.out.push_str("    add r9, rcx\n");
+                match elem {
+                    Ty::String => {
+                        // `kelp_String__clone(dst, src)` writes the clone into
+                        // the destination element slot itself, so there is no
+                        // second copy to make.
+                        self.out.push_str("    mov rdi, r9\n    mov rsi, r11\n");
+                        let _ = writeln!(self.out, "    call {}", Routine::StringClone.label());
+                    }
+                    Ty::Bytes => {
+                        self.out.push_str("    mov rdi, r9\n    mov rsi, r11\n");
+                        let _ = writeln!(self.out, "    call {}", Routine::BytesClone.label());
+                    }
+                    _ => emit_copy(&mut self.out, "r9", 0, "r11", 0, size),
+                }
+                let _ = writeln!(self.out, "    mov r9, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str("    mov rcx, QWORD PTR [r9+8]\n    add rcx, 1\n");
+                self.out.push_str("    mov QWORD PTR [r9+8], rcx\n");
+                let _ = writeln!(self.out, "    add QWORD PTR [rbp{slot_i}], 1");
+                let _ = writeln!(self.out, "    jmp {top}");
+                let _ = writeln!(self.out, "{done}:");
+                let _ = writeln!(self.out, "    mov rax, QWORD PTR [rbp{slot_ret}]");
+                self.out.push_str(epilogue);
+                let _ = writeln!(self.out, "{panic}:");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic();
             }
             // `clear(self); free(self->data); self->data = NULL;
             //  self->cap = 0;` — `clear` resets `len`, so all three fields end
@@ -9379,11 +9823,26 @@ impl Gen {
                 "insert" => ListFn::Insert(elem),
                 "remove" => ListFn::Remove(elem),
                 "reverse" => ListFn::Reverse(elem),
-                // `sort`, `contains` and `slice` are the three S1 methods this
-                // slice leaves out on purpose: each needs an element-level
-                // comparison or clone the backend has no way to express yet.
-                // Naming them is what keeps the gap visible — the alternative
-                // is a call to a symbol nothing emits.
+                // S1's three element-level methods. Each is offered only for an
+                // element type that has the property it needs — the *same*
+                // predicates `infer.rs`'s `list_sig` gates the signature on
+                // (`types::list_sortable_elem`, `list_comparable_elem`,
+                // `list_clonable_elem`), so a method the type checker accepted
+                // can never arrive here without a lowering, and one it refused
+                // cannot be built by accident.
+                "sort" if crate::types::list_sortable_elem(&elem) => {
+                    ListFn::Sort(elem)
+                }
+                "contains" if crate::types::list_comparable_elem(&elem) => {
+                    ListFn::Contains(elem)
+                }
+                "slice" if crate::types::list_clonable_elem(&elem) => {
+                    ListFn::Slice(elem)
+                }
+                // `sort`, `contains` and `slice` on an element kind that has no
+                // order, no equality or no clone — `infer.rs` refuses the same
+                // set with `list_unsortable_element`'s diagnostic, so this arm
+                // is unreachable for a program that type-checked.
                 _ => {
                     return Err(unsupported(&format!(
                         "the method `{}` on a `List`",

@@ -64,15 +64,20 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 173 fixtures the C backend
-/// builds, 150 of them also built by the asm backend, 23 refused — which is the
+/// The counts this list was recorded against: 174 fixtures the C backend
+/// builds, 154 of them also built by the asm backend, 20 refused — which is the
 /// 241-of-290 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level.
 ///
-/// The last re-recording is the print slice, which turned
-/// `heap_temporary_print` from a refusal into a built fixture (the heap row
-/// went 13 -> 12) and added `template_buffer_pieces` for the register
-/// numbering a `%.*s` interpolation needs: 172/148/24 -> 173/150/23.
+/// The last re-recording is the sort/contains/slice slice: `stdlib_sort`,
+/// `list_slice_insert` and `list_slice_bounds` left the heap row (three of its
+/// twelve, now nine) and `list_sort_kinds` is new, so 173/150/23 ->
+/// 174/154/20.
+///
+/// Before that, the print slice turned `heap_temporary_print` from a refusal
+/// into a built fixture (the heap row went 13 -> 12) and added
+/// `template_buffer_pieces` for the register numbering a `%.*s` interpolation
+/// needs: 172/148/24 -> 173/150/23.
 ///
 /// Before that, the drop-plan defect's fix added `owned_conditional_move` and
 /// `owned_move_in_loop`: both are ordinary owned values moved on one path and
@@ -246,6 +251,9 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "list_owned_replacement",
     "list_pop_empty",
     "list_remove_bounds",
+    "list_slice_bounds",
+    "list_slice_insert",
+    "list_sort_kinds",
     "literal_operand_typing",
     "map_basic",
     "map_clear_then_reuse",
@@ -297,6 +305,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "stdlib_option_result",
     "stdlib_parse",
     "stdlib_path",
+    "stdlib_sort",
     "stdlib_str",
     "str_to_string_coercion",
     "string_basic",

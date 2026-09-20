@@ -1,0 +1,48 @@
+// S1's element-level methods across the element kinds this backend can hold in
+// a list. Each kind reaches a *different* comparison — a signed integer, an
+// unsigned one (200 in a `u8` sorts above 3 only if the compare is unsigned),
+// and an owned buffer compared length-aware (a prefix must not pass, and an
+// embedded NUL must not stop the compare) — and a slice of a `Copy` element is
+// a plain copy where a slice of an owned one clones, so this fixture pins both
+// slice paths too. `stdlib_sort` and `list_slice_insert` cover `i32`, `bool`
+// and `String`; this one is the kinds neither of them reaches.
+fun main() {
+    var ints: List<i32> = List.empty()
+    ints.push(3)
+    ints.push(-7)
+    ints.push(0)
+    ints.sort()
+    print(ints.get(0))
+    print(ints.get(1))
+    print(ints.get(2))
+    print(ints.contains(0))
+    print(ints.contains(4))
+    val low = ints.slice(0, 1)
+    print(low.len())
+    print(low.get(0))
+
+    var small: List<u8> = List.empty()
+    small.push(200)
+    small.push(3)
+    small.sort()
+    print(small.get(0))
+    print(small.get(1))
+    print(small.contains(200))
+    print(small.contains(7))
+
+    var words: List<Bytes> = List.empty()
+    words.push(Bytes.from_str("pear"))
+    words.push(Bytes.from_str("apple"))
+    words.push(Bytes.from_str("fig"))
+    words.sort()
+    print(words.get(0))
+    print(words.get(1))
+    print(words.get(2))
+    print(words.contains(Bytes.from_str("apple")))
+    print(words.contains(Bytes.from_str("app")))
+    var middle = words.slice(1, 3)
+    print(middle.len())
+    print(middle.get(0))
+    middle.clear()
+    print(words.len())
+}
