@@ -3,7 +3,7 @@
 // cannot run anything. That separation is the point: reading your own argv is
 // your own invocation, not authority over the machine, while the patterns are
 // what turn the grant into the authority to execute.
-impl "runner" with caps(process = [])
+impl "runner" caps(process = [])
 
 fun main() {
     print(runner.count())

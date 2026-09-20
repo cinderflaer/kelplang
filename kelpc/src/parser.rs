@@ -222,9 +222,10 @@ impl Parser {
         })
     }
 
-    /// `impl "shapes/circle"` / `impl "time" as t`. `with caps(...)` is
-    /// milestone M7 (capability-based security); a file that writes it gets
-    /// a clear "not yet" error rather than a confusing parse error.
+    /// `impl "shapes/circle"` / `impl "time" as t`, and the capability
+    /// grant `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (M7). The
+    /// `with caps(...)` spelling of the grant is still read, and it is
+    /// registered as outdated rather than refused (`deprecated.rs`).
     fn parse_impl_decl(&mut self) -> PResult<ImplDecl> {
         let start = self.expect(TokenKind::Impl, "'impl'")?.span;
         let (path, path_span) = match self.peek_kind().clone() {
@@ -247,10 +248,16 @@ impl Parser {
         } else {
             (None, None, path_span)
         };
-        // `with caps(domain = ["pattern", ...], ...)` — the capability grant
+        // `caps(domain = ["pattern", ...], ...)` — the capability grant
         // (M7). Domains and patterns are validated in `resolve.rs`, where the
-        // module graph (and therefore the importer's own set) is known.
-        let caps = if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
+        // module graph (and therefore the importer's own set) is known. The
+        // `with` this used to be spelled with is read and recorded, not
+        // refused: a module's `impl` line already states what it grants, so
+        // the keyword is a deprecation rather than a second meaning.
+        let mut caps_with_span = None;
+        let mut has_caps_clause = false;
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "with") {
+            caps_with_span = Some(self.peek().span);
             self.advance();
             match self.peek_kind().clone() {
                 TokenKind::Ident(k) if k == "caps" => {
@@ -263,7 +270,13 @@ impl Parser {
                     })
                 }
             }
-            self.expect(TokenKind::LParen, "'('")?;
+            has_caps_clause = true;
+        } else if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "caps") {
+            self.advance();
+            has_caps_clause = true;
+        }
+        let caps = if has_caps_clause {
+            self.expect(TokenKind::LParen, "'(' after 'caps'")?;
             let mut grants: Vec<CapGrant> = Vec::new();
             while !self.check(&TokenKind::RParen) {
                 let (domain, dspan) = self.expect_ident()?;
@@ -313,6 +326,7 @@ impl Parser {
             alias,
             alias_span,
             caps,
+            caps_with_span,
             span: start.to(end),
         })
     }
@@ -2584,7 +2598,7 @@ mod tests {
 
     #[test]
     fn parses_a_caps_clause_with_several_grants() {
-        let p = parse("impl \"util\" with caps(fs = [\"/tmp/**\", \"/var/log/*\"], env = [\"HOME\"])");
+        let p = parse("impl \"util\" caps(fs = [\"/tmp/**\", \"/var/log/*\"], env = [\"HOME\"])");
         assert_eq!(p.impls.len(), 1);
         let caps = &p.impls[0].caps;
         assert_eq!(caps.len(), 2);
@@ -2592,17 +2606,30 @@ mod tests {
         assert_eq!(caps[0].patterns, vec!["/tmp/**", "/var/log/*"]);
         assert_eq!(caps[1].domain, "env");
         assert_eq!(caps[1].patterns, vec!["HOME"]);
+        assert!(p.impls[0].caps_with_span.is_none());
+    }
+
+    #[test]
+    fn the_with_caps_spelling_is_still_read_and_marked() {
+        // Outdated, not refused: the clause is the same one, and the `with`
+        // token's span is what the deprecation names.
+        let p = parse("impl \"util\" with caps(fs = [\"/tmp/**\"])");
+        assert_eq!(p.impls[0].caps.len(), 1);
+        assert_eq!(p.impls[0].caps[0].domain, "fs");
+        let span = p.impls[0].caps_with_span.expect("the `with` token is recorded");
+        assert!(span.start > 0, "the span names the keyword, not the line");
     }
 
     #[test]
     fn a_caps_clause_requires_bracketed_string_patterns() {
-        parse_err("impl \"util\" with caps(fs = [tmp])");
+        parse_err("impl \"util\" caps(fs = [tmp])");
     }
 
     #[test]
     fn an_impl_without_caps_has_no_grants() {
         let p = parse("impl \"std/fs\"");
         assert!(p.impls[0].caps.is_empty());
+        assert!(p.impls[0].caps_with_span.is_none());
     }
 
     #[test]

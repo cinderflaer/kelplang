@@ -6,7 +6,7 @@
 //
 // The grant names the host as the URL spells it, because that is the string the
 // capability check matches (S3's rule): `127.0.0.1` covers every port on it.
-impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/process"
 impl "std/str"
 impl "std/result"

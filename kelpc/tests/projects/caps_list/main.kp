@@ -3,7 +3,7 @@
 // remove built on `fs.list` itself), then creates, lists and removes known
 // contents, so the run is repeatable and depends on nothing already on disk.
 impl "std/str"
-impl "std/fs" with caps(fs = ["/tmp/kelp_caps_list_test/**"])
+impl "std/fs" caps(fs = ["/tmp/kelp_caps_list_test/**"])
 
 fun path_of(dir: &str, name: &str).R: String {
     var parts: List<String> = List.empty()

@@ -1,6 +1,6 @@
 // M7: main holds every capability implicitly, so it delegates a narrow `fs`
 // grant to `util` and can use `fs` itself without restrictions.
-impl "util" with caps(fs = ["/tmp/kelp_caps_granted/**"])
+impl "util" caps(fs = ["/tmp/kelp_caps_granted/**"])
 impl "std/fs"
 
 fun main() {

@@ -3,7 +3,7 @@
 // directory is created and removed by the program, so the run depends on
 // nothing already on disk.
 impl "std/str"
-impl "std/fs" with caps(fs = ["/tmp/kelp_fs_breadth_test/**"])
+impl "std/fs" caps(fs = ["/tmp/kelp_fs_breadth_test/**"])
 
 fun main() {
     val root = "/tmp/kelp_fs_breadth_test"

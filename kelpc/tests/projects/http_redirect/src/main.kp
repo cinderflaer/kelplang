@@ -4,7 +4,7 @@
 // *pooled* connection — one connection carries both hops. The POST at the end
 // goes through `http.post_text`, which uses `Client.send` and therefore a fresh
 // connection: the harness sees exactly two connections and asserts both.
-impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/process"
 impl "std/str"
 impl "std/result"

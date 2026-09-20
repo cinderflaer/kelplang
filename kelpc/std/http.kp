@@ -7,7 +7,7 @@ impl "std/result"
 
 /* std/http — an HTTP/1.1 client (S4). Ungated itself, and it *holds* `net`:
    the grant that governs its connections is the one its importer wrote
-   (`impl "std/http" with caps(net = ["api.example.com:443"])`), and the
+   (`impl "std/http" caps(net = ["api.example.com:443"])`), and the
    runtime check that follows uses those patterns, not any of its own. Because
    naming `net.connect` needs the `net` domain, a project that imports this
    module without delegating gets a compile error naming the module, not a

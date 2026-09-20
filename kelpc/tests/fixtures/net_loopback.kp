@@ -1,7 +1,7 @@
 impl "std/net"
 
 // A single-file program: the entry module implicitly holds every domain with a
-// `*` pattern (open item 18), so `net` resolves here with no `with caps(...)`
+// `*` pattern (open item 18), so `net` resolves here with no `caps(...)`
 // clause at all — and the runtime check is the whole-resource wildcard `*`,
 // which is what the `net` vocabulary had to gain in S3 alongside `host:port`.
 //

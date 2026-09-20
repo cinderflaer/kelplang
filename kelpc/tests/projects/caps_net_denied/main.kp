@@ -4,7 +4,7 @@
 // is denied rather than silently allowed. That is the design rule S3 records:
 // a grant for `example.com` does not cover `93.184.216.34`, and a grant for
 // `127.0.0.1` does not cover `localhost`.
-impl "util" with caps(net = ["127.0.0.1:*"])
+impl "util" caps(net = ["127.0.0.1:*"])
 
 fun main() {
     print(util.connect_by_another_name())

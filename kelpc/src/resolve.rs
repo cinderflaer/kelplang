@@ -478,7 +478,7 @@ struct Loader<'a> {
     stack: Vec<String>,
     modules: Vec<ModuleInfo>,
     prefixes: HashMap<String, String>,
-    /// Every `with caps(...)` seen while loading, in load order (M7). Kept
+    /// Every `caps(...)` seen while loading, in load order (M7). Kept
     /// until the whole graph is known, because a module's own set is the
     /// union of the grants made *to* it by importers loaded from anywhere.
     grants: Vec<GrantEdge>,
@@ -486,7 +486,7 @@ struct Loader<'a> {
     deprecations: Vec<Diagnostic>,
 }
 
-/// One `impl "target" with caps(domain = [patterns])` from `importer` (M7).
+/// One `impl "target" caps(domain = [patterns])` from `importer` (M7).
 #[derive(Debug, Clone)]
 struct GrantEdge {
     importer: String,
@@ -556,12 +556,19 @@ impl Loader<'_> {
         }))
     }
 
+    /// A round is one full load attempt: the discovery pass, then the strict
+    /// pass that decides the round. Everything a round produced is discarded
+    /// here so that the last round is the only one anything reads — including
+    /// the deprecations, which both passes collect. Leaving them in printed
+    /// every outdated finding twice, once for the discovery pass and once for
+    /// the strict one.
     fn reset_round(&mut self) {
         self.state.clear();
         self.stack.clear();
         self.modules.clear();
         self.prefixes.clear();
         self.parsed.clear();
+        self.deprecations.clear();
     }
 
     fn load_alias_kpconf(&mut self) -> Result<(), Diagnostic> {
@@ -675,6 +682,16 @@ impl Loader<'_> {
         let mut seen_aliases: HashSet<String> = HashSet::new();
         for imp in &program.impls {
             validate_impl_path(&imp.path, imp.span, id)?;
+            if let Some(span) = imp.caps_with_span {
+                // Still accepted, no longer wanted: `impl` already says the
+                // module declares what it imports, so the keyword states
+                // nothing the clause does not (`deprecated.rs`).
+                self.deprecations.push(crate::deprecated::finding(
+                    crate::deprecated::CAPS_WITH,
+                    span,
+                    id,
+                ));
+            }
             let alias = match &imp.alias {
                 Some(a) => {
                     // Still accepted, no longer wanted: the module's own name

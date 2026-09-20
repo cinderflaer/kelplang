@@ -1,7 +1,7 @@
 // S4: `http_pool = 0`. The same two requests as `http_get`, and the harness
 // asserts *two* connections instead of one: the ceiling in `coral.toml` is what
 // reaches `std/http`, so this pins the compiler's only configuration value.
-impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/process"
 impl "std/str"
 impl "std/result"

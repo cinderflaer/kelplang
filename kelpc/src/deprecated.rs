@@ -56,21 +56,37 @@ pub struct Outdated {
 /// `impl "..." as name`: the module alias clause (`syntax.md` 13.1).
 pub const IMPL_AS: &str = "impl-as";
 
+/// `impl "..." with caps(...)`: the keyword in front of a capability grant
+/// (`syntax.md` 15.2).
+pub const CAPS_WITH: &str = "caps-with";
+
 /// Every outdated construct, in the order they were scheduled.
 ///
-/// One entry so far. The clause is deprecated rather than deleted because a
-/// module already knows its own name: `impl "std/path"` is `path`, and a
-/// dependency's entry module is named after the folder Coral put it in
+/// Two entries so far. The `as` clause is deprecated rather than deleted
+/// because a module already knows its own name: `impl "std/path"` is `path`,
+/// and a dependency's entry module is named after the folder Coral put it in
 /// (`impl "deps/argparse/lib"` is `argparse`), so `as` names something the
 /// compiler can already work out, and the spellings that used it for a
 /// *shorter* name are the ones with an edit to make.
-pub const REGISTER: &[Outdated] = &[Outdated {
-    id: IMPL_AS,
-    what: "`impl \"...\" as name`",
-    instead: "a module is reached by its own name (`std/path` is `path`, `shapes/circle` is \
-              `circle`, and a dependency's entry module `deps/argparse/lib` is `argparse`), so \
-              drop the clause and use that name",
-}];
+///
+/// `with caps(...)` is the same shape of redundancy: `impl` already means "this
+/// module declares what it imports", so the keyword states nothing the clause
+/// does not, and the grant it introduces is unchanged when it goes.
+pub const REGISTER: &[Outdated] = &[
+    Outdated {
+        id: IMPL_AS,
+        what: "`impl \"...\" as name`",
+        instead: "a module is reached by its own name (`std/path` is `path`, `shapes/circle` is \
+                  `circle`, and a dependency's entry module `deps/argparse/lib` is `argparse`), so \
+                  drop the clause and use that name",
+    },
+    Outdated {
+        id: CAPS_WITH,
+        what: "`impl \"...\" with caps(...)`",
+        instead: "drop the `with`: the grant is `impl \"std/fs\" caps(fs = [\"/var/log/**\"])`, and \
+                  the patterns, the domains and the no-escalation rule are exactly the same",
+    },
+];
 
 /// The register entry with this id.
 pub fn find(id: &str) -> &'static Outdated {
@@ -140,7 +156,6 @@ mod tests {
     fn the_shipped_sources_carry_no_outdated_spelling() {
         // A deprecation in the stdlib is the worst kind: every program that
         // imports that module would be warned about a file it cannot edit.
-        // The register has one entry, so this scans the one shape it names.
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);
         for id in ids {
@@ -158,6 +173,13 @@ mod tests {
                      syntax: a program that imports it would be warned about a file it cannot edit",
                     imp.path,
                     imp.alias.as_deref().unwrap_or("")
+                );
+                assert!(
+                    imp.caps_with_span.is_none(),
+                    "the shipped module '{id}' writes `impl \"{}\" with caps(...)`, which is \
+                     outdated syntax: a program that imports it would be warned about a file it \
+                     cannot edit",
+                    imp.path
                 );
             }
         }

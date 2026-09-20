@@ -3,7 +3,7 @@
 // follows uses *that* module's patterns. `127.0.0.1:*` is the shape S3 made
 // expressible — a host and a wildcard port, matched as a name rather than
 // lexically normalized as a path.
-impl "peer" with caps(net = ["127.0.0.1:*"])
+impl "peer" caps(net = ["127.0.0.1:*"])
 
 fun main() {
     print(peer.report())

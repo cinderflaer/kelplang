@@ -54,7 +54,7 @@ pub struct PdDecl {
 }
 
 /// One `impl "shapes/circle"` / `impl "time" as t` line, plus its optional
-/// `with caps(...)` grants (M7).
+/// `caps(...)` grants (M7).
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
     /// The string literal's contents, verbatim (`shapes/circle` — no `.kp`).
@@ -65,15 +65,20 @@ pub struct ImplDecl {
     /// deprecation names the clause rather than the line, so the reader's eye
     /// lands on the token the fix deletes.
     pub alias_span: Option<Span>,
-    /// `with caps(domain = [patterns...])` grants. Empty when the clause is
+    /// `caps(domain = [patterns...])` grants. Empty when the clause is
     /// absent. Two jobs in one syntax: it *delegates* the domain to the
     /// imported module, and it is how the importing module states which
     /// patterns it is willing to hand over.
     pub caps: Vec<CapGrant>,
+    /// The span of the `with` in `with caps(...)`, when it was written. The
+    /// keyword carries no information (`impl` already means the module
+    /// declares what it imports), so the clause is outdated and this is what
+    /// the finding points at.
+    pub caps_with_span: Option<Span>,
     pub span: Span,
 }
 
-/// One `fs = ["/var/log/**"]` inside a `with caps(...)` clause.
+/// One `fs = ["/var/log/**"]` inside a `caps(...)` clause.
 #[derive(Debug, Clone)]
 pub struct CapGrant {
     pub domain: String,

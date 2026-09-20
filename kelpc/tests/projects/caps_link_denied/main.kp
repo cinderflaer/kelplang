@@ -2,7 +2,7 @@
 // is outside the grant is refused before `symlink(2)` runs. That is what keeps
 // a grant closed under link creation: a module can only make a link whose
 // target it could also name.
-impl "util" with caps(fs = ["/tmp/kelp_caps_link_denied/**"])
+impl "util" caps(fs = ["/tmp/kelp_caps_link_denied/**"])
 
 fun main() {
     util.escape()

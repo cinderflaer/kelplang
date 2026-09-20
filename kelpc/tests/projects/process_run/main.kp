@@ -3,7 +3,7 @@
 // follows uses *that* module's patterns. `/bin/sh` is a symlink into
 // `/nix/store` on a NixOS machine, and the check resolves symlinks before
 // matching (the same rule `fs` follows), so both spellings are granted.
-impl "runner" with caps(process = ["/bin/**", "/nix/store/**"])
+impl "runner" caps(process = ["/bin/**", "/nix/store/**"])
 
 fun main() {
     val ok = runner.run_echo()

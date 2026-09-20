@@ -1,7 +1,7 @@
 // `fs.symlink` (MK5-S2-M2), inside a grant. The scratch directory is named literally
 // here and in the module that does the work, because a grant pattern is source
 // text — the harness creates the same literal path before running this.
-impl "util" with caps(fs = ["/tmp/kelp_caps_link/**"])
+impl "util" caps(fs = ["/tmp/kelp_caps_link/**"])
 
 fun main() {
     util.build()

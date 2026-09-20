@@ -15,7 +15,7 @@
 // over an existing path is atomic on POSIX, so a run that dies halfway leaves
 // the previous file intact instead of a half-written one. That is the only
 // reason this is 60 lines rather than 10.
-impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/fs"
 impl "std/process"
 impl "std/str"

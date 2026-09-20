@@ -7,7 +7,7 @@
 // the connect path and `localhost` fails the compiled-in allowlist. The check
 // matches the host *as written*, so the address being the same machine is
 // irrelevant — which is exactly why `caps_net_denied` exists too.
-impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/process"
 impl "std/str"
 impl "std/result"

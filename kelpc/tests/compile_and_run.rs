@@ -2930,7 +2930,7 @@ fn a_child_gets_a_working_directory_and_a_fallible_run_reports_why() {
 #[test]
 fn the_entry_module_holds_net_as_the_whole_resource_wildcard() {
     // A single-file program, so `main` holds every domain with a `*` pattern:
-    // `net` resolves with no `with caps(...)` clause, and the runtime check is
+    // `net` resolves with no `caps(...)` clause, and the runtime check is
     // the `*` the vocabulary gained in S3 (before it, `net` was a path domain
     // and every host would have been denied by the path normalizer).
     assert_compiles_and_runs("tests/fixtures/net_loopback.kp", "hello\n");

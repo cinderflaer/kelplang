@@ -498,7 +498,7 @@ impl Ctx {
         }
         Err(TypeError {
             message: format!(
-                "'{}' needs the '{}' capability, which module '{}' was not granted — the module that imports this one must delegate it (`impl \"<this module>\" with caps({} = [\"<pattern>\"])`)",
+                "'{}' needs the '{}' capability, which module '{}' was not granted; the module that imports this one must delegate it (`impl \"<this module>\" caps({} = [\"<pattern>\"])`)",
                 display_callee(key),
                 domain,
                 self.module,

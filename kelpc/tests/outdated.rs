@@ -15,7 +15,8 @@
 //!
 //! The one register entry is `impl "..." as name`, so the fixtures import a
 //! module the old way. The new way is in the last test here: a dependency path
-//! is reached by the name under `deps/`.
+//! is reached by the name under `deps/`. The second entry, `with caps(...)`,
+//! has its own case below.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,6 +72,18 @@ fn outdated_project(dir: &Path) -> PathBuf {
     )
 }
 
+/// The same project with the other outdated spelling: a real `fs` delegation
+/// written with the `with` keyword, so the case is about the keyword rather
+/// than about a clause the resolver skips.
+fn caps_with_project(dir: &Path) -> PathBuf {
+    write(dir, "src/util.kp", "fun answer().R: i32 = 42\n");
+    write(
+        dir,
+        "src/main.kp",
+        "impl \"util\" with caps(fs = [\"/tmp/**\"])\n\nfun main() {\n    print(util.answer())\n}\n",
+    )
+}
+
 #[test]
 fn outdated_syntax_warns_and_the_build_succeeds() {
     let dir = scratch("warn");
@@ -101,8 +114,53 @@ fn outdated_syntax_warns_and_the_build_succeeds() {
         text.contains(&format!("{}:1:16", source.display())),
         "the warning does not point at the clause it is about:\n{text}"
     );
+    // One load, two passes (discovery, then strict): the finding is a fact
+    // about the source, so it is reported once, not once per pass.
+    assert_eq!(
+        text.matches("outdated:").count(),
+        1,
+        "the finding is printed once, not once per load pass:\n{text}"
+    );
 
     // And the program the warning was printed for is a working binary.
+    let ran = Command::new(&out).output().expect("run the built program");
+    assert!(ran.status.success());
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n");
+}
+
+#[test]
+fn the_with_caps_spelling_warns_and_the_build_succeeds() {
+    let dir = scratch("caps-with");
+    let source = caps_with_project(&dir);
+    let out = dir.join("prog");
+
+    let result = build(&source, &out, false);
+    assert!(
+        result.status.success(),
+        "outdated syntax must still compile, got {:?}:\n{}",
+        result.status.code(),
+        stderr(&result)
+    );
+    let text = stderr(&result);
+    assert!(
+        text.contains("outdated: `impl \"...\" with caps(...)` is outdated"),
+        "the finding is not labelled `outdated:`:\n{text}"
+    );
+    assert!(
+        text.contains("drop the `with`"),
+        "the warning does not name the fix:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("{}:1:13", source.display())),
+        "the warning does not point at the `with` token:\n{text}"
+    );
+    assert_eq!(
+        text.matches("outdated:").count(),
+        1,
+        "the finding is printed once, not once per load pass:\n{text}"
+    );
+
+    // The grant behind the keyword still works: the program builds and runs.
     let ran = Command::new(&out).output().expect("run the built program");
     assert!(ran.status.success());
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n");

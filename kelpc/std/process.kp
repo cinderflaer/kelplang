@@ -89,7 +89,7 @@ enum ProcErr {
 // This process's own argv, including `argv[0]`.
 //
 // Reading argv is itself behind the `process` gate: a grant with no patterns
-// (`with caps(process = [])`) is enough to name `process.args`, since there is
+// (`caps(process = [])`) is enough to name `process.args`, since there is
 // no resource argument to match.
 fun args().R: List<String> {
     var out: List<String> = List.empty()

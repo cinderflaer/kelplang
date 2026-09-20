@@ -124,7 +124,7 @@ pub enum TokenKind {
     LBrace,
     RBrace,
     // `[`/`]` are not used by any expression yet — they exist so M7's
-    // `with caps(fs = ["..."])` grant lists lex (and so the parser can
+    // `caps(fs = ["..."])` grant lists lex (and so the parser can
     // reject them with a real message instead of a lex error).
     LBracket,
     RBracket,

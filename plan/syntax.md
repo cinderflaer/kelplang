@@ -1343,9 +1343,9 @@ Every file is a module, and a module starts by importing what it uses:
 
 ```kelp
 impl "shapes/circle"
-impl "std/fs" with caps(fs = ["/var/log/myapp/*"])
+impl "std/fs" caps(fs = ["/var/log/myapp/*"])
 impl "std/str"
-impl "std/time" as t
+impl "std/time"
 ```
 
 - The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.kp` extension is not written.
@@ -1432,8 +1432,8 @@ A module reaches the outside world only through a capability. The key is that th
 
 ```kelp
 impl "std/fs"
-impl "std/http" with caps(net = ["api.example.com:443", "127.0.0.1:*"])
-impl "logger" with caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
+impl "std/http" caps(net = ["api.example.com:443", "127.0.0.1:*"])
+impl "logger" caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
 ```
 
 - The entry module holds the wildcard for every domain (`/**` for path domains, `*` for name domains), so a single-file program needs no grant for its own calls.
@@ -1442,7 +1442,8 @@ impl "logger" with caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
 - Referencing a gated function without holding the domain is a compile error naming the missing domain and the grant to write.
 - `net` patterns are `host`, `host:port`, `*.host`, `*:port` or `*`, matched as names, never as resolved addresses. `127.0.0.1:*` does not cover `localhost`.
 - `fs` and `process` patterns are absolute paths, normalized lexically and resolved through symlinks before matching, so a symlink inside the grant that points outside it is denied.
-- An empty pattern list denies everything: `with caps(process = [])` is a grant that permits no program.
+- An empty pattern list denies everything: `caps(process = [])` is a grant that permits no program.
+- The clause stands on its own: `with caps(...)` is the older spelling of the same grant, and it is **outdated** (`23`). `impl` already means "this module declares what it imports", so the keyword says nothing the clause does not, and it is removed on the next development cycle.
 
 ### 15.3 Runtime checks
 
@@ -1913,7 +1914,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `'<dir>' is a directory but has no coral.toml` | `kelpc build <dir>` needs a manifest in that directory; pass a `.kp` file instead, or add one (1.4) |
 | `entry file '<path>' is not inside '<root>/src'` | a project's modules live under `src/`; the manifest's `entry` is resolved against the project root, not against `src/` (1.3) |
 | `no 'main' function found` | the entry module needs `fun main()` |
-| `'fs.read' needs the 'fs' capability, which module 'm' was not granted` | grant it at the `impl` line: `impl "m" with caps(fs = ["/path/**"])` |
+| `'fs.read' needs the 'fs' capability, which module 'm' was not granted` | grant it at the `impl` line: `impl "m" caps(fs = ["/path/**"])` |
 | `datac 'Bad' cannot hold itself by value` | a recursive field needs indirection: `Box<Bad>` or `List<Bad>` |
 | `'Pair' is a generic type — it needs 2 type argument(s)` | write the arguments where the type is used: `Pair<i32, String>` (9.3) |
 | `cannot infer type parameter 'T' of 'Option' here` | neither the arguments nor the expected type determines `T`; annotate the binding (`val x: Option<i32> = ...`, or `val xs: List<String> = empty_of()`) |
@@ -2254,7 +2255,7 @@ if counts.has("a") { print(counts.get("a")) }
 ### 22.7 Capabilities are declared where you import
 
 ```kelp
-impl "std/fs" with caps(fs = ["/project/out/**", "/project/data/**"])
+impl "std/fs" caps(fs = ["/project/out/**", "/project/data/**"])
 ```
 
 - A module gets nothing it did not `impl`, and the checker knows each module's authority statically.
@@ -2359,7 +2360,14 @@ compiler keeps a register of those spellings (`kelpc/src/deprecated.rs`), and
 ```
 outdated: `impl "..." as name` is outdated and will be removed in the next development cycle: a module is reached by its own name (`deps/argparse/lib` is `argparse`, `std/path` is `path`, `shapes/circle` is `circle`), so drop the clause and use that name
   --> src/main.kp:1:16
+outdated: `impl "..." with caps(...)` is outdated and will be removed in the next development cycle: drop the `with`: the grant is `impl "std/fs" caps(fs = ["/var/log/**"])`, and the patterns, the domains and the no-escalation rule are exactly the same
+  --> src/main.kp:2:13
 ```
+
+A program that uses an outdated spelling **more than once gets one finding per
+use**, and one finding per use is all it gets: a load reads each module twice
+(once to discover the module graph, once to decide), so a finding collected by
+that reading is deduplicated at the end of it.
 
 - **It is not an error, and the build succeeds.** The label is `outdated: `, which is neither `error:` nor `warning: `: a lint's `warning: ` is a style opinion (19), this is a promise about a later version, and nothing is removed on the day its warning first appears.
 - **The warning names the removal.** Every entry is removed on the next development cycle, and that sentence is shared by every entry, so no entry can promise a different deadline.
@@ -2374,3 +2382,4 @@ outdated: `impl "..." as name` is outdated and will be removed in the next devel
 | id | Outdated | Write instead |
 | --- | --- | --- |
 | `impl-as` | `impl "path" as name` | `impl "path"`, and reach the module by its own name: the last path segment, or, for a module whose path ends in `/lib` under `deps/`, the name of the directory it sits in (`deps/argparse/lib` is `argparse`, `deps/fpl/json/lib` is `json`). A name the module does not have (`impl "std/path" as p`) is the namespace to change, not the import to keep. |
+| `caps-with` | `impl "path" with caps(...)` | `impl "path" caps(...)`, with the same domains and the same patterns: `impl "std/fs" caps(fs = ["/var/log/**"])`. |

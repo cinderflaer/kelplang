@@ -64,7 +64,7 @@ Authority is declared where a module is imported, and it is the only thing that
 grants it:
 
 ```kelp
-impl "std/http" with caps(net = ["127.0.0.1:*"])
+impl "std/http" caps(net = ["127.0.0.1:*"])
 impl "std/fs"
 ```
 

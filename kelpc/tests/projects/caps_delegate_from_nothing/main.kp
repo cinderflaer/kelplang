@@ -1,4 +1,4 @@
-// The entry module imports `store` with no `with caps(...)`, so `store` holds
+// The entry module imports `store` with no `caps(...)`, so `store` holds
 // nothing. `store` then tries to delegate `fs` to `inner`, and the diagnostic
 // has to point at the entry module's bare `impl` line rather than at `store`.
 impl "store"
