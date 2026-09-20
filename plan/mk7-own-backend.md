@@ -58,6 +58,13 @@ projected.*
 > `cargo test --test compile_and_run` (and with `KELPC_BACKEND=asm`), and
 > `cargo test --test memory_gate -- --ignored --nocapture`.
 
+> **Correction recorded 2026-09-20: the `81e68e7` message's "byte-identical" claim is false.** Measured
+> over the 447 `.kp` targets under `tests/fixtures` and `tests/projects` at `81e68e7^` and `81e68e7`
+> (235 of them emit C at both and were compared as sorted line multisets), six differ, five only by the
+> `String.as_str()` hoist `checked_arg_needs_temp` adds (the capability fix is behaviourally neutral for
+> every other analysed target) and the sixth being the new `caps_double_eval`; `docs` commit `7cb41ec`
+> carries the measurement and the method.
+
 | stage | state | evidence |
 | --- | --- | --- |
 | **0. Backend boundary** | **done** | `backend.rs` + `--backend=`/`KELPC_BACKEND` + per-backend suite + `run-all-backends.sh`; commit `68746a6` |
