@@ -21,4 +21,22 @@ fun main() {
     // and viewed before it can be concatenated.
     val padded = fmt.pad_left("7", 3, 48)
     print(str.concat(padded.as_str(), "!"))
+
+    print(fmt.commas_u64(0))
+    print(fmt.commas_u64(999))
+    print(fmt.commas_u64(1000))
+    print(fmt.commas_u64(1234567))
+    // `u64` max has no literal spelling, so it is the arithmetic form
+    // `fpl/hash` already uses for the FNV offset basis. Each part is bound
+    // with its type: a literal that is only the receiver of a method call gets
+    // no type from anywhere and defaults to `i32`.
+    val unit: u64 = 4294967296
+    val mask: u64 = 4294967295
+    print(fmt.commas_u64(mask * unit + mask))
+    print(fmt.commas_i64(0 - 1234567))
+    print(fmt.human_size(0))
+    print(fmt.human_size(1023))
+    print(fmt.human_size(1024))
+    print(fmt.human_size(1536))
+    print(fmt.human_size(1099511627776))
 }

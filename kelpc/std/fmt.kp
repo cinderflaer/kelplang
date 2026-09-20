@@ -24,13 +24,13 @@ extern fun bytes_raw(b: &Bytes).R: String
 
 // A byte dump for debugging binary data: "1f 8b 08". Lowercase, one space
 // between bytes, no trailing space. This is the honest first step towards
-// *seeing* your data — `print` still cannot show a `datac` or a `List`
+// *seeing* your data: `print` still cannot show a `datac` or a `List`
 // (open item 35).
 fun bytes(b: Bytes).R: String = bytes_raw(b)
 
-// `s` right-aligned in a field of `width`, padded with `fill` (a byte, not a
-// `char`: v1 has no char literal — see plan.md's open item 53). A string at
-// least `width` long is copied unchanged.
+// `s` right-aligned in a field of `width`, padded with `fill`. The fill is a
+// `u8`, not a `char`, so a character literal at the call site takes that type.
+// A string at least `width` long is copied unchanged.
 fun pad_left(s: &str, width: usize, fill: u8).R: String {
     val n = str.len(s)
     if n >= width {
@@ -60,4 +60,69 @@ fun pad_right(s: &str, width: usize, fill: u8).R: String {
         i = i + 1
     }
     return out
+}
+
+// `n` with a comma every three digits from the right: `1234567` prints as
+// `1,234,567`. Both signednesses exist because a user module cannot overload a
+// name, which is why `fmt` already spells `int` and `uint` apart.
+fun commas_u64(n: u64).R: String {
+    val digits = str.from_u64(n)
+    return group_digits(text = digits.as_str())
+}
+
+fun commas_i64(n: i64).R: String {
+    val digits = str.from_i64(n)
+    return group_digits(text = digits.as_str())
+}
+
+// The digit run of `text` with a comma every three digits, a leading `-`
+// copied before the grouping starts.
+fun group_digits(text: &str).R: String {
+    val len = str.len(text)
+    if len == 0 {
+        return String.empty()
+    }
+    var start: usize = 0
+    if str.byte(text, 0) == 45 {
+        start = 1
+    }
+    var out = String.with_capacity(len + len / 3)
+    var i: usize = 0
+    while i < start {
+        out.push(str.byte(text, i))
+        i = i + 1
+    }
+    while i < len {
+        if i > start && (len - i) % 3 == 0 {
+            out.push(',')
+        }
+        out.push(str.byte(text, i))
+        i = i + 1
+    }
+    return out
+}
+
+// `bytes` in binary units with two decimals: `"585.94 KiB"`, `"0 B"`. Binary
+// and not decimal, because `1024` is what the byte-count suffix on a command
+// line (`4k`) means and the two have to agree.
+fun human_size(bytes: u64).R: String {
+    if bytes < 1024 {
+        val text = str.from_u64(bytes)
+        return str.concat(text.as_str(), " B")
+    }
+    if bytes < 1048576 {
+        return human_scale(bytes = bytes, div = 1024, unit = " KiB")
+    }
+    if bytes < 1073741824 {
+        return human_scale(bytes = bytes, div = 1048576, unit = " MiB")
+    }
+    if bytes < 1099511627776 {
+        return human_scale(bytes = bytes, div = 1073741824, unit = " GiB")
+    }
+    return human_scale(bytes = bytes, div = 1099511627776, unit = " TiB")
+}
+
+fun human_scale(bytes: u64, div: u64, unit: &str).R: String {
+    val text = float(x = bytes.to_f64() / div.to_f64(), decimals = 2)
+    return str.concat(text.as_str(), unit)
 }
