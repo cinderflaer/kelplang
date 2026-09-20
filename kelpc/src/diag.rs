@@ -122,8 +122,18 @@ impl SourceMap {
         eprintln!("{}", self.render(d));
     }
 
+    /// The same, labelled `warning:`: a lint's finding is not a build failure,
+    /// and the label is the whole difference between the two (`kelpc lint`).
+    pub fn report_warning(&self, d: &Diagnostic) {
+        eprintln!("{}", self.render_labeled(d, "warning: "));
+    }
+
     pub fn render(&self, d: &Diagnostic) -> String {
-        let mut out = self.render_at(&d.message, d.span, &d.module, "error: ");
+        self.render_labeled(d, "error: ")
+    }
+
+    fn render_labeled(&self, d: &Diagnostic, label: &str) -> String {
+        let mut out = self.render_at(&d.message, d.span, &d.module, label);
         for note in &d.notes {
             out.push('\n');
             out.push_str(&self.render_at(&note.message, note.span, &note.module, "  note: "));

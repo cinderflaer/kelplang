@@ -1926,7 +1926,7 @@ panic: String.from_bytes: input is not valid utf-8
 - Standard library modules, functions and datac fields are `snake_case` (`fs.read_text`, `str.is_empty`, `Line.text`), and types are `PascalCase` (`String`, `Bytes`, `Box`, `Metadata`, `Url`).
 - User code case is not enforced. The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
-- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code — which nests, so a region that already contains a block comment still works.
+- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code — which nests, so a region that already contains a block comment still works. Two or more consecutive `//` lines with no blank line and no code between them is the pattern this rule is about written the other way, so `kelpc lint` warns about it. The warning never guesses intent (the author may have meant every line), so it is a warning and not an error.
 
 `kelpc fmt` enforces the indentation, spacing, trailing-whitespace, newline and
 comment rules of this section and nothing else: it caps a run of blank lines
@@ -1934,8 +1934,12 @@ between top-level declarations at one but never inserts a blank line the author
 did not write, it preserves the author's own line wrapping instead of
 re-wrapping to the 100-column limit, and the 100-column limit itself, the order
 inside the last group and the naming/case rules remain review conventions that
-need a lint, not a formatter (`kelpc` has no `lint` command). It holds four
-invariants: formatting is **idempotent** (formatting a formatted file changes
+need a lint, not a formatter. `kelpc lint` is that command, and it is
+warning-only by design: it exits zero when it finds something, because a style
+finding is not a build failure. It implements the comment-run rule above and
+nothing else yet; the naming/case option is still open (roadmap item 23).
+`kelpc fmt` holds four invariants: formatting is **idempotent** (formatting a
+formatted file changes
 nothing), **token-faithful** (no token's text is ever rewritten, so the formatted
 file is the same program), **comment-preserving** (every comment survives
 verbatim), and it **never writes a file it refuses** (a file that does not parse

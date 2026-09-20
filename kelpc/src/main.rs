@@ -9,6 +9,7 @@ mod externs;
 mod fmt;
 mod infer;
 mod lexer;
+mod lint;
 mod parser;
 mod preprocess;
 mod pretty;
@@ -49,6 +50,7 @@ fn usage() {
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
+         {BIN_NAME} lint <path>...\n       \
          {BIN_NAME} version\n\n\
          The backend may also be chosen with the KELPC_BACKEND environment\n\
          variable; an explicit --backend wins over it. The default is 'c'.\n\n\
@@ -67,9 +69,12 @@ fn usage() {
          program, and a rewritten file is a new inode — a hard link to it\n\
          keeps the old bytes. A file that does not parse — by fmt's own\n\
          reading of it, or by the compiler's when the project's aliases are\n\
-         needed — is reported as a parse error and left alone.",
-        BIN_NAME = BIN_NAME,
-        BUILD_DIR = BUILD_DIR,
+         needed — is reported as a parse error and left alone.\n\n\
+         lint prints warnings for the sources under each path (.{EXT} files,\n\
+         recursing a directory, with a symbolic link inside a directory\n\
+         skipped and reported). A warning is not a failure: lint exits zero\n\
+         with warnings on stderr, and nonzero only for a path it could not\n\
+         read or a file it could not lex. It never writes to a file.",
         EXT = resolve::EXT
     );
 }
@@ -208,7 +213,7 @@ fn fmt_command(args: &[String]) -> ExitCode {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
     for path in &paths {
-        match collect_kp(Path::new(path)) {
+        match collect_kp(Path::new(path), "fmt") {
             Ok((mut found, mut links)) => {
                 files.append(&mut found);
                 skipped.append(&mut links);
@@ -586,7 +591,7 @@ static TEMP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize
 /// writes); a link that names a directory is refused here, because a directory
 /// command would recurse through it and rewrite a tree under a name that is not
 /// that tree's own.
-fn collect_kp(path: &Path) -> Result<(Vec<PathBuf>, Vec<String>), String> {
+fn collect_kp(path: &Path, command: &str) -> Result<(Vec<PathBuf>, Vec<String>), String> {
     let meta = fs::symlink_metadata(path).map_err(|e| {
         RefusalKind::PathNamesNothing
             .message(format!("cannot read '{}': {e}", path.display()))
@@ -597,7 +602,7 @@ fn collect_kp(path: &Path) -> Result<(Vec<PathBuf>, Vec<String>), String> {
                 .map(|t| t.display().to_string())
                 .unwrap_or_else(|_| path.display().to_string());
             return Err(RefusalKind::NotARegularFile.message(format!(
-                "'{}' is a symbolic link to the directory '{real}'; fmt does not follow it — \
+                "'{}' is a symbolic link to the directory '{real}'; {command} does not follow it — \
                  pass the directory itself",
                 path.display()
             )));
@@ -614,6 +619,103 @@ fn collect_kp(path: &Path) -> Result<(Vec<PathBuf>, Vec<String>), String> {
         Ok((out, skipped))
     } else {
         Ok((vec![path.to_path_buf()], Vec::new()))
+    }
+}
+
+/// `kelpc lint <path>...`: warns about the sources under each path, and never
+/// fails a build for a warning.
+///
+/// The contract, which is the whole difference from `fmt` and `build`:
+///
+/// - **A warning is not a failure.** Warnings go to stderr and the exit stays
+///   zero, so a lint run in a script tells "clean" from "has findings" by the
+///   output and "could not check" by the exit code.
+/// - **Nothing is written.** No file is rewritten, so there is no `-w` and no
+///   `--check`: the command says what it found and leaves the tree alone.
+/// - **Only a read failure or a lex failure is an error**, and those are
+///   reported exactly as `build` reports them for the same file.
+///
+/// Paths are collected the way `fmt` collects them (a `.kp` file or a
+/// directory, recursing, a link inside a directory skipped and reported), so a
+/// script that lints a tree names the tree once.
+fn lint_command(args: &[String]) -> ExitCode {
+    let mut paths: Vec<String> = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            other if other.starts_with('-') && other.len() > 1 => {
+                eprintln!("error: unknown flag '{other}'; 'lint' takes paths only");
+                return ExitCode::FAILURE;
+            }
+            other => paths.push(other.to_string()),
+        }
+    }
+    if paths.is_empty() {
+        eprintln!("error: 'lint' needs at least one path (a '.{}' file or a directory)", resolve::EXT);
+        return ExitCode::FAILURE;
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for path in &paths {
+        match collect_kp(Path::new(path), "lint") {
+            Ok((mut found, mut links)) => {
+                files.append(&mut found);
+                skipped.append(&mut links);
+            }
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    for link in &skipped {
+        eprintln!(
+            "note: skipping '{link}': a symbolic link found inside a directory is not \
+             linted, because the file behind it is already in the tree or not in it"
+        );
+    }
+    files.sort();
+    files.dedup();
+    if files.is_empty() {
+        eprintln!("error: no '.{}' files found", resolve::EXT);
+        return ExitCode::FAILURE;
+    }
+
+    let mut failed = false;
+    for file in &files {
+        failed |= !lint_one(file);
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Lints one file. `false` means a diagnostic was printed, which only a
+/// failure to read the file or to lex it produces: a warning is a success.
+fn lint_one(path: &Path) -> bool {
+    let src = match read_source(path) {
+        Ok(src) => src,
+        Err(()) => return false,
+    };
+    let mut sources = SourceMap::new();
+    let module = path.to_string_lossy().to_string();
+    let runs = lint::comment_runs(&src);
+    // The file is registered either way: a lex error carries a span into it,
+    // and that span has to print as `file:line:col` like every other one.
+    sources.insert(&module, path, src);
+    match runs {
+        Ok(runs) => {
+            for run in runs {
+                sources.report_warning(&Diagnostic::new(run.message(), run.span, module.clone()));
+            }
+            true
+        }
+        Err(e) => {
+            sources.report(&Diagnostic::new(e.message, e.span, module));
+            false
+        }
     }
 }
 
@@ -653,6 +755,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Some("fmt") => return fmt_command(&args[2..]),
+        Some("lint") => return lint_command(&args[2..]),
         Some(c @ ("build" | "run")) => c,
         _ => {
             usage();
