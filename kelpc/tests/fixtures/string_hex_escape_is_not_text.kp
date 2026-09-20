@@ -1,0 +1,6 @@
+// A string literal is UTF-8 text, so `\xNN` stops at the ASCII range: a byte
+// above 0x7F is not a text character, and 0x00 is refused because a `str` is
+// NUL-terminated. Bytes are `Bytes` (syntax.md 2.4).
+fun main() {
+    print("\xff")
+}

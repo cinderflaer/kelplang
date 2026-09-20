@@ -2501,6 +2501,22 @@ fn fold_const(
         // numeric sense; `check_expr` is what refuses a code point that does
         // not fit the declared type.
         ast::Expr::CharLit(v, _) => Ok(ConstValue::Int(*v as i64)),
+        // A byte literal folds to its byte, and only where the declared type
+        // is the `u8` it is: `const NL: u8 = b'\n'` is a byte, and
+        // `const C: char = b'x'` is refused for the reason `check_expr`
+        // refuses it, with the `const` named.
+        ast::Expr::ByteLit(v, _) => {
+            if !matches!(declared, Ty::U8) {
+                return Err(TypeError {
+                    message: format!(
+                        "a byte literal is a 'u8', not a '{}'",
+                        declared.display()
+                    ),
+                    span,
+                });
+            }
+            Ok(ConstValue::Int(*v as i64))
+        }
         ast::Expr::FloatLit(v, _) => Ok(ConstValue::Float(*v)),
         ast::Expr::BoolLit(b, _) => Ok(ConstValue::Bool(*b)),
         ast::Expr::StringLit(s, _) => Ok(ConstValue::Str(s.clone())),
@@ -3951,6 +3967,7 @@ impl PdScan {
             }
             ast::Expr::IntLit(..)
             | ast::Expr::CharLit(..)
+            | ast::Expr::ByteLit(..)
             | ast::Expr::FloatLit(..)
             | ast::Expr::StringLit(..)
             | ast::Expr::BoolLit(..) => {}
@@ -4883,6 +4900,29 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             Ok(tir::Expr {
                 kind: tir::ExprKind::FloatLit(*v),
                 ty,
+                span: *span,
+            })
+        }
+        // A byte literal (H-11) is a `u8` by construction, unlike a character
+        // literal, which takes the integer type its context asks for. That is
+        // the whole difference: `b'\n'` needs no type written on the binding,
+        // and it is refused (rather than widened) where the context wants
+        // something other than a byte, which is what `'\n'` is for.
+        ast::Expr::ByteLit(v, span) => {
+            if let Some(t) = expected {
+                if !matches!(t, Ty::U8) {
+                    return Err(TypeError {
+                        message: format!(
+                            "a byte literal is a 'u8', not a '{}': write it as a character literal when it should take this type",
+                            t.display()
+                        ),
+                        span: *span,
+                    });
+                }
+            }
+            Ok(tir::Expr {
+                kind: tir::ExprKind::IntLit(*v as i64),
+                ty: Ty::U8,
                 span: *span,
             })
         }

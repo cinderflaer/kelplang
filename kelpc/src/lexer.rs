@@ -33,6 +33,13 @@ pub enum TokenKind {
     /// literal takes the integer type its context asks for, which is what
     /// makes `c == '"'` work when `c` is a `u8` byte.
     CharLit(u32),
+    /// `b'x'`, `b'\n'`, `b'\xff'` — one byte, and a `u8` by construction
+    /// (H-11). Distinct from `CharLit` because the two differ in exactly the
+    /// places a byte-level program cares about: a byte literal never needs
+    /// the type written on a binding (`val nl = b'\n'` is a `u8`), it is
+    /// refused where a wider type is asked for rather than widened, and
+    /// `b'\xff'` is the byte 255 while `'\xff'` is the code point U+00FF.
+    ByteLit(u8),
     Ident(String),
     /// `// ...` up to (not including) the line terminator, or `/* ... */`,
     /// both with their delimiters. Produced only by
@@ -720,6 +727,18 @@ impl<'a> Lexer<'a> {
                     if self.peek() == Some(b'!') && self.peek_at(1) == Some(b'(') {
                         self.pos += 1;
                     }
+                    // `b'x'` is a byte literal, not the identifier `b` beside
+                    // a character literal (H-11). The test is on the exact
+                    // spelling `b` followed by a quote, so `bx'x'` is still an
+                    // identifier and a literal.
+                    if self.src[start..self.pos] == *"b" && self.peek() == Some(b'\'') {
+                        self.advance(); // the opening quote
+                        let byte = self.lex_byte_literal(start)?;
+                        return Ok(Some(Token {
+                            kind: TokenKind::ByteLit(byte),
+                            span: Span::new(start, self.pos),
+                        }));
+                    }
                     let text = &self.src[start..self.pos];
                     match text {
                         "fun" => TokenKind::Fun,
@@ -806,6 +825,11 @@ impl<'a> Lexer<'a> {
                 Some(b'\\') => '\\' as u32,
                 Some(b'\'') => '\'' as u32,
                 Some(b'"') => '"' as u32,
+                // `\xNN` is the code point NN in a character literal, the
+                // same value a character with that code point has: `'\x41'`
+                // is `'A'`. It is the byte NN in a byte literal. Two hex
+                // digits exactly (open item 64).
+                Some(b'x') => self.lex_hex_escape(start)? as u32,
                 // `\u{4e2d}` — the code point in hex, braced so the escape has
                 // an unambiguous end and an arbitrary number of digits.
                 Some(b'u') => {
@@ -836,7 +860,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some(c) => {
                     return Err(err!(
-                        "unknown escape '\\{}' in a character literal — the escapes are \\n, \\t, \\r, \\0, \\', \\\", \\\\ and \\u{{...}}",
+                        "unknown escape '\\{}' in a character literal: the escapes are \\n, \\t, \\r, \\0, \\', \\\", \\\\, \\xNN and \\u{{...}}",
                         c as char
                     ))
                 }
@@ -860,6 +884,116 @@ impl<'a> Lexer<'a> {
             Some(_) => Err(err!("a character literal holds exactly one character")),
             None => Err(err!("unterminated character literal")),
         }
+    }
+
+    /// Lexes a byte literal, having consumed the opening `'`; `start` is that
+    /// quote's offset (H-11).
+    ///
+    /// The result is a `u8` by construction, which is the point: `val nl =
+    /// b'\n'` needs no type, and it is refused where a wider type is asked
+    /// for rather than widened into one. `infer.rs` gives it `u8` and nothing
+    /// else, so unlike a character literal it does not take the type its
+    /// context asks for.
+    ///
+    /// It holds one byte, written as one ASCII character or as a `\xNN`
+    /// escape: `b'é'` is a diagnostic (a byte literal is not a code point, and
+    /// `'é'` belongs in a character literal), while `b'\xe9'` is the byte 233,
+    /// which is the value a character literal with that code point has in a
+    /// `u8` position. `b'\u{4e2d}'` is not its escape either.
+    fn lex_byte_literal(&mut self, start: usize) -> Result<u8, LexError> {
+        macro_rules! err {
+            ($($arg:tt)*) => {
+                LexError {
+                    message: format!($($arg)*),
+                    span: Span::new(start, self.pos),
+                }
+            };
+        }
+        if self.peek() == Some(b'\'') {
+            self.advance();
+            return Err(err!("a byte literal cannot be empty"));
+        }
+        let byte = match self.advance() {
+            None => return Err(err!("unterminated byte literal")),
+            Some(b'\n') => {
+                return Err(err!(
+                    "a byte literal cannot span lines, write '\\n' for a newline"
+                ))
+            }
+            Some(b'\\') => match self.advance() {
+                Some(b'n') => b'\n',
+                Some(b't') => b'\t',
+                Some(b'r') => b'\r',
+                Some(b'0') => 0,
+                Some(b'\\') => b'\\',
+                Some(b'\'') => b'\'',
+                Some(b'"') => b'"',
+                Some(b'x') => self.lex_hex_escape(start)?,
+                Some(b'u') => {
+                    return Err(err!(
+                        "a byte literal holds one byte, so '\\u{{...}}' is a character literal escape"
+                    ))
+                }
+                Some(c) => {
+                    return Err(err!(
+                        "unknown escape '\\{}' in a byte literal: the escapes are \\n, \\t, \\r, \\0, \\', \\\", \\\\ and \\xNN",
+                        c as char
+                    ))
+                }
+                None => return Err(err!("unterminated byte literal")),
+            },
+            // The byte just consumed is only the first byte of a non-ASCII
+            // character, so the message names the character rather than a byte
+            // of its UTF-8: a byte literal is one ASCII character or a `\xNN`
+            // escape (the escape is how any other byte is written), so a
+            // non-ASCII character belongs in a character literal.
+            Some(c) if !c.is_ascii() => {
+                let byte_start = self.pos - 1;
+                let ch = self.src[byte_start..]
+                    .chars()
+                    .next()
+                    .expect("not at the end of the source");
+                return Err(LexError {
+                    message: format!(
+                        "a byte literal is one ASCII character or a '\\xNN' escape, and '{ch}' is not one: a non-ASCII character is a code point, so it belongs in a character literal"
+                    ),
+                    span: Span::new(start, byte_start + ch.len_utf8()),
+                });
+            }
+            Some(c) => c,
+        };
+        match self.advance() {
+            Some(b'\'') => Ok(byte),
+            Some(_) => Err(err!("a byte literal holds exactly one byte")),
+            None => Err(err!("unterminated byte literal")),
+        }
+    }
+
+    /// Reads the two hex digits of a `\xNN` escape, the `x` already consumed,
+    /// and returns the value.
+    ///
+    /// Exactly two digits, never a run of them: C's hex escape swallows every
+    /// hex digit after it, so `"\x0d" + "a"` is one escape there and its value
+    /// overflows the byte (open item 64). A fixed width is the whole
+    /// discipline, and it is why a third hex digit is just the next character
+    /// of the text: `"\x41a"` is `"Aa"`.
+    fn lex_hex_escape(&mut self, start: usize) -> Result<u8, LexError> {
+        let mut value: u32 = 0;
+        for _ in 0..2 {
+            let digit = match self.advance() {
+                Some(c) if c.is_ascii_hexdigit() => {
+                    (c as char).to_digit(16).expect("an ASCII hex digit")
+                }
+                _ => {
+                    return Err(LexError {
+                        message: "a hex escape is written '\\xNN', with two hex digits".to_string(),
+                        span: Span::new(start, self.pos),
+                    })
+                }
+            };
+            value = value * 16 + digit;
+        }
+        Ok(value as u8)
     }
 
     /// Lexes a string literal, having consumed the opening quote; `start` is
@@ -889,6 +1023,29 @@ impl<'a> Lexer<'a> {
                     Some(b'r') => text.push('\r'),
                     Some(b'"') => text.push('"'),
                     Some(b'\\') => text.push('\\'),
+                    // `\xNN`, exactly two hex digits (open item 64). A `str`
+                    // is NUL-terminated UTF-8, so only the ASCII range and
+                    // everything but NUL can be written this way; anything
+                    // above it is a byte buffer's business (`Bytes`), not
+                    // text's.
+                    Some(b'x') => {
+                        let byte = self.lex_hex_escape(start)?;
+                        if byte == 0 {
+                            return Err(LexError {
+                                message: "a 'str' is NUL-terminated, so '\\x00' cannot be in a string literal".to_string(),
+                                span: Span::new(start, self.pos),
+                            });
+                        }
+                        if !byte.is_ascii() {
+                            return Err(LexError {
+                                message: format!(
+                                    "a string literal is UTF-8: '\\x{byte:02X}' is not a text character. Write the character itself, or build the bytes with 'Bytes'"
+                                ),
+                                span: Span::new(start, self.pos),
+                            });
+                        }
+                        text.push(byte as char);
+                    }
                     // Anything else is an error rather than the bare character:
                     // passing it through made `"\q"` mean `"q"`, so a typo was
                     // silently a different string. `\0` is rejected for a second
@@ -896,7 +1053,7 @@ impl<'a> Lexer<'a> {
                     Some(c) => {
                         return Err(LexError {
                             message: format!(
-                                "unknown escape '\\{}' in a string literal — the escapes are \\n, \\t, \\r, \\\" and \\\\",
+                                "unknown escape '\\{}' in a string literal: the escapes are \\n, \\t, \\r, \\\", \\\\ and \\xNN",
                                 c as char
                             ),
                             span: Span::new(start, self.pos),
@@ -1188,6 +1345,60 @@ mod tests {
                 "0x10000000000000000",
                 "larger than the largest integer literal",
             ),
+        ];
+        for (src, needle) in cases {
+            let err = Lexer::new(src).tokenize().unwrap_err();
+            assert!(
+                err.message.contains(needle),
+                "for {src:?} expected a message containing {needle:?}, got: {}",
+                err.message
+            );
+        }
+    }
+
+    /// `b'x'` is one token, not the identifier `b` beside a character literal
+    /// (H-11), and `\xNN` is exactly two hex digits in a byte literal, a
+    /// character literal and a string.
+    #[test]
+    fn lexes_byte_literals_and_hex_escapes() {
+        assert_eq!(
+            kinds(r#"b'x' b'\n' b'\x41' b'\xff' '\x41' "\x41""#),
+            vec![
+                TokenKind::ByteLit(b'x'),
+                TokenKind::ByteLit(b'\n'),
+                TokenKind::ByteLit(0x41),
+                TokenKind::ByteLit(0xff),
+                TokenKind::CharLit(0x41),
+                TokenKind::StringLit("A".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+        // `b` is an ordinary identifier when it is not a byte literal, and a
+        // hex escape does not run on into the hex-looking text after it.
+        assert_eq!(
+            kinds(r#"bx b "\x41a""#),
+            vec![
+                TokenKind::Ident("bx".to_string()),
+                TokenKind::Ident("b".to_string()),
+                TokenKind::StringLit("Aa".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    /// Each malformed shape is named at its own span: a byte literal is one
+    /// ASCII character or a `\xNN` escape, and the escape is two hex digits in
+    /// every literal form, with a string literal stopping at the ASCII range.
+    #[test]
+    fn a_malformed_byte_literal_or_hex_escape_names_its_own_problem() {
+        let cases = [
+            ("b''", "cannot be empty"),
+            ("b'ab'", "exactly one byte"),
+            ("b'\u{e9}'", "one ASCII character or a '\\xNN' escape"),
+            ("b'\\u{4e2d}'", "character literal escape"),
+            ("b'\\x4'", "two hex digits"),
+            ("\"\\xff\"", "not a text character"),
+            ("\"\\x00\"", "NUL-terminated"),
         ];
         for (src, needle) in cases {
             let err = Lexer::new(src).tokenize().unwrap_err();

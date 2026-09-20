@@ -866,6 +866,7 @@ impl Lead {
                     | TokenKind::FloatLit(_)
                     | TokenKind::StringLit(_)
                     | TokenKind::CharLit(_)
+                    | TokenKind::ByteLit(_)
                     | TokenKind::Ident(_)
                     | TokenKind::True
                     | TokenKind::False

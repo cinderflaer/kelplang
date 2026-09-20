@@ -1,0 +1,6 @@
+// `\xNN` is exactly two hex digits, in a string or a byte literal, so the
+// escape cannot run on into the hex-looking text after it (open item 64).
+fun main() {
+    val x = b'\x4'
+    print(x)
+}

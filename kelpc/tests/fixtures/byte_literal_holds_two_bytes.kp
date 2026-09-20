@@ -1,0 +1,6 @@
+// A byte literal is one byte: `b'ab'` is refused at the second character
+// rather than taking the first (syntax.md 2.4).
+fun main() {
+    val x = b'ab'
+    print(x)
+}

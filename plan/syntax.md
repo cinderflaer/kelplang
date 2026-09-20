@@ -212,6 +212,7 @@ val b = 3.5             // float literal
 val c = true            // bool literal
 val d = "text\n"        // string literal
 val e = 'x'             // character literal
+val g = b'x'            // byte literal
 val f = "n = $a, sum = ${a + 1}"   // string template
 ```
 
@@ -231,7 +232,9 @@ val big: i64 = 'z'          // the same literal, in a wider slot
 
 - A code point that does not fit the type the context asks for is a **compile error**, not a truncation: `val c: u8 = '中'` fails with the character and its code point named.
 - A `char` is a code point, and it is *not* an integer: `'a' + 1` and `'a' == 97` are both errors. Give the literal the type you mean (`val a: u8 = 'a'`) when you are doing arithmetic on it.
-- The escape set for both literal forms is closed. In a **character** literal: `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, and `\u{...}` — `'\u{4e2d}'` is U+4E2D, braced so the escape has an unambiguous end. In a **string** literal: `\n`, `\t`, `\r`, `\"`, `\\` — a string literal is NUL-terminated, so `\0` is refused there and `\u{...}` is not an escape (write the character itself: `"中"`).
+- The escape set for all three literal forms is closed. In a **character** literal: `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\xNN` and `\u{...}`: `'\u{4e2d}'` is U+4E2D, braced so the escape has an unambiguous end. In a **byte** literal: `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\` and `\xNN` (not `\u{...}`: a byte literal is one byte, not a code point). In a **string** literal: `\n`, `\t`, `\r`, `\"`, `\\` and `\xNN` up to the ASCII range: a string literal is NUL-terminated and UTF-8, so `\0` and `\x00` are refused there and a byte above `0x7f` is not text (that is what `Bytes` is for); `\u{...}` is not an escape either (write the character itself: `"中"`).
+- `\xNN` is **exactly two hex digits**, so it cannot run on into the text after it: `"\x41a"` is `"Aa"`, and `\x0d` followed by `a` is a carriage return and the letter (C's hex escape swallows the `a` and overflows the byte). In a character literal it is the code point, so `'\x41'` is `'A'`; in a byte literal it is the byte, so `b'\x41'` is `65` and `b'\xff'` is `255`.
+- A **byte literal** is one ASCII character or a `\xNN` escape, and it is a `u8` **by construction**: `val nl = b'\n'` needs no type written anywhere, which is the whole difference from a character literal. It does not take the type its context asks for, so `val n: i64 = b'x'` is refused rather than widened (write `val n: i64 = 'x'` for that), and a non-ASCII character belongs in a character literal (`b'é'` is refused, and `b'\xe9'` is the byte 233, the value `'\u{e9}'` has in a `u8` position).
 - A string literal is a `str`: a borrowed, NUL-terminated byte sequence. It is not owned and is not freed. It is converted to an owned `String` implicitly where one is expected (see 5.1).
 
 ### 2.5 String templates
@@ -1839,7 +1842,10 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding; a field of a returned `datac` (`mkName().name.as_str()`) is the same case one projection deeper (§10.2) |
 | `argument 'b' has type 'String', expected 'str'` | the parameter is `str` and the value is owned: `str.eq(a, b)`, `fs.write_text`, `path.join` and every other `str` parameter need a view — add `.as_str()` |
-| `argument 'c' has type 'char', expected 'u8'` — with the note about writing the type | a character literal with nothing asking for a type is a `char`, and a `char` is not an integer; write `val c: u8 = '"'` |
+| `argument 'c' has type 'char', expected 'u8'` (with the note about writing the type) | a character literal with nothing asking for a type is a `char`, and a `char` is not an integer; write the type (`val c: u8 = '"'`) or use the byte literal, which is a `u8` by construction (`b'"'`, §2.4) |
+| `a byte literal is a 'u8', not a 'i64'` | a byte literal is a `u8` and does not take the type its context asks for, which is the difference from a character literal: write `'x'` when the type should come from where the literal sits (§2.4) |
+| `a byte literal is one ASCII character or a '\xNN' escape` | a non-ASCII character is a code point, so it belongs in a character literal; `b'\xe9'` is the byte 233 (§2.4) |
+| `a hex escape is written '\xNN', with two hex digits` | the escape is exactly two hex digits, and a string literal stops at the ASCII range: `"\xff"` is not text (§2.4) |
 | `the character '中' (U+4E2D) does not fit in 'u8'` | a character literal takes the type its context asks for, and this one does not fit; use a wider type, or the byte you meant |
 | `operator requires matching integer operands, found 'u8' and 'bool'` | `&` `\|` `^` `<<` `>>` `~` are integer-only (`bool` has `&&`/`\|\|`), and both operands must be the *same* type |
 | `cannot compare 'View' values with '=='` | use `v.eq(other)` — it compares the bytes and the lengths |

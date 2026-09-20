@@ -1,0 +1,68 @@
+// Byte literals (H-11). The only way to write a byte used to be a character
+// literal with the type written on the binding first: `val c: u8 = '"'`. With
+// nothing asking for a type, `'x'` is a `char`, and a `char` is a code point
+// rather than a byte, so `val c = '"'` was refused and every byte in a
+// signature had to be spelled twice.
+//
+// `b'x'` is a `u8` by construction. It never needs the type, it is refused
+// where a wider one is asked for rather than silently widening, and `\xNN`
+// writes a byte with no printable spelling in a byte literal or in a string
+// (`"\x1b[0m"`), with exactly two hex digits so the escape cannot run on into
+// the text after it (`"\x41a"` is "Aa").
+impl "std/str"
+
+fun main() {
+    // No type on the binding, which is the whole point.
+    val nl = b'\n'
+    print(nl)
+    val cr = b'\r'
+    print(cr)
+    val tab = b'\t'
+    print(tab)
+    val quote = b'"'
+    print(quote)
+    val backslash = b'\\'
+    print(backslash)
+    val squote = b'\''
+    print(squote)
+    val nul = b'\0'
+    print(nul)
+    val space = b' '
+    print(space)
+
+    // `\xNN`, in a byte literal: the byte 255, which a `u8` binding and a
+    // character literal could not reach without a `\u{...}` code point.
+    val all = b'\xff'
+    print(all)
+    print(all == 255)
+
+    // A byte read out of text compares against a byte literal directly.
+    val text = "hi"
+    print(str.byte(text, 0) == b'h')
+    print(str.byte(text, 1) == b'i')
+    print(str.byte(text, 0) == b'H')
+
+    // `\xNN` in a string: the escape sequence a terminal reads, and a byte
+    // followed by a hex-digit character, which is the C run-on this spelling
+    // cannot have.
+    print(str.len("\x1b[0m"))
+    print("\x41bc")
+    print(str.eq("\x41", "A"))
+
+    // A character literal with the same escape is the code point, and in a
+    // `u8` position the two spellings agree: 233 either way.
+    val code_point: u8 = '\xe9'
+    print(code_point)
+    val byte = b'\xe9'
+    print(byte == code_point)
+
+    // A byte literal in a byte-level loop, where the workaround was worst. The
+    // counter is a `u8` because the literal is one: a byte literal does not
+    // widen into an `i32` expression the way a character literal does, which is
+    // the price of `val c = b'0'` needing no type at all.
+    var n: u8 = 0
+    while n < 3 {
+        print(b'0' + n)
+        n += 1
+    }
+}

@@ -1,0 +1,7 @@
+// A byte literal is a `u8` and does not take the type its context asks for,
+// which is what a character literal is for: `val x: i64 = 'x'` is the same
+// value in a wider slot (syntax.md 2.4).
+fun main() {
+    val x: i64 = b'x'
+    print(x)
+}

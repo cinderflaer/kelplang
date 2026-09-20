@@ -1572,6 +1572,44 @@ fn character_literals_take_the_type_their_context_asks_for() {
     );
 }
 
+/// Byte literals (H-11). The assertion is the byte values and the escapes,
+/// including the `\xNN` pair that agrees across a byte and a character
+/// literal.
+#[test]
+fn byte_literals_are_u8_and_carry_hex_escapes() {
+    assert_compiles_and_runs(
+        "tests/fixtures/byte_literals.kp",
+        "10\n13\n9\n34\n92\n39\n0\n32\n255\ntrue\ntrue\ntrue\nfalse\n4\nAbc\ntrue\n233\ntrue\n48\n49\n50\n",
+    );
+}
+
+/// A byte literal is one ASCII character or a `\xNN` escape, it is a `u8` and
+/// not the type its context asks for, and the escape is exactly two hex
+/// digits in both literal forms.
+#[test]
+fn a_byte_literal_is_one_byte_and_a_u8() {
+    assert_rejected_with(
+        "tests/fixtures/byte_literal_holds_two_bytes.kp",
+        "a byte literal holds exactly one byte",
+    );
+    assert_rejected_with(
+        "tests/fixtures/byte_literal_is_not_ascii.kp",
+        "a byte literal is one ASCII character or a '\\xNN' escape",
+    );
+    assert_rejected_with(
+        "tests/fixtures/byte_literal_does_not_widen.kp",
+        "a byte literal is a 'u8', not a 'i64'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/hex_escape_needs_two_digits.kp",
+        "a hex escape is written '\\xNN', with two hex digits",
+    );
+    assert_rejected_with(
+        "tests/fixtures/string_hex_escape_is_not_text.kp",
+        "not a text character",
+    );
+}
+
 #[test]
 fn a_character_literal_too_large_for_its_type_is_rejected() {
     assert_rejected("tests/fixtures/char_literal_does_not_fit.kp");
@@ -4248,6 +4286,11 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // narrowed to an `i32` is the same two's-complement question
         // `int_literal_width` pins, one spelling further out.
         "int_literals",
+        // ...and the byte literals, which are `u8` values from the lexer and
+        // so take the narrow-integer path through both backends, plus a string
+        // with a hex escape, where the escape reaches code generation as an
+        // ordinary character.
+        "byte_literals",
         // MK7 §5's next slice: a scalar borrow and the store through it. A
         // wrong pointer is a wrong number or a wild write, not a build
         // failure, which is exactly what comparing the two backends catches.

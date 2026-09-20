@@ -1,0 +1,7 @@
+// A byte literal is one ASCII character or a `\xNN` escape. A non-ASCII
+// character is a code point, so it belongs in a character literal; `b'\xe9'`
+// is how the byte itself is written (syntax.md 2.4).
+fun main() {
+    val x = b'é'
+    print(x)
+}

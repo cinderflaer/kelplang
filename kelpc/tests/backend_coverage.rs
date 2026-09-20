@@ -64,8 +64,8 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 179 fixtures the C backend
-/// builds, 159 of them also built by the asm backend, 20 refused: which is the
+/// The counts this list was recorded against: 181 fixtures the C backend
+/// builds, 161 of them also built by the asm backend, 20 refused: which is the
 /// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level. (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
@@ -74,7 +74,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `panic_owned_message`) were recorded with it; see the re-recording notes
 /// below.)
 ///
-/// The last re-recording is the field-of-a-temporary slice:
+/// The last re-recording is the literal-syntax slice: `int_literals` and
+/// `byte_literals` are the first fixtures for `0x`/`0b` integer literals and
+/// for byte literals, and both are ordinary narrow-integer programs, so both
+/// backends build them: 179/159/20 -> 181/161/20.
+///
+/// Before it, the last re-recording was the field-of-a-temporary slice:
 /// `heap_field_of_owned_temporary` left the C backend's rejected column: it
 /// stages the temporary a borrowed field lives in and frees *it* after the
 /// call, which the asm backend has always done. So the fixture is in the
@@ -200,7 +205,8 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "box_field_take",
     "box_owned_elements",
     "box_recursive",
-    "bytes_build",
+"byte_literals",
+"bytes_build",
     "char_literals",
     "consts",
     "datac_basic",
@@ -254,7 +260,8 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "if_let_chain_same_scrutinee",
     "int_conversion_overflow",
     "int_conversions",
-    "int_literal_width",
+"int_literal_width",
+"int_literals",
     "int_mod_narrow",
     "list_basic",
     "list_clone",

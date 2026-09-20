@@ -1367,6 +1367,10 @@ impl Parser {
                 self.advance();
                 Ok(Expr::CharLit(v, tok.span))
             }
+            TokenKind::ByteLit(v) => {
+                self.advance();
+                Ok(Expr::ByteLit(v, tok.span))
+            }
             TokenKind::FloatLit(v) => {
                 self.advance();
                 Ok(Expr::FloatLit(v, tok.span))
