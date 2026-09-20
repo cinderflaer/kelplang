@@ -783,6 +783,32 @@ fn reading_a_copy_passdown_twice_in_one_call_is_allowed() {
 }
 
 #[test]
+fn a_method_receiver_is_borrowed_after_its_own_arguments() {
+    // MISSING-n4Bz7: `counts.insert(k, counts.get_or(..) + 1)` and its List and
+    // String-keyed spellings. Each was "already borrowed exclusively" before,
+    // because the receiver's exclusive borrow started before the arguments were
+    // checked.
+    assert_compiles_and_runs(
+        "tests/fixtures/borrow_two_phase.kp",
+        "2\n2\n42\n3\n",
+    );
+}
+
+#[test]
+fn two_phase_borrows_still_reject_aliasing() {
+    // The other half: a shared borrow of the receiver that outlives the
+    // arguments is still a conflict, and so is a second exclusive borrow.
+    assert_rejected_with(
+        "tests/fixtures/borrow_two_phase_alias.kp",
+        "already borrowed as shared",
+    );
+    assert_rejected_with(
+        "tests/fixtures/borrow_two_phase_nested.kp",
+        "already borrowed exclusively",
+    );
+}
+
+#[test]
 fn reading_a_passdown_before_it_is_declared_is_rejected() {
     assert_rejected("tests/fixtures/pd_forward_read.kp");
 }

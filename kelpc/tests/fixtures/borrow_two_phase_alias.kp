@@ -1,0 +1,14 @@
+// The deferral is not a way around aliasing: a shared borrow of the receiver
+// that is still live when the receiver's own borrow begins is still a
+// conflict ("cannot borrow 'p' as exclusive: already borrowed as shared").
+datac P(var n: i32)
+
+fun mut P.copy_from(other: &P) {
+    self.n = other.n
+}
+
+fun main() {
+    var p = P(n = 1)
+    p.copy_from(other = p)
+    print(p.n)
+}

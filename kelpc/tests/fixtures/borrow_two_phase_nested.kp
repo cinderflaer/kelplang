@@ -1,0 +1,8 @@
+// A reservation admits reads and shared borrows, not a second exclusive one:
+// the argument's own mutation of the container is still two mutable borrows of
+// one list ("cannot borrow 'xs': already borrowed exclusively").
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.insert(0, xs.remove(0))
+}

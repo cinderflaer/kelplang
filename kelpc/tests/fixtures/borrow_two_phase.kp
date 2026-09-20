@@ -1,0 +1,27 @@
+// MISSING-n4Bz7: a method call's receiver is borrowed exclusively *after* its
+// own arguments are checked, so a tally can read the container it is about to
+// mutate. Each of these was "cannot borrow ...: already borrowed exclusively".
+fun main() {
+    var counts: Map<u64, i64> = Map.new()
+    counts.insert(key = 1.to_u64(), v = counts.get_or(key = 1.to_u64(), fallback = 0) + 1)
+    counts.insert(key = 1.to_u64(), v = counts.get_or(key = 1.to_u64(), fallback = 0) + 1)
+    print(counts.get_or(key = 1.to_u64(), fallback = 0))
+
+    var names: Map<String, i64> = Map.new()
+    names.insert(key = "a", v = names.get_or(key = "a", fallback = 0) + 1)
+    names.insert(key = "a", v = names.get_or(key = "a", fallback = 0) + 1)
+    print(names.get_or(key = "a", fallback = 0))
+
+    var xs: List<i32> = List.empty()
+    xs.push(41)
+    xs.insert(0, xs.get(0) + 1)
+    print(xs.get(0))
+
+    // The receiver's place may be read through the argument list more than
+    // once, and the container may be a field of the receiver's root.
+    var log: List<i32> = List.empty()
+    log.push(1)
+    log.push(2)
+    log.set(0, log.get(0) + log.get(1))
+    print(log.get(0))
+}

@@ -267,6 +267,14 @@ struct VarState {
     ty: Ty,
     moved_at: Option<Span>,
     borrow: BorrowKind,
+    /// A pending exclusive borrow, taken for a method call's receiver and not
+    /// yet committed (MISSING-n4Bz7). While it is set the place may still be
+    /// *read* and shared-borrowed — that is what lets
+    /// `counts.insert(k, counts.get_or(..) + 1)` type-check — but not moved
+    /// or exclusively borrowed again, and committing turns it into
+    /// `borrow = Exclusive`, which fails if a shared borrow taken meanwhile is
+    /// still live (`f(&mut c, &c)`).
+    reserved: bool,
     /// The place root this binding's value came from, when the binding *is* a
     /// borrow — the provenance a pattern binding would otherwise lose. See
     /// `set_origin`.
@@ -311,6 +319,10 @@ impl Scope {
                     ty: va.ty.clone(),
                     moved_at,
                     borrow: va.borrow,
+                    // Identical on both sides for the same reason `borrow` is:
+                    // a reservation is active before the branch and no arm
+                    // releases it, so there is nothing to merge.
+                    reserved: va.reserved,
                     origin: va.origin.clone(),
                 },
             );
@@ -439,6 +451,7 @@ impl Ctx {
                 ty: ty.clone(),
                 moved_at: None,
                 borrow: BorrowKind::None,
+                reserved: false,
                 origin: None,
             },
         );
@@ -561,7 +574,7 @@ impl Ctx {
                 span,
             });
         }
-        if v.borrow != BorrowKind::None {
+        if v.borrow != BorrowKind::None || v.reserved {
             return Err(BorrowError {
                 message: format!("cannot move {} while it is borrowed", display_root(name)),
                 span,
@@ -610,7 +623,7 @@ impl Ctx {
         let Some(v) = self.lookup_mut(name) else {
             return Ok(());
         };
-        if v.borrow != BorrowKind::None {
+        if v.borrow != BorrowKind::None || v.reserved {
             return Err(BorrowError {
                 message: format!("cannot assign to {} while it is borrowed", display_root(name)),
                 span,
@@ -637,6 +650,27 @@ impl Ctx {
                 message: format!("cannot borrow {}: value was moved", display_root(root)),
                 span,
             });
+        }
+        // A reservation (a method call's receiver, taken before its own
+        // arguments are checked) admits reads and shared borrows, but not a
+        // second exclusive borrow: `xs.insert(0, xs.remove(0))` is still two
+        // mutable borrows of one list. `commit` is what rejects a shared
+        // borrow that is still live when the receiver's own borrow begins.
+        if v.reserved {
+            if mutable {
+                return Err(BorrowError {
+                    message: format!(
+                        "cannot borrow {} as exclusive: already borrowed exclusively",
+                        display_root(root)
+                    ),
+                    span,
+                });
+            }
+            v.borrow = match &v.borrow {
+                BorrowKind::Shared(n) => BorrowKind::Shared(n + 1),
+                _ => BorrowKind::Shared(1),
+            };
+            return Ok(());
         }
         v.borrow = match (&v.borrow, mutable) {
             (BorrowKind::Exclusive, _) => {
@@ -671,6 +705,69 @@ impl Ctx {
                 _ => BorrowKind::None,
             };
         }
+    }
+
+    /// Phase one of a two-phase borrow: the receiver of a method call is set
+    /// aside before its own arguments are checked, so an argument may read the
+    /// same place. Nothing is borrow-checked as exclusive yet (MISSING-n4Bz7).
+    fn reserve_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
+        let Some(v) = self.lookup_mut(root) else {
+            return Ok(());
+        };
+        if v.moved_at.is_some() {
+            return Err(BorrowError {
+                message: format!("cannot borrow {}: value was moved", display_root(root)),
+                span,
+            });
+        }
+        if v.reserved {
+            return Err(BorrowError {
+                message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
+                span,
+            });
+        }
+        match &v.borrow {
+            BorrowKind::Exclusive => {
+                return Err(BorrowError {
+                    message: format!("cannot borrow {}: already borrowed exclusively", display_root(root)),
+                    span,
+                });
+            }
+            BorrowKind::Shared(_) => {
+                return Err(BorrowError {
+                    message: format!(
+                        "cannot borrow {} as exclusive: already borrowed as shared",
+                        display_root(root)
+                    ),
+                    span,
+                });
+            }
+            BorrowKind::None => {}
+        }
+        v.reserved = true;
+        Ok(())
+    }
+
+    /// Phase two: the reservation becomes the exclusive borrow the call wants.
+    /// A shared borrow started while the reservation was in flight and still
+    /// live here is a real conflict (`f(&mut c, &c)`), and so is a move, which
+    /// `use_value` already refused.
+    fn commit_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
+        let Some(v) = self.lookup_mut(root) else {
+            return Ok(());
+        };
+        v.reserved = false;
+        if v.borrow != BorrowKind::None {
+            return Err(BorrowError {
+                message: format!(
+                    "cannot borrow {} as exclusive: already borrowed as shared",
+                    display_root(root)
+                ),
+                span,
+            });
+        }
+        v.borrow = BorrowKind::Exclusive;
+        Ok(())
     }
 
     fn register_scope_borrow(&mut self, root: &str) {
@@ -1268,7 +1365,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // rule a named call's do.
         tir::ExprKind::IndirectCall { callee, args } => {
             check_place(callee, ctx)?;
-            let taken = take_call_arguments(args, ctx)?;
+            let taken = take_call_arguments(args, ctx, None)?;
             release_call_borrows(&taken, ctx);
             Ok(())
         }
@@ -1462,7 +1559,25 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     let tir::ExprKind::Call { callee, args } = &expr.kind else {
         unreachable!("check_call is only called on a Call node")
     };
-    let mut taken = take_call_arguments(args, ctx)?;
+    // A method call's receiver is borrowed exclusively *before* its own
+    // arguments are checked, but only as a reservation until they are. That is
+    // what lets a tally read the container it is about to mutate
+    // (MISSING-n4Bz7): an exclusive borrow taken first would refuse
+    // `counts.insert(k, counts.get_or(..) + 1)`, and committing the
+    // reservation afterwards still catches a shared borrow that outlives the
+    // arguments (`f(&mut c, &c)`).
+    let receiver = method_receiver_index(callee, args);
+    if let Some(i) = receiver {
+        if let Some(root) = arg_root(&args[i]) {
+            ctx.reserve_exclusive(root, args[i].span)?;
+        }
+    }
+    let mut taken = take_call_arguments(args, ctx, receiver)?;
+    if let Some(i) = receiver {
+        if let Some(root) = arg_root(&args[i]) {
+            ctx.commit_exclusive(root, args[i].span)?;
+        }
+    }
     if crate::infer::is_borrowed_value(&expr.ty) {
         let idx = ctx.borrow_root_param_of(callee);
         if let Some(root) = idx
@@ -1479,19 +1594,44 @@ fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
+/// The argument index of a method call's own receiver, when that receiver is
+/// borrowed exclusively and so needs the two-phase treatment. Keyed on the
+/// `#` in a method's callee key (`Map#insert`), which nothing else has.
+fn method_receiver_index(callee: &str, args: &[tir::Expr]) -> Option<usize> {
+    if !callee.contains('#') {
+        return None;
+    }
+    match args.first().map(|a| &a.kind) {
+        Some(tir::ExprKind::Ref { mutable: true, .. }) => Some(0),
+        _ => None,
+    }
+}
+
 /// One argument list, borrowed for the duration of a call: a `Ref` argument's
 /// place is checked and its borrow started, everything else is read as a
 /// value. Returns the roots whose borrow has to be released afterwards. Shared
 /// by a named call and a call through a function value (A-4), because the two
 /// borrow their arguments identically.
-fn take_call_arguments(args: &[tir::Expr], ctx: &mut Ctx) -> Result<Vec<String>> {
+///
+/// `receiver` is the index whose exclusive borrow was already reserved by
+/// `check_call`; its place is still checked here, but no second borrow is
+/// started for it.
+fn take_call_arguments(
+    args: &[tir::Expr],
+    ctx: &mut Ctx,
+    receiver: Option<usize>,
+) -> Result<Vec<String>> {
     let mut taken = Vec::new();
-    for a in args {
+    for (i, a) in args.iter().enumerate() {
         if let tir::ExprKind::Ref { mutable, expr: inner } = &a.kind {
             check_place(inner, ctx)?;
             if let Some(root) = tir_root_ident(inner) {
-                ctx.start_borrow(root, *mutable, a.span)?;
-                taken.push(root.to_string());
+                if receiver == Some(i) {
+                    taken.push(root.to_string());
+                } else {
+                    ctx.start_borrow(root, *mutable, a.span)?;
+                    taken.push(root.to_string());
+                }
             }
         } else {
             check_value(a, ctx)?;
