@@ -1010,6 +1010,18 @@ enum Routine {
     FsListRaw,
     FsSymlinkRaw,
     FsReadLinkRaw,
+    /// MK7 §5's S7 slice: the fallible `fs` pair and the UTF-8 predicate,
+    /// transliterated from their `externs.rs` bodies. `FsTryReadRaw` is
+    /// `FsReadRaw` with a `mut i32` out-parameter written on every path (the
+    /// failing call's `errno`, or 0) and an empty `Bytes` returned on failure;
+    /// the short-read path is the one that `BytesDrop`s the buffer it had
+    /// already allocated before it returns the empty one. `FsTryOpenRaw` is
+    /// `open_raw`'s mode table, writing `EINVAL` (22) for an unknown mode and
+    /// 0 on success. `FsUtf8ValidRaw` is one tail call to `Utf8Valid` with the
+    /// borrowed `Bytes`'s two fields.
+    FsTryReadRaw,
+    FsTryOpenRaw,
+    FsUtf8ValidRaw,
     /// MK7 §5's S8 slice: the thirteen `std/net` socket bodies, transliterated
     /// from their `externs.rs` bodies. `NetConnectRaw`/`NetListenRaw` are the
     /// `getaddrinfo` + `socket`/`bind`/`listen` walks over the `struct addrinfo`
@@ -1147,6 +1159,9 @@ impl Routine {
             Routine::FsListRaw => "kelp_rt$fs_list_raw",
             Routine::FsSymlinkRaw => "kelp_rt$fs_symlink_raw",
             Routine::FsReadLinkRaw => "kelp_rt$fs_read_link_raw",
+            Routine::FsTryReadRaw => "kelp_rt$fs_try_read_raw",
+            Routine::FsTryOpenRaw => "kelp_rt$fs_try_open_raw",
+            Routine::FsUtf8ValidRaw => "kelp_rt$fs_utf8_valid_raw",
             Routine::CapDeny => "kelp_rt$cap_deny",
             Routine::ResolvePath => "kelp_rt$resolve_path",
             Routine::CapCheckPath => "kelp_rt$cap_check_path",
@@ -1346,6 +1361,9 @@ fn extern_target(key: &str) -> Option<Extern> {
         "std.fs.list_raw" => Extern::Routine(Routine::FsListRaw),
         "std.fs.symlink_raw" => Extern::Routine(Routine::FsSymlinkRaw),
         "std.fs.read_link_raw" => Extern::Routine(Routine::FsReadLinkRaw),
+        "std.fs.try_read_raw" => Extern::Routine(Routine::FsTryReadRaw),
+        "std.fs.try_open_raw" => Extern::Routine(Routine::FsTryOpenRaw),
+        "std.fs.utf8_valid_raw" => Extern::Routine(Routine::FsUtf8ValidRaw),
         // MK7 §5's S8 slice: the whole `std/net` socket family, transliterated
         // from their `externs.rs` bodies. The three `getaddrinfo` bodies
         // (`connect_raw`, `listen_raw`, `resolve_raw`) report a resolution
@@ -8843,6 +8861,17 @@ impl<'a> Gen<'a> {
             Routine::FsReadLinkRaw => {
                 self.require_routine(Routine::StringFromStr);
             }
+            // MK7 §5's S7 slice: `try_read_raw` allocates its return value and
+            // its short-read path frees the buffer it had just written through
+            // the caller's destination, so it needs both heap routines;
+            // `utf8_valid_raw` is the existing scanner.
+            Routine::FsTryReadRaw => {
+                self.require_routine(Routine::BytesAllocRaw);
+                self.require_routine(Routine::BytesDrop);
+            }
+            Routine::FsUtf8ValidRaw => {
+                self.require_routine(Routine::Utf8Valid);
+            }
             // MK7 §5's S8 slice: `recv_raw` builds its return value with the
             // `Bytes` allocator (the family's only allocation, the same one
             // `IoReadRaw` uses), and `peer_addr_raw`/`resolve_raw` copy a stack
@@ -14128,6 +14157,82 @@ impl<'a> Gen<'a> {
                 self.out.push_str(".Lfs_readlink_long:\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{long_msg}]");
                 self.call_panic();
+            }
+            // ---- MK7 §5's S7 slice: the fallible `fs` pair ------------------
+            //
+            // `try_read_raw`: `FsReadRaw`'s sequence, with `*err` written on
+            // every path and an empty `Bytes` returned instead of a panic. The
+            // destination is `r12`, the `err` out-parameter `r13`, the path
+            // `r14` and the file length (then the saved `errno`) `rbx`; `r14`
+            // holds the length across the read, which is why the path is not
+            // kept. The short-read path is the one the memory gate is about:
+            // the buffer was allocated before the read was known to have
+            // succeeded, so `BytesDrop` frees it before the empty `Bytes`
+            // replaces it, exactly as the C body drops `b`. `EIO` is 5.
+            Routine::FsTryReadRaw => {
+                let mode = self.bytes_label(b"rb");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n");
+                self.out.push_str("    mov r12, rdi\n    mov r13, rdx\n    mov r14, rsi\n    mov DWORD PTR [r13], 0\n");
+                self.out.push_str("    mov rdi, r14\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode}]");
+                self.out.push_str("    call fopen@PLT\n    test rax, rax\n    je .Lfs_try_read_open\n");
+                self.out.push_str("    mov rbx, rax\n    mov rdi, rbx\n    xor esi, esi\n    mov edx, 2\n    call fseek@PLT\n    test eax, eax\n    jne .Lfs_try_read_seek\n");
+                self.out.push_str("    mov rdi, rbx\n    call ftell@PLT\n    test rax, rax\n    js .Lfs_try_read_size\n");
+                self.out.push_str("    mov r14, rax\n    mov rdi, rbx\n    call rewind@PLT\n    mov rdi, r12\n    mov rsi, r14\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    test r14, r14\n    je .Lfs_try_read_close\n");
+                self.out.push_str("    mov rdi, QWORD PTR [r12]\n    mov esi, 1\n    mov rdx, r14\n    mov rcx, rbx\n    call fread@PLT\n");
+                self.out.push_str("    cmp rax, r14\n    jne .Lfs_try_read_short\n");
+                self.out.push_str(".Lfs_try_read_close:\n    mov rdi, rbx\n    call fclose@PLT\n");
+                self.out.push_str("    mov rax, r12\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_try_read_short:\n    call __errno_location@PLT\n    mov r14d, DWORD PTR [rax]\n    mov rdi, rbx\n    call fclose@PLT\n    mov rdi, r12\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesDrop.label());
+                self.out.push_str("    test r14d, r14d\n    jne .Lfs_try_read_have_err\n    mov r14d, 5\n.Lfs_try_read_have_err:\n    mov DWORD PTR [r13], r14d\n    jmp .Lfs_try_read_empty\n");
+                self.out.push_str(".Lfs_try_read_seek:\n    call __errno_location@PLT\n    mov r14d, DWORD PTR [rax]\n    mov rdi, rbx\n    call fclose@PLT\n    mov DWORD PTR [r13], r14d\n    jmp .Lfs_try_read_empty\n");
+                self.out.push_str(".Lfs_try_read_size:\n    call __errno_location@PLT\n    mov r14d, DWORD PTR [rax]\n    mov rdi, rbx\n    call fclose@PLT\n    mov DWORD PTR [r13], r14d\n    jmp .Lfs_try_read_empty\n");
+                self.out.push_str(".Lfs_try_read_open:\n    call __errno_location@PLT\n    mov eax, DWORD PTR [rax]\n    mov DWORD PTR [r13], eax\n");
+                self.out.push_str(".Lfs_try_read_empty:\n    mov rdi, r12\n    xor esi, esi\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    mov rax, r12\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `try_open_raw`: the same mode table `open_raw` has, with the
+            // unknown mode writing `EINVAL` instead of panicking and a failed
+            // `open` writing `errno` and returning -1. The path is `rbx`, the
+            // mode `r13` and the `err` out-parameter `r12`; the four `O_*`
+            // spellings are the C's (`O_RDONLY` 0, `O_WRONLY|O_CREAT|O_TRUNC`
+            // 577, `O_WRONLY|O_CREAT|O_APPEND` 1089, `O_RDWR|O_CREAT` 66) and
+            // `0666` is 438.
+            Routine::FsTryOpenRaw => {
+                let mode_r = self.bytes_label(b"r");
+                let mode_w = self.bytes_label(b"w");
+                let mode_a = self.bytes_label(b"a");
+                let mode_rw = self.bytes_label(b"rw");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r13, rsi\n    mov r12, rdx\n");
+                self.out.push_str("    mov rdi, r13\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode_r}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_try_open_r\n    mov rdi, r13\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode_w}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_try_open_w\n    mov rdi, r13\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode_a}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_try_open_a\n    mov rdi, r13\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode_rw}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_try_open_rw\n    mov DWORD PTR [r12], 22\n    mov eax, -1\n    jmp .Lfs_try_open_done\n");
+                self.out.push_str(".Lfs_try_open_r:\n    xor edx, edx\n    jmp .Lfs_try_open_go\n");
+                self.out.push_str(".Lfs_try_open_w:\n    mov edx, 577\n    jmp .Lfs_try_open_go\n");
+                self.out.push_str(".Lfs_try_open_a:\n    mov edx, 1089\n    jmp .Lfs_try_open_go\n.Lfs_try_open_rw:\n    mov edx, 66\n");
+                self.out.push_str(".Lfs_try_open_go:\n    mov rdi, rbx\n    mov esi, edx\n    mov edx, 438\n    xor eax, eax\n    call open@PLT\n");
+                self.out.push_str("    test eax, eax\n    js .Lfs_try_open_fail\n    mov DWORD PTR [r12], 0\n    jmp .Lfs_try_open_done\n");
+                self.out.push_str(".Lfs_try_open_fail:\n    call __errno_location@PLT\n    mov ecx, DWORD PTR [rax]\n    mov DWORD PTR [r12], ecx\n    mov eax, -1\n");
+                self.out.push_str(".Lfs_try_open_done:\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `utf8_valid_raw`: the borrowed `Bytes`'s two fields into the
+            // existing scanner's `(p, n)`. A tail jump rather than a call: the
+            // scanner makes no call of its own, and a `call` here would leave
+            // `rsp` misaligned for it (this routine pushes nothing).
+            Routine::FsUtf8ValidRaw => {
+                self.out.push_str("    mov rsi, QWORD PTR [rdi+8]\n    mov rdi, QWORD PTR [rdi]\n");
+                let _ = writeln!(self.out, "    jmp {}", Routine::Utf8Valid.label());
             }
             // ---- MK7 §5's S8 slice: the `std/net` socket family ------------
             //

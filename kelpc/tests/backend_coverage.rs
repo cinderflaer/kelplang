@@ -294,6 +294,14 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// holds the eight fixtures whose remaining refusal is an extern body or a heap
 /// type, not a gate. `caps_gated_path` is the pin the item 7 note above was
 /// waiting for.
+/// MK7 §5's S7 slice (the fallible `fs` pair and the UTF-8 predicate) added
+/// `fs_fallible`, the fixture the S2 note above left pointing at
+/// `std.fs.write_raw`: its whole set is `FsReadRaw`/`FsWriteRaw`/
+/// `FsWriteTextRaw`/`FsRemoveRaw` (S4), the four `std/io` bodies (S2) and this
+/// slice's three. It is the first fixture whose acceptance is a *returned*
+/// failure path rather than a panic, so its stdout pins the `mut i32`
+/// out-parameter (2, then 0, then 22 for the unknown mode) and the UTF-8
+/// refusal, whose errno is 0.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "array_basic",
@@ -395,6 +403,11 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     // fixture builds and agrees with the C backend. Its check *admits* (the
     // entry module holds `/**`), so the call runs and fails on `errno`.
     "fs_errno",
+    // MK7 §5's S7 slice: the fallible `fs` pair, which is the last of this
+    // fixture's externs once S2, S3 and S4 are in (`fs_fallible`'s head was
+    // `std.io.is_open_raw`). The errno values it prints (2, 0, 22) pin the
+    // `mut i32` out-parameter and the UTF-8 failure.
+    "fs_fallible",
     // MK7 §5's S4 slice: the `std/fs` path family, pinned through its raw
     // externs because the gated wrappers still refused at the time (the
     // capability check was not emitted yet). One fixture reaches all thirteen
