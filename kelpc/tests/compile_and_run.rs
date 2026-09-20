@@ -596,6 +596,17 @@ fn unshipped_stdlib_module_is_rejected() {
 }
 
 #[test]
+fn a_local_that_shadows_a_module_names_the_shadowing() {
+    // The local wins, so the call is not the module's. The message says that
+    // much, and names the module only when that module really has the method
+    // the call was written for.
+    assert_rejected_with(
+        "tests/fixtures/shadowed_module_alias.kp",
+        "'path' is a local binding here, so 'path.join' is not the module 'path'",
+    );
+}
+
+#[test]
 fn a_grant_pattern_that_is_not_a_path_is_rejected() {
     assert_project_rejected(
         "caps_bad_path_pattern",

@@ -6409,6 +6409,32 @@ fn is_module_alias(name: &str, ctx: &Ctx) -> bool {
         && ctx.aliases.contains_key(name)
 }
 
+/// A method call whose receiver is a local binding that shares its name with a
+/// module alias in scope (`MISSING-9tRe4`). The missing-method message names the
+/// local's type and never the module the call was meant to reach, which sends
+/// the reader to look for a method on a type that was never going to have one.
+///
+/// The note is only added when the shadowed module really declares that method:
+/// the sentence is a claim about where the call could have gone, so it has to be
+/// true of that module, not merely of the name.
+fn shadowed_module_alias_note(receiver: &ast::Expr, method: &str, ctx: &Ctx) -> String {
+    let ast::Expr::Ident(name, _) = receiver else {
+        return String::new();
+    };
+    if ctx.lookup(name).is_none() {
+        return String::new();
+    }
+    let Some(prefix) = ctx.aliases.get(name) else {
+        return String::new();
+    };
+    if ctx.sig_of(&format!("{prefix}{method}")).is_none() {
+        return String::new();
+    }
+    format!(
+        " '{name}' is a local binding here, so '{name}.{method}' is not the module '{name}'; rename the binding"
+    )
+}
+
 /// The passdown whose storage a place expression is, if it is one: the hidden
 /// parameter (`pd#<name>`, already a borrow) directly, or behind the explicit
 /// `&` that a `main` or `pd` initializer takes of the generated global. Any
@@ -7707,8 +7733,7 @@ fn check_method_call(
                 None => match builtin_sig(&key) {
                     Some(s) => (key, s),
                     None => {
-                        return Err(TypeError {
-                            message: match (&container_elem, owner.as_str()) {
+                        let base = match (&container_elem, owner.as_str()) {
                 // Three List methods are defined only for an element type that
                 // can be ordered, compared, or copied, so the generic "no
                 // method" text would be misleading for exactly these three.
@@ -7748,7 +7773,12 @@ fn check_method_call(
                     probe.ty.display()
                 ),
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
-                            },
+                        };
+                        return Err(TypeError {
+                            message: format!(
+                                "{base}{}",
+                                shadowed_module_alias_note(receiver, method, ctx)
+                            ),
                             span,
                         });
                     }

@@ -1,0 +1,10 @@
+// A local binding wins over an import of the same name, so `path.join` here is
+// `str.join`, which does not exist. The message has to name the shadowing: on
+// its own it reports a missing method on `str` and leaves the reader looking
+// for a method on a type that was never going to have one.
+impl "std/path"
+
+fun main() {
+    val path = "a/b"
+    print(path.join("x", "y"))
+}
