@@ -64,8 +64,8 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 181 fixtures the C backend
-/// builds, 161 of them also built by the asm backend, 20 refused: which is the
+/// The counts this list was recorded against: 182 fixtures the C backend
+/// builds, 162 of them also built by the asm backend, 20 refused: which is the
 /// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
 /// fixture level instead of the test level. (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
@@ -74,7 +74,12 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// `panic_owned_message`) were recorded with it; see the re-recording notes
 /// below.)
 ///
-/// The last re-recording is the literal-syntax slice: `int_literals` and
+/// The last re-recording is the stdlib-encoding slice: `stdlib_encoding` is a
+/// plain Kelp module over `Bytes`, `String`, `List<u8>` and `Result`, all of
+/// which both backends already build, so it joins the baseline and the counts
+/// move 181/161/20 -> 182/162/20.
+///
+/// Before it, the last re-recording was the literal-syntax slice: `int_literals` and
 /// `byte_literals` are the first fixtures for `0x`/`0b` integer literals and
 /// for byte literals, and both are ordinary narrow-integer programs, so both
 /// backends build them: 179/159/20 -> 181/161/20.
@@ -325,6 +330,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "scalar_borrow_f64",
     "std_str_order",
     "stdlib_build",
+    "stdlib_encoding",
     "stdlib_fmt",
     "stdlib_list",
     "stdlib_math",

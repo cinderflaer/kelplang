@@ -582,7 +582,7 @@ until something needs it.
 - **The `A`-`F` item lists**, which the roadmap used to carry inline: the language surface a self-hosted `kelpc` needs (A), the substrate deep-systems work needs (B), the capability-model gaps (C), the verification and semantics duty (D), a suggested order with the plan's cost calibration (E), and dependency and precedence notes (F). MK8, MK9, MK10 and MK11 promote parts of A-D to Marks; the items keep their `A-n`/`B-n`/`C-n`/`D-n` labels here as the detail.
 - **The `G` wants**, which are ergonomics rather than structural goals: a native UI library, multiple return values, `elif`, the capability clause without `with`, and a comment lint. None is a blocker, none is a reversal, and none has a milestone.
 - **The `H` list**, which is the whole set of rows the wiki's `Known issues` and `Pitfalls` pages carry, one item per row, with the work each row needs to stop being a workaround. The invariant: when H is worked off, no page needs a "Workarounds" paragraph and `Known issues` stays empty. Most H items overlap an A-item and name it; the ones nothing else covers are new.
-- **Encodings**, the alphabet-and-codec library want (`std/encoding`): named alphabet tables plus one codec each. It is the one entry in this Backlog that no language work blocks — see **Encodings and alphabets** below.
+- **Encodings**, the alphabet-and-codec library want (`std/encoding`): named alphabet tables plus one codec each. It is the one entry in this Backlog that no language work blocks — see **Encodings and alphabets** below. The module shipped with the `fpl/encoding` surface; the wider alphabet family is still wanted.
 - **`testkit`**, the self-test harness: the predicate half is writable now, the discovery half is A-15/Coral territory — see **`testkit`, the self-test harness** below.
 - **Coral**, the project-layer build tool and package manager, if open item 72 is ever answered yes.
 - **Regulated and financial domains**, if open item 71 is ever answered yes.
@@ -736,6 +736,16 @@ and Known issues is empty. Every H item names the existing item it overlaps, or 
 nothing else. It is recorded because the same handful of encoders has now been
 hand-written three times and a fourth is about to be, and because the alphabet
 tables themselves are the part worth writing down once.*
+
+**Partly shipped.** `std/encoding` exists as of the current development cycle,
+and it carries the `fpl/encoding` surface whole: base64 (RFC 4648 §4), base32
+(§6), base58 (Bitcoin), hex, RFC 3986 percent and the `x-www-form-urlencoded`
+pair, and the `hexdump`-shaped `dump`. Everything else this section describes is
+still the want it was: the base64url/base32hex/85/58-variant rows, the derived
+decode table, the `*_into` shapes, the split `DecodeErr` reasons, and the
+replacement of the existing copies. Sub-question 2 is answered by that module:
+a shipped module spells a string `const` the way `syntax.md` and the rest of
+`std/` already do — `const B64_ALPHABET: str = "..."`, not `&str`.
 
 **What the repository already proves.** `fpl/encoding` implements standard base64
 and RFC 3986 percent-encoding in today's Kelp — 6-bit masking, `u8` pushes, a

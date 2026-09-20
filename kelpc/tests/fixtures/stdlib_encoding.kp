@@ -1,0 +1,65 @@
+// MISSING-FZqe6: `std/encoding` — the alphabet-and-codec module. Every decoder
+// is exercised once with a good input and once with a bad one, and both
+// directions of each codec are checked against a literal.
+impl "std/encoding"
+impl "std/str"
+impl "std/result"
+
+// The decoded bytes as text, or a marker when the decode was refused. The
+// payload is a borrow (`Result`'s header), so the copy is explicit.
+fun decoded(r: result.Result<Bytes, encoding.DecodeErr>).R: String {
+    if let Ok(b) = r {
+        return String.from_bytes(b.clone())
+    }
+    return "<err>"
+}
+
+// The decoded text, or the same marker.
+fun decoded_text(r: result.Result<String, encoding.DecodeErr>).R: String {
+    if let Ok(s) = r {
+        return s.clone()
+    }
+    return "<err>"
+}
+
+fun main() {
+    print(encoding.base64_encode(Bytes.from_str("hello")))
+    print(encoding.base64_encode(Bytes.from_str("hi")))
+    print(encoding.base64_encode(Bytes.from_str("a")))
+    print(encoding.base64_encode(Bytes.empty()))
+    print(decoded(r = encoding.base64_decode("aGVsbG8=")))
+    print(decoded(r = encoding.base64_decode("aGk=")))
+    print(decoded(r = encoding.base64_decode("YQ==")))
+    print(result.is_err(r = encoding.base64_decode("aGVsbG8")))
+    print(result.is_err(r = encoding.base64_decode("aGVsbG8*")))
+
+    print(encoding.base32_encode(Bytes.from_str("hello")))
+    print(encoding.base32_encode(Bytes.from_str("hi")))
+    print(decoded(r = encoding.base32_decode("NBSWY3DP")))
+    print(result.is_err(r = encoding.base32_decode("NBSWY3D")))
+    print(result.is_err(r = encoding.base32_decode("NBSWY3D1")))
+
+    print(encoding.base58_encode(Bytes.from_str("hello")))
+    print(encoding.base58_encode(Bytes.from_str("a")))
+    print(decoded(r = encoding.base58_decode("Cn8eVZg")))
+    print(result.is_err(r = encoding.base58_decode("0OIl")))
+
+    print(encoding.hex_encode(Bytes.from_str("Hi")))
+    print(decoded(r = encoding.hex_decode("4869")))
+    print(decoded(r = encoding.hex_decode("48656C6C6F")))
+    print(result.is_err(r = encoding.hex_decode("4")))
+    print(result.is_err(r = encoding.hex_decode("4z")))
+
+    print(encoding.percent_encode("a b/c?d=e&f"))
+    print(encoding.percent_encode("plain-._~"))
+    print(decoded_text(r = encoding.percent_decode("a%20b%2Fc")))
+    print(result.is_err(r = encoding.percent_decode("%2")))
+    print(result.is_err(r = encoding.percent_decode("%zz")))
+
+    print(encoding.form_encode("a b+c"))
+    print(decoded_text(r = encoding.form_decode("a+b%2Bc")))
+    print(result.is_err(r = encoding.form_decode("%")))
+
+    print(encoding.dump(Bytes.from_str("Hi")))
+    print(encoding.dump(Bytes.empty()))
+}

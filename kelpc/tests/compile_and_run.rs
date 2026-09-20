@@ -1255,6 +1255,18 @@ fn the_path_stdlib_module_runs_from_kelp_source() {
 }
 
 #[test]
+fn the_encoding_stdlib_module_runs_from_kelp_source() {
+    // MISSING-FZqe6: the alphabet-and-codec module. `std/encoding` imports
+    // `std/str`, `std/option`, `std/result` and `std/fmt`, so this fixture also
+    // exercises the owned payloads those modules hand back (`Result<Bytes, _>`
+    // and `Result<String, _>`) without a `?` or a `Copy` payload to lean on.
+    assert_compiles_and_runs(
+        "tests/fixtures/stdlib_encoding.kp",
+        "aGVsbG8=\naGk=\nYQ==\n\nhello\nhi\na\ntrue\ntrue\nNBSWY3DP\nNBUQ====\nhello\ntrue\ntrue\nCn8eVZg\n2g\nhello\ntrue\n4869\nHi\nHello\ntrue\ntrue\na%20b%2Fc%3Fd%3De%26f\nplain-._~\na b/c\ntrue\ntrue\na+b%2Bc\na b+c\ntrue\n00000000  48 69                                             |Hi|\n\n",
+    );
+}
+
+#[test]
 fn an_extern_without_a_compiler_supplied_body_is_rejected() {
     assert_rejected("tests/fixtures/extern_no_body.kp");
 }
@@ -1838,6 +1850,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "stdlib_str",
         "stdlib_path",
         "stdlib_math",
+        "stdlib_encoding",
         "string_views",
         "path_parts",
         "view_released_at_scope_end",
