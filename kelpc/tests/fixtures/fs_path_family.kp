@@ -1,0 +1,72 @@
+// The raw `std/fs` path family, called directly: the `fopen`/`fwrite`/
+// `stat`/`lstat` read-and-predicate bodies, `remove`/`mkdir`/`mkdir_all`, and
+// the directory-and-link set (`list`, `symlink`, `read_link`, `is_symlink`).
+//
+// The gated wrappers (`fs.read`, `fs.write_text`, ...) are refused in the
+// `asm` backend until the capability check is emitted at the call site, so
+// this fixture pins the syscall bodies themselves: each is built by both
+// backends and its stdout compared byte for byte, which is the only
+// acceptance target the bodies have today. It moves to the wrappers once the
+// check lands.
+impl "std/fs"
+
+fun main() {
+    val root = "/tmp/kelp_fs_path_family"
+    val sub = "/tmp/kelp_fs_path_family/sub"
+    val a = "/tmp/kelp_fs_path_family/a.txt"
+    val b = "/tmp/kelp_fs_path_family/sub/b.txt"
+    val link = "/tmp/kelp_fs_path_family/link"
+
+    // Idempotent across runs: drop the link and the files, then the empty
+    // directories, deepest first.
+    if fs.is_symlink_raw(link) {
+        fs.remove_raw(link)
+    }
+    if fs.exists_raw(b) {
+        fs.remove_raw(b)
+    }
+    if fs.exists_raw(a) {
+        fs.remove_raw(a)
+    }
+    if fs.exists_raw(sub) {
+        fs.remove_raw(sub)
+    }
+    if fs.exists_raw(root) {
+        fs.remove_raw(root)
+    }
+
+    print(fs.exists_raw(root))
+    fs.mkdir_raw(root)
+    print(fs.is_dir_raw(root))
+    print(fs.is_file_raw(root))
+
+    fs.write_text_raw(a, String.from_str("hello\n"))
+    val text = fs.read_raw(a)
+    print(text.len())
+    print(text)
+
+    fs.mkdir_all_raw(sub)
+    print(fs.is_dir_raw(sub))
+    // A second `mkdir_all` over an existing tree is success, not a panic.
+    fs.mkdir_all_raw(sub)
+
+    fs.write_raw(b, Bytes.from_str("xyz"))
+    print(fs.read_raw(b))
+
+    fs.symlink_raw(a, link)
+    // A link is a link; the two `stat` predicates resolve through it.
+    print(fs.is_symlink_raw(link))
+    print(fs.is_file_raw(link))
+    print(fs.is_dir_raw(link))
+    print(fs.read_link_raw(link))
+    print(fs.is_symlink_raw(a))
+
+    print(fs.list_raw(root))
+
+    fs.remove_raw(link)
+    fs.remove_raw(b)
+    fs.remove_raw(a)
+    fs.remove_raw(sub)
+    fs.remove_raw(root)
+    print(fs.exists_raw(root))
+}

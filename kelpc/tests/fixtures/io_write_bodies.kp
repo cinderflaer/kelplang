@@ -1,0 +1,17 @@
+// The three `std.io` write bodies: `write_bytes_raw`, `write_text_raw` and
+// `write_str_raw` over the standard descriptors. This is the regression pin for
+// the borrow ABI a by-value `Bytes`/`String` parameter travels by (`const
+// kelp_Bytes*` in the C signature): a body that read the outgoing argument area
+// instead wrote nothing and returned 0. Every write flushes the matching
+// stdio stream first, so the raw write and the buffered `print` below stay in
+// program order.
+impl "std/io"
+
+fun main() {
+    val bytes = io.write_bytes_raw(1, Bytes.from_str("bytes\n"))
+    print(bytes)
+    val text = io.write_text_raw(1, String.from_str("text\n"))
+    print(text)
+    val view = io.write_str_raw(1, "str\n")
+    print(view)
+}

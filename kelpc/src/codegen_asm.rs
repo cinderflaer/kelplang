@@ -971,6 +971,28 @@ enum Routine {
     IoWaitReadableRaw,
     IoWaitWritableRaw,
     IoErrnoTextRaw,
+    /// MK7 §5's S4 slice: the `fs` path family, transliterated from their
+    /// `externs.rs` bodies. The read/write trio is `fopen`/`fseek`/`ftell`/
+    /// `rewind`/`fread`/`fclose` (with the one owned `Bytes` out of
+    /// `FsReadRaw`); the four predicates are one `stat`/`lstat` plus the
+    /// `st_mode` mask at offset 24; `FsMkdirAllRaw` is the `PATH_MAX` prefix
+    /// loop; `FsListRaw` is `scandir` with the `struct dirent` `d_name` at
+    /// offset 19; `FsReadLinkRaw` is `readlink` into a `PATH_MAX` buffer. Every
+    /// failing call is the C body's `kelp_panic_errno`, captured before any
+    /// cleanup `fclose` can overwrite it.
+    FsReadRaw,
+    FsWriteRaw,
+    FsWriteTextRaw,
+    FsExistsRaw,
+    FsIsFileRaw,
+    FsIsDirRaw,
+    FsIsSymlinkRaw,
+    FsRemoveRaw,
+    FsMkdirRaw,
+    FsMkdirAllRaw,
+    FsListRaw,
+    FsSymlinkRaw,
+    FsReadLinkRaw,
 }
 
 impl Routine {
@@ -1050,6 +1072,19 @@ impl Routine {
             Routine::IoWaitReadableRaw => "kelp_rt$io_wait_readable_raw",
             Routine::IoWaitWritableRaw => "kelp_rt$io_wait_writable_raw",
             Routine::IoErrnoTextRaw => "kelp_rt$io_errno_text_raw",
+            Routine::FsReadRaw => "kelp_rt$fs_read_raw",
+            Routine::FsWriteRaw => "kelp_rt$fs_write_raw",
+            Routine::FsWriteTextRaw => "kelp_rt$fs_write_text_raw",
+            Routine::FsExistsRaw => "kelp_rt$fs_exists_raw",
+            Routine::FsIsFileRaw => "kelp_rt$fs_is_file_raw",
+            Routine::FsIsDirRaw => "kelp_rt$fs_is_dir_raw",
+            Routine::FsIsSymlinkRaw => "kelp_rt$fs_is_symlink_raw",
+            Routine::FsRemoveRaw => "kelp_rt$fs_remove_raw",
+            Routine::FsMkdirRaw => "kelp_rt$fs_mkdir_raw",
+            Routine::FsMkdirAllRaw => "kelp_rt$fs_mkdir_all_raw",
+            Routine::FsListRaw => "kelp_rt$fs_list_raw",
+            Routine::FsSymlinkRaw => "kelp_rt$fs_symlink_raw",
+            Routine::FsReadLinkRaw => "kelp_rt$fs_read_link_raw",
         }
     }
 }
@@ -1208,6 +1243,27 @@ fn extern_target(key: &str) -> Option<Extern> {
         "std.io.wait_readable_raw" => Extern::Routine(Routine::IoWaitReadableRaw),
         "std.io.wait_writable_raw" => Extern::Routine(Routine::IoWaitWritableRaw),
         "std.io.errno_text_raw" => Extern::Routine(Routine::IoErrnoTextRaw),
+        // MK7 §5's S4 slice: the `fs` path family, transliterated from their
+        // `externs.rs` bodies. Each is `fopen`/`fread`/`fwrite`/`stat`/`mkdir`/
+        // `remove`/`lstat`/`symlink`/`readlink`/`scandir` over the heap types
+        // that already lower, so the new code is marshalling and errno rather
+        // than a new mechanism. The bodies that move memory are `read_raw` (one
+        // owned `Bytes`, allocated before the read is known to succeed) and
+        // `list_raw` (the `scandir` array freed, then a `String` built from a
+        // freshly allocated `Bytes`).
+        "std.fs.read_raw" => Extern::Routine(Routine::FsReadRaw),
+        "std.fs.write_raw" => Extern::Routine(Routine::FsWriteRaw),
+        "std.fs.write_text_raw" => Extern::Routine(Routine::FsWriteTextRaw),
+        "std.fs.exists_raw" => Extern::Routine(Routine::FsExistsRaw),
+        "std.fs.is_file_raw" => Extern::Routine(Routine::FsIsFileRaw),
+        "std.fs.is_dir_raw" => Extern::Routine(Routine::FsIsDirRaw),
+        "std.fs.is_symlink_raw" => Extern::Routine(Routine::FsIsSymlinkRaw),
+        "std.fs.remove_raw" => Extern::Routine(Routine::FsRemoveRaw),
+        "std.fs.mkdir_raw" => Extern::Routine(Routine::FsMkdirRaw),
+        "std.fs.mkdir_all_raw" => Extern::Routine(Routine::FsMkdirAllRaw),
+        "std.fs.list_raw" => Extern::Routine(Routine::FsListRaw),
+        "std.fs.symlink_raw" => Extern::Routine(Routine::FsSymlinkRaw),
+        "std.fs.read_link_raw" => Extern::Routine(Routine::FsReadLinkRaw),
         _ => return None,
     })
 }
@@ -8480,6 +8536,21 @@ impl Gen {
             Routine::IoErrnoTextRaw => {
                 self.require_routine(Routine::StringFromStr);
             }
+            // MK7 §5's S4 slice: `read_raw` builds its return value with the
+            // `Bytes` allocator, `list_raw` builds one too and hands it to
+            // `String.from_bytes` (which is what pulls in the UTF-8 check),
+            // and `read_link_raw` copies the `readlink` buffer into an owned
+            // `String`.
+            Routine::FsReadRaw => {
+                self.require_routine(Routine::BytesAllocRaw);
+            }
+            Routine::FsListRaw => {
+                self.require_routine(Routine::BytesAllocRaw);
+                self.require_routine(Routine::StringFromBytes);
+            }
+            Routine::FsReadLinkRaw => {
+                self.require_routine(Routine::StringFromStr);
+            }
             _ => {}
         }
         self.routines.insert(r);
@@ -13181,34 +13252,38 @@ impl Gen {
                 self.call_panic_errno();
             }
             // `kelp_io_flush_stdio(fd)` then the short-write loop over
-            // `kelp_data->len`. `fd` lives in `ebx` (the flush needs it after
-            // `fflush` clobbers `rdi`), `off` in `r12`, and the buffer is the
-            // `MEMORY`-class argument at `[rbp+16]`.
+            // `data->len`. `fd` lives in `ebx` (the flush needs it after
+            // `fflush` clobbers `rdi`), `off` in `r12`, and the `Bytes`
+            // argument is a borrow in `rsi` (`infer.rs` spells a by-value
+            // owned aggregate `const kelp_Bytes*`, the same pointer the C
+            // signature has), so its field pointer is in `r13`.
             Routine::IoWriteBytesRaw => {
                 let msg = self.bytes_label(b"io.write: write failed");
-                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    mov ebx, edi\n");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov ebx, edi\n    mov r13, rsi\n");
                 self.emit_flush_stdio("ebx");
                 self.out.push_str("    xor r12d, r12d\n.Lio_wbytes_loop:\n");
-                self.out.push_str("    mov rax, QWORD PTR [rbp+24]\n    cmp r12, rax\n    jae .Lio_wbytes_done\n");
-                self.out.push_str("    mov rsi, QWORD PTR [rbp+16]\n    add rsi, r12\n    mov rdx, rax\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [r13+8]\n    cmp r12, rax\n    jae .Lio_wbytes_done\n");
+                self.out.push_str("    mov rsi, QWORD PTR [r13]\n    add rsi, r12\n    mov rdx, rax\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
                 self.out.push_str("    test rax, rax\n    jns .Lio_wbytes_adv\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_wbytes_loop\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
                 self.call_panic_errno();
-                self.out.push_str(".Lio_wbytes_adv:\n    add r12, rax\n    jmp .Lio_wbytes_loop\n.Lio_wbytes_done:\n    mov rax, r12\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lio_wbytes_adv:\n    add r12, rax\n    jmp .Lio_wbytes_loop\n.Lio_wbytes_done:\n    mov rax, r12\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
             }
             // The same loop over a `String`'s `len` bytes, with the C body's
             // own message.
             Routine::IoWriteTextRaw => {
                 let msg = self.bytes_label(b"io.write_text: write failed");
-                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    mov ebx, edi\n");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov ebx, edi\n    mov r13, rsi\n");
                 self.emit_flush_stdio("ebx");
                 self.out.push_str("    xor r12d, r12d\n.Lio_wtext_loop:\n");
-                self.out.push_str("    mov rax, QWORD PTR [rbp+24]\n    cmp r12, rax\n    jae .Lio_wtext_done\n");
-                self.out.push_str("    mov rsi, QWORD PTR [rbp+16]\n    add rsi, r12\n    mov rdx, rax\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [r13+8]\n    cmp r12, rax\n    jae .Lio_wtext_done\n");
+                self.out.push_str("    mov rsi, QWORD PTR [r13]\n    add rsi, r12\n    mov rdx, rax\n    sub rdx, r12\n    mov edi, ebx\n    call write@PLT\n");
                 self.out.push_str("    test rax, rax\n    jns .Lio_wtext_adv\n    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lio_wtext_loop\n");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
                 self.call_panic_errno();
-                self.out.push_str(".Lio_wtext_adv:\n    add r12, rax\n    jmp .Lio_wtext_loop\n.Lio_wtext_done:\n    mov rax, r12\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lio_wtext_adv:\n    add r12, rax\n    jmp .Lio_wtext_loop\n.Lio_wtext_done:\n    mov rax, r12\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
             }
             // The `&str` form: a `strlen` first, and the pointer is a plain
             // `INTEGER` argument in `rsi` (not a `MEMORY` one), so it lives in
@@ -13288,6 +13363,256 @@ impl Gen {
                 self.out.push_str("    mov rdi, rbx\n    mov rsi, rax\n");
                 let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
                 self.out.push_str("    mov rax, rbx\n    pop rbx\n    ret\n");
+            }
+            // ---- MK7 §5's S4 slice: the `fs` path family --------------------
+            //
+            // Every body below is `externs.rs`'s, transliterated. The `fs`
+            // externs take the path in `rdi` (a `str` is one `INTEGER`
+            // eightbyte), a `Bytes`/`String` argument arrives as a borrow in
+            // the next integer register (`infer.rs` spells a by-value owned
+            // aggregate as `const T*`, the same pointer the C signature has,
+            // which is why the two write bodies read their data through
+            // `rsi`), and a `Bytes`/`String` *return* takes the hidden
+            // destination in `rdi` first (which is why `read_raw`'s path
+            // arrives in `rsi` and `list_raw`'s too). The `struct stat` is 144
+            // bytes on x86-64 glibc, with `st_mode` at offset 24; the masks
+            // are `S_IFMT` `0xf000` against `S_IFREG` `0x8000`, `S_IFDIR`
+            // `0x4000` and `S_IFLNK` `0xa000`. `struct dirent`'s `d_name` is at
+            // offset 19. Every failed call is the C body's
+            // `kelp_panic_errno`, with the failing `errno` captured before the
+            // cleanup `fclose` can overwrite it (the C's own
+            // `kelp_panic_at(msg, e)`).
+            //
+            // `read_raw`: `fopen`/`fseek`/`ftell`/`rewind`/`fread`/`fclose`
+            // and the one owned `Bytes`, allocated before the read is known to
+            // have succeeded. `r12` is the destination, `rbx` the stream and
+            // `r13` the length, or the saved `errno` on the two failures that
+            // run the `fclose` before they panic.
+            Routine::FsReadRaw => {
+                let mode = self.bytes_label(b"rb");
+                let open_msg = self.bytes_label(b"fs.read: cannot open file");
+                let seek_msg = self.bytes_label(b"fs.read: cannot seek");
+                let size_msg = self.bytes_label(b"fs.read: cannot size file");
+                let short_msg = self.bytes_label(b"fs.read: short read");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n");
+                self.out.push_str("    mov r12, rdi\n    mov rdi, rsi\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode}]");
+                self.out.push_str("    call fopen@PLT\n    test rax, rax\n    je .Lfs_read_open\n");
+                self.out.push_str("    mov rbx, rax\n    mov rdi, rbx\n    xor esi, esi\n    mov edx, 2\n    call fseek@PLT\n    test eax, eax\n    jne .Lfs_read_seek\n");
+                self.out.push_str("    mov rdi, rbx\n    call ftell@PLT\n    test rax, rax\n    js .Lfs_read_size\n");
+                self.out.push_str("    mov r13, rax\n    mov rdi, rbx\n    call rewind@PLT\n");
+                self.out.push_str("    mov rdi, r12\n    mov rsi, r13\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    test r13, r13\n    je .Lfs_read_close\n");
+                self.out.push_str("    mov rdi, QWORD PTR [r12]\n    mov esi, 1\n    mov rdx, r13\n    mov rcx, rbx\n    call fread@PLT\n");
+                self.out.push_str("    cmp rax, r13\n    jne .Lfs_read_short\n");
+                self.out.push_str(".Lfs_read_close:\n    mov rdi, rbx\n    call fclose@PLT\n");
+                self.out.push_str("    mov rax, r12\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_read_short:\n    mov rdi, rbx\n    call fclose@PLT\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{short_msg}]");
+                self.call_panic();
+                self.out.push_str(".Lfs_read_seek:\n    call __errno_location@PLT\n    mov r13d, DWORD PTR [rax]\n    mov rdi, rbx\n    call fclose@PLT\n    call __errno_location@PLT\n    mov DWORD PTR [rax], r13d\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{seek_msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lfs_read_size:\n    call __errno_location@PLT\n    mov r13d, DWORD PTR [rax]\n    mov rdi, rbx\n    call fclose@PLT\n    call __errno_location@PLT\n    mov DWORD PTR [rax], r13d\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{size_msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lfs_read_open:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{open_msg}]");
+                self.call_panic_errno();
+            }
+            // `write_raw`: `fopen("wb")`/`fwrite`/`fclose`. The `Bytes`
+            // parameter arrives as a *borrow* (`infer.rs` lowers a by-value
+            // owned aggregate to `const kelp_Bytes*`, the same pointer the C
+            // signature spells), so its pointer is in `rsi` and the fields are
+            // read through it. `rbx` is the stream, `r12` the borrowed
+            // `Bytes`.
+            Routine::FsWriteRaw => {
+                let mode = self.bytes_label(b"wb");
+                let open_msg = self.bytes_label(b"fs.write: cannot open file");
+                let short_msg = self.bytes_label(b"fs.write: short write");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n");
+                self.out.push_str("    mov r12, rsi\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode}]");
+                self.out.push_str("    call fopen@PLT\n    test rax, rax\n    je .Lfs_write_open\n");
+                self.out.push_str("    mov rbx, rax\n    mov rdx, QWORD PTR [r12+8]\n    test rdx, rdx\n    je .Lfs_write_close\n");
+                self.out.push_str("    mov rdi, QWORD PTR [r12]\n    mov esi, 1\n    mov rcx, rbx\n    call fwrite@PLT\n");
+                self.out.push_str("    cmp rax, QWORD PTR [r12+8]\n    jne .Lfs_write_short\n");
+                self.out.push_str(".Lfs_write_close:\n    mov rdi, rbx\n    call fclose@PLT\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_write_short:\n    mov rdi, rbx\n    call fclose@PLT\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{short_msg}]");
+                self.call_panic();
+                self.out.push_str(".Lfs_write_open:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{open_msg}]");
+                self.call_panic_errno();
+            }
+            // The same body with a `String` argument and its own messages.
+            Routine::FsWriteTextRaw => {
+                let mode = self.bytes_label(b"wb");
+                let open_msg = self.bytes_label(b"fs.write_text: cannot open file");
+                let short_msg = self.bytes_label(b"fs.write_text: short write");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n");
+                self.out.push_str("    mov r12, rsi\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{mode}]");
+                self.out.push_str("    call fopen@PLT\n    test rax, rax\n    je .Lfs_wtext_open\n");
+                self.out.push_str("    mov rbx, rax\n    mov rdx, QWORD PTR [r12+8]\n    test rdx, rdx\n    je .Lfs_wtext_close\n");
+                self.out.push_str("    mov rdi, QWORD PTR [r12]\n    mov esi, 1\n    mov rcx, rbx\n    call fwrite@PLT\n");
+                self.out.push_str("    cmp rax, QWORD PTR [r12+8]\n    jne .Lfs_wtext_short\n");
+                self.out.push_str(".Lfs_wtext_close:\n    mov rdi, rbx\n    call fclose@PLT\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_wtext_short:\n    mov rdi, rbx\n    call fclose@PLT\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{short_msg}]");
+                self.call_panic();
+                self.out.push_str(".Lfs_wtext_open:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{open_msg}]");
+                self.call_panic_errno();
+            }
+            // The four predicates share a 144-byte `struct stat` frame.
+            // `exists_raw` is `stat(...) == 0`; the other three add the mask at
+            // offset 24. No errno is read: a path that does not exist is a
+            // plain `false`, not a panic.
+            Routine::FsExistsRaw => {
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 144\n    mov rsi, rsp\n    call stat@PLT\n");
+                self.out.push_str("    test eax, eax\n    sete al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            Routine::FsIsFileRaw => {
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 144\n    mov rsi, rsp\n    call stat@PLT\n");
+                self.out.push_str("    test eax, eax\n    jne .Lfs_isfile_no\n    mov eax, DWORD PTR [rsp+24]\n    and eax, 0xf000\n    cmp eax, 0x8000\n    sete al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_isfile_no:\n    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            Routine::FsIsDirRaw => {
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 144\n    mov rsi, rsp\n    call stat@PLT\n");
+                self.out.push_str("    test eax, eax\n    jne .Lfs_isdir_no\n    mov eax, DWORD PTR [rsp+24]\n    and eax, 0xf000\n    cmp eax, 0x4000\n    sete al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_isdir_no:\n    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            // `lstat`, so a link answers as a link rather than as whatever it
+            // points at.
+            Routine::FsIsSymlinkRaw => {
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 144\n    mov rsi, rsp\n    call lstat@PLT\n");
+                self.out.push_str("    test eax, eax\n    jne .Lfs_islink_no\n    mov eax, DWORD PTR [rsp+24]\n    and eax, 0xf000\n    cmp eax, 0xa000\n    sete al\n    movzx eax, al\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_islink_no:\n    xor eax, eax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            Routine::FsRemoveRaw => {
+                let msg = self.bytes_label(b"fs.remove: cannot remove file");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    call remove@PLT\n    test eax, eax\n    jne .Lfs_remove_fail\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n.Lfs_remove_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `mkdir(path, 0777)`; `0777` is `511`.
+            Routine::FsMkdirRaw => {
+                let msg = self.bytes_label(b"fs.mkdir: cannot create directory");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    mov esi, 511\n    call mkdir@PLT\n    test eax, eax\n    jne .Lfs_mkdir_fail\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n.Lfs_mkdir_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `mkdir_all_raw`: a `PATH_MAX` (4096) stack buffer, the length
+            // check, the copy, then the prefix loop. A component is created on
+            // both `/` and the terminating NUL, and `EEXIST` (17) is success.
+            // `r13` is the path for the `memcpy` and then the saved byte,
+            // `rbx` the length and `r12` the index.
+            Routine::FsMkdirAllRaw => {
+                let bad_msg = self.bytes_label(b"fs.mkdir_all: path is empty or too long");
+                let fail_msg = self.bytes_label(b"fs.mkdir_all: cannot create directory");
+                self.out.push_str("    push rbx\n    push r12\n    push r13\n    sub rsp, 4096\n");
+                self.out.push_str("    mov r13, rdi\n    call strlen@PLT\n    mov rbx, rax\n");
+                self.out.push_str("    test rax, rax\n    je .Lfs_mkall_bad\n    cmp rbx, 4096\n    jae .Lfs_mkall_bad\n");
+                self.out.push_str("    lea rdx, [rbx+1]\n    mov rdi, rsp\n    mov rsi, r13\n    call memcpy@PLT\n");
+                self.out.push_str("    mov r12, 1\n.Lfs_mkall_loop:\n    cmp r12, rbx\n    ja .Lfs_mkall_done\n");
+                self.out.push_str("    movzx eax, BYTE PTR [rsp+r12]\n    cmp al, 47\n    je .Lfs_mkall_mk\n    test al, al\n    jne .Lfs_mkall_next\n");
+                self.out.push_str(".Lfs_mkall_mk:\n    movzx r13d, BYTE PTR [rsp+r12]\n    mov BYTE PTR [rsp+r12], 0\n");
+                self.out.push_str("    mov rdi, rsp\n    mov esi, 511\n    call mkdir@PLT\n    test eax, eax\n    je .Lfs_mkall_restore\n");
+                self.out.push_str("    call __errno_location@PLT\n    cmp DWORD PTR [rax], 17\n    jne .Lfs_mkall_fail\n");
+                self.out.push_str(".Lfs_mkall_restore:\n    mov BYTE PTR [rsp+r12], r13b\n");
+                self.out.push_str(".Lfs_mkall_next:\n    add r12, 1\n    jmp .Lfs_mkall_loop\n");
+                self.out.push_str(".Lfs_mkall_done:\n    add rsp, 4096\n    pop r13\n    pop r12\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lfs_mkall_bad:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{bad_msg}]");
+                self.call_panic();
+                self.out.push_str(".Lfs_mkall_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{fail_msg}]");
+                self.call_panic_errno();
+            }
+            // `list_raw`: `scandir` with `alphasort`, the two-pass body (count
+            // the names, then copy them), and the `{data, len, cap}` that
+            // `String.from_bytes` takes. `.`/`..` are skipped by `strcmp` in
+            // both passes. The `Bytes` sits at `[rsp]` so `StringFromBytes`
+            // gets it as its outgoing `MEMORY` argument: frame slots are `b`
+            // (`-80`, `-72`, `-64`), `names` (`-56`), the destination (`-48`),
+            // `n` (`-40`), `total` (`-32`), `i` (`-24`), `at` (`-16`) and the
+            // per-entry length (`-8`).
+            Routine::FsListRaw => {
+                let dot = self.bytes_label(b".");
+                let dotdot = self.bytes_label(b"..");
+                let open_msg = self.bytes_label(b"fs.list: cannot read directory");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 80\n");
+                self.out.push_str("    mov QWORD PTR [rbp-48], rdi\n    mov QWORD PTR [rbp-56], 0\n");
+                self.out.push_str("    mov rdi, rsi\n    lea rsi, [rbp-56]\n    xor edx, edx\n");
+                self.out.push_str("    mov rcx, QWORD PTR alphasort@GOTPCREL[rip]\n    call scandir@PLT\n");
+                self.out.push_str("    test eax, eax\n    js .Lfs_list_fail\n    movsxd rax, eax\n    mov QWORD PTR [rbp-40], rax\n");
+                self.out.push_str("    mov QWORD PTR [rbp-32], 0\n    mov QWORD PTR [rbp-24], 0\n");
+                self.out.push_str(".Lfs_list_total:\n    mov rax, QWORD PTR [rbp-24]\n    cmp rax, QWORD PTR [rbp-40]\n    jge .Lfs_list_alloc\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    add rdi, 19\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{dot}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_list_total_next\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-24]\n    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    add rdi, 19\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{dotdot}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_list_total_next\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-24]\n    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    add rdi, 19\n    call strlen@PLT\n");
+                self.out.push_str("    add rax, 1\n    add QWORD PTR [rbp-32], rax\n");
+                self.out.push_str(".Lfs_list_total_next:\n    add QWORD PTR [rbp-24], 1\n    jmp .Lfs_list_total\n");
+                self.out.push_str(".Lfs_list_alloc:\n    lea rdi, [rbp-80]\n    mov rsi, QWORD PTR [rbp-32]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str("    mov QWORD PTR [rbp-16], 0\n    mov QWORD PTR [rbp-24], 0\n");
+                self.out.push_str(".Lfs_list_copy:\n    mov rax, QWORD PTR [rbp-24]\n    cmp rax, QWORD PTR [rbp-40]\n    jge .Lfs_list_done\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    add rdi, 19\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{dot}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_list_free\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-24]\n    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    add rdi, 19\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{dotdot}]");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lfs_list_free\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-24]\n    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    add rdi, 19\n    call strlen@PLT\n");
+                self.out.push_str("    mov QWORD PTR [rbp-8], rax\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rbp-24]\n    mov r8, QWORD PTR [rbp-56]\n    mov rsi, QWORD PTR [r8+rcx*8]\n    add rsi, 19\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbp-80]\n    add rdi, QWORD PTR [rbp-16]\n    mov rdx, QWORD PTR [rbp-8]\n    call memcpy@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-8]\n    add QWORD PTR [rbp-16], rax\n");
+                self.out.push_str("    mov rcx, QWORD PTR [rbp-80]\n    add rcx, QWORD PTR [rbp-16]\n    mov BYTE PTR [rcx], 10\n    add QWORD PTR [rbp-16], 1\n");
+                self.out.push_str(".Lfs_list_free:\n    mov rax, QWORD PTR [rbp-24]\n    mov rcx, QWORD PTR [rbp-56]\n    mov rdi, QWORD PTR [rcx+rax*8]\n    call free@PLT\n");
+                self.out.push_str("    add QWORD PTR [rbp-24], 1\n    jmp .Lfs_list_copy\n");
+                self.out.push_str(".Lfs_list_done:\n    mov rdi, QWORD PTR [rbp-56]\n    call free@PLT\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-16]\n    test rax, rax\n    je .Lfs_list_no_dec\n    sub rax, 1\n    mov QWORD PTR [rbp-16], rax\n");
+                self.out.push_str(".Lfs_list_no_dec:\n    mov rcx, QWORD PTR [rbp-80]\n    add rcx, QWORD PTR [rbp-16]\n    mov BYTE PTR [rcx], 0\n");
+                self.out.push_str("    mov rax, QWORD PTR [rbp-16]\n    mov QWORD PTR [rbp-72], rax\n    mov rdi, QWORD PTR [rbp-48]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromBytes.label());
+                self.out.push_str("    mov rax, QWORD PTR [rbp-48]\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lfs_list_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{open_msg}]");
+                self.call_panic_errno();
+            }
+            // `symlink(target, link)`: two paths, already in `rdi`/`rsi`.
+            Routine::FsSymlinkRaw => {
+                let msg = self.bytes_label(b"fs.symlink: cannot create symlink");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    call symlink@PLT\n    test eax, eax\n    jne .Lfs_symlink_fail\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n.Lfs_symlink_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `readlink` into a `PATH_MAX` buffer, then the owned `String`.
+            // `rbx` is the destination across the call.
+            Routine::FsReadLinkRaw => {
+                let errno_msg = self.bytes_label(b"fs.read_link: cannot read link");
+                let long_msg = self.bytes_label(b"fs.read_link: target is too long");
+                self.out.push_str("    push rbx\n    sub rsp, 4096\n    mov rbx, rdi\n    mov rdi, rsi\n    mov rsi, rsp\n    mov edx, 4096\n    call readlink@PLT\n");
+                self.out.push_str("    test rax, rax\n    js .Lfs_readlink_errno\n    cmp rax, 4096\n    jae .Lfs_readlink_long\n    mov BYTE PTR [rsp+rax], 0\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, rsp\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+                self.out.push_str("    mov rax, rbx\n    add rsp, 4096\n    pop rbx\n    ret\n");
+                self.out.push_str(".Lfs_readlink_errno:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{errno_msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lfs_readlink_long:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{long_msg}]");
+                self.call_panic();
             }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");

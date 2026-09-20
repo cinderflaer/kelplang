@@ -3193,6 +3193,29 @@ fn a_symlink_is_seen_reported_and_left_alone_by_the_walk() {
 }
 
 // ---------------------------------------------------------------------------
+// S4: the `std/fs` path family, called through its raw externs.
+//
+// The gated wrappers are refused by the `asm` backend until the capability
+// check lands, so the fixture reaches the bodies directly; it is the only
+// differential acceptance target the family has until then.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_fs_path_family_reads_writes_and_walks() {
+    // One call per extern: `exists`/`is_file`/`is_dir`/`is_symlink`, `mkdir`,
+    // `mkdir_all` (twice, so the `EEXIST` tolerance is pinned), `write_text`,
+    // `write`, `read`, `symlink`, `read_link`, `list` and `remove`. The listing
+    // is sorted by `alphasort`, and the link is reported without being
+    // descended into.
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_path_family");
+    assert_compiles_and_runs(
+        "tests/fixtures/fs_path_family.kp",
+        "false\ntrue\nfalse\n6\nhello\n\ntrue\nxyz\ntrue\ntrue\nfalse\n/tmp/kelp_fs_path_family/a.txt\nfalse\na.txt\nlink\nsub\nfalse\n",
+    );
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_path_family");
+}
+
+// ---------------------------------------------------------------------------
 // S2: `io` (the standard descriptors as streams, buffered line reading) and
 // `process` (argv, running a program, spawning one).
 //
@@ -3237,6 +3260,19 @@ fn a_held_buf_reader_reads_lines_and_consumes_the_rest() {
         "io_streams",
         "l1\nl2\n",
         "true\nl1\n3\nl2\n\ntrue\n0\n4\ntrue\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn io_writes_bytes_text_and_a_borrowed_view() {
+    // The three write bodies take their buffer as a borrow (`const kelp_Bytes*`
+    // in the C signature), which a body that read the outgoing argument area
+    // would miss and write nothing: each returns the byte count it wrote, and
+    // the raw bytes reach stdout ahead of the buffered `print` because the body
+    // flushes the matching stdio stream first.
+    assert_compiles_and_runs(
+        "tests/fixtures/io_write_bodies.kp",
+        "bytes\n6\ntext\n5\nstr\n4\n",
     );
 }
 

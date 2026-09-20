@@ -64,7 +64,18 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The count at the last re-recording, which is this one: 202 fixtures the C
+/// The count at the last re-recording, which is this one: 207 fixtures the C
+/// backend builds, 196 of them also built by the asm backend, 11 refused. This
+/// round's MK7 §5 S4 slice added two fixtures: `fs_path_family` (the raw
+/// `std/fs` path family, pinned directly because the gated wrappers still
+/// refuse) and `io_write_bodies` (the borrow ABI in the `std.io` write bodies,
+/// which were reading the outgoing argument area and writing nothing):
+/// 205/194/11 -> 207/196/11. The three `fs` fixtures S4 moves (`fs_errno`,
+/// `fs_symlink_kind`, `caps_gated_path`) advance from an `extern fun` refusal to
+/// the capability-check one and do not leave the refused column, and
+/// `fs_fallible` advances to `std.fs.try_read_raw`, so no other entry changed.
+///
+/// Before it, the previous re-recording read: 202 fixtures the C
 /// backend builds, 178 of them also built by the asm backend, 24 refused. Two
 /// slices moved it since the A-18 re-recording below: the empty-container
 /// slice recorded `container_element_from_use` (196/175/21), and the MK7 §5
@@ -361,6 +372,10 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "fn_literal_capture",
     "fn_value",
     "for_loop",
+    // MK7 §5's S4 slice: the `std/fs` path family, pinned through its raw
+    // externs because the gated wrappers still refuse (the capability check is
+    // not emitted yet). One fixture reaches all thirteen bodies.
+    "fs_path_family",
     "generic_explicit_args",
     "generic_function_basic",
     "generic_function_owned",
@@ -394,6 +409,10 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     // family. `std/io` is ungated, so these two need no capability check.
     "io_stdio",
     "io_streams",
+    // The regression pin for the borrow ABI in the `std.io` write bodies:
+    // `write_bytes_raw`/`write_text_raw` read their borrow, not the outgoing
+    // argument area a by-value aggregate would use.
+    "io_write_bodies",
     "isize_kinds",
     "list_basic",
     "list_clone",
