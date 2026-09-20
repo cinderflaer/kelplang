@@ -3041,6 +3041,23 @@ fn a_narrow_fs_grant_still_reaches_cwd() {
     );
 }
 
+#[test]
+fn a_symlink_is_seen_reported_and_left_alone_by_the_walk() {
+    // MISSING-cK4hT: `is_symlink`/`read_link` classify a link, a broken link
+    // still has a target text, `walk` reports a link without descending it (so
+    // the link back to the root terminates the walk), and `remove_all` unlinks
+    // a link instead of walking into it (BUG-a9Km4: the target's own file
+    // survives).
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind");
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind_target");
+    assert_compiles_and_runs(
+        "tests/fixtures/fs_symlink_kind.kp",
+        "true\ntrue\ntrue\nfalse\n/tmp/kelp_fs_symlink_kind/note.txt\ntrue\nfalse\n8\nfalse\ntrue\nfalse\n",
+    );
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind");
+    let _ = std::fs::remove_dir_all("/tmp/kelp_fs_symlink_kind_target");
+}
+
 // ---------------------------------------------------------------------------
 // S2: `io` (the standard descriptors as streams, buffered line reading) and
 // `process` (argv, running a program, spawning one).

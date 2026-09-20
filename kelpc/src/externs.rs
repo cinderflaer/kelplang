@@ -254,6 +254,16 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "is_symlink_raw",
+        "    struct stat st;\n    return lstat(kelp_path, &st) == 0 && S_ISLNK(st.st_mode);\n",
+    ),
+    (
+        "std/fs",
+        "read_link_raw",
+        "    char buf[PATH_MAX];\n    ssize_t n = readlink(kelp_path, buf, sizeof buf);\n    if (n < 0) {\n        kelp_panic_errno(\"fs.read_link: cannot read link\");\n    }\n    if ((size_t)n >= sizeof buf) {\n        kelp_panic(\"fs.read_link: target is too long\");\n    }\n    buf[n] = 0;\n    return kelp_String__from_str(buf);\n",
+    ),
+    (
+        "std/fs",
         "cwd_raw",
         "    char buf[PATH_MAX];\n    if (getcwd(buf, sizeof buf) == NULL) {\n        kelp_panic_errno(\"fs.cwd: cannot read the current directory\");\n    }\n    return kelp_String__from_str(buf);\n",
     ),

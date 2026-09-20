@@ -21,8 +21,9 @@ impl "std/io"
    link creation: a module can only make a link whose target it could also
    name. `target` has to be absolute, like every other path this API takes,
    because the check normalizes before it matches and only an absolute path
-   normalizes at all. There is no `read_link` — nothing has needed to resolve a
-   link back to its target text. */
+   normalizes at all. `fs.is_symlink` and `fs.read_link` (`lstat`/`readlink`) let
+   a caller see a link as a link and read its target, and `walk`/`remove_all`
+   stop at one rather than descending through it (MISSING-cK4hT). */
 
 extern fun read_raw(path: &str).R: Bytes
 extern fun write_raw(path: &str, data: Bytes)
@@ -45,6 +46,8 @@ extern fun touch_raw(path: &str)
 extern fun temp_path_raw(prefix: &str).R: String
 extern fun mtime_raw(path: &str).R: i64
 extern fun mode_raw(path: &str).R: u32
+extern fun is_symlink_raw(path: &str).R: bool
+extern fun read_link_raw(path: &str).R: String
 extern fun cwd_raw().R: String
 
 // A point-in-time view of one path (MK5-S5). `mode` is the low 12 permission
@@ -84,6 +87,19 @@ fun cwd().R: String = cwd_raw()
 fun exists(path: &str).R: bool = exists_raw(path)
 fun is_file(path: &str).R: bool = is_file_raw(path)
 fun is_dir(path: &str).R: bool = is_dir_raw(path)
+
+// Whether `path` is itself a symlink. `is_file`/`is_dir` follow a link and
+// answer for what it points at; this is `lstat`, so it answers for the link,
+// and a broken link is `true` here and `false` for both of the others. The
+// path is normalized and symlink-resolved for the capability check like every
+// other `fs` path, so a link out of the grant is denied rather than reported.
+fun is_symlink(path: &str).R: bool = is_symlink_raw(path)
+
+// The text `path` points at, exactly as it was stored: a relative target stays
+// relative (it is relative to the link's own directory), and a broken link
+// still has one.
+// Panics: if `path` is not a symlink, or cannot be read.
+fun read_link(path: &str).R: String = read_link_raw(path)
 
 // Panics: if the file does not exist.
 fun size(path: &str).R: u64 = size_raw(path)
@@ -162,13 +178,13 @@ fun mkdir_all(path: &str) {
     mkdir_all_raw(path)
 }
 
-// Removes `path`, recursively when it is a directory. A symlink to a
-// directory is treated as a directory (there is no `lstat` form in v1), so the
-// walk descends into it — and because every child it then names is checked
-// against the grant *after* resolution, a link inside the grant that points
-// outside it makes this panic instead of escaping. `fs.symlink` cannot create
-// such a link, since it checks both of its paths, but one made by another tool
-// can still be sitting in the tree.
+// Removes `path`, recursively when it is a directory. A symlink is removed and
+// never descended into — `is_symlink` is checked before `is_dir`, so a link to a
+// directory is unlinked rather than walked into (BUG-a9Km4) — and because every
+// child it does name is checked against the grant *after* resolution, a link
+// inside the grant that points outside it makes this panic instead of escaping.
+// `fs.symlink` cannot create such a link, since it checks both of its paths, but
+// one made by another tool can still be sitting in the tree.
 //
 // Panics: if anything cannot be removed, including a link out of the grant
 // that the walk reaches.
@@ -177,6 +193,10 @@ fun mkdir_all(path: &str) {
 // `path` is what the join below goes through, and a local binding shadows a
 // module name.
 fun remove_all(target: &str) {
+    if is_symlink(target) {
+        remove_raw(target)
+        return
+    }
     if is_dir(target) {
         val entries = list(target)
         var i: usize = 0
@@ -191,9 +211,11 @@ fun remove_all(target: &str) {
 
 // Every name under `dir`, recursively, each joined to its parent. A
 // depth-first walk driven by an explicit stack: `fs.list` is sorted per
-// directory, so the output is deterministic. Entries are popped off the
-// stack, which is also why the pending list is mutated without a live borrow
-// of itself (`List.get` would hold one for the whole loop body).
+// directory, so the output is deterministic. A symlink is reported as an entry
+// and **not** descended into, so a link back up the tree cannot make the walk
+// run until the kernel refuses the path length (MISSING-cK4hT). Entries are
+// popped off the stack, which is also why the pending list is mutated without a
+// live borrow of itself (`List.get` would hold one for the whole loop body).
 //
 // Panics: if any directory cannot be read.
 fun walk(dir: &str).R: List<String> {
@@ -206,13 +228,14 @@ fun walk(dir: &str).R: List<String> {
         var i: usize = 0
         while i < entries.len() {
             // Three joins, deliberately: a borrow of a local lasts to the end
-            // of the block in v1, so the value `is_dir` probes cannot then be
-            // moved into `pending`. `probe` stays put and is dropped at the
-            // end of the iteration; the pushed value is a fresh one.
+            // of the block in v1, so the value `is_symlink`/`is_dir` probe
+            // cannot then be moved into `pending`. `probe` stays put and is
+            // dropped at the end of the iteration; the pushed value is a fresh
+            // one.
             val name = path.join(current.as_str(), entries.get(i).as_str())
             out.push(name)
             val probe = path.join(current.as_str(), entries.get(i).as_str())
-            val is_directory = is_dir(probe.as_str())
+            val is_directory = !is_symlink(probe.as_str()) && is_dir(probe.as_str())
             if is_directory {
                 pending.push(path.join(current.as_str(), entries.get(i).as_str()))
             }
