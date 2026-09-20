@@ -1,12 +1,13 @@
 # The "Kelp" language roadmap
 
-The critical path, the MK/S/M naming scheme, the marks at a glance, the open items, the features Kelp needs, and — in its last part — the backlog: everything the plan has named and not scheduled. This file is the record and the plan.
+The critical path, the MK/S/M naming scheme, the marks at a glance, the open items, the features Kelp needs, and (in its last part) the backlog: everything the plan has named and not scheduled. This file is the record and the plan.
 
 - The critical path, the naming scheme, the marks, the open items, the features Kelp needs, and the backlog: this file.
 - What has shipped: `done.md`.
 - The design behind the language, capabilities, the standard library, and the non-syntax decisions: `architecture.md`.
 - Syntax and style authority: `syntax.md`.
 - The compiler's own backend (a branch's working plan, not a plan of record): `mk7-own-backend.md`.
+- Moving the default backend off `C`: `mk7-default-switch.md` (a proposal, not committed).
 - What the project is, and how to build, run and test it: `../README.md`.
 
 ## Current state

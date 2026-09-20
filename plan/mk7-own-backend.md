@@ -15,6 +15,11 @@ starting, not the reason to finish.
 current toolchain does, we do. That is the expensive reading of "no LLVM no nothing", and it is the reading
 this branch takes.
 
+**Where the default moves:** `plan/mk7-default-switch.md` is the proposed sequence for making the `asm`
+backend the default, and states what has to be true first and in what order. It is a proposal, not a
+commitment: this file's §0 stays the live state, and §1's ground rule 4 still decides when stage 2 may
+start.
+
 ---
 
 ## 0. Where the branch is
