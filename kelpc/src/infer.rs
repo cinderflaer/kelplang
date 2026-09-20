@@ -4110,6 +4110,28 @@ fn is_tir_place(expr: &tir::Expr) -> bool {
     )
 }
 
+/// A place whose storage is still there after the enclosing statement, which
+/// is what a returned borrow and an exclusive borrow both need.
+///
+/// `is_tir_place` is the weaker question, "can an address be taken?", and
+/// a field of a temporary answers yes: `codegen_c.rs` stages the temporary so
+/// the field has an address. That address dies with the statement, though, so
+/// `mkName().name.as_str()` is a borrow of a temporary the same way
+/// `String.from_str("x").as_str()` is, one projection deeper, and it needs the
+/// same refusal. A `Deref` is durable, and so is any chain that steps through
+/// one: what a pointer points at is somebody else's storage, which is what
+/// makes `headers.get(i).name.as_str()` fine where `mkName().name.as_str()` is
+/// not.
+fn is_durable_place(expr: &tir::Expr) -> bool {
+    match &expr.kind {
+        tir::ExprKind::FieldAccess { base, .. } | tir::ExprKind::EnumField { base, .. } => {
+            matches!(base.ty, Ty::Ref { .. }) || is_durable_place(base)
+        }
+        tir::ExprKind::Deref { .. } => true,
+        _ => is_tir_place(expr),
+    }
+}
+
 /// `ast::is_place`, kept callable under its old local name at every existing
 /// call site — the definition itself now lives in `ast.rs` so `parser.rs` can
 /// share it (see `parse_if_let`).
@@ -6754,7 +6776,10 @@ fn require_place_for_borrowed_arg(
     let tir::ExprKind::Ref { expr: inner, .. } = &arg.kind else {
         return Ok(());
     };
-    if !is_tir_place(inner) {
+    // `is_durable_place`, not `is_tir_place`: a field of a temporary has an
+    // address (codegen stages one) but not one that outlives the statement the
+    // borrow is taken in, which is the whole question here.
+    if !is_durable_place(inner) {
         return Err(TypeError {
             message: format!(
                 "this call returns a borrow of its parameter '{}', so that argument has to be a variable or a field — a temporary would be freed before the borrow could be used; bind it to a local first (`val tmp = <the expression>`) and pass `tmp` instead",
@@ -6820,10 +6845,11 @@ fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) ->
             // whole enclosing expression, which is exactly how long a
             // call-scoped borrow lasts, and `codegen_c.rs` hoists it into a C
             // temporary to take its address. An *exclusive* borrow still
-            // needs a place, since the callee may write through it and a
-            // temporary has nowhere for a write to land.
+            // needs a place to write into, and `is_durable_place` is the
+            // question: a temp staged for the call would swallow the write,
+            // and a field of one would take the write down with it.
             if *mutable {
-                if !is_tir_place(&checked) {
+                if !is_durable_place(&checked) {
                     return Err(TypeError {
                         message: format!("argument {pname} must be a variable or field, not a temporary value"),
                         span: arg_expr.span(),

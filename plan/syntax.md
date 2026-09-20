@@ -1014,6 +1014,25 @@ the chain. Binding the call to a `val` first is the fix, or leaving the
 `.as_str()` inside the enclosing call (`print(str.len(...))`), where the
 temporary lives for that call.
 
+A **field of a temporary is the same case one projection deeper**: `mkName().name`
+is a field of an rvalue, so it has no storage of its own and the temporary it
+lives in is freed at the end of the statement. The compiler stages that
+temporary for the length of one call, and frees it after the call rather than
+freeing the field alone. That is what makes a field of a returned `datac`
+usable wherever the borrow does not outlive the call:
+
+```kelp
+print(mkName().name.len())      // ok: staged for the call, freed after it
+take(mkName().name)             // ok: the parameter borrows, for the call
+val n = mkName().name.len()     // ok: the borrow ends with the call
+val r = &mkName().name          // error: cannot borrow a temporary value
+val v = mkName().name.as_str()  // error: the returned borrow outlives it
+```
+
+A chain that steps through a borrow is not a temporary case at all:
+`headers.get(i).name` lives in whatever `get` pointed at, so its address is
+durable and `&headers.get(i).name` needs no staging.
+
 ### 10.3 Drops
 
 Owned values are freed at the end of the scope that owns them, on every exit path including `return` and either branch of an `if`. A `datac` drops its fields, a `List` drops its elements and then its buffer, and a `Box` drops what it holds if it holds anything. An owned `pd` is freed once at process exit. There is no `free`, no `deinit`, and no way to leak deliberately.
@@ -1815,9 +1834,10 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot borrow 'c' as exclusive: already borrowed as shared` | end the earlier borrow (an inner block does it), because borrows last to the end of the scope |
 | `cannot borrow 'c': already borrowed exclusively` | same rule, other direction |
 | `this is a borrow of a borrow` (with the operand named) | a parameter is already a borrow (§10.2), so `&o` on one makes two: pass the parameter itself, `o` |
+| `cannot borrow a temporary value` | `&expr` needs a place, and a call's result is not one, nor is a field of one (`&mkName().name`); bind the call to a `val` and borrow the field of that (§10.2) |
 | `operator requires matching numeric operands, found 'mut i64' and 'i32'` with the `write '*sink'` note | a `mut T` parameter is a borrow: read and write it through `*`, the same rule as §10's `*pos` |
 | `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
-| `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding |
+| `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding; a field of a returned `datac` (`mkName().name.as_str()`) is the same case one projection deeper (§10.2) |
 | `argument 'b' has type 'String', expected 'str'` | the parameter is `str` and the value is owned: `str.eq(a, b)`, `fs.write_text`, `path.join` and every other `str` parameter need a view — add `.as_str()` |
 | `argument 'c' has type 'char', expected 'u8'` — with the note about writing the type | a character literal with nothing asking for a type is a `char`, and a `char` is not an integer; write `val c: u8 = '"'` |
 | `the character '中' (U+4E2D) does not fit in 'u8'` | a character literal takes the type its context asks for, and this one does not fit; use a wider type, or the byte you meant |

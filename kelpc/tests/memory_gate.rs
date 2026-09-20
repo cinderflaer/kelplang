@@ -420,8 +420,11 @@ struct Sweep {
     asm_checked: Vec<Check>,
     /// How many of `asm_checked` belong to a fixture the C backend itself
     /// rejects. Without them a leak in a shape only the asm backend accepts
-    /// would have no gate at all — `heap_field_of_owned_temporary` is that
-    /// shape: the C backend emits `&(rvalue).field`, which `cc` refuses.
+    /// would have no gate at all. `heap_field_of_owned_temporary` was that
+    /// shape until both backends learned to stage and free a field of an
+    /// rvalue, and the branch stays because the next one will be: a fixture
+    /// that only one backend builds is exactly the one whose drops nothing
+    /// else checks.
     asm_only: usize,
     /// Fixtures the C backend builds and the asm backend refuses, sorted.
     asm_refused: Vec<String>,
@@ -451,8 +454,7 @@ fn run_sweep() -> Sweep {
             // The C backend is the oracle and the compile-error fixtures are
             // rejected by design, so there is no C binary to run — but the asm
             // backend may still build one, and a binary no sweep runs is a leak
-            // nothing would catch. `heap_field_of_owned_temporary` is exactly
-            // that shape, so build and check it instead of skipping it.
+            // nothing would catch.
             c_rejected += 1;
             let asm_bin = dir.join(format!("asm_{name}"));
             if build("asm", name, &asm_bin) {

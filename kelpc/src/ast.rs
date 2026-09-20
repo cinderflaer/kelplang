@@ -409,8 +409,21 @@ pub struct CallArg {
 /// and `infer.rs` (which uses it for the same question about an explicit
 /// `&expr`/method-borrow argument), so the definition of "a place" cannot
 /// drift between the two.
+///
+/// The field case **recurses**, because a field is exactly as durable as what
+/// it is a field of: `mkName().name` is a field of an rvalue, so it has no
+/// storage of its own. That is what makes `&mkName().name` the "cannot borrow
+/// a temporary value" refusal rather than a borrow whose owner is freed at the
+/// end of the statement, and it is also what makes an `if let` over such a
+/// scrutinee bind a temporary of its own (a payload borrow has to outlive the
+/// arm). A `Deref` stays unconditional: the pointer may itself be a temporary,
+/// but what it points at belongs to somebody else.
 pub fn is_place(expr: &Expr) -> bool {
-    matches!(expr, Expr::Ident(..) | Expr::FieldAccess { .. } | Expr::Deref { .. })
+    match expr {
+        Expr::Ident(..) | Expr::Deref { .. } => true,
+        Expr::FieldAccess { base, .. } => is_place(base),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]

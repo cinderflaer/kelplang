@@ -2629,24 +2629,29 @@ impl<'a> Gen<'a> {
             // hidden first argument; the callee is bound to a temporary
             // first, so a field or a dereference is evaluated once.
             ExprKind::IndirectCall { callee, args } => {
-                let rendered: Vec<String> = args.iter().map(|a| self.expr_value(a)).collect();
-                let arglist = rendered.join(", ");
+                let (prelude, arg_texts, hoisted) = self.render_arguments(args);
+                let arglist = arg_texts.join(", ");
                 match closure_access(&callee.ty) {
                     Some((fn_member, env_member)) => {
                         let tmp = fresh_temp();
                         let value = self.expr_value(callee);
                         let code_ptr = format!("{tmp}{fn_member}");
                         let env_ptr = format!("{tmp}{env_member}");
-                        let call = if arglist.is_empty() {
+                        let invoke = if arglist.is_empty() {
                             format!("({code_ptr})({env_ptr})")
                         } else {
                             format!("({code_ptr})({env_ptr}, {arglist})")
                         };
-                        format!("({{ {} = {value}; {call}; }})", callee.ty.c_decl(&tmp))
+                        // The callee is bound to a temporary of its own, in
+                        // front of the call, so a field or a dereference is
+                        // evaluated once.
+                        let prelude = format!("{prelude}{} = {value};\n", callee.ty.c_decl(&tmp));
+                        self.hoisted_call(prelude, invoke, &hoisted, &expr.ty)
                     }
                     None => {
                         let callee = self.expr_value(callee);
-                        format!("({callee})({arglist})")
+                        let call = format!("({callee})({arglist})");
+                        self.hoisted_call(prelude, call, &hoisted, &expr.ty)
                     }
                 }
             }
@@ -2666,7 +2671,11 @@ impl<'a> Gen<'a> {
                             // An owned temporary (nothing else owns it) is
                             // held in a C temporary and freed right after the
                             // `printf`, so interpolating an allocation does
-                            // not leak.
+                            // not leak. A borrow of a *field* of a temporary
+                            // is the same problem one projection deeper and is
+                            // staged the same way, at the temporary and not at
+                            // the field, so the buffers the other fields own
+                            // are freed with it.
                             if matches!(value.ty, Ty::Bytes | Ty::String) {
                                 let tmp = fresh_temp();
                                 let rendered = self.expr_value(value);
@@ -2675,6 +2684,16 @@ impl<'a> Gen<'a> {
                                 fmt.push_str(spec);
                                 args.push(text);
                                 drops.push(format!("{}(&{tmp});", drop_fn_name(&value.ty)));
+                            } else if let Some((hold, text, drop)) =
+                                self.stage_borrowed_field(value)
+                            {
+                                holds.push(hold);
+                                let (spec, rendered) = self.printf_piece_with(&text, &value.ty);
+                                fmt.push_str(spec);
+                                args.push(rendered);
+                                if !drop.is_empty() {
+                                    drops.push(drop);
+                                }
                             } else {
                                 let (spec, rendered) = self.printf_piece(value);
                                 fmt.push_str(spec);
@@ -3119,6 +3138,12 @@ impl<'a> Gen<'a> {
                     );
                 }
                 Ty::Ref { inner, .. } if matches!(**inner, Ty::String) => {
+                    // A message read out of a field of a temporary is the same
+                    // staging as `print`'s, minus the free: a drop after a
+                    // panic is unreachable.
+                    if let Some((hold, text, _)) = self.stage_borrowed_field(arg) {
+                        return format!("({{ {hold} kelp_panic((const char*)({text})->data); }})");
+                    }
                     let value = self.expr_value(arg);
                     return format!("kelp_panic((const char*)({value})->data)");
                 }
@@ -3144,6 +3169,15 @@ impl<'a> Gen<'a> {
                     drop_fn_name(&arg.ty)
                 );
             }
+            // A borrow of a *field* of a temporary, as in
+            // `print(mkName().name)`, is the same problem one projection
+            // deeper: the whole temporary is what has to be freed, so it is
+            // staged here, the `printf` reads through the field's address
+            // inside it, and the free follows the `printf`.
+            if let Some((hold, text, drop)) = self.stage_borrowed_field(arg) {
+                let (fmt, rendered) = self.printf_piece_with(&text, &arg.ty);
+                return format!("({{ {hold} printf(\"{fmt}{newline}\", {rendered}); {drop} }})");
+            }
             let (fmt, value) = self.printf_piece(arg);
             return format!("printf(\"{fmt}{newline}\", {value})");
         }
@@ -3156,24 +3190,7 @@ impl<'a> Gen<'a> {
         // call runs; hoisting it into the *argument* alone would not do,
         // because a GNU statement expression's temporaries die when it ends,
         // before the call it is an argument to.
-        let mut prelude = String::new();
-        let mut args_text: Vec<String> = Vec::new();
-        let mut hoisted: Vec<(String, Ty)> = Vec::new();
-        for a in args {
-            if let ExprKind::Ref { expr: sub, .. } = &a.kind {
-                let is_str_view =
-                    matches!(&a.ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str));
-                if !is_str_view && !is_place(sub) {
-                    let tmp = fresh_temp();
-                    writeln!(prelude, "{} = {};", sub.ty.c_decl(&tmp), self.expr_value(sub))
-                        .unwrap();
-                    args_text.push(format!("&{tmp}"));
-                    hoisted.push((tmp, sub.ty.clone()));
-                    continue;
-                }
-            }
-            args_text.push(self.expr_value(a));
-        }
+        let (prelude, args_text, hoisted) = self.render_arguments(args);
 
         let mut s = format!("{}({})", c_name(callee), args_text.join(", "));
         // Container methods are monomorphized: the C name carries the element
@@ -3244,38 +3261,7 @@ impl<'a> Gen<'a> {
             }
         }
         let call = self.cap_checked_call(callee, s, args, span);
-        let owned_hoisted: Vec<&(String, Ty)> = hoisted
-            .iter()
-            .filter(|(_, ty)| needs_drop(ty, self.owned))
-            .collect();
-        if prelude.is_empty() {
-            return call;
-        }
-        // The call's value cannot be the statement expression's last
-        // statement when a hoisted temporary has to be freed after it (a drop
-        // call returns void), so the result goes through a temporary of its
-        // own and the frees follow. With nothing hoisted, and only for a
-        // non-`unit` result, the call itself can be the last statement.
-        if owned_hoisted.is_empty() && *ret != Ty::Unit {
-            return format!("({{ {prelude}{call}; }})");
-        }
-        let mut body = prelude;
-        if *ret == Ty::Unit {
-            writeln!(body, "{call};").unwrap();
-        } else {
-            let result_tmp = fresh_temp();
-            writeln!(body, "{} {result_tmp} = {call};", ret.c_type()).unwrap();
-            for (tmp, ty) in &owned_hoisted {
-                writeln!(body, "{}(&{tmp});", drop_fn_name(ty)).unwrap();
-            }
-            writeln!(body, "{result_tmp};").unwrap();
-        }
-        if *ret == Ty::Unit {
-            for (tmp, ty) in &owned_hoisted {
-                writeln!(body, "{}(&{tmp});", drop_fn_name(ty)).unwrap();
-            }
-        }
-        format!("({{ {body}}})")
+        self.hoisted_call(prelude, call, &hoisted, ret)
     }
 
     /// `base.field` in C: `->` when `base` is reached through a borrow
@@ -3300,21 +3286,180 @@ impl<'a> Gen<'a> {
     /// One payload of one variant: `<base>.kelp_v.kelp_v_Circle.kelp_r`, or
     /// the `->` form for a borrowed base.
     fn enum_member_access(&self, base: &Expr, member: &str) -> String {
-        let base_text = self.expr_value(base);
-        if matches!(base.ty, Ty::Ref { .. }) {
-            format!("({base_text})->kelp_v.{member}")
-        } else {
-            format!("({base_text}).kelp_v.{member}")
-        }
+        member_access(&self.expr_value(base), &base.ty, &format!("kelp_v.{member}"))
     }
 
     fn field_access(&self, base: &Expr, field: &str) -> String {
-        let base_text = self.expr_value(base);
-        if matches!(base.ty, Ty::Ref { .. }) {
-            format!("({base_text})->{}", field_name(field))
-        } else {
-            format!("({base_text}).{}", field_name(field))
+        member_access(&self.expr_value(base), &base.ty, &field_name(field))
+    }
+
+    /// The C text of the field chain `expr` read out of the temporary its root
+    /// was staged into: `chain_off("_xtmp0", mkName().name)` is
+    /// `((_xtmp0).kelp_name)`. `expr` is the `FieldAccess`/`EnumField` chain
+    /// `temporary_root` answers `Some` for, and `root_text` replaces the base
+    /// expression the chain is rooted at, which is the rvalue C refuses to
+    /// project through and the whole reason the root was staged.
+    fn chain_off(&self, root_text: &str, expr: &Expr) -> String {
+        match &expr.kind {
+            ExprKind::FieldAccess { base, field } => {
+                let base_text = self.chain_off(root_text, base);
+                member_access(&base_text, &base.ty, &field_name(field))
+            }
+            ExprKind::EnumField {
+                base,
+                variant,
+                field,
+            } => {
+                let base_text = self.chain_off(root_text, base);
+                let ename =
+                    struct_name_of_ty(&base.ty).expect("an enum field's base is enum-typed");
+                let edef = self
+                    .enum_def(ename)
+                    .expect("an enum field's base names a declared enum");
+                let member = format!(
+                    "{}.{}",
+                    variant_member(&edef.variants[*variant].name),
+                    field_name(&edef.variants[*variant].fields[*field].name)
+                );
+                member_access(&base_text, &base.ty, &format!("kelp_v.{member}"))
+            }
+            _ => root_text.to_string(),
         }
+    }
+
+    /// One call argument, with whatever storage its borrow needs staged in
+    /// front of the call and the owned temporaries that storage handed over.
+    ///
+    /// A shared borrow of a temporary has no address to take: `str.join(parts
+    /// = str.split(s, sep), sep)` borrows a temporary `List`, and
+    /// `take(mkName().name)` borrows a field *of* a temporary. Neither can be
+    /// staged inside the argument itself, because a GNU statement expression's
+    /// own variables die when it ends, before the call the argument belongs
+    /// to. So the declaration comes back as a prelude for the caller to put at the
+    /// front of the statement expression that holds the call, and the
+    /// temporary comes back in `owned` for the caller to free after it. A
+    /// field chain is staged at its *root*: freeing the field alone would
+    /// leave the rest of the temporary, and every buffer the other fields own,
+    /// unfreed.
+    ///
+    /// Returns `(prelude, argument text, owned temporaries)`. An argument that
+    /// needs nothing comes back as its own C text with an empty prelude.
+    fn stage_argument(&self, arg: &Expr) -> (String, String, Vec<(String, Ty)>) {
+        let ExprKind::Ref { expr: sub, .. } = &arg.kind else {
+            return (String::new(), self.expr_value(arg), Vec::new());
+        };
+        if let Some(root) = temporary_root(sub) {
+            let tmp = fresh_temp();
+            let prelude = format!("{} = {};\n", root.ty.c_decl(&tmp), self.expr_value(root));
+            let chain = self.chain_off(&tmp, sub);
+            let text = if is_str_borrow(&arg.ty) {
+                chain
+            } else {
+                format!("&{chain}")
+            };
+            return (prelude, text, vec![(tmp, root.ty.clone())]);
+        }
+        // A `&str` borrow is the same C value as the `str` it points at (both
+        // `const char*`), so no `&` is emitted for it, and a place already has
+        // the address the callee wants.
+        if is_str_borrow(&arg.ty) || is_place(sub) {
+            return (String::new(), self.expr_value(arg), Vec::new());
+        }
+        let tmp = fresh_temp();
+        let prelude = format!("{} = {};\n", sub.ty.c_decl(&tmp), self.expr_value(sub));
+        (prelude, format!("&{tmp}"), vec![(tmp, sub.ty.clone())])
+    }
+
+    /// A call's arguments as C text, with each one's staged storage in the
+    /// prelude and its owned temporaries in the third slot; see
+    /// `stage_argument`.
+    fn render_arguments(&self, args: &[Expr]) -> (String, Vec<String>, Vec<(String, Ty)>) {
+        let mut prelude = String::new();
+        let mut texts: Vec<String> = Vec::new();
+        let mut staged: Vec<(String, Ty)> = Vec::new();
+        for a in args {
+            let (decls, text, owned) = self.stage_argument(a);
+            prelude.push_str(&decls);
+            texts.push(text);
+            staged.extend(owned);
+        }
+        (prelude, texts, staged)
+    }
+
+    /// The same staging as `stage_argument` for a borrow that is *not* a call
+    /// argument: a `print` or template operand, or a `panic` message. There
+    /// is no call for a prelude to sit in front of, so the declaration and the
+    /// drop come back as the two halves of the statement expression the
+    /// operand's own lowering already builds.
+    ///
+    /// Returns `(declaration, borrow text, drop)`, or `None` when the operand
+    /// is not a borrow of a field of a temporary.
+    fn stage_borrowed_field(&self, value: &Expr) -> Option<(String, String, String)> {
+        let ExprKind::Ref { expr: sub, .. } = &value.kind else {
+            return None;
+        };
+        let root = temporary_root(sub)?;
+        let tmp = fresh_temp();
+        let hold = format!("{} = {};", root.ty.c_decl(&tmp), self.expr_value(root));
+        let chain = self.chain_off(&tmp, sub);
+        let text = if is_str_borrow(&value.ty) {
+            chain
+        } else {
+            format!("&{chain}")
+        };
+        // A `datac` that owns nothing has no drop routine to call, and nothing
+        // to free either: the staging is only about having the address.
+        let drop = if needs_drop(&root.ty, self.owned) {
+            format!("{}(&{tmp});", drop_fn_name(&root.ty))
+        } else {
+            String::new()
+        };
+        Some((hold, text, drop))
+    }
+
+    /// One call as a statement expression: the staged temporaries are built
+    /// first, the call runs, and every staged temporary that owns memory is
+    /// freed after it (`a drop call returns void`, so a value has to go
+    /// through a temporary of its own first).
+    fn hoisted_call(
+        &self,
+        prelude: String,
+        call: String,
+        staged: &[(String, Ty)],
+        ret: &Ty,
+    ) -> String {
+        let owned: Vec<&(String, Ty)> = staged
+            .iter()
+            .filter(|(_, ty)| needs_drop(ty, self.owned))
+            .collect();
+        if prelude.is_empty() {
+            return call;
+        }
+        // The call's value cannot be the statement expression's last statement
+        // when a staged temporary has to be freed after it, so the result goes
+        // through a temporary of its own and the frees follow. With nothing to
+        // free, and only for a non-`unit` result, the call itself can be the
+        // last statement.
+        if owned.is_empty() && *ret != Ty::Unit {
+            return format!("({{ {prelude}{call}; }})");
+        }
+        let mut body = prelude;
+        if *ret == Ty::Unit {
+            writeln!(body, "{call};").unwrap();
+        } else {
+            let result_tmp = fresh_temp();
+            writeln!(body, "{} {result_tmp} = {call};", ret.c_type()).unwrap();
+            for (tmp, ty) in &owned {
+                writeln!(body, "{}(&{tmp});", drop_fn_name(ty)).unwrap();
+            }
+            writeln!(body, "{result_tmp};").unwrap();
+        }
+        if *ret == Ty::Unit {
+            for (tmp, ty) in &owned {
+                writeln!(body, "{}(&{tmp});", drop_fn_name(ty)).unwrap();
+            }
+        }
+        format!("({{ {body}}})")
     }
 
     /// Renders an assignment target as a C lvalue. The type checker
@@ -3426,6 +3571,54 @@ fn is_place(expr: &Expr) -> bool {
             | ExprKind::Deref { .. }
             | ExprKind::Capture { .. }
     )
+}
+
+/// The rvalue a field chain hangs off, when the chain's own address is not C
+/// storage already: `None` for a place (`c`, `c.f`, `*p.f`), `Some(root)` for a
+/// chain rooted at a temporary (`mkName().name`, `xs.pop().a`).
+///
+/// The chain is staged at this expression and never at the field: the whole
+/// temporary is what has to be freed, and freeing the field alone would leave
+/// every other field it owns behind. `is_place` above staying shallow is what
+/// makes the two separable: a `FieldAccess` is a place for the purpose of
+/// taking an address (it is one once the root is staged), and this asks the
+/// narrower question of whether the address outlives the statement.
+///
+/// A chain that steps through a borrow is neither: `headers.get(i).name` lives
+/// in whatever `get` pointed at, so its address is the pointee's and nothing
+/// has to be staged. That is the same line `infer::is_durable_place` draws.
+fn temporary_root(expr: &Expr) -> Option<&Expr> {
+    let mut cur = expr;
+    loop {
+        match &cur.kind {
+            ExprKind::FieldAccess { base, .. } | ExprKind::EnumField { base, .. } => {
+                if matches!(base.ty, Ty::Ref { .. }) {
+                    return None;
+                }
+                cur = base;
+            }
+            _ => break,
+        }
+    }
+    if is_place(cur) { None } else { Some(cur) }
+}
+
+/// Whether a borrow is a `&str`: the one borrow C spells as the pointer
+/// itself rather than as the address of a value.
+fn is_str_borrow(ty: &Ty) -> bool {
+    matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
+}
+
+/// One member access on a base whose C text is already rendered: `->` for a
+/// borrowed base, `.` otherwise. `field_access`, `enum_member_access`,
+/// `enum_tag_access` and `chain_off` all project through a value this way, so
+/// the rule lives in one place.
+fn member_access(base_text: &str, base_ty: &Ty, suffix: &str) -> String {
+    if matches!(base_ty, Ty::Ref { .. }) {
+        format!("({base_text})->{suffix}")
+    } else {
+        format!("({base_text}).{suffix}")
+    }
 }
 
 /// How a closure callee reaches its code pointer and its environment: `.fn` /

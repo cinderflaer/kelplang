@@ -64,12 +64,23 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 174 fixtures the C backend
-/// builds, 154 of them also built by the asm backend, 20 refused: which is the
+/// The counts this list was recorded against: 179 fixtures the C backend
+/// builds, 159 of them also built by the asm backend, 20 refused: which is the
 /// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
-/// fixture level instead of the test level.
+/// fixture level instead of the test level. (174/154 before the
+/// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
+/// C backend's built column and the four names the previous run's note listed
+/// (`else_if_let`, `list_clone`, `panic_bound_message`,
+/// `panic_owned_message`) were recorded with it; see the re-recording notes
+/// below.)
 ///
-/// The last re-recording is the sort/contains/slice slice: `stdlib_sort`,
+/// The last re-recording is the field-of-a-temporary slice:
+/// `heap_field_of_owned_temporary` left the C backend's rejected column: it
+/// stages the temporary a borrowed field lives in and frees *it* after the
+/// call, which the asm backend has always done. So the fixture is in the
+/// differential sweep now, and with the four names the previous run's note had
+/// listed the list stands at 159 entries and the measurement at 179/159/20.
+/// Before it, the last re-recording was the sort/contains/slice slice: `stdlib_sort`,
 /// `list_slice_insert` and `list_slice_bounds` left the heap row (three of its
 /// twelve, now nine) and `list_sort_kinds` is new, so 173/150/23 ->
 /// 174/154/20. That slice's own gate left one entry out and the sweep's note
@@ -96,7 +107,7 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// added fixtures — corrected here, in the commit that recorded
 /// `heap_field_of_temporary`.)
 ///
-/// Re-recorded eight times so far, and the *reason* each time is worth keeping:
+/// Re-recorded nine times so far, and the *reason* each time is worth keeping:
 /// the first heap slice added `bytes_build`, `heap_branches`, `heap_bytes`,
 /// `heap_drops_in_control_flow`, `heap_move_then_rebind`, `heap_param_borrow`,
 /// `heap_reassign`, `heap_returned`, `heap_scope_drop` and `stdlib_mem` (37
@@ -198,6 +209,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "datac_memory_class_by_value",
     "datac_owned_fields",
     "datac_two_eightbytes",
+    "else_if_let",
     "enum_basic",
     "enum_container",
     "enum_in_containers",
@@ -228,6 +240,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "heap_bytes",
     "heap_drops_in_control_flow",
     "heap_drops_in_desugared_blocks",
+    "heap_field_of_owned_temporary",
     "heap_field_of_temporary",
     "heap_move_then_rebind",
     "heap_narrow_fields",
@@ -244,6 +257,7 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "int_literal_width",
     "int_mod_narrow",
     "list_basic",
+    "list_clone",
     "list_datac_element",
     "list_element_widths",
     "list_field",
@@ -279,7 +293,9 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "nested_while_registers",
     "owned_conditional_move",
     "owned_move_in_loop",
+    "panic_bound_message",
     "panic_msg",
+    "panic_owned_message",
     "panic_tail",
     "passdown_datac",
     "passdown_globals",

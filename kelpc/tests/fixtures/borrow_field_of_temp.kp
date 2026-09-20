@@ -1,0 +1,15 @@
+// An explicit `&` on a field of a temporary. The same rule as the receiver
+// one above, from the other direction: the language takes a shared borrow of
+// a temporary for the length of the enclosing call (`str.join(str.split(s,
+// sep), sep)`), but a borrow *bound* to a name outlives the statement, and a
+// field of an rvalue has nowhere to live that long, because `mkName()` returns a
+// value, not storage. Bind the call to a `val` first and borrow the field of
+// that.
+datac Named(val name: String)
+
+fun mkName().R: Named = Named(name = String.from_str("x"))
+
+fun main() {
+    val r = &mkName().name
+    print(r)
+}

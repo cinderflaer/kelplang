@@ -1696,6 +1696,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "path_parts",
         "view_released_at_scope_end",
         "heap_temporary_print",
+        // MK7 §5's temporary-drop slice: the field of an owned temporary, read
+        // in `print` position, as a call argument, as a method receiver and
+        // through a `move` parameter, with a `List` field as well as `String`
+        // ones. Every read has to free the whole temporary exactly once, so
+        // this is the fixture the staged-and-freed path is leak-checked by.
+        "heap_field_of_owned_temporary",
         // MK7 §5's print slice: the same staged-and-freed temporary, but one
         // per buffer piece and with a scalar, a float and a second buffer
         // behind the first — the register-numbering case.
@@ -1952,23 +1958,20 @@ fn a_float_field_is_written_through_the_xmm_file() {
 /// A field read of an *owned* temporary, whose temporary has to be dropped
 /// once per read.
 ///
-/// This is the one fixture in the corpus the C backend rejects —
-/// `codegen_c.rs` emits `&(rvalue).field` and `cc` refuses that — so the test
-/// is written the way its fixture is: under the asm backend it builds, runs
-/// and its stdout is compared, and under any other backend it asserts the
-/// refusal, which is the property that makes this fixture asm-only. Without a
-/// test here under *either* backend, the loop in this fixture was committed
-/// non-terminating and nothing said so: the only thing that noticed was
+/// Both backends stage the temporary for the field's address and free *it*
+/// after the read, so the fixture builds, runs and compares on either one.
+/// (The C backend used to emit `&(rvalue).field` and reject the whole shape,
+/// which is why this test used to be written the way its fixture was: the
+/// refusal under every other backend is what `heap_field_of_owned_temporary`
+/// no longer asserts.) This is the fixture the leak was found in: without a
+/// test here under *either* backend, the loop below was committed
+/// non-terminating and nothing said so. The only thing that noticed was
 /// `memory_gate`'s 60 s timeout, which reads as a valgrind finding.
 #[test]
 fn a_field_of_an_owned_temporary_is_dropped_per_read() {
-    if backend() != "asm" {
-        assert_rejected("tests/fixtures/heap_field_of_owned_temporary.kp");
-        return;
-    }
     assert_compiles_and_runs(
         "tests/fixtures/heap_field_of_owned_temporary.kp",
-        "aa\nbb\n2\naa\n4\n3\n",
+        "aa\nbb\n2\naa\n4\n3\n2\n2\n",
     );
 }
 
@@ -2591,6 +2594,30 @@ fn each_borrowed_temporary_gets_a_slot_of_its_own() {
 #[test]
 fn a_returned_borrow_cannot_come_from_a_temporary() {
     assert_rejected("tests/fixtures/borrow_temp_returned.kp");
+}
+
+/// The field spelling of the same refusal: `mkName().name` is a field of an
+/// rvalue, so a borrow that outlives the call has no storage to live in. It
+/// is checked by message, not just by rejection, because the shape *does*
+/// build whenever the borrow is only read inside the call. The two have to be
+/// told apart, and this is the one that must not quietly start compiling.
+#[test]
+fn a_returned_borrow_cannot_come_from_a_field_of_a_temporary() {
+    assert_rejected_with(
+        "tests/fixtures/borrow_field_of_temp_returned.kp",
+        "this call returns a borrow of its parameter 'self'",
+    );
+}
+
+/// And the explicit-borrow half: `&<field of a temporary>` is not a place, so
+/// binding one is refused in the compiler's own voice rather than by `cc`
+/// objecting to `&(rvalue).field`.
+#[test]
+fn an_explicit_borrow_of_a_field_of_a_temporary_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/borrow_field_of_temp.kp",
+        "cannot borrow a temporary value",
+    );
 }
 
 #[test]
