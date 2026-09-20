@@ -588,28 +588,123 @@ impl<'a> Lexer<'a> {
                     TokenKind::CharLit(cp)
                 }
                 b'0'..=b'9' => {
-                    while matches!(self.peek(), Some(b'0'..=b'9')) {
-                        self.pos += 1;
-                    }
-                    let mut is_float = false;
-                    if self.peek() == Some(b'.') && matches!(self.peek_at(1), Some(b'0'..=b'9')) {
-                        is_float = true;
-                        self.pos += 1;
+                    // A radix prefix is read first, at the leading `0`, because
+                    // `0` on its own is decimal: it has to branch before the
+                    // decimal digit run consumes the zero and stops, which is
+                    // what left `0xff` lexing as `0` and then an identifier
+                    // `xff` (A-9, the half left after the bitwise operators).
+                    let radix = if b == b'0' {
+                        match self.peek_at(1) {
+                            Some(b'x') | Some(b'X') => 16,
+                            Some(b'b') | Some(b'B') => 2,
+                            _ => 10,
+                        }
+                    } else {
+                        10
+                    };
+                    if radix != 10 {
+                        self.pos += 2; // the `0` and the prefix letter
+                        let name = if radix == 16 { "hexadecimal" } else { "binary" };
+                        let digit = |c: u8| {
+                            if radix == 16 {
+                                c.is_ascii_hexdigit()
+                            } else {
+                                c == b'0' || c == b'1'
+                            }
+                        };
+                        let digits_start = self.pos;
+                        while matches!(self.peek(), Some(c) if digit(c)) {
+                            self.pos += 1;
+                        }
+                        if self.pos == digits_start {
+                            let example = if radix == 16 { "0x1f" } else { "0b1010" };
+                            return Err(LexError {
+                                message: format!(
+                                    "a {name} literal needs at least one {} digit, for example '{example}'",
+                                    if radix == 16 { "hex" } else { "binary" }
+                                ),
+                                span: Span::new(start, self.pos),
+                            });
+                        }
+                        // A digit the radix does not have, or a separator, is
+                        // named here rather than left to the parser: `0b12`
+                        // would otherwise be `0b1` and then `2`, and the parse
+                        // error would point at the wrong thing.
+                        if let Some(c) = self.peek() {
+                            if c == b'_' {
+                                return Err(LexError {
+                                    message: "an integer literal takes no digit separators"
+                                        .to_string(),
+                                    span: Span::new(start, self.pos + 1),
+                                });
+                            }
+                            if c.is_ascii_alphanumeric() {
+                                return Err(LexError {
+                                    message: format!(
+                                        "invalid digit '{}' in a {name} literal",
+                                        c as char
+                                    ),
+                                    span: Span::new(start, self.pos + 1),
+                                });
+                            }
+                        }
+                        let digits = &self.src[digits_start..self.pos];
+                        let text = &self.src[start..self.pos];
+                        TokenKind::IntLit(i64::from_str_radix(digits, radix).map_err(|_| {
+                            LexError {
+                                message: format!(
+                                    "'{text}' is larger than the largest integer literal, {}",
+                                    i64::MAX
+                                ),
+                                span: Span::new(start, self.pos),
+                            }
+                        })?)
+                    } else {
                         while matches!(self.peek(), Some(b'0'..=b'9')) {
                             self.pos += 1;
                         }
-                    }
-                    let text = &self.src[start..self.pos];
-                    if is_float {
-                        TokenKind::FloatLit(text.parse().map_err(|_| LexError {
-                            message: format!("invalid float literal '{text}'"),
-                            span: Span::new(start, self.pos),
-                        })?)
-                    } else {
-                        TokenKind::IntLit(text.parse().map_err(|_| LexError {
-                            message: format!("invalid integer literal '{text}'"),
-                            span: Span::new(start, self.pos),
-                        })?)
+                        let mut is_float = false;
+                        if self.peek() == Some(b'.') && matches!(self.peek_at(1), Some(b'0'..=b'9'))
+                        {
+                            is_float = true;
+                            self.pos += 1;
+                            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                                self.pos += 1;
+                            }
+                        }
+                        let text = &self.src[start..self.pos];
+                        if is_float {
+                            TokenKind::FloatLit(text.parse().map_err(|_| LexError {
+                                message: format!("invalid float literal '{text}'"),
+                                span: Span::new(start, self.pos),
+                            })?)
+                        } else {
+                            // A trailing identifier character is a suffix or a
+                            // separator, and a literal in this language has
+                            // neither: its width comes from its context (2.4).
+                            // Saying so beats the parser's "found Ident("u8")".
+                            if let Some(c) = self.peek() {
+                                if c == b'_' {
+                                    return Err(LexError {
+                                        message: "an integer literal takes no digit separators"
+                                            .to_string(),
+                                        span: Span::new(start, self.pos + 1),
+                                    });
+                                }
+                                if c.is_ascii_alphabetic() {
+                                    return Err(LexError {
+                                        message: format!(
+                                            "a literal takes no suffix: the width of '{text}' comes from where it sits"
+                                        ),
+                                        span: Span::new(start, self.pos + 1),
+                                    });
+                                }
+                            }
+                            TokenKind::IntLit(text.parse().map_err(|_| LexError {
+                                message: format!("invalid integer literal '{text}'"),
+                                span: Span::new(start, self.pos),
+                            })?)
+                        }
                     }
                 }
                 c if c.is_ascii_alphabetic() || c == b'_' => {
@@ -1043,6 +1138,65 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    /// `0x` and `0b` literals (A-9). The prefix has to be read at the leading
+    /// `0`, before the decimal digit run stops there: `0xff` used to lex as
+    /// `0` and then an identifier `xff`, so `val mask: i32 = 0xff` was a
+    /// parse error and every mask in the standard library was decimal.
+    #[test]
+    fn lexes_hexadecimal_and_binary_literals() {
+        assert_eq!(
+            kinds("0xff 0xFF 0b1010 0x0 0b0 0x7fffffff"),
+            vec![
+                TokenKind::IntLit(255),
+                TokenKind::IntLit(255),
+                TokenKind::IntLit(10),
+                TokenKind::IntLit(0),
+                TokenKind::IntLit(0),
+                TokenKind::IntLit(0x7fff_ffff),
+                TokenKind::Eof,
+            ]
+        );
+        // A prefix is not a radix for the next token: `0xff` stops at the
+        // first non-hex character, and `.` follows as its own token.
+        assert_eq!(
+            kinds("0xf.a"),
+            vec![
+                TokenKind::IntLit(15),
+                TokenKind::Dot,
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    /// Each malformed shape is named at its own span, rather than splitting
+    /// into two tokens and failing later in the parser: `0b12` used to be
+    /// `0b1` then `2`, and `1_000` was `1` then an identifier `_000`.
+    #[test]
+    fn a_malformed_radix_literal_names_its_own_problem() {
+        let cases = [
+            ("0x", "needs at least one hex digit"),
+            ("0b", "needs at least one binary digit"),
+            ("0b12", "invalid digit '2' in a binary literal"),
+            ("0x1g", "invalid digit 'g' in a hexadecimal literal"),
+            ("0x_ff", "needs at least one hex digit"),
+            ("1_000", "takes no digit separators"),
+            ("5u8", "takes no suffix"),
+            (
+                "0x10000000000000000",
+                "larger than the largest integer literal",
+            ),
+        ];
+        for (src, needle) in cases {
+            let err = Lexer::new(src).tokenize().unwrap_err();
+            assert!(
+                err.message.contains(needle),
+                "for {src:?} expected a message containing {needle:?}, got: {}",
+                err.message
+            );
+        }
     }
 
     #[test]

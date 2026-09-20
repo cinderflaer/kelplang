@@ -215,7 +215,7 @@ val e = 'x'             // character literal
 val f = "n = $a, sum = ${a + 1}"   // string template
 ```
 
-- Integer literals are decimal digits only: no suffix, no hex, no digit separators. A literal has no width of its own; it takes the integer type its context requires, and `i32` when nothing determines it.
+- Integer literals are decimal, or hexadecimal after `0x` and binary after `0b`: `0xff`, `0b1010`. The prefix letter may be written in either case; there is no octal form. A radix literal is the same value as its decimal spelling (`0xff` is `255`) and has no width of its own either, so it narrows to the type its context asks for exactly as `255` does. There is no suffix and no digit separator, and anything else after the digits is a lex error that names the shape rather than splitting the token: `0b12` is `invalid digit '2' in a binary literal`, and `5u8` is `a literal takes no suffix`. A literal has to fit `i64`, the largest value the lexer holds.
 - Float literals are `digits.digits`, and are `f64` unless the context requires `f32`.
 - A **character literal** is one Unicode scalar value written in single quotes: `'x'`, `' '`, `'"'`, `'é'`, `'中'`. A backslash is never a quote escape in a *string*, so the two literal forms never collide — `''` is not a string, and `"a"` is not a character.
 - A character literal takes the integer type its context requires, exactly as an integer literal does, and is `char` when nothing determines one. That one rule is what makes byte-level code read the way it thinks:
@@ -1805,7 +1805,7 @@ These are deliberate, and each one has a workaround in this document:
 - A `View` never becomes a `str`: a slice has no NUL after it, so `str.len`/`str.eq`/`%s` on one would read past the slice. Take `v.to_string()` when you need owned text, and keep `str` and `View` apart otherwise.
 - No `str.eq`/`==` on a `View`; `str.eq` takes a `str`, so compare two views with `view.eq(other)`.
 - No string concatenation operator, and no implicit `String` to `str`: use `str.concat` and `.as_str()`. The other direction *is* implicit (5.1): a `str` or a `View` becomes an owned `String` where one is expected.
-- No sized, hexadecimal or binary integer literal: integers are decimal only. Write masks and shifts in decimal (`15`, `48`) or as character literals (`'0' & 15`), and use `fmt.hex` to *print* in hex.
+- No sized integer literal and no digit separator: a literal has no width of its own, so a `u8` byte is written `val b: u8 = 0xff`. Hexadecimal and binary are `0x` and `0b` (2.4); there is no octal form and no suffix.
 - A `char` is a code point and does not mix with the integer types: `'a' + 1` and `'a' == 97` are errors. Give the literal the type the arithmetic needs (`val a: u8 = 'a'`).
 - No float-to-integer conversion: `to_i64` does not exist on `f64` (it would drop the fraction silently). Use `math.trunc`/`math.floor` and then an integer conversion.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
@@ -2155,7 +2155,7 @@ fun parse_all(text: &str).R: result.Result<Thing, ParseError> {
 - Formatting a number: `fmt.int(n)`, `fmt.uint(n)`, `fmt.float(x, decimals)`, `fmt.hex(n)`. All return `String`.
 - `print(x)` handles every scalar, `str`, `String`, `Bytes` and `View`; a template (`"$x"`) is the only way to print a mixture, and a template is not a value.
 - **`.as_str()` on a temporary is refused** (`String.from_str("x").as_str()`): bind the `String` first. The same applies to `.view()`.
-- UTF-8 by hand is expressible directly now — `(224 | (cp >> 12))`, `(128 | ((cp >> 6) & 63))`, `(128 | (cp & 63))` — and `%`/`/` are no longer the only arithmetic available for it (5). Integer literals are decimal only (2.4), so these are the decimal spellings of `0xE0` and `0x80`.
+- UTF-8 by hand is expressible directly now: `0xE0 | (cp >> 12)`, `0x80 | ((cp >> 6) & 0x3F)`, `0x80 | (cp & 0x3F)` (5, and 2.4 for the literal). `%` and `/` are no longer the only arithmetic available for it.
 
 ### 22.5 Records and tags
 

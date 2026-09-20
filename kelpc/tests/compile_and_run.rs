@@ -1522,6 +1522,32 @@ fn bitwise_operators_on_bool_are_rejected() {
     assert_rejected("tests/fixtures/bitwise_bool.kp");
 }
 
+/// `0x` and `0b` literals (A-9). They are the same values as their decimal
+/// spellings, so the assertion is the masks and the encoder constants a
+/// byte-level program writes, not the spellings themselves.
+#[test]
+fn hexadecimal_and_binary_literals_are_ordinary_integers() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_literals.kp",
+        "255\n10\n511\ntrue\n196\n184\n173\n1\n0\n255\n4294967295\n-1\ntrue\n",
+    );
+}
+
+/// A malformed radix literal is named at its own span rather than split into
+/// two tokens: `0x` needs a digit, and `0b12` has a digit binary does not
+/// have.
+#[test]
+fn a_malformed_radix_literal_is_rejected_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/hex_literal_without_digits.kp",
+        "needs at least one hex digit",
+    );
+    assert_rejected_with(
+        "tests/fixtures/binary_literal_with_a_decimal_digit.kp",
+        "invalid digit '2' in a binary literal",
+    );
+}
+
 #[test]
 fn float_arithmetic_comparisons_and_unordered_nan() {
     assert_compiles_and_runs(
@@ -4217,6 +4243,11 @@ fn the_two_backends_agree_on_the_scalar_fixtures() {
         // because no fixture had ever written either shape.
         "int_literal_width",
         "string_with_capacity_zero",
+        // ...and the radix literals, where the two backends could disagree on
+        // the *value* of a literal before anything else sees it: `0xffffffff`
+        // narrowed to an `i32` is the same two's-complement question
+        // `int_literal_width` pins, one spelling further out.
+        "int_literals",
         // MK7 §5's next slice: a scalar borrow and the store through it. A
         // wrong pointer is a wrong number or a wild write, not a build
         // failure, which is exactly what comparing the two backends catches.

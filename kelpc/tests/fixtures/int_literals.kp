@@ -1,0 +1,40 @@
+// Hexadecimal and binary integer literals (A-9). Integers were decimal only:
+// `0xff` lexed as `0` and then an identifier `xff`, so a mask had to be
+// written 255, the UTF-8 encoder wrote `192 + cp / 64` where the standard says
+// `0xC0 | (cp >> 6)`, and the JSON reader spelled its punctuation in decimal.
+// A character literal could carry one byte (`'0' & 15`), which is not a mask.
+//
+// A radix literal is the same value as its decimal spelling and has no width
+// of its own either: like every other literal it takes the integer type its
+// context requires, and `i32` when nothing determines one (syntax.md 2.4).
+fun main() {
+    // The mask, which is what the literal is for.
+    val mask: i32 = 0xff
+    print(mask)
+    print(mask & 0b1010)
+    print(mask | 0x100)
+    print(mask == 255)
+
+    // The UTF-8 encoder's constants, written the way the standard states them
+    // instead of as 224, 128 and 63.
+    val cp: u32 = 0x4e2d
+    print((cp >> 12) | 0xC0)
+    print(((cp >> 6) & 0x3F) | 0x80)
+    print((cp & 0x3F) | 0x80)
+
+    // A flag set reads as the flag set: which bits are on is the literal.
+    val flags: u8 = 0b0110
+    print(flags >> 1 & 1)
+    val empty: u8 = 0b0
+    print(empty)
+
+    // The same value in two spellings, and the width coming from the context.
+    val byte: u8 = 0b11111111
+    print(byte)
+    val wide: i64 = 0xffffffff
+    print(wide)
+    val narrow: i32 = 0xffffffff
+    print(narrow)
+    val a: u8 = 'A'
+    print(a == 0x41)
+}

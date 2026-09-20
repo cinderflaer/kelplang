@@ -1,0 +1,6 @@
+// A digit the radix does not have is named: `0b12` used to lex as `0b1` and
+// then `2`, and the parse error pointed at the wrong thing (syntax.md 2.4).
+fun main() {
+    val x = 0b12
+    print(x)
+}

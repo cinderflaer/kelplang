@@ -1,0 +1,6 @@
+// `0x` with no hex digit is a lex error naming its own shape, rather than the
+// `0` and the identifier `x` it used to split into (syntax.md 2.4).
+fun main() {
+    val x = 0x
+    print(x)
+}
