@@ -133,8 +133,10 @@ refusal is at `:9704`.
 **Exact current refusals.** The six in the first group of §1: `fs_fallible` (`std.fs.try_read_raw`),
 `process_spawn` (`std.process.arg_count_raw`), and the four `net` fixtures
 (`std.net.connect_raw` twice, `std.net.resolve_raw`). The previous round's list was twelve here; the
-`fs` path family (`0053bc2`), the `io` descriptor family (`4752ebb`) and the five `time`/`rand`
-bodies (`5958794`) built the other six, and `path_normalize`/`path_absolute` built with them.
+`fs` path family (`0053bc2`) built `fs_errno`, `fs_symlink_kind`, `path_normalize` and `path_absolute`,
+and the `io` descriptor family (`4752ebb`) built `io_stdio` and `io_streams`. (The five `time`/`rand`
+bodies of `5958794` are not part of this row: they emptied the gated-extern row, `caps_time_rand`,
+because a `time`/`rand` call names no resource.)
 
 **Reach, and it is three numbers rather than one.** The first refusal of six of the eight remaining
 fixtures is one of these bodies. Behind them:
