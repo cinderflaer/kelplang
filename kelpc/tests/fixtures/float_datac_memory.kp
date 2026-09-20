@@ -11,7 +11,7 @@
 // Note: a field read of an *owned temporary* (`mkName().r`) is deliberately
 // not here. That shape leaks the temporary in this backend for an integer
 // field too, a pre-existing bug this slice recorded rather than fixed (see the
-// slice's blockquote in `plan/mk7-own-backend.md`); every temporary below is
+// slice's blockquote in `plan/asm-backend/plan.md`); every temporary below is
 // bound, moved or passed instead.
 datac Named(val r: f64, val name: String)
 
