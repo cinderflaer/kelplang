@@ -224,12 +224,14 @@ fn first_str_arg(arg_is_str: &[bool]) -> Option<usize> {
 ///
 /// Which position holds the program is a property of the call, the same shape
 /// `fs.open`'s mode argument and `net`'s resources needed: the `_in` forms put
-/// the directory first. Getting this wrong is not cosmetic — checking
-/// argument 0 there would match the *directory* against a program allowlist,
-/// which denies every call whose directory is outside the granted programs.
+/// the directory first, and so does the primitive `spawn_raw(dir, program,
+/// ...)` they wrap. Getting this wrong is not cosmetic: checking argument 0
+/// there would match the *directory* against a program allowlist, which denies
+/// every call whose directory is outside the granted programs, while leaving
+/// the program itself unchecked.
 fn process_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
     let program_at = match callee {
-        "spawn_in" | "run_in" | "try_run_in" => 1,
+        "spawn_in" | "run_in" | "try_run_in" | "spawn_raw" => 1,
         _ => 0,
     };
     match arg_is_str.get(program_at) {
@@ -253,7 +255,10 @@ fn process_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
 /// stops a tree inside a grant from containing a link out of it (the case
 /// `fs.remove_all` refuses to walk, and now says so).
 fn fs_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
-    if callee == "open" || callee == "try_open" {
+    // The primitives carry the same signature as the wrappers they back, so
+    // `open_raw`'s mode argument is not a path for the same reason and must
+    // not be normalized and matched as one.
+    if matches!(callee, "open" | "try_open" | "open_raw" | "try_open_raw") {
         return first_str_arg(arg_is_str)
             .map(|i| vec![CapCheck::Path(i)])
             .unwrap_or_default();
@@ -268,14 +273,17 @@ fn fs_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
 
 /// `net`'s resource arguments, by function. The host is argument 0 and the
 /// port argument 1 in `connect`; `listen` has only a port; `resolve` only a
-/// host. Everything else in the namespace — the `Socket`/`Listener` methods,
-/// `send`, `recv` — names no resource the grant governs, and is admitted by
-/// the domain gate alone.
+/// host. The primitives are listed under their own `_raw` names because this
+/// table is keyed on the name the author wrote, and a raw call must not be
+/// left with *no* check while the wrapper it backs is checked. Everything
+/// else in the namespace (the `Socket`/`Listener` methods, `send`, `recv`)
+/// names no resource the grant governs, and is admitted by the domain gate
+/// alone.
 fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
     match callee {
-        "connect" => vec![CapCheck::HostPort(0, 1)],
-        "listen" => vec![CapCheck::Port(0)],
-        "resolve" => vec![CapCheck::Host(0)],
+        "connect" | "connect_raw" => vec![CapCheck::HostPort(0, 1)],
+        "listen" | "listen_raw" => vec![CapCheck::Port(0)],
+        "resolve" | "resolve_raw" => vec![CapCheck::Host(0)],
         _ => Vec::new(),
     }
 }

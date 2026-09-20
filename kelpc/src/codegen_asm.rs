@@ -14595,4 +14595,42 @@ mod tests {
             CapDecision::Plain
         ));
     }
+
+    /// The primitive spelling of `fs.open`: its second argument is a *mode*
+    /// (`"r"`/`"w"`/`"a"`), so the check is on the first `str` argument only.
+    /// Checking the mode would normalize `"r"` and deny it as a relative path,
+    /// which is a false denial for every well-formed call.
+    #[test]
+    fn a_gated_open_raw_checks_its_path_and_not_its_mode() {
+        let mut table = gated();
+        table.insert("std.fs.open_raw".to_string(), "fs".to_string());
+        match cap_decision(&table, "std.fs.open_raw", &[true, true]) {
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "fs");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::Path(0)]);
+            }
+            other => panic!("expected a path check, got {other:?}"),
+        }
+    }
+
+    /// The primitive spelling of `process.spawn_in`: the program is argument 1,
+    /// after the working directory. Checking argument 0 would match the
+    /// directory against the program allowlist (a false denial for a call whose
+    /// directory is outside the grant) and leave the program itself unchecked.
+    #[test]
+    fn a_gated_spawn_raw_checks_the_program_and_not_the_directory() {
+        let mut table = gated();
+        table.insert("std.process.spawn_raw".to_string(), "process".to_string());
+        match cap_decision(
+            &table,
+            "std.process.spawn_raw",
+            &[true, true, false, false, false, false, false],
+        ) {
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "process");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::Path(1)]);
+            }
+            other => panic!("expected a path check, got {other:?}"),
+        }
+    }
 }

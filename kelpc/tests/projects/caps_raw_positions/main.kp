@@ -1,0 +1,20 @@
+// The two position entries that keep the new primitive checks from denying
+// correct programs, both called the way the primitive is written.
+//
+// `open_raw(path, mode)`: the mode is not a path, so a check on every `str`
+// argument would normalize `"r"` and deny it as a relative path. The work
+// directory of `spawn_raw(dir, program, ...)` is not a resource either, and the
+// program is argument 1: a check on argument 0 would match the directory
+// against the program allowlist, denying this call and leaving the program
+// itself unchecked.
+//
+// The program grant is the two prefixes the other process fixtures use:
+// `/bin/sh` is a symlink, and the check resolves it before matching.
+impl "spawner" caps(fs = ["/tmp/kelp_caps_raw_positions/**"], process = ["/bin/**", "/nix/store/**"])
+impl "std/fs"
+
+fun main() {
+    print(spawner.open_mode_ok())
+    print(spawner.spawn_raw_ok())
+    print(fs.exists("/tmp/kelp_caps_raw_positions/note.txt"))
+}

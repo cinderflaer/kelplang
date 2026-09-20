@@ -1,0 +1,6 @@
+// The primitive behind `fs.read`, reached the way the wrapper reaches it: a
+// module that holds the domain may name it, and the resource argument is what
+// the grant is enforced against.
+impl "std/fs"
+
+fun outside_raw().R: usize = fs.read_raw("/etc/passwd").len()

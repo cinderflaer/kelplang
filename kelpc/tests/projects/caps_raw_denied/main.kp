@@ -1,0 +1,8 @@
+// `BUG-wQ9tL`, the pattern half: the domain is held, so the call resolves, and
+// the path is outside the grant. A primitive goes through the same runtime
+// allowlist check the wrapper over it does, so this is a denial and not a read.
+impl "util" caps(fs = ["/tmp/kelp_caps_raw_denied/**"])
+
+fun main() {
+    print(util.outside_raw())
+}

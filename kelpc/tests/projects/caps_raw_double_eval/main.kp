@@ -1,0 +1,10 @@
+// The eval-once invariant at a *primitive* call site, the shape the wrapper
+// `caps_double_eval` pins for `fs.read_text`. `mk()` prints on every call and
+// names an in-grant path the first time and `/etc/passwd` the second, so a
+// stdout with one `SIDE` says the check and the call read the same evaluation.
+impl "util" caps(fs = ["/tmp/kelp_caps_raw_double_eval/**"])
+
+fun main() {
+    print(util.inside_once())
+    print(util.outside())
+}

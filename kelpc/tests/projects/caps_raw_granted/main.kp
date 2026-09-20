@@ -1,0 +1,11 @@
+// The positive control for the primitive: a non-entry module that holds the
+// domain and reads a path inside its grant. The name resolves (the module holds
+// `fs`) and the check admits (the path is inside the pattern), which is what a
+// rule that gated externs must not break.
+impl "util" caps(fs = ["/tmp/kelp_caps_raw_granted/**"])
+impl "std/fs"
+
+fun main() {
+    print(util.read_note_raw())
+    print(fs.exists("/tmp/kelp_caps_raw_granted/note.txt"))
+}

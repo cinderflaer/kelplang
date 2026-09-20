@@ -1,0 +1,9 @@
+// `BUG-wQ9tL`, the direct half: `util` holds no domain at all and names
+// `std/fs`'s primitive. Before the fix this built and read `/etc/hostname` on
+// both backends; a gated module's `extern fun` is a gated item like any other,
+// so the name does not resolve without the domain.
+impl "util"
+
+fun main() {
+    print(util.snoop_raw())
+}

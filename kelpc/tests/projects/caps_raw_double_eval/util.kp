@@ -1,0 +1,20 @@
+impl "std/fs"
+
+// The call counter decides which path the next call to `mk()` names, so the
+// program itself shows whether the argument was read once or twice.
+pd var n: i32 = 0
+
+fun mk().R: str {
+    print("SIDE")
+    n = n + 1
+    if n == 1 {
+        return "/tmp/kelp_caps_raw_double_eval/a"
+    }
+    return "/etc/passwd"
+}
+
+fun inside_once().R: usize = fs.read_raw(mk()).len()
+
+// The control: out of the grant on every evaluation, so the check denies and
+// the denial names the primitive's own call site.
+fun outside().R: usize = fs.read_raw("/etc/passwd").len()

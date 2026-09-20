@@ -1,0 +1,9 @@
+// The mirror of `caps_raw_positions`: the working directory is inside the
+// grant and the program is not, so the check that fires is the one on the
+// *program*. A check on argument 0 would have denied the directory instead and
+// let this call run.
+impl "spawner" caps(process = ["/tmp/kelp_caps_raw_positions_denied/**"])
+
+fun main() {
+    spawner.spawn_outside()
+}

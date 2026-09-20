@@ -1557,6 +1557,150 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// ---------------------------------------------------------------------------
+// MK7 extern gating: the four routes that made a grant advisory (`BUG-wQ9tL`).
+//
+// A gated module's item is gated wherever it is *named*: its `extern fun`
+// primitives and its receiver methods sit in the gate table beside its free
+// functions, and the naming sites the check has to reach are the direct call,
+// a function value, and a `pd` initializer. One test per route, each refused or
+// denied where before it read the file.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_ungranted_module_cannot_name_another_modules_primitive() {
+    // Before the fix this built and printed the length of `/etc/hostname` on
+    // both backends: the gate table held only a gated module's non-extern free
+    // functions, so a user module could reach around the wrapper to the raw
+    // syscall with no grant at all.
+    assert_project_rejected(
+        "caps_raw_ungranted",
+        &project("caps_raw_ungranted").join("main.kp"),
+        "needs the 'fs' capability, which module 'util' was not granted",
+    );
+}
+
+#[test]
+fn a_path_outside_the_grant_is_denied_at_a_primitive_too() {
+    // The domain is held, so the name resolves and the *pattern* check is what
+    // has to fire. A raw call goes through the same `cap_plan` a wrapper call
+    // does, so its denial names the same module, call site and grant.
+    assert_project_denied_at_runtime(
+        "caps_raw_denied",
+        &project("caps_raw_denied").join("main.kp"),
+        "outside the fs capability granted to module 'util'",
+    );
+}
+
+#[test]
+fn a_granted_module_reads_inside_its_grant_through_a_primitive() {
+    // The positive half of the same rule: a non-entry module that holds the
+    // domain names the primitive and reads a path inside its grant. A fix that
+    // hid the primitives instead would fail here.
+    let dir = caps_scratch("raw_granted");
+    std::fs::write(dir.join("note.txt"), "hello caps").unwrap();
+    assert_project_runs(
+        "caps_raw_granted",
+        &project("caps_raw_granted").join("main.kp"),
+        "hello caps\ntrue\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_position_tables_keep_the_mode_and_the_directory_out_of_the_check() {
+    // `fs.open_raw(path, "r")` must be checked on the path and not on the mode
+    // (a relative "r" denies), and `process.spawn_raw(dir, program, ...)` on the
+    // program and not on the directory. The mirror case is the next test; the
+    // entries themselves are pinned for *both* backends in `codegen_asm.rs`'s
+    // `cap_decision` unit tests, because the asm backend refuses these two
+    // externs outright (no body yet) and never reaches a call site.
+    if backend() != "c" {
+        eprintln!(
+            "note: `fs.open_raw` and `process.spawn_raw` have no asm body yet, so the asm \
+             backend refuses a program that calls one before any check; backend '{}' runs \
+             nothing here (the position entries are pinned in the unit tests)",
+            backend()
+        );
+        return;
+    }
+    let dir = caps_scratch("raw_positions");
+    std::fs::write(dir.join("note.txt"), "note content\n").unwrap();
+    assert_project_runs(
+        "caps_raw_positions",
+        &project("caps_raw_positions").join("main.kp"),
+        "true\ntrue\ntrue\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_spawn_check_matches_the_program_and_not_the_directory() {
+    // The mirror of the case above: the directory is inside the grant and the
+    // program is not, so the denial has to name the *program*. Checking
+    // argument 0 would have denied the directory and let the program through.
+    // C-only for the same reason as the case above: `process.spawn_raw` has no
+    // asm body yet, so a program that calls it is refused before the check.
+    if backend() != "c" {
+        eprintln!(
+            "note: `process.spawn_raw` has no asm body yet, so the asm backend refuses a \
+             program that calls it before any check; backend '{}' runs nothing here",
+            backend()
+        );
+        return;
+    }
+    assert_project_denied_at_runtime(
+        "caps_raw_positions_denied",
+        &project("caps_raw_positions_denied").join("main.kp"),
+        "is outside the process capability granted to module 'spawner'",
+    );
+}
+
+#[test]
+fn a_primitive_checks_its_resource_argument_once() {
+    // The eval-once invariant at a primitive call site, the shape
+    // `a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied`
+    // pins for `fs.read_text`. `mk()` prints on every call and names an
+    // in-grant path the first time and `/etc/passwd` the second, so a stdout
+    // other than one `SIDE` and the in-grant file's length is the check and the
+    // call reading different evaluations. The control's denial is asserted
+    // whole, so the path, the location and the `granted:` block are pinned.
+    let dir = caps_scratch("raw_double_eval");
+    std::fs::write(dir.join("a"), "FILECONTENT").unwrap();
+    let target = project("caps_raw_double_eval").join("main.kp");
+    let bin = out_path("caps_raw_double_eval");
+    let build = kelpc()
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected project 'caps_raw_double_eval' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "SIDE\n11\n",
+        "the primitive's resource argument was not evaluated exactly once"
+    );
+    assert_eq!(run.status.code(), Some(1), "the control must be denied");
+    let expected = format!(
+        "{}:20:26: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+         granted:\n    /tmp/kelp_caps_raw_double_eval/**\n",
+        project("caps_raw_double_eval").join("util.kp").display()
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        expected,
+        "the primitive's capability denial is not what the compiler writes"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_granted_module_creates_a_symlink_inside_its_grant() {
     // `fs.symlink` checks *both* of its paths, so a link can only be created

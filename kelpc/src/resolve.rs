@@ -416,8 +416,16 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
     }
 
     // Which of the shipped items are gated: a module that gates a domain
-    // contributes every free function it declares. (Overloaded names only
-    // exist in `std/math`, which is ungated, so the plain key is enough.)
+    // contributes **every item it declares**, its `extern fun` primitives and
+    // its receiver methods included. The domain gate is what decides whether
+    // the name resolves at all, and the resource patterns are the runtime
+    // half, so an item that is left out of this table is reachable by any
+    // module, granted or not: that was the `*_raw` bypass (`BUG-wQ9tL`) and
+    // the reason a receiver method of a gated module reached its syscall with
+    // no grant. The declaring module's own calls stay exempt in
+    // `infer.rs::check_capability` by prefix, which is what lets a gated
+    // module wrap its own primitive. (Overloaded names only exist in
+    // `std/math`, which is ungated, so the plain key is enough.)
     let mut gated = HashMap::new();
     for m in &loader.modules {
         let Some(domain) = crate::stdlib::domain_of(&m.id) else {
@@ -425,14 +433,14 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         };
         let parsed = &loader.parsed[&m.id];
         for f in &parsed.functions {
-            // Externs are the *primitive*: the raw syscall inside the gated
-            // module. They are not themselves gated, or the module wrapping
-            // them would need a grant to call its own body — the check
-            // belongs at the boundary where a *user* module names the public
-            // function, which is what this table drives.
-            if f.receiver.is_none() && !f.extern_ {
-                gated.insert(format!("{}{}", m.prefix, f.name), domain.to_string());
-            }
+            // A method's key is `Type#name` and the *receiver type* carries
+            // the module prefix (`infer.rs::sig_key`, and the prefixing loop
+            // above); a free function's key is its prefixed name.
+            let key = match &f.receiver {
+                Some(r) => format!("{}{}#{}", m.prefix, r.type_name, f.name),
+                None => format!("{}{}", m.prefix, f.name),
+            };
+            gated.insert(key, domain.to_string());
         }
     }
 
