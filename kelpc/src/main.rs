@@ -3,6 +3,7 @@ mod backend;
 mod borrowck;
 mod codegen_asm;
 mod codegen_c;
+mod deprecated;
 mod diag;
 mod driver;
 mod externs;
@@ -45,8 +46,8 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>]\n       \
-         {BIN_NAME} run <file.{EXT}>\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>] [--deny-outdated]\n       \
+         {BIN_NAME} run <file.{EXT}> [--deny-outdated]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
@@ -54,7 +55,13 @@ fn usage() {
          {BIN_NAME} version\n\n\
          The backend may also be chosen with the KELPC_BACKEND environment\n\
          variable; an explicit --backend wins over it. The default is 'c'.\n\n\
-         With no -o, the binary and the C it was generated from are written to\n\
+         A spelling in the register of outdated syntax still compiles, and\n\
+         build and run print it as an 'outdated:' warning naming what to write\n\
+         instead and saying it is removed in the next development cycle.\n\
+         --deny-outdated turns those findings into errors, which is the\n\
+         migration gate for a project that wants to know when its own code is\n\
+         on the list.\n\n\
+         With no -o, the binary and the C it was generated from are written to\n\\
          {BUILD_DIR}/<file stem>, which the compiler creates if it is missing.\n\n\
          fmt prints formatted source to stdout; -w rewrites in place, and\n\
          --check exits nonzero without writing when a file is not already\n\
@@ -86,10 +93,13 @@ fn usage() {
 /// `path` may be a `.kp` file or a project directory containing a manifest
 /// (in which case the manifest's entry point is used).
 ///
+/// `deny_outdated` is `--deny-outdated`: a load that uses outdated syntax
+/// reports those findings as errors and stops, before anything is generated.
+///
 /// Everything before `backend` is backend-independent, which is why the suite
 /// that exercises it does not care which backend is selected; the seam is the
 /// one `match` below, and it is the only place a code generator is named.
-fn build(path: &str, out_path: &Path, backend: Backend) -> bool {
+fn build(path: &str, out_path: &Path, backend: Backend, deny_outdated: bool) -> bool {
     let mut sources = SourceMap::new();
 
     let loaded = match resolve::load(Path::new(path), &mut sources) {
@@ -99,6 +109,9 @@ fn build(path: &str, out_path: &Path, backend: Backend) -> bool {
             return false;
         }
     };
+    if !report_deprecations(&sources, &loaded.deprecations, deny_outdated) {
+        return false;
+    }
 
     let typed = match infer::check_program(&loaded.program, &loaded.project) {
         Ok(p) => p,
@@ -147,6 +160,28 @@ fn build(path: &str, out_path: &Path, backend: Backend) -> bool {
     }
 
     true
+}
+
+/// Prints the deprecations one load found, and says whether the build may
+/// continue.
+///
+/// Without `--deny-outdated` they are warnings labelled `outdated: `, the exit
+/// status is untouched, and the artifact is built: a spelling on the register
+/// still works, which is the point of the register. With the flag they are
+/// errors, and the caller stops before codegen, so a project can put the flag
+/// in CI and find out when its own code is on the list rather than at removal
+/// time. A load that found nothing is not denied by the flag either: there is
+/// nothing on the list to stop for, which is what makes the flag usable over a
+/// tree that is already migrated.
+fn report_deprecations(sources: &SourceMap, found: &[Diagnostic], deny: bool) -> bool {
+    for d in found {
+        if deny {
+            sources.report(d);
+        } else {
+            sources.report_outdated(d);
+        }
+    }
+    found.is_empty() || !deny
 }
 
 /// Where a build with no `-o` writes: `build/<stem>`.
@@ -802,6 +837,7 @@ fn main() -> ExitCode {
     let mut path: Option<String> = None;
     let mut out: Option<PathBuf> = None;
     let mut backend_flag: Option<String> = None;
+    let mut deny_outdated = false;
     let mut i = 2;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -829,6 +865,9 @@ fn main() -> ExitCode {
             } else {
                 out = Some(PathBuf::from(value));
             }
+            i += 1;
+        } else if arg == "--deny-outdated" {
+            deny_outdated = true;
             i += 1;
         } else if path.is_none() {
             path = Some(arg.to_string());
@@ -873,7 +912,7 @@ fn main() -> ExitCode {
         }
     }
 
-    if !build(&path, &out_path, backend) {
+    if !build(&path, &out_path, backend, deny_outdated) {
         return ExitCode::FAILURE;
     }
 

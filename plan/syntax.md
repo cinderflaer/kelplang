@@ -1350,7 +1350,7 @@ impl "std/time" as t
 
 - The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.kp` extension is not written.
 - `impl` lines come first in the file.
-- The namespace is the last path segment: `impl "shapes/circle"` gives `circle.area(...)`, and `impl "std/fs"` gives `fs.read(...)`. `as name` overrides it.
+- The namespace is the module's own name: the last path segment, so `impl "shapes/circle"` gives `circle.area(...)` and `impl "std/fs"` gives `fs.read(...)`. A **dependency's entry module** is named after the directory Coral fetched it into: a path ending in `/lib` under `deps/` takes the name of its folder, which is the `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse.parse(...)`) or, for a whole-repository dependency, the library's own folder inside it (`impl "deps/fpl/json/lib"` is `json.write(...)`). Everything else under `deps/` is an internal module with its own name. `as name` overrides it, and it is **outdated** (`23`): the clause names something the path already says, and it is removed on the next development cycle.
 - Imports are transitive: a file that imports a module also loads what that module imports.
 - Import cycles and missing modules are errors, and the missing-module message names the file it expected.
 - Only the entry module has unprefixed names. Every other module is reached through its namespace.
@@ -1982,6 +1982,7 @@ program      := line* EOF
 line         := impl | const | pd | datac | enum | fun
 
 impl         := "impl" string [ "as" ident ] [ "with" "caps" "(" grant ("," grant)* ")" ]
+                // the `as` clause is outdated (23): it still parses, and a build warns about it
 grant        := ident "=" "[" string ("," string)* "]"
 const        := "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
@@ -2348,3 +2349,28 @@ fun main() {
 ```
 
 It prints `count`, `=`, `_a`, `1`, `+`, `42`, one per line. Worth noticing: `tokenize` passes `pos` (a local `var`) with no `*` while the helpers take `*pos`; `scan_word` returns an owned `String` even though it only ever sliced a view; `is_alpha(c)` receives the `u8` from `text.get` and compares it to character literals; and `if let Ok(tokens) = r` binds the payload as a borrow, so `t` in the loop is a `&String` and `t.as_str()` is what `print` needs.
+
+## 23. Deprecated syntax
+
+A spelling that is on its way out is **still accepted, and still compiles**. The
+compiler keeps a register of those spellings (`kelpc/src/deprecated.rs`), and
+`kelpc build` and `kelpc run` print one finding for each one a program uses:
+
+```
+outdated: `impl "..." as name` is outdated and will be removed in the next development cycle: a module is reached by its own name (`deps/argparse/lib` is `argparse`, `std/path` is `path`, `shapes/circle` is `circle`), so drop the clause and use that name
+  --> src/main.kp:1:16
+```
+
+- **It is not an error, and the build succeeds.** The label is `outdated: `, which is neither `error:` nor `warning: `: a lint's `warning: ` is a style opinion (19), this is a promise about a later version, and nothing is removed on the day its warning first appears.
+- **The warning names the removal.** Every entry is removed on the next development cycle, and that sentence is shared by every entry, so no entry can promise a different deadline.
+- **`--deny-outdated` turns the findings into errors** (`kelpc build <path> --deny-outdated`, and the same flag on `run`). That is the migration gate: a project (or its CI) that wants to hear about its own code fails the build instead of reading a warning. A program with nothing on the list builds exactly as it did before the flag.
+- **`kelpc fmt` never rewrites one spelling into another**, for the reason it never rewrites anything: it copies the token it was given. The edit is the author's.
+- **`kelpc lint` does not report deprecations.** A lint is a style pass over tokens; a deprecation is reported where the syntax is read, which is the load a build performs.
+- **The compiler's own sources carry none.** The shipped stdlib is migrated before an entry is written, because a deprecation there would warn every program that imports that module about a file its reader cannot edit. A unit test in `deprecated.rs` keeps that true.
+- **The register is not `ISSUES.md`.** An entry here is scheduled work with a deadline; an open defect is something that does not work today.
+
+### 23.1 The register, as it stands
+
+| id | Outdated | Write instead |
+| --- | --- | --- |
+| `impl-as` | `impl "path" as name` | `impl "path"`, and reach the module by its own name: the last path segment, or, for a module whose path ends in `/lib` under `deps/`, the name of the directory it sits in (`deps/argparse/lib` is `argparse`, `deps/fpl/json/lib` is `json`). A name the module does not have (`impl "std/path" as p`) is the namespace to change, not the import to keep. |

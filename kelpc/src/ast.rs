@@ -61,6 +61,10 @@ pub struct ImplDecl {
     pub path: String,
     /// `Some` only when written `as alias`.
     pub alias: Option<String>,
+    /// The span of the `as` clause's own name, when there is one. A
+    /// deprecation names the clause rather than the line, so the reader's eye
+    /// lands on the token the fix deletes.
+    pub alias_span: Option<Span>,
     /// `with caps(domain = [patterns...])` grants. Empty when the clause is
     /// absent. Two jobs in one syntax: it *delegates* the domain to the
     /// imported module, and it is how the importing module states which

@@ -1,5 +1,5 @@
 impl "std/str"
-impl "std/path" as p
+impl "std/path"
 impl "std/io"
 
 /* std/fs — the gated filesystem namespace (M7).
@@ -162,17 +162,21 @@ fun mkdir_all(path: &str) {
 //
 // Panics: if anything cannot be removed, including a link out of the grant
 // that the walk reaches.
-fun remove_all(path: &str) {
-    if is_dir(path) {
-        val entries = list(path)
+//
+// The parameter is `target` rather than `path` because the module namespace
+// `path` is what the join below goes through, and a local binding shadows a
+// module name.
+fun remove_all(target: &str) {
+    if is_dir(target) {
+        val entries = list(target)
         var i: usize = 0
         while i < entries.len() {
-            val child = p.join(path, entries.get(i).as_str())
+            val child = path.join(target, entries.get(i).as_str())
             remove_all(child.as_str())
             i = i + 1
         }
     }
-    remove_raw(path)
+    remove_raw(target)
 }
 
 // Every name under `dir`, recursively, each joined to its parent. A
@@ -195,12 +199,12 @@ fun walk(dir: &str).R: List<String> {
             // of the block in v1, so the value `is_dir` probes cannot then be
             // moved into `pending`. `probe` stays put and is dropped at the
             // end of the iteration; the pushed value is a fresh one.
-            val name = p.join(current.as_str(), entries.get(i).as_str())
+            val name = path.join(current.as_str(), entries.get(i).as_str())
             out.push(name)
-            val probe = p.join(current.as_str(), entries.get(i).as_str())
+            val probe = path.join(current.as_str(), entries.get(i).as_str())
             val is_directory = is_dir(probe.as_str())
             if is_directory {
-                pending.push(p.join(current.as_str(), entries.get(i).as_str()))
+                pending.push(path.join(current.as_str(), entries.get(i).as_str()))
             }
             i = i + 1
         }

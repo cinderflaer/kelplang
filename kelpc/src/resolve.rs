@@ -119,6 +119,12 @@ pub struct Loaded {
     /// One merged program: all modules' decls, prefixed and module-tagged.
     pub program: ast::Program,
     pub project: Project,
+    /// Outdated syntax the loaded modules use, in load order
+    /// (`deprecated.rs`). `kelpc build` and `kelpc run` report them, as
+    /// `outdated:` warnings or as errors under `--deny-outdated`; the
+    /// formatter ignores them, because a formatter that printed warnings would
+    /// mix them into the text it writes to stdout.
+    pub deprecations: Vec<Diagnostic>,
 }
 
 /// Loads the entry file, follows every `impl` transitively, rejects import
@@ -233,6 +239,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         modules: Vec::new(),
         prefixes: HashMap::new(),
         grants: Vec::new(),
+        deprecations: Vec::new(),
     };
     loader.load_project()?;
 
@@ -440,7 +447,11 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         caps,
         gated,
     };
-    Ok(Loaded { program, project })
+    Ok(Loaded {
+        program,
+        project,
+        deprecations: loader.deprecations,
+    })
 }
 
 struct Loader<'a> {
@@ -471,6 +482,8 @@ struct Loader<'a> {
     /// until the whole graph is known, because a module's own set is the
     /// union of the grants made *to* it by importers loaded from anywhere.
     grants: Vec<GrantEdge>,
+    /// Outdated syntax found while loading, in load order (`deprecated.rs`).
+    deprecations: Vec<Diagnostic>,
 }
 
 /// One `impl "target" with caps(domain = [patterns])` from `importer` (M7).
@@ -663,7 +676,16 @@ impl Loader<'_> {
         for imp in &program.impls {
             validate_impl_path(&imp.path, imp.span, id)?;
             let alias = match &imp.alias {
-                Some(a) => a.clone(),
+                Some(a) => {
+                    // Still accepted, no longer wanted: the module's own name
+                    // is the namespace (`deprecated.rs`).
+                    self.deprecations.push(crate::deprecated::finding(
+                        crate::deprecated::IMPL_AS,
+                        imp.alias_span.unwrap_or(imp.span),
+                        id,
+                    ));
+                    a.clone()
+                }
                 None => default_alias(&imp.path),
             };
             validate_alias(&alias, imp.span, id)?;
@@ -735,7 +757,33 @@ impl Loader<'_> {
 }
 
 /// The alias used when `as` is not written: the last path segment.
+/// The name a module is reached by when its `impl` line writes no `as`.
+///
+/// A module is reached by its own name, which is its last path segment:
+/// `impl "shapes/circle"` is `circle`, `impl "std/fs"` is `fs`.
+///
+/// A **dependency's entry module** is the exception, and it is why the `as`
+/// clause is deprecated rather than simply deleted: Coral copies a dependency to
+/// `src/deps/<key>/` with `lib.kp` as the entry file, so a path ending in
+/// `/lib` under `deps/` is named after the directory it sits in, which is the
+/// `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse`) or, for a
+/// whole-repository dependency, the library's own folder inside it
+/// (`impl "deps/fpl/json/lib"` is `json`). Everything else under `deps/` is an
+/// internal module and keeps its own name.
+///
+/// The `deps/` prefix is what makes this coral's rule rather than the
+/// language's: `src/deps/` is the directory Coral fetches into, and a file
+/// named `lib.kp` elsewhere in a project is just a file.
 fn default_alias(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("deps/") {
+        if let Some(directory) = rest.strip_suffix("/lib") {
+            if let Some(name) = directory.rsplit('/').next() {
+                if !name.is_empty() {
+                    return name.to_string();
+                }
+            }
+        }
+    }
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 

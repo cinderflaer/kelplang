@@ -240,12 +240,12 @@ impl Parser {
                 })
             }
         };
-        let (alias, end) = if self.check(&TokenKind::As) {
+        let (alias, alias_span, end) = if self.check(&TokenKind::As) {
             self.advance();
             let (name, span) = self.expect_ident()?;
-            (Some(name), span)
+            (Some(name), Some(span), span)
         } else {
-            (None, path_span)
+            (None, None, path_span)
         };
         // `with caps(domain = ["pattern", ...], ...)` — the capability grant
         // (M7). Domains and patterns are validated in `resolve.rs`, where the
@@ -311,6 +311,7 @@ impl Parser {
         Ok(ImplDecl {
             path,
             alias,
+            alias_span,
             caps,
             span: start.to(end),
         })

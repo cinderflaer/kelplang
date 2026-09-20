@@ -128,6 +128,15 @@ impl SourceMap {
         eprintln!("{}", self.render_labeled(d, "warning: "));
     }
 
+    /// A deprecation, labelled `outdated: `: the construct still compiles and
+    /// the compiler still builds it, so this is not an error, but it is not a
+    /// style opinion either (that is what `warning:` is for) and the label says
+    /// which kind of finding a reader is looking at. `--deny-outdated` prints
+    /// the same diagnostics through `report`, as errors.
+    pub fn report_outdated(&self, d: &Diagnostic) {
+        eprintln!("{}", self.render_labeled(d, "outdated: "));
+    }
+
     pub fn render(&self, d: &Diagnostic) -> String {
         self.render_labeled(d, "error: ")
     }

@@ -32,7 +32,7 @@ Because a full borrow checker is the hardest single component here, the plan is 
 
 ## Compiler crate layout
 
-What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `preprocess.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, `externs.rs`, `stdlib.rs`, `tests/`, and `std/` all exist now. The `Bytes`/`String` runtime (allocation, bounds checks, `free`) lives in `codegen_c.rs` as a fixed C preamble; the three stdlib primitives that cannot be written in Kelp live in `externs.rs`.
+What is on disk today, plus the files later milestones add. `main.rs`, `lexer.rs`, `preprocess.rs`, `ast.rs`, `parser.rs`, `pretty.rs`, `types.rs`, `infer.rs`, `tir.rs`, `borrowck.rs`, `codegen_c.rs`, `driver.rs`, `resolve.rs`, `diag.rs`, `externs.rs`, `stdlib.rs`, `fmt.rs`, `lint.rs`, `deprecated.rs`, `tests/`, and `std/` all exist now. The `Bytes`/`String` runtime (allocation, bounds checks, `free`) lives in `codegen_c.rs` as a fixed C preamble; the three stdlib primitives that cannot be written in Kelp live in `externs.rs`.
 
 Cargo workspace at repo root:
 
@@ -53,6 +53,7 @@ x/
       codegen_c.rs             # typed IR -> C source text
       driver.rs                # orchestrates pipeline, invokes `cc`
       resolve.rs              # project/manifest loading, `impl` imports, module naming (MK2-S1-M1), capability gating (MK4-S1-M1)
+      deprecated.rs           # the register of outdated syntax, and the `outdated:` finding (open item 74)
       diag.rs                 # cross-file diagnostics: module id -> file/line/col (MK2-S1-M1)
       preprocess.rs            # `%*alias*%` expansion, runs before the parser (MK2-S1-M3, done)
       externs.rs              # compiler-supplied C bodies for `extern fun` (MK3-S1-M2, done)
@@ -93,7 +94,7 @@ Explicit reaction against Java/Kotlin's convention (package must mirror deeply-n
 
 - **One manifest file**, `coral.toml`, at the project root name, version, entry point. No separate build-tool layer; `kelpc` itself is the build tool. **As shipped (MK2-S1-M1): the manifest is optional.** `kelpc build <dir>` needs one; `kelpc build <file.kp>` walks up looking for one and, finding none, treats that file's own directory as the module root. Everything in `kelpc/tests/fixtures/` and `examples/` relies on the manifest-less path a single loose file is still a complete program.
 - **`src/` holds everything**, flat by default, with subfolders only when the user actually wants to group files a file's path is never required to match any declared namespace.
-- **Imports are path-based**, not namespace-based: `impl "shapes/circle"` pulls in `src/shapes/circle.kp` by its file path relative to `src/`, and you refer to its items as `circle.Circle` (last path segment becomes the default alias). No `mod` declarations needed to "announce" a file into a tree the file existing under `src/` is enough.
+- **Imports are path-based**, not namespace-based: `impl "shapes/circle"` pulls in `src/shapes/circle.kp` by its file path relative to `src/`, and you refer to its items as `circle.Circle` (the default alias is the module's own name: the last path segment, or the `[dependencies]` key for a `deps/<key>/...` path). No `mod` declarations needed to "announce" a file into a tree the file existing under `src/` is enough.
 - **File names are therefore part of the API**: the last path segment becomes the alias, so file names must be valid identifiers `snake_case`, no dashes, no dots.
 - **v1 is local-files-only**: `impl` can only reach files inside the current project's `src/`. No external/third-party dependency support yet (no registry, no git-url deps, no lockfile). The stdlib is the one exception: `impl "std/fs"` reaches compiler-shipped modules, not project files. **As shipped (MK2-S1-M1): `std/...` is reserved but unimplemented** it is rejected with an explicit MK3/MK4-S1-M1 message rather than reported as a missing file, so the reservation is visible in the error.
 
