@@ -1,0 +1,39 @@
+// MISSING-7: `List<T>.clone` is the whole-list case of `slice(0, len)`, under
+// the name a caller reaches for first. A `Copy` element is copied, an owned one
+// is cloned, and neither side shows through to the other afterwards, which is
+// what the fixture checks by mutating the original after the clone. It is in
+// the AddressSanitizer pass: a `List<String>` clone that shared a buffer would
+// double-free at scope end.
+impl "std/str" as str
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    val ys = xs.clone()
+    xs.push(3)
+    xs.set(0, 9)
+    print(ys.len())
+    print(xs.len())
+    print(ys.get(0))
+    print(xs.get(0))
+
+    var words: List<String> = List.empty()
+    words.push(String.from_str(s = "alpha"))
+    words.push(String.from_str(s = "beta"))
+    val copy = words.clone()
+    words.set(0, String.from_str(s = "changed"))
+    print(copy.len())
+    print(copy.get(0).as_str())
+    print(words.get(0).as_str())
+
+    val empty: List<i64> = List.empty()
+    val nothing = empty.clone()
+    print(nothing.len())
+
+    // The spelling that needs the clone: `str.join` takes its list by value, so
+    // a caller who wants to keep the original has to hand over a copy. It is
+    // the owned-element case that stings, because every element is cloned with
+    // the list.
+    print(str.join(parts = copy, sep = "-"))
+}

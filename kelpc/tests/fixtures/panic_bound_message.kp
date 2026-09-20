@@ -1,0 +1,8 @@
+// The other half of MISSING-8: an owned `String` that is already a *place* is
+// read through a shared borrow, exactly as `print`s of it are, so the binding
+// is still live (and still dropped) at the end of `main`.
+fun main() {
+    val msg = String.from_str(s = "bound message")
+    print("before")
+    panic(msg)
+}

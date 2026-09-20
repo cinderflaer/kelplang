@@ -959,6 +959,20 @@ fn panic_reports_its_message_and_assert_reports_failure() {
 }
 
 #[test]
+fn a_panic_message_may_be_an_owned_string() {
+    // MISSING-8: the borrowed `str` was the only spelling, so a message built
+    // in an error path had to be bound to a `val` or spelled `.as_str()`
+    // first. An owned temporary and an owned binding both reach `kelp_panic`
+    // with the buffer's own bytes.
+    assert_fixture_panics("panic_owned_message", "panic: 7");
+    assert_fixture_panics("panic_bound_message", "panic: bound message");
+    assert_rejected_with(
+        "tests/fixtures/panic_not_a_message.kp",
+        "a panic message is a 'str' or an owned 'String'",
+    );
+}
+
+#[test]
 fn stdlib_text_builds_numbers_replaces_and_parses() {
     // Concatenation, replacement, and both live edges of the decimal
     // conversion: `u64`'s maximum and `i64`'s minimum, round-tripped through
@@ -1659,6 +1673,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "closure_datac_borrow_param",
         "stdlib_sort",
         "list_slice_insert",
+        // MISSING-7: the whole-list copy, over a `Copy` element and an owned
+        // one, with the original mutated after the clone, so a second handle
+        // would free the buffer twice.
+        "list_clone",
         // MK7 §5's sort/contains/slice slice: the element kinds neither of the
         // two above reaches — a signed and an unsigned integer and `Bytes`,
         // whose comparator is a length-aware `memcmp` — plus a slice of a
@@ -2113,6 +2131,19 @@ fn a_list_sorts_reverses_searches_and_slices() {
     assert_compiles_and_runs(
         "tests/fixtures/stdlib_sort.kp",
         "1\n2\n3\n3\n1\ntrue\nfalse\n2\n3\n3\nfalse\ntrue\n0\n",
+    );
+}
+
+#[test]
+fn a_list_clones_without_sharing_its_elements() {
+    // MISSING-7: `clone` is the whole-list case of `slice(0, len)`. Mutating
+    // the original after the clone is what proves the copy is not a second
+    // handle on the same buffer, and the fixture is in the AddressSanitizer
+    // pass because a `List<String>` clone that shared an element would
+    // double-free at scope end.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_clone.kp",
+        "2\n3\n1\n9\n2\nalpha\nchanged\n0\nalpha-beta\n",
     );
 }
 
@@ -3358,6 +3389,19 @@ fn if_let_misuse_is_rejected() {
     for name in ["if_let_unknown_variant", "if_let_bind_count"] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }
+}
+
+#[test]
+fn an_else_if_let_behind_a_plain_if_compiles() {
+    // BUG-6: the checker's else-if arm assumed `Expr::If`, which only a plain
+    // `else if` is (an `else if let` desugars to a block), so this shape was an
+    // internal error rather than a program. The chain starts with a plain
+    // `if`, a payload-free variant and a link whose pattern misses are all
+    // here.
+    assert_compiles_and_runs(
+        "tests/fixtures/else_if_let.kp",
+        "3\n0\n5\n0\n1\n3\n1\n7\n0\n",
+    );
 }
 
 // ---------------------------------------------------------------------------

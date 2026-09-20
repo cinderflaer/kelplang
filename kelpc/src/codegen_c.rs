@@ -1813,6 +1813,9 @@ fn write_list_s1(out: &mut String, elem: &Ty, list: &str, elem_c: &str, _owned: 
             }
         }
         out.push_str("    }\n    return out;\n}\n\n");
+        // `clone()` is the whole-list case of the same copy: no bounds to
+        // check, so it forwards to `slice` rather than repeating the loop.
+        writeln!(out, "static {list} {list}__clone(const {list}* self) {{\n    return {list}__slice(self, 0, self->len);\n}}\n").unwrap();
     }
 
     writeln!(out, "static void {list}__insert({list}* self, size_t i, {elem_c} v) {{").unwrap();
@@ -3095,6 +3098,31 @@ impl<'a> Gen<'a> {
                     let value = self.expr_value(&args[0]);
                     return numeric_conversion(callee, &from, &to, &value);
                 }
+            }
+        }
+        // `panic` reaches `kelp_panic`, whose one argument is the
+        // `const char*` message. A `str` is already that pointer, but an owned
+        // `String` message (MISSING-8) is a struct, so the buffer's data
+        // pointer is what goes through, and for a temporary nothing else
+        // owns, the struct is hoisted the way `print` hoists one. The drop
+        // after the panic would be unreachable, so the hoist is only about
+        // having a place to read `data` from.
+        if callee == "panic" {
+            let arg = &args[0];
+            match &arg.ty {
+                Ty::String => {
+                    let tmp = fresh_temp();
+                    let value = self.expr_value(arg);
+                    return format!(
+                        "({{ {} = {value}; kelp_panic((const char*)({tmp}).data); }})",
+                        arg.ty.c_decl(&tmp)
+                    );
+                }
+                Ty::Ref { inner, .. } if matches!(**inner, Ty::String) => {
+                    let value = self.expr_value(arg);
+                    return format!("kelp_panic((const char*)({value})->data)");
+                }
+                _ => {}
             }
         }
         if callee == "print" || callee == "print!" {

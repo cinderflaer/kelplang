@@ -1464,6 +1464,10 @@ enum ListFn {
     /// `…__slice`, gated on `types::list_clonable_elem`: the copy out of the
     /// list is a clone for an owned element and a plain copy for a `Copy` one.
     Slice(Ty),
+    /// `…__clone`, the whole-list case of `Slice` and gated on the same
+    /// predicate: `kelpc 0.2.3`'s `List.clone` surface. The body forwards to
+    /// `…__slice` with `from = 0`, so the copy lives in one place.
+    Clone(Ty),
     Drop(Ty),
 }
 
@@ -1487,6 +1491,7 @@ impl ListFn {
             | ListFn::Sort(e)
             | ListFn::Contains(e)
             | ListFn::Slice(e)
+            | ListFn::Clone(e)
             | ListFn::Drop(e) => e,
         }
     }
@@ -1517,6 +1522,7 @@ impl ListFn {
             ListFn::Sort(_) => format!("{base}__sort"),
             ListFn::Contains(_) => format!("{base}__contains"),
             ListFn::Slice(_) => format!("{base}__slice"),
+            ListFn::Clone(_) => format!("{base}__clone"),
             // `types::drop_fn_name`'s spelling, which is not the
             // `kelp_List__*__<op>` shape the rest of the set uses.
             ListFn::Drop(e) => format!("kelp_list_drop__{}", crate::types::ty_mangle(e)),
@@ -4643,6 +4649,11 @@ impl Gen {
                     _ => {}
                 }
             }
+            // `clone` is `slice(0, len)`, so its body is one tail jump and
+            // everything it needs is the slice routine's own dependency set.
+            ListFn::Clone(elem) => {
+                self.require_list_fn(ListFn::Slice(elem.clone()));
+            }
             ListFn::Get(_, _) | ListFn::Set(_) => {
                 self.require_list_fn(ListFn::Bounds(f.elem().clone()));
             }
@@ -6134,6 +6145,16 @@ impl Gen {
                 let _ = writeln!(self.out, "{panic}:");
                 let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
                 self.call_panic();
+            }
+            // `return slice(self, 0, self->len);`. `clone` is the whole-list
+            // case of the copy `slice` already makes, so the body is a tail
+            // jump rather than a second copy of the loop: the hidden return
+            // pointer is already in `rdi` where `slice` wants it, the receiver
+            // is already in `rsi`, and only `from`/`to` have to be set.
+            ListFn::Clone(_) => {
+                let slice = ListFn::Slice(elem.clone()).label();
+                self.out.push_str("    mov rcx, QWORD PTR [rsi+8]\n    xor edx, edx\n");
+                let _ = writeln!(self.out, "    jmp {slice}");
             }
             // `clear(self); free(self->data); self->data = NULL;
             //  self->cap = 0;` — `clear` resets `len`, so all three fields end
@@ -9460,6 +9481,26 @@ impl Gen {
             let [arg] = args else {
                 return Err(unsupported("a panic that is not given exactly one value"));
             };
+            // An owned or borrowed `String` message (MISSING-8): `kelp_panic`
+            // wants the `char*` at the front of the buffer, so the receiver's
+            // address is read out of the value the same way `print_buffer`
+            // reads it; an owned temporary is staged first (nothing frees it:
+            // the panic never returns).
+            if string_ty(&arg.ty) {
+                let owned = matches!(arg.ty, Ty::String);
+                if owned {
+                    let layout = struct_layout(&arg.ty, &self.layouts)
+                        .expect("String has a synthesized layout");
+                    let slot = frame.scratch(align_up(layout.size, 8));
+                    self.eval_struct_into(arg, frame, Dest::Direct(slot))?;
+                    let _ = writeln!(self.out, "    lea rax, [rbp{slot}]");
+                } else {
+                    self.expr(arg, frame)?;
+                }
+                self.out.push_str("    mov rdi, QWORD PTR [rax]\n");
+                self.call_panic();
+                return Ok(());
+            }
             self.expr(arg, frame)?;
             self.out.push_str("    mov rdi, rax\n");
             self.call_panic();
@@ -9838,6 +9879,9 @@ impl Gen {
                 }
                 "slice" if crate::types::list_clonable_elem(&elem) => {
                     ListFn::Slice(elem)
+                }
+                "clone" if crate::types::list_clonable_elem(&elem) => {
+                    ListFn::Clone(elem)
                 }
                 // `sort`, `contains` and `slice` on an element kind that has no
                 // order, no equality or no clone — `infer.rs` refuses the same

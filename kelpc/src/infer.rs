@@ -2028,6 +2028,14 @@ fn list_sig(key: &str, elem: &Ty) -> Option<FnSig> {
             params: vec![p("self", shared), p("from", Ty::Usize), p("to", Ty::Usize)],
             ret: list.clone(),
         },
+        // `clone()` under the name a caller reaches for first: the copy
+        // `slice(0, len)` already makes, with the same
+        // `list_clonable_elem` gate, so an element that cannot be copied
+        // out gets the "no method" diagnostic rather than a signature
+        // codegen has no body for.
+        "List#clone" if crate::types::list_clonable_elem(elem) => {
+            FnSig { params: vec![p("self", shared)], ret: list.clone() }
+        }
         "List#insert" => FnSig {
             params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
             ret: Ty::Unit,
@@ -4031,6 +4039,16 @@ fn struct_name_of(ty: &Ty) -> Option<&str> {
         Ty::Ref { inner, .. } => struct_name_of(inner),
         _ => None,
     }
+}
+
+/// The message types `panic` takes: the borrowed `str` every call site
+/// already had, and an owned `String` (MISSING-8). `print`'s set is wider on
+/// purpose (numbers, `bool`, `Bytes`); a panic message that renders as a
+/// length-and-pointer pair is a string in every case.
+fn is_panic_message(ty: &Ty) -> bool {
+    is_str_like(ty)
+        || matches!(ty, Ty::String)
+        || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::String))
 }
 
 /// Whether a type is one of the builtin owned buffers, or a borrow of one —
@@ -6914,6 +6932,47 @@ fn check_call(
         });
     }
 
+    // `panic` takes a message, and the owned spelling of one now sits beside
+    // the borrowed `str` every call site already had: a message built as a
+    // `String` (`fmt.int(n)`, `str.concat`) no longer has to be bound to a
+    // `val` or spelled `.as_str()` first, which is exactly the ceremony an
+    // error path does not want. The buffer is read, never consumed, so this is
+    // `print`'s lifetime rule and `print`'s temporary handling, and a message
+    // that is neither a `str` nor an owned `String` is still refused by name.
+    if callee == "panic" {
+        if args.len() != 1 {
+            return Err(TypeError {
+                message: format!("'panic' takes exactly 1 argument, found {}", args.len()),
+                span,
+            });
+        }
+        if args[0].name.is_some() {
+            return Err(TypeError {
+                message: "'panic' does not take named arguments".to_string(),
+                span,
+            });
+        }
+        let arg = check_expr(&args[0].value, ctx, None)?;
+        let arg = borrow_for_print(arg, callee, ctx)?;
+        if !is_panic_message(&arg.ty) {
+            return Err(TypeError {
+                message: format!(
+                    "cannot pass a value of type '{}' to 'panic': a panic message is a 'str' or an owned 'String'",
+                    arg.ty.display()
+                ),
+                span,
+            });
+        }
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: callee.to_string(),
+                args: vec![arg],
+            },
+            ty: Ty::Unit,
+            span,
+        });
+    }
+
     // A-2: construction of a generic `datac`: `Pair(first = 1, second = "x")`.
     // The type arguments are inferred from the argument types (and, failing
     // that, from the expected type), so a generic value is constructed with
@@ -7550,7 +7609,7 @@ fn check_method_call(
                 // method" text would be misleading for exactly these three.
                 (Some(e), "List")
                     if matches!(e, Ty::Struct(_))
-                        && matches!(method, "sort" | "contains" | "slice") =>
+                        && matches!(method, "sort" | "contains" | "slice" | "clone") =>
                 {
                     format!(
                         "List<{}>.{method} is not defined: a 'datac' element has no {}, so it cannot be {} — use a scalar, 'String' or 'Bytes' element",
@@ -7568,7 +7627,7 @@ fn check_method_call(
                     )
                 }
                 (Some(e), "List") => format!(
-                    "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear, sort, reverse, contains, slice, insert, remove",
+                    "List<{}> has no method '{method}' — the List surface is len, is_empty, push, get, set, pop, clear, sort, reverse, contains, slice, clone, insert, remove",
                     e.display()
                 ),
                 (Some(e), "Map") => format!(
@@ -7861,13 +7920,16 @@ fn check_if(
         Some(ast::ElseBranch::Block(b)) => Some(check_block(b, ctx, expected)?),
         Some(ast::ElseBranch::If(e)) => {
             let checked = check_expr(e, ctx, expected)?;
-            match checked.kind {
-                tir::ExprKind::If { .. } => Some(tir::Block {
-                    stmts: vec![],
-                    tail: Some(Box::new(checked)),
-                }),
-                _ => unreachable!("parser guarantees else-if parses to Expr::If"),
-            }
+            // The parser folds a plain `else if` into an `If`, but an
+            // `else if let` desugars to the block `parse_if_let` builds (a
+            // bound scrutinee and a pattern `when`), and that block is the
+            // else branch's value exactly as an `If` is: wrap either one and
+            // let the join below see a block. Assuming `If` here was an
+            // internal error on every `else if let` a program wrote.
+            Some(tir::Block {
+                stmts: vec![],
+                tail: Some(Box::new(checked)),
+            })
         }
         None => None,
     };

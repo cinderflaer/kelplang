@@ -1,0 +1,11 @@
+// MISSING-8: `panic` takes an owned `String` as well as a `str`, so a message
+// built in an error path does not have to be bound to a `val` or spelled
+// `.as_str()` first. What goes to `kelp_panic` is the buffer's data pointer,
+// from an owned temporary here and from a binding in
+// `panic_bound_message.kp`.
+impl "std/fmt" as fmt
+
+fun main() {
+    print("before")
+    panic(fmt.int(7))
+}

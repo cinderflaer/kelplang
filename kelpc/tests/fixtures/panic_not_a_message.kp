@@ -1,0 +1,6 @@
+// A panic message is a `str` or an owned `String`; anything else is refused by
+// name rather than reaching `kelp_panic` with a value whose pointer means
+// something else.
+fun main() {
+    panic(42)
+}

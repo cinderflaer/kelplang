@@ -586,6 +586,8 @@ fun as_str(v: &Json).R: &str {
 
 This is the shape every accessor over an owned payload ends with, and it is the one deliberate piece of divergence analysis in the language (an `if` arm cannot be a `panic`).
 
+The message is a `str`, or an owned `String` read without being consumed: `panic(built_up_string)` and `panic(fmt.int(n))` both work, so an error path does not have to bind a `val` or spell `.as_str()` first.
+
 That is the whole of the divergence rule: it applies to a function body's tail and nowhere else, so a `panic` cannot be the arm of an `if`/`when` used as a value. It exists because it is what makes a "this cannot happen" accessor expressible at all (`std/option`'s `unwrap` is the first one).
 
 ## 7. Functions
@@ -1004,6 +1006,14 @@ print(str.len(text.as_str()))     // ok: the temporary lives for the call
 val bad = String.from_str("hi").as_str()   // error: borrow of a temporary
 ```
 
+The last line is the chained form of the same rule, and the chain is not a second
+case: a call result is one temporary for the whole expression, so
+`fmt.int(n).as_str()` and `t.labels_text().as_str()` are refused exactly as
+`String.from_str("hi").as_str()` is, and the error names the borrow rather than
+the chain. Binding the call to a `val` first is the fix, or leaving the
+`.as_str()` inside the enclosing call (`print(str.len(...))`), where the
+temporary lives for that call.
+
 ### 10.3 Drops
 
 Owned values are freed at the end of the scope that owns them, on every exit path including `return` and either branch of an `if`. A `datac` drops its fields, a `List` drops its elements and then its buffer, and a `Box` drops what it holds if it holds anything. An owned `pd` is freed once at process exit. There is no `free`, no `deinit`, and no way to leak deliberately.
@@ -1216,10 +1226,11 @@ while !xs.is_empty() {
 | `reverse()` | exclusive | `Unit` |
 | `contains(v)` | shared | `bool`, for comparable elements |
 | `slice(from, to)` | shared | a copy of the range, for clonable elements |
+| `clone()` | shared | a copy of the whole list, for clonable elements |
 
 `get` and `pop` move an owned element out and return a copy for a `Copy` element, so `List<i32>.get(i)` is an `i32` while `List<String>.get(i)` is a `&String`. Out-of-range indices and popping an empty list panic.
 
-The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice` and `Map.values` are offered only for element types that support them.
+The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice`, `clone` and `Map.values` are offered only for element types that support them.
 
 The element-wise methods above are builtin. The callback-shaped operations
 (`map`, `filter`, `each`, `find_index`, `any`, `all`) live in `std/list`,
@@ -2061,7 +2072,7 @@ print(a.as_str())             // error: use of moved value 'a'
 Three ways out, in the order to try them:
 
 1. **Borrow instead of move.** `use_it(a)` where the parameter is `String` borrows it, so `a` is still yours afterwards.
-2. **Copy the text.** `val b = a.clone()`? — there is no `clone` for `String`; use `String.from_str(a.as_str())` to make a second owned copy.
+2. **Copy the text.** `val b = a.clone()` copies the buffer, so both `a` and `b` own one.
 3. **Reorder.** Do the last use last.
 
 The related rule is **no partial moves**: you cannot read an owned field out of a borrowed structure, because that would hand out a second owner of the same buffer.
