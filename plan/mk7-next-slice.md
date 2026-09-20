@@ -1,5 +1,443 @@
 # MK7 next slice: reconnaissance brief
 
+Branch `mk7/own-backend`, HEAD `9c89b70` ("test: pin the asm capability check and re-record the asm
+baseline"), measured 2026-09-20. This brief measures the candidate slices below against the backend at
+that commit. It is a specification lane: it changes no source. Every refusal text below was reproduced
+by hand with
+
+```
+./target/release/kelpc build --backend=asm kelpc/tests/fixtures/NAME.kp -o /tmp/next_NAME
+```
+
+and the C backend was built for every fixture named reachable, because a fixture the oracle rejects is
+not a target. Every number in this file is `9c89b70`'s, measured in a detached worktree of this
+checkout (`git worktree add --detach /tmp/plan-refresh 9c89b70`), because other lanes were working in
+the shared checkout at the time; the worktree was removed afterwards. The plan is
+`plan/mk7-own-backend.md`, and this file is the reconnaissance its next round is chosen from.
+
+**Every number names its commit because a concurrent lane is rewriting the capability gate table, and
+that rewrite will move some of them.** The other lane is implementing `plan/mk7-extern-gating.md`'s
+rule (b), which stops `resolve.rs` excluding a gated module's `extern fun`s (and, as the rule, its
+receiver methods), and adds the missing `open_raw`/`try_open_raw`/`spawn_raw`/`connect_raw`/
+`listen_raw`/`resolve_raw` position entries to `stdlib.rs`. Both backends read those two files. What
+that is expected to invalidate is stated at the end of `## 0` below; the short version is that it is
+coupled to the C-built denominator and to the refusal *messages* of the gated extern bodies, and not
+to the two non-gated refusals.
+
+**The brief before this one measured a different backend, and its numbers are history.** It was
+written at `c3a8759` and refreshed at `bb2316e` (which recorded the `caeb98d` tip), and its round
+closed the whole closure row, the whole capability check's step 1, the clock and entropy externs, the
+`io` descriptor family and the `fs` path family. It measured `176 built of the 201 fixtures the C
+backend builds, 25 refused` and an asm suite of `285 of 336`. Every one of those is superseded below.
+The old text is kept rather than deleted, because §9's first lesson is that a slice's own brief is what
+its acceptance is judged against; it is the first layer of the appendix at the end of this file, and
+the round before it is the second layer.
+
+## 0. The refusal ranking, verbatim
+
+Command: `cargo test --release --test backend_coverage -- --ignored --nocapture` (39.6 s). The
+`the_refusals_rank_by_the_categories_the_plan_uses` test prints:
+
+```
+asm backend refusal ranking (8 fixtures refused of 208 the C backend builds, 200 built)
+  a heap type: 8
+    borrow_chain_through_a_borrow
+    fs_fallible
+    list_datac_clone_sort
+    net_loopback
+    net_poll
+    net_resolve
+    net_timeout
+    process_spawn
+  a fixed-size array (A-18): 0
+  an `enum`: 0
+  a `datac` holding a float or heap field: 0
+  a closure or a function value: 0
+  a gated extern: 0
+  total: 8
+```
+
+The same run prints no `note:` line. The previous round's sweep reported `borrow_two_phase` as built
+and unnamed; it is recorded in `ASM_BUILT_BASELINE` now, so the recorded list is the measurement.
+
+**Five of the six rows are empty, and that is the headline.** Since the last brief the closure row
+went 10 to 0, the gated-extern row went 1 to 0, and the heap row went 14 to 8. The closure row emptied
+with the closures slice (`eab7916`); the gated-extern row emptied with the clock and entropy externs
+(`5958794`), because a `time`/`rand` call names no resource for the gate to check; and the heap row's
+six-fixture drop is the `fs` path family (`0053bc2`), the `io` descriptor family (`4752ebb`) and the
+capability check itself (`e65ce61`, `9c89b70`), which built `caps_gated_path`, `fs_errno` and
+`fs_symlink_kind` and took the last two path fixtures with them. What is left is one row, eight
+fixtures, and three mechanisms inside it: six extern bodies, one `List` method, one borrow.
+
+**What the concurrent gate-table rewrite is expected to invalidate, stated here because every number
+above names `9c89b70`.** Rule (b) edits `resolve.rs` and `stdlib.rs`, the two files both backends read
+to decide what is gated, so three of this file's numbers are coupled to it and three are not:
+
+- **The C-built denominator (208), and therefore every ratio in this file, if the rewrite's
+  compile-time half (`infer.rs::check_capability`) newly refuses a corpus fixture that calls a gated
+  module's primitive.** The fix's own spec calls the stdlib and `bench/speed` unchanged; it does not
+  claim the fixture corpus is unchanged, and the compile error is the measured half of rule (b).
+- **The refusal messages of the six gated extern-body fixtures** (`fs_fallible`, `process_spawn`,
+  `net_loopback`, `net_poll`, `net_resolve`, `net_timeout`): their first refusal is an extern body
+  only because the live-extern pre-pass in `generate` (`codegen_asm.rs:3551-3553`, inside the routine
+  loop at `:3547`) runs before the call-site gate decision (`cap_decision`, `codegen_asm.rs:1352`,
+  called at `:11728`). Rule (b) is precisely about externs, so if it changes the gated set the
+  *message* can change even when the row does not.
+- **`ASM_BUILT_BASELINE` and the ratchet counts**, because the rewrite lane owns source: any
+  re-record it makes moves the recorded entry count (200 today).
+- **Not coupled, and stable across the rewrite:** the ranking's row counts (heap 8, five empty rows),
+  the two non-gated refusals (`list_datac_clone_sort`, `borrow_chain_through_a_borrow`, which no gate
+  edit touches), and the asm suite's `319 passed / 25 failed`, whose failures are the extern bodies,
+  the gate's `net` half and those two fixtures. Read every number below against `9c89b70` and
+  re-measure after the rewrite lands.
+
+## 1. Each remaining refusal, reproduced by hand
+
+The command is the one at the top, once per fixture. **All eight build under the C backend at this
+commit**, so every one is a target and none is an oracle rejection (measured by building each of the
+eight with `--backend=c`). The row they sit in is the heap row, but they are three mechanisms, not
+one; the ranking puts all eight there because the heap row is the catch-all.
+
+**An `extern fun` body (6).** All six call a free function of a gated module, so all six also pass
+through the capability check once the body lands; that is §A.
+
+```
+fs_fallible                    error: the 'asm' backend does not support the `extern fun std.fs.try_read_raw` yet
+net_loopback                   error: the 'asm' backend does not support the `extern fun std.net.connect_raw` yet
+net_poll                       error: the 'asm' backend does not support the `extern fun std.net.connect_raw` yet
+net_resolve                    error: the 'asm' backend does not support the `extern fun std.net.resolve_raw` yet
+net_timeout                    error: the 'asm' backend does not support the `extern fun std.net.connect_raw` yet
+process_spawn                  error: the 'asm' backend does not support the `extern fun std.process.arg_count_raw` yet
+```
+
+**A `List` method on a `datac`/`enum` element (1).**
+
+```
+list_datac_clone_sort          error: the 'asm' backend does not support the method `List.clone` on a `List` yet
+```
+
+**A borrow of a field chain (1).**
+
+```
+borrow_chain_through_a_borrow  error: the 'asm' backend does not support a borrow of anything but a named local (a scalar, a `datac` or a heap type), a `datac` temporary, or a field of one yet
+```
+
+The refusal sites, for the reader who wants to see how much of each gap is a refusal and how much is a
+missing body: the live-extern pre-pass is `codegen_asm.rs:3551-3553` (inside the routine loop that
+starts at `:3547`), the `List` dispatch's `_` refusal arm is at `:12177` against `types.rs:483`
+`list_sortable_elem`, `:489` `list_comparable_elem` and `:497` `list_clonable_elem`, and the borrow
+refusal is at `:9704`.
+
+## A. The gated-module extern bodies (§5 items 5 and 10)
+
+**Exact current refusals.** The six in the first group of §1: `fs_fallible` (`std.fs.try_read_raw`),
+`process_spawn` (`std.process.arg_count_raw`), and the four `net` fixtures
+(`std.net.connect_raw` twice, `std.net.resolve_raw`). The previous round's list was twelve here; the
+`fs` path family (`0053bc2`), the `io` descriptor family (`4752ebb`) and the five `time`/`rand`
+bodies (`5958794`) built the other six, and `path_normalize`/`path_absolute` built with them.
+
+**Reach, and it is three numbers rather than one.** The first refusal of six of the eight remaining
+fixtures is one of these bodies. Behind them:
+
+1. **Two fixtures build on the body alone.** `fs_fallible` and `process_spawn` check a path through
+   `fs_checked_args`/`process_checked_args` (`stdlib.rs`), which answer `CapCheck::Path`, and the asm
+   backend emits a `Path` check today (`emit_cap_checks`). Measured that the gate is not the blocker:
+   the asm backend refuses `fs.fallible`'s first call for the body, not for a check kind it cannot
+   emit, and the same is true of `process.run`/`process.spawn`.
+2. **Four fixtures need the check's `net` half as well.** `net_loopback`, `net_poll` and `net_timeout`
+   call `net.listen(0)` (`CapCheck::Port`) and `net.connect("127.0.0.1", port)` (`CapCheck::HostPort`);
+   `net_resolve` calls `net.resolve` (`CapCheck::Host`). `cap_decision` returns
+   `CapDecision::Unsupported` for all three kinds (`codegen_asm.rs:1352-1380`), so once the net bodies
+   land the refusal moves to the call-site gate. That is a source read plus a unit test rather than a
+   hand-reproduced message, because codegen stops at the first refusal and no program can reach the
+   gate ahead of a missing body: the test is
+   `codegen_asm.rs`'s `a_gated_net_call_is_refused_while_the_net_checks_are_missing`, and §D below is
+   the `net` half it names.
+3. **The asm suite's reach is much wider than the ranking's.** The ranking covers
+   `tests/fixtures/*.kp` only. The `KELPC_BACKEND=asm` suite has **25 failures**, and 22 of them are
+   this row: `fs` 3, `process` 5, `env` 2 and `net`/`http` 12 (the map is the failure list in "what I
+   could not determine" below).
+
+**Exact C-side thing to mirror.** `externs.rs` holds the bodies, and they are not one-liners.
+`std.fs.try_read_raw` is `std.fs.read_raw`'s `fopen`/`fread` sequence with its failures folded into an
+`Option`/`Result`; `std.process.spawn_raw` (`externs.rs:418`) builds two pipes and forks with `execvp`;
+`std.net.connect_raw` and `std.net.listen_raw` (`:440` onward) build an `addrinfo` and call
+`getaddrinfo`, and `std.net.local_port_raw` reads a `sockaddr_storage` back through `getsockname`.
+
+**Size, counted.** The gated modules still declare **40 `extern fun`s this backend has no routine
+for**: `std/fs` 13 (`append_raw`, `copy_raw`, `mode_raw`, `mtime_raw`, `open_raw`, `rename_raw`,
+`size_raw`, `sync_raw`, `temp_path_raw`, `touch_raw`, `try_open_raw`, `try_read_raw`,
+`utf8_valid_raw`), `std/net` 13 (`accept_raw`, `close_raw`, `connect_raw`, `listen_raw`,
+`local_port_raw`, `peer_addr_raw`, `recv_into_raw`, `recv_raw`, `resolve_raw`, `send_all_raw`,
+`send_raw`, `set_timeout_raw`, `shutdown_write_raw`), `std/process` 10 (`arg_at_raw`,
+`arg_count_raw`, `executable_raw`, `exists_raw`, `exit_raw`, `getpid_raw`, `is_dir_raw`, `kill_raw`,
+`reap_raw`, `spawn_raw`) and `std/env` 4 (`get_raw`, `has_raw`, `set_raw`, `unset_raw`). The `time`
+and `rand` families are complete. Not all 40 are live for any one fixture, but the bodies that are
+live are hand-written assembly over C struct layouts this backend has no notion of (`addrinfo`,
+`sockaddr_storage`, `timeval`, `stat`), plus process control (`fork`, `execvp`, `waitpid`, `pipe`) and
+a directory scan.
+
+**Size and risk.** The largest work item on the board by far. The `fs`, `process` and `env` halves
+need no gate work (their checks are `Path`/`Name`, already emitted), and they are the smaller, safer
+part; the `net` half is 13 externs plus §D. Risk is high and of the wrong-number kind: a wrong offset
+in a `sockaddr` is a wrong port or a wrong address, and the net fixtures are loopback tests, so a
+self-consistent mistake can pass two ends of the same wrong thing.
+
+## B. `List`'s derived copy and order on a `datac`/`enum` element (the asm half of `c3a8759`)
+
+**Exact current refusal.** `list_datac_clone_sort`: `error: the 'asm' backend does not support the
+method \`List.clone\` on a \`List\` yet`. Split into one-statement probes, the same fixture also
+refuses `.sort()` and `.slice()` on a `datac` element (`error: ... the method \`List.sort\` on a
+\`List\` yet` and `... \`List.slice\` ...`), and a minimal `List<Mark>.clone()` over an `enum` element
+refuses identically. `List<i32>.clone()` and `List<String>.clone()` build.
+
+**Measurement, and it is an older commit than this branch's tip.** `c3a8759`'s subject is "a
+`datac`/`enum` list element gets a derived copy and order": it added the frontend fixpoints
+(`types.rs` `value_is_clonable`, `value_is_sortable`, the `clonable_types`/`sortable_types` least
+fixpoints), widened `infer.rs`'s `list_sig` to use them, and made the C backend emit
+`kelp_clone_<T>`/`kelp_cmp_<T>` beside every `datac` and `enum` typedef. This backend's dispatch still
+gates on the old, element-only predicates, which answer false for a `datac`, so the `clone`/`sort`/
+`slice` arms fall through to the `_` refusal arm. So the two backends disagree about a surface the
+language already has, and the C backend is the one that is right.
+
+**Reach, verified: 1** (`list_datac_clone_sort`, the only fixture in the corpus with a
+`datac`/`enum` list element that is cloned, sorted or sliced). The asm suite's one test for it is
+`a_datac_or_enum_element_gets_a_derived_copy_and_order`.
+
+**Exact C-side thing to mirror.** `codegen_c.rs:1142`/`:1163` emit `kelp_clone_<T>` and
+`:1261`/`:1287` emit `kelp_cmp_<T>`; `write_list_s1` (`codegen_c.rs:2041`) gates on
+`value_is_clonable`/`value_is_sortable` (`:2050`).
+
+**The mechanism, one paragraph.** Emit a clone and a compare routine per clonable/sortable user type
+beside the generated drops this backend already emits: the clone walks the fields (a scalar is a
+load/store, an owned field calls its own clone), the compare walks them in declaration order (numeric
+compare, `memcmp` for `String`/`Bytes` and for an `enum` tag first), and both are the `codegen_c.rs`
+bodies transliterated. Then widen the four dispatch guards to the fixpoint predicates, which means
+threading `clonable_types`/`sortable_types` into the dispatch the way `build_layouts` already threads
+layouts. `ListFn::Clone` exists (`codegen_asm.rs:2094`'s `ListFn` enum, its `Clone` arm forwarding to
+`Slice`) and `List`'s element marshalling already handles an aggregate element.
+
+**Size and risk.** Estimated 300 to 500 lines, most of it generated-routine emission rather than new
+code paths. Risk is moderate: a wrong field offset in a clone is a leak or a double free that prints
+nothing, and `list_datac_clone_sort` is in the valgrind pass for exactly that. The compare half is
+covered by the differential sweep.
+
+**Why it is worth naming even at one fixture.** It is the only candidate that is a *debt* rather than
+a missing library body: a landed language surface the second backend refuses while the first emits
+it, and the plan's §0 table implies otherwise by not naming it.
+
+## C. A borrow of a field chain
+
+**Exact current refusal.** `borrow_chain_through_a_borrow`: `error: the 'asm' backend does not support
+a borrow of anything but a named local (a scalar, a \`datac\` or a heap type), a \`datac\` temporary,
+or a field of one yet`. A one-line probe of `&xs.get(i = 0).v` refuses with the same message; the
+fixture's one-further-in shape (`&bag.items.get(i = 0).v`) is the same projection.
+
+**Exact C-side thing to mirror.** The fixture's own comment cites the rule: `syntax.md` 10.2 says a
+chain that steps through a borrow is durable, so `&xs.get(i).v` has an address. The C backend never
+had to write a rule for this (a C expression's address is whatever it is). This backend's place
+resolution accepts a named local's slot, a `datac` temporary and a field of one, and refuses a chain
+rooted in a call's *result* rather than in a borrow; the refusal is at `codegen_asm.rs:9704`, one
+projection down from the case the fixture is about. The refusal text itself is `unsupported`ed for
+the whole shape, so a citation that has drifted (the capability check added roughly 600 lines to this
+file) is found by the name in the sentence.
+
+**Reach, verified: 1.** The asm suite's one test for it is
+`an_explicit_borrow_of_a_field_of_a_borrow_is_accepted`.
+
+**Size and risk.** Small: the estimate is 30 to 80 lines in `ExprKind::Ref`'s place-resolution, with
+the lifetime argument already made by `borrowck.rs` (the borrow's extent is the enclosing statement or
+the pointee's own frame). Risk low.
+
+## D. The capability check's `net` half (§5 item 7, step 2)
+
+**Measured: 0 fixtures on its own.** No fixture's first refusal names the gate. The text is
+`cap_decision`'s `CapDecision::Unsupported` arm (`codegen_asm.rs:1352-1380`), whose message is "the
+capability check that gates `<callee>` (domain `<domain>`) for a host or port", and it appears nowhere
+in the eight messages of §1. It cannot: every fixture that would reach it refuses first at a missing
+`net` extern body, because the live-extern pre-pass runs before the call site.
+
+**Everything it is behind.** It is the second prerequisite of the four `net` fixtures
+(`net_loopback`, `net_poll`, `net_resolve`, `net_timeout`), which is why §A's net bodies alone reach
+two fixtures rather than six. It is also the second prerequisite of the 12 `net`/`http` asm-suite
+tests.
+
+**Why it is smaller than the plan assumed.** The matcher is already Kelp (`std/rt.kp`), and it lowers
+on this backend today. What this slice adds is three `CapCheck` kinds to `emit_cap_checks`
+(`host_match`/`host_glob`/port comparison against the compiled-in table), not a new matcher. The
+existing `kelpc/tests/cap_matcher.rs` corpus is the differential control.
+
+**Size and risk.** Moderate: no new matcher code and no new ABI, but three new check emission paths
+and the port formatting. Risk is the security kind: a check emitted leniently widens every `net`
+grant in every program. It should not ride inside another slice for that reason.
+
+## The §13 gate, restated at `9c89b70`
+
+The annex (`plan/mk7-own-backend.md` §13) had two prerequisites for the gate artifact and last
+measured its asm column at `4752ebb`. **Both are now behind it and the artifact builds.** Measured:
+
+```
+$ ./target/release/kelpc build --backend=asm bench/speed/speed.kp -o /tmp/sp/speed_asm   # exit 0
+$ ./target/release/kelpc build --backend=c   bench/speed/speed.kp -o /tmp/sp/speed_c     # exit 0
+```
+
+The clock extern landed at `5958794`, and the annex's other named prerequisite, the scalar `mut`
+borrow, at the scalar-borrow slice; the capability check it did not name was not a second blocker,
+because `speed.kp`'s only gated call is `time.now_mono_ns()`, which names no resource. So the annex's
+"What a follow-up must do" item 1 ("build the gate artifact first") is met, and its item 2 (external
+wall-clock recorded) is met by the run below.
+
+The gate table is re-measured, not copied, because the annex's table was `4752ebb`'s and the
+concurrent lane is rewriting the same table. Same four columns, one estimator for every column
+(interleaved round-robin, 9 rounds, round 1 discarded, median of the 8 that remain, spread min to
+max), `work_ns` is the program's own clock, external wall is `date +%s%N` around the whole process.
+Machine `AMD Ryzen 5 7600`; **load average 4.08 during the sweep, from another lane compiling**, which
+is why the `float` cell is reported with its spread. Every column printed the gate's checksums and the
+`VALUE` line.
+
+| workload | `-O0` | `-O2` | asm | asm/`-O0` |
+| --- | --- | --- | --- | --- |
+| collatz | 449.8 (441.0-458.3) | 81.4 (80.5-82.1) | 429.7 (426.7-435.8) | 0.955 |
+| float | 255.7 (253.2-260.4) | 100.1 (97.6-113.9) | 149.5 (138.8-199.8) | 0.585 |
+| mix | 201.1 (200.4-204.1) | 166.7 (164.2-169.8) | 139.1 (138.0-143.5) | 0.692 |
+| fib | 26.8 (26.6-28.1) | 23.4 (23.0-24.1) | 46.0 (45.7-47.4) | 1.713 |
+
+Whole-process external wall, median of the same 8: `-O0` 933.8 ms, `-O2` 373.0 ms, asm 765.3 ms, so the
+artifact's whole-process asm/`-O0` ratio is **0.820**. Checksums and the float `VALUE` match
+`bench/speed/results.txt` exactly in every column (`collatz 131434424`, `float 57735026`,
+`mix 542344`, `fib 5702887`, `VALUE 78539816.062926`).
+
+**The annex's table is confirmed, not corrected.** Its `4752ebb` reading was collatz 0.964, float
+0.594, mix 0.684, fib 1.723 and whole-process 0.827; this round reads 0.955, 0.585, 0.692, 1.713 and
+0.820, which is the same table inside the noise of a loaded machine. The annex's own reading is
+unchanged: by §5's per-workload reading the gate is **unmet on `fib` alone** (1.713, the only cell
+above 1.0), and met on the other three; by the whole-artifact reading it is met at 0.820. The `float`
+cell remains bimodal (its 8 kept runs span 138.8 to 199.8 ms while `-O0` and `-O2` stay inside 3% of
+their own medians), which is the annex's concurrency caveat, not a slower compiler.
+
+**Which numbers here the concurrent lane's gate-table rewrite is expected to invalidate.** The
+`bench/speed` numbers above are *not* coupled to the capability gate table: the fix's own spec
+measures `speed.kp`'s generated C unchanged under rule (b), because its only gated call names no
+resource, so the assembly and the timings stay. What is coupled is the annex's own "cannot build
+speed.kp" cells and its two prerequisites, which this round supersedes anyway. A future round that
+actually rewrites the §13 table (a new estimator, an idle machine, a changed kernel) does invalidate
+every cell above; that is why each one names `9c89b70`.
+
+## Close
+
+**Cheapest per line.** **C** (a borrow of a field chain): 30 to 80 lines, one fixture, low risk. **B**
+is next at 300 to 500 lines and one fixture, and it buys something C does not: agreement with a
+landed language surface.
+
+**Largest per mechanism.** **A** (the gated-module extern bodies): six fixture first-refusals and 22
+of the asm suite's 25 failures, against D's 0 fixtures (4 behind it), B's 1 and C's 1. It is also §5
+items 5 and 10, the last unfinished rows of the item list.
+
+**Recommendation for the next round: A, the gated-module extern bodies**, taken as the row and in the
+order that costs least gating work first:
+
+1. **The `fs`, `process` and `env` halves first (27 externs), which need no gate work.** Their resource
+   arguments are paths or names, the kinds this backend already checks, so lowering their bodies
+   reaches `fs_fallible` and `process_spawn` outright and the `fs`/`process`/`env` asm-suite tests (10
+   of the 22) with them.
+2. **The `net` half (13 externs) with D, the check's `net` half, together.** Neither reaches the four
+   net fixtures without the other, and the pair is the only way to reach them at all.
+
+Reasons, in this plan's own terms:
+
+- It is the largest single remaining mechanism by reach: six of the eight refused fixtures and 22 of
+  the 25 asm failures, against B's and C's one each and D's 0 alone.
+- It is the last row the plan's §0 "what is next" still names in the current tense: the heap row is
+  what is left, and it is what is left.
+- The one cost the plan feared it would carry, the capability check, has landed (`e65ce61`), so the
+  gated modules' bodies are now safe to lower: a gated call the check can emit is no longer a refusal.
+- The mitigation already exists for the risk it carries: the differential stdout sweep, the valgrind
+  gate (green over 408 runs at this commit), and the C backend as the oracle for every errno path.
+- The alternative is honest and worth stating: if the fixture ratio is the only thing that matters, the
+  cheapest path to *more built fixtures* is B and C together (two fixtures, roughly 350 to 580 lines,
+  no syscall work at all), which would leave the ratchet at 202 built of 210 with only the six
+  extern-body fixtures refused.
+
+**Must-pass fixtures for A.** The six in §1's first group. Be precise about which the bodies alone
+reach: `fs_fallible` and `process_spawn` are the two whose checks are path checks; `net_loopback`,
+`net_poll`, `net_resolve` and `net_timeout` also need D, so name D in the same acceptance list or name
+only the two. Do not name `list_datac_clone_sort` or `borrow_chain_through_a_borrow` for A; they are B
+and C.
+
+**If a short round is wanted instead: C.** One fixture, 30 to 80 lines, low risk, and the smallest
+change that removes a place where this backend refuses an ordinary program. **B** is the other short
+round and is the only one that removes a two-backend disagreement about the language itself.
+
+## Measurement disagreements with the plan, collected
+
+1. **§0's and §5's current-tense numbers.** §0's status table says `285 of 336` under `--backend=asm`
+   and `all 176 fixtures`; its prose ends on `240 of 289`, `144 built of 168, 24 refused` and
+   `heap 13, enum 0, datac 0, closure 10, gated 1`. Measured at `9c89b70`: the asm suite is **319 of
+   344** with the C backend passing all **344**, the fixture ratchet is **200 built of 208, 8
+   refused**, the ranking is **heap 8, array 0, enum 0, datac 0, closure 0, gated extern 0**, and
+   valgrind is clean over **408 runs / 364 fixtures, c: 208 checked, asm: 200 checked, 8 refused, 0
+   findings**. Commands are in §0 and the gate section.
+2. **§0's "What is next" row 1.** It lists 14 heap-row fixtures made of 12 extern bodies, one `List`
+   derived clone/order and one borrow chain named `path_absolute`/`path_normalize` among the externs.
+   Measured: the heap row is 8, the two path fixtures build, and the extern bodies are 6: `fs_fallible`
+   (`std.fs.try_read_raw`), `process_spawn` (`std.process.arg_count_raw`) and the four `net` fixtures.
+3. **§0's rows 2 to 5.** The float-payload row, the passdown row, the `List` S1 leftovers, the `Map`
+   row, the closure row and the gated-extern row are all marked as landed there; measurement agrees,
+   and the ranking's closure and gated-extern rows at 0 are the same statement from the other end. The
+   remaining `List` entry in the heap row is B, an older commit's own feature.
+4. **§0's row 6 and §5's "capability-gated row (7 fixtures)".** Measured: the capability check is the
+   first refusal of **0** of the 8, and the ranking's gated-extern row is **0**. The plan's masking
+   claim is correct and measured (the live-extern pre-pass runs first); its count is not.
+5. **§13's annex.** Its headline ("the gate cannot be evaluated as written") and its "cannot build
+   speed.kp" cells are false at this commit: the artifact builds and its columns exist. Its named
+   second prerequisite is the scalar `mut` borrow, which landed; the check it does not name was not a
+   blocker for `speed.kp`. Its "whether the asm backend has further refusals behind the two above" is
+   answered: none. Its table is otherwise confirmed by re-measurement (this file's gate section).
+6. **§5's definition-of-done paragraph.** It says "`bench/speed` no worse than the measured `-O0`
+   column (it still cannot be built for this backend, and §13's dated correction says what is left in
+   its way)". Measured: it builds, and the whole-process ratio is 0.820.
+7. **The recorded baseline's own header note.** `ASM_BUILT_BASELINE`'s comment ends on "208 C / 200 asm
+   / 8 refused", which is this round's measurement; the sweep prints no unrecorded build.
+
+## What I could not determine
+
+- **Whether each of the six extern-body fixtures builds once its module's bodies and (for `net`) the
+  gate land.** This backend stops at the first refusal, and the live extern set of a fixture is not
+  machine-readable, so the six are first-refusals rather than builds. `fs_fallible` and `process_spawn`
+  are argued reachable from the check kinds, not measured: what remains behind their first refusal is
+  unmeasured.
+- **Whether the `net` gate refusal is exactly the message in §D.** It cannot be reproduced by hand
+  because no program reaches it ahead of a missing `net` body; it is a source read
+  (`codegen_asm.rs:1352-1380`) plus the unit test
+  `a_gated_net_call_is_refused_while_the_net_checks_are_missing`.
+- **Whether `List.clone` is all of `list_datac_clone_sort`.** Its clone, sort and slice statements each
+  refuse at their own `List` method message when probed alone, and whether the derived compare for an
+  `enum` element (`Mark`) needs anything past the tag-then-payload rule the C backend uses is not
+  measurable until the clone exists.
+- **Which of the 25 asm failures a given extern body would clear.** The count is measured (`319 passed;
+  25 failed` of 344); the mapping is by test-to-fixture/project reading, not by building each behind a
+  lowered body. 22 are the extern/gate row, 1 is B, 1 is C, and 1,
+  `a_build_with_no_output_path_lands_in_build`, is not a refusal at all: it builds `while_accumulator`
+  with the asm backend and then asserts a `.c` file sits beside the artifact, which only the C backend
+  writes. It is a C-bound test in a backend-agnostic suite, not a second backend gap.
+- **The gate's own number at an idle machine.** The sweep above ran at load 4.08 from another lane, so
+  `float`'s median lands in the contended mode; the annex's fairness conditions are otherwise met. A
+  gate run on an idle machine is still owed.
+
+---
+
+# Appendix: the previous rounds' briefs, kept as the record
+
+The appendix carries two earlier rounds, kept rather than deleted, because §9's first lesson is that a
+slice's own brief is what its acceptance is judged against. The first is this file as it stood before
+the `9c89b70` measurement, with each `##` heading demoted one level; its numbers are the measurement of
+the round it was written in (`c3a8759`, refreshed at `bb2316e`). The second is the round before it, at
+`3a2f6f9`, kept with its own note.
+
+## Layer 1: the `c3a8759` brief, refreshed at `bb2316e`
+
+## MK7 next slice: reconnaissance brief
+
 Branch `mk7/own-backend`, HEAD `c3a8759` ("a `datac`/`enum` list element gets a derived copy and
 order"), measured 2026-09-20. This brief measures the candidate slices below against the backend at
 that commit. It is a specification lane: it changes no source. Every refusal text below was
@@ -24,7 +462,7 @@ because two of its four candidate measurements were corrected by measurement rat
 argument. It is the appendix at the end of this file; its section letters are the previous round's,
 and its numbers are the round it was written in.
 
-## 0. The refusal ranking, verbatim
+### 0. The refusal ranking, verbatim
 
 Command: `cargo test --release --test backend_coverage -- --ignored --nocapture` (36.9 s). The
 `the_refusals_rank_by_the_categories_the_plan_uses` test prints:
@@ -95,7 +533,7 @@ the ranking since the last brief. What remains is three rows, and the first of t
 > `cargo test --test backend_coverage -- --ignored --nocapture`, `cargo test --test compile_and_run`
 > with `KELPC_BACKEND=asm`, and `cargo test --test memory_gate -- --ignored --nocapture`.
 
-## 1. Each remaining refusal, reproduced by hand
+### 1. Each remaining refusal, reproduced by hand
 
 The command is the one at the top, once per fixture. **All 25 build under the C backend at this
 commit**, so every one is a target and none is an oracle rejection (measured by building each of the
@@ -153,7 +591,7 @@ function-value and closure-capture refusals `:8487`/`:8494`/`:8496`, the borrow 
 passdown storage check `:3015`, the gated-call refusal `:10353`, and the live-extern check that runs
 before all of them `:2966`.
 
-## A. Closures and function values (§5 item 6)
+### A. Closures and function values (§5 item 6)
 
 **Exact current refusals.** The ten in group two of §1. One fixture (`fn_value`) is refused at the
 passdown storage check rather than at a closure expression, because a `pd` of function type has no
@@ -202,7 +640,7 @@ environment is heap and prints nothing), and `closure_basic`, `closure_datac_bor
 differential stdout sweep, the valgrind gate (§ measured below), and the C backend as the oracle for
 every capture order.
 
-## B. The heap-bodied externs (§5 items 5 and 10)
+### B. The heap-bodied externs (§5 items 5 and 10)
 
 **Exact current refusals.** The twelve in group one of §1 that name an `extern fun`: `fs_errno`
 (`std.fs.read_raw`), `fs_fallible` (`std.io.is_open_raw`), `fs_symlink_kind`
@@ -247,7 +685,7 @@ self-consistent mistake can pass two ends of the same wrong thing.
 `bench/speed` gate needs (see the gate section below), and `std/rand`'s two are `getrandom`-shaped.
 Those five plus §C are a separable, small first half.
 
-## C. The capability check (§5 item 7)
+### C. The capability check (§5 item 7)
 
 **Measured: 0 fixtures on its own.** No fixture's first refusal names it. The text is
 `codegen_asm.rs:10355`'s ("the capability check that gates ... the asm backend cannot emit an
@@ -281,7 +719,7 @@ slice: a check emitted leniently widens every grant in every program. The existi
 `kelpc/tests/cap_matcher.rs` corpus is the differential control for the matcher, and the ten fixtures
 above are the control for the call sites.
 
-## D. `List`'s derived copy and order: the asm half of `c3a8759`
+### D. `List`'s derived copy and order: the asm half of `c3a8759`
 
 **Exact current refusal.** `list_datac_clone_sort`: `error: the 'asm' backend does not support the
 method \`List.clone\` on a \`List\` yet`. The same fixture also refuses `.sort()` and `.slice()` on a
@@ -322,7 +760,7 @@ so). The compare half is covered by the differential sweep.
 a feature: the newest commit on this branch ships a language surface the second backend refuses, and
 the plan's own §0 table currently implies otherwise by not naming it.
 
-## E. A borrow of a field chain
+### E. A borrow of a field chain
 
 **Exact current refusal.** `borrow_chain_through_a_borrow`: `error: the 'asm' backend does not
 support a borrow of anything but a named local (a scalar, a \`datac\` or a heap type), a \`datac\`
@@ -341,7 +779,7 @@ down from the case the fixture is about.
 the lifetime argument already made by `borrowck.rs` (the borrow's extent is the enclosing statement
 or the pointee's own frame). Risk low.
 
-## The §13 gate, restated at `c3a8759`
+### The §13 gate, restated at `c3a8759`
 
 The annex (`plan/mk7-own-backend.md` §13) was measured at `d0a485f` and names two prerequisites for
 the gate artifact. Measured now:
@@ -369,7 +807,7 @@ bodies (small: `clock_gettime`, `clock_gettime`, `nanosleep`) and the capability
 The annex's "What could not be determined" item ("whether the asm backend has further refusals behind
 the two above") is now determined: none.
 
-## Close
+### Close
 
 **Cheapest per line.** **E** (a borrow of a field chain): 30 to 80 lines, one fixture. **D** is the
 next cheapest at 300 to 500 lines and one fixture, and it buys something E does not: agreement with
@@ -411,7 +849,7 @@ name a fixture from another row: the acceptance list of the float-aggregate slic
 the other backend, and the smallest change that removes a place where the two backends disagree about
 the language rather than about a library.
 
-## Measurement disagreements with the plan, collected
+### Measurement disagreements with the plan, collected
 
 1. **§0's and §5's current-tense numbers.** §0's status table says `283 of 329` integration tests,
    `all 175 fixtures`, `168 C and 144 asm` valgrind and `329 runs over 309 fixtures`; its prose ends
@@ -445,7 +883,7 @@ the language rather than about a library.
    them is wrong as a measurement of the round they were written in, and two of their corrections
    (`try_drops_frame` is a closures fixture; `stdlib_parse` needed the float row) are still the record.
 
-## What I could not determine
+### What I could not determine
 
 - **Whether each of the twelve extern-body fixtures builds once the externs and the check land.** This
   backend stops at the first refusal, and the live extern set of a fixture is not machine-readable, so
@@ -466,9 +904,10 @@ the language rather than about a library.
   until the clock extern and the capability check land; the probe in the gate section above is not the
   gate, and it uses one run per backend with the self-timing removed.
 
+
 ---
 
-# Appendix: the previous rounds' briefs, kept as the record
+## Layer 2: the `3a2f6f9` brief
 
 The text below is this file as it stood before the `c3a8759` measurement, with two edits and no
 others: each em dash it carried is written as a comma, because this file carries no em dash, and
