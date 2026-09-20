@@ -1,0 +1,9 @@
+// The same rule stated for a `datac`: `Name` holds a `String`, so it owns
+// memory transitively and cannot be the element of a repeat.
+datac Name(val text: String)
+
+fun main() {
+    val n = Name(text = "x")
+    val xs: [Name; 2] = [n; 2]
+    print(xs.len())
+}

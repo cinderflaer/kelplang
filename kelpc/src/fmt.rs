@@ -1119,11 +1119,14 @@ fn needs_space(prev: &Lead, prev_prefix: bool, cur: &Lead, gap_ws: bool) -> bool
     if matches!(prev, Lead::Tok(TokenKind::LBrace)) && matches!(cur, Lead::Tok(TokenKind::RBrace)) {
         return false;
     }
-    // No space before a token that attaches to what precedes it.
+    // No space before a token that attaches to what precedes it. `;` is on
+    // the list for the one place it can appear: the separator in an array's
+    // `[T; N]`, which is written tight on its left and spaced on its right.
     if matches!(
         cur,
         Lead::Tok(
             TokenKind::Comma
+                | TokenKind::Semi
                 | TokenKind::RParen
                 | TokenKind::RBracket
                 | TokenKind::Dot

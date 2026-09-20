@@ -614,6 +614,28 @@ impl Parser {
         // keyword, so this can never be an ordinary type name. A closure type
         // (A-4 phase E) is the same shape under the `closure` keyword:
         // `closure(i32).R: i32` is a function value that owns an environment.
+        // A fixed-size array type (A-18): `[T; N]`. Its length is a
+        // compile-time constant expression (A-19), kept as an expression here
+        // and folded by `infer.rs` when the type is resolved. So
+        // `[Entry; PAGE_SIZE / ENTRY_SIZE]` is one type, and the `;` between
+        // the two halves is the token that says so.
+        if self.check(&TokenKind::LBracket) {
+            let open = self.advance().span;
+            let elem = self.parse_type()?;
+            self.expect(TokenKind::Semi, "';' between an array's element type and its length")?;
+            let len = self.parse_expr()?;
+            let close = self.expect(TokenKind::RBracket, "']' to close the array type")?.span;
+            return Ok(TypeExpr {
+                name: String::new(),
+                args: Vec::new(),
+                array_elem: Some(Box::new(elem)),
+                array_len: Some(Box::new(len)),
+                amp: amp_start.is_some(),
+                fn_params: None,
+                fn_ret: None,
+                span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
+            });
+        }
         if self.check(&TokenKind::Fun) {
             let start = self.advance().span;
             return self.parse_fn_type(start, amp_start, "fun");
@@ -645,6 +667,8 @@ impl Parser {
             return Ok(TypeExpr {
                 name,
                 args,
+                array_elem: None,
+                array_len: None,
                 amp: amp_start.is_some(),
                 fn_params: None,
                 fn_ret: None,
@@ -654,6 +678,8 @@ impl Parser {
         Ok(TypeExpr {
             name,
             args: Vec::new(),
+            array_elem: None,
+            array_len: None,
             amp: amp_start.is_some(),
             fn_params: None,
             fn_ret: None,
@@ -805,6 +831,8 @@ impl Parser {
         Ok(TypeExpr {
             name: name.to_string(),
             args: Vec::new(),
+            array_elem: None,
+            array_len: None,
             amp: amp_start.is_some(),
             fn_params: Some(params),
             fn_ret: ret,
@@ -1440,6 +1468,7 @@ impl Parser {
                 let block = self.parse_block()?;
                 Ok(Expr::Block(block))
             }
+            TokenKind::LBracket => self.parse_array_literal(tok.span),
             TokenKind::Fun => self.parse_fn_literal(),
             TokenKind::If => self.parse_if(),
             TokenKind::When => self.parse_when(),
@@ -1448,6 +1477,49 @@ impl Parser {
                 span: tok.span,
             }),
         }
+    }
+
+    /// `[a, b, c]` and `[x; N]`: the two array literals (A-18). The list form
+    /// fixes the length by how many elements were written; the repeat form
+    /// takes it from a compile-time constant, which is what makes a zeroed
+    /// buffer (`[0; 4096]`) one expression rather than 4096 of them.
+    ///
+    /// `[]` is refused here rather than later: with no elements there is no
+    /// element type to infer and no length, so there is nothing a later pass
+    /// could do with it.
+    fn parse_array_literal(&mut self, start: Span) -> PResult<Expr> {
+        self.expect(TokenKind::LBracket, "'['")?;
+        if self.check(&TokenKind::RBracket) {
+            return Err(ParseError {
+                message: "an array literal needs at least one element ('[a, b, c]') or a repeat ('[x; N]')"
+                    .to_string(),
+                span: start.to(self.peek().span),
+            });
+        }
+        let first = self.parse_expr()?;
+        if self.check(&TokenKind::Semi) {
+            self.advance();
+            let len = self.parse_expr()?;
+            let end = self.expect(TokenKind::RBracket, "']' to close the array literal")?.span;
+            return Ok(Expr::ArrayRepeat {
+                value: Box::new(first),
+                len: Box::new(len),
+                span: start.to(end),
+            });
+        }
+        let mut elems = vec![first];
+        while self.check(&TokenKind::Comma) {
+            self.advance();
+            if self.check(&TokenKind::RBracket) {
+                break;
+            }
+            elems.push(self.parse_expr()?);
+        }
+        let end = self.expect(TokenKind::RBracket, "']' to close the array literal")?.span;
+        Ok(Expr::ArrayLit {
+            elems,
+            span: start.to(end),
+        })
     }
 
     /// Parses a full string template, starting at its `TemplateStart` (the

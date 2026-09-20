@@ -1828,6 +1828,119 @@ fn a_const_that_does_not_fold_is_rejected() {
     assert_rejected("tests/fixtures/const_not_constant.kp");
 }
 
+// ---------------------------------------------------------------------------
+// A-18: a fixed-size, stack-allocated array; A-19: compile-time evaluation
+// ---------------------------------------------------------------------------
+
+/// Runs a fixture that only the C backend builds, because it uses a
+/// fixed-size array (A-18), which the asm backend refuses by name (the check
+/// `backend_coverage.rs` makes). Under that backend the test reports
+/// itself and passes, the way the AddressSanitizer gate does.
+fn assert_c_only_fixture_runs(name: &str, expected: &str) {
+    if backend() != "c" {
+        eprintln!(
+            "note: '{name}' uses a fixed-size array, which the 'asm' backend refuses by name \
+             (A-18); backend '{}' does not check it",
+            backend()
+        );
+        return;
+    }
+    assert_compiles_and_runs(&format!("tests/fixtures/{name}.kp"), expected);
+}
+
+#[test]
+fn a_fixed_size_array_is_a_value_and_its_length_is_in_its_type() {
+    // `.len()` is the length the type already carries, `.get`/`.set` are
+    // bounds-checked against it, a nested array is held inline, and `for`
+    // walks one because its desugar is exactly `.len()` plus `.get(i)`.
+    assert_c_only_fixture_runs("array_basic", "3\n20\nfalse\n7\n6\n2\n2\n2\n");
+}
+
+#[test]
+fn an_array_element_may_own_memory_a_datac_or_another_array() {
+    // `[Gate; 4]` as a `datac` field is the IDT/GDT shape, `[String; 3]`
+    // makes the array own its elements (so `set` frees the one it replaces,
+    // and a `datac` holding one owns it transitively), a `mut` parameter writes
+    // through the borrow while a `move` one takes the value over, and
+    // `Box<[i32; 3]>` is a fixed-size buffer kept past its frame.
+    assert_c_only_fixture_runs("array_owned", "9 2\n6\nbee\n3\n9\n2\n9\n");
+}
+
+#[test]
+fn an_out_of_bounds_array_read_panics() {
+    if backend() != "c" {
+        eprintln!(
+            "note: 'array_bounds' uses a fixed-size array, which the 'asm' backend refuses by \
+             name (A-18); backend '{}' does not check it",
+            backend()
+        );
+        return;
+    }
+    assert_fixture_panics("array_bounds", "Array.get: index out of bounds");
+}
+
+#[test]
+fn an_out_of_bounds_array_write_panics_before_the_store() {
+    if backend() != "c" {
+        eprintln!(
+            "note: 'array_bounds_set' uses a fixed-size array, which the 'asm' backend refuses \
+             by name (A-18); backend '{}' does not check it",
+            backend()
+        );
+        return;
+    }
+    assert_fixture_panics("array_bounds_set", "Array.get: index out of bounds");
+}
+
+#[test]
+fn an_array_length_that_is_not_a_constant_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/array_length_is_a_constant.kp",
+        "is not a constant here",
+    );
+}
+
+#[test]
+fn an_array_literal_of_the_wrong_length_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/array_literal_length_mismatch.kp",
+        "element(s) is expected here",
+    );
+}
+
+#[test]
+fn a_repeat_literal_over_an_owning_element_is_rejected() {
+    // `[x; N]` copies `x` into every slot, so an element that owns memory
+    // would end up with N owners of one buffer.
+    assert_rejected_with(
+        "tests/fixtures/array_repeat_owns_memory.kp",
+        "needs an element that owns nothing",
+    );
+    assert_rejected_with(
+        "tests/fixtures/array_repeat_owned_datac.kp",
+        "needs an element that owns nothing",
+    );
+}
+
+#[test]
+fn a_borrow_cannot_be_an_array_element() {
+    assert_rejected_with(
+        "tests/fixtures/array_of_a_borrow.kp",
+        "cannot be a container element",
+    );
+}
+
+#[test]
+fn a_const_may_call_a_function_and_the_call_is_evaluated_at_compile_time() {
+    // A-19: parameters are bound, a `while` loop runs and a recursive call
+    // terminates, all inside the compiler. The result is a literal at
+    // every use site, so both backends agree on it.
+    assert_compiles_and_runs(
+        "tests/fixtures/const_fn.kp",
+        "24\n120\n128\n144\n",
+    );
+}
+
 #[test]
 fn a_modules_own_items_are_reachable_bare_inside_it() {
     // `util.kp` calls `doubled` and constructs `Pair` without qualifying
@@ -1937,6 +2050,14 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "list_insert_remove_shifts",
         "list_growth_and_rebuild",
         "list_owned_replacement",
+        // A-18: an array is a by-value struct, so its drop has to free what it
+        // holds. `array_owned` is the one that owns something: three
+        // `String`s with one replaced through `set`, a `datac` array, and a
+        // `Box<[i32; 3]>`, and `array_basic` is the scalar and nested case
+        // that must free *nothing* (a spurious drop there would be a free of
+        // stack memory).
+        "array_owned",
+        "array_basic",
         "path_polish",
         "box_basic",
         "box_recursive",

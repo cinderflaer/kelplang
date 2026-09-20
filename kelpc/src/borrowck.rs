@@ -1304,6 +1304,20 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
+        // An array literal's elements are moved in exactly as a `datac`'s
+        // field initializers are (A-18): the array owns them from here, and
+        // `val a = [s1, s2]` is `s1` and `s2` given up.
+        tir::ExprKind::ArrayLit(elems) => {
+            for e in elems {
+                check_value(e, ctx)?;
+            }
+            Ok(())
+        }
+        // The repeat form copies its value into every slot, so `infer.rs` only
+        // accepts an element that owns nothing and the source is read as a
+        // *place*: a `datac` of scalars is copied into the array rather than
+        // moved out of the binding it came from.
+        tir::ExprKind::ArrayRepeat { value, .. } => check_place(value, ctx),
         // Construction of an enum variant (A-1): each payload value is used
         // exactly as a struct field's initializer is.
         tir::ExprKind::EnumLit { fields, .. } => {

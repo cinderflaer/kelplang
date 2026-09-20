@@ -130,7 +130,11 @@ pub struct Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    IntLit(i64),
+    /// An integer literal, at `i128` so that a `const` folded to the top of
+    /// `u64`'s range is representable; `codegen_c.rs` and `codegen_asm.rs` both
+    /// cut it to the expression's own type, which is what makes the width the
+    /// type's rather than the literal's.
+    IntLit(i128),
     /// `'a'` — the code point, already checked against the type
     /// `infer.rs` resolved for it. Codegen casts it to that type's C
     /// spelling, so a `'0'` in a `u8` position emits a `uint8_t`.
@@ -270,6 +274,16 @@ pub enum ExprKind {
         newline: bool,
         pieces: Vec<TemplatePiece>,
     },
+    /// `[a, b, c]`: an array value (A-18). Every element has the array's own
+    /// element type (checked here), and the length is the number of elements,
+    /// so the expression's `ty` is a complete `[T; n]` and no later pass has
+    /// to count anything.
+    ArrayLit(Vec<Expr>),
+    /// `[v; N]`: `N` copies of `v`, which is how a zeroed fixed-size buffer is
+    /// written (A-18). The length is a compile-time constant and lives in the
+    /// expression's own type (`[T; N]`), which is where codegen reads it; the
+    /// element must own nothing, because the value is copied into every slot.
+    ArrayRepeat { value: Box<Expr> },
 }
 
 /// One piece of a template: literal text, or an interpolated value that has

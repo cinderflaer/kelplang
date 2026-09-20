@@ -1,8 +1,13 @@
-// M6.3: a `const` has to fold at compile time, so a call is not an
-// initializer.
-const BAD: i32 = side()
+// A-19: a `const` is folded while the compiler runs. It may call a plain
+// `fun` whose own body stays inside what a constant can evaluate, but not one
+// whose body does something a constant cannot be: `shout` prints, and a
+// compile-time fold has no output to print to.
+const BAD: i32 = shout()
 
-fun side().R: i32 = 1
+fun shout().R: i32 {
+    print("hi")
+    1
+}
 
 fun main() {
     print(BAD)

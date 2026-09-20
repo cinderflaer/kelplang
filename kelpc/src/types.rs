@@ -119,6 +119,22 @@ pub enum Ty {
     /// this type is made, so a program cannot build a closure without
     /// something to capture.
     Closure { params: Vec<Ty>, ret: Box<Ty> },
+    /// A **fixed-size array** (A-18): `[T; N]`, with `N` a compile-time
+    /// constant. The storage is inline: one `N`-element block on whatever
+    /// stack frame holds it, with no allocator in the path. That is the whole
+    /// point, since a page table, an IDT/GDT or a register-save frame has to
+    /// exist before an allocator can be trusted.
+    ///
+    /// The length is part of the type, so `[u8; 4]` and `[u8; 8]` are
+    /// different types with different generated C structs, exactly as
+    /// `List<i32>` and `List<String>` are. The element is monomorphized the
+    /// same way a list's is: one `kelp_Array__<elem>__<N>` typedef, one
+    /// function set, one drop function per `(element, length)` pair used.
+    ///
+    /// `Copy` **iff the element is**: an array of scalars is a value you can
+    /// copy, while an array of `String` owns those strings and moves, which
+    /// is the rule `plan/syntax.md` 3 states for the type.
+    Array(Box<Ty>, u64),
 }
 
 impl Ty {
@@ -149,16 +165,21 @@ impl Ty {
     /// kinds of thing that own heap memory: a `datac` and the builtin
     /// `Bytes`/`String`. Reading a non-`Copy` value as a whole moves it (M3).
     pub fn is_copy(&self) -> bool {
-        !matches!(
-            self,
-            Ty::Struct(_)
-                | Ty::Bytes
-                | Ty::String
-                | Ty::List(_)
-                | Ty::Box(_)
-                | Ty::Map(..)
-                | Ty::Closure { .. }
-        )
+        match self {
+            // An array copies exactly when its element does: `[i32; 4]` is a
+            // value, `[String; 4]` owns four strings and moves.
+            Ty::Array(elem, _) => elem.is_copy(),
+            _ => !matches!(
+                self,
+                Ty::Struct(_)
+                    | Ty::Bytes
+                    | Ty::String
+                    | Ty::List(_)
+                    | Ty::Box(_)
+                    | Ty::Map(..)
+                    | Ty::Closure { .. }
+            ),
+        }
     }
 
     /// Whether this type *itself* owns heap memory, ignoring whether a
@@ -166,10 +187,20 @@ impl Ty {
     /// available — a `datac` with an owned field owns memory too, and out of
     /// context `Ty::Struct(_)` cannot know that.
     pub fn owns_heap(&self) -> bool {
-        matches!(
-            self,
-            Ty::Bytes | Ty::String | Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Closure { .. }
-        )
+        match self {
+            // An array owns whatever its elements own, one drop call per
+            // element at scope exit.
+            Ty::Array(elem, _) => elem.owns_heap(),
+            other => matches!(
+                other,
+                Ty::Bytes
+                    | Ty::String
+                    | Ty::List(_)
+                    | Ty::Box(_)
+                    | Ty::Map(..)
+                    | Ty::Closure { .. }
+            ),
+        }
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -245,6 +276,7 @@ impl Ty {
             Ty::List(elem) => list_c_type(elem),
             Ty::Box(elem) => box_c_type(elem),
             Ty::Map(key, value) => map_c_type(key, value),
+            Ty::Array(elem, len) => array_c_type(elem, *len),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -296,6 +328,7 @@ impl Ty {
             Ty::Struct(name) => name.clone(),
             Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
+            Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
             Ty::Ref { mutable: false, inner } => format!("&{}", inner.display()),
@@ -450,7 +483,6 @@ pub fn owned_types(
 pub fn list_sortable_elem(ty: &Ty) -> bool {
     ty.is_numeric() || matches!(ty, Ty::Bool | Ty::String | Ty::Bytes)
 }
-
 /// Whether a `List<T>` element type has equality, so `List.contains` means
 /// something. Same set as `list_sortable_elem`, for the same reason: a
 /// `datac` has no `==` in v1.
@@ -471,6 +503,9 @@ pub fn list_clonable_elem(ty: &Ty) -> bool {
 pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) -> bool {
     match ty {
         Ty::Struct(name) => owned_structs.contains(name),
+        // An array is freed element by element, so it needs a drop call
+        // exactly when its element does.
+        Ty::Array(elem, _) => needs_drop(elem, owned_structs),
         other => other.owns_heap(),
     }
 }
@@ -485,6 +520,7 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
+        Ty::Array(elem, len) => format!("kelp_array_drop__{}__{}", ty_mangle(elem), len),
         Ty::Map(key, value) => {
             format!("kelp_map_drop__{}__{}", ty_mangle(key), ty_mangle(value))
         }
@@ -522,6 +558,20 @@ pub fn is_map_element(ty: &Ty) -> bool {
     is_list_element(ty)
 }
 
+/// Whether `ty` may be an array element or an array itself: `[T; N]` holds its
+/// elements inline, so the element set is the `List` element set plus another
+/// array, so a nested `[[u8; 4]; 8]` is a page table, and it is expressible for
+/// the same reason it is in C. A `List`/`Box`/`Map` element is still refused
+/// (the first two are pointers this type does not need and the third is a
+/// container of its own), and a borrow is refused for the reason it always is:
+/// an element outlives the borrow it came from.
+pub fn is_array_element(ty: &Ty) -> bool {
+    match ty {
+        Ty::Array(elem, _) => is_array_element(elem),
+        other => is_list_element(other),
+    }
+}
+
 /// Whether `ty` may be a `Map<K, V>` key. The compiler generates the key's
 /// hash and its equality, so the set is closed: `String` (byte-wise, with a
 /// length so an embedded NUL is safe), the integers, and `bool`. A float is
@@ -545,7 +595,16 @@ pub fn is_box_element(ty: &Ty) -> bool {
         // `Box` instantiation that names one (A-4 phase E), so a box is the
         // one container that can hold a closure — `Box<closure().R: i32>` is
         // how an *optional* callback is written (`Box.empty()`).
-        Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Closure { .. } => {
+        Ty::Bytes
+        | Ty::String
+        | Ty::Struct(_)
+        | Ty::List(_)
+        | Ty::Box(_)
+        | Ty::Closure { .. }
+        // A fixed-size array is a plain inline struct, so a box can hold one
+        // (A-18): `Box<[u8; 4096]>` is a heap allocation of a fixed-size
+        // buffer, which is how one is kept alive past its frame.
+        | Ty::Array(..) => {
             true
         }
         // A `View` is a borrow of text that outlives the box, with nowhere to
@@ -570,6 +629,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::List(elem) => format!("List__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
+        Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
         // A function type never reaches a container or a type argument (both
         // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
         // unreachable arm and by diagnostics, so it gets an identifier-shaped
@@ -614,6 +674,17 @@ pub fn map_c_type(key: &Ty, value: &Ty) -> String {
     format!("kelp_Map__{}__{}", ty_mangle(key), ty_mangle(value))
 }
 
+/// The generated C struct tag for `[T; N]` (A-18).
+///
+/// The storage is inline, so this is an ordinary struct wrapping a C array:
+/// `typedef struct { T v[N]; } kelp_Array__T__N;`. The wrapper (rather than a
+/// bare C array) is what makes the value obey Kelp's rules in C: assignment
+/// copies it, a function can take and return it by value, and nothing decays
+/// to a pointer behind the type system's back.
+pub fn array_c_type(elem: &Ty, len: u64) -> String {
+    format!("kelp_Array__{}__{}", ty_mangle(elem), len)
+}
+
 /// The `List<T>` or `Box<T>` behind an expression's type, looking through a
 /// borrow — `l.push(x)` and `b.get()` both arrive with the receiver typed
 /// `&List<T>`/`&Box<T>` (a container parameter is a borrow, and a method
@@ -651,6 +722,26 @@ pub fn map_key_of(ty: &Ty) -> Option<&Ty> {
     match ty {
         Ty::Map(key, _) => Some(key),
         Ty::Ref { inner, .. } => map_key_of(inner),
+        _ => None,
+    }
+}
+
+/// The element type of an array, looking through a borrow: `a.len()` and
+/// `a.get(i)` arrive with the receiver typed `&[T; N]`, since an owned array
+/// parameter is a borrow.
+pub fn array_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Array(elem, _) => Some(elem),
+        Ty::Ref { inner, .. } => array_elem_of(inner),
+        _ => None,
+    }
+}
+
+/// The length of an array, looking through a borrow.
+pub fn array_len_of(ty: &Ty) -> Option<u64> {
+    match ty {
+        Ty::Array(_, len) => Some(*len),
+        Ty::Ref { inner, .. } => array_len_of(inner),
         _ => None,
     }
 }

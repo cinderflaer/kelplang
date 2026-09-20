@@ -123,12 +123,16 @@ pub enum TokenKind {
     RParen,
     LBrace,
     RBrace,
-    // `[`/`]` are not used by any expression yet — they exist so M7's
-    // `caps(fs = ["..."])` grant lists lex (and so the parser can
-    // reject them with a real message instead of a lex error).
+    /// `[`/`]`. Used by `caps(fs = ["..."])`, by the `[T; N]` fixed-size
+    /// array type (A-18) and by its two literals (`[a, b, c]`, `[x; N]`).
     LBracket,
     RBracket,
     Comma,
+    /// `;`, used in exactly one place: between an array's element type and its
+    /// length (`[u8; 4096]`, `[x; N]`). Statements are newline-terminated, so
+    /// the character had no meaning before A-18 and this is not a second
+    /// statement separator.
+    Semi,
     Colon,
     Dot,
     Arrow, // -> (reserved for `when` arms)
@@ -489,6 +493,10 @@ impl<'a> Lexer<'a> {
                 b',' => {
                     self.advance();
                     TokenKind::Comma
+                }
+                b';' => {
+                    self.advance();
+                    TokenKind::Semi
                 }
                 b':' => {
                     self.advance();

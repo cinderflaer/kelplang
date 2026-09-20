@@ -1,0 +1,6 @@
+// A-18: the length written in the type and the number of elements written in
+// the literal are the same fact, so they are checked against each other.
+fun main() {
+    val xs: [i32; 3] = [1, 2]
+    print(xs.len())
+}

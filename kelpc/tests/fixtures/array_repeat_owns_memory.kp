@@ -1,0 +1,8 @@
+// A-18: the repeat form copies its value into every slot, so the element has
+// to own nothing. `String` owns its buffer, and `[s; 4]` would be four owners
+// of one allocation.
+fun main() {
+    val s = "x"
+    val xs: [String; 4] = [s; 4]
+    print(xs.len())
+}

@@ -1,0 +1,10 @@
+// A-18/A-19: an array's length is part of its type, so it has to be a
+// compile-time constant. A `val` computed at runtime is not one, however
+// obviously constant the initializer looks here.
+fun slots().R: usize = 3
+
+fun main() {
+    val k = slots()
+    val xs: [i32; k] = [1, 2, 3]
+    print(xs.len())
+}

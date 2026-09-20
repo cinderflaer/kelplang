@@ -78,7 +78,7 @@ can be acquired.
 
 | | |
 | --- | --- |
-| Types | `i32` `i64` `u8` `u16` `u32` `u64` `usize` `isize` `f32` `f64` `bool` `char`, `str` (borrowed, NUL-terminated text) and `View` (borrowed, length-carrying text) |
+| Types | `i32` `i64` `u8` `u16` `u32` `u64` `usize` `isize` `f32` `f64` `bool` `char`, `str` (borrowed, NUL-terminated text), `View` (borrowed, length-carrying text) and `[T; N]` (fixed-size, held inline, no allocator) |
 | Data | `datac` records with `val`/`var` fields, `enum` tagged unions, exhaustive `when` (with a scrutinee or without), `if let`, type parameters on declarations (`Pair<A, B>`, `Option<T>`), `const` |
 | Ownership | owned builtins `Bytes`, `String`, `List<T>`, `Map<K, V>`, `Box<T>`; moves, shared and `mut` borrows, drops at end of scope, no GC |
 | Errors | `Option`, `Result`, the `?` operator, `panic`/`assert` |

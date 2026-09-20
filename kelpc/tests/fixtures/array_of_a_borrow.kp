@@ -1,0 +1,7 @@
+// An array holds its elements inline and owns them, so a borrow cannot be an
+// element. It is the same rule a `List` element follows.
+fun main() {
+    val n = 7
+    val xs: [&i32; 1] = [&n]
+    print(xs.len())
+}

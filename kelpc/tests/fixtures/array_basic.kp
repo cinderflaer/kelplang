@@ -1,0 +1,25 @@
+// A-18: a fixed-size array is a value whose length is part of its type. The
+// storage is the value, so nothing here touches the allocator: a local array
+// is a stack frame's bytes, and `[0; N]` fills it without one call per element.
+const SLOTS: usize = 4
+
+fun main() {
+    val xs: [i32; 3] = [10, 20, 30]
+    print(xs.len())
+    print(xs.get(i = 1))
+    print(xs.is_empty())
+
+    var buf: [u8; SLOTS] = [0; SLOTS]
+    buf.set(i = 2, v = 7)
+    print(buf.get(i = 2))
+
+    // An element may be another array: a nested one is held inline, exactly
+    // as a C array of arrays is.
+    val grid: [[u8; 2]; 3] = [[1, 2], [3, 4], [5, 6]]
+    print(grid.get(i = 2).get(i = 1))
+    // `for` works over an array for the same reason it works over a `List`:
+    // the parser desugars it into `.len()` and `.get(i)`.
+    for row in grid {
+        print(row.len())
+    }
+}

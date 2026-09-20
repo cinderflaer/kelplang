@@ -185,6 +185,23 @@ fn print_expr(out: &mut String, expr: &Expr) {
             }
         }
         Expr::IntLit(v, _) => write!(out, "{v}").unwrap(),
+        Expr::ArrayLit { elems, .. } => {
+            out.push('[');
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                print_expr(out, e);
+            }
+            out.push(']');
+        }
+        Expr::ArrayRepeat { value, len, .. } => {
+            out.push('[');
+            print_expr(out, value);
+            out.push_str("; ");
+            print_expr(out, len);
+            out.push(']');
+        }
         Expr::CharLit(v, _) => write!(out, "{}", char_literal(*v)).unwrap(),
         Expr::ByteLit(v, _) => write!(out, "{}", byte_literal(*v)).unwrap(),
         Expr::FloatLit(v, _) => out.push_str(&float_literal(*v)),

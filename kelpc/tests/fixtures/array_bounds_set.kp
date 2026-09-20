@@ -1,0 +1,7 @@
+// The same check on the write side: `set` is where a wrong index would
+// scribble past the array, so it is refused before the store.
+fun main() {
+    var xs: [i32; 2] = [1, 2]
+    xs.set(i = 2, v = 3)
+    print(xs.get(i = 0))
+}

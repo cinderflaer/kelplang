@@ -347,6 +347,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `List<T>` | owned | growable sequence, one instantiation per element type |
 | `Map<K, V>` | owned | keyed container, insertion order; `Map<V>` is a `String` key (12.2) |
 | `Box<T>` | owned | one heap cell that holds a `T` or nothing |
+| `[T; N]` | Copy / owned | fixed-size array: `N` elements held **inline**, with nothing allocated. `Copy` when `T` is, and an owner that drops each element when it is not (12.4) |
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
 | `fun(T, U).R: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
@@ -357,8 +358,9 @@ Rules that follow from the table:
 
 - There is no implicit numeric conversion, not even between two integer widths. `u64 % 10` produces a `u64` and cannot be pushed into a `u8` slot without `to_u8()`. The one widening that goes to a float is explicit too: `n.to_f64()` (5.0).
 - Owned types are not `Copy`: assigning one moves it, and every owned value is dropped at the end of the scope that owns it, including inside `datac` fields, `List` elements and `Map` values.
-- `str` **and `View`** are borrows, so neither can live in a `datac` field, an `enum` payload, a `List` element, a `Map` value or a `Box`; only owned types can. A borrow in a field would outlive the value it points at, and v1 has no lifetime syntax to say otherwise (17). An owned `String` is what to store instead.
+- `str` **and `View`** are borrows, so neither can live in a `datac` field, an `enum` payload, a `List` element, a `Map` value, an array element or a `Box`; only owned types can. A borrow in a field would outlive the value it points at, and v1 has no lifetime syntax to say otherwise (17). An owned `String` is what to store instead.
 - No `List` or `Map` may hold another `List` or `Map` directly, because elements are stored inline. Put it in a `Box`.
+- `[T; N]` holds its elements inline too, and it is the one container that may hold another *array*: `[[u8; 4]; 8]` is a page table. It may not hold a `List`, a `Map` or a `Box` (12.4).
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
 - `Unit` is not a value and cannot be stored.
 - A function type is Copy and owns nothing: a function value is a plain function pointer, so copying one is copying a pointer. It cannot be borrowed (`&`/`mut`), stored in a container, or used as a type argument's *element* — the placements 7.4 lists.
@@ -589,7 +591,7 @@ for x in xs {
 }
 ```
 
-- The iterable must be a `List<T>`. `for` is **desugared by the parser** into the index-and-`while` walk below; no later pass knows it exists, and there is no protocol to implement (`iter`/`next` is a post-v1 question).
+- The iterable must be a `List<T>` or a `[T; N]` (12.4). `for` is **desugared by the parser** into the index-and-`while` walk below, so anything with `.len()` and `.get(i)` walks the same way; no later pass knows it exists, and there is no protocol to implement (`iter`/`next` is a post-v1 question).
 - The element binding gives exactly what `List.get` gives (12.1): a copy of a `Copy` element, and a shared borrow of an owned one. So `for n in numbers` reads `n: i32` directly, while `for name in names` reads `name: &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
 - The iterable is *borrowed*, not moved, when it is a place (`xs`, `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is the ordinary case. Anything else — a call, a literal — is bound to a temporary that the loop owns and frees, so it is evaluated **once**.
 - The loop variable is a `val`. Copy it into a `var` to mutate it, and note that the list is still borrowed for the duration of the body, so the body cannot `push` to what it walks.
@@ -1400,6 +1402,48 @@ list = Node(value = 2, next = Box.of(list))
 
 `Box` methods: `Box.empty()`, `Box.of(v)`, `is_empty()`, `get()` (a copy for a `Copy` element, otherwise a borrow), `set(v)`, `take()` (moves the value out and leaves the box empty). `take` on an empty box panics.
 
+### 12.4 `[T; N]`
+
+A fixed-size array: `N` elements of `T`, held inline. Nothing is allocated, and the length is part of the type, so `[u8; 4]` and `[u8; 8]` are different types. It is the type for a buffer whose size is known at compile time (a page table, an IDT/GDT, a register-save frame), and it is the reason those can exist with no allocator in the path at all.
+
+```kelp
+const PAGE_SIZE: usize = 4096
+const ENTRY_SIZE: usize = 8
+const ENTRIES: usize = PAGE_SIZE / ENTRY_SIZE
+
+fun main() {
+    val xs: [i32; 3] = [10, 20, 30]
+    print(xs.len())                 // 3, from the type: nothing is loaded
+    print(xs.get(i = 1))
+
+    var buf: [u8; 4] = [0; 4]       // the repeat form: a zeroed buffer
+    buf.set(i = 2, v = 7)
+
+    val table: [u64; ENTRIES] = [0; ENTRIES]
+    val grid: [[u8; 2]; 3] = [[1, 2], [3, 4], [5, 6]]
+    print(grid.get(i = 2).get(i = 1))
+}
+```
+
+| Method | Takes | Returns |
+| --- | --- | --- |
+| `len()` | shared | `usize`, as a compile-time constant |
+| `is_empty()` | shared | `bool`, always `false` |
+| `get(i)` | shared, `usize` | the element, or a borrow of it |
+| `set(i, v)` | exclusive, `usize` | `Unit` |
+
+- **The length is a compile-time constant**, written as a literal, another `const`, or an expression over them (A-19): `[u64; PAGE_SIZE / ENTRY_SIZE]`. A `val` computed at runtime is refused, however obviously constant its initializer looks.
+- **The element type may be a scalar, `String`, `Bytes`, a `datac`, an `enum`, or another array.** It may not be a borrow (a `str`, a `View` or a `&T`), a `Unit`, or a `List`/`Map`/`Box`, for the reason 12.1 gives: an element is held inline and owned by the array.
+- **`Copy` when the element is.** `[i32; 3]` is a value you can assign freely; `[String; 3]` owns its three strings, so assigning it moves it and dropping it frees each element. `set` drops the element it replaces.
+- **Both literals.** `[a, b, c]` takes the length from the number of elements, and its type is the one the context declares or, with no declaration, `[T; n]` for the type its elements agree on. `[x; N]` fills `N` slots with `x`, and copied means `x` has to **own nothing**: a scalar, or a `datac` whose fields are all scalars. A `String` element is refused by name, because `[s; 4]` would be four owners of one buffer.
+- **No `[T; 0]`.** A zero-length array would be a C array with no elements, which is not standard C; there is no empty form.
+- **Indexing is `get`/`set`, not `a[i]`.** The language has no `[]` subscript anywhere, and `a[i]` on an array is the same as on a `List` (12.1): a method call.
+- **There is no `delete`/`insert`/`push`.** The length is the type, so an array cannot grow; a growable sequence is a `List<T>`.
+- **`for` walks one**, exactly as it walks a `List`: the desugar is `.len()` and `.get(i)`, and both exist here (6.2).
+- A `datac` field may be one (`val entries: [Entry; 512]`), which is the shape a kernel's IDT or GDT has, and `Box<[T; N]>` holds one on the heap when it has to outlive its frame.
+
+An array parameter is borrowed by default like any owned type, so `fun total(xs: [i32; 3])` reads a borrow while `mut [T; N]` and `move [T; N]` are the writable and taking forms. An array returned from a function is copied out by value.
+
 ## 13. Modules and imports
 
 ### 13.1 `impl`
@@ -1452,9 +1496,43 @@ Aliases come from two places: an inline `alias %*name*% = <raw text to end of li
 const LIMIT: i32 = 10
 const NAME: str = "x"
 const PI2: f64 = math.PI * 2.0
+const PAGE_SIZE: usize = 4096
+const ENTRY_SIZE: usize = 8
+const ENTRIES_PER_PAGE: usize = PAGE_SIZE / ENTRY_SIZE
+
+fun entries_for(pages: usize).R: usize {
+    var total: usize = 0
+    var i: usize = 0
+    while i < pages {
+        total += ENTRIES_PER_PAGE
+        i += 1
+    }
+    total
+}
+
+const TABLE_ENTRIES: usize = entries_for(pages = 64)
 ```
 
-A `const` is a top-level compile-time value. The type is mandatory, the initializer must be foldable at compile time, and each use is substituted as a literal, so there is no storage and no initialization at startup. A `const` may only name constants declared before it.
+A `const` is a top-level compile-time value. The type is mandatory, the initializer is **evaluated while the compiler runs**, and each use is substituted as a literal, so there is no storage and no initialization at startup.
+
+What an initializer may be:
+
+- a literal, including a character, a byte and a `str` literal;
+- another `const`, written bare or as `module.NAME`, **declared before it**;
+- the operators: arithmetic, comparison, `&&`/`||`, the bitwise operators and the unary forms, each at the width of the declared type;
+- an integer conversion (`n.to_usize()`), with the same out-of-range check the runtime performs;
+- `if`/`else`, including one nested in another;
+- **a call to a plain `fun`** whose own body stays inside this list: parameters, `val`/`var` locals, `if`, `while`, `return`, arithmetic, and further calls. The call is evaluated like any other: named and positional arguments bind to the parameters, and a recursive call works as long as it terminates. The function does not have to be declared before the `const` that calls it.
+
+What it may not be: a method call on a value, a builtin (`print`, `panic`, `assert`), an `extern fun`, a generic function, an array or a `datac` value, a `when`, a `?`, a borrow or a template. Each is refused by name rather than folded to something that is not the program's value.
+
+The result has to be a scalar (an integer, a float, a `bool`, a `char` or a `str`), because a use site is a literal. A `const` whose declared type is anything else is refused.
+
+Two budgets keep evaluation bounded, because it is the compiler doing the running: one million evaluation steps, and sixty-four nested calls. Exceeding either is a diagnostic naming the call, not a compiler that hangs.
+
+The arithmetic is the declared type's, so a `const` folds the way the generated code would compute: `u8` arithmetic wraps at 256, `i64` at its two's-complement range, `>>` on a signed type is arithmetic, and a shift by the width or more is refused rather than folded to whatever this machine would do. Division by zero is a diagnostic.
+
+An array's length is the same evaluated expression (12.4), which is what makes `[u64; PAGE_SIZE / ENTRY_SIZE]` and `[Gate; entries_for(pages = 64)]` one type each rather than a number written out by hand.
 
 ### 14.2 `pd` passdowns
 
@@ -1899,6 +1977,8 @@ These are deliberate, and each one has a workaround in this document:
 - A `char` is a code point and does not mix with the integer types: `'a' + 1` and `'a' == 97` are errors. Give the literal the type the arithmetic needs (`val a: u8 = 'a'`).
 - No float-to-integer conversion: `to_i64` does not exist on `f64` (it would drop the fraction silently). Use `math.trunc`/`math.floor` and then an integer conversion.
 - No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
+- A `[T; N]` array is fixed at its written length: there is no `[T; 0]`, no `a[i]` subscript (use `.get`/`.set`, as on a `List`), and no growth (`push`/`insert` are a `List`'s). The repeat form `[x; N]` copies its value into every slot, so it needs an element that owns nothing, and it is the one array shape a `datac` element cannot take (write the elements out, or start from a literal and `set` each one).
+- Compile-time evaluation is the language's own operators plus calls to plain `fun`s. There is no `comptime` block, no compile-time `List`/`Map`, no `size_of`/`align_of`, and a `const` cannot read a `pd` or call anything `extern`-backed.
 - Function values (7.4) are declared functions, `fun` literals, and closures: a literal becomes a closure when it names a binding from the enclosing scope, captures are **move-only** (a `Copy` binding is copied, an owned one is moved), and a borrow cannot be captured at all. A function value cannot be called as the result of another call (`f()(x)`) — bind it first.
 - A function value cannot be a container element or the return type of a function *type*, a function that reads a passdown is not a value, and a closure cannot be a `List`/`Map` element (a `Box` or a one-field `datac` holds it).
 - A closure's captures are read out of its environment through a borrow, so an owned capture cannot be handed out by value (9's no-partial-moves rule). Its environment is dropped where the closure dies, so a closure cannot outlive anything it captured — which is why a borrow can never be a capture.
@@ -1917,7 +1997,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `if without an else branch must evaluate to 'unit'` | an `if`, `if let` or `when` used as a value needs an `else` arm |
 | `pattern 'Circle(a, b)' has 2 binding(s) but variant 'Circle' carries 1 payload field(s)` | `if let` and a `when` arm bind one name per payload field, in order |
 | `expected 'in' between the 'for' binding and what it iterates, found 'xs'` | a `for` is `for name in list { ... }`; the `in` is required (6.2) |
-| `type 'i32' has no method 'len'` (the span on the iterable) | `for` walks a `List<T>` only, and the desugar asks it for `.len()` (6.2) |
+| `type 'i32' has no method 'len'` (the span on the iterable) | `for` walks a `List<T>` or a `[T; N]` only, and the desugar asks it for `.len()` (6.2) |
 | `cannot assign to 'x': not declared 'var'` | declare the binding `var` |
 | `'id' is not a 'var' field` | the `datac` field must be declared `var` too |
 | `use of moved value 'a'` | an owned value was moved earlier; reorder, or borrow instead |
@@ -1967,6 +2047,14 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `a 'fun' literal cannot return a borrow ('&str')` | an indirect call has no parameter an elided lifetime could bind to; return an owned value |
 | `a 'fun' literal needs a body` | write `= expr` or `{ ... }` |
 | `a string template can only be printed` | a template is not a value; build the text with `str.concat`, `fmt.*` or a `String` |
+| `an array of 3 element(s) is expected here, and this literal has 2` | the length is in the type, so `[T; N]` and the literal have to agree (12.4) |
+| `'k' is not a constant here` | an array's length is evaluated at compile time; a `val` computed at runtime is not a constant, and a `const` can only name constants declared before it (14.1) |
+| `the repeat form '[x; N]' needs an element that owns nothing` | `[x; N]` copies `x` into every slot, so `x` cannot own memory; write the elements out, or use a scalar or a scalar-only `datac` (12.4) |
+| `'&i32' cannot be a container element` | a container owns its elements, so a borrow cannot be one (3, 12.1) |
+| `an array length has to be at least 1` | there is no `[T; 0]`; a zero-length C array is not standard C (12.4) |
+| `Array.get: index out of bounds` (at run time) | the index was checked against the array's own length; a longer index is a bug at the call site |
+| `'print' cannot be called in a constant expression` | a `const` is folded inside the compiler, so it cannot call a builtin, an `extern fun` or a method, only a plain `fun` that does the same (14.1) |
+| `this constant expression did not finish within 1000000 steps` | a `const` may call a `fun`, and that function has to terminate on the values the constant gives it (14.1) |
 | `unknown escape '\q' in a string literal` | the escapes are `\n`, `\t`, `\r`, `\"`, `\\` |
 | `function 'f' is defined more than once for the same parameter types` | user code cannot overload; rename one |
 | `cannot tell what 'List.empty()' holds` | write the element type on the binding: `var xs: List<i32> = List.empty()` |
@@ -2063,7 +2151,8 @@ param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>
 
 type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
-                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ] )
+                       | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
+                       | "[" type ";" expr "]" )        // a fixed-size array: [T; N]
 fparam       := [ "mut" | "move" ] type
 ```
 
@@ -2090,6 +2179,8 @@ postfix      := primary ( "?" | "." ident [ typeargs ] [ "(" args ")" ] )*
 primary      := int | float | string | char | template | "true" | "false"
               | "fun" "(" [ param ("," param)* ] ")" [ ".R" "：" type ]
                 ( "=" expr | block )
+              | "[" expr ("," expr)* "]"       // an array literal: length is the count
+              | "[" expr ";" expr "]"          // a repeat: [0; 4096]
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block chain
               | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr

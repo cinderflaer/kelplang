@@ -64,10 +64,15 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The counts this list was recorded against: 188 fixtures the C backend
-/// builds, 167 of them also built by the asm backend, 21 refused: which is the
-/// 250-of-295 integration-test ratio in the plan's §0 table, measured at the
-/// fixture level instead of the test level. (174/154 before the
+/// The count at the last re-recording, which is this one: 193 fixtures the C
+/// backend builds, 168 of them also built by the asm backend, 25 refused. The
+/// array fixtures A-18 added are among the refused, which is the documented
+/// state of a construct this backend does not lower yet; `const_fn` is the one
+/// entry A-19 added to this list, because a folded `const` is a literal by the
+/// time either backend sees it. (The counts before this re-recording: 188 C /
+/// 167 asm / 21 refused, which was the 250-of-295 integration-test ratio in
+/// the plan's §0 table measured at the fixture level instead of the test
+/// level.) (174/154 before the
 /// field-of-a-temporary slice moved `heap_field_of_owned_temporary` into the
 /// C backend's built column and the four names the previous run's note listed
 /// (`else_if_let`, `list_clone`, `panic_bound_message`,
@@ -238,6 +243,10 @@ const ASM_BUILT_BASELINE: &[&str] = &[
 "byte_literals",
 "bytes_build",
     "char_literals",
+    // A-19: a `const` is folded by the compiler (`infer.rs`'s const
+    // evaluator), so a program that computes one with a loop and a recursive
+    // call is an ordinary program for either backend.
+    "const_fn",
     "consts",
     "datac_basic",
     "datac_embeds_datac",
@@ -641,6 +650,11 @@ fn the_asm_backend_builds_a_superset_of_the_recorded_baseline() {
 /// wording changes — which is why this is a `println!` and never an assertion.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Ranking {
+    /// A fixed-size array (A-18): a by-value struct this backend has no layout
+    /// or addressing for yet, refused by name on its literals and on the type
+    /// itself. It is its own row rather than part of the heap row because it
+    /// needs no allocator at all, which is the whole point of the type.
+    Array,
     /// A heap type the backend cannot lower — `Bytes`/`String`/`View`/`List`/
     /// `Map`/`Box` as a type, a parameter, a return, a field or a passdown —
     /// plus an `extern fun` whose body this backend has no routine for. §5
@@ -666,6 +680,7 @@ impl Ranking {
     fn title(self) -> &'static str {
         match self {
             Ranking::Heap => "a heap type",
+            Ranking::Array => "a fixed-size array (A-18)",
             Ranking::Enum => "an `enum`",
             Ranking::Datac => "a `datac` holding a float or heap field",
             Ranking::Closure => "a closure or a function value",
@@ -674,8 +689,9 @@ impl Ranking {
     }
 
     /// The order §5's table uses.
-    const ROWS: [Ranking; 5] = [
+    const ROWS: [Ranking; 6] = [
         Ranking::Heap,
+        Ranking::Array,
         Ranking::Enum,
         Ranking::Datac,
         Ranking::Closure,
@@ -700,6 +716,9 @@ const GATED_EXTERNS: &[&str] = &["std.time.now_unix_raw"];
 /// from which one this is.
 enum Subject<'a> {
     Closure,
+    /// A fixed-size array (A-18), which the refusal names as a construct rather
+    /// than as a type.
+    Array,
     Extern(&'a str),
     EnumName,
     DatacName,
@@ -723,6 +742,11 @@ fn subject(message: &str) -> Subject<'_> {
         || message.contains("a closure")
     {
         return Subject::Closure;
+    }
+    // A-18: `a fixed-size array` is spelled without backticks, so it is matched
+    // before the type-name probes below, which are all backticked.
+    if message.contains("a fixed-size array") {
+        return Subject::Array;
     }
     if let Some(symbol) = backticked_after(message, "the `extern fun ") {
         return Subject::Extern(symbol);
@@ -774,6 +798,13 @@ fn type_category(source: &str, ty: &str) -> Ranking {
     if ty.contains("closure") || ty.contains("fun(") {
         return Ranking::Closure;
     }
+    // A-18: a written array type is `[T; N]`, and it is refused as a parameter
+    // or a return before anything inside it is looked at. `[` is not the first
+    // character of any other type this backend can be handed, so the test is
+    // the shape of the spelling rather than a name lookup.
+    if ty.trim_start().starts_with('[') && ty.contains(';') {
+        return Ranking::Array;
+    }
     let bare = bare_type_name(ty);
     if HEAP_TYPES.contains(&bare.as_str()) {
         return Ranking::Heap;
@@ -797,6 +828,7 @@ fn category(source: &str, message: &str) -> Ranking {
                 Ranking::Heap
             }
         }
+        Subject::Array => Ranking::Array,
         Subject::EnumName => Ranking::Enum,
         Subject::DatacName => Ranking::Datac,
         Subject::Type(ty) => type_category(source, ty),

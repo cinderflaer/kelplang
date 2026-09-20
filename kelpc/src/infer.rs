@@ -21,6 +21,15 @@ impl TypeError {
     fn in_module(self, module: &str) -> Diagnostic {
         Diagnostic::new(self.message, self.span, module)
     }
+
+    /// The same error re-pointed at another span, for the sites that only
+    /// learn the real location after an inner resolution succeeds: a parameter
+    /// type resolved at a call site belongs to the call, not to the
+    /// declaration it was written in.
+    fn at(mut self, span: Span) -> TypeError {
+        self.span = span;
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -189,6 +198,15 @@ struct Ctx {
     /// already folded to a literal — so a use site is a substitution, not a
     /// load from anywhere.
     consts: HashMap<String, ConstInfo>,
+    /// The functions a compile-time fold may call (A-19). Shared rather than
+    /// cloned, because a `Ctx` is cloned once per body checked and this table
+    /// is the whole program's functions.
+    const_fns: std::rc::Rc<ConstFns>,
+    /// Which user types own heap memory, transitively (`types::owned_types`).
+    /// A `[T; N]` repeat literal (`[Gate(...); 256]`) copies its value into
+    /// every element, so it needs the same answer the drop planner does: does
+    /// this type own anything (A-18)?
+    owned_structs: std::collections::HashSet<String>,
     /// Overload sets for compiler-shipped stdlib functions (M6.3): plain key
     /// (`std.math.abs`) -> each declaration's parameter types and its
     /// type-suffixed key.
@@ -540,6 +558,8 @@ impl Ctx {
             // Every datac is known by the time bodies are checked.
             later_datacs: None,
             in_progress: None,
+            consts: Some(&self.consts),
+            const_fns: Some(&self.const_fns),
         }
     }
 
@@ -687,6 +707,14 @@ struct TypeScope<'a> {
     /// self-referential struct has no finite size); through a container it
     /// is allowed, which is how `datac Node(val next: Box<Node>)` works.
     in_progress: Option<&'a str>,
+    /// The folded `const`s of the whole program, and the functions a compile
+    /// time fold may call (A-19). Both are here for one reason: a type may
+    /// carry an expression, and the only expression a type carries is an
+    /// array's `[T; N]` length (A-18). `None` at the few sites where no
+    /// constant is in reach, which turns a length that needs one into a
+    /// diagnostic instead of a wrong answer.
+    consts: Option<&'a HashMap<String, ConstInfo>>,
+    const_fns: Option<&'a ConstFns>,
 }
 
 impl TypeScope<'_> {
@@ -716,6 +744,24 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // A fixed-size array (A-18): `[T; N]`. The length is a compile-time
+        // constant expression (A-19) folded here, once, so the type is a
+        // concrete `[T; N]` for every pass after this one.
+        if let Some(elem) = &ty.array_elem {
+            let len_expr = ty
+                .array_len
+                .as_ref()
+                .expect("the parser builds an array type with both halves");
+            let len = self.array_len(len_expr)?;
+            let elem = self.resolve_element(elem)?;
+            if !crate::types::is_array_element(&elem) {
+                return Err(TypeError {
+                    message: array_element_error(&elem),
+                    span: ty.span,
+                });
+            }
+            return Ok(Ty::Array(Box::new(elem), len));
+        }
         // A function type (A-4): `fun(i32, String).R: bool`. Checked before
         // every name, because it is the one written type that is not one —
         // and `fun` cannot be a name at all, since it is a keyword. A closure
@@ -746,7 +792,7 @@ impl TypeScope<'_> {
                 match ty.args.len() {
                     1 => (Ty::String, &ty.args[0], ty.args[0].span),
                     2 => {
-                        let key = self.resolve(&ty.args[0], true)?;
+                        let key = self.resolve_element(&ty.args[0])?;
                         if !crate::types::is_map_key(&key) {
                             return Err(TypeError {
                                 message: map_key_error(&key),
@@ -777,7 +823,7 @@ impl TypeScope<'_> {
                 }
                 (Ty::Unit, &ty.args[0], ty.args[0].span)
             };
-            let elem = self.resolve(value_arg, true)?;
+            let elem = self.resolve_element(value_arg)?;
             let (ok, error) = if ty.name == "List" {
                 (crate::types::is_list_element(&elem), list_element_error(&elem))
             } else if ty.name == "Map" {
@@ -895,6 +941,39 @@ impl TypeScope<'_> {
         }
     }
 
+    /// Resolves one element (or type argument) of a container: an array's
+    /// element, a `List`/`Box` element, a `Map` key or value. Its own `&` is
+    /// refused here rather than dropped, because `resolve_base` has no position
+    /// to read it in and a silently-ignored `&` turns `List<&i32>` into
+    /// `List<i32>`, a written borrow that means something else entirely.
+    fn resolve_element(&self, ty: &ast::TypeExpr) -> Result<Ty> {
+        if ty.amp {
+            return Err(TypeError {
+                message: format!(
+                    "'&{}' cannot be a container element: an element has to outlive the container that holds it, and v1 has no lifetime syntax to say so; use the owned type",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        self.resolve(ty, true)
+    }
+
+    /// Folds the length of an array type or of a repeat literal (A-19).
+    fn array_len(&self, expr: &ast::Expr) -> Result<u64> {
+        let (Some(consts), Some(const_fns)) = (self.consts, self.const_fns) else {
+            return Err(TypeError {
+                message: "an array length has to be a compile-time constant, and this position has no constants in reach".to_string(),
+                span: expr.span(),
+            });
+        };
+        ConstEvaluator::new(const_fns, self.structs, &self.env, consts).array_len(
+            expr,
+            self.prefix,
+            self.aliases,
+        )
+    }
+
     /// A written name as its canonical, module-qualified key: a bare name
     /// belongs to the current module, and `alias.Item` resolves through the
     /// module's `impl` table. Factored out of `resolve_base` so the generic
@@ -948,6 +1027,8 @@ impl TypeScope<'_> {
             aliases: &tmpl.aliases,
             later_datacs: None,
             in_progress: Some(&key),
+            consts: self.consts,
+            const_fns: self.const_fns,
         };
         let built = scope.build_instance(&tmpl, &key);
         self.env.instances.borrow_mut().in_progress.remove(&key);
@@ -1829,6 +1910,7 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         Ty::View => Some("View"),
         Ty::List(_) => Some("List"),
         Ty::Box(_) => Some("Box"),
+        Ty::Array(..) => Some("Array"),
         Ty::Map(..) => Some("Map"),
         // The integer types answer to their written names so that the
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
@@ -1929,6 +2011,37 @@ fn map_element_error(ty: &Ty) -> String {
     )
 }
 
+/// Why a type cannot be an array's element (A-18). The set is the `List`
+/// element set plus another array, since an array holds its elements inline, so
+/// `[[u8; 4]; 8]` is a page table and is as expressible as it is in C, while a
+/// `List`/`Box`/`Map` element is refused for the reason a list refuses it.
+fn array_element_error(ty: &Ty) -> String {
+    match ty {
+        Ty::Fn { .. } => {
+            return format!(
+                "'{}' cannot be an array element yet: a function value is a plain inline value, but the generated C names an array's element type as a name prefix, and a function pointer has no such spelling (the name goes inside its declarator); hold it in a one-field 'datac' instead",
+                ty.display()
+            )
+        }
+        Ty::Closure { .. } => {
+            return format!(
+                "'{}' cannot be an array element yet: a closure owns the environment its captures were moved into, and an array's elements are held inline; put it in a 'Box' or a one-field 'datac' instead",
+                ty.display()
+            )
+        }
+        _ => {}
+    }
+    if let Some(reason) = borrowed_element_reason(ty) {
+        return format!(
+            "{reason}. An array holds its elements inline, so they have to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another array"
+        );
+    }
+    format!(
+        "'{}' cannot be an array element in v1: an array holds its elements inline, exactly as a list's buffer does, so a nested 'List'/'Box'/'Map' is not expressible; use a scalar, 'String', 'Bytes', a 'datac', or a nested array",
+        ty.display()
+    )
+}
+
 /// The same for a `Box<T>` element, which may be a container: a box holds a
 /// pointer, so `Box<List<i32>>` and `Box<Box<i32>>` are both fine.
 fn box_element_error(ty: &Ty) -> String {
@@ -1956,14 +2069,48 @@ fn box_element_error(ty: &Ty) -> String {
 /// - `push`/`set`/`pop` take and give the element by value, which is where a
 ///   move in or out of the list happens (M3's move tracking runs on the
 ///   ordinary call-argument path, so no new borrow rules were needed).
-fn container_sig(key: &str, elem: &Ty, map_key: &Ty) -> Option<FnSig> {
+fn container_sig(key: &str, elem: &Ty, map_key: &Ty, array_len: Option<u64>) -> Option<FnSig> {
     if key.starts_with("List#") {
         list_sig(key, elem)
     } else if key.starts_with("Map#") {
         map_sig(key, map_key, elem)
+    } else if key.starts_with("Array#") {
+        array_sig(key, elem, array_len.unwrap_or(0))
     } else {
         box_sig(key, elem)
     }
+}
+
+/// The `[T; N]` builtins (A-18), instantiated for one element type. The
+/// surface is deliberately small, and `len` is not a function of the length
+/// here at all: the length is part of the type, so the signature only has to
+/// say that `.len()` is a `usize`; `codegen_c.rs` emits the constant.
+///
+/// `get` follows `List.get` exactly: a `Copy` element is handed back by value,
+/// an owned one by shared borrow (`infer.rs` roots that borrow at the receiver
+/// through `builtin_borrow_root`). `set` takes the element by value, and both
+/// check the index against the type's own length at runtime.
+fn array_sig(key: &str, elem: &Ty, len: u64) -> Option<FnSig> {
+    // The receiver's own array type, length included: it is the type the call
+    // site's argument has, so the signature has to spell the same one.
+    let array = Ty::Array(Box::new(elem.clone()), len);
+    let shared = Ty::Ref { mutable: false, inner: Box::new(array.clone()) };
+    let exclusive = Ty::Ref { mutable: true, inner: Box::new(array) };
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    let elem_ref = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
+    Some(match key {
+        "Array#len" => FnSig { params: vec![p("self", shared)], ret: Ty::Usize },
+        "Array#is_empty" => FnSig { params: vec![p("self", shared)], ret: Ty::Bool },
+        "Array#get" => FnSig {
+            params: vec![p("self", shared), p("i", Ty::Usize)],
+            ret: if elem.is_copy() { elem.clone() } else { elem_ref },
+        },
+        "Array#set" => FnSig {
+            params: vec![p("self", exclusive), p("i", Ty::Usize), p("v", elem.clone())],
+            ret: Ty::Unit,
+        },
+        _ => return None,
+    })
 }
 
 /// The `Box<T>` builtins (M8), instantiated for one element type. A box
@@ -2195,7 +2342,7 @@ pub fn builtin_borrow_root(key: &str) -> Option<Option<usize>> {
     // builtin method's `self`. (For a `Copy` element the type checker never
     // asks, since the call's result is not a borrow; see
     // `borrowck::check_call`.)
-    if key == "List#get" || key == "Box#get" || key == "Map#get" {
+    if key == "List#get" || key == "Box#get" || key == "Map#get" || key == "Array#get" {
         return Some(Some(0));
     }
     let b = BUILTINS.get(key)?;
@@ -2353,16 +2500,98 @@ fn printable_codepoint(cp: u32) -> String {
 struct ConstInfo {
     value: tir::Expr,
 }
-
-/// A folded constant value. Deliberately small: a `const` may only be a
-/// number, a `bool`, or a `&str`, so there is nothing to allocate and
-/// nothing to drop.
+/// A folded constant value (A-19). Deliberately small: a compile-time value is
+/// a scalar, so there is nothing to allocate and nothing to drop.
 #[derive(Debug, Clone, PartialEq)]
 enum ConstValue {
-    Int(i64),
+    /// Every integer width, `u64`'s whole range included, which is why the
+    /// payload is `i128` rather than `i64`: the width and the signedness live
+    /// in the `Ty` carried beside the value, and the arithmetic wraps at that
+    /// width instead of guessing one.
+    Int(i128),
     Float(f64),
     Bool(bool),
+    /// A character constant's code point, kept apart from `Int` so that
+    /// `const C: char = 'a'` substitutes as a character literal rather than as
+    /// the integer `97`.
+    Char(u32),
     Str(String),
+    /// The value of an expression that has none: a `fun` called for its effect
+    /// (or one that fell off its end), which is what makes `Unit` a result a
+    /// caller has to handle rather than a case that cannot arise.
+    Unit,
+}
+
+/// The functions a compile-time evaluator may call (A-19): one entry per
+/// declared, non-generic `fun`, holding only what a compile-time call needs.
+///
+/// Built once, before anything is folded, because an initializer may name a
+/// function declared *later* in the file, because a `const` and a `fun` are not in
+/// each other's declaration order. What the evaluator does with an entry is
+/// cross the body against its own step budget; what it will not do is reach
+/// code it cannot see, and a call to an `extern` or to a stdlib overload is
+/// refused with a message that says so.
+#[derive(Default)]
+struct ConstFns {
+    fns: HashMap<String, ConstFn>,
+}
+
+/// One function a const evaluator may call: its parameters, its declared
+/// return type, and its body, all as written. Nothing here is resolved yet:
+/// a parameter's type is resolved when a call binds an argument to it, which
+/// is the first moment it matters.
+struct ConstFn {
+    params: Vec<(String, ast::TypeExpr)>,
+    ret: Option<ast::TypeExpr>,
+    body: ast::Block,
+    /// Symbol prefix of the module the body was written in, and that module's
+    /// alias table. Carried here rather than looked up per call so the
+    /// evaluator needs no `Project`: a name inside a called body resolves the
+    /// same way it does when that module is the one being compiled.
+    prefix: String,
+    aliases: HashMap<String, String>,
+}
+
+/// Collects the compile-time callable functions (A-19). Generic functions are
+/// left out on purpose: an instantiation's parameter types depend on the call
+/// site, and a const initializer has no type arguments to offer.
+fn collect_const_fns(program: &ast::Program, project: &Project) -> ConstFns {
+    let mut out = ConstFns::default();
+    for f in &program.functions {
+        if !f.type_params.is_empty() || f.receiver.is_some() {
+            continue;
+        }
+        if out.fns.contains_key(&f.name) {
+            continue;
+        }
+        out.fns.insert(
+            f.name.clone(),
+            ConstFn {
+                params: f.params.iter().map(|p| (p.name.clone(), p.ty.clone())).collect(),
+                ret: match &f.return_type {
+                    Some(ast::TypeExpr { name, .. }) if name == "unit" => None,
+                    Some(t) => Some(t.clone()),
+                    None => None,
+                },
+                prefix: project.prefix_of(&f.module).to_string(),
+                aliases: project.alias_prefixes_of(&f.module),
+                body: match &f.body {
+                    ast::FunctionBody::Block(b) => b.clone(),
+                    // `fun f() = expr` is the same body one statement long.
+                    ast::FunctionBody::Expr(e) => ast::Block {
+                        stmts: vec![ast::Stmt::Expr {
+                            expr: e.clone(),
+                            span: e.span(),
+                        }],
+                        span: e.span(),
+                    },
+                    // An `extern fun` has no body to run at compile time.
+                    ast::FunctionBody::Extern => continue,
+                },
+            },
+        );
+    }
+    out
 }
 
 /// Stand-in for "no later datacs" at the sites where every `datac` in the
@@ -2383,6 +2612,7 @@ fn collect_consts(
     project: &Project,
     structs: &HashMap<String, StructDef>,
     env: &TypeEnv,
+    const_fns: &ConstFns,
 ) -> std::result::Result<HashMap<String, ConstInfo>, Diagnostic> {
     let mut out: HashMap<String, ConstInfo> = HashMap::new();
     for decl in &program.consts {
@@ -2397,6 +2627,8 @@ fn collect_consts(
             aliases: &aliases,
             later_datacs: None,
             in_progress: None,
+            consts: Some(&out),
+            const_fns: Some(const_fns),
         }
         .resolve(&decl.ty, false)
         .map_err(|e| e.in_module(&decl.module))?;
@@ -2423,18 +2655,12 @@ fn collect_consts(
                 decl.module.clone(),
             ));
         }
-        let value = fold_const(&decl.init, &declared, prefix, &aliases, &out)
-            .map_err(|e| e.in_module(&decl.module))?;
-        let literal = literal_for(&value, &declared).map_err(|why| {
-            Diagnostic::new(
-                format!(
-                    "const '{bare}' is declared as '{}' but {why}",
-                    declared.display()
-                ),
-                decl.span,
-                decl.module.clone(),
-            )
-        })?;
+        let literal = {
+            let evaluator = ConstEvaluator::new(const_fns, structs, env, &out);
+            evaluator
+                .fold_const(&bare, &decl.init, &declared, prefix, &aliases)
+                .map_err(|e| e.in_module(&decl.module))?
+        };
         out.insert(decl.name.clone(), ConstInfo { value: literal });
     }
     Ok(out)
@@ -2445,35 +2671,37 @@ fn bare_name<'a>(qualified: &'a str, prefix: &str) -> &'a str {
     qualified.strip_prefix(prefix).unwrap_or(qualified)
 }
 
-/// The folded value behind a `ConstInfo`, for a const referenced by another
-/// const's initializer.
-fn value_of(e: &tir::Expr) -> Option<ConstValue> {
-    match &e.kind {
-        tir::ExprKind::IntLit(v) => Some(ConstValue::Int(*v)),
-        tir::ExprKind::FloatLit(v) => Some(ConstValue::Float(*v)),
-        tir::ExprKind::BoolLit(b) => Some(ConstValue::Bool(*b)),
-        tir::ExprKind::StringLit(s) => Some(ConstValue::Str(s.clone())),
-        _ => None,
-    }
+/// The folded value behind a `ConstInfo`, for a constant referenced by another
+/// constant expression: its value *and* its type, because the next operator's
+/// width is the pair's rather than the value's alone.
+fn value_of(e: &tir::Expr) -> Option<ConstResult> {
+    let value = match &e.kind {
+        tir::ExprKind::IntLit(v) => ConstValue::Int(*v),
+        tir::ExprKind::CharLit(c) => ConstValue::Char(*c),
+        tir::ExprKind::FloatLit(v) => ConstValue::Float(*v),
+        tir::ExprKind::BoolLit(b) => ConstValue::Bool(*b),
+        tir::ExprKind::StringLit(s) => ConstValue::Str(s.clone()),
+        _ => return None,
+    };
+    Some((value, e.ty.clone()))
 }
 
 /// Turns a folded value into the literal node a use site substitutes. The
-/// typed C literal comes out of `codegen_c.rs`'s ordinary literal path — a
+/// typed C literal comes out of `codegen_c.rs`'s ordinary literal path, so a
 /// `const` adds no code path of its own.
-fn literal_for(
-    value: &ConstValue,
-    declared: &Ty,
-) -> std::result::Result<tir::Expr, String> {
+fn literal_for(value: &ConstValue, declared: &Ty) -> std::result::Result<tir::Expr, String> {
     use ConstValue::*;
     let kind = match (value, declared) {
         (Int(v), t) if t.is_integer() => tir::ExprKind::IntLit(*v),
-        // A `const C: char = 'a'` folds to an integer like any other scalar
-        // constant and comes back out as a character literal, so the
-        // substituted value prints and compares exactly as the literal did.
+        // A `const C: char = 'a'` folds to a code point and comes back out as
+        // a character literal, so the substituted value prints and compares
+        // exactly as the literal did.
         (Int(v), Ty::Char) => tir::ExprKind::CharLit(*v as u32),
         (Int(v), t) if t.is_float() => tir::ExprKind::FloatLit(*v as f64),
         (Float(v), t) if t.is_float() => tir::ExprKind::FloatLit(*v),
         (Bool(b), Ty::Bool) => tir::ExprKind::BoolLit(*b),
+        (Char(c), Ty::Char) => tir::ExprKind::CharLit(*c),
+        (Char(c), t) if t.is_integer() => tir::ExprKind::IntLit(*c as i128),
         (Str(s), Ty::Str) => tir::ExprKind::StringLit(s.clone()),
         (_, t) => return Err(format!("its initializer is not a '{}' value", t.display())),
     };
@@ -2484,167 +2712,958 @@ fn literal_for(
     })
 }
 
-/// Folds a `const` initializer. Only what a compile-time value can honestly
-/// be: literals, earlier constants, and arithmetic on those.
-fn fold_const(
-    expr: &ast::Expr,
-    declared: &Ty,
-    prefix: &str,
-    aliases: &HashMap<String, String>,
-    seen: &HashMap<String, ConstInfo>,
-) -> Result<ConstValue> {
-    let span = expr.span();
-    let unsupported = || TypeError {
-        message: "a 'const' initializer must be a literal, an earlier 'const', or arithmetic on those"
-            .to_string(),
-        span,
-    };
-    match expr {
-        ast::Expr::IntLit(v, _) => Ok(if declared.is_float() {
-            ConstValue::Float(*v as f64)
-        } else {
-            ConstValue::Int(*v)
-        }),
-        // A character literal folds by its code point, so `const A: u8 = 'a'`
-        // and `const C: char = 'a'` are both constants in the ordinary
-        // numeric sense; `check_expr` is what refuses a code point that does
-        // not fit the declared type.
-        ast::Expr::CharLit(v, _) => Ok(ConstValue::Int(*v as i64)),
-        // A byte literal folds to its byte, and only where the declared type
-        // is the `u8` it is: `const NL: u8 = b'\n'` is a byte, and
-        // `const C: char = b'x'` is refused for the reason `check_expr`
-        // refuses it, with the `const` named.
-        ast::Expr::ByteLit(v, _) => {
-            if !matches!(declared, Ty::U8) {
-                return Err(TypeError {
-                    message: format!(
-                        "a byte literal is a 'u8', not a '{}'",
-                        declared.display()
-                    ),
-                    span,
-                });
-            }
-            Ok(ConstValue::Int(*v as i64))
+/// How many evaluation steps one compile-time fold may take before it is
+/// refused (A-19). A constant expression is not a program, and a `fun` that a
+/// `const` calls is running inside the compiler: the budget is what turns a
+/// runaway `while` into a diagnostic instead of a compiler that never returns.
+const CONST_EVAL_STEPS: u64 = 1_000_000;
+
+/// How deep a compile-time call may nest, for the same reason.
+const CONST_EVAL_DEPTH: u32 = 64;
+
+/// The result of one compile-time evaluation: the value and the type it has.
+type ConstResult = (ConstValue, Ty);
+
+/// One local binding of an evaluated body: its value, its type, and whether
+/// the body may write it (`var`).
+struct ConstBinding {
+    value: ConstResult,
+    mutable: bool,
+}
+
+/// What a const-evaluated body has in scope: its local bindings, innermost
+/// frame last, the module its names resolve against, and the return type of
+/// the function being evaluated (for `return`).
+struct ConstScope {
+    frames: Vec<HashMap<String, ConstBinding>>,
+    prefix: String,
+    aliases: HashMap<String, String>,
+    ret_ty: Option<Ty>,
+    /// A `return` that has happened while this body is being evaluated, with
+    /// the value it carried. Every expression after it is skipped and the call
+    /// boundary reads it as the function's result, which is how a `return`
+    /// inside an `if` unwinds out of a `fun` exactly as it does at runtime.
+    ///
+    /// It lives on the scope rather than in an error type so that a `return`
+    /// reaches only the body it belongs to: a call evaluates its body in a
+    /// scope of its own, so the flag cannot leak into the caller.
+    returning: Option<Option<ConstResult>>,
+}
+
+/// How a block finished.
+enum ConstFlow {
+    /// It ran to the end. `Some` is the tail expression's value.
+    Fell(Option<ConstResult>),
+    /// A `return` left it.
+    Returned(Option<ConstResult>),
+}
+
+impl ConstScope {
+    fn new(prefix: String, aliases: HashMap<String, String>) -> ConstScope {
+        ConstScope {
+            frames: vec![HashMap::new()],
+            prefix,
+            aliases,
+            ret_ty: None,
+            returning: None,
         }
-        ast::Expr::FloatLit(v, _) => Ok(ConstValue::Float(*v)),
-        ast::Expr::BoolLit(b, _) => Ok(ConstValue::Bool(*b)),
-        ast::Expr::StringLit(s, _) => Ok(ConstValue::Str(s.clone())),
-        ast::Expr::Ident(name, _) => {
-            let key = format!("{prefix}{name}");
-            match seen.get(&key).and_then(|c| value_of(&c.value)) {
-                Some(v) => Ok(v),
-                None => Err(TypeError {
-                    message: format!(
-                        "undefined const '{name}' — a 'const' can only use constants declared before it"
-                    ),
-                    span,
-                }),
-            }
-        }
-        ast::Expr::MethodCall {
-            receiver,
-            method,
-            args,
-            ..
-        } => {
-            if !args.is_empty() {
-                return Err(unsupported());
-            }
-            let ast::Expr::Ident(alias, _) = receiver.as_ref() else {
-                return Err(unsupported());
-            };
-            let Some(target_prefix) = aliases.get(alias) else {
-                return Err(TypeError {
-                    message: format!("unknown module alias '{alias}' in a 'const' initializer"),
-                    span,
-                });
-            };
-            let key = format!("{target_prefix}{method}");
-            match seen.get(&key).and_then(|c| value_of(&c.value)) {
-                Some(v) => Ok(v),
-                None => Err(TypeError {
-                    message: format!("module '{alias}' has no const '{method}' declared before this one"),
-                    span,
-                }),
-            }
-        }
-        ast::Expr::Unary { op, expr: sub, .. } => {
-            let v = fold_const(sub, declared, prefix, aliases, seen)?;
-            match (op, v) {
-                (ast::UnOp::Neg, ConstValue::Int(i)) => Ok(ConstValue::Int(i.wrapping_neg())),
-                (ast::UnOp::Neg, ConstValue::Float(f)) => Ok(ConstValue::Float(-f)),
-                (ast::UnOp::Not, ConstValue::Bool(b)) => Ok(ConstValue::Bool(!b)),
-                _ => Err(unsupported()),
-            }
-        }
-        ast::Expr::Binary { op, lhs, rhs, .. } => {
-            let l = fold_const(lhs, declared, prefix, aliases, seen)?;
-            let r = fold_const(rhs, declared, prefix, aliases, seen)?;
-            fold_binary(*op, l, r, span)
-        }
-        _ => Err(unsupported()),
+    }
+
+    fn get(&self, name: &str) -> Option<&ConstResult> {
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name).map(|b| &b.value))
+    }
+
+    fn get_mut(&mut self, name: &str) -> Option<&mut ConstBinding> {
+        self.frames.iter_mut().rev().find_map(|f| f.get_mut(name))
+    }
+
+    /// Whether a `return` has already happened in this body, in which case
+    /// nothing after it is evaluated and the value it carries is the one the
+    /// enclosing call produces.
+    fn halted(&self) -> bool {
+        self.returning.is_some()
     }
 }
 
-fn fold_binary(op: ast::BinOp, l: ConstValue, r: ConstValue, span: Span) -> Result<ConstValue> {
-    use ast::BinOp::*;
-    use ConstValue::*;
-    let mismatch = || TypeError {
-        message: "a 'const' expression mixes values of different kinds".to_string(),
-        span,
+/// The two's-complement width of an integer type, in bits.
+fn int_bits(ty: &Ty) -> Option<u32> {
+    Some(match ty {
+        Ty::I32 | Ty::U32 => 32,
+        Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => 64,
+        Ty::U8 => 8,
+        Ty::U16 => 16,
+        _ => return None,
+    })
+}
+
+/// Whether an integer type's values are non-negative.
+fn int_unsigned(ty: &Ty) -> bool {
+    matches!(ty, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize)
+}
+
+/// `v` reduced into `ty`'s range, so a folding arithmetic step behaves like the
+/// generated C: a `u8` wraps at 256 and an `i64` at its two's-complement
+/// range, and neither silently grows into the next width.
+fn wrap_int(v: i128, ty: &Ty) -> i128 {
+    let Some(bits) = int_bits(ty) else {
+        return v;
     };
-    let zero = || TypeError {
-        message: "division by zero in a 'const' initializer".to_string(),
-        span,
-    };
-    match (l, r) {
-        (Int(a), Int(b)) => Ok(match op {
-            Add => Int(a.wrapping_add(b)),
-            Sub => Int(a.wrapping_sub(b)),
-            Mul => Int(a.wrapping_mul(b)),
-            Div if b == 0 => return Err(zero()),
-            Div => Int(a.wrapping_div(b)),
-            Mod if b == 0 => return Err(zero()),
-            Mod => Int(a.wrapping_rem(b)),
-            Eq => Bool(a == b),
-            NotEq => Bool(a != b),
-            Lt => Bool(a < b),
-            LtEq => Bool(a <= b),
-            Gt => Bool(a > b),
-            GtEq => Bool(a >= b),
-            And | Or => return Err(mismatch()),
-            BitAnd => Int(a & b),
-            BitOr => Int(a | b),
-            BitXor => Int(a ^ b),
-            // `wrapping_shl`/`wrapping_shr` mask the shift count to the
-            // width, which is also what the generated C does on x86-64; a
-            // `shr` on a signed value is arithmetic, matching `cc`'s own
-            // reading of `>>` on an `int64_t`.
-            Shl => Int(a.wrapping_shl(b as u32)),
-            Shr => Int(a.wrapping_shr(b as u32)),
-        }),
-        (Float(a), Float(b)) => Ok(match op {
-            Add => Float(a + b),
-            Sub => Float(a - b),
-            Mul => Float(a * b),
-            Div => Float(a / b),
-            Mod => Float(a % b),
-            Eq => Bool(a == b),
-            NotEq => Bool(a != b),
-            Lt => Bool(a < b),
-            LtEq => Bool(a <= b),
-            Gt => Bool(a > b),
-            GtEq => Bool(a >= b),
-            And | Or | BitAnd | BitOr | BitXor | Shl | Shr => return Err(mismatch()),
-        }),
-        (Bool(a), Bool(b)) => match op {
-            And => Ok(Bool(a && b)),
-            Or => Ok(Bool(a || b)),
-            Eq => Ok(Bool(a == b)),
-            NotEq => Ok(Bool(a != b)),
-            _ => Err(mismatch()),
-        },
-        _ => Err(mismatch()),
+    let mask: i128 = (1i128 << bits) - 1;
+    let raw = v & mask;
+    if !int_unsigned(ty) && raw >= (1i128 << (bits - 1)) {
+        raw - (1i128 << bits)
+    } else {
+        raw
+    }
+}
+
+/// What a compile-time fold can run (A-19).
+///
+/// A fold is *evaluation*, not execution: it walks expressions and the bodies
+/// of plain `fun`s with parameter bindings of its own, and the only state it
+/// carries is those bindings. Everything it can reach is a borrowed table built
+/// before it started, so one of these is cheap to make per constant and shares
+/// one step budget across every call it makes.
+struct ConstEvaluator<'a> {
+    const_fns: &'a ConstFns,
+    structs: &'a HashMap<String, StructDef>,
+    env: &'a TypeEnv,
+    consts: &'a HashMap<String, ConstInfo>,
+    steps: std::cell::Cell<u64>,
+    depth: std::cell::Cell<u32>,
+}
+
+impl<'a> ConstEvaluator<'a> {
+    fn new(
+        const_fns: &'a ConstFns,
+        structs: &'a HashMap<String, StructDef>,
+        env: &'a TypeEnv,
+        consts: &'a HashMap<String, ConstInfo>,
+    ) -> ConstEvaluator<'a> {
+        ConstEvaluator {
+            const_fns,
+            structs,
+            env,
+            consts,
+            steps: std::cell::Cell::new(0),
+            depth: std::cell::Cell::new(0),
+        }
+    }
+
+    /// The type-namespace view of one module, so a parameter's or a return
+    /// value's written type resolves where it was written.
+    fn type_scope<'s>(
+        &'s self,
+        prefix: &'s str,
+        aliases: &'s HashMap<String, String>,
+    ) -> TypeScope<'s> {
+        TypeScope {
+            structs: self.structs,
+            env: self.env.clone(),
+            params: &EMPTY_PARAMS,
+            prefix,
+            aliases,
+            later_datacs: None,
+            in_progress: None,
+            consts: Some(self.consts),
+            const_fns: Some(self.const_fns),
+        }
+    }
+
+    /// Charges one step against the budget.
+    fn tick(&self, span: Span) -> Result<()> {
+        self.steps.set(self.steps.get() + 1);
+        if self.steps.get() > CONST_EVAL_STEPS {
+            return Err(TypeError {
+                message: format!(
+                    "this constant expression did not finish within {CONST_EVAL_STEPS} steps: a 'const' is folded while the compiler runs, so a 'fun' it calls has to terminate on the values it is given"
+                ),
+                span,
+            });
+        }
+        Ok(())
+    }
+
+    /// Folds a `const` declaration's initializer into the literal a use site
+    /// substitutes.
+    fn fold_const(
+        &self,
+        name: &str,
+        expr: &ast::Expr,
+        declared: &Ty,
+        prefix: &str,
+        aliases: &HashMap<String, String>,
+    ) -> Result<tir::Expr> {
+        let mut scope = ConstScope::new(prefix.to_string(), aliases.clone());
+        let (value, found) = self.eval(expr, Some(declared), &mut scope)?;
+        literal_for(&value, declared).map_err(|_| TypeError {
+            message: format!(
+                "const '{name}' is declared as '{}' but its initializer is a '{}'",
+                declared.display(),
+                found.display()
+            ),
+            span: expr.span(),
+        })
+    }
+
+    /// Folds the `N` of an array type or of a repeat literal (A-18): the one
+    /// number a type or a literal needs, evaluated as a `usize` because a
+    /// length is a count.
+    fn array_len(
+        &self,
+        expr: &ast::Expr,
+        prefix: &str,
+        aliases: &HashMap<String, String>,
+    ) -> Result<u64> {
+        let mut scope = ConstScope::new(prefix.to_string(), aliases.clone());
+        let (value, ty) = self.eval(expr, Some(&Ty::Usize), &mut scope)?;
+        match value {
+            ConstValue::Int(n) if n > 0 => Ok(n as u64),
+            ConstValue::Int(n) => Err(TypeError {
+                message: format!(
+                    "an array length has to be at least 1, and this one is {n}: v1 has no zero-length form ('[T; 0]' would be a C array with no elements, which is not standard C)"
+                ),
+                span: expr.span(),
+            }),
+            _ => Err(TypeError {
+                message: format!(
+                    "an array length has to be an integer constant, and this one is a '{}' value",
+                    ty.display()
+                ),
+                span: expr.span(),
+            }),
+        }
+    }
+
+    /// Folds one written expression to a value of `expected`'s type, or to its
+    /// own default type when the context names none.
+    fn eval(
+        &self,
+        expr: &ast::Expr,
+        expected: Option<&Ty>,
+        scope: &mut ConstScope,
+    ) -> Result<ConstResult> {
+        self.tick(expr.span())?;
+        if scope.halted() {
+            return Ok((ConstValue::Unit, Ty::Unit));
+        }
+        match expr {
+            ast::Expr::IntLit(v, _) => Ok(match expected {
+                Some(t) if t.is_float() => (ConstValue::Float(*v as f64), t.clone()),
+                Some(t) if t.is_integer() => (ConstValue::Int(*v as i128), t.clone()),
+                Some(Ty::Char) => (ConstValue::Int(*v as i128), Ty::Char),
+                _ => (ConstValue::Int(*v as i128), Ty::I32),
+            }),
+            ast::Expr::CharLit(v, span) => Ok(match expected {
+                Some(t) if t.is_integer() => {
+                    if !char_fits(*v, t) {
+                        return Err(TypeError {
+                            message: format!(
+                                "the character '{}' (U+{:04X}) does not fit in '{}'",
+                                printable_codepoint(*v),
+                                v,
+                                t.display()
+                            ),
+                            span: *span,
+                        });
+                    }
+                    (ConstValue::Int(*v as i128), t.clone())
+                }
+                _ => (ConstValue::Char(*v), Ty::Char),
+            }),
+            ast::Expr::ByteLit(v, span) => {
+                if let Some(t) = expected {
+                    if !matches!(t, Ty::U8) {
+                        return Err(TypeError {
+                            message: format!(
+                                "a byte literal is a 'u8', not a '{}': write it as a character literal when it should take this type",
+                                t.display()
+                            ),
+                            span: *span,
+                        });
+                    }
+                }
+                Ok((ConstValue::Int(*v as i128), Ty::U8))
+            }
+            ast::Expr::FloatLit(v, _) => Ok(match expected {
+                Some(t) if t.is_float() => (ConstValue::Float(*v), t.clone()),
+                _ => (ConstValue::Float(*v), Ty::F64),
+            }),
+            ast::Expr::BoolLit(b, _) => Ok((ConstValue::Bool(*b), Ty::Bool)),
+            ast::Expr::StringLit(s, _) => Ok((ConstValue::Str(s.clone()), Ty::Str)),
+            ast::Expr::Ident(name, span) => {
+                if let Some(v) = scope.get(name) {
+                    return Ok(v.clone());
+                }
+                let key = format!("{}{}", scope.prefix, name);
+                if let Some(c) = self.consts.get(&key).and_then(|c| value_of(&c.value)) {
+                    return Ok(c);
+                }
+                if self.const_fns.fns.contains_key(&key) {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{name}' is a function, not a value: call it, and a constant expression can call it too when its body is one a constant can evaluate"
+                        ),
+                        span: *span,
+                    });
+                }
+                Err(TypeError {
+                    message: format!(
+                        "'{name}' is not a constant here: a compile-time expression (an array length, or a 'const' initializer) can only use literals, 'const's declared before it, and the locals of the 'fun' it is evaluating; a 'val' from the enclosing function is not one"
+                    ),
+                    span: *span,
+                })
+            }
+            // `math.PI`: another module's constant, reached through an alias.
+            ast::Expr::FieldAccess { base, field, span } => {
+                let ast::Expr::Ident(alias, _) = base.as_ref() else {
+                    return Err(self.unsupported(expr, "a field of a value"));
+                };
+                let Some(prefix) = scope.aliases.get(alias).cloned() else {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{alias}' is not a module alias, so '{alias}.{field}' is a field of a value; a constant expression has no values to read fields from"
+                        ),
+                        span: *span,
+                    });
+                };
+                let key = format!("{prefix}{field}");
+                match self.consts.get(&key).and_then(|c| value_of(&c.value)) {
+                    Some(c) => Ok(c),
+                    None => Err(TypeError {
+                        message: format!(
+                            "module '{alias}' has no constant '{field}' declared before this one"
+                        ),
+                        span: *span,
+                    }),
+                }
+            }
+            ast::Expr::Unary { op, expr: sub, span } => {
+                let (v, ty) = self.eval(sub, expected, scope)?;
+                if scope.halted() {
+                    return Ok((ConstValue::Unit, Ty::Unit));
+                }
+                self.fold_unary(*op, v, &ty, *span)
+            }
+            ast::Expr::Binary { op, lhs, rhs, span } => self.fold_binary(*op, lhs, rhs, *span, expected, scope),
+            ast::Expr::If {
+                cond,
+                then_block,
+                else_block,
+                span: _,
+            } => {
+                let (value, ty) = self.eval(cond, Some(&Ty::Bool), scope)?;
+                if scope.halted() {
+                    return Ok((ConstValue::Unit, Ty::Unit));
+                }
+                let ConstValue::Bool(take) = value else {
+                    return Err(TypeError {
+                        message: format!(
+                            "the condition of an 'if' has to be a 'bool', and this one is a '{}'",
+                            ty.display()
+                        ),
+                        span: cond.span(),
+                    });
+                };
+                if take {
+                    return match self.eval_block(then_block, expected, scope)? {
+                        ConstFlow::Fell(v) | ConstFlow::Returned(v) => match v {
+                            Some(v) => Ok(v),
+                            None => Ok((ConstValue::Unit, Ty::Unit)),
+                        },
+                    };
+                }
+                match else_block.as_deref() {
+                    Some(ast::ElseBranch::Block(b)) => match self.eval_block(b, expected, scope)? {
+                        ConstFlow::Fell(v) | ConstFlow::Returned(v) => match v {
+                            Some(v) => Ok(v),
+                            None => Ok((ConstValue::Unit, Ty::Unit)),
+                        },
+                    },
+                    Some(ast::ElseBranch::If(e)) => self.eval(e, expected, scope),
+                    None => Ok((ConstValue::Unit, Ty::Unit)),
+                }
+            }
+            ast::Expr::Block(block) => match self.eval_block(block, expected, scope)? {
+                ConstFlow::Fell(v) | ConstFlow::Returned(v) => match v {
+                    Some(v) => Ok(v),
+                    None => Ok((ConstValue::Unit, Ty::Unit)),
+                },
+            },
+            ast::Expr::Assign { target, value, span } => {
+                let ast::Expr::Ident(name, nspan) = target.as_ref() else {
+                    return Err(self.unsupported(expr, "an assignment to anything but a local"));
+                };
+                // The declared type is the binding's, so `x = 1` in an `i64`
+                // local is an `i64` assignment and not an `i32` one.
+                let declared = scope.get(name).map(|(_, t)| t.clone());
+                let v = self.eval(value, declared.as_ref(), scope)?;
+                if scope.halted() {
+                    return Ok((ConstValue::Unit, Ty::Unit));
+                }
+                if let Some((_, ty)) = scope.get(name) {
+                    if v.1 != *ty {
+                        return Err(TypeError {
+                            message: format!(
+                                "cannot assign a '{}' to '{name}', which is a '{}'",
+                                v.1.display(),
+                                ty.display()
+                            ),
+                            span: *span,
+                        });
+                    }
+                }
+                match scope.get_mut(name) {
+                    Some(b) if b.mutable => {
+                        b.value = v.clone();
+                        Ok((ConstValue::Unit, Ty::Unit))
+                    }
+                    Some(_) => Err(TypeError {
+                        message: format!("cannot assign to '{name}': it was declared with 'val'"),
+                        span: *nspan,
+                    }),
+                    None => Err(TypeError {
+                        message: format!("undefined local '{name}'"),
+                        span: *nspan,
+                    }),
+                }
+            }
+            ast::Expr::Call {
+                callee,
+                type_args,
+                args,
+                span,
+            } => {
+                if !type_args.is_empty() {
+                    return Err(self.unsupported(expr, "a call with explicit type arguments"));
+                }
+                let key = format!("{}{}", scope.prefix, callee);
+                self.call_fn(&key, callee, args, *span, scope)
+            }
+            // `math.sqrt(2.0)` reaches here as a method call on a module
+            // alias, exactly as `math.PI` does; anything else is either an
+            // integer conversion (`n.to_u8()`) or out of reach.
+            ast::Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                type_args: _,
+                span,
+            } => {
+                if let ast::Expr::Ident(alias, _) = receiver.as_ref() {
+                    if let Some(prefix) = scope.aliases.get(alias).cloned() {
+                        let key = format!("{prefix}{method}");
+                        return self.call_fn(&key, &format!("{alias}.{method}"), args, *span, scope);
+                    }
+                }
+                if let Some(to) = method.strip_prefix("to_") {
+                    if !args.is_empty() {
+                        return Err(self.unsupported(expr, "a conversion call with arguments"));
+                    }
+                    let (value, from) = self.eval(receiver, None, scope)?;
+                    if scope.halted() {
+                        return Ok((ConstValue::Unit, Ty::Unit));
+                    }
+                    return self.convert(&value, &from, to, method, *span);
+                }
+                Err(self.unsupported(expr, "a method call"))
+            }
+            ast::Expr::ArrayLit { .. } | ast::Expr::ArrayRepeat { .. } => {
+                Err(self.unsupported(expr, "an array value"))
+            }
+            ast::Expr::Template { .. } => Err(self.unsupported(expr, "a string template")),
+            ast::Expr::FnLit { .. } => Err(self.unsupported(expr, "a 'fun' literal")),
+            ast::Expr::When { .. } => Err(self.unsupported(expr, "a 'when' pattern match")),
+            ast::Expr::Try { .. } => Err(self.unsupported(expr, "the '?' operator")),
+            ast::Expr::Deref { .. } => Err(self.unsupported(expr, "a dereference")),
+            ast::Expr::Ref { .. } => Err(self.unsupported(expr, "a borrow")),
+        }
+    }
+
+    /// The message every out-of-reach construct shares: it names the construct
+    /// and says what a constant expression is allowed to do.
+    fn unsupported(&self, expr: &ast::Expr, what: &str) -> TypeError {
+        TypeError {
+            message: format!(
+                "a 'const' initializer cannot use {what}: what it can evaluate is literals, other 'const's, the arithmetic, comparison and bitwise operators, 'if', and a call to a plain 'fun' whose own body stays inside that"
+            ),
+            span: expr.span(),
+        }
+    }
+
+    fn fold_unary(
+        &self,
+        op: ast::UnOp,
+        v: ConstValue,
+        ty: &Ty,
+        span: Span,
+    ) -> Result<ConstResult> {
+        use ConstValue::*;
+        let kind_mismatch = || TypeError {
+            message: format!(
+                "operator does not apply to '{}'",
+                ty.display()
+            ),
+            span,
+        };
+        Ok(match (op, v) {
+            (ast::UnOp::Neg, Int(i)) => (Int(wrap_int(-i, ty)), ty.clone()),
+            (ast::UnOp::Neg, Float(f)) => (Float(-f), ty.clone()),
+            (ast::UnOp::Not, Bool(b)) => (Bool(!b), Ty::Bool),
+            (ast::UnOp::BitNot, Int(i)) => (Int(wrap_int(!i, ty)), ty.clone()),
+            _ => return Err(kind_mismatch()),
+        })
+    }
+
+    fn fold_binary(
+        &self,
+        op: ast::BinOp,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+        expected: Option<&Ty>,
+        scope: &mut ConstScope,
+    ) -> Result<ConstResult> {
+        use ast::BinOp::*;
+        let hint = match op {
+            Add | Sub | Mul | Div | Mod => expected.filter(|t| t.is_numeric()),
+            BitAnd | BitOr | BitXor | Shl | Shr => expected.filter(|t| t.is_integer()),
+            _ => None,
+        };
+        let (l, r) = if hint.is_none() && is_untyped_literal(lhs) && !is_untyped_literal(rhs) {
+            let right = self.eval(rhs, None, scope)?;
+            let ty = right.1.clone();
+            let left = self.eval(lhs, Some(&ty), scope)?;
+            (left, right)
+        } else {
+            let left = self.eval(lhs, hint, scope)?;
+            let ty = left.1.clone();
+            let right = self.eval(rhs, Some(&ty), scope)?;
+            (left, right)
+        };
+        // A `return` in either operand means the whole expression is skipped:
+        // its value belongs to the function that returned, not to this
+        // operator.
+        if scope.halted() {
+            return Ok((ConstValue::Unit, Ty::Unit));
+        }
+        let (lv, lt) = l;
+        let (rv, rt) = r;
+        if lt != rt {
+            return Err(TypeError {
+                message: format!(
+                    "a constant expression cannot mix '{}' and '{}': every operator requires matching operands, exactly as it does at runtime",
+                    lt.display(),
+                    rt.display()
+                ),
+                span,
+            });
+        }
+        let no = |what: &str, ty: &Ty| TypeError {
+            message: format!(
+                "a 'const' expression cannot use {what} on '{}' values",
+                ty.display()
+            ),
+            span,
+        };
+        let zero = || TypeError {
+            message: "division by zero in a constant expression".to_string(),
+            span,
+        };
+        use ConstValue::*;
+        Ok(match (lv, rv) {
+            (Int(a), Int(b)) => {
+                let bits = int_bits(&lt).unwrap_or(64);
+                match op {
+                    Add => (Int(wrap_int(a + b, &lt)), lt),
+                    Sub => (Int(wrap_int(a - b, &lt)), lt),
+                    Mul => (Int(wrap_int(a * b, &lt)), lt),
+                    Div => {
+                        if b == 0 {
+                            return Err(zero());
+                        }
+                        (Int(wrap_int(a / b, &lt)), lt)
+                    }
+                    Mod => {
+                        if b == 0 {
+                            return Err(zero());
+                        }
+                        (Int(wrap_int(a % b, &lt)), lt)
+                    }
+                    BitAnd => (Int(wrap_int(a & b, &lt)), lt),
+                    BitOr => (Int(wrap_int(a | b, &lt)), lt),
+                    BitXor => (Int(wrap_int(a ^ b, &lt)), lt),
+                    // A shift by the width or more is undefined in C, so it is
+                    // refused here rather than folded to whatever this machine
+                    // happens to do; `>>` is arithmetic on a signed type,
+                    // which is what the generated code does.
+                    Shl | Shr if b < 0 || b >= bits as i128 => {
+                        return Err(TypeError {
+                            message: format!(
+                                "a shift by {b} is not defined for a '{}', whose width is {bits} bits",
+                                lt.display()
+                            ),
+                            span,
+                        })
+                    }
+                    Shl => (Int(wrap_int(a << (b as u32), &lt)), lt),
+                    // `>>` on the `i128` that holds a signed value is already
+                    // arithmetic, and an unsigned value is never negative in
+                    // that representation, so one shift covers both.
+                    Shr => (Int(wrap_int(a >> (b as u32), &lt)), lt),
+                    Eq => (Bool(a == b), Ty::Bool),
+                    NotEq => (Bool(a != b), Ty::Bool),
+                    Lt => (Bool(a < b), Ty::Bool),
+                    LtEq => (Bool(a <= b), Ty::Bool),
+                    Gt => (Bool(a > b), Ty::Bool),
+                    GtEq => (Bool(a >= b), Ty::Bool),
+                    And | Or => return Err(no(if op == And { "&&" } else { "||" }, &lt)),
+                }
+            }
+            (Float(a), Float(b)) => match op {
+                Add => (Float(a + b), lt),
+                Sub => (Float(a - b), lt),
+                Mul => (Float(a * b), lt),
+                Div => (Float(a / b), lt),
+                Mod => (Float(a % b), lt),
+                Eq => (Bool(a == b), Ty::Bool),
+                NotEq => (Bool(a != b), Ty::Bool),
+                Lt => (Bool(a < b), Ty::Bool),
+                LtEq => (Bool(a <= b), Ty::Bool),
+                Gt => (Bool(a > b), Ty::Bool),
+                GtEq => (Bool(a >= b), Ty::Bool),
+                _ => return Err(no("a bitwise operator", &lt)),
+            },
+            (Bool(a), Bool(b)) => match op {
+                And => (Bool(a && b), Ty::Bool),
+                Or => (Bool(a || b), Ty::Bool),
+                Eq => (Bool(a == b), Ty::Bool),
+                NotEq => (Bool(a != b), Ty::Bool),
+                _ => return Err(no("an arithmetic operator", &lt)),
+            },
+            _ => {
+                return Err(TypeError {
+                    message: format!(
+                        "a constant expression cannot compare or combine '{}' values",
+                        lt.display()
+                    ),
+                    span,
+                })
+            }
+        })
+    }
+
+    /// An integer conversion in constant position (`n.to_usize()`): the same
+    /// checked narrowing the runtime performs, reported as a diagnostic
+    /// instead of a panic because nothing is running.
+    fn convert(
+        &self,
+        value: &ConstValue,
+        from: &Ty,
+        to: &str,
+        call: &str,
+        span: Span,
+    ) -> Result<ConstResult> {
+        let Some(target) = Ty::from_name(to) else {
+            return Err(TypeError {
+                message: format!("'{}' is not a type to convert to", to),
+                span,
+            });
+        };
+        let (ConstValue::Int(n), true) = (value, from.is_integer()) else {
+            return Err(TypeError {
+                message: format!(
+                    "only an integer conversion is available in a constant expression, and this one reads a '{}'",
+                    from.display()
+                ),
+                span,
+            });
+        };
+        if target.is_float() {
+            return Ok((
+                ConstValue::Float(if matches!(target, Ty::F32) { *n as f32 as f64 } else { *n as f64 }),
+                target,
+            ));
+        }
+        if !target.is_integer() {
+            return Err(TypeError {
+                message: format!("'{call}' is not a conversion a constant expression can perform"),
+                span,
+            });
+        }
+        let (lo, hi) = Ty::int_bounds(&target).expect("an integer target has bounds");
+        // `hi` is a `u128` so `u64`/`usize` can state theirs, but every bound
+        // it holds fits an `i128`, which is what the folded value is.
+        let fits = *n >= lo && *n <= hi as i128;
+        if !fits {
+            return Err(TypeError {
+                message: format!("{call}: value out of range"),
+                span,
+            });
+        }
+        Ok((ConstValue::Int(wrap_int(*n, &target)), target))
+    }
+
+    /// A `fun` call in constant position: bind the arguments to the declared
+    /// parameters, then walk the body (A-19).
+    fn call_fn(
+        &self,
+        key: &str,
+        display: &str,
+        args: &[ast::CallArg],
+        span: Span,
+        scope: &mut ConstScope,
+    ) -> Result<ConstResult> {
+        let Some(f) = self.const_fns.fns.get(key) else {
+            return Err(TypeError {
+                message: format!(
+                    "'{display}' cannot be called in a constant expression: only a plain 'fun' whose own body a constant can evaluate is in reach, and this is not one (a builtin, an 'extern', a method and a generic function are all out of reach)"
+                ),
+                span,
+            });
+        };
+        if self.depth.get() >= CONST_EVAL_DEPTH {
+            return Err(TypeError {
+                message: format!(
+                    "evaluating '{display}' recursed more than {CONST_EVAL_DEPTH} calls deep: a constant expression has to terminate on the values it is given"
+                ),
+                span,
+            });
+        }
+        let ts = self.type_scope(&f.prefix, &f.aliases);
+        let mut callee = ConstScope::new(f.prefix.clone(), f.aliases.clone());
+        let mut slots: Vec<Option<ConstResult>> = Vec::with_capacity(f.params.len());
+        for _ in 0..f.params.len() {
+            slots.push(None);
+        }
+        let mut next_positional = 0usize;
+        for arg in args {
+            let index = match &arg.name {
+                Some(name) => match f.params.iter().position(|(p, _)| p == name) {
+                    Some(i) => i,
+                    None => {
+                        return Err(TypeError {
+                            message: format!("'{display}' has no parameter named '{name}'"),
+                            span: arg.value.span(),
+                        })
+                    }
+                },
+                None => {
+                    let i = next_positional;
+                    next_positional += 1;
+                    i
+                }
+            };
+            if index >= f.params.len() {
+                return Err(TypeError {
+                    message: format!(
+                        "'{display}' takes {} argument(s), and this call has more",
+                        f.params.len()
+                    ),
+                    span: arg.value.span(),
+                });
+            }
+            if slots[index].is_some() {
+                return Err(TypeError {
+                    message: format!(
+                        "parameter '{}' of '{display}' is given twice",
+                        f.params[index].0
+                    ),
+                    span: arg.value.span(),
+                });
+            }
+            let pty = ts
+                .resolve(&f.params[index].1, false)
+                .map_err(|e| e.at(arg.value.span()))?;
+            // The argument is evaluated in the *caller's* scope: `f(n)` inside
+            // `f`'s own body reads the caller's `n`, which is the binding the
+            // call frame is about to replace.
+            slots[index] = Some(self.eval(&arg.value, Some(&pty), scope)?);
+            if scope.halted() {
+                return Ok((ConstValue::Unit, Ty::Unit));
+            }
+        }
+        let ret_ty = match &f.ret {
+            Some(t) => Some(ts.resolve(t, false).map_err(|e| e.at(span))?),
+            None => None,
+        };
+        for (i, slot) in slots.into_iter().enumerate() {
+            match slot {
+                Some(v) => {
+                    let declared = ts
+                        .resolve(&f.params[i].1, false)
+                        .map_err(|e| e.at(span))?;
+                    if v.1 != declared {
+                        return Err(TypeError {
+                            message: format!(
+                                "parameter '{}' of '{display}' is a '{}', and this argument is a '{}'",
+                                f.params[i].0,
+                                declared.display(),
+                                v.1.display()
+                            ),
+                            span,
+                        });
+                    }
+                    callee.frames[0].insert(
+                        f.params[i].0.clone(),
+                        ConstBinding {
+                            value: v,
+                            mutable: false,
+                        },
+                    );
+                }
+                None => {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{display}' is missing its argument for parameter '{}'",
+                            f.params[i].0
+                        ),
+                        span,
+                    })
+                }
+            }
+        }
+        callee.ret_ty = ret_ty.clone();
+        self.depth.set(self.depth.get() + 1);
+        let flow = self.eval_block(&f.body, ret_ty.as_ref(), &mut callee);
+        self.depth.set(self.depth.get() - 1);
+        let value = match flow? {
+            ConstFlow::Fell(v) | ConstFlow::Returned(v) => v,
+        };
+        match (value, ret_ty) {
+            (Some(v), Some(t)) => {
+                if v.1 != t {
+                    return Err(TypeError {
+                        message: format!(
+                            "'{display}' declares '{}' but this call produced a '{}'",
+                            t.display(),
+                            v.1.display()
+                        ),
+                        span,
+                    });
+                }
+                Ok(v)
+            }
+            (Some(_), None) => Err(TypeError {
+                message: format!("'{display}' returns a value but declares no return type"),
+                span,
+            }),
+            (None, None) => Ok((ConstValue::Unit, Ty::Unit)),
+            (None, Some(t)) => Err(TypeError {
+                message: format!(
+                    "'{display}' has to produce a '{}' value, and it fell off its end",
+                    t.display()
+                ),
+                span,
+            }),
+        }
+    }
+
+    /// Walks a block: its statements in order, one frame of locals, and its
+    /// tail expression as the block's value.
+    fn eval_block(
+        &self,
+        block: &ast::Block,
+        expected: Option<&Ty>,
+        scope: &mut ConstScope,
+    ) -> Result<ConstFlow> {
+        scope.frames.push(HashMap::new());
+        let last = block.stmts.len().saturating_sub(1);
+        let mut tail: Option<ConstResult> = None;
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            match stmt {
+                ast::Stmt::Let {
+                    name,
+                    mutable,
+                    ty,
+                    init,
+                    ..
+                } => {
+                    let declared = match ty {
+                        Some(t) => Some(
+                            self.type_scope(&scope.prefix, &scope.aliases)
+                                .resolve(t, false)?,
+                        ),
+                        None => None,
+                    };
+                    let value = self.eval(init, declared.as_ref(), scope)?;
+                    if scope.halted() {
+                        break;
+                    }
+                    if let Some(t) = &declared {
+                        if &value.1 != t {
+                            return Err(TypeError {
+                                message: format!(
+                                    "'{name}' is declared as '{}', and its initializer is a '{}'",
+                                    t.display(),
+                                    value.1.display()
+                                ),
+                                span: init.span(),
+                            });
+                        }
+                    }
+                    scope.frames.last_mut().expect("frame pushed above").insert(
+                        name.clone(),
+                        ConstBinding {
+                            value,
+                            mutable: *mutable,
+                        },
+                    );
+                }
+                ast::Stmt::While { cond, body, .. } => loop {
+                    let (value, ty) = self.eval(cond, Some(&Ty::Bool), scope)?;
+                    match value {
+                        ConstValue::Bool(true) => {}
+                        ConstValue::Bool(false) => break,
+                        _ => {
+                            return Err(TypeError {
+                                message: format!(
+                                    "the condition of a 'while' has to be a 'bool', and this one is a '{}'",
+                                    ty.display()
+                                ),
+                                span: cond.span(),
+                            })
+                        }
+                    }
+                    self.tick(cond.span())?;
+                    if scope.halted() {
+                        break;
+                    }
+                    let _ = self.eval_block(body, None, scope)?;
+                },
+                ast::Stmt::Return { value, .. } => {
+                    let ret = scope.ret_ty.clone();
+                    let v = match value {
+                        Some(e) => Some(self.eval(e, ret.as_ref(), scope)?),
+                        None => None,
+                    };
+                    // The one place a `return` is recorded: from here on,
+                    // `eval` and `eval_block` short-circuit until the call
+                    // boundary reads this value as the function's result.
+                    scope.returning = Some(v);
+                    break;
+                }
+                ast::Stmt::Expr { expr, .. } => {
+                    let v = self.eval(expr, if i == last { expected } else { None }, scope)?;
+                    if i == last {
+                        tail = Some(v);
+                    }
+                }
+            }
+            if scope.halted() {
+                break;
+            }
+        }
+        scope.frames.pop();
+        if scope.halted() {
+            // Cloned rather than taken: an outer block in the same body still
+            // has to see the same value (and the same flag).
+            return Ok(ConstFlow::Returned(scope.returning.clone().flatten()));
+        }
+        Ok(ConstFlow::Fell(tail))
     }
 }
 
@@ -2995,6 +4014,21 @@ fn check_program_pass(
             )
         })
         .collect();
+    // Compile-time constants (M6.3, A-19) are folded before any type is
+    // declared, because canonical order puts every `const` before every
+    // `datac`/`enum`, so a const's own declared type can only name a builtin,
+    // and the struct table it is folded against is empty by construction.
+    // Folding this early is what makes a const reachable from a *type*: a
+    // `datac` field's array length (`[Entry; PAGE_COUNT]`, A-18) is written in
+    // a field list, which is resolved long after a function body is.
+    //
+    // A fold may call a plain `fun` (A-19), and the table it calls through is
+    // the declarations themselves, built here from the AST before any
+    // signature exists, so a `const` and a `fun` may reference each other in
+    // either order.
+    let const_fns = std::rc::Rc::new(collect_const_fns(program, project));
+    let consts = collect_consts(program, project, &HashMap::new(), &env, &const_fns)?;
+
     let mut enums: HashMap<String, EnumDef> = HashMap::new();
     let mut enum_order: Vec<String> = Vec::new();
     for (order, name, is_enum) in &merged {
@@ -3097,6 +4131,8 @@ fn check_program_pass(
                         aliases: &aliases,
                         later_datacs: Some(&later_datacs),
                         in_progress: in_progress.as_deref(),
+                        consts: Some(&consts),
+                        const_fns: Some(&const_fns),
                     }
                     .resolve(&f.ty, false)
                     .map_err(|err| err.in_module(&e.module))?;
@@ -3197,6 +4233,8 @@ fn check_program_pass(
                 aliases: &aliases,
                 later_datacs: Some(&later_datacs),
                 in_progress: in_progress.as_deref(),
+                consts: Some(&consts),
+                const_fns: Some(&const_fns),
             }
             .resolve(&f.ty, false)
             .map_err(|e| e.in_module(&d.module))?;
@@ -3234,11 +4272,6 @@ fn check_program_pass(
         );
     }
 
-    // Compile-time constants (M6.3) are folded before signatures are built:
-    // a `const` may not call anything, so it needs no function table, and
-    // folding early means every later site can treat a const as a literal.
-    let consts = collect_consts(program, project, &structs, &env)?;
-
     let mut sigs = HashMap::new();
     let mut overloads: HashMap<String, Vec<(Vec<Ty>, String)>> = HashMap::new();
     // Signature key per declaration, in declaration order: once overloads
@@ -3274,6 +4307,8 @@ fn check_program_pass(
             aliases: &aliases,
             later_datacs: None,
             in_progress: None,
+            consts: Some(&consts),
+            const_fns: Some(&const_fns),
         };
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
@@ -3346,6 +4381,13 @@ fn check_program_pass(
     //      passdowns declared before that point visible).
     //   3. the wiring scan says which functions reference which passdowns.
     //   4. initializers and function bodies are checked for real.
+    // Which user types own heap memory, transitively, computed once: the
+    // array repeat literal and the drop planner both ask it (A-18).
+    let owned_structs = crate::types::owned_types(
+        &structs.values().cloned().collect::<Vec<_>>(),
+        &enums.values().cloned().collect::<Vec<_>>(),
+    );
+
     let all_pds = collect_pds(
         program,
         project,
@@ -3353,6 +4395,8 @@ fn check_program_pass(
         &structs,
         &enums,
         &consts,
+        &const_fns,
+        &owned_structs,
         &overloads,
         &env,
         &fns,
@@ -3377,6 +4421,8 @@ fn check_program_pass(
             &structs,
             &enums,
             &consts,
+            &const_fns,
+            &owned_structs,
             &overloads,
             project,
             &all_pds,
@@ -3415,6 +4461,8 @@ fn check_program_pass(
             &structs,
             &enums,
             &consts,
+            &const_fns,
+            &owned_structs,
             &overloads,
             project,
             &all_pds,
@@ -3463,6 +4511,8 @@ fn check_program_pass(
             &structs,
             &enums,
             &consts,
+            &const_fns,
+            &owned_structs,
             &overloads,
             project,
             &all_pds,
@@ -3625,6 +4675,8 @@ fn collect_pds(
     structs: &HashMap<String, StructDef>,
     enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+    owned_structs: &std::collections::HashSet<String>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     env: &TypeEnv,
     fns: &FuncEnv,
@@ -3669,6 +4721,8 @@ fn collect_pds(
                 aliases: &aliases,
                 later_datacs: None,
                 in_progress: None,
+                consts: Some(consts),
+                const_fns: Some(const_fns),
             }
             .resolve(t, false)
             .map_err(|e| e.in_module(&decl.module))?,
@@ -3683,6 +4737,8 @@ fn collect_pds(
                     structs,
                     enums,
                     consts,
+                    const_fns,
+                    owned_structs,
                     overloads,
                     project,
                     &out,
@@ -3722,6 +4778,8 @@ fn check_pd_initializer(
     structs: &HashMap<String, StructDef>,
     enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+    owned_structs: &std::collections::HashSet<String>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
     all: &[PdInfo],
@@ -3737,6 +4795,8 @@ fn check_pd_initializer(
         structs,
         enums,
         consts,
+        const_fns,
+        owned_structs,
         overloads,
         project,
         all,
@@ -3761,6 +4821,8 @@ fn base_ctx(
     structs: &HashMap<String, StructDef>,
     enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+    owned_structs: &std::collections::HashSet<String>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
     all_pds: &[PdInfo],
@@ -3785,6 +4847,8 @@ fn base_ctx(
         structs: structs.clone(),
         enums: enums.clone(),
         consts: consts.clone(),
+        const_fns: const_fns.clone(),
+        owned_structs: owned_structs.clone(),
         overloads: overloads.clone(),
         module: module.to_string(),
         caps: project.caps_of(module),
@@ -3920,6 +4984,15 @@ impl PdScan {
                 for a in args {
                     self.scan_expr(&a.value);
                 }
+            }
+            ast::Expr::ArrayLit { elems, .. } => {
+                for e in elems {
+                    self.scan_expr(e);
+                }
+            }
+            ast::Expr::ArrayRepeat { value, len, .. } => {
+                self.scan_expr(value);
+                self.scan_expr(len);
             }
             // Only the base — a field named like a passdown isn't a read of
             // it.
@@ -4278,6 +5351,8 @@ fn check_function(
     structs: &HashMap<String, StructDef>,
     enums: &HashMap<String, EnumDef>,
     consts: &HashMap<String, ConstInfo>,
+    const_fns: &std::rc::Rc<ConstFns>,
+    owned_structs: &std::collections::HashSet<String>,
     overloads: &HashMap<String, Vec<(Vec<Ty>, String)>>,
     project: &Project,
     all_pds: &[PdInfo],
@@ -4321,6 +5396,8 @@ fn check_function(
         structs,
         enums,
         consts,
+        const_fns,
+        owned_structs,
         overloads,
         project,
         all_pds,
@@ -4864,7 +5941,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 _ => Ty::I32,
             };
             Ok(tir::Expr {
-                kind: tir::ExprKind::IntLit(*v),
+                kind: tir::ExprKind::IntLit(*v as i128),
                 ty,
                 span: *span,
             })
@@ -4931,7 +6008,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 }
             }
             Ok(tir::Expr {
-                kind: tir::ExprKind::IntLit(*v as i64),
+                kind: tir::ExprKind::IntLit(*v as i128),
                 ty: Ty::U8,
                 span: *span,
             })
@@ -5406,6 +6483,108 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             arms,
             span,
         } => check_when_scrutinee(scrutinee, arms, *span, ctx, expected),
+        // `[a, b, c]`: an array literal (A-18). Every element takes the
+        // array's element type, which is either the one the context named or,
+        // when nothing constrains it, the first element's own type.
+        ast::Expr::ArrayLit { elems, span } => {
+            let hinted = match expected {
+                Some(Ty::Array(elem, len)) => {
+                    if *len as usize != elems.len() {
+                        return Err(TypeError {
+                            message: format!(
+                                "an array of {len} element(s) is expected here, and this literal has {}",
+                                elems.len()
+                            ),
+                            span: *span,
+                        });
+                    }
+                    Some((**elem).clone())
+                }
+                _ => None,
+            };
+            let mut checked: Vec<tir::Expr> = Vec::with_capacity(elems.len());
+            let mut elem_ty = hinted;
+            for (i, e) in elems.iter().enumerate() {
+                // The first element's own type is what the rest are checked
+                // against, which is the same rule `2` in `1 + 2` follows: a
+                // literal takes the type of the whole it is part of, and the
+                // first element is what defines that whole.
+                let v = check_expr(e, ctx, elem_ty.as_ref())?;
+                match &elem_ty {
+                    None => elem_ty = Some(v.ty.clone()),
+                    Some(t) if *t != v.ty => {
+                        return Err(TypeError {
+                            message: format!(
+                                "the elements of an array have different types: element {i} is a '{}', and the first element is a '{}'",
+                                v.ty.display(),
+                                t.display()
+                            ),
+                            span: e.span(),
+                        })
+                    }
+                    _ => {}
+                }
+                checked.push(v);
+            }
+            let elem_ty = elem_ty.expect("an array literal has at least one element");
+            if !crate::types::is_array_element(&elem_ty) {
+                return Err(TypeError {
+                    message: array_element_error(&elem_ty),
+                    span: *span,
+                });
+            }
+            Ok(tir::Expr {
+                kind: tir::ExprKind::ArrayLit(checked),
+                ty: Ty::Array(Box::new(elem_ty), elems.len() as u64),
+                span: *span,
+            })
+        }
+        // `[v; N]`: the repeat form (A-18). `N` is folded here exactly as an
+        // array type's length is (A-19), and the element has to be `Copy`,
+        // because the alternative is cloning an owned value once per element.
+        ast::Expr::ArrayRepeat { value, len, span } => {
+            let n = ctx.type_scope().array_len(len)?;
+            let hinted = match expected {
+                Some(Ty::Array(elem, expected_len)) => {
+                    if *expected_len != n {
+                        return Err(TypeError {
+                            message: format!(
+                                "an array of {expected_len} element(s) is expected here, and this repeat produces {n}"
+                            ),
+                            span: *span,
+                        });
+                    }
+                    Some((**elem).clone())
+                }
+                _ => None,
+            };
+            let v = check_expr(value, ctx, hinted.as_ref())?;
+            let elem_ty = v.ty.clone();
+            // The repeat form *copies* its value into every slot, so the
+            // element has to own nothing: a scalar, or a `datac` whose fields
+            // are all scalars. An element that owns memory would need N
+            // clones, and a copy of an owner is a second owner.
+            if crate::types::needs_drop(&elem_ty, &ctx.owned_structs) {
+                return Err(TypeError {
+                    message: format!(
+                        "the repeat form '[x; N]' needs an element that owns nothing, and '{}' owns memory. Copying it into {n} slots would make {n} owners of the same buffer; write the elements out ('[a, b, c]') instead",
+                        elem_ty.display()
+                    ),
+                    span: *span,
+                });
+            }
+            if !crate::types::is_array_element(&elem_ty) {
+                return Err(TypeError {
+                    message: array_element_error(&elem_ty),
+                    span: *span,
+                });
+            }
+            Ok(tir::Expr {
+                kind: tir::ExprKind::ArrayRepeat { value: Box::new(v) },
+                ty: Ty::Array(Box::new(elem_ty), n),
+                span: *span,
+            })
+        }
     }
 }
 
@@ -5776,6 +6955,8 @@ fn field_hint(
         aliases,
         later_datacs: None,
         in_progress: None,
+        consts: Some(&ctx.consts),
+        const_fns: Some(&ctx.const_fns),
     };
     scope.resolve(written, false).ok()
 }
@@ -7431,6 +8612,8 @@ fn instantiate_function(
         aliases: &tmpl.aliases,
         later_datacs: None,
         in_progress: None,
+        consts: Some(&ctx.consts),
+        const_fns: Some(&ctx.const_fns),
     };
     let mut params = Vec::new();
     if let Some((_, receiver_mutable)) = &tmpl.receiver {
@@ -7777,6 +8960,7 @@ fn check_method_call(
     let container_elem = crate::types::list_elem_of(&probe.ty)
         .or_else(|| crate::types::box_elem_of(&probe.ty))
         .or_else(|| crate::types::map_elem_of(&probe.ty))
+        .or_else(|| crate::types::array_elem_of(&probe.ty))
         .cloned();
     let container_key = crate::types::map_key_of(&probe.ty)
         .cloned()
@@ -7791,10 +8975,14 @@ fn check_method_call(
             Some(tmpl_key) => {
                 instantiate_function(ctx, &tmpl_key, &[], args, span, expected, Some(&probe.ty))?
             }
-            None => match container_elem
-                .as_ref()
-                .and_then(|e| container_sig(&key, e, &container_key))
-            {
+            None => match container_elem.as_ref().and_then(|e| {
+                container_sig(
+                    &key,
+                    e,
+                    &container_key,
+                    crate::types::array_len_of(&probe.ty),
+                )
+            }) {
                 Some(s) => (key, s),
                 None => match builtin_sig(&key) {
                     Some(s) => (key, s),
@@ -7828,6 +9016,10 @@ fn check_method_call(
                 ),
                 (Some(e), "Map") => format!(
                     "Map<{}> has no method '{method}' — the Map surface is len, is_empty, has, get, get_or, insert, remove, clear, keys, values",
+                    e.display()
+                ),
+                (Some(e), "Array") => format!(
+                    "[{}; N] has no method '{method}': the array surface is len, is_empty, get, set",
                     e.display()
                 ),
                 (Some(e), _) => format!(
@@ -7952,7 +9144,7 @@ fn lower_try_to(src: &Ty, dst: &Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> 
         span,
     };
     let lit = |v: i128| tir::Expr {
-        kind: tir::ExprKind::IntLit(v as i64),
+        kind: tir::ExprKind::IntLit(v),
         ty: src.clone(),
         span,
     };

@@ -269,6 +269,14 @@ pub struct TypeExpr {
     /// `infer.rs` rejects arguments on a name that is not `List`, and more
     /// than one on `List` itself; v1 has no user-definable generics.
     pub args: Vec<TypeExpr>,
+    /// The element type of `[T; N]` (A-18), `Some` exactly when the type was
+    /// written with brackets. `name` is empty in that case, because an array
+    /// type has no name of its own: it is its element and its length.
+    pub array_elem: Option<Box<TypeExpr>>,
+    /// The `N` of `[T; N]`, kept as an expression because a length is
+    /// allowed to be computed from constants (`PAGE_SIZE / ENTRY_SIZE`,
+    /// A-19), folded by `infer.rs` when the type is resolved.
+    pub array_len: Option<Box<Expr>>,
     /// `&T` was written with a leading `&`. Only meaningful in a *return*
     /// position (M6.3): `&str`/`&T` there is a borrow of the caller's value
     /// under the elision rule, whereas a parameter's `&str` is what `str`
@@ -293,6 +301,8 @@ impl TypeExpr {
         TypeExpr {
             name: name.into(),
             args: Vec::new(),
+            array_elem: None,
+            array_len: None,
             amp: false,
             fn_params: None,
             fn_ret: None,
@@ -313,7 +323,14 @@ impl TypeExpr {
 
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
-        let mut s = if let Some(params) = &self.fn_params {
+        let mut s = if let Some(elem) = &self.array_elem {
+            let len = self
+                .array_len
+                .as_ref()
+                .map(|l| l.display_source())
+                .unwrap_or_else(|| "?".to_string());
+            format!("[{}; {}]", elem.display(), len)
+        } else if let Some(params) = &self.fn_params {
             // A function type and a closure type differ by one keyword and
             // nothing else, so the keyword written is the keyword shown
             // (A-4 phase E).
@@ -600,6 +617,21 @@ pub enum Expr {
         arms: Vec<WhenArm>,
         span: Span,
     },
+    /// `[a, b, c]`: an array value (A-18). Its length is the number of
+    /// elements written, and its type is `[T; n]` for the element type the
+    /// elements agree on. `infer.rs` gives it the declared type when the
+    /// context names one (`val xs: [i32; 3] = [1, 2, 3]`) and joins the
+    /// elements' own types when it does not.
+    ArrayLit { elems: Vec<Expr>, span: Span },
+    /// `[v; N]`: `N` copies of `v`, the zeroed-buffer form (A-18). `v` must
+    /// be `Copy`: the alternative is cloning an owned value per element,
+    /// which is not a thing a literal can do. `N` is a compile-time constant
+    /// (A-19), folded here exactly as an array type's length is.
+    ArrayRepeat {
+        value: Box<Expr>,
+        len: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// One arm of the pattern form of `when`. `pattern` is `None` for an `else`
@@ -657,8 +689,65 @@ impl Expr {
             | Expr::MethodCall { span: s, .. }
             | Expr::Template { span: s, .. }
             | Expr::FnLit { span: s, .. }
-            | Expr::When { span: s, .. } => *s,
+            | Expr::When { span: s, .. }
+            | Expr::ArrayLit { span: s, .. }
+            | Expr::ArrayRepeat { span: s, .. } => *s,
             Expr::Block(b) => b.span,
+        }
+    }
+
+    /// How this expression was written, for the one place a *type* diagnostic
+    /// has to quote an expression back: the `N` of an array's `[T; N]`
+    /// (`infer.rs` reports a length that is not a constant, or an array whose
+    /// literal has the wrong length, and "[i32; 1 + 2]" reads better than
+    /// "[i32; ?]"). Kept deliberately small: it covers the shapes a length is
+    /// written as, and falls back to a placeholder for anything else rather
+    /// than growing a second full pretty-printer.
+    pub fn display_source(&self) -> String {
+        match self {
+            Expr::IntLit(v, _) => v.to_string(),
+            Expr::FloatLit(v, _) => v.to_string(),
+            Expr::CharLit(c, _) => format!("'{}'", char::from_u32(*c).unwrap_or('?')),
+            Expr::ByteLit(b, _) => format!("b'{}'", *b as char),
+            Expr::BoolLit(b, _) => b.to_string(),
+            Expr::StringLit(s, _) => format!("\"{s}\""),
+            Expr::Ident(name, _) => name.clone(),
+            Expr::Unary { op, expr, .. } => {
+                let op = match op {
+                    UnOp::Neg => "-",
+                    UnOp::Not => "!",
+                    UnOp::BitNot => "~",
+                };
+                format!("{op}{}", expr.display_source())
+            }
+            Expr::Binary { op, lhs, rhs, .. } => {
+                let op = match op {
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::Mul => "*",
+                    BinOp::Div => "/",
+                    BinOp::Mod => "%",
+                    BinOp::Eq => "==",
+                    BinOp::NotEq => "!=",
+                    BinOp::Lt => "<",
+                    BinOp::LtEq => "<=",
+                    BinOp::Gt => ">",
+                    BinOp::GtEq => ">=",
+                    BinOp::And => "&&",
+                    BinOp::Or => "||",
+                    BinOp::BitAnd => "&",
+                    BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl => "<<",
+                    BinOp::Shr => ">>",
+                };
+                format!("{} {op} {}", lhs.display_source(), rhs.display_source())
+            }
+            Expr::MethodCall { receiver, method, .. } => {
+                format!("{}.{method}(...)", receiver.display_source())
+            }
+            Expr::Call { callee, .. } => format!("{callee}(...)"),
+            _ => "...".to_string(),
         }
     }
 }

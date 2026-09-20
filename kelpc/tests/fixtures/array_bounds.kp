@@ -1,0 +1,7 @@
+// A-18: an index is checked against the array's own length, which the type
+// carries. `.len()` costs nothing precisely because the number is already
+// known here.
+fun main() {
+    val xs: [i32; 2] = [1, 2]
+    print(xs.get(i = 2))
+}

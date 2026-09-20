@@ -727,7 +727,13 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         closures: closure_tys,
         coerced: coerced_tys,
         shims: shim_tys,
+        arrays: array_tys,
     } = collection;
+    // An array is emitted after the types it holds by value, so it is sorted
+    // innermost-first like a container, and the ones a `datac` field needs are
+    // emitted immediately before that `datac` (step 3 below).
+    let mut arrays: Vec<Ty> = array_tys.iter().cloned().collect();
+    arrays.sort_by_key(|t| (container_depth(t), container_name(t)));
     let mut containers: Vec<Ty> = list_elems
         .iter()
         .map(|e| Ty::List(Box::new(e.clone())))
@@ -740,8 +746,16 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         .chain(closure_tys.iter().cloned())
         .collect();
     containers.sort_by_key(|t| (container_depth(t), container_name(t)));
-    if !containers.is_empty() {
+    if !containers.is_empty() || !arrays.is_empty() {
         write_tags(&mut out, &program.structs, &program.enums);
+        // Every array's tag is typedef'd here, before anything can name it: a
+        // `Box<[u8; 4]>` typedef written just below holds a *pointer* to one,
+        // and a pointer to an incomplete type is legal C. The struct's body
+        // lands later, right before the first type that holds it by value.
+        for ty in &arrays {
+            let name = container_name(ty);
+            writeln!(out, "typedef struct {name} {name};").unwrap();
+        }
         out.push('\n');
         for ty in &containers {
             write_container_typedef(&mut out, ty);
@@ -785,13 +799,37 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         .chain(program.enums.iter().map(|e| (e.order, Decl::Sum(e))))
         .collect();
     decls.sort_by_key(|(order, _)| *order);
+    let mut emitted_arrays: HashSet<Ty> = HashSet::new();
     for (_, decl) in &decls {
+        // A field or payload that holds an array holds it *by value*, so the
+        // array's C struct has to be complete before this declaration is
+        // written. Emitting it here (rather than with the pointer containers
+        // above) is what keeps `val entries: [Entry; 512]` a field a `datac`
+        // can actually have.
+        let field_tys: Vec<&Ty> = match decl {
+            Decl::Record(s) => s.fields.iter().map(|f| &f.ty).collect(),
+            Decl::Sum(e) => e.variants.iter().flat_map(|v| v.fields.iter()).map(|f| &f.ty).collect(),
+        };
+        for ty in field_tys {
+            emit_arrays_for(&mut out, ty, &mut emitted_arrays, &owned);
+        }
         match decl {
             Decl::Record(s) => write_struct(&mut out, s, &owned),
             Decl::Sum(e) => write_enum(&mut out, e, &owned),
         }
     }
     if !decls.is_empty() {
+        out.push('\n');
+    }
+
+    // Every array the program uses that no `datac` field pulled in earlier: a
+    // local, a parameter, a return value, a `Box` element. They go here, after
+    // every by-value declaration and before the container function sets below,
+    // because those sets size and drop the types their elements are.
+    for ty in &arrays.clone() {
+        emit_arrays_for(&mut out, ty, &mut emitted_arrays, &owned);
+    }
+    if !emitted_arrays.is_empty() {
         out.push('\n');
     }
 
@@ -1388,7 +1426,79 @@ fn container_name(ty: &Ty) -> String {
         Ty::Box(elem) => crate::types::box_c_type(elem),
         Ty::Map(key, value) => crate::types::map_c_type(key, value),
         Ty::Closure { .. } => ty.c_type(),
+        Ty::Array(elem, len) => crate::types::array_c_type(elem, *len),
         other => unreachable!("not a container: {}", other.display()),
+    }
+}
+
+/// The one `[T; N]` instantiation C text: the struct that *is* the storage
+/// (A-18), the small function set its methods call, and its drop.
+///
+/// Nothing here allocates. The struct holds `N` elements inline, so an array
+/// lives wherever its value lives: a stack frame, a `datac` field, or a
+/// `Box`'s heap cell. That is the whole point of the type, since a page table,
+/// an IDT/GDT or a register-save frame has to exist with no allocator in the
+/// path.
+///
+/// The struct's tag was typedef'd with the other forward declarations, because
+/// a `Box<[T; N]>` typedef written earlier holds a *pointer* to one.
+fn write_array(out: &mut String, elem: &Ty, len: u64, owned: &HashSet<String>) {
+    let name = crate::types::array_c_type(elem, len);
+    let elem_c = crate::types::container_elem_c_type(elem);
+    let elem_drops = needs_drop(elem, owned);
+    let drop_elem = elem_drops.then(|| drop_fn_name(elem));
+    writeln!(out, "// ---- {name} (fixed-size array) {}", "-".repeat(30)).unwrap();
+    writeln!(out, "struct {name} {{\n    {elem_c} v[{len}];\n}};\n").unwrap();
+
+    writeln!(out, "static size_t {name}__len(const {name}* self) {{\n    (void)self;\n    return {len};\n}}\n").unwrap();
+    writeln!(out, "static bool {name}__is_empty(const {name}* self) {{\n    (void)self;\n    return false;\n}}\n").unwrap();
+    writeln!(out, "static void {name}__bounds(size_t i) {{\n    if (i >= {len}) {{\n        kelp_panic(\"Array.get: index out of bounds\");\n    }}\n}}\n").unwrap();
+    if elem.is_copy() {
+        writeln!(out, "static {elem_c} {name}__get(const {name}* self, size_t i) {{\n    {name}__bounds(i);\n    return self->v[i];\n}}\n").unwrap();
+    } else {
+        writeln!(out, "static const {elem_c}* {name}__get_const(const {name}* self, size_t i) {{\n    {name}__bounds(i);\n    return &self->v[i];\n}}\n").unwrap();
+    }
+    writeln!(out, "static void {name}__set({name}* self, size_t i, {elem_c} v) {{\n    {name}__bounds(i);").unwrap();
+    if elem_drops {
+        writeln!(out, "    {}(&self->v[i]);", drop_elem.as_deref().unwrap()).unwrap();
+    }
+    out.push_str("    self->v[i] = v;\n}\n\n");
+
+    if elem_drops {
+        writeln!(
+            out,
+            "static void {}({name}* self) {{\n    for (size_t i = 0; i < {len}; i++) {{\n        {}(&self->v[i]);\n    }}\n}}\n",
+            crate::types::drop_fn_name(&Ty::Array(Box::new(elem.clone()), len)),
+            drop_elem.as_deref().unwrap()
+        )
+        .unwrap();
+    }
+
+    // The repeat literal's helper: `[x; N]` is one call rather than N copies
+    // in the emitted C, and a big zero fill stays a loop the C compiler can
+    // turn into a `memset`.
+    writeln!(out, "static {name} {name}__fill({elem_c} v) {{\n    {name} r;\n    for (size_t i = 0; i < {len}; i++) {{\n        r.v[i] = v;\n    }}\n    return r;\n}}\n").unwrap();
+}
+
+/// Emits whichever array instantiations a type needs before it can be written
+/// itself: the array when `ty` is one (after any array nested inside it), and
+/// nothing for a type that holds its array behind a pointer, which the forward
+/// typedef already covers.
+fn emit_arrays_for(
+    out: &mut String,
+    ty: &Ty,
+    emitted: &mut HashSet<Ty>,
+    owned: &HashSet<String>,
+) {
+    match ty {
+        Ty::Array(elem, len) => {
+            emit_arrays_for(out, elem, emitted, owned);
+            if emitted.insert(ty.clone()) {
+                write_array(out, elem, *len, owned);
+            }
+        }
+        Ty::Ref { inner, .. } => emit_arrays_for(out, inner, emitted, owned),
+        _ => {}
     }
 }
 
@@ -1411,6 +1521,9 @@ fn container_depth(ty: &Ty) -> usize {
                 .max()
                 .unwrap_or(0)
         }
+        // A nested array is held inline, so it has to be complete before the
+        // array that contains it: `[[u8; 4]; 8]` emits the inner one first.
+        Ty::Array(elem, _) => 1 + container_depth(elem),
         _ => 0,
     }
 }
@@ -1859,6 +1972,12 @@ struct Instantiations {
     /// environment: the wrapper has nothing to hold, so `env` is `NULL` and
     /// the conversion allocates nothing (A-4 phase E).
     shims: HashSet<(String, Ty)>,
+    /// Array instantiations (A-18): `[T; N]` needs one C struct, one function
+    /// set and one drop per `(element, length)` pair the program uses. Kept
+    /// apart from the pointer containers above because an array holds its
+    /// elements *inline*: it has to be emitted after the types it contains,
+    /// not before them.
+    arrays: HashSet<Ty>,
 }
 
 fn collect_containers(program: &Program, out: &mut Instantiations) {
@@ -1890,6 +2009,10 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                     note_ty(p, out);
                 }
                 note_ty(ret, out);
+            }
+            Ty::Array(elem, _) => {
+                out.arrays.insert(ty.clone());
+                note_ty(elem, out);
             }
             Ty::Ref { inner, .. } => note_ty(inner, out),
             _ => {}
@@ -1938,6 +2061,12 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                     note_expr(c, out);
                 }
             }
+            ExprKind::ArrayLit(elems) => {
+                for e in elems {
+                    note_expr(e, out);
+                }
+            }
+            ExprKind::ArrayRepeat { value, .. } => note_expr(value, out),
             // A widened function value: the target signature needs its thunk,
             // and the value being wrapped needs the walk too. A value that is
             // a known function needs a shim instead of the heap wrapper.
@@ -2696,6 +2825,30 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
+            // `[a, b, c]`: a C compound literal of the array's wrapper struct,
+            // so the elements are initialized in order and the result *is* the
+            // value (no temporary to copy out of).
+            ExprKind::ArrayLit(elems) => {
+                let Ty::Array(elem, len) = &expr.ty else {
+                    unreachable!("an array literal is typed as an array")
+                };
+                let name = crate::types::array_c_type(elem, *len);
+                let values: Vec<String> = elems.iter().map(|e| self.expr_value(e)).collect();
+                format!("(({name}){{ .v = {{ {} }} }})", values.join(", "))
+            }
+            // `[v; N]`: the generated fill helper, one call per repeat
+            // literal, so a 4096-element zero fill is not 4096 initializers in
+            // the emitted C.
+            ExprKind::ArrayRepeat { value, .. } => {
+                let Ty::Array(elem, len) = &expr.ty else {
+                    unreachable!("a repeat literal is typed as an array")
+                };
+                format!(
+                    "{}__fill({})",
+                    crate::types::array_c_type(elem, *len),
+                    self.expr_value(value)
+                )
+            }
             ExprKind::Template { newline, pieces } => {
                 // One `printf` with a generated format string: literal chunks
                 // are escaped into it, each interpolated value contributes
@@ -3276,6 +3429,26 @@ impl<'a> Gen<'a> {
                 s = format!("{base}__{suffix}({})", args_text.join(", "));
             }
         }
+        if let Some(op) = callee.strip_prefix("Array#") {
+            let elem = args
+                .first()
+                .and_then(|a| crate::types::array_elem_of(&a.ty))
+                .cloned();
+            if let Some(elem) = elem {
+                let len = crate::types::array_len_of(&args[0].ty)
+                    .expect("an Array# receiver is an array");
+                let base = crate::types::array_c_type(&elem, len);
+                // `get` has two C spellings: by value for a `Copy` element, by
+                // pointer for an owned one, decided by the call's result type,
+                // exactly as `List#get` decides it.
+                let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
+                    "get_const"
+                } else {
+                    op
+                };
+                s = format!("{base}__{suffix}({})", args_text.join(", "));
+            }
+        }
         // A map's name carries *two* type arguments, so it is spelled out
         // separately: its key comes from the receiver (or, for `Map.new()`,
         // from the call's own result type) and its value from the same place.
@@ -3578,7 +3751,13 @@ impl<'a> Gen<'a> {
                 "%.*s",
                 format!("(int)({value}).len, (const char*)({value}).data"),
             ),
-            Ty::Unit | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Ref { .. } => {
+            Ty::Unit
+            | Ty::Struct(_)
+            | Ty::List(_)
+            | Ty::Box(_)
+            | Ty::Map(..)
+            | Ty::Array(..)
+            | Ty::Ref { .. } => {
                 unreachable!("type checker rejects printing unit/struct/container/reference values")
             }
         }

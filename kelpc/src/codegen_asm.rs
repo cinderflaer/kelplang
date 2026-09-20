@@ -1131,6 +1131,12 @@ fn collect_calls_expr(e: &Expr, out: &mut Vec<String>) {
                 collect_calls_expr(a, out);
             }
         }
+        ExprKind::ArrayLit(elems) => {
+            for e in elems {
+                collect_calls_expr(e, out);
+            }
+        }
+        ExprKind::ArrayRepeat { value, .. } => collect_calls_expr(value, out),
         ExprKind::FieldAccess { base, .. } | ExprKind::EnumField { base, .. } => {
             collect_calls_expr(base, out)
         }
@@ -7527,7 +7533,8 @@ impl Gen {
                     (Width::W2, false) => (*v as u16) as i64,
                     (Width::W4, true) => (*v as i32) as i64,
                     (Width::W4, false) => (*v as u32) as i64,
-                    (Width::W8, _) => *v,
+                    (Width::W8, true) => *v as i64,
+                    (Width::W8, false) => (*v as u64) as i64,
                 };
                 let _ = writeln!(self.out, "    mov rax, {cut}");
                 Ok(())
@@ -7854,6 +7861,11 @@ impl Gen {
             ExprKind::Call { callee, args } => self.call(callee, args, &e.ty, None, frame),
             ExprKind::Template { newline, pieces } => self.template(*newline, pieces, frame),
             ExprKind::IndirectCall { .. } => Err(unsupported("a call through a function value")),
+            // A fixed-size array (A-18) is a by-value struct the C backend
+            // emits and this one has no layout for yet; refusing it by name is
+            // what keeps a program from being silently miscompiled.
+            ExprKind::ArrayLit(_) => Err(unsupported("a fixed-size array")),
+            ExprKind::ArrayRepeat { .. } => Err(unsupported("a fixed-size array")),
             ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } | ExprKind::ClosureLit { .. } => {
                 Err(unsupported("a function value"))
             }

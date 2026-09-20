@@ -1,0 +1,61 @@
+// A-18: an array whose element owns memory owns it too, so it moves rather
+// than copies, and its drop frees each element. Arrays also pass and return by
+// value, and a `datac` field may be one, which is the shape a kernel's IDT or
+// GDT has.
+const SLOTS: usize = 3
+
+datac Gate(val lo: u64, val hi: u64)
+datac Idt(var entries: [Gate; 4])
+datac Names(val items: [String; 2])
+
+fun sum(xs: [i32; 3]).R: i32 {
+    var total: i32 = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += xs.get(i)
+        i += 1
+    }
+    total
+}
+
+fun make().R: [i32; 3] = [1, 2, 3]
+
+fun bump(buf: mut [u8; 2]) {
+    buf.set(i = 0, v = 9)
+}
+
+fun take(buf: move [u8; 2]).R: u8 = buf.get(i = 1)
+
+fun main() {
+    // A `datac` element array is filled by writing it out or by `set`: a
+    // repeat needs an element that owns nothing, and `Gate` holds two scalars
+    // but is still a `datac`, so the repeat form takes it here only because it
+    // owns no memory.
+    var idt = Idt(entries = [Gate(lo = 1, hi = 2); 4])
+    idt.entries.set(i = 0, v = Gate(lo = 9, hi = 9))
+    print("${idt.entries.get(i = 0).lo} ${idt.entries.get(i = 3).hi}")
+
+    print(sum(make()))
+
+    // An owned element: the array owns the strings, and setting one frees the
+    // string that was there. A `datac` holding one owns it transitively, so
+    // its own drop has to reach the array's.
+    var names: [String; SLOTS] = ["a", "b", "c"]
+    names.set(i = 1, v = "bee")
+    print(names.get(i = 1).as_str())
+    var tagged = Names(items = ["aa", "bb"])
+    tagged.items.set(i = 0, v = "ccc")
+    print(tagged.items.get(i = 0).len())
+
+    // An array parameter is borrowed by default, `mut` writes through the
+    // borrow, and `move` takes the value over.
+    var buf: [u8; 2] = [1, 2]
+    bump(buf)
+    print(buf.get(i = 0))
+    print(take(buf))
+
+    // An array inside a `Box` is an optional fixed-size buffer; the box holds
+    // the pointer, the array holds the bytes.
+    var b = Box.of([7, 8, 9])
+    print(b.get().get(i = 2))
+}
