@@ -522,7 +522,7 @@ fun decode_at(s: &str, at: usize).R: u32 {
     if b0 < 224 {
         cp = b0 - 192
         extra = 1
-    } else if b0 < 240 {
+    } elif b0 < 240 {
         cp = b0 - 224
         extra = 2
     } else {

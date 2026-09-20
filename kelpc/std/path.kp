@@ -104,7 +104,7 @@ fun join_all(parts: List<String>).R: String {
         if is_absolute(part) {
             out = String.from_str(part)
             first = false
-        } else if first {
+        } elif first {
             out.push_str(part)
             first = false
         } else {

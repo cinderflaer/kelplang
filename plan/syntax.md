@@ -198,8 +198,8 @@ Inside `(` `)` newlines are insignificant, which is what lets a field list or an
 An identifier starts with a letter or `_`. These words are keywords:
 
 ```
-as  closure  const  datac  else  enum  extern  false  for  fun  if  impl  move
-mut  pd  return  true  val  var  when  while
+as  closure  const  datac  elif  else  enum  extern  false  for  fun  if  impl
+move  mut  pd  return  true  val  var  when  while
 ```
 
 `fn`, `let`, `struct`, `use`, `loop`, `break`, `continue`, `match`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8). `in` is not a keyword either: `for x in xs` reads it as a separator, the way `if let` reads `let` (6.1), so a binding may still be named `in`.
@@ -447,7 +447,7 @@ val label = if n > 0 { "pos" } else { "neg" }
 
 if temp > 30 {
     print("hot")
-} else if temp > 20 {
+} elif temp > 20 {
     print("warm")
 } else {
     print("cool")
@@ -455,6 +455,27 @@ if temp > 30 {
 ```
 
 Braces are always required. Parentheses around the condition are neither needed nor the house style. An `if` used as a value must have an `else`; an `if` without an `else` must produce `Unit`, and the compiler says so: `if without an else branch must evaluate to 'unit'`.
+
+#### `elif` and `else if`
+
+The link between one condition and the next has two spellings, and they mean exactly the same thing:
+
+```kelp
+if n > 2 {
+    print("big")
+} elif n > 1 {
+    print("medium")
+} elif n > 0 {
+    print("small")
+} else {
+    print("none")
+}
+```
+
+- **`elif` is the preferred spelling**, and `else if` is what `kelpc lint` warns about (a cosmetic warning: findings on stderr, exit 0, and nothing written). `else if` stays legal, compiles identically, and is never rewritten by `kelpc fmt`, which is token-faithful; switching spelling is the author's edit.
+- A chain may mix them. `if a { .. } else if b { .. } elif c { .. } else { .. }` is one chain of four links, and the parser reads each link the same way.
+- `elif` takes the same grammar as `if`: a condition and a block, or a pattern and a block (`elif let`). `if let A(n) = x { .. } elif let B(m) = x { .. } else { .. }` is the pattern form of the chain above, and its links read the same scrutinee once each (see `if let` below).
+- `elif` is one token, so `else elif` is not a chain: after an `else` the grammar expects a block or an `if`.
 
 #### `if let`
 
@@ -471,7 +492,7 @@ if let Word(text) = token {
 
 if let Rect(w, h) = shape {
     print(w * h)
-} else if let Circle(r) = shape {
+} elif let Circle(r) = shape {
     print(3.14159 * r * r)
 } else {
     print(0.0)
@@ -489,7 +510,7 @@ if let Circle(r) = shape {
 
 - It is exactly the pattern form of `when` (6.3) with a single arm and an `else`, which is why the arm rules are the same: the variant must exist, the number of bindings must match the payload, `_` ignores one, and a payload binds as a copy when it is `Copy` and as a shared borrow otherwise.
 - The scrutinee may be **any expression**, temporary or place. A *place* (a name, a `.field` chain, `*expr`) is matched directly, with nothing moved — the same rule a bare `when` follows (6.3). A *temporary* (a call's result, a literal) is bound to a local first, since `when`'s pattern form needs a place to borrow a payload through; that local is a fresh binding no other code can see, so it never collides with anything and there is nothing to reuse it across links of a chain.
-- `else if let` chains, and a plain `else if`, are both allowed; without any `else` the whole expression is `Unit`, the same as an `if` without one. Chaining on the *same place* (`if let A = x { .. } else if let B = x { .. }`) is legal for the reason above: neither link moves `x`, so the second link's own read of it is not a use of a moved value.
+- `elif let` and `else if let` chains are both allowed, and a plain `else if`/`elif` link may sit in the same chain; without any `else` the whole expression is `Unit`, the same as an `if` without one. Chaining on the *same place* (`if let A = x { .. } else if let B = x { .. }`) is legal for the reason above: neither link moves `x`, so the second link's own read of it is not a use of a moved value.
 - `let` is an ordinary identifier everywhere else in the language. It is read as the pattern form only directly after `if`, so a binding named `let` cannot be the condition of an `if` without parentheses.
 
 ### 6.2 `for` and `while`
@@ -1816,7 +1837,7 @@ These are deliberate, and each one has a workaround in this document:
 - A function value cannot be a container element or the return type of a function *type*, a function that reads a passdown is not a value, and a closure cannot be a `List`/`Map` element (a `Box` or a one-field `datac` holds it).
 - A closure's captures are read out of its environment through a borrow, so an owned capture cannot be handed out by value (9's no-partial-moves rule). Its environment is dropped where the closure dies, so a closure cannot outlive anything it captured — which is why a borrow can never be a capture.
 - A nested literal can copy a `Copy` capture out of the enclosing closure's environment, but not move an owned one out of it.
-- `kelpc` has no formatter or linter command yet, and `kelpc run` cannot pass arguments to the program.
+- `kelpc run` cannot pass arguments to the program, so a program that reads `argv` is tested through `coral run -- <args>` or the built binary.
 - Capability patterns are static text: they cannot be computed, narrowed or revoked at runtime.
 
 ## 18. Errors you will hit
@@ -1924,9 +1945,11 @@ panic: String.from_bytes: input is not valid utf-8
 - File order: `impl`, then `const`, then `pd`, then `datac`/`enum`/`fun` (13.2). The parser enforces every step but the order inside the last group: an `impl` written after any declaration, a `const` written after a `pd`, `datac`, `enum` or `fun`, and a `pd` written after a `datac`, `enum` or `fun` are parse errors. Whether a `datac` or an `enum` comes before a `fun` remains a review convention.
 - No semicolons. Do not wrap an expression across lines unless the wrap is inside parentheses or an argument list.
 - Standard library modules, functions and datac fields are `snake_case` (`fs.read_text`, `str.is_empty`, `Line.text`), and types are `PascalCase` (`String`, `Bytes`, `Box`, `Metadata`, `Url`).
-- User code case is not enforced. The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
+- User code case is configurable rather than fixed: `kelpc lint` reports a declared name that is not the project's case, and either case keeps compiling (see below). The examples and this plan use `snake_case` for functions and lowercase for bindings, matching the standard library.
 - Named arguments are used wherever a call would otherwise be ambiguous, which in practice means every `datac` construction with two or more fields, as in `Circle(r = 2.0)`.
-- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code — which nests, so a region that already contains a block comment still works. Two or more consecutive `//` lines with no blank line and no code between them is the pattern this rule is about written the other way, so `kelpc lint` warns about it. The warning never guesses intent (the author may have meant every line), so it is a warning and not an error.
+- Comments are `//`, written as full sentences when they explain a decision and never to restate the next line. `/* ... */` is for the two things a line comment cannot do: a note that spans lines, and commenting out a region of code; a block comment nests, so a region that already contains one still works. Two or more consecutive `//` lines with no blank line and no code between them is the pattern this rule is about written the other way, so `kelpc lint` warns about it. The warning never guesses intent (the author may have meant every line), so it is a warning and not an error.
+- A chain link is written `elif` (6.1). `else if` is the same link, stays legal and compiles identically; `kelpc lint` warns about it, and `kelpc fmt` never rewrites it.
+- The case of the project's own names is **configurable**, and it is the one style rule that has a setting: `coral.toml`'s `naming_case`, `0` for `camelCase` (the default) or `1` for `snake_case`. It is `kelpc lint`-only, so either case keeps compiling, and a file with no manifest to read gets the default. The rule reads the names a file **declares**: a `fun` name, a parameter, a `val`/`var`/`pd` binding, a `datac` field, an enum payload field, a loop binding, and a pattern binding (`if let Circle(r) = s`, `when s { Circle(r) -> .. }`). A name the project did not write is not its business, and that is the whole of the standard library's exception: the stdlib keeps its locked `snake_case`, so a `camelCase` project is never warned about its call into `str.is_empty` and a `snake_case` project is never warned about the stdlib's `fs.read_text` either, because a call is a use and this rule is about declarations. Type names stay `PascalCase` whatever the setting says, and a `const` name stays `UPPER_SNAKE`.
 
 `kelpc fmt` enforces the indentation, spacing, trailing-whitespace, newline and
 comment rules of this section and nothing else: it caps a run of blank lines
@@ -1936,8 +1959,11 @@ re-wrapping to the 100-column limit, and the 100-column limit itself, the order
 inside the last group and the naming/case rules remain review conventions that
 need a lint, not a formatter. `kelpc lint` is that command, and it is
 warning-only by design: it exits zero when it finds something, because a style
-finding is not a build failure. It implements the comment-run rule above and
-nothing else yet; the naming/case option is still open (roadmap item 23).
+finding is not a build failure. It implements the three rules above that a
+formatter cannot: the comment run, the `else if` link, and the configurable
+naming case. The naming case is the one rule with a setting, it is read from the
+project's `coral.toml` rather than from a flag, and the names it reads are the
+ones the file declares and nothing else (19 says which, and why).
 `kelpc fmt` holds four invariants: formatting is **idempotent** (formatting a
 formatted file changes
 nothing), **token-faithful** (no token's text is ever rewritten, so the formatted
@@ -1998,16 +2024,24 @@ primary      := int | float | string | char | template | "true" | "false"
               | "fun" "(" [ param ("," param)* ] ")" [ ".R" "：" type ]
                 ( "=" expr | block )
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
-              | "if" expr block [ "else" ( block | if ) ]
+              | "if" expr block chain
               | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
-                block [ "else" ( block | if ) ]
+                block chain
               | "when" "{" ( expr "->" expr )* "else" "->" expr "}"
 char         := "'" ( <any Unicode scalar value except ' and newline>
                     | "\\n" | "\\t" | "\\r" | "\\0" | "\\'" | "\\"" | "\\\\"
                     | "\\u{" hexdigit+ "}" ) "'"
 args         := [ arg ("," arg)* ]
 arg          := [ ident "=" ] expr
+chain        := [ "elif" expr block chain
+                | "elif" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
+                  block chain
+                | "else" ( block | "if" expr block chain
+                         | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr
+                           block chain ) ]
 ```
+
+`chain` is what follows the first block of an `if` or an `if let`: nothing, an `else` block, or another link, which is `elif` (6.1) or the `else if` spelling of it. The `let` form of a link is the pattern form, and a chain may mix the two spellings and the two forms freely.
 
 ## 21. A complete program
 

@@ -1467,6 +1467,22 @@ impl Parser {
 
     fn parse_if(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::If, "'if'")?.span;
+        self.parse_if_link(start)
+    }
+
+    /// `elif cond { ... }`: the `else if` link written as one keyword
+    /// (`plan/syntax.md` 6.1). The token is consumed and the rest of the link
+    /// goes through `parse_if_link`, exactly as `else if` does, so the two
+    /// spellings cannot mean two different things.
+    fn parse_elif(&mut self) -> PResult<Expr> {
+        let start = self.expect(TokenKind::Elif, "'elif'")?.span;
+        self.parse_if_link(start)
+    }
+
+    /// One link of an `if` chain: the optional `let` pattern, the condition,
+    /// the block, and whatever follows (nothing, `else`, `else if`, or
+    /// `elif`). Shared by `if` and `elif`, which is why a chain may mix them.
+    fn parse_if_link(&mut self, start: Span) -> PResult<Expr> {
         // `if let PATTERN = EXPR { ... }` — a pattern condition rather than a
         // boolean one. `let` is only an identifier everywhere else in the
         // language, so this is recognized by the token pair rather than by
@@ -1490,6 +1506,10 @@ impl Parser {
                 span = span.to(block.span);
                 Some(Box::new(ElseBranch::Block(block)))
             }
+        } else if self.check(&TokenKind::Elif) {
+            let link = self.parse_elif()?;
+            span = span.to(link.span());
+            Some(Box::new(ElseBranch::If(link)))
         } else {
             None
         };
@@ -1551,6 +1571,12 @@ impl Parser {
                 span = span.to(block.span);
                 Expr::Block(block)
             }
+        } else if self.check(&TokenKind::Elif) {
+            // `elif let Foo(x) = e { ... }` — the chained pattern link, in the
+            // spelling 6.1 prefers. Same link, same function.
+            let link = self.parse_elif()?;
+            span = span.to(link.span());
+            link
         } else {
             // No `else`, so the whole thing produces `Unit` — exactly what an
             // `if` without one does. An empty block is the `Unit` arm.
@@ -1841,6 +1867,81 @@ mod tests {
             }
             other => panic!("expected block body, got {other:?}"),
         }
+    }
+
+    /// The number of links in an `if` chain: one per `if`/`elif`, plus one for
+    /// a trailing `else` block. Both spellings have to give the same number,
+    /// which is the whole claim `elif` makes (`plan/syntax.md` 6.1).
+    fn links(branch: &ElseBranch) -> usize {
+        match branch {
+            ElseBranch::If(e) => match e {
+                Expr::If { else_block, .. } => {
+                    1 + else_block.as_deref().map(links).unwrap_or(0)
+                }
+                other => panic!("expected an if, got {other:?}"),
+            },
+            ElseBranch::Block(_) => 1,
+        }
+    }
+
+    /// The chain of the first statement of the first function in `src`.
+    fn chain(src: &str) -> usize {
+        let p = parse(src);
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => match &b.stmts[0] {
+                Stmt::Expr { expr, .. } => match expr {
+                    Expr::If { else_block, .. } => {
+                        1 + else_block.as_deref().map(links).unwrap_or(0)
+                    }
+                    other => panic!("expected an if, got {other:?}"),
+                },
+                other => panic!("expected an expression statement, got {other:?}"),
+            },
+            other => panic!("expected a block body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn elif_is_the_same_link_as_else_if() {
+        let spelled_out = "fun f(n: i32).R: i32 {\n    if n > 2 { return 1 } else if n > 1 { return 2 } else { return 3 }\n}";
+        let spelled_elif = "fun f(n: i32).R: i32 {\n    if n > 2 { return 1 } elif n > 1 { return 2 } else { return 3 }\n}";
+        assert_eq!(chain(spelled_out), 3);
+        assert_eq!(chain(spelled_elif), chain(spelled_out));
+    }
+
+    #[test]
+    fn an_if_chain_may_mix_both_spellings() {
+        let mixed = "fun f(n: i32).R: i32 {\n    if n > 3 { return 1 } else if n > 2 { return 2 } elif n > 1 { return 3 } else { return 4 }\n}";
+        assert_eq!(chain(mixed), 4);
+    }
+
+    #[test]
+    fn elif_needs_no_else_after_it() {
+        let src = "fun f(n: i32).R: i32 {\n    if n > 1 { return 1 } elif n > 0 { return 2 }\n}";
+        assert_eq!(chain(src), 2);
+    }
+
+    #[test]
+    fn elif_let_is_the_chained_pattern_link() {
+        // `elif let PAT = e { ... }` is `else if let PAT = e { ... }` in the
+        // preferred spelling, so it goes through the same desugaring: a block
+        // whose `when` carries the link.
+        let after_a_pattern = "enum Answer {\n    Yes(val n: i32)\n    No\n}\n\nfun f(m: Answer).R: i32 {\n    if let Yes(n) = m {\n        return n\n    } elif let No = m {\n        return 0\n    }\n    return 1\n}";
+        assert_eq!(parse(after_a_pattern).functions.len(), 1);
+        // And a chain may leave the pattern form for a boolean one, either
+        // way round.
+        let leaving_the_pattern = "enum Answer {\n    Yes(val n: i32)\n    No\n}\n\nfun f(m: Answer).R: i32 {\n    if let Yes(n) = m {\n        return n\n    } elif n > 1 {\n        return 2\n    }\n    return 1\n}";
+        assert_eq!(parse(leaving_the_pattern).functions.len(), 1);
+    }
+
+    #[test]
+    fn an_elif_that_follows_nothing_is_an_error() {
+        parse_err("fun f(n: i32) {\n    elif n > 1 { }\n}");
+    }
+
+    #[test]
+    fn elsif_is_not_a_spelling() {
+        parse_err("fun f(n: i32) {\n    if n > 1 { } elsif n > 0 { }\n}");
     }
 
     #[test]

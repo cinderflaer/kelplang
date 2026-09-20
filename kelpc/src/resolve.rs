@@ -765,6 +765,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         version: None,
         entry: format!("src/main.{EXT}"),
         http_pool: crate::stdlib::DEFAULT_HTTP_POOL,
+        naming_case: None,
     };
     let at = Span::new(0, 0);
     for raw in text.lines() {
@@ -812,6 +813,39 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             })?;
             continue;
         }
+        // `naming_case` is the second numeric key, and the only one with a
+        // closed set of values: it is `kelpc lint`'s setting (`syntax.md` 19),
+        // so a number the option does not define is a typo rather than a
+        // future option, and it is refused here where the file is read.
+        if key == "naming_case" {
+            if value.is_empty() || !value.chars().all(|c| c.is_ascii_digit()) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for 'naming_case' must be a non-negative whole number, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            let option = value.parse::<usize>().map_err(|_| {
+                Diagnostic::new(
+                    format!("{MANIFEST_NAME} value for 'naming_case' is out of range: '{value}'"),
+                    at,
+                    "",
+                )
+            })?;
+            if option > 1 {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for 'naming_case' must be 0 (camelCase) or 1 (snake_case), found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            manifest.naming_case = Some(option);
+            continue;
+        }
         let Some(value) = value
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
@@ -847,9 +881,32 @@ struct Manifest {
     /// `0` disables pooling. Absent means `stdlib::DEFAULT_HTTP_POOL`. A
     /// loose `.kp` file with no manifest always gets the default.
     http_pool: usize,
+    /// `naming_case = <0|1>`: the case `kelpc lint` asks the project's own
+    /// names to be written in (`syntax.md` 19). `None` means the manifest
+    /// says nothing about it, which the lint reads as the option's default.
+    naming_case: Option<usize>,
 }
 
-fn find_manifest_root(file: &Path) -> Option<PathBuf> {
+/// The project's `naming_case`, for `kelpc lint` (`syntax.md` 19, roadmap
+/// item 23).
+///
+/// `None` covers every way the setting can be absent or unusable: there is no
+/// manifest above `file`, the key is not there, or the file does not parse.
+/// None of those is a lint diagnostic: a broken `coral.toml` is reported by
+/// `kelpc build`, which is the command that runs against a project, and `lint`
+/// answering the question "what case does this project write?" from a file it
+/// cannot read would mean inventing an answer. The option's default is the
+/// honest one.
+pub fn manifest_naming_case(root: &Path) -> Option<usize> {
+    let path = root.join(MANIFEST_NAME);
+    let text = fs::read_to_string(&path).ok()?;
+    parse_manifest(&text, &path).ok()?.naming_case
+}
+
+/// The directory holding the nearest `coral.toml` above `file`, if there is
+/// one. `kelpc lint` uses it to find the settings a file is linted under,
+/// which is the same walk a project build does.
+pub fn find_manifest_root(file: &Path) -> Option<PathBuf> {
     let mut dir = file.parent().map(|p| p.to_path_buf());
     while let Some(d) = dir {
         if d.join(MANIFEST_NAME).is_file() {

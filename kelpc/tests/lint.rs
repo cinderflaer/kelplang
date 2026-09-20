@@ -221,3 +221,120 @@ fn an_unknown_flag_is_refused() {
         stderr(&out)
     );
 }
+
+#[test]
+fn an_else_if_link_is_reported_and_the_exit_stays_zero() {
+    let dir = scratch("else-if");
+    let file = write(
+        &dir,
+        "link.kp",
+        "fun f(n: i32).R: i32 {\n    if n > 1 {\n        return 1\n    } else if n > 0 {\n        return 2\n    }\n    return 3\n}\n",
+    );
+
+    let out = lint(&file);
+    assert!(out.status.success(), "a warning exits zero");
+    let text = stderr(&out);
+    // The file is not `main`, so `else if` is the only thing here worth a
+    // warning, whatever the case rule defaults to.
+    assert!(
+        text.contains("warning: 'else if' compiles, but 'elif' is the preferred spelling"),
+        "the preferred spelling is not named:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("{}:4:7", file.display())),
+        "the warning does not locate the `else` it replaces:\n{text}"
+    );
+}
+
+#[test]
+fn elif_is_silent() {
+    let dir = scratch("elif");
+    let file = write(
+        &dir,
+        "link.kp",
+        "fun f(n: i32).R: i32 {\n    if n > 1 {\n        return 1\n    } elif n > 0 {\n        return 2\n    }\n    return 3\n}\n",
+    );
+
+    let out = lint(&file);
+    assert!(out.status.success());
+    assert!(
+        stderr(&out).is_empty(),
+        "the preferred spelling should print nothing, got:\n{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn the_naming_case_comes_from_the_projects_manifest() {
+    let dir = scratch("naming-manifest");
+    // `name` is the one key a manifest must have; `naming_case = 1` is the
+    // setting this test is about.
+    write(&dir, "coral.toml", "name = \"demo\"\nnaming_case = 1\n");
+    let src = dir.join("src");
+    fs::create_dir_all(&src).expect("create src/");
+    let file = write(
+        &src,
+        "main.kp",
+        "fun readText().R: i32 {\n    val lineCount = 1\n    return lineCount\n}\n",
+    );
+
+    let out = lint(&file);
+    assert!(out.status.success(), "a warning exits zero");
+    let text = stderr(&out);
+    assert!(
+        text.contains("'readText' is camelCase") && text.contains("coral.toml 'naming_case = 1'"),
+        "the manifest's setting is not named:\n{text}"
+    );
+    assert!(
+        text.contains("write 'read_text'"),
+        "the suggestion is missing:\n{text}"
+    );
+    // The stdlib's locked `snake_case` is not the project's to fix, so a call
+    // into it is never a finding.
+    assert!(
+        !text.contains("is_empty"),
+        "a stdlib call was reported as a name:\n{text}"
+    );
+}
+
+#[test]
+fn a_file_outside_a_project_gets_the_options_default() {
+    let dir = scratch("naming-default");
+    let file = write(&dir, "main.kp", "fun read_text().R: i32 = 1\n");
+
+    let out = lint(&file);
+    assert!(out.status.success());
+    let text = stderr(&out);
+    assert!(
+        text.contains("'read_text' is snake_case") && text.contains("no manifest sets it"),
+        "the default case is not named:\n{text}"
+    );
+    assert!(text.contains("write 'readText'"), "{text}");
+}
+
+#[test]
+fn a_fetched_dependency_is_not_linted_for_its_names() {
+    let dir = scratch("naming-deps");
+    write(&dir, "coral.toml", "name = \"demo\"\nnaming_case = 0\n");
+    let deps = dir.join("src").join("deps").join("sillyname");
+    fs::create_dir_all(&deps).expect("create src/deps/sillyname");
+    // A dependency written in the case the project does not ask for, and one
+    // comment run: the comment rule still applies, the case rule does not.
+    let file = write(
+        &deps,
+        "lib.kp",
+        "// one\n// two\n\nfun read_text().R: i32 = 1\n",
+    );
+
+    let out = lint(&file);
+    assert!(out.status.success());
+    let text = stderr(&out);
+    assert!(
+        text.contains("consecutive '//' lines"),
+        "the comment rule applies to a dependency too:\n{text}"
+    );
+    assert!(
+        !text.contains("read_text'"),
+        "a dependency's naming was reported:\n{text}"
+    );
+}

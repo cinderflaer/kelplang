@@ -81,6 +81,12 @@ pub enum TokenKind {
     Move,
     If,
     Else,
+    /// `elif cond { ... }` — the `else if` link spelled as one keyword. It
+    /// means exactly what `else if` means (`plan/syntax.md` 6.1 records both
+    /// spellings, with `elif` the preferred one), so the parser hands it to
+    /// the same function the `else if` link goes to; the only other reader is
+    /// `kelpc lint`, which warns when the longer spelling is written.
+    Elif,
     While,
     /// `for x in xs { ... }` — the indexed walk over a `List` (A-5,
     /// `plan/syntax.md` §6.2). The parser desugars it to a `while`, so no pass
@@ -749,6 +755,7 @@ impl<'a> Lexer<'a> {
                         "move" => TokenKind::Move,
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
+                        "elif" => TokenKind::Elif,
                         "while" => TokenKind::While,
                         "for" => TokenKind::For,
                         "when" => TokenKind::When,
@@ -1231,7 +1238,7 @@ mod tests {
     #[test]
     fn lexes_keywords_and_idents() {
         assert_eq!(
-            kinds("fun val var mut if else while for when return true false datac foo"),
+            kinds("fun val var mut if else elif while for when return true false datac foo"),
             vec![
                 TokenKind::Fun,
                 TokenKind::Val,
@@ -1239,6 +1246,7 @@ mod tests {
                 TokenKind::Mut,
                 TokenKind::If,
                 TokenKind::Else,
+                TokenKind::Elif,
                 TokenKind::While,
                 TokenKind::For,
                 TokenKind::When,

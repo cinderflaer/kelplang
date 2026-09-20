@@ -699,16 +699,21 @@ fn lint_one(path: &Path) -> bool {
         Ok(src) => src,
         Err(()) => return false,
     };
+    let naming = naming_for(path);
     let mut sources = SourceMap::new();
     let module = path.to_string_lossy().to_string();
-    let runs = lint::comment_runs(&src);
+    let found = lint::findings(&src, naming.as_ref());
     // The file is registered either way: a lex error carries a span into it,
     // and that span has to print as `file:line:col` like every other one.
     sources.insert(&module, path, src);
-    match runs {
-        Ok(runs) => {
-            for run in runs {
-                sources.report_warning(&Diagnostic::new(run.message(), run.span, module.clone()));
+    match found {
+        Ok(findings) => {
+            for finding in findings {
+                sources.report_warning(&Diagnostic::new(
+                    finding.message,
+                    finding.span,
+                    module.clone(),
+                ));
             }
             true
         }
@@ -716,6 +721,35 @@ fn lint_one(path: &Path) -> bool {
             sources.report(&Diagnostic::new(e.message, e.span, module));
             false
         }
+    }
+}
+
+/// The naming rule's setting for one file, or `None` when the rule does not
+/// apply to it.
+///
+/// `None` is a fetched dependency under the project's `src/deps/`: another
+/// repository's names are not this project's convention to enforce, and a
+/// warning about them would be one nobody could fix from their own tree.
+///
+/// A file with no manifest above it gets the option's default, because the
+/// question the rule asks ("what case does this project write?") has an answer
+/// everywhere, and the answer with no manifest is the option's own default.
+/// A manifest that is missing or unreadable is the same case, deliberately: a
+/// broken `coral.toml` is `kelpc build`'s diagnostic, and `lint` is not the
+/// command that reports build failures.
+fn naming_for(path: &Path) -> Option<lint::Naming> {
+    let Some(root) = resolve::find_manifest_root(path) else {
+        return Some(lint::Naming::default_without_manifest());
+    };
+    if path.starts_with(root.join("src").join("deps")) {
+        return None;
+    }
+    match resolve::manifest_naming_case(&root) {
+        Some(option) => lint::NamingCase::from_option(option).map(|case| lint::Naming {
+            case,
+            from_manifest: true,
+        }),
+        None => Some(lint::Naming::default_without_manifest()),
     }
 }
 
