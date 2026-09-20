@@ -26,11 +26,11 @@
 //!
 //! **Ground rule 1.5** (`plan/mk7-own-backend.md`): the cheap oracle stays
 //! cheap, and *nothing* is allowed to make the C backend's build or test time
-//! worse. The sweep above builds 127 fixtures twice and runs 37 pairs, which
-//! takes on the order of half a minute — far too much to add to the default
-//! `cargo test`. Every test that touches the sweep is therefore `#[ignore]`d,
-//! and the default suite compiles this file and runs only the cheap
-//! baseline-shape check. Run the heavy ones explicitly:
+//! worse. The sweep above builds the 208 fixtures the C backend accepts twice
+//! and runs 205 pairs, roughly a minute of work, which is far too much to add
+//! to the default `cargo test`. Every test that touches the sweep is therefore
+//! `#[ignore]`d, and the default suite compiles this file and runs only the
+//! cheap baseline-shape check. Run the heavy ones explicitly:
 //!
 //! ```text
 //! cargo test --test backend_coverage -- --ignored --nocapture
@@ -64,7 +64,22 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// fixtures it builds but this list does not, and the ratchet only fails on the
 /// opposite direction.
 ///
-/// The count at the last re-recording, which is this one: 207 fixtures the C
+/// The count at the last re-recording, which is this one: 208 fixtures the C
+/// backend builds, 205 of them also built by the asm backend, 3 refused, and
+/// the three the asm backend refuses are `borrow_chain_through_a_borrow`,
+/// `list_datac_clone_sort` and `process_spawn`. None of the three moves removed
+/// an entry: MK7 §5 item 7 step 1 added `caps_gated_path`, `fs_errno` and
+/// `fs_symlink_kind` and emitted the capability check itself, so
+/// 207/196/11 became 208/200/8; the net slice lowered the bodies of the four
+/// `net` fixtures, which left the refused column, 208/200/8 -> 208/204/4; and
+/// S7 added `fs_fallible`, 208/204/4 -> 208/205/3. The C backend's built column
+/// did not move after item 7 step 1, and nothing outside `tests/fixtures` is in
+/// the sweep, so the removed project `caps_raw_value_granted` never entered it
+/// in either direction: a project was never a candidate, and the construct it
+/// pinned is a frontend refusal in both backends now rather than the asm
+/// backend's by-name one.
+///
+/// Before it, the previous re-recording read: 207 fixtures the C
 /// backend builds, 196 of them also built by the asm backend, 11 refused. This
 /// round's MK7 §5 S4 slice added two fixtures: `fs_path_family` (the raw
 /// `std/fs` path family, pinned directly because the gated wrappers still
@@ -726,7 +741,7 @@ fn run_sweep() -> Sweep {
 /// not begin with [`REFUSAL_PREFIX`], which would be the backend hiding a gap
 /// instead of naming it.
 #[test]
-#[ignore = "the full sweep builds 127 fixtures twice; ground rule 1.5 keeps it out of the default suite"]
+#[ignore = "the full sweep builds 208 fixtures twice; ground rule 1.5 keeps it out of the default suite"]
 fn the_asm_backend_agrees_with_the_c_backend_or_refuses_by_name() {
     let s = sweep();
 
@@ -770,7 +785,7 @@ fn the_asm_backend_agrees_with_the_c_backend_or_refuses_by_name() {
 /// failure direction is one-sided on purpose — an entry that no longer appears
 /// fails and names itself.
 #[test]
-#[ignore = "the full sweep builds 127 fixtures twice; ground rule 1.5 keeps it out of the default suite"]
+#[ignore = "the full sweep builds 208 fixtures twice; ground rule 1.5 keeps it out of the default suite"]
 fn the_asm_backend_builds_a_superset_of_the_recorded_baseline() {
     let s = sweep();
     let built: BTreeSet<&str> = s.asm_built.iter().map(String::as_str).collect();
@@ -1013,7 +1028,7 @@ fn category(source: &str, message: &str) -> Ranking {
 /// Run it with `cargo test --test backend_coverage -- --ignored --nocapture`;
 /// without `--nocapture` the harness swallows stdout and the report is invisible.
 #[test]
-#[ignore = "the full sweep builds 127 fixtures twice; ground rule 1.5 keeps it out of the default suite"]
+#[ignore = "the full sweep builds 208 fixtures twice; ground rule 1.5 keeps it out of the default suite"]
 fn the_refusals_rank_by_the_categories_the_plan_uses() {
     let s = sweep();
 
