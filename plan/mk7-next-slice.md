@@ -372,9 +372,10 @@ round and is the only one that removes a two-backend disagreement about the lang
 
 ## Measurement disagreements with the plan, collected
 
-1. **§0's and §5's current-tense numbers.** §0's status table says `285 of 336` under `--backend=asm`
-   and `all 176 fixtures`; its prose ends on `240 of 289`, `144 built of 168, 24 refused` and
-   `heap 13, enum 0, datac 0, closure 10, gated 1`. Measured at `9c89b70`: the asm suite is **319 of
+1. **§0's and §5's earlier numbers.** §5's status blockquote and §0's pre-`9c89b70` blockquotes are
+   the text that carried `285 of 336`, `all 176 fixtures`, `240 of 289`, `144 built of 168, 24 refused`
+   and `heap 13, enum 0, datac 0, closure 10, gated 1`; this round's §0 blockquote and status table
+   carry the numbers below in their place. Measured at `9c89b70`: the asm suite is **319 of
    344** with the C backend passing all **344**, the fixture ratchet is **200 built of 208, 8
    refused**, the ranking is **heap 8, array 0, enum 0, datac 0, closure 0, gated extern 0**, and
    valgrind is clean over **408 runs / 364 fixtures, c: 208 checked, asm: 200 checked, 8 refused, 0
