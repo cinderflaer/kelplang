@@ -1516,17 +1516,8 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
     // `util.outside()` is the control, out of the grant on every evaluation,
     // and its denial is asserted whole rather than by substring, so the path,
     // the location, the `granted:` line and its indentation are all pinned.
-    if backend() != "c" {
-        // The asm backend refuses a gated call that carries a resource
-        // argument, so it cannot build this project at all; the property this
-        // test pins is the C emitter's.
-        eprintln!(
-            "note: this project is a gated call with a resource argument, which the \
-             asm backend refuses; backend '{}' is not checked by it",
-            backend()
-        );
-        return;
-    }
+    // Both backends are held to all of it: MK7 §5 item 7 step 1 gave the asm
+    // backend the check that produces this text.
     let dir = caps_scratch("double_eval");
     std::fs::write(dir.join("a"), "FILECONTENT").unwrap();
     let target = project("caps_double_eval").join("main.kp");
@@ -3164,6 +3155,98 @@ fn path_absolute_resolves_a_relative_argument_against_a_base() {
         "tests/fixtures/path_absolute.kp",
         "/a/b/c.txt\n/a/c.txt\n/abs/x\ntrue\ntrue\n",
     );
+}
+
+/// MK7 §5 item 7 step 1: the capability check the asm backend emits for a
+/// gated path call, read back out of the assembly rather than argued. This is
+/// the asm-side analogue of `cap_matcher.rs`'s
+/// `the_generated_capability_check_calls_the_kelp_matcher`: the check runs
+/// before the call it gates, the allowlist it scans is the calling module's
+/// own compiled-in array, and the check routine itself is made of the three
+/// calls the C glue makes, in the same order.
+#[test]
+fn the_asm_capability_check_runs_before_the_gated_call() {
+    if backend() != "asm" {
+        eprintln!(
+            "note: this assertion reads the emitted assembly, so it is asm-backend-only; \
+             backend '{}' is not checked by it",
+            backend()
+        );
+        return;
+    }
+    let bin = out_path("caps_gated_path_asm_check");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/caps_gated_path.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the gated-path fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let s = std::fs::read_to_string(bin.with_extension("s"))
+        .expect("assemble_and_link keeps <out>.s beside the binary");
+
+    // The call site: the check first, then the call it gates, with the
+    // calling module's own allowlist and its pattern count.
+    let main = function_body_in_asm(&s, "main");
+    let check = main
+        .find("call kelp_rt$cap_check_path")
+        .unwrap_or_else(|| panic!("no capability check in `main`:\n{main}"));
+    let call = main
+        .find("call kelp_std__fs__read")
+        .unwrap_or_else(|| panic!("no gated call in `main`:\n{main}"));
+    assert!(
+        check < call,
+        "the check must run before the call it gates:\n{main}"
+    );
+    assert!(
+        main.contains("lea rdx, [rip+kelp_caps_caps_gated_path_fs]"),
+        "the check must scan the calling module's compiled-in allowlist:\n{main}"
+    );
+    assert!(
+        main.contains("mov ecx, 1"),
+        "the check must be handed the pattern count:\n{main}"
+    );
+
+    // The check routine: normalize, match, deny — the three pieces of the C
+    // glue, in the order the deny falls back to.
+    let check_body = function_body_in_asm(&s, "kelp_rt$cap_check_path");
+    let normalize = check_body
+        .find("call kelp_std__rt__path_normalize")
+        .unwrap_or_else(|| panic!("no path_normalize in the check:\n{check_body}"));
+    let glob = check_body
+        .find("call kelp_std__rt__glob_match")
+        .unwrap_or_else(|| panic!("no glob_match in the check:\n{check_body}"));
+    let deny = check_body
+        .find("call kelp_rt$cap_deny")
+        .unwrap_or_else(|| panic!("no deny path in the check:\n{check_body}"));
+    assert!(
+        normalize < glob && glob < deny,
+        "the check must normalize, then match, then deny:\n{check_body}"
+    );
+
+    // The allowlist itself, in the C backend's layout: one pointer per
+    // pattern, `NULL`-terminated.
+    assert!(
+        s.contains("kelp_caps_caps_gated_path_fs:\n"),
+        "the allowlist array is not in .rodata"
+    );
+}
+
+/// MK7 §5 item 7 step 1's other half: a call whose wide return value is
+/// discarded. A return wider than one eightbyte is written by the callee
+/// through a hidden pointer, so the caller supplies the storage even when the
+/// value is dead, which is the compiler temporary the C backend passes at the
+/// same site. The gated fixtures needed the `unit` body's tail shape
+/// (`fun main() { fs.read(p) }`); this fixture pins that plus the statement and
+/// function-value shapes no fixture reached before.
+#[test]
+fn a_discarded_wide_return_still_builds() {
+    assert_compiles_and_runs("tests/fixtures/discard_wide_return.kp", "discarded\n");
 }
 
 #[test]

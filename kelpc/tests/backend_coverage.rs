@@ -261,9 +261,10 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// normalizer, and `path_absolute`, which reaches that plus `std/fs.cwd_raw`;
 /// `borrow_two_phase` was already building and the sweep's own note is what
 /// asked for it to be recorded. This slice also wrote `caps_gated_path`, which
-/// is **not** here and must not be: its gated `fs.read` of a path is refused
-/// today for the extern it reaches, and it becomes the capability-check pin the
-/// moment that extern's body is lowered. MK7 §5 item 6 (closures and function
+/// is not in this list as it stood then: its gated `fs.read` of a path was
+/// refused for the extern it reached until that extern's body was lowered, and
+/// it is the capability-check pin once the check itself is emitted (see the
+/// last paragraph of this note). MK7 §5 item 6 (closures and function
 /// values) added the last ten: `closure_basic`, `closure_datac_borrow_param`,
 /// `closure_move`, `fn_literal`, `fn_literal_capture`, `fn_value`,
 /// `stdlib_closure_callbacks`, `stdlib_combinators`, `stdlib_list_callbacks`
@@ -285,6 +286,14 @@ const REFUSAL_PREFIX: &str = "error: the 'asm' backend does not support";
 /// refused: the heap row drops to 11, and its heads move on three more
 /// fixtures (`fs_fallible` to `std.fs.write_raw`, `process_spawn` to
 /// `std.process.arg_count_raw`, `net_poll` to `std.net.connect_raw`).
+/// MK7 §5 item 7 step 1 (the capability check itself: the deny path, the path
+/// and name checks, the symlink resolution and the compiled-in allowlists)
+/// added three, `caps_gated_path`, `fs_errno` and `fs_symlink_kind`, and wrote
+/// `discard_wide_return` for the discarded-wide-return half the gated fixtures
+/// needed, so the measurement is 208 C / 200 asm / 8 refused and the heap row
+/// holds the eight fixtures whose remaining refusal is an extern body or a heap
+/// type, not a gate. `caps_gated_path` is the pin the item 7 note above was
+/// waiting for.
 const ASM_BUILT_BASELINE: &[&str] = &[
     "aliases",
     "array_basic",
@@ -313,6 +322,10 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "box_recursive",
 "byte_literals",
 "bytes_build",
+    // MK7 §5 item 7 step 1: the fixture the item 7 note below was waiting for,
+    // a gated `fs.read` of an absolute path in the entry module. Its check
+    // admits (`/**`) and its call then fails with `errno`.
+    "caps_gated_path",
     // MK7 §5's S1 slice: `std.time`'s `now_unix`/`now_mono_ns`/`sleep_ms` and
     // `std.rand`'s `u64`/`bytes` call five externs, and none of them names a
     // resource, so the backend has no check to refuse at and the fixture
@@ -348,6 +361,12 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "datac_memory_class_by_value",
     "datac_owned_fields",
     "datac_two_eightbytes",
+    // MK7 §5 item 7 step 1's other half: a call whose wide return value is
+    // discarded, in statement position, through a function value and as a
+    // `unit` body's tail. Needed for the gated fixtures (a `unit` `main` whose
+    // tail is `fs.read(p)`), pinned on its own because no other fixture reached
+    // the statement or function-value shapes.
+    "discard_wide_return",
     "documentation_comment",
     "else_if_let",
     "enum_basic",
@@ -372,10 +391,18 @@ const ASM_BUILT_BASELINE: &[&str] = &[
     "fn_literal_capture",
     "fn_value",
     "for_loop",
+    // MK7 §5 item 7 step 1: the capability check is emitted now, so this
+    // fixture builds and agrees with the C backend. Its check *admits* (the
+    // entry module holds `/**`), so the call runs and fails on `errno`.
+    "fs_errno",
     // MK7 §5's S4 slice: the `std/fs` path family, pinned through its raw
-    // externs because the gated wrappers still refuse (the capability check is
-    // not emitted yet). One fixture reaches all thirteen bodies.
+    // externs because the gated wrappers still refused at the time (the
+    // capability check was not emitted yet). One fixture reaches all thirteen
+    // bodies.
     "fs_path_family",
+    // MK7 §5 item 7 step 1: the whole `std/fs` predicate family through the
+    // *gated* wrappers, which build now that the check exists.
+    "fs_symlink_kind",
     "generic_explicit_args",
     "generic_function_basic",
     "generic_function_owned",

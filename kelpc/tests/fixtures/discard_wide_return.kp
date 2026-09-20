@@ -1,0 +1,30 @@
+// A call whose return value is discarded is not always a call whose value fits
+// in `rax`. A return wider than one eightbyte (a `MEMORY`-class aggregate, or a
+// two-eightbyte one) is written by the callee through a hidden pointer, so the
+// caller has to supply storage even when it wants nothing back. The C backend
+// passes a compiler temporary at every such site; the asm backend refused two
+// of these shapes (`a struct-returning call ... used as a plain value`) until
+// the statement and the `unit` body's tail learned to supply a slot.
+//
+// `wide()` is the owned-aggregate tail of a `unit` function, `arr()` is a
+// two-eightbyte `Copy` array in statement position, and `f()` is the same
+// through a function value. `narrow()` is the unchanged case next to them: a
+// `str` is one pointer, so it never needed a destination.
+datac Triple(val a: i32, val b: i32, val c: i32)
+
+fun wide().R: Triple = Triple(a = 1, b = 2, c = 3)
+fun arr().R: [i32; 3] = [1, 2, 3]
+fun narrow().R: str = "narrow"
+
+fun tail_discard() {
+    wide()
+}
+
+fun main() {
+    tail_discard()
+    arr()
+    val f = arr
+    f()
+    narrow()
+    print("discarded")
+}
