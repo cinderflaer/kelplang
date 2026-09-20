@@ -840,6 +840,12 @@ const RT_PATH_NORMALIZE: &str = "std.rt.path_normalize";
 /// One spelling for every mention, `RT_PATH_NORMALIZE`'s rule.
 const RT_GLOB_MATCH: &str = "std.rt.glob_match";
 
+/// The two `std/rt` functions the `net` checks of MK7 §5 item 7's step 2 call:
+/// the host matcher behind `net.connect`'s `host:port` check and the two
+/// single-resource forms. `RT_GLOB_MATCH`'s rule: one spelling per mention.
+const RT_HOST_GLOB: &str = "std.rt.host_glob";
+const RT_HOST_MATCH: &str = "std.rt.host_match";
+
 /// One routine this backend owns, emitted once per program that needs it
 /// (`Gen::emit_routine`). Named by an enum rather than a string so the set of
 /// them is closed and a typo is a compile error rather than a missing symbol.
@@ -1004,6 +1010,32 @@ enum Routine {
     FsListRaw,
     FsSymlinkRaw,
     FsReadLinkRaw,
+    /// MK7 §5's S8 slice: the thirteen `std/net` socket bodies, transliterated
+    /// from their `externs.rs` bodies. `NetConnectRaw`/`NetListenRaw` are the
+    /// `getaddrinfo` + `socket`/`bind`/`listen` walks over the `struct addrinfo`
+    /// list (`freeaddrinfo` on every exit); `NetAcceptRaw` is the `accept`
+    /// EINTR loop; `NetSendRaw`/`NetSendAllRaw` are `send` with
+    /// `MSG_NOSIGNAL`; `NetRecvRaw`/`NetRecvIntoRaw` are the `recv` EINTR loops
+    /// whose `EAGAIN`/`EWOULDBLOCK` is the `net.recv: timed out` panic;
+    /// `NetCloseRaw`/`NetShutdownWriteRaw`/`NetSetTimeoutRaw` are one
+    /// `close`/`shutdown`/two `setsockopt`s; `NetLocalPortRaw` reads
+    /// `getsockname`'s port back; `NetPeerAddrRaw` formats `getpeername`'s
+    /// address into a `String`; `NetResolveRaw` is the `getaddrinfo` +
+    /// `inet_ntop` list with the C body's own dedup table. `getaddrinfo`
+    /// failures report through `kelp_panic_gai`, not `errno`.
+    NetConnectRaw,
+    NetListenRaw,
+    NetAcceptRaw,
+    NetCloseRaw,
+    NetShutdownWriteRaw,
+    NetSendRaw,
+    NetSendAllRaw,
+    NetRecvRaw,
+    NetRecvIntoRaw,
+    NetSetTimeoutRaw,
+    NetLocalPortRaw,
+    NetPeerAddrRaw,
+    NetResolveRaw,
     /// MK7 §5 item 7, step 1: the capability check's own half, transliterated
     /// from `kelpc/runtime/cap_glue.c`. `CapDeny` is the deny path (`fprintf`
     /// plus `exit(1)`) and is required by every check routine, so a program
@@ -1012,12 +1044,17 @@ enum Routine {
     /// the path check matches against; it is still C in the other backend
     /// because `realpath` is a libc call and `std/rt` has no way to reach one
     /// (see `cap_glue.c`'s own note). `CapCheckPath`/`CapCheckName` are the two
-    /// check kinds this step implements: the allowlist loop around
+    /// check kinds step 1 implemented: the allowlist loop around
     /// `std.rt.path_normalize`/`glob_match`, which is the Kelp half.
+    /// `CapCheckHost`/`CapCheckHostPort`/`CapCheckPort` are step 2's three
+    /// `net` kinds, the same shape over `std.rt.host_glob`/`host_match`.
     CapDeny,
     ResolvePath,
     CapCheckPath,
     CapCheckName,
+    CapCheckHost,
+    CapCheckHostPort,
+    CapCheckPort,
 }
 
 impl Routine {
@@ -1114,6 +1151,22 @@ impl Routine {
             Routine::ResolvePath => "kelp_rt$resolve_path",
             Routine::CapCheckPath => "kelp_rt$cap_check_path",
             Routine::CapCheckName => "kelp_rt$cap_check_name",
+            Routine::CapCheckHost => "kelp_rt$cap_check_host",
+            Routine::CapCheckHostPort => "kelp_rt$cap_check_hostport",
+            Routine::CapCheckPort => "kelp_rt$cap_check_port",
+            Routine::NetConnectRaw => "kelp_rt$net_connect_raw",
+            Routine::NetListenRaw => "kelp_rt$net_listen_raw",
+            Routine::NetAcceptRaw => "kelp_rt$net_accept_raw",
+            Routine::NetCloseRaw => "kelp_rt$net_close_raw",
+            Routine::NetShutdownWriteRaw => "kelp_rt$net_shutdown_write_raw",
+            Routine::NetSendRaw => "kelp_rt$net_send_raw",
+            Routine::NetSendAllRaw => "kelp_rt$net_send_all_raw",
+            Routine::NetRecvRaw => "kelp_rt$net_recv_raw",
+            Routine::NetRecvIntoRaw => "kelp_rt$net_recv_into_raw",
+            Routine::NetSetTimeoutRaw => "kelp_rt$net_set_timeout_raw",
+            Routine::NetLocalPortRaw => "kelp_rt$net_local_port_raw",
+            Routine::NetPeerAddrRaw => "kelp_rt$net_peer_addr_raw",
+            Routine::NetResolveRaw => "kelp_rt$net_resolve_raw",
         }
     }
 }
@@ -1293,6 +1346,26 @@ fn extern_target(key: &str) -> Option<Extern> {
         "std.fs.list_raw" => Extern::Routine(Routine::FsListRaw),
         "std.fs.symlink_raw" => Extern::Routine(Routine::FsSymlinkRaw),
         "std.fs.read_link_raw" => Extern::Routine(Routine::FsReadLinkRaw),
+        // MK7 §5's S8 slice: the whole `std/net` socket family, transliterated
+        // from their `externs.rs` bodies. The three `getaddrinfo` bodies
+        // (`connect_raw`, `listen_raw`, `resolve_raw`) report a resolution
+        // failure through `kelp_panic_gai`; every other failure is the C
+        // body's `kelp_panic_errno`. The `EINTR` retries and the
+        // `EAGAIN`/`EWOULDBLOCK` timeout mapping are the C's, and `recv_raw`
+        // is the family's one owned `Bytes`.
+        "std.net.connect_raw" => Extern::Routine(Routine::NetConnectRaw),
+        "std.net.listen_raw" => Extern::Routine(Routine::NetListenRaw),
+        "std.net.accept_raw" => Extern::Routine(Routine::NetAcceptRaw),
+        "std.net.close_raw" => Extern::Routine(Routine::NetCloseRaw),
+        "std.net.shutdown_write_raw" => Extern::Routine(Routine::NetShutdownWriteRaw),
+        "std.net.send_raw" => Extern::Routine(Routine::NetSendRaw),
+        "std.net.send_all_raw" => Extern::Routine(Routine::NetSendAllRaw),
+        "std.net.recv_raw" => Extern::Routine(Routine::NetRecvRaw),
+        "std.net.recv_into_raw" => Extern::Routine(Routine::NetRecvIntoRaw),
+        "std.net.set_timeout_raw" => Extern::Routine(Routine::NetSetTimeoutRaw),
+        "std.net.local_port_raw" => Extern::Routine(Routine::NetLocalPortRaw),
+        "std.net.peer_addr_raw" => Extern::Routine(Routine::NetPeerAddrRaw),
+        "std.net.resolve_raw" => Extern::Routine(Routine::NetResolveRaw),
         _ => return None,
     })
 }
@@ -1334,9 +1407,6 @@ enum CapDecision {
     Plain,
     /// The domain, and the check kinds to emit before the call.
     Check(String, Vec<crate::stdlib::CapCheck>),
-    /// A gated call whose resource is one of `net`'s kinds, which step 1 does
-    /// not transliterate yet. A compile-time refusal, never an unchecked call.
-    Unsupported(String),
 }
 
 /// The capability decision for `callee`, at the level the unit tests can pin
@@ -1359,8 +1429,6 @@ fn cap_decision(
     callee: &str,
     arg_is_str: &[bool],
 ) -> CapDecision {
-    use crate::stdlib::CapCheck;
-
     let Some(domain) = gated.get(callee) else {
         return CapDecision::Plain;
     };
@@ -1370,14 +1438,6 @@ fn cap_decision(
     let checked = crate::stdlib::checked_args(domain, bare, arg_is_str);
     if checked.is_empty() {
         return CapDecision::Plain;
-    }
-    if checked.iter().any(|c| {
-        matches!(
-            c,
-            CapCheck::Host(_) | CapCheck::HostPort(_, _) | CapCheck::Port(_)
-        )
-    }) {
-        return CapDecision::Unsupported(domain.clone());
     }
     CapDecision::Check(domain.clone(), checked)
 }
@@ -3776,6 +3836,14 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Res
     if g.needs_panic_errno {
         g.emit_panic_errno_routine();
     }
+    // MK7 §5's S8 slice: the `getaddrinfo`-failure panic, the C runtime's
+    // `kelp_panic_gai`, for the two `net` bodies that call `getaddrinfo`
+    // (`NetConnectRaw`, `NetListenRaw`, `NetResolveRaw`). Emitted on the same
+    // terms as the other two: once per program, and only for one that can
+    // reach it.
+    if g.needs_panic_gai {
+        g.emit_panic_gai_routine();
+    }
     // MK7 §5: the passdowns' storage, in `.bss` — zeroed and assigned by the
     // sequence `Gen::function` puts at the top of `main`, exactly as the C
     // backend's uninitialized `static` globals are assigned by its generated
@@ -4760,6 +4828,12 @@ struct Gen<'a> {
     /// (`FsCwdRaw`'s `getcwd` failure, `kelp_panic_errno` in the C runtime),
     /// which decides whether `Gen::emit_panic_errno_routine` writes it.
     needs_panic_errno: bool,
+    /// MK7 §5's S8 slice: whether anything reaches `kelp_panic_gai`, the
+    /// `getaddrinfo`-failure panic (the C runtime's `kelp_panic_gai`), which
+    /// decides whether `Gen::emit_panic_gai_routine` writes it. A
+    /// `getaddrinfo` failure reports through its own return code rather than
+    /// `errno`, so it gets a second line from `gai_strerror` instead.
+    needs_panic_gai: bool,
     /// MK7 §5 (the passdown slice): every `pd`'s storage, in initialization
     /// order, indexed by `Dest::Global`. Built once from `program.pds`; the
     /// storage itself is emitted in `.bss` and assigned by the sequence
@@ -8769,6 +8843,28 @@ impl<'a> Gen<'a> {
             Routine::FsReadLinkRaw => {
                 self.require_routine(Routine::StringFromStr);
             }
+            // MK7 §5's S8 slice: `recv_raw` builds its return value with the
+            // `Bytes` allocator (the family's only allocation, the same one
+            // `IoReadRaw` uses), and `peer_addr_raw`/`resolve_raw` copy a stack
+            // buffer into an owned `String`.
+            Routine::NetRecvRaw => {
+                self.require_routine(Routine::BytesAllocRaw);
+            }
+            Routine::NetPeerAddrRaw | Routine::NetResolveRaw => {
+                self.require_routine(Routine::StringFromStr);
+            }
+            // MK7 §5 item 7 step 2: the three `net` checks. Each denies
+            // through `CapDeny`, and the `std/rt` host matcher they call is
+            // ordinary program code recorded the same way step 1's
+            // `glob_match` is.
+            Routine::CapCheckHost | Routine::CapCheckPort => {
+                self.require_routine(Routine::CapDeny);
+                self.rt_functions.insert(RT_HOST_GLOB.to_string());
+            }
+            Routine::CapCheckHostPort => {
+                self.require_routine(Routine::CapDeny);
+                self.rt_functions.insert(RT_HOST_MATCH.to_string());
+            }
             _ => {}
         }
         self.routines.insert(r);
@@ -11766,24 +11862,19 @@ impl<'a> Gen<'a> {
             let _ = writeln!(self.out, "{ok}:");
             return Ok(());
         }
-        // MK7 §5 item 7 step 1: the runtime allowlist check the C backend
-        // wraps this call in, decided before any argument is evaluated so the
-        // check can read the value the call will actually pass. An unchecked
-        // gated call would be worse than an unimplemented feature, because a
-        // grant that is never checked is a grant that is not there, so a check
-        // kind this slice cannot emit is a compile-time refusal, and a gated
-        // call with no named resource (`fs.cwd`, `time.*`) is emitted plain,
-        // the way the C backend emits it.
+        // MK7 §5 item 7: the runtime allowlist check the C backend wraps this
+        // call in, decided before any argument is evaluated so the check can
+        // read the value the call will actually pass. An unchecked gated call
+        // would be worse than an unimplemented feature, because a grant that is
+        // never checked is a grant that is not there, so a check kind this
+        // backend cannot emit is a compile-time refusal
+        // (`emit_cap_checks`), and a gated call with no named resource
+        // (`fs.cwd`, `time.*`) is emitted plain, the way the C backend emits
+        // it.
         let arg_is_str: Vec<bool> =
             args.iter().map(|a| crate::stdlib::is_str_like_ty(&a.ty)).collect();
         let cap_plan = match cap_decision(&self.gated, callee, &arg_is_str) {
             CapDecision::Plain => None,
-            CapDecision::Unsupported(domain) => {
-                return Err(unsupported(&format!(
-                    "the capability check that gates `{callee}` (domain `{domain}`) for a \
-                     host or port"
-                )));
-            }
             CapDecision::Check(domain, checks) => {
                 // `codegen_c.rs::cap_plan` emits no check at all when the
                 // calling module holds no grant entry for the domain, which
@@ -12468,7 +12559,7 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// MK7 §5 item 7 step 1: one gated call site's runtime allowlist checks,
+    /// MK7 §5 item 7: one gated call site's runtime allowlist checks,
     /// emitted after every argument is evaluated and before the first one is
     /// popped into a register.
     ///
@@ -12479,10 +12570,12 @@ impl<'a> Gen<'a> {
     /// wrapped in the ordinary alignment discipline, which saves `rsp` and
     /// restores it, so the pending argument pushes are untouched by the check.
     ///
-    /// A kind or an argument shape this step cannot emit is a refusal, not a
-    /// skipped check: `cap_decision` already refused the `net` kinds, and a
-    /// resource argument that is not exactly one eightbyte is a shape the
-    /// count in `slot_bytes` does not describe.
+    /// `HostPort` is the one kind whose check routine takes seven arguments,
+    /// so its location goes on the stack (the plan's per-variant layout) and
+    /// the outgoing area is carved below the aligned `rsp` rather than written
+    /// over the last pending push. An argument shape this cannot describe (a
+    /// resource that is not exactly one eightbyte) is a refusal, not a skipped
+    /// check.
     fn emit_cap_checks(
         &mut self,
         plan: &CapPlan,
@@ -12498,24 +12591,56 @@ impl<'a> Gen<'a> {
         let module = self.bytes_label(module_name.as_bytes());
         let at = self.bytes_label(plan.at.as_bytes());
         let table = cap_table_symbol(&self.module, &plan.domain);
-        for check in &plan.checks {
-            let (routine, index) = match check {
-                CapCheck::Path(i) => (Routine::CapCheckPath, *i),
-                CapCheck::Name(i) => (Routine::CapCheckName, *i),
-                other => {
-                    return Err(unsupported(&format!(
-                        "the capability check `{other:?}`"
-                    )))
-                }
-            };
+        // The offset of argument `index`'s slot below the top of the stack:
+        // every argument after it has been pushed on top of it. A resource
+        // argument is a `str` or a `u16`, both one eight-byte word.
+        let slot_off = |index: usize| -> Result<i32, String> {
             if slot_bytes.get(index).copied() != Some(8) {
                 return Err(unsupported(&format!(
                     "the capability check on argument {index}, which is not one register wide"
                 )));
             }
-            // The offset of this argument's slot below the top of the stack:
-            // every argument after it has been pushed on top of it.
-            let off: i32 = slot_bytes[index + 1..].iter().sum();
+            Ok(slot_bytes[index + 1..].iter().sum())
+        };
+        for check in &plan.checks {
+            if let CapCheck::HostPort(host, port) = check {
+                // `cap_glue.c`'s `_hostport`: host in `rsi`, port in `rdx`,
+                // allowlist in `rcx`, count in `r8`, module in `r9`, and the
+                // location as the seventh argument on the stack. The two
+                // resource slots are read while the pushes are still
+                // outstanding; `sub rsp, 16` after the alignment save keeps
+                // `rsp` sixteen-byte aligned at the call and puts the outgoing
+                // word below every pending push.
+                let host_off = slot_off(*host)?;
+                let port_off = slot_off(*port)?;
+                let _ = writeln!(self.out, "    mov rsi, QWORD PTR [rsp+{host_off}]");
+                let _ = writeln!(self.out, "    mov rdx, QWORD PTR [rsp+{port_off}]");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{domain}]");
+                let _ = writeln!(self.out, "    lea rcx, [rip+{table}]");
+                let _ = writeln!(self.out, "    mov r8d, {}", plan.patterns);
+                let _ = writeln!(self.out, "    lea r9, [rip+{module}]");
+                call_align_begin(&mut self.out, frame.sp_slot);
+                self.out.push_str("    sub rsp, 16\n");
+                let _ = writeln!(self.out, "    lea rax, [rip+{at}]");
+                self.out.push_str("    mov QWORD PTR [rsp], rax\n");
+                let _ = writeln!(self.out, "    call {}", Routine::CapCheckHostPort.label());
+                self.out.push_str("    add rsp, 16\n");
+                call_align_end(&mut self.out, frame.sp_slot);
+                self.require_routine(Routine::CapCheckHostPort);
+                continue;
+            }
+            // The four single-resource kinds share the one shape: the resource
+            // is the check routine's second argument (`rsi`), the allowlist and
+            // its count are `rdx`/`rcx`, and the module and location are
+            // `r8`/`r9`.
+            let (routine, index) = match check {
+                CapCheck::Path(i) => (Routine::CapCheckPath, *i),
+                CapCheck::Name(i) => (Routine::CapCheckName, *i),
+                CapCheck::Host(i) => (Routine::CapCheckHost, *i),
+                CapCheck::Port(i) => (Routine::CapCheckPort, *i),
+                CapCheck::HostPort(..) => unreachable!("handled above"),
+            };
+            let off = slot_off(index)?;
             let _ = writeln!(self.out, "    mov r11, QWORD PTR [rsp+{off}]");
             let _ = writeln!(self.out, "    lea rdi, [rip+{domain}]");
             self.out.push_str("    mov rsi, r11\n");
@@ -12659,6 +12784,17 @@ impl<'a> Gen<'a> {
     fn call_panic_errno(&mut self) {
         self.needs_panic_errno = true;
         self.out.push_str("    call kelp_panic_errno\n");
+    }
+
+    /// A call to the hand-written `kelp_panic_gai` routine, the C runtime's
+    /// `getaddrinfo`-failure panic: the same `panic: <msg>` line, then
+    /// `  getaddrinfo: <gai_strerror>`. `rdi` carries the message and `esi` the
+    /// `getaddrinfo` return code, and the routine never returns. A DNS failure
+    /// reports through that code rather than `errno`, so it must not be sent
+    /// through `kelp_panic_errno`.
+    fn call_panic_gai(&mut self) {
+        self.needs_panic_gai = true;
+        self.out.push_str("    call kelp_panic_gai\n");
     }
 
     /// The asm side of `kelp_io_flush_stdio` (`codegen_c.rs:89-95`): flush the
@@ -13993,6 +14129,288 @@ impl<'a> Gen<'a> {
                 let _ = writeln!(self.out, "    lea rdi, [rip+{long_msg}]");
                 self.call_panic();
             }
+            // ---- MK7 §5's S8 slice: the `std/net` socket family ------------
+            //
+            // Every body below is `externs.rs`'s, transliterated. The
+            // `getaddrinfo` walks need the `struct addrinfo` fields the C
+            // names: `ai_flags` at 0, `ai_family` at 4, `ai_socktype` at 8,
+            // `ai_protocol` at 12, `ai_addrlen` at 16, `ai_addr` at 24 and
+            // `ai_next` at 40, over a 48-byte struct; `hints` is zeroed on the
+            // frame and `freeaddrinfo` runs on every path out. The constants
+            // are the C's: `AF_INET` 2, `AF_INET6` 10, `SOCK_STREAM` 1,
+            // `AI_PASSIVE` 1, `SOL_SOCKET` 1, `SO_REUSEADDR` 2, `SO_RCVTIMEO`
+            // 20, `SO_SNDTIMEO` 21, `SHUT_WR` 1, `MSG_NOSIGNAL` 0x4000,
+            // `EINTR` 4 and `EAGAIN`/`EWOULDBLOCK` 11. `sockaddr_in`'s port is
+            // at offset 2 and its address at 4; `sockaddr_in6`'s address is at
+            // 8; `sockaddr_storage` is 128 bytes and its family is at 0.
+            //
+            // `connect_raw`: `getaddrinfo` fills `list`, then the loop tries
+            // `socket`/`connect` over it, keeping the last `errno` (`r15`) so
+            // the panic after `freeaddrinfo` reports the *connect* failure
+            // rather than whatever `freeaddrinfo` left behind.
+            Routine::NetConnectRaw => {
+                let pct_u = self.bytes_label(b"%u");
+                let gai_msg = self.bytes_label(b"net.connect: cannot resolve host");
+                let fail_msg = self.bytes_label(b"net.connect: connection failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n    sub rsp, 72\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r12d, esi\n");
+                self.out.push_str("    xor eax, eax\n    mov QWORD PTR [rsp], rax\n    mov QWORD PTR [rsp+8], rax\n    mov QWORD PTR [rsp+16], rax\n");
+                self.out.push_str("    mov QWORD PTR [rsp+24], rax\n    mov QWORD PTR [rsp+32], rax\n    mov QWORD PTR [rsp+40], rax\n");
+                self.out.push_str("    mov DWORD PTR [rsp+8], 1\n    lea rdi, [rsp+48]\n    mov esi, 8\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_u}]\n    mov ecx, r12d\n    xor eax, eax\n    call snprintf@PLT");
+                self.out.push_str("    mov QWORD PTR [rsp+56], 0\n    mov rdi, rbx\n    lea rsi, [rsp+48]\n    mov rdx, rsp\n    lea rcx, [rsp+56]\n");
+                self.out.push_str("    call getaddrinfo@PLT\n    test eax, eax\n    jne .Lnet_connect_gai\n");
+                self.out.push_str("    mov r14, -1\n    xor r15d, r15d\n    mov r13, QWORD PTR [rsp+56]\n");
+                self.out.push_str(".Lnet_connect_loop:\n    test r13, r13\n    je .Lnet_connect_free\n");
+                self.out.push_str("    mov edi, DWORD PTR [r13+4]\n    mov esi, DWORD PTR [r13+8]\n    mov edx, DWORD PTR [r13+12]\n    call socket@PLT\n");
+                self.out.push_str("    mov r14d, eax\n    test eax, eax\n    jns .Lnet_connect_have\n");
+                self.out.push_str("    call __errno_location@PLT\n    mov r15d, DWORD PTR [rax]\n    mov r13, QWORD PTR [r13+40]\n    jmp .Lnet_connect_loop\n");
+                self.out.push_str(".Lnet_connect_have:\n    mov edi, r14d\n    mov rsi, QWORD PTR [r13+24]\n    mov edx, DWORD PTR [r13+16]\n    call connect@PLT\n");
+                self.out.push_str("    test eax, eax\n    je .Lnet_connect_free\n");
+                self.out.push_str("    call __errno_location@PLT\n    mov r15d, DWORD PTR [rax]\n    mov edi, r14d\n    call close@PLT\n");
+                self.out.push_str("    mov r14, -1\n    mov r13, QWORD PTR [r13+40]\n    jmp .Lnet_connect_loop\n");
+                self.out.push_str(".Lnet_connect_free:\n    mov rdi, QWORD PTR [rsp+56]\n    call freeaddrinfo@PLT\n    test r14, r14\n    js .Lnet_connect_fail\n");
+                self.out.push_str("    mov eax, r14d\n    add rsp, 72\n    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnet_connect_gai:\n    mov esi, eax\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{gai_msg}]");
+                self.call_panic_gai();
+                self.out.push_str(".Lnet_connect_fail:\n    call __errno_location@PLT\n    mov DWORD PTR [rax], r15d\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{fail_msg}]");
+                self.call_panic_errno();
+            }
+            // `listen_raw`: the same walk with `AF_INET`/`AI_PASSIVE` and
+            // `NULL` for the node, plus `setsockopt(SO_REUSEADDR)` before the
+            // `bind` and the `listen(fd, 128)` after it.
+            Routine::NetListenRaw => {
+                let pct_u = self.bytes_label(b"%u");
+                let gai_msg = self.bytes_label(b"net.listen: cannot resolve the bind address");
+                let fail_msg = self.bytes_label(b"net.listen: cannot bind");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push r12\n    push r13\n    push r14\n    push r15\n    sub rsp, 80\n");
+                self.out.push_str("    mov r12d, edi\n");
+                self.out.push_str("    xor eax, eax\n    mov QWORD PTR [rsp], rax\n    mov QWORD PTR [rsp+8], rax\n    mov QWORD PTR [rsp+16], rax\n");
+                self.out.push_str("    mov QWORD PTR [rsp+24], rax\n    mov QWORD PTR [rsp+32], rax\n    mov QWORD PTR [rsp+40], rax\n");
+                self.out.push_str("    mov DWORD PTR [rsp], 1\n    mov DWORD PTR [rsp+4], 2\n    mov DWORD PTR [rsp+8], 1\n    lea rdi, [rsp+48]\n    mov esi, 8\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_u}]\n    mov ecx, r12d\n    xor eax, eax\n    call snprintf@PLT");
+                self.out.push_str("    mov QWORD PTR [rsp+56], 0\n    xor edi, edi\n    lea rsi, [rsp+48]\n    mov rdx, rsp\n    lea rcx, [rsp+56]\n");
+                self.out.push_str("    call getaddrinfo@PLT\n    test eax, eax\n    jne .Lnet_listen_gai\n");
+                self.out.push_str("    mov r14, -1\n    xor r15d, r15d\n    mov r13, QWORD PTR [rsp+56]\n");
+                self.out.push_str(".Lnet_listen_loop:\n    test r13, r13\n    je .Lnet_listen_free\n");
+                self.out.push_str("    mov edi, DWORD PTR [r13+4]\n    mov esi, DWORD PTR [r13+8]\n    mov edx, DWORD PTR [r13+12]\n    call socket@PLT\n");
+                self.out.push_str("    mov r14d, eax\n    test eax, eax\n    jns .Lnet_listen_have\n");
+                self.out.push_str("    call __errno_location@PLT\n    mov r15d, DWORD PTR [rax]\n    mov r13, QWORD PTR [r13+40]\n    jmp .Lnet_listen_loop\n");
+                self.out.push_str(".Lnet_listen_have:\n    mov DWORD PTR [rsp+64], 1\n    mov edi, r14d\n    mov esi, 1\n    mov edx, 2\n    lea rcx, [rsp+64]\n    mov r8d, 4\n    call setsockopt@PLT\n");
+                self.out.push_str("    mov edi, r14d\n    mov rsi, QWORD PTR [r13+24]\n    mov edx, DWORD PTR [r13+16]\n    call bind@PLT\n    test eax, eax\n    jne .Lnet_listen_this\n");
+                self.out.push_str("    mov edi, r14d\n    mov esi, 128\n    call listen@PLT\n    test eax, eax\n    je .Lnet_listen_free\n");
+                self.out.push_str(".Lnet_listen_this:\n    call __errno_location@PLT\n    mov r15d, DWORD PTR [rax]\n    mov edi, r14d\n    call close@PLT\n");
+                self.out.push_str("    mov r14, -1\n    mov r13, QWORD PTR [r13+40]\n    jmp .Lnet_listen_loop\n");
+                self.out.push_str(".Lnet_listen_free:\n    mov rdi, QWORD PTR [rsp+56]\n    call freeaddrinfo@PLT\n    test r14, r14\n    js .Lnet_listen_fail\n");
+                self.out.push_str("    mov eax, r14d\n    add rsp, 80\n    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnet_listen_gai:\n    mov esi, eax\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{gai_msg}]");
+                self.call_panic_gai();
+                self.out.push_str(".Lnet_listen_fail:\n    call __errno_location@PLT\n    mov DWORD PTR [rax], r15d\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{fail_msg}]");
+                self.call_panic_errno();
+            }
+            // `accept_raw`: the C body's `do { accept } while (EINTR)` loop,
+            // with the descriptor kept in a frame slot so the body needs no
+            // callee-saved register across the `accept`.
+            Routine::NetAcceptRaw => {
+                let msg = self.bytes_label(b"net.accept: accept failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 16\n    mov DWORD PTR [rsp], edi\n");
+                self.out.push_str(".Lnet_accept_loop:\n    mov edi, DWORD PTR [rsp]\n    xor esi, esi\n    xor edx, edx\n    call accept@PLT\n");
+                self.out.push_str("    test eax, eax\n    jns .Lnet_accept_done\n");
+                self.out.push_str("    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lnet_accept_loop\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lnet_accept_done:\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+            }
+            // `if (close(fd) != 0) panic_errno(...)`, the descriptor already in
+            // `edi`.
+            Routine::NetCloseRaw => {
+                let msg = self.bytes_label(b"net.close: close failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    call close@PLT\n    test eax, eax\n    jne .Lnet_close_fail\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n.Lnet_close_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `shutdown(fd, SHUT_WR)`; `SHUT_WR` is 1.
+            Routine::NetShutdownWriteRaw => {
+                let msg = self.bytes_label(b"net.shutdown_write: shutdown failed");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    mov esi, 1\n    call shutdown@PLT\n    test eax, eax\n    jne .Lnet_shutdown_fail\n");
+                self.out.push_str("    mov rsp, rbp\n    pop rbp\n    ret\n.Lnet_shutdown_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `send_raw`: one `send` in the C body's `do { } while (EINTR)`
+            // loop, with `MSG_NOSIGNAL` so a closed peer is a panic rather than
+            // a `SIGPIPE`. The `Bytes` argument arrives as a borrow in `rsi`
+            // (`infer.rs` spells a by-value owned aggregate `const T*`), so its
+            // fields are read through `r12`.
+            Routine::NetSendRaw => {
+                let msg = self.bytes_label(b"net.send: send failed (the peer may have closed)");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    mov ebx, edi\n    mov r12, rsi\n");
+                self.out.push_str(".Lnet_send_loop:\n    mov edi, ebx\n    mov rsi, QWORD PTR [r12]\n    mov rdx, QWORD PTR [r12+8]\n    mov ecx, 0x4000\n    call send@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lnet_send_done\n");
+                self.out.push_str("    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lnet_send_loop\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lnet_send_done:\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `send_all_raw`: the C body's short-write loop. `r13` is the
+            // offset, and a `send` that returns 0 simply loops.
+            Routine::NetSendAllRaw => {
+                let msg = self.bytes_label(b"net.send: send failed (the peer may have closed)");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n    mov ebx, edi\n    mov r12, rsi\n    xor r13d, r13d\n");
+                self.out.push_str(".Lnet_sendall_loop:\n    mov rax, QWORD PTR [r12+8]\n    cmp r13, rax\n    jae .Lnet_sendall_done\n");
+                self.out.push_str("    mov edi, ebx\n    mov rsi, QWORD PTR [r12]\n    add rsi, r13\n    mov rdx, rax\n    sub rdx, r13\n    mov ecx, 0x4000\n    call send@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lnet_sendall_adv\n");
+                self.out.push_str("    call __errno_location@PLT\n    cmp DWORD PTR [rax], 4\n    je .Lnet_sendall_loop\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lnet_sendall_adv:\n    add r13, rax\n    jmp .Lnet_sendall_loop\n");
+                self.out.push_str(".Lnet_sendall_done:\n    mov rax, r13\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `recv_raw`: the family's one owned `Bytes`, allocated before the
+            // read is known to succeed (`BytesAllocRaw` writes the 24 bytes
+            // into the caller's destination, which is `rdi`). The C body's
+            // timeout rule is the second half: `EAGAIN`/`EWOULDBLOCK` is the
+            // `net.recv: timed out` panic, everything else is `errno`.
+            Routine::NetRecvRaw => {
+                let recv_msg = self.bytes_label(b"net.recv: receive failed");
+                let timeout_msg = self.bytes_label(b"net.recv: timed out");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 8\n    mov rbx, rdi\n    mov r12d, esi\n    mov r13, rdx\n");
+                self.out.push_str("    mov rdi, rbx\n    mov rsi, r13\n");
+                let _ = writeln!(self.out, "    call {}", Routine::BytesAllocRaw.label());
+                self.out.push_str(".Lnet_recv_loop:\n    mov edi, r12d\n    mov rsi, QWORD PTR [rbx]\n    mov rdx, r13\n    xor ecx, ecx\n    call recv@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lnet_recv_ok\n");
+                self.out.push_str("    call __errno_location@PLT\n    mov ecx, DWORD PTR [rax]\n    cmp ecx, 4\n    je .Lnet_recv_loop\n    cmp ecx, 11\n    je .Lnet_recv_timeout\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{recv_msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lnet_recv_timeout:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{timeout_msg}]");
+                self.call_panic();
+                self.out.push_str(".Lnet_recv_ok:\n    mov QWORD PTR [rbx+8], rax\n    mov rcx, QWORD PTR [rbx]\n    mov BYTE PTR [rcx+rax], 0\n");
+                self.out.push_str("    mov rax, rbx\n    add rsp, 8\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `recv_into_raw`: no allocation at all. `room == 0` returns 0
+            // before any syscall, so errno is never read on that path, and the
+            // buffer's length is deliberately left alone (it is the capacity).
+            Routine::NetRecvIntoRaw => {
+                let recv_msg = self.bytes_label(b"net.recv_into: receive failed");
+                let timeout_msg = self.bytes_label(b"net.recv_into: timed out");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n    mov ebx, edi\n    mov r12, rsi\n    mov r13, rdx\n");
+                self.out.push_str("    mov rax, QWORD PTR [r12+8]\n    xor ecx, ecx\n    cmp r13, rax\n    jae .Lnet_into_room0\n    mov rcx, rax\n    sub rcx, r13\n.Lnet_into_room0:\n    mov r14, rcx\n    test rcx, rcx\n    je .Lnet_into_zero\n");
+                self.out.push_str(".Lnet_into_loop:\n    mov edi, ebx\n    mov rsi, QWORD PTR [r12]\n    add rsi, r13\n    mov rdx, r14\n    xor ecx, ecx\n    call recv@PLT\n");
+                self.out.push_str("    test rax, rax\n    jns .Lnet_into_ok\n");
+                self.out.push_str("    call __errno_location@PLT\n    mov ecx, DWORD PTR [rax]\n    cmp ecx, 4\n    je .Lnet_into_loop\n    cmp ecx, 11\n    je .Lnet_into_timeout\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{recv_msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lnet_into_timeout:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{timeout_msg}]");
+                self.call_panic();
+                self.out.push_str(".Lnet_into_ok:\n    mov rcx, QWORD PTR [r12]\n    add rcx, r13\n    mov BYTE PTR [rcx+rax], 0\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnet_into_zero:\n    xor eax, eax\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `set_timeout_raw`: one `timeval` and two `setsockopt`s. The
+            // fields are `ms / 1000` and `(ms % 1000) * 1000`, so one unsigned
+            // divide gives both; the C's `time_t`/`suseconds_t` are both 64-bit
+            // here, so the quotient and the product go into their slots whole.
+            Routine::NetSetTimeoutRaw => {
+                let rcv_msg = self.bytes_label(b"net.set_timeout: cannot set the receive timeout");
+                let snd_msg = self.bytes_label(b"net.set_timeout: cannot set the send timeout");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    sub rsp, 24\n    mov ebx, edi\n");
+                self.out.push_str("    mov rax, rsi\n    xor edx, edx\n    mov ecx, 1000\n    div rcx\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rax\n    imul rdx, rdx, 1000\n    mov QWORD PTR [rsp+8], rdx\n");
+                self.out.push_str("    mov edi, ebx\n    mov esi, 1\n    mov edx, 20\n    mov rcx, rsp\n    mov r8d, 16\n    call setsockopt@PLT\n    test eax, eax\n    jne .Lnet_timeout_rcv\n");
+                self.out.push_str("    mov edi, ebx\n    mov esi, 1\n    mov edx, 21\n    mov rcx, rsp\n    mov r8d, 16\n    call setsockopt@PLT\n    test eax, eax\n    jne .Lnet_timeout_snd\n");
+                self.out.push_str("    add rsp, 24\n    pop rbx\n    pop rbp\n    ret\n.Lnet_timeout_rcv:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{rcv_msg}]");
+                self.call_panic_errno();
+                self.out.push_str(".Lnet_timeout_snd:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{snd_msg}]");
+                self.call_panic_errno();
+            }
+            // `local_port_raw`: `getsockname` into a `sockaddr_storage` (128
+            // bytes), then `ntohs` of `sin_port` (offset 2) for `AF_INET` or of
+            // `sin6_port` (also offset 2) for `AF_INET6`.
+            Routine::NetLocalPortRaw => {
+                let msg = self.bytes_label(b"net.port: getsockname failed");
+                let unknown = self.bytes_label(b"net.port: unknown address family");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    sub rsp, 144\n    mov DWORD PTR [rsp+128], 128\n    mov rsi, rsp\n    lea rdx, [rsp+128]\n    call getsockname@PLT\n    test eax, eax\n    jne .Lnet_port_fail\n");
+                self.out.push_str("    movzx eax, WORD PTR [rsp]\n    cmp eax, 2\n    je .Lnet_port_read\n    cmp eax, 10\n    je .Lnet_port_read\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{unknown}]");
+                self.call_panic();
+                self.out.push_str(".Lnet_port_read:\n    movzx edi, WORD PTR [rsp+2]\n    call ntohs@PLT\n    movzx eax, ax\n    mov rsp, rbp\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnet_port_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `peer_addr_raw`: `getpeername`, then `inet_ntop` into one stack
+            // buffer and `snprintf` of `host:port` or `[host]:port` into
+            // another, and the owned `String` by copy. Both buffers are zeroed
+            // first: the C leaves `host` uninitialised when `inet_ntop` fails,
+            // and `snprintf` would then read those bytes.
+            Routine::NetPeerAddrRaw => {
+                let msg = self.bytes_label(b"net.peer_addr: getpeername failed");
+                let unknown = self.bytes_label(b"net.peer_addr: unknown address family");
+                let fmt4 = self.bytes_label(b"%s:%u");
+                let fmt6 = self.bytes_label(b"[%s]:%u");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    sub rsp, 272\n    mov rbx, rdi\n    mov r12d, esi\n");
+                self.out.push_str("    xor eax, eax\n    lea rdi, [rsp+128]\n    mov ecx, 16\n    rep stosq\n");
+                self.out.push_str("    mov DWORD PTR [rsp+256], 128\n    mov edi, r12d\n    mov rsi, rsp\n    lea rdx, [rsp+256]\n    call getpeername@PLT\n    test eax, eax\n    jne .Lnet_peer_fail\n");
+                self.out.push_str("    movzx eax, WORD PTR [rsp]\n    cmp eax, 2\n    je .Lnet_peer_inet\n    cmp eax, 10\n    je .Lnet_peer_inet6\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{unknown}]");
+                self.call_panic();
+                self.out.push_str(".Lnet_peer_inet:\n    mov edi, 2\n    lea rsi, [rsp+4]\n    lea rdx, [rsp+128]\n    mov ecx, 46\n    call inet_ntop@PLT\n");
+                self.out.push_str("    movzx edi, WORD PTR [rsp+2]\n    call ntohs@PLT\n    movzx r8d, ax\n    lea rdi, [rsp+192]\n    mov esi, 62\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{fmt4}]", );
+                self.out.push_str("    lea rcx, [rsp+128]\n    xor eax, eax\n    call snprintf@PLT\n    jmp .Lnet_peer_build\n");
+                self.out.push_str(".Lnet_peer_inet6:\n    mov edi, 10\n    lea rsi, [rsp+8]\n    lea rdx, [rsp+128]\n    mov ecx, 46\n    call inet_ntop@PLT\n");
+                self.out.push_str("    movzx edi, WORD PTR [rsp+2]\n    call ntohs@PLT\n    movzx r8d, ax\n    lea rdi, [rsp+192]\n    mov esi, 62\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{fmt6}]");
+                self.out.push_str("    lea rcx, [rsp+128]\n    xor eax, eax\n    call snprintf@PLT\n");
+                self.out.push_str(".Lnet_peer_build:\n    mov rdi, rbx\n    lea rsi, [rsp+192]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+                self.out.push_str("    mov rax, rbx\n    add rsp, 272\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnet_peer_fail:\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{msg}]");
+                self.call_panic_errno();
+            }
+            // `resolve_raw`: `getaddrinfo` with no service, then the C body's
+            // 4096-byte output buffer and its 16-entry dedup table, an
+            // `inet_ntop` per address, `freeaddrinfo`, and the owned `String`
+            // by copy. DNS itself is `getaddrinfo`'s, exactly as `externs.rs`
+            // spells it: this body decides only the formatting.
+            Routine::NetResolveRaw => {
+                let pct_s = self.bytes_label(b"%s");
+                let gai_msg = self.bytes_label(b"net.resolve: cannot resolve host");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n    sub rsp, 4968\n");
+                self.out.push_str("    mov rbx, rdi\n    mov r15, rsi\n");
+                self.out.push_str("    xor eax, eax\n    mov QWORD PTR [rsp], rax\n    mov QWORD PTR [rsp+8], rax\n    mov QWORD PTR [rsp+16], rax\n");
+                self.out.push_str("    mov QWORD PTR [rsp+24], rax\n    mov QWORD PTR [rsp+32], rax\n    mov QWORD PTR [rsp+40], rax\n");
+                self.out.push_str("    mov DWORD PTR [rsp+8], 1\n    mov QWORD PTR [rsp+48], 0\n");
+                self.out.push_str("    mov rdi, r15\n    xor esi, esi\n    mov rdx, rsp\n    lea rcx, [rsp+48]\n    call getaddrinfo@PLT\n    test eax, eax\n    jne .Lnet_resolve_gai\n");
+                self.out.push_str("    mov BYTE PTR [rsp+56], 0\n    xor r14d, r14d\n    xor r13d, r13d\n    mov r12, QWORD PTR [rsp+48]\n");
+                self.out.push_str(".Lnr_loop:\n    test r12, r12\n    je .Lnr_done\n");
+                self.out.push_str("    mov eax, DWORD PTR [r12+4]\n    cmp eax, 2\n    je .Lnr_v4\n    cmp eax, 10\n    je .Lnr_v6\n    jmp .Lnr_next\n");
+                self.out.push_str(".Lnr_v4:\n    mov rsi, QWORD PTR [r12+24]\n    add rsi, 4\n    jmp .Lnr_src\n");
+                self.out.push_str(".Lnr_v6:\n    mov rsi, QWORD PTR [r12+24]\n    add rsi, 8\n.Lnr_src:\n    mov edi, DWORD PTR [r12+4]\n    lea rdx, [rsp+4888]\n    mov ecx, 46\n    call inet_ntop@PLT\n    test rax, rax\n    je .Lnr_next\n");
+                self.out.push_str("    xor r15d, r15d\n.Lnr_dup:\n    cmp r15, r13\n    jae .Lnr_notdup\n    mov rax, r15\n    imul rax, rax, 46\n    lea rdi, [rsp+4152]\n    add rdi, rax\n    lea rsi, [rsp+4888]\n    call strcmp@PLT\n    test eax, eax\n    je .Lnr_next\n    add r15, 1\n    jmp .Lnr_dup\n");
+                self.out.push_str(".Lnr_notdup:\n    cmp r13, 16\n    jae .Lnr_after_seen\n    mov rax, r13\n    imul rax, rax, 46\n    lea rdi, [rsp+4152]\n    add rdi, rax\n    mov esi, 46\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_s}]");
+                self.out.push_str("    lea rcx, [rsp+4888]\n    xor eax, eax\n    call snprintf@PLT\n    add r13, 1\n");
+                self.out.push_str(".Lnr_after_seen:\n    lea rdi, [rsp+4888]\n    call strlen@PLT\n    mov r15, rax\n");
+                self.out.push_str("    mov rax, r14\n    add rax, r15\n    add rax, 1\n    cmp rax, 4096\n    jae .Lnr_done\n");
+                self.out.push_str("    test r14, r14\n    je .Lnr_plain\n    lea rcx, [rsp+56]\n    add rcx, r14\n    mov BYTE PTR [rcx], 10\n    add r14, 1\n.Lnr_plain:\n    lea rdi, [rsp+56]\n    add rdi, r14\n    lea rsi, [rsp+4888]\n    mov rdx, r15\n    call memcpy@PLT\n    add r14, r15\n    lea rcx, [rsp+56]\n    add rcx, r14\n    mov BYTE PTR [rcx], 0\n");
+                self.out.push_str(".Lnr_next:\n    mov r12, QWORD PTR [r12+40]\n    jmp .Lnr_loop\n");
+                self.out.push_str(".Lnr_done:\n    mov rdi, QWORD PTR [rsp+48]\n    call freeaddrinfo@PLT\n    mov rdi, rbx\n    lea rsi, [rsp+56]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::StringFromStr.label());
+                self.out.push_str("    mov rax, rbx\n    add rsp, 4968\n    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+                self.out.push_str(".Lnet_resolve_gai:\n    mov esi, eax\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{gai_msg}]");
+                self.call_panic_gai();
+            }
             // ---- MK7 §5 item 7, step 1: the capability check --------------
             //
             // `cap_glue.c`'s `kelp_cap_deny`, transliterated. One routine, so
@@ -14128,6 +14546,85 @@ impl<'a> Gen<'a> {
                 let _ = writeln!(self.out, "    call {}", Routine::CapDeny.label());
                 self.out.push_str(".Lcap_name_done:\n    add rsp, 40\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
             }
+            // ---- MK7 §5 item 7, step 2: the three `net` checks ------------
+            //
+            // `cap_glue.c`'s `kelp_cap_check_host`, transliterated: `"*"`
+            // admits outright, then `host_glob(pat, host)`, then the same with
+            // the pattern's own host part cut at its last `:` (a `PATH_MAX`
+            // buffer and the C's `sizeof head - 1` clamp). The denial names the
+            // host as written. `rbx`/`r12`/`r13` are the pattern array, the count
+            // and the index across the Kelp matcher's calls, and the host lives
+            // in the frame because the head buffer needs `r14` while it is cut.
+            Routine::CapCheckHost => {
+                let star = self.bytes_label(b"*");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n    sub rsp, 4144\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rdi\n    mov QWORD PTR [rsp+8], r8\n    mov QWORD PTR [rsp+16], r9\n    mov QWORD PTR [rsp+24], rsi\n");
+                self.out.push_str("    mov rbx, rdx\n    mov r12, rcx\n    xor r13d, r13d\n");
+                self.out.push_str(".Lcap_host_loop:\n    cmp r13, r12\n    jae .Lcap_host_deny\n    mov r14, QWORD PTR [rbx+r13*8]\n");
+                let _ = writeln!(self.out, "    lea rdi, [rip+{star}]\n    mov rsi, r14");
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lcap_host_done\n");
+                self.out.push_str("    mov rdi, r14\n    mov rsi, QWORD PTR [rsp+24]\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_HOST_GLOB));
+                self.out.push_str("    test al, al\n    jne .Lcap_host_done\n");
+                self.out.push_str("    mov rdi, r14\n    mov esi, 58\n    call strrchr@PLT\n    test rax, rax\n    je .Lcap_host_next\n");
+                self.out.push_str("    mov rcx, rax\n    sub rcx, r14\n    cmp rcx, 4096\n    jb .Lcap_host_cut\n    mov ecx, 4095\n.Lcap_host_cut:\n");
+                self.out.push_str("    lea rdi, [rsp+32]\n    mov rsi, r14\n    mov rdx, rcx\n    mov r14, rcx\n    call memcpy@PLT\n");
+                self.out.push_str("    lea rax, [rsp+32]\n    mov BYTE PTR [rax+r14], 0\n    lea rdi, [rsp+32]\n    mov rsi, QWORD PTR [rsp+24]\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_HOST_GLOB));
+                self.out.push_str("    test al, al\n    jne .Lcap_host_done\n");
+                self.out.push_str(".Lcap_host_next:\n    add r13, 1\n    jmp .Lcap_host_loop\n");
+                self.out.push_str(".Lcap_host_deny:\n    mov rdi, QWORD PTR [rsp]\n    mov rsi, QWORD PTR [rsp+24]\n    mov rdx, rbx\n    mov rcx, r12\n    mov r8, QWORD PTR [rsp+8]\n    mov r9, QWORD PTR [rsp+16]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::CapDeny.label());
+                self.out.push_str(".Lcap_host_done:\n    add rsp, 4144\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `cap_glue.c`'s `kelp_cap_check_hostport`, transliterated:
+            // `snprintf` of `"%s:%u"` then a `host_match` per pattern. Its
+            // seventh argument (`at`) arrives on the stack at `[rbp+16]`, and
+            // the port is masked to its own width before `%u` reads it.
+            Routine::CapCheckHostPort => {
+                let fmt = self.bytes_label(b"%s:%u");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    push r14\n    sub rsp, 4144\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rdi\n    mov QWORD PTR [rsp+8], r9\n    mov rax, QWORD PTR [rbp+16]\n    mov QWORD PTR [rsp+16], rax\n");
+                self.out.push_str("    mov QWORD PTR [rsp+24], rsi\n    mov rbx, rcx\n    mov r12, r8\n    mov r13, rdx\n");
+                self.out.push_str("    lea rdi, [rsp+32]\n    mov esi, 4096\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{fmt}]");
+                self.out.push_str("    mov rcx, QWORD PTR [rsp+24]\n    movzx r8d, r13w\n    xor eax, eax\n    call snprintf@PLT\n");
+                self.out.push_str("    xor r14d, r14d\n.Lcap_hostport_loop:\n    cmp r14, r12\n    jae .Lcap_hostport_deny\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbx+r14*8]\n    lea rsi, [rsp+32]\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_HOST_MATCH));
+                self.out.push_str("    test al, al\n    jne .Lcap_hostport_done\n    add r14, 1\n    jmp .Lcap_hostport_loop\n");
+                self.out.push_str(".Lcap_hostport_deny:\n    mov rdi, QWORD PTR [rsp]\n    lea rsi, [rsp+32]\n    mov rdx, rbx\n    mov rcx, r12\n    mov r8, QWORD PTR [rsp+8]\n    mov r9, QWORD PTR [rsp+16]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::CapDeny.label());
+                self.out.push_str(".Lcap_hostport_done:\n    add rsp, 4144\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
+            // `cap_glue.c`'s `kelp_cap_check_port`, transliterated: the port
+            // rendered as `"*:port"` for the denial, then `"*"` admits
+            // outright, a pattern with no `:` constrains no port, and
+            // otherwise the part after the last `:` is matched against the
+            // port's text. The port is masked to its own width, as the C's
+            // `uint16_t` argument is.
+            Routine::CapCheckPort => {
+                let star = self.bytes_label(b"*");
+                let pct_u = self.bytes_label(b"%u");
+                let star_pct = self.bytes_label(b"*:%s");
+                self.out.push_str("    push rbp\n    mov rbp, rsp\n    push rbx\n    push r12\n    push r13\n    sub rsp, 88\n");
+                self.out.push_str("    mov QWORD PTR [rsp], rdi\n    mov QWORD PTR [rsp+8], r8\n    mov QWORD PTR [rsp+16], r9\n    mov rbx, rdx\n    mov r12, rcx\n");
+                self.out.push_str("    movzx r13d, si\n    lea rdi, [rsp+24]\n    mov esi, 16\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{pct_u}]\n    mov ecx, r13d\n    xor eax, eax\n    call snprintf@PLT");
+                self.out.push_str("    lea rdi, [rsp+40]\n    mov esi, 32\n");
+                let _ = writeln!(self.out, "    lea rdx, [rip+{star_pct}]\n    lea rcx, [rsp+24]\n    xor eax, eax\n    call snprintf@PLT");
+                self.out.push_str("    xor r13d, r13d\n.Lcap_port_loop:\n    cmp r13, r12\n    jae .Lcap_port_deny\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbx+r13*8]\n");
+                let _ = writeln!(self.out, "    lea rsi, [rip+{star}]", );
+                self.out.push_str("    call strcmp@PLT\n    test eax, eax\n    je .Lcap_port_done\n");
+                self.out.push_str("    mov rdi, QWORD PTR [rbx+r13*8]\n    mov esi, 58\n    call strrchr@PLT\n    test rax, rax\n    je .Lcap_port_done\n");
+                self.out.push_str("    lea rdi, [rax+1]\n    lea rsi, [rsp+24]\n");
+                let _ = writeln!(self.out, "    call {}", Gen::symbol(RT_HOST_GLOB));
+                self.out.push_str("    test al, al\n    jne .Lcap_port_done\n    add r13, 1\n    jmp .Lcap_port_loop\n");
+                self.out.push_str(".Lcap_port_deny:\n    mov rdi, QWORD PTR [rsp]\n    lea rsi, [rsp+40]\n    mov rdx, rbx\n    mov rcx, r12\n    mov r8, QWORD PTR [rsp+8]\n    mov r9, QWORD PTR [rsp+16]\n");
+                let _ = writeln!(self.out, "    call {}", Routine::CapDeny.label());
+                self.out.push_str(".Lcap_port_done:\n    add rsp, 88\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n    ret\n");
+            }
         }
         let _ = writeln!(self.out, "    .size {label}, .-{label}");
     }
@@ -14182,6 +14679,33 @@ impl<'a> Gen<'a> {
         self.out.push_str("    xor eax, eax\n    call fprintf@PLT\n");
         self.out.push_str("    mov edi, 1\n    call exit@PLT\n");
         self.out.push_str("    .size kelp_panic_errno, .-kelp_panic_errno\n");
+    }
+
+    /// MK7 §5's S8 slice: `kelp_panic_gai`, the `getaddrinfo`-failure panic.
+    /// The C runtime's own body is `fprintf("panic: %s")`, then
+    /// `fprintf("  getaddrinfo: %s", gai_strerror(rc))` and `exit(1)`: a DNS
+    /// failure has no `errno` to report, so the second line comes from
+    /// `gai_strerror` instead. `rdi` is the message and `esi` the return code;
+    /// `rbx` holds the message and `r12` the code across the two `fprintf`s.
+    fn emit_panic_gai_routine(&mut self) {
+        let panic_fmt = self.bytes_label(b"panic: %s\n");
+        let gai_fmt = self.bytes_label(b"  getaddrinfo: %s\n");
+        self.out.push_str("    .type kelp_panic_gai, @function\nkelp_panic_gai:\n");
+        self.out.push_str("    push rbx\n    push r12\n    sub rsp, 8\n    mov rbx, rdi\n    mov r12d, esi\n");
+        self.out.push_str("    mov rdx, rbx\n");
+        let _ = writeln!(self.out, "    lea rsi, [rip+{panic_fmt}]");
+        self.out.push_str(
+            "    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n",
+        );
+        self.out.push_str("    xor eax, eax\n    call fprintf@PLT\n");
+        self.out.push_str("    mov edi, r12d\n    call gai_strerror@PLT\n    mov rdx, rax\n");
+        let _ = writeln!(self.out, "    lea rsi, [rip+{gai_fmt}]");
+        self.out.push_str(
+            "    mov rdi, QWORD PTR stderr@GOTPCREL[rip]\n    mov rdi, QWORD PTR [rdi]\n",
+        );
+        self.out.push_str("    xor eax, eax\n    call fprintf@PLT\n");
+        self.out.push_str("    mov edi, 1\n    call exit@PLT\n");
+        self.out.push_str("    .size kelp_panic_gai, .-kelp_panic_gai\n");
     }
 
     /// Turns the 0/1 in `reg` into a pointer to `"true"` or `"false"`.
@@ -14605,14 +15129,44 @@ mod tests {
         }
     }
 
-    /// `net`'s three kinds are step 2, and a call that needs one is refused by
-    /// name: a grant that is never checked is a grant that is not there, so
-    /// this direction is a compile error rather than an unchecked call.
+    /// MK7 §5 item 7 step 2: `net`'s three kinds now get their checks rather
+    /// than a refusal. `net.connect`'s resource is `HostPort(0, 1)` — the host
+    /// is argument 0 and the port argument 1, which is the argument-position
+    /// trap the plan names: swapping them would check the port as a host and
+    /// deny every well-formed call.
     #[test]
-    fn a_gated_net_call_is_refused_while_the_net_checks_are_missing() {
+    fn a_gated_net_call_gets_its_host_port_check() {
         match cap_decision(&gated(), "std.net.connect", &[true, true]) {
-            CapDecision::Unsupported(domain) => assert_eq!(domain, "net"),
-            other => panic!("expected a refusal for the net kind, got {other:?}"),
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "net");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::HostPort(0, 1)]);
+            }
+            other => panic!("expected a host:port check, got {other:?}"),
+        }
+    }
+
+    /// `net.listen`'s resource is the port alone (`Port(0)`), and
+    /// `net.resolve`'s the host alone (`Host(0)`): the other argument shapes
+    /// the step 2 checks take, and the ones whose call-site layout differs
+    /// from `HostPort`'s stack-passed location.
+    #[test]
+    fn a_gated_listen_and_resolve_get_their_single_resource_checks() {
+        let mut table = gated();
+        table.insert("std.net.listen".to_string(), "net".to_string());
+        table.insert("std.net.resolve".to_string(), "net".to_string());
+        match cap_decision(&table, "std.net.listen", &[false]) {
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "net");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::Port(0)]);
+            }
+            other => panic!("expected a port check, got {other:?}"),
+        }
+        match cap_decision(&table, "std.net.resolve", &[true]) {
+            CapDecision::Check(domain, checks) => {
+                assert_eq!(domain, "net");
+                assert_eq!(checks, vec![crate::stdlib::CapCheck::Host(0)]);
+            }
+            other => panic!("expected a host check, got {other:?}"),
         }
     }
 
