@@ -354,6 +354,26 @@ green at every stage.
 | **S6** | the optimization-level decision | a day, plus a bench run | one answer from §4.3, written down, with an idle-machine `bench/speed` table |
 | **S7** | the flip | a release | `llvm` is the default in a release, `c` the oracle and the escape hatch, both suites green |
 
+Stage 2 is one stage in the plan and was landed in slices, and the backend's
+refusals name those slices, so the mapping belongs here. `S2D` to `S2F` are the
+labels the refusals already carry.
+
+| slice | what it is | state |
+| --- | --- | --- |
+| **S2A** | plain records: a `datac` whose fields are all dropless, with the C backend's field order and alignment, construction, field read and write, by-value parameters and returns | done 2026-09-21 |
+| **S2B** | the heap: the C runtime compiled once by `build.rs` instead of emitted per program, `str`/`String`/`Bytes`, an owned field, the drop plan, `panic`/`assert` | done 2026-09-21 |
+| **S2C** | tagged unions: `enum` at the C backend's `{ tag, union }` layout, `when`, `if let`, `?`, and one `switch` per drop | done 2026-09-21 |
+| **S2D** | containers: `List`, `Map`, `Box`, `[T; N]`, one monomorphized function set per instantiation | open |
+| **S2E** | closures and function values | open |
+| **S2F** | references that are not a `datac`: `&T` to a scalar, a `&T` field, and the dereference of one | open |
+| **S3** | the runtime, the `extern fun` bodies, `pd` globals and the capability check | open |
+
+Two notes on the labels. The backend still refuses a borrow of a non-`datac`
+under `S2B`, which has landed: that label is stale and the first slice to touch
+those lines moves them to `S2F`. And one refusal carries a bare `S2` with no
+slice, the string literal containing NUL (`MISSING-k2VmP`), which the C backend
+carries through its `%.*s` path and the IR path does not.
+
 The minimum for S7 is S1 to S4 plus the S6 decision. S5 is not required to flip but
 is required to believe the flip, and saying so is part of the flip's notes.
 
