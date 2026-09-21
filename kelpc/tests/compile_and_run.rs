@@ -4533,6 +4533,20 @@ fn a_fun_literal_captures_rather_than_failing() {
 }
 
 #[test]
+fn function_values_and_closures_need_no_stdlib() {
+    // The closure slice's own fixture (MK7 S2E): the shapes of `fn_value` and
+    // `closure_basic` with no `impl` that drags in a std module, because an
+    // imported module's bodies are lowered too and `std/str` reaches
+    // `std.mem.alloc_raw`, which is the runtime slice. A function value as a
+    // local, a parameter, a return value and a `datac` field; a capturing
+    // closure as a `Box` element, a `move` parameter and a field of its own.
+    assert_compiles_and_runs(
+        "tests/fixtures/fn_value_plain.kp",
+        "42\n12\n18\n21\n20\n6\n7\n",
+    );
+}
+
+#[test]
 fn a_plain_function_value_is_widened_into_a_closure() {
     // Which of the two widening shapes is used depends on whether the compiler
     // knows which function the value is: a named one gets a shim and allocates

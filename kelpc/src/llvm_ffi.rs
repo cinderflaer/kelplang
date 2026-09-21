@@ -515,6 +515,18 @@ impl<'ctx> Function<'ctx> {
         self.raw
     }
 
+    /// The function's own address as an ordinary pointer value, which is what a
+    /// Kelp function value *is* (A-4). In LLVM a function is already a value of
+    /// pointer type, so this is the same `LLVMValueRef` handed back as a
+    /// [`Value`]; the copy is what lets it be stored in a slot, passed as an
+    /// argument or wrapped in a closure without a second instruction.
+    pub fn as_value(self) -> Value<'ctx> {
+        Value {
+            raw: self.raw,
+            context: PhantomData,
+        }
+    }
+
     /// The `index`-th parameter of this function (`LLVMGetParam`).
     ///
     /// The parameters exist as values as soon as the declaration does, which is
@@ -884,6 +896,40 @@ impl<'ctx> Builder<'ctx> {
             // SAFETY: the builder is positioned, the callee and its type are
             // live, and LLVM reads the argument vector only during the call. An
             // empty vector still yields a valid pointer for count 0.
+            raw: unsafe {
+                LLVMBuildCall2(
+                    self.raw,
+                    ty.as_raw(),
+                    callee.as_raw(),
+                    args.as_mut_ptr(),
+                    args.len() as c_uint,
+                    name.as_ptr(),
+                )
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit a call through a function *pointer* rather than a declared symbol
+    /// (`LLVMBuildCall2` with a value callee).
+    ///
+    /// A Kelp function value is a plain pointer and a closure is a fat pointer
+    /// whose first member is one, so the indirect call and the call through a
+    /// closure's code pointer are the same instruction with a different
+    /// argument list. The type is passed explicitly for the same reason
+    /// [`Builder::build_call`] passes it: a pointer carries no pointee any more.
+    pub fn build_indirect_call(
+        &self,
+        callee: Value<'ctx>,
+        ty: FnType<'ctx>,
+        args: &[Value<'ctx>],
+        name: &str,
+    ) -> Value<'ctx> {
+        let mut args: Vec<LLVMValueRef> = args.iter().map(|a| a.as_raw()).collect();
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned, the callee and its type are
+            // live, and LLVM reads the argument vector only during the call.
             raw: unsafe {
                 LLVMBuildCall2(
                     self.raw,

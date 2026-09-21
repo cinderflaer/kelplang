@@ -1,0 +1,58 @@
+// A-4 without the stdlib: a declared `fun` as a local, a parameter, a return
+// value and a `datac` field, called through each, and a capturing closure in the
+// two places a closure can live besides a local: a `Box` element and a `datac`
+// field. The corpus' `fn_value` covers the same shapes but reads a passdown,
+// which is the runtime slice (MK7 S3); this fixture is the closure slice's own
+// copy, so MK7 S2E is gated on shapes no stdlib import hides behind `S3`.
+
+fun double(x: i32).R: i32 = x * 2
+
+fun triple(x: i32).R: i32 = x * 3
+
+// A function type as a parameter, and one widened closure parameter by `move`.
+fun apply(f: fun(i32).R: i32, x: i32).R: i32 = f(x)
+
+fun own(f: move closure(i32).R: i32, x: i32).R: i32 = f(x)
+
+// A function type as a return value: which function it is, the caller cannot
+// tell, so calling it is the backend's indirect call.
+fun pick(which: bool).R: fun(i32).R: i32 {
+    if which {
+        return double
+    }
+    return triple
+}
+
+// A function value in a `datac` field, and a closure in one.
+datac Handlers(val on_i32: fun(i32).R: i32)
+
+datac Callback(val cb: closure(i32).R: i32)
+
+fun call_through(h: Handlers, x: i32).R: i32 = h.on_i32(x)
+
+fun main() {
+    // A local, a parameter and a call through a value.
+    val f = double
+    print(f(21))
+    print(apply(f, 6))
+
+    // The identity known only at the call.
+    val p = pick(true)
+    print(p(9))
+
+    // A field holding one, read through a borrowed receiver.
+    print(call_through(Handlers(on_i32 = triple), 7))
+
+    // A `Box` is the one container a closure may be an element of, and the
+    // literal here captured `k`, so the box owns an environment.
+    val k = 5
+    val boxed: Box<closure(i32).R: i32> = Box.of(fun(x: i32).R: i32 = x * k)
+    val g = boxed.get()
+    print(g(4))
+
+    // A capturing literal moved into a `move` parameter, and a closure in a
+    // field called through the field's own address.
+    print(own(fun(x: i32).R: i32 = x + k, 1))
+    val h = Callback(cb = fun(x: i32).R: i32 = x - k)
+    print(h.cb(12))
+}

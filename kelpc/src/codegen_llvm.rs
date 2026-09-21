@@ -157,6 +157,42 @@
 //! pointer itself, and a borrow of a heap type stays the address the runtime
 //! helpers take.
 //!
+//! # What S2E adds (MK7 S2, the closure slice)
+//!
+//! Function values and closures, mirrored from `codegen_c.rs`: a declared `fun`
+//! named as a value, a `fun` literal (with and without captures), a call through
+//! a value, and a closure or a function value as a local, a parameter, a return
+//! value, a `datac` field and a `Box` element.
+//!
+//! - a `Ty::Fn` is a bare `ptr`: the address of the declared function, which is
+//!   what `FnRef` yields (`LLVM` already treats a function as a pointer value).
+//!   It is `Copy`, owns nothing and has no drop.
+//! - a `Ty::Closure` is the C backend's fat pointer, one identified struct per
+//!   **signature** (`{ ptr fn, ptr env, ptr drop }`), exactly the three members
+//!   `write_closure_typedef` declares. `fn` takes the environment as its hidden
+//!   first parameter, so the call site is `fn(env, args...)`; the members are
+//!   all `ptr` here because LLVM 21 pointers are opaque, while the C typedef
+//!   types them and so had to monomorphize the same way.
+//! - a capture is an environment read: `Capture { index }` is a
+//!   `getelementptr` into the literal's environment struct (named and laid out
+//!   by `declare_closure_envs`), and it is a *place*, so an owned capture is
+//!   borrowed rather than moved out. `ClosureLit` mallocs that struct, stores
+//!   each capture in field order and builds the fat pointer (MK7 §3.3: the
+//!   environment is heap, so its pointer is spelled out).
+//! - the widening of a plain function value where a closure is expected keeps
+//!   the C backend's two shapes: a *known* function (`FnRef`) gets a generated
+//!   shim with a `null` environment and allocates nothing, while a value whose
+//!   identity only the call knows gets a one-field heap environment and a
+//!   thunk that loads the code pointer back out of it.
+//! - the per-signature closure drop is the one function in a closure's set, as
+//!   it is in the C backend: `if (env != null) { drop(env); env = null; }`.
+//!
+//! Where an aggregate crosses to C the pointer stays spelled out (BUG-vN4tR),
+//! but a closure never crosses: its environment is Kelp-only and its drop is
+//! called from IR. What the runtime does see is `malloc`/`free` for the
+//! environment and the widened value's, the same two libc calls the generated C
+//! makes.
+//!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
 //! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
@@ -206,8 +242,9 @@ use crate::llvm_ffi::{
 use crate::lexer::Span;
 use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt, TemplatePiece};
 use crate::types::{
-    box_c_type, clone_fn_name, cmp_fn_name, drop_fn_name, list_c_type, list_clonable_elem,
-    map_c_type, needs_drop, owned_types, struct_tag, ty_mangle, Ty,
+    box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
+    drop_fn_name, list_c_type, list_clonable_elem, map_c_type, needs_drop, owned_types, struct_tag,
+    ty_mangle, Ty,
 };
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
@@ -247,6 +284,10 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     lowering.emit_drop_fn_bodies()?;
     lowering.emit_clone_cmp_bodies()?;
     lowering.emit_container_bodies()?;
+    // The S2E machinery (per-signature closure drops, the widening's thunk and
+    // destructor, the shims) comes before the function bodies, the same order
+    // the C backend writes them in.
+    lowering.emit_closure_bodies()?;
     lowering.emit_all()?;
 
     // A caller must verify before emitting: LLVM's object writer assumes a
@@ -382,6 +423,21 @@ struct Gen<'a> {
     /// value can be deep-copied, the mirror of the ones `write_struct`/
     /// `write_enum` emit beside each typedef.
     clone_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The S2E closure machinery, keyed by its mangled symbol: the
+    /// per-signature drop, the per-signature widening thunk and its
+    /// environment's destructor, and the per-`(function, signature)` shim. One
+    /// map because `emit_closure_bodies` defines each under the name it was
+    /// declared with, and the two cannot drift.
+    closure_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The LLVM environment struct of each capturing literal, keyed by the
+    /// literal's `tir` key: one field per capture, in capture order, the same
+    /// fields `write_env` gives the C struct.
+    env_types: HashMap<String, Type<'a>>,
+    /// The one-field environment a widened function value's thunk reads its code
+    /// pointer out of: `{ ptr f }`, the shape `write_coerce_env` declares.
+    /// Shared by every signature because opaque pointers make the field's type
+    /// the same for all of them.
+    coerce_env_ty: Type<'a>,
     /// The generated `kelp_cmp_<name>` functions of an orderable `datac`/`enum`.
     cmp_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
     /// The libc primitives the container function sets call: the standard
@@ -408,6 +464,17 @@ struct Instantiations {
     boxes: HashSet<Ty>,
     maps: HashSet<(Ty, Ty)>,
     arrays: HashSet<Ty>,
+    /// Closure signatures (S2E). A closure's type is `{ fn, env, drop }`,
+    /// monomorphized per signature exactly as the C backend monomorphizes its
+    /// typedef, so one exists per signature the program mentions.
+    closures: HashSet<Ty>,
+    /// Closure signatures a plain function value is widened into somewhere, so
+    /// each needs the thunk and the one-field environment that do the widening.
+    coerced: HashSet<Ty>,
+    /// Widened values whose function is *known* (a declared `fun` named as a
+    /// value, or a literal that captured nothing, whose value is a `FnRef`
+    /// too). Each gets a shim instead of the heap environment and the thunk.
+    shims: HashSet<(String, Ty)>,
 }
 
 impl<'a> Gen<'a> {
@@ -441,6 +508,11 @@ impl<'a> Gen<'a> {
         let view_ty = ctx.struct_type("kelp_View");
         ctx.struct_set_body(view_ty, &[ptr, ctx.i64()]);
         structs.insert("View".to_string(), view_ty);
+        // The widening's one-field environment (S2E): `{ ptr f }`, where `f` is
+        // the code pointer a thunk calls through. One type for every signature,
+        // since a pointer is a pointer here.
+        let coerce_env_ty = ctx.struct_type("kelp_ClosureCoerceEnv");
+        ctx.struct_set_body(coerce_env_ty, &[ptr]);
         let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty);
         let panic = *runtime
             .get("kelp_panic")
@@ -469,6 +541,9 @@ impl<'a> Gen<'a> {
             container_fns: HashMap::new(),
             clone_fns: HashMap::new(),
             cmp_fns: HashMap::new(),
+            closure_fns: HashMap::new(),
+            env_types: HashMap::new(),
+            coerce_env_ty,
             libc: declare_libc(ctx, module),
             instantiations: collect_instantiations(program),
             clonable: crate::types::clonable_types(&type_decls),
@@ -493,6 +568,10 @@ impl<'a> Gen<'a> {
         // reported by its own construct rather than behind an unrelated std
         // declaration.
         self.declare_aggregates()?;
+        // The environment struct of each capturing literal (S2E), after every
+        // aggregate type exists and before any signature names the `ptr` that
+        // carries it.
+        self.declare_closure_envs()?;
         // A `pd` is a module global plus an `atexit` registration, which is the
         // runtime slice's job.
         if !program.pds.is_empty() {
@@ -509,6 +588,11 @@ impl<'a> Gen<'a> {
         // `kelp_clone_<name>`/`kelp_cmp_<name>`, so both exist first.
         self.declare_clone_cmp_fns();
         self.declare_container_fns()?;
+        // The closure machinery (S2E): the per-signature drop, the widening
+        // thunk and its destructor, and the shim a known function is widened
+        // through. Declared after the container sets because a container whose
+        // element is a closure (`Box<closure(...)>`) calls the element's drop.
+        self.declare_closure_fns()?;
 
         let ctx = self.ctx;
 
@@ -520,19 +604,26 @@ impl<'a> Gen<'a> {
             if f.extern_ {
                 continue;
             }
-            if f.env.is_some() {
-                return Err(refuse("'a closure'", "S2E"));
-            }
             let (params, ret) = if f.name == "main" {
                 // The C backend's `main` is `int main(int, char**)`; S1 mirrors
                 // the type the C standard cares about and returns 0.
                 (Vec::new(), ctx.i32())
             } else {
-                let params = f
-                    .params
-                    .iter()
-                    .map(|(_, ty)| llvm_type(ctx, &self.structs, &self.containers, ty))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut params: Vec<Type<'a>> = Vec::new();
+                // A literal that captured something receives its environment as
+                // a hidden first parameter, as a `void*` the body casts back to
+                // the literal's own environment struct (A-4 phase E). The
+                // environment's layout stays out of the signature, which is what
+                // lets two closures of one signature share a code-pointer type.
+                if f.env.is_some() {
+                    params.push(ctx.opaque_ptr());
+                }
+                params.extend(
+                    f.params
+                        .iter()
+                        .map(|(_, ty)| llvm_type(ctx, &self.structs, &self.containers, ty))
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
                 let ret = llvm_ret_type(ctx, &self.structs, &self.containers, &f.ret)?;
                 (params, ret)
             };
@@ -913,6 +1004,17 @@ impl<'a> Gen<'a> {
                     None => return Ok(()),
                 }
             }
+            // A closure owns the environment its captures were moved into, so
+            // its drop is the per-signature generated one (S2E). A plain
+            // function value is `Copy` and owns nothing, so it is the silence
+            // below.
+            Ty::Closure { .. } => {
+                let symbol = drop_fn_name(ty);
+                match self.closure_fns.get(&symbol).copied() {
+                    Some((func, fty)) => (func, fty),
+                    None => return Ok(()),
+                }
+            }
             _ => return Ok(()),
         };
         self.builder.build_call(func, fty, &[ptr], "");
@@ -951,6 +1053,13 @@ struct FnGen<'g, 'a> {
     /// program so the walk does not hold a borrow of `self`.
     body: &'a Block,
     params: Vec<(String, Ty)>,
+    /// The LLVM environment struct of this literal, when it captured something
+    /// (S2E): `Some` makes the generated function take a hidden first `ptr`
+    /// parameter and the body's `Capture` reads project into that struct.
+    env_ty: Option<Type<'a>>,
+    /// The slot holding the hidden environment pointer, bound in the entry
+    /// block. One location, so `mem2reg` can promote it out.
+    env_slot: Option<Value<'a>>,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -961,6 +1070,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .cloned()
             .ok_or_else(|| no_value("a declared function"))?;
         let entry = info.func.append_block("entry");
+        let env_ty = match &f.env {
+            Some(_) => Some(
+                *g.env_types
+                    .get(&f.name)
+                    .ok_or_else(|| no_value(&format!("the environment of '{}'", f.name)))?,
+            ),
+            None => None,
+        };
         Ok(FnGen {
             g,
             cur_fn: info.func,
@@ -972,6 +1089,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ret_ty: f.ret.clone(),
             body: &f.body,
             params: f.params.clone(),
+            env_ty,
+            env_slot: None,
         })
     }
 
@@ -979,11 +1098,24 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.position_at_end(self.entry);
         self.scopes.push(HashMap::new());
 
+        // A literal that captured something receives its environment as a
+        // hidden first parameter (S2E). Bind it into a slot of its own, so
+        // every `Capture` read loads one location.
+        let param_offset = if self.env_ty.is_some() {
+            let raw = self.cur_fn.get_param(0);
+            let slot = self.temp_alloca(self.g.pty(), "env");
+            self.g.builder.build_store(raw, slot);
+            self.env_slot = Some(slot);
+            1
+        } else {
+            0
+        };
+
         // Bind each parameter into its own slot, so its name is a load like any
         // other local.
         if self.fn_name != "main" {
             for (i, (name, ty)) in self.params.clone().iter().enumerate() {
-                let value = self.cur_fn.get_param(i);
+                let value = self.cur_fn.get_param(i + param_offset);
                 let slot = self.alloca(ty, name)?;
                 self.g.builder.build_store(value, slot);
                 self.scopes
@@ -1326,7 +1458,31 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.emit_template(*newline, pieces)?;
                 Ok(None)
             }
-            other => Err(refuse_expr(other)),
+            // A declared `fun` (or a literal that captured nothing) used as a
+            // value (S2E): the C function is the value, spelled as its address.
+            ExprKind::FnRef(key) => Ok(Some(self.emit_fn_ref(key)?)),
+            // A capturing `fun` literal: the heap environment, one field per
+            // capture in capture order, then the fat pointer.
+            ExprKind::ClosureLit { key, captures } => {
+                Ok(Some(self.emit_closure_lit(key, captures, &e.ty)?))
+            }
+            // One field of the enclosing closure's environment. It is a
+            // *place* (the environment owns the value), so the read is the
+            // field's own type loaded out of that address.
+            ExprKind::Capture { index } => {
+                let place = self.capture_place(*index)?;
+                let lty = self.lty(&e.ty)?;
+                Ok(Some(self.g.builder.build_load(lty, place, "capture")))
+            }
+            // A plain function value where a closure is expected: the widening
+            // (S2E), a shim for a known function and a thunk for one whose
+            // identity the call knows.
+            ExprKind::FnToClosure { func } => {
+                Ok(Some(self.emit_fn_to_closure(func, &e.ty)?))
+            }
+            ExprKind::IndirectCall { callee, args } => {
+                self.emit_indirect_call(callee, args, &e.ty)
+            }
         }
     }
 
@@ -1375,6 +1531,217 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 .build_insert_value(agg, value, index as u32, fname);
         }
         Ok(agg)
+    }
+
+    /// A declared `fun` (or a literal that captured nothing) named as a value
+    /// (S2E): the function's own address, which *is* the value. Nothing is
+    /// allocated and nothing is owned.
+    fn emit_fn_ref(&self, key: &str) -> Result<Value<'a>, String> {
+        self.g
+            .funcs
+            .get(key)
+            .map(|info| info.func.as_value())
+            // Only an `extern fun` can be missing here: an `extern fun` is a
+            // declaration the runtime owns, which is the S3 slice, and its name
+            // is the honest refusal.
+            .ok_or_else(|| refuse(&format!("the function value '{key}'"), "S3"))
+    }
+
+    /// A capturing `fun` literal (S2E): the environment is heap (MK7 §3.3
+    /// spells the pointer out), one field per capture in capture order, and the
+    /// value is the fat pointer `{ fn, env, drop }`.
+    fn emit_closure_lit(
+        &mut self,
+        key: &str,
+        captures: &[Expr],
+        sig: &Ty,
+    ) -> Result<Value<'a>, String> {
+        let func = self
+            .g
+            .funcs
+            .get(key)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the literal '{key}'")))?;
+        let closure_ty = self.g.closure_value_ty(sig)?;
+        let env_ty = *self
+            .g
+            .env_types
+            .get(key)
+            .ok_or_else(|| no_value(&format!("the environment of '{key}'")))?;
+        let env = self.g.malloc_for(env_ty)?;
+        self.cur = self.g.check_alloc(env, self.cur_fn)?;
+        for (index, init) in captures.iter().enumerate() {
+            let value = self.value_of(init)?;
+            let field = self.g.builder.build_struct_gep(
+                env_ty,
+                env,
+                index as u32,
+                &capture_field(index),
+            );
+            self.g.builder.build_store(value, field);
+        }
+        let drop = self.g.closure_symbol(&crate::types::env_drop_name(key))?;
+        let mut agg = self.g.ctx.undef(closure_ty);
+        agg = self.g.builder.build_insert_value(agg, func.func.as_value(), 0, "fn");
+        agg = self.g.builder.build_insert_value(agg, env, 1, "env");
+        agg = self.g.builder.build_insert_value(agg, drop.as_value(), 2, "drop");
+        Ok(agg)
+    }
+
+    /// The widening of a plain function value into a closure (S2E). A *known*
+    /// function takes the shim, which ignores the environment, so the value
+    /// carries `null` there and allocates nothing; a value whose identity only
+    /// the call knows gets the one-field heap environment and the thunk that
+    /// reads the code pointer back out of it.
+    fn emit_fn_to_closure(&mut self, func: &Expr, sig: &Ty) -> Result<Value<'a>, String> {
+        let closure_ty = self.g.closure_value_ty(sig)?;
+        let null = self.g.ctx.const_null(self.g.pty());
+        if let ExprKind::FnRef(key) = &func.kind {
+            let shim = self.g.closure_symbol(&shim_symbol(key, sig))?;
+            let mut agg = self.g.ctx.undef(closure_ty);
+            agg = self.g.builder.build_insert_value(agg, shim.as_value(), 0, "fn");
+            agg = self.g.builder.build_insert_value(agg, null, 1, "env");
+            agg = self.g.builder.build_insert_value(agg, null, 2, "drop");
+            return Ok(agg);
+        }
+        let code = self.value_of(func)?;
+        let env_ty = self.g.coerce_env_ty;
+        let env = self.g.malloc_for(env_ty)?;
+        self.cur = self.g.check_alloc(env, self.cur_fn)?;
+        let slot = self
+            .g
+            .builder
+            .build_struct_gep(env_ty, env, 0, "coerce.f");
+        self.g.builder.build_store(code, slot);
+        let thunk = self.g.closure_symbol(&coerce_thunk_symbol(sig))?;
+        let drop = self.g.closure_symbol(&coerce_drop_symbol(sig))?;
+        let mut agg = self.g.ctx.undef(closure_ty);
+        agg = self.g.builder.build_insert_value(agg, thunk.as_value(), 0, "fn");
+        agg = self.g.builder.build_insert_value(agg, env, 1, "env");
+        agg = self.g.builder.build_insert_value(agg, drop.as_value(), 2, "drop");
+        Ok(agg)
+    }
+
+    /// A call through a function value (S2E): a plain function pointer is the
+    /// callee, and a closure is the fat pointer, so the call names its code
+    /// pointer and passes the environment as the hidden first argument
+    /// (`(c.fn)(c.env, ...)`, the shape `codegen_c.rs` writes).
+    fn emit_indirect_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        // A closure value or a borrow of one: the code pointer and the
+        // environment come out of the same fat pointer the C backend projects.
+        if let Some(sig) = closure_callee_sig(&callee.ty) {
+            // The callee is read before the arguments, as the C backend binds
+            // it to a temporary in front of the call, so a field or a
+            // dereference is evaluated once.
+            let (code, env) = self.closure_code_and_env(callee)?;
+            let (params, ret_lty) = self.g.closure_sig_types(&sig)?;
+            let mut all = Vec::with_capacity(params.len() + 1);
+            all.push(env);
+            let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+            for a in args {
+                all.push(self.arg_value(a, &mut held)?);
+            }
+            let mut call_params = Vec::with_capacity(params.len() + 1);
+            call_params.push(self.g.pty());
+            call_params.extend(params);
+            let call_ty = self.g.ctx.fn_type(ret_lty, &call_params, false);
+            let yields = *ret != Ty::Unit;
+            let name = if yields { "call" } else { "" };
+            let v = self
+                .g
+                .builder
+                .build_indirect_call(code, call_ty, &all, name);
+            for (slot, ty) in held {
+                self.g.call_drop(slot, &ty)?;
+            }
+            return Ok(if yields { Some(v) } else { None });
+        }
+
+        // A plain function value: the pointer itself is the callee. A borrow of
+        // one holds the address of the function pointer, so the call loads it
+        // first (`*p`), exactly as reading the pointee would.
+        let code = match &callee.ty {
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Fn { .. }) => {
+                let p = self.value_of(callee)?;
+                self.g.builder.build_load(self.g.pty(), p, "callee")
+            }
+            _ => self.value_of(callee)?,
+        };
+        let (params, ret_lty) = self.g.fn_value_sig(&callee.ty)?;
+        let mut all: Vec<Value<'a>> = Vec::with_capacity(args.len());
+        let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+        for a in args {
+            all.push(self.arg_value(a, &mut held)?);
+        }
+        let call_ty = self.g.ctx.fn_type(ret_lty, &params, false);
+        let yields = *ret != Ty::Unit;
+        let name = if yields { "call" } else { "" };
+        let v = self
+            .g
+            .builder
+            .build_indirect_call(code, call_ty, &all, name);
+        for (slot, ty) in held {
+            self.g.call_drop(slot, &ty)?;
+        }
+        Ok(if yields { Some(v) } else { None })
+    }
+
+    /// The code pointer and the environment of a closure callee (S2E). A
+    /// `Ty::Closure` callee is read as a *place* (borrowck guarantees it), so
+    /// the fat pointer is projected rather than copied out: the binding that
+    /// owns the environment keeps it. A `Ty::Ref` callee is already the
+    /// pointer to one.
+    fn closure_code_and_env(&mut self, callee: &Expr) -> Result<(Value<'a>, Value<'a>), String> {
+        let ptr = self.g.pty();
+        let (base, ty) = if matches!(callee.ty, Ty::Ref { .. }) {
+            (self.value_of(callee)?, self.g.closure_value_ty(&callee.ty)?)
+        } else {
+            let ty = self.g.closure_value_ty(&callee.ty)?;
+            let place = if is_place_expr(callee) {
+                self.place_of(callee)?
+            } else {
+                let value = self.value_of(callee)?;
+                let slot = self.temp_alloca(ty, "callee");
+                self.g.builder.build_store(value, slot);
+                slot
+            };
+            (place, ty)
+        };
+        let code = self.g.builder.build_load(
+            ptr,
+            self.g.builder.build_struct_gep(ty, base, 0, "fn"),
+            "fn",
+        );
+        let env = self.g.builder.build_load(
+            ptr,
+            self.g.builder.build_struct_gep(ty, base, 1, "env"),
+            "env",
+        );
+        Ok((code, env))
+    }
+
+    /// The address of one field of the enclosing closure's environment (S2E).
+    /// The environment owns the capture, so this is a *place*: an owned capture
+    /// is borrowed rather than moved out.
+    fn capture_place(&mut self, index: usize) -> Result<Value<'a>, String> {
+        let slot = self
+            .env_slot
+            .ok_or_else(|| no_value("a capture outside a closure"))?;
+        let env_ty = self
+            .env_ty
+            .ok_or_else(|| no_value("a capture outside a closure"))?;
+        let raw = self.g.builder.build_load(self.g.pty(), slot, "env");
+        Ok(self.g.builder.build_struct_gep(
+            env_ty,
+            raw,
+            index as u32,
+            &capture_field(index),
+        ))
     }
 
     /// The layout of the `enum` a (possibly borrowed) expression's type names.
@@ -1693,6 +2060,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 variant,
                 field,
             } => self.enum_field_place(base, *variant, *field),
+            // A field of the enclosing closure's environment (S2E): the
+            // environment owns the capture, so the field is its address.
+            ExprKind::Capture { index } => self.capture_place(*index),
             // A borrow in a place position is already an address.
             ExprKind::Ref { expr: sub, .. } => self.place_of(sub),
             ExprKind::Deref { expr: sub } => self.value_of(sub),
@@ -2799,6 +3169,15 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 out.arrays.insert(ty.clone());
                 note_ty(elem, out);
             }
+            // A closure is emitted once per signature, and its parameters and
+            // return type may name another closure or a container.
+            Ty::Closure { params, ret } => {
+                out.closures.insert(ty.clone());
+                for p in params {
+                    note_ty(p, out);
+                }
+                note_ty(ret, out);
+            }
             Ty::Ref { inner, .. } => note_ty(inner, out),
             _ => {}
         }
@@ -2831,8 +3210,17 @@ fn collect_instantiations(program: &Program) -> Instantiations {
             | ExprKind::Deref { expr }
             | ExprKind::EnumTag { expr, .. }
             | ExprKind::Try { expr, .. }
-            | ExprKind::FnToClosure { func: expr }
             | ExprKind::ArrayRepeat { value: expr } => note_expr(expr, out),
+            // A widened function value: the target signature needs the thunk
+            // and its environment, and a value that *names* a function needs a
+            // shim instead. The wrapped value needs the walk too.
+            ExprKind::FnToClosure { func } => {
+                if let ExprKind::FnRef(key) = &func.kind {
+                    out.shims.insert((key.clone(), expr.ty.clone()));
+                }
+                out.coerced.insert(expr.ty.clone());
+                note_expr(func, out);
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 note_expr(lhs, out);
                 note_expr(rhs, out);
@@ -2912,7 +3300,15 @@ fn collect_instantiations(program: &Program) -> Instantiations {
             note_ty(ty, &mut out);
         }
         note_ty(&f.ret, &mut out);
-        if !f.extern_ && f.env.is_none() {
+        // A literal's environment fields are values the generated function
+        // holds, so their types need instantiations too (a captured `Box`, a
+        // captured `String`).
+        if let Some(env) = &f.env {
+            for (_, ty) in &env.fields {
+                note_ty(ty, &mut out);
+            }
+        }
+        if !f.extern_ {
             note_block(&f.body, &mut out);
         }
     }
@@ -3051,6 +3447,20 @@ impl<'a> Gen<'a> {
         let mut arrays: Vec<Ty> = inst.arrays.iter().cloned().collect();
         arrays.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
 
+        // The closure signature types first (S2E): a container element may be
+        // one (`Box<closure(...)>`), a parameter certainly may, and a later
+        // closure signature may name an earlier one. The C backend emits these
+        // before every container and `datac` for the same reason.
+        let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
+        closures.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+        for sig in &closures {
+            let Ty::Closure { params, ret } = sig else {
+                continue;
+            };
+            let ty = self.ctx.struct_type(&closure_c_type(params, ret));
+            self.containers.insert(sig.clone(), ty);
+        }
+
         for elem in &lists {
             let ty = self.ctx.struct_type(&list_c_type(elem));
             self.containers.insert(Ty::List(Box::new(elem.clone())), ty);
@@ -3090,6 +3500,10 @@ impl<'a> Gen<'a> {
             match ty {
                 Ty::List(_) => self.ctx.struct_set_body(*lty, &[ptr, i64t, i64t]),
                 Ty::Box(_) => self.ctx.struct_set_body(*lty, &[ptr]),
+                // The closure's fat pointer, field for field
+                // `write_closure_typedef`'s three members (S2E): the code
+                // pointer, the environment and the environment's destructor.
+                Ty::Closure { .. } => self.ctx.struct_set_body(*lty, &[ptr, ptr, ptr]),
                 Ty::Map(_, _) => self.ctx.struct_set_body(
                     *lty,
                     &[ptr, i64t, i64t, i64t, ptr, i64t, i64t],
@@ -3132,8 +3546,11 @@ impl<'a> Gen<'a> {
     }
 
     /// `kelp_panic("out of memory")` when `ptr` is NULL, the same check every
-    /// generated C allocation makes.
-    fn check_alloc(&self, ptr: Value<'a>, func: LlvmFunction<'a>) -> Result<(), String> {
+    /// generated C allocation makes. The block control continues in is returned,
+    /// because a caller that tracks its own current block (the function-body
+    /// walk) has to be told where the branch landed; the container bodies, which
+    /// position the builder by hand, ignore it.
+    fn check_alloc(&self, ptr: Value<'a>, func: LlvmFunction<'a>) -> Result<BasicBlock<'a>, String> {
         let null = self.ctx.const_null(self.pty());
         let isnull = self.builder.build_icmp(IntCmp::Eq, ptr, null, "oom");
         let oom = self.block(func, "oom");
@@ -3142,9 +3559,385 @@ impl<'a> Gen<'a> {
         self.builder.position_at_end(oom);
         self.emit_panic("out of memory")?;
         self.builder.position_at_end(ok);
+        Ok(ok)
+    }
+
+}
+
+// ===========================================================================
+// The closures (MK7 S2E): function values and the fat pointer a capturing
+// `fun` literal becomes. The C backend's shape is mirrored member for member
+// (see `codegen_c.rs::write_closure_typedef` and its neighbours): the value is
+// `{ fn, env, drop }`, the code pointer takes the environment first, the
+// environment and the widening's one-field wrapper are heap, and the only
+// function in a signature's own set is the drop. Per-instantiation code is
+// generated into the module, which is MK7 §3.2's one exception to "the runtime
+// stays C".
+// ===========================================================================
+
+impl<'a> Gen<'a> {
+    /// The LLVM types of one closure signature: its own parameters and its
+    /// return, with `unit` becoming `void`. The fat pointer's own struct type is
+    /// in `containers`, keyed by the `tir` closure type.
+    fn closure_sig_types(&self, ty: &Ty) -> Result<(Vec<Type<'a>>, Type<'a>), String> {
+        let Ty::Closure { params, ret } = ty else {
+            return Err(no_value("a closure signature"));
+        };
+        let params = params
+            .iter()
+            .map(|p| self.lty2(p))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ret = if **ret == Ty::Unit {
+            self.ctx.void()
+        } else {
+            self.lty2(ret)?
+        };
+        Ok((params, ret))
+    }
+
+    /// The code-pointer type of one closure signature: the environment first,
+    /// then the closure's own parameters. The `fn` member, the widening thunk
+    /// and the shim are all declared with it.
+    fn closure_code_ty(&self, ty: &Ty) -> Result<FnType<'a>, String> {
+        let (params, ret) = self.closure_sig_types(ty)?;
+        let mut all = Vec::with_capacity(params.len() + 1);
+        all.push(self.pty());
+        all.extend(params);
+        Ok(self.ctx.fn_type(ret, &all, false))
+    }
+
+    /// The struct type of a closure value, looking through a borrow: a
+    /// `Ty::Ref` of a closure is the pointer a parameter of one takes, so the
+    /// struct is the pointee's.
+    fn closure_value_ty(&self, ty: &Ty) -> Result<Type<'a>, String> {
+        match ty {
+            Ty::Ref { inner, .. } => self.closure_value_ty(inner),
+            Ty::Closure { .. } => self.cty(ty),
+            other => Err(refuse_type(other)),
+        }
+    }
+
+    /// The `(params, ret)` LLVM types of a plain function value, looking
+    /// through a borrow. `unit` becomes `void`.
+    fn fn_value_sig(&self, ty: &Ty) -> Result<(Vec<Type<'a>>, Type<'a>), String> {
+        let inner = match ty {
+            Ty::Ref { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        let Ty::Fn { params, ret } = inner else {
+            return Err(no_value("a function value"));
+        };
+        let params = params
+            .iter()
+            .map(|p| self.lty2(p))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ret = if **ret == Ty::Unit {
+            self.ctx.void()
+        } else {
+            self.lty2(ret)?
+        };
+        Ok((params, ret))
+    }
+
+    /// One generated S2E function by its symbol, so the lowering can take its
+    /// address or call it. Every symbol in the map was declared in
+    /// `declare_closure_fns`, before any body that names one.
+    fn closure_symbol(&self, symbol: &str) -> Result<LlvmFunction<'a>, String> {
+        self.closure_fns
+            .get(symbol)
+            .map(|(func, _)| *func)
+            .ok_or_else(|| no_value(&format!("the closure function '{symbol}'")))
+    }
+
+    /// The environment struct of every capturing literal in the program: one
+    /// field per capture, in capture order, the layout `write_env` gives the C
+    /// struct. Emitted after every aggregate type exists, so a captured
+    /// `datac` names a complete type, and before any signature, so the hidden
+    /// `ptr` it is passed as needs nothing else.
+    fn declare_closure_envs(&mut self) -> Result<(), String> {
+        for f in &self.program.functions {
+            let Some(env) = &f.env else {
+                continue;
+            };
+            let fields = env
+                .fields
+                .iter()
+                .map(|(_, ty)| llvm_type(self.ctx, &self.structs, &self.containers, ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            let ty = self.ctx.struct_type(&env.struct_name);
+            self.ctx.struct_set_body(ty, &fields);
+            self.env_types.insert(f.name.clone(), ty);
+        }
         Ok(())
     }
 
+    /// Declare the S2E machinery: the per-signature drop, one environment
+    /// destructor per capturing literal, the widening thunk and its
+    /// environment's destructor, and the shim a known function value is widened
+    /// through. One name each, the same names the C backend gives them, so the
+    /// IR reads like the generated C beside it.
+    fn declare_closure_fns(&mut self) -> Result<(), String> {
+        let inst = self.instantiations.clone();
+        let ptr = self.pty();
+        let void = self.ctx.void();
+
+        let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
+        closures.sort_by_key(container_sort_name);
+        for sig in &closures {
+            let symbol = drop_fn_name(sig);
+            let ty = self.ctx.fn_type(void, &[ptr], false);
+            let func = self.module.add_function(&symbol, ty);
+            self.closure_fns.insert(symbol, (func, ty));
+        }
+
+        // One destructor per capturing literal (S2E): the function the closure
+        // value carries in its `drop` member, which frees the environment the
+        // captures were moved into. It is a separate function from the
+        // per-signature closure drop because the environment's layout belongs
+        // to the one literal that made it, exactly as in `write_env`.
+        for f in &self.program.functions {
+            let Some(env) = &f.env else {
+                continue;
+            };
+            let ty = self.ctx.fn_type(void, &[ptr], false);
+            let func = self.module.add_function(&env.drop_name, ty);
+            self.closure_fns.insert(env.drop_name.clone(), (func, ty));
+        }
+
+        let mut coerced: Vec<Ty> = inst.coerced.iter().cloned().collect();
+        coerced.sort_by_key(container_sort_name);
+        for sig in &coerced {
+            let code_ty = self.closure_code_ty(sig)?;
+            let thunk = coerce_thunk_symbol(sig);
+            let func = self.module.add_function(&thunk, code_ty);
+            self.closure_fns.insert(thunk, (func, code_ty));
+            let drop = coerce_drop_symbol(sig);
+            let dty = self.ctx.fn_type(void, &[ptr], false);
+            let dfunc = self.module.add_function(&drop, dty);
+            self.closure_fns.insert(drop, (dfunc, dty));
+        }
+
+        let mut shims: Vec<(String, Ty)> = inst.shims.iter().cloned().collect();
+        shims.sort_by_key(|(key, _)| key.clone());
+        for (key, sig) in &shims {
+            let code_ty = self.closure_code_ty(sig)?;
+            let symbol = shim_symbol(key, sig);
+            let func = self.module.add_function(&symbol, code_ty);
+            self.closure_fns.insert(symbol, (func, code_ty));
+        }
+        Ok(())
+    }
+
+    /// Define every function `declare_closure_fns` declared, in the order the C
+    /// backend writes them: the per-signature drop, then the widening's
+    /// machinery, then the shims.
+    fn emit_closure_bodies(&self) -> Result<(), String> {
+        let inst = self.instantiations.clone();
+        // Each capturing literal's environment destructor first, because the
+        // closure values built below carry its address.
+        for f in &self.program.functions {
+            if f.env.is_some() {
+                self.emit_env_drop(f)?;
+            }
+        }
+        let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
+        closures.sort_by_key(container_sort_name);
+        for sig in &closures {
+            self.emit_closure_drop(sig)?;
+        }
+        let mut coerced: Vec<Ty> = inst.coerced.iter().cloned().collect();
+        coerced.sort_by_key(container_sort_name);
+        for sig in &coerced {
+            self.emit_coerce_drop(sig)?;
+            self.emit_coerce_thunk(sig)?;
+        }
+        let mut shims: Vec<(String, Ty)> = inst.shims.iter().cloned().collect();
+        shims.sort_by_key(|(key, _)| key.clone());
+        for (key, sig) in &shims {
+            self.emit_shim(key, sig)?;
+        }
+        Ok(())
+    }
+
+    /// One capturing literal's environment destructor (S2E): drop each owned
+    /// field through its own drop, then free the struct. The same order a
+    /// `datac`'s drop uses, one level down (`write_env`).
+    fn emit_env_drop(&self, f: &Function) -> Result<(), String> {
+        let env = f
+            .env
+            .as_ref()
+            .ok_or_else(|| no_value("the environment destructor of a plain function"))?;
+        let (func, _) = *self
+            .closure_fns
+            .get(&env.drop_name)
+            .ok_or_else(|| no_value(&format!("the environment destructor '{}'", env.drop_name)))?;
+        let env_ty = *self
+            .env_types
+            .get(&f.name)
+            .ok_or_else(|| no_value(&format!("the environment of '{}'", f.name)))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let raw = func.get_param(0);
+        for (index, (name, ty)) in env.fields.iter().enumerate() {
+            if !needs_drop(ty, &self.owned) {
+                continue;
+            }
+            let field = self.builder.build_struct_gep(env_ty, raw, index as u32, name);
+            self.call_drop(field, ty)?;
+        }
+        let (free, fty) = self.libc_fn("free")?;
+        self.call(free, fty, &[raw], "");
+        self.builder.build_ret_void();
+        Ok(())
+    }
+
+    /// One closure signature's drop, the only function in its set: free the
+    /// environment through the destructor the value carries, then clear the
+    /// pointer. The `env` test comes first because a value widened from a plain
+    /// function has no environment, and its destructor pointer is `null` too
+    /// (`write_closure` draws the same line).
+    fn emit_closure_drop(&self, sig: &Ty) -> Result<(), String> {
+        let symbol = drop_fn_name(sig);
+        let (func, _) = *self
+            .closure_fns
+            .get(&symbol)
+            .ok_or_else(|| no_value(&format!("the closure drop '{symbol}'")))?;
+        let closure_ty = self.closure_value_ty(sig)?;
+        let ptr = self.pty();
+        let void = self.ctx.void();
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let c = func.get_param(0);
+        let env_slot = self.fld(closure_ty, c, 1, "env");
+        let env = self.ld(ptr, env_slot, "env");
+        let null = self.ctx.const_null(ptr);
+        let missing = self.builder.build_icmp(IntCmp::Eq, env, null, "no.env");
+        let exit = func.append_block("exit");
+        let live = func.append_block("drop");
+        self.builder.build_cond_br(missing, exit, live);
+        self.builder.position_at_end(live);
+        let drop = self.ld(ptr, self.fld(closure_ty, c, 2, "drop"), "drop");
+        let dty = self.ctx.fn_type(void, &[ptr], false);
+        self.builder.build_indirect_call(drop, dty, &[env], "");
+        self.st(null, env_slot);
+        self.builder.build_br(exit);
+        self.builder.position_at_end(exit);
+        self.builder.build_ret_void();
+        Ok(())
+    }
+
+    /// The destructor of a widened function value's one-field environment: a
+    /// plain `free`, because the code pointer it holds owns nothing.
+    fn emit_coerce_drop(&self, sig: &Ty) -> Result<(), String> {
+        let symbol = coerce_drop_symbol(sig);
+        let (func, _) = *self
+            .closure_fns
+            .get(&symbol)
+            .ok_or_else(|| no_value(&format!("the coerce drop '{symbol}'")))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let raw = func.get_param(0);
+        let (free, fty) = self.libc_fn("free")?;
+        self.call(free, fty, &[raw], "");
+        self.builder.build_ret_void();
+        Ok(())
+    }
+
+    /// The thunk of a widened function value: read the code pointer back out of
+    /// the environment and call through it. One thunk per *signature*, because
+    /// what it does is the same for every value of that shape.
+    fn emit_coerce_thunk(&self, sig: &Ty) -> Result<(), String> {
+        let symbol = coerce_thunk_symbol(sig);
+        let (func, _) = *self
+            .closure_fns
+            .get(&symbol)
+            .ok_or_else(|| no_value(&format!("the coerce thunk '{symbol}'")))?;
+        let (params, ret) = self.closure_sig_types(sig)?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let raw = func.get_param(0);
+        let f = self.ld(self.pty(), self.fld(self.coerce_env_ty, raw, 0, "coerce.f"), "f");
+        let args: Vec<Value<'a>> = (0..params.len()).map(|i| func.get_param(i + 1)).collect();
+        let call_ty = self.ctx.fn_type(ret, &params, false);
+        if closure_is_unit(sig) {
+            self.builder.build_indirect_call(f, call_ty, &args, "");
+            self.builder.build_ret_void();
+        } else {
+            let v = self.builder.build_indirect_call(f, call_ty, &args, "call");
+            self.builder.build_ret(v);
+        }
+        Ok(())
+    }
+
+    /// The shim of a widened *known* function value: take the environment a
+    /// closure's `fn` member is called with, ignore it, and call the function it
+    /// wraps. A named function needs no environment and no indirection, so the
+    /// common widening allocates nothing.
+    fn emit_shim(&self, key: &str, sig: &Ty) -> Result<(), String> {
+        let symbol = shim_symbol(key, sig);
+        let (func, _) = *self
+            .closure_fns
+            .get(&symbol)
+            .ok_or_else(|| no_value(&format!("the shim '{symbol}'")))?;
+        let (params, _) = self.closure_sig_types(sig)?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let callee = self
+            .funcs
+            .get(key)
+            .cloned()
+            .ok_or_else(|| refuse(&format!("the function value '{key}'"), "S3"))?;
+        let args: Vec<Value<'a>> = (0..params.len()).map(|i| func.get_param(i + 1)).collect();
+        if closure_is_unit(sig) {
+            self.call(callee.func, callee.ty, &args, "");
+            self.builder.build_ret_void();
+        } else {
+            let v = self.call(callee.func, callee.ty, &args, "call");
+            self.builder.build_ret(v);
+        }
+        Ok(())
+    }
+}
+
+/// The mangled signature fragment of a closure type, for the generated S2E
+/// symbols. The value is always a `Ty::Closure`; a `Ty::Fn` has no environment
+/// and so no machinery of its own.
+fn closure_mangle_of(ty: &Ty) -> String {
+    match ty {
+        Ty::Closure { params, ret } => closure_mangle(params, ret),
+        other => unreachable!("not a closure signature: {}", other.display()),
+    }
+}
+
+/// The generated names of the widening's two halves and of the shim, mirroring
+/// `codegen_c.rs::coerce_thunk_name`/`coerce_drop_name`/`coerce_shim_name`.
+fn coerce_thunk_symbol(ty: &Ty) -> String {
+    format!("kelp_coerce__{}", closure_mangle_of(ty))
+}
+
+fn coerce_drop_symbol(ty: &Ty) -> String {
+    format!("kelp_coerce_drop__{}", closure_mangle_of(ty))
+}
+
+fn shim_symbol(key: &str, ty: &Ty) -> String {
+    format!("kelp_shim__{}__{}", crate::types::c_ident(key), closure_mangle_of(ty))
+}
+
+/// The signature a closure callee is called with, when the callee is a closure
+/// value or a borrow of one. `None` for a plain function value, whose callee is
+/// the pointer itself.
+fn closure_callee_sig(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::Closure { .. } => Some(ty.clone()),
+        Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => Some((**inner).clone()),
+        _ => None,
+    }
+}
+
+/// Whether one closure signature returns `unit`, which decides between `ret`
+/// and `ret void` in the three functions that are declared with it.
+fn closure_is_unit(sig: &Ty) -> bool {
+    matches!(sig, Ty::Closure { ret, .. } if **ret == Ty::Unit)
 }
 
 /// How deeply containers nest, used to emit a container after the containers it
@@ -5639,14 +6432,20 @@ fn llvm_type<'a>(
         }
         // Every other borrow is one pointer too (S2F): a `mut i64`
         // parameter, an `&i32` local, a field borrow, a borrow a container
-        // method returns. A borrow of a function value or a closure stays
-        // out of the reference slice, so it is named as the closure slice.
-        Ty::Ref { inner, .. }
-            if matches!(**inner, Ty::Fn { .. } | Ty::Closure { .. }) =>
-        {
-            return Err(refuse("'a borrow of a function value'", "S2E"))
-        }
+        // method returns. A borrow of a function value or of a closure is the
+        // same pointer, and it is what a closure parameter is (S2E): the
+        // parameter rule borrows a non-`Copy` closure, so the fat pointer's
+        // address is what a callee projects through.
         Ty::Ref { .. } => ctx.opaque_ptr(),
+        // A plain function value is the function's address (S2E): one `ptr`,
+        // `Copy`, owning nothing.
+        Ty::Fn { .. } => ctx.opaque_ptr(),
+        // A closure is the fat pointer `{ fn, env, drop }`, one identified
+        // struct per signature and so a named type here like a container
+        // (S2E).
+        Ty::Closure { .. } => *containers
+            .get(ty)
+            .ok_or_else(|| no_value(&format!("the closure '{}'", ty.display())))?,
         Ty::Struct(name) => *structs
             .get(name)
             .ok_or_else(|| refuse(&format!("the datac '{name}'"), "S2A"))?,
@@ -5714,6 +6513,7 @@ fn is_place_expr(e: &Expr) -> bool {
             | ExprKind::FieldAccess { .. }
             | ExprKind::EnumField { .. }
             | ExprKind::Deref { .. }
+            | ExprKind::Capture { .. }
     )
 }
 
@@ -5873,10 +6673,10 @@ fn int_width(ty: &Ty) -> Option<u32> {
 /// The refusal message for a construct this stage does not lower. `what` is the
 /// construct's name, quoted when it is a language word (`'enum'`) and a phrase
 /// when it is a shape; `stage` is the MK7 stage that will lower it. Everything
-/// through S2F is lowered: plain records, owned fields, the drop plan, the
-/// runtime, the tagged union, the containers and arrays, and the references
-/// that are not a `datac` (S2E is closures and function values, and S3 is `pd`
-/// and the stdlib's `extern fun` bodies).
+/// through S2E is lowered: plain records, owned fields, the drop plan, the
+/// runtime, the tagged union, the containers and arrays, the references that
+/// are not a `datac`, and closures and function values. What is left is S3:
+/// `pd` globals, the `extern fun` bodies and the capability check.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
@@ -5885,11 +6685,11 @@ fn refuse(what: &str, stage: &str) -> String {
 /// with the construct named.
 ///
 /// A `String`/`Bytes` field, a field of an owned aggregate and a field that
-/// names a `datac` or an `enum` are laid out (MK7 §3.1, §3.4); everything else
-/// is named by its own construct. A container or array field is the container
-/// slice (S2D), and the `str`/`View` rows are unreachable from the frontend
-/// (`types::is_borrowed_field_ty` rejects them) but are refused here rather than
-/// mis-lowered if they ever appear.
+/// names a `datac` or an `enum` are laid out (MK7 §3.1, §3.4), and so are a
+/// container, an array and a function value or closure (S2D, S2E); everything
+/// else is named by its own construct. The `str`/`View` rows are unreachable
+/// from the frontend (`types::is_borrowed_field_ty` rejects them) but are
+/// refused here rather than mis-lowered if they ever appear.
 fn refuse_field(ty: &Ty) -> Result<(), String> {
     match ty {
         Ty::Bytes | Ty::String => Ok(()),
@@ -5905,7 +6705,9 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         Ty::Str => Err(refuse("'a 'str' field'", "S2F")),
         Ty::View => Err(refuse("'a 'View' field'", "S2F")),
         Ty::Ref { .. } => Err(refuse("'a reference field'", "S2F")),
-        Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2E")),
+        // A function value is a `ptr` field and a closure is the fat pointer's
+        // struct, laid out by the container pass before this one (S2E).
+        Ty::Fn { .. } | Ty::Closure { .. } => Ok(()),
         Ty::Struct(_) => Ok(()),
         other if llvm_scalar_type(other) => Ok(()),
         other => Err(refuse_type(other)),
@@ -5934,9 +6736,9 @@ fn llvm_scalar_type(ty: &Ty) -> bool {
 }
 
 /// Name the type in a refusal, with the stage that will lower it. A container
-/// is the container slice (S2D) and a function value the closure slice (S2E);
-/// the heap types are lowered above, so their rows are unreachable and kept only
-/// so the match stays total in the author's eye.
+/// is the container slice (S2D); a function value, a closure and a borrow of
+/// either are lowered from S2E on, so those rows are unreachable and are kept
+/// only so the match stays total without a panic.
 fn refuse_type(ty: &Ty) -> String {
     let (what, stage) = match ty {
         Ty::Struct(_) => ("'datac'", "S2B"),
@@ -5946,27 +6748,12 @@ fn refuse_type(ty: &Ty) -> String {
         Ty::Box(_) => ("'Box'", "S2D"),
         Ty::Map(..) => ("'Map'", "S2D"),
         Ty::Array(..) => ("'an array'", "S2D"),
-        Ty::Ref { .. } => ("'a borrow of a function value'", "S2E"),
-        Ty::Fn { .. } => ("'a function value'", "S2E"),
-        Ty::Closure { .. } => ("'a closure'", "S2E"),
+        Ty::Ref { .. } | Ty::Fn { .. } | Ty::Closure { .. } => {
+            return no_value(&format!("the type '{}'", ty.display()))
+        }
         Ty::Str | Ty::View => ("a borrowed view", "S2D"),
         Ty::Unit => ("'unit'", "S1"),
         other => return refuse(&format!("the type '{}'", other.display()), "S1"),
-    };
-    refuse(what, stage)
-}
-
-/// Name the expression in a refusal. A `FieldAccess`, a `StructLit`, an `enum`
-/// construct, a `?`, a borrow and a dereference and the two array literals
-/// never reach here: all are lowered. A function value, a closure and an
-/// indirect call are S2E.
-fn refuse_expr(kind: &ExprKind) -> String {
-    let (what, stage) = match kind {
-        ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2E"),
-        ExprKind::ClosureLit { .. } => ("'a closure'", "S2E"),
-        ExprKind::Capture { .. } => ("'a capture'", "S2E"),
-        ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2E"),
-        _ => ("'this expression'", "S2B"),
     };
     refuse(what, stage)
 }
