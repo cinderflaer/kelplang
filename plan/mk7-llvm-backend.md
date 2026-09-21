@@ -162,9 +162,10 @@ alongside `clang 21.1.8`.
     intent"; with two, it is a measurement over the corpus.
   - A flip with no way back is how a second backend becomes unmaintained.
 - **The backend seam.** `backend.rs` keeps its shape: the selector, the names, the
-  `--backend=`/`KELPC_BACKEND` resolution, `Backend::DEFAULT`. The new name is
-  `llvm`. `asm` was removed from `Backend::IMPLEMENTED` on 2026-09-21, with its
-  source and its rows in the tests.
+  `--backend=`/`KELPC_BACKEND` resolution, `Backend::DEFAULT`. `llvm` is the name
+  the seam carries, and since MK7 S7 it is what `Backend::DEFAULT` names.
+  `asm` was removed from `Backend::IMPLEMENTED` on 2026-09-21, with its source
+  and its rows in the tests; `c` and `llvm` both stay in it.
 - **The fixture suite stays backend-agnostic** (compile, run, compare stdout), so it
   validates the new backend by being pointed at it.
 - **The language does not change.** The surface, the capability model, the move and
@@ -269,7 +270,8 @@ This is the part LLVM does not do for us, and it is where the new backend can be
 ## 4. What must be true before the default moves
 
 Replaces `asm-backend/default-switch.md` §1. Grouped the same way, because each item
-exists for a different reason.
+exists for a different reason. The code half of the flip landed on 2026-09-21
+(§4.5), so what the items below gate now is the release that ships it.
 
 ### 4.1 Correctness evidence
 
@@ -411,6 +413,25 @@ corrected by the measurement, in the one direction that is a pleasant surprise.
 - Rollout: the flip lands in a release that announces it, names the minimum version,
   names the `libLLVM` requirement, and states the one flag that goes back.
 
+**S7's code half landed on 2026-09-21.** `Backend::DEFAULT` is `Llvm`,
+`usage()` says so, `Backend::parse` still accepts and lists both names, and
+`--backend=c`/`KELPC_BACKEND=c` are unchanged. The suite moved with it: the
+harness's own default follows the compiler's, so a plain `cargo test` runs the
+fixtures against `llvm` and `KELPC_BACKEND=c cargo test` runs them against the
+oracle, and `run-all-backends.sh` defaults to `BACKENDS="c llvm"` so both are
+always run. A plain run therefore exercises the new default, which is the point
+of the flip; the oracle is one environment variable away.
+
+**The release is still to be cut, and this stage is not it.** That release's
+notes must carry four facts, in the plan's own words:
+
+- the minimum `kelpc` version that has the flip;
+- that a `kelpc` built this way needs `libLLVM-21.so` at runtime, whichever
+  backend it runs (MK7 §1.3 and §4.4);
+- that `cc` is still the linker, so a C compiler and glibc are still required;
+- the one flag that goes back: `--backend=c` (and its environment spelling
+  `KELPC_BACKEND=c`).
+
 ## 5. Stages
 
 Ordered by dependency. Each stage names what proves it and the corpus gate is
@@ -425,7 +446,7 @@ green at every stage.
 | **S4** | debug locations to DWARF | done 2026-09-21 | a fixture that crashes on purpose names a `.kp` line |
 | **S5** | fuzzing and conformance (D-4) | done 2026-09-21 | generated programs over the whole landed surface, every one built by both backends with byte-identical stdout and exit status and zero mismatches (`kelpc/tests/differential_fuzz.rs`), plus a checked-in conformance corpus |
 | **S6** | the optimization-level decision | done 2026-09-21 | the `-O0` to `-O3` and `-Os` knob on `kelpc build` with `-O2` the default, one level for both backends, the corpus swept with both backends at every level (0 mismatches), the debug line table resolved at `-O0` and `-O2`, and an idle-machine `bench/speed` table written into §4.3 |
-| **S7** | the flip | a release | `llvm` is the default in a release, `c` the oracle and the escape hatch, both suites green |
+| **S7** | the flip | a release | **code half done 2026-09-21** (§4.5): `Backend::DEFAULT` is `Llvm`, a plain `cargo test` exercises it and `KELPC_BACKEND=c` exercises the oracle, `run-all-backends.sh` defaults to `BACKENDS="c llvm"`; the release that announces the flip is still to be cut, and its notes must carry the minimum version, the `libLLVM-21.so` runtime requirement, that `cc` still links, and `--backend=c` as the way back |
 
 Stage 2 is one stage in the plan and was landed in slices, and the backend's
 refusals name those slices, so the mapping belongs here. `S2D` to `S2F` are the
