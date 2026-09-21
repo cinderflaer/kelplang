@@ -242,12 +242,13 @@
 //!   text is the same bytes in both backends. The matcher and the path
 //!   normalizer stay Kelp (`std/rt`) and are lowered like any other code.
 //!
-//! The whole fixture corpus now lowers: `Backend::DEFAULT` is still `c`, but the
-//! `llvm` backend builds every one of the 223 corpus targets the C backend
-//! builds, with an empty refusal ranking (MK7 §4.1), and the differential sweep
-//! records no disagreement between the two. The differential fuzzer
-//! (`kelpc/tests/differential_fuzz.rs`, MK7 S5) covers the surface the curated
-//! corpus does not, and found the two shapes the sweep's fixtures were missing.
+//! The whole fixture corpus now lowers: `Backend::DEFAULT` is `llvm` since MK7
+//! S7, and the `llvm` backend builds every one of the 223 corpus targets the C
+//! backend builds, with an empty refusal ranking (MK7 §4.1), and the
+//! differential sweep records no disagreement between the two. The differential
+//! fuzzer (`kelpc/tests/differential_fuzz.rs`, MK7 S5) covers the surface the
+//! curated corpus does not, and found the two shapes the sweep's fixtures were
+//! missing.
 //!
 //! What remains in this file is **refused by name** with a clean diagnostic,
 //! never miscompiled and never a panic, for a shape the frontend does not

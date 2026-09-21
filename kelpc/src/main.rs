@@ -82,7 +82,9 @@ fn usage() {
          {BIN_NAME} lint <path>...\n       \
          {BIN_NAME} version\n\n\
          The backend may also be chosen with the KELPC_BACKEND environment\n\
-         variable; an explicit --backend wins over it. The default is 'c'.\n\n\
+         variable; an explicit --backend wins over it. The default is 'llvm'.\n\
+         The 'c' backend stays selectable as the differential oracle and the\n\
+         escape hatch.\n\n\
          The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
          default, the level the C backend has always used. One level is one\n\
          level for both backends: it selects the LLVM pass pipeline and the\n\

@@ -15,7 +15,8 @@
 //!
 //! The hand-written `asm` backend this seam was built for was removed on
 //! 2026-09-21 (`plan/asm-backend/plan.md`). `llvm` is the name the seam carries
-//! now, at MK7 S1: the scalar subset, with everything else refused by name.
+//! now, and since MK7 S7 (2026-09-21) it is the default; `c` stays selectable as
+//! the oracle and the escape hatch.
 
 /// A code generator `kelpc` can lower a typed program with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,8 +27,9 @@ pub enum Backend {
     /// stops being maintained.
     C,
     /// Lower `tir` to LLVM IR, let LLVM emit the object, and hand that to `cc`
-    /// (MK7). At S1 it covers the scalar subset only: anything else is refused
-    /// by name with a `--backend=c` way out.
+    /// (MK7), with `cc` still the linker. Since MK7 S7 it is the default, and it
+    /// lowers the whole corpus the C backend builds; a shape it cannot lower is
+    /// refused by name with a `--backend=c` way out.
     Llvm,
 }
 
@@ -37,10 +39,16 @@ const RESERVED: &[&str] = &["own"];
 impl Backend {
     /// What `--backend` and `KELPC_BACKEND` mean when neither is given.
     ///
-    /// The C backend stays the default: it is the differential oracle every
-    /// other backend is checked against, so making the new one default would
-    /// remove the reference the comparison is against.
-    pub const DEFAULT: Backend = Backend::C;
+    /// `llvm` became the default at MK7 S7, on the measurements §4.3 records:
+    /// it builds all 223 corpus targets the C backend builds, with an empty
+    /// refusal ranking and 0 mismatches, 0 crashes and 0 refusals at every
+    /// optimization level from `-O0` to `-O3` and `-Os`, and the whole fixture
+    /// suite is green under it. The C backend is not replaced by that: it is
+    /// the differential oracle every backend is checked against, so `c` stays
+    /// selectable forever as the oracle and the escape hatch. A flip with no
+    /// way back is how a second backend becomes unmaintained, so both names
+    /// stay in `IMPLEMENTED` and the suite keeps running both.
+    pub const DEFAULT: Backend = Backend::Llvm;
 
     /// Every backend that can actually be selected. The integration suite loops
     /// over this to run the fixtures once per backend.
@@ -111,9 +119,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_is_the_c_backend() {
-        assert_eq!(resolve(None, None).unwrap(), Backend::C);
-        assert_eq!(Backend::DEFAULT.name(), "c");
+    fn the_default_is_the_llvm_backend() {
+        assert_eq!(resolve(None, None).unwrap(), Backend::Llvm);
+        assert_eq!(Backend::DEFAULT.name(), "llvm");
     }
 
     #[test]
@@ -121,10 +129,15 @@ mod tests {
         assert_eq!(resolve(Some("c"), Some("own")).unwrap(), Backend::C);
     }
 
+    /// The oracle is still reachable after the flip, by either source: the
+    /// change is a default, not a removal. Both names are covered because both
+    /// must stay selectable.
     #[test]
     fn an_implemented_backend_is_selectable_from_either_source() {
-        assert_eq!(resolve(Some("c"), None).unwrap(), Backend::C);
-        assert_eq!(resolve(None, Some("c")).unwrap(), Backend::C);
+        for b in Backend::IMPLEMENTED {
+            assert_eq!(resolve(Some(b.name()), None).unwrap(), *b);
+            assert_eq!(resolve(None, Some(b.name())).unwrap(), *b);
+        }
     }
 
     /// A reserved name must not be reported as unknown: the two messages mean
