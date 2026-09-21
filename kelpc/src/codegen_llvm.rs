@@ -243,9 +243,11 @@
 //!   normalizer stay Kelp (`std/rt`) and are lowered like any other code.
 //!
 //! The whole fixture corpus now lowers: `Backend::DEFAULT` is still `c`, but the
-//! `llvm` backend builds every one of the 221 corpus targets the C backend
+//! `llvm` backend builds every one of the 223 corpus targets the C backend
 //! builds, with an empty refusal ranking (MK7 §4.1), and the differential sweep
-//! records no disagreement between the two.
+//! records no disagreement between the two. The differential fuzzer
+//! (`kelpc/tests/differential_fuzz.rs`, MK7 S5) covers the surface the curated
+//! corpus does not, and found the two shapes the sweep's fixtures were missing.
 //!
 //! What remains in this file is **refused by name** with a clean diagnostic,
 //! never miscompiled and never a panic, for a shape the frontend does not
@@ -4300,6 +4302,14 @@ fn collect_instantiations(program: &Program) -> Instantiations {
             }
         }
     }
+    // A `pd` is a module-scope global with a drop of its own, so its declared
+    // type needs its container function set even when nothing reads it: a
+    // `pd val xs = List.of(7)` no expression calls `.get` on still drops at
+    // exit, and the drop is a call into that set.
+    for pd in &program.pds {
+        note_ty(&pd.value_ty, &mut out);
+        note_expr(&pd.init, &mut out);
+    }
     for f in &program.functions {
         for (_, ty) in &f.params {
             note_ty(ty, &mut out);
@@ -6133,6 +6143,13 @@ impl<'a> Gen<'a> {
                     let hit_phi = self.builder.build_phi(i1t, "hit");
                     self.builder.add_incoming(hit_phi, &[(zeros, body), (ceq, data_cmp)]);
                     hit_phi
+                }
+                // A float element is `Copy`, so `contains` is offered for it
+                // and C's `==` on a double is `fcmp oeq`; an integer compare
+                // here is invalid IR on the emitted `double`.
+                _ if elem.is_float() => {
+                    self.builder
+                        .build_fcmp(RealCmp::Oeq, self.ld(elem_ty, at, "av"), v, "hit")
                 }
                 _ => self.builder.build_icmp(IntCmp::Eq, self.ld(elem_ty, at, "av"), v, "hit"),
             };

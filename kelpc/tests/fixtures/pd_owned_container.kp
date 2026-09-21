@@ -1,0 +1,14 @@
+// MK7 S5: an owned passdown no expression reads. The `pd` still has to drop at
+// exit, so the container function set its generated drop calls must exist even
+// though nothing calls `.get` or `.len` on it. `collect_instantiations`
+// (`codegen_llvm.rs`) walked only structs, enums and functions, so a `pd` whose
+// only use was its own drop left `List<i32>` undeclared and the backend
+// reported an internal error; the C backend built the same program, and the
+// differential fuzzer is what found it.
+pd val primes = List.of(7)
+
+pd val names = List.of(String.from_str("kelp"))
+
+fun main() {
+    print("ok")
+}

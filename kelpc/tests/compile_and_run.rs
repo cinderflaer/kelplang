@@ -1304,6 +1304,15 @@ fn an_owned_passdown_is_freed_at_exit() {
 }
 
 #[test]
+fn an_owned_passdown_no_expression_reads_is_still_dropped() {
+    // An owned `pd` is dropped by the generated `atexit` handler, so the
+    // container function set its drop calls has to exist even when nothing
+    // reads the value. The differential fuzzer found the `llvm` backend
+    // reporting an internal error for exactly this shape.
+    assert_compiles_and_runs("tests/fixtures/pd_owned_container.kp", "ok\n");
+}
+
+#[test]
 fn a_compiler_shipped_stdlib_module_can_be_imported() {
     // `impl "std/mem"` — the module's Kelp body calls a compiler-supplied
     // `extern` for the allocation itself.
@@ -2827,6 +2836,21 @@ fn a_list_grows_past_several_doublings_and_reuses_its_buffer() {
     assert_compiles_and_runs(
         "tests/fixtures/list_growth_and_rebuild.kp",
         "300\n44850\n0\n300\n89700\n300\nelement\n0\n598\n",
+    );
+}
+
+#[test]
+fn a_float_list_copies_and_compares_at_its_own_width() {
+    // A plain `List<f64>` element: the copy width is eight bytes in a float
+    // register, and `contains` compares with a float `==` rather than an
+    // integer one. The differential fuzzer found the `llvm` backend emitting
+    // an integer compare for the float element, which was invalid IR. The
+    // narrow `f32` list below goes through the same path at four bytes.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_float_element.kp",
+        "4\n3.500000\n2.000000\ntrue\nfalse\n1.250000\n3.500000\n4\n2.000000\n\
+         2.000000\n9.500000\n9.500000\n0.500000\n3.500000\n2.000000\n\
+         2.500000\ntrue\nfalse\n",
     );
 }
 

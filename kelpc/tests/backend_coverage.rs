@@ -67,12 +67,22 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **221 of the 221 targets the C backend builds**. The refusal ranking is
+/// **223 of the 223 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
 ///
-/// Recorded at MK7 S3 (the rest: `pd` globals, the capability check, the last
-/// three refusals) on 2026-09-21. The 183 the S3A tip built plus the 38 the
-/// rest of S3 added: the 35 `pd` targets (module globals, `kelp_init_pds`,
+/// Recorded at MK7 S5 on 2026-09-21, raised from the 221 the S3 tip built. Two
+/// fixtures landed with S5, each the regression fixture for a defect the
+/// curated corpus could not see and the differential fuzzer found:
+/// `list_float_element.kp` (a plain `List<f64>` element, whose `contains` the
+/// `llvm` backend emitted an integer compare for, which is invalid IR) and
+/// `pd_owned_container.kp` (an owned `pd` no expression reads, whose container
+/// function set `collect_instantiations` omitted, so the backend reported an
+/// internal error where the C backend built it).
+///
+/// The S3 record this supersedes: **221 of the 221 targets the C backend
+/// builds**, recorded at MK7 S3 (the rest: `pd` globals, the capability check,
+/// the last three refusals) on 2026-09-21. The 183 the S3A tip built plus the 38
+/// the rest of S3 added: the 35 `pd` targets (module globals, `kelp_init_pds`,
 /// the `atexit` drop and the `argv` saved by `main`), the 9 that reach a gated
 /// call site with a resource argument (`fs`, `net` and `process`, checked
 /// against the module's compiled-in allowlist exactly as the C backend checks
@@ -100,7 +110,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// two owned-temporary shapes all lower. The gate for this slice is
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
-const LLVM_BUILT_BASELINE: usize = 221;
+const LLVM_BUILT_BASELINE: usize = 223;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
