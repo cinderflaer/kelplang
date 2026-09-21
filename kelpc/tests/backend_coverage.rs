@@ -67,16 +67,27 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **129 of the 219 targets the C backend builds**, the rest refused.
+/// **140 of the 220 targets the C backend builds**, the rest refused.
 ///
-/// Recorded at MK7 S2F (references that are not a `datac`) on 2026-09-21. The
-/// 129 are 123 of the fixtures, the four manifests `alias_cross_file`,
-/// `alias_kpconf`, `namespace` and `shapes`, and the examples `fib.kp` and
-/// `hello.kp`. The sweep records no target that builds and then disagrees with
-/// the C backend, and no target that fails without a named refusal: the S2F
-/// slice lowered the scalar, field and return borrows and the two divergent
-/// tails, so `move_param_return` and `panic_tail` build instead of reporting the
-/// backend's own `internal error` (BUG-b2Ldp).
+/// Recorded at MK7 S2E (closures and function values) on 2026-09-21. The 140 are
+/// 123 of the fixtures plus the nine the closure slice lowered
+/// (`closure_datac_borrow_param`, `closure_env_wide_ret`, `closure_move`,
+/// `closure_two_captures`, `closure_value_widening`, `discard_wide_return`,
+/// `fn_literal`, `fn_literal_capture`, `try_drops_frame`) and the closure
+/// slice's own new `fn_value_plain`, the four manifests `alias_cross_file`,
+/// `alias_kpconf`, `namespace` and `shapes`, the `closure_datac_param` project,
+/// and the examples `fib.kp` and `hello.kp`. The sweep records no target that
+/// builds and then disagrees with the C backend, and no target that fails
+/// without a named refusal: the S2E slice lowered function values, closures,
+/// their environments, the indirect call and the two widening shapes.
+///
+/// Five of the fifteen targets the earlier S2E refusals named still refuse, but
+/// under the *runtime* slice's message rather than a closure one: their modules
+/// are lowered whole, and `std/str` reaches `std.mem.alloc_raw` (S3), so
+/// `closure_basic`, the three `stdlib_*` callback fixtures and `fn_value` (a
+/// `pd` read) stop at S3 instead. A refusal that names a construct the backend
+/// does not lower, at the right stage, is the designed answer; only the count is
+/// what moved.
 ///
 /// This number may only rise. A slice that lowers a construct turns refusals
 /// into built targets, so the count changes and the constant is raised in the
@@ -91,24 +102,19 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// to trust once work has moved:
 ///
 /// ```text
-///   36  cannot lower the call to 'std.mem.alloc_raw' yet (MK7 S3)
-///   34  cannot lower 'pd' yet (MK7 S3)
-///    5  cannot lower 'a borrow of a function value' yet (MK7 S2E)
-///    4  cannot lower 'a function-valued field' yet (MK7 S2E)
-///    3  cannot lower 'a closure' yet (MK7 S2E)
-///    3  cannot lower 'a function value' yet (MK7 S2E)
+///   40  cannot lower the call to 'std.mem.alloc_raw' yet (MK7 S3)
+///   35  cannot lower 'pd' yet (MK7 S3)
 ///    2  cannot lower 'a field of an owned temporary' yet (MK7 S2B)
 ///    1  cannot lower the call to 'String#into_bytes' yet (MK7 S2B)
 ///    1  cannot lower the call to 'std.math.sqrt_raw' yet (MK7 S3)
 ///    1  cannot lower the call to 'std.time.now_unix_raw' yet (MK7 S3)
 /// ```
 ///
-/// 72 of the 90 refusals are the runtime and `pd` slice (S3, and 36 of those are
-/// the one `std.mem.alloc_raw` call), 15 are closures and function values (S2E),
-/// and 3 are owned-temporary shapes (S2B). No refusal names a borrow any more,
-/// and there is no unnamed one: the ranking is dominated by one slice, S3, and
-/// after it by the closure slice.
-const LLVM_BUILT_BASELINE: usize = 129;
+/// 77 of the 80 refusals are the runtime, the `extern fun` bodies and `pd` (S3,
+/// and 40 of those are the one `std.mem.alloc_raw` call), and 3 are
+/// owned-temporary shapes (S2B). No refusal names a closure or a function value
+/// any more, and there is no unnamed one: the ranking is one slice, S3.
+const LLVM_BUILT_BASELINE: usize = 140;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
