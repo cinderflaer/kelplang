@@ -287,7 +287,7 @@ fn build(path: &str, out_path: &Path, backend: Backend, deny_outdated: bool) -> 
             // The LLVM backend builds its own module, writes the textual IR
             // beside the binary, and links the object itself; the C source
             // string the arm above writes has no counterpart here.
-            if let Err(message) = codegen_llvm::compile(&typed, out_path) {
+            if let Err(message) = codegen_llvm::compile(&typed, &drops, out_path) {
                 eprintln!("error: {message}");
                 return false;
             }

@@ -35,11 +35,31 @@
 //!   address, so `p.x` through a borrowed `datac` parameter is the same
 //!   `getelementptr` a plain local field read is
 //!
-//! A move is a load and a store (MK7 §3.4). Every struct this slice lowers has a
-//! field set that owns nothing, so `types::needs_drop` is false for it and the
-//! drop plan is empty: there is no second drop to leave behind because there is
-//! no first one. An owned field is the container/drop slice and is refused by
-//! name below.
+//! A move is a load and a store, and an all-scalar struct owns nothing, so at
+//! S2A there was no drop plan to run.
+//!
+//! # What S2B adds (MK7 S2, the runtime and heap slice)
+//!
+//! - the C runtime object: `runtime/kelp_rt.c` (the same text the C backend
+//!   emits) compiled once by `build.rs` and linked into every LLVM binary, with
+//!   the helpers reached by declaration, never re-implemented in IR
+//! - `String` and `Bytes` as an identified `{ ptr, i64, i64 }` and `View` as
+//!   `{ ptr, i64 }`, field for field the structs `kelp_rt.c` defines (MK7 §3.3)
+//! - the builtin `Bytes`/`String`/`View` methods, and `print`/templates reading
+//!   a buffer or a view as `%.*s` from its own length and pointer
+//! - an owned `datac` field, the generated per-`datac` drop, and the
+//!   `borrowck::DropPlan` emitted at the same points `codegen_c.rs` emits it:
+//!   end of block, before a `return`, and before an assignment overwrites an
+//!   owned binding. A move clears its source slot, so the drop a binding still
+//!   owes on a path that did not move it frees nothing
+//! - `panic`, `assert`, and the out-of-range panic of a narrowing conversion,
+//!   all now the runtime's own text
+//!
+//! A runtime helper that returns a struct larger than two eightbytes uses the
+//! ABI shape clang emits for it: the hidden return pointer, modelled here as an
+//! explicit first `ptr` argument (see `RtFn.sret`). The two helpers that take
+//! such a struct by value are left out, so a call to one is refused by name
+//! rather than crossed wrongly. `View` is two eightbytes and crosses unchanged.
 //!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
@@ -82,12 +102,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::ast::{BinOp, UnOp};
+use crate::borrowck::{DropPlan, DropTarget};
 use crate::llvm_ffi::{
     self, BasicBlock, Builder, Context, FloatBinOp, FnType, Function as LlvmFunction, IntBinOp,
     IntCmp, Module, RealCmp, TargetMachine, Type, Value,
 };
+use crate::lexer::Span;
 use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt, TemplatePiece};
-use crate::types::{needs_drop, owned_types, struct_tag, Ty};
+use crate::types::{drop_fn_name, needs_drop, owned_types, struct_tag, Ty};
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
 /// emit the object and link it with `cc`.
@@ -96,7 +118,7 @@ use crate::types::{needs_drop, owned_types, struct_tag, Ty};
 /// (MK7 §4.4) so the IR is inspectable next to the binary, and keeps the object
 /// it hands `cc` as `<out>.o`. Linking itself is `driver::link_llvm_object`, the
 /// sibling of `driver::compile_c`.
-pub fn compile(program: &Program, out_path: &Path) -> Result<(), String> {
+pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(), String> {
     llvm_ffi::initialize_native_target()?;
     let triple = llvm_ffi::default_target_triple();
     if triple.is_empty() {
@@ -107,9 +129,12 @@ pub fn compile(program: &Program, out_path: &Path) -> Result<(), String> {
     let mut module = Module::new(&ctx, "kelp");
     module.set_triple(&triple);
 
-    let mut lowering = Gen::new(&ctx, &module, program)?;
+    let mut lowering = Gen::new(&ctx, &module, program, drops)?;
     lowering.declare()?;
-    lowering.define_panic();
+    // The generated per-`datac` drops are defined before the function bodies
+    // that call them, mirroring the order `codegen_c.rs` writes the typedef and
+    // its drop routine in.
+    lowering.emit_drop_fn_bodies()?;
     lowering.emit_all()?;
 
     // A caller must verify before emitting: LLVM's object writer assumes a
@@ -138,6 +163,26 @@ struct FnInfo<'a> {
     ret_ty: Ty,
 }
 
+/// One runtime helper the IR calls by declaration: the function, its LLVM type,
+/// whether it yields a value (a `void` one must not be given a result name), the
+/// struct it produces, and whether that production is the C ABI's hidden return
+/// pointer.
+#[derive(Clone, Copy)]
+struct RtFn<'a> {
+    func: LlvmFunction<'a>,
+    ty: FnType<'a>,
+    yields: bool,
+    ret: Option<Type<'a>>,
+    /// True when the C function returns a struct larger than two eightbytes,
+    /// which the SysV ABI returns through a hidden pointer in `rdi`. clang marks
+    /// that pointer `sret` in the IR it emits; this backend models it as an
+    /// explicit first `ptr` parameter instead, which produces the *same machine
+    /// call* (the destination lands in `rdi`, the real arguments follow) without
+    /// growing the wrapper with a parameter-attribute API. The declared type is
+    /// therefore the C signature's ABI shape rather than its written spelling.
+    sret: bool,
+}
+
 /// Module-level state: the context, the module, the builder, and the runtime
 /// symbols every function shares. Per-function state lives in [`FnGen`].
 struct Gen<'a> {
@@ -148,11 +193,8 @@ struct Gen<'a> {
     funcs: HashMap<String, FnInfo<'a>>,
     printf_fn: LlvmFunction<'a>,
     printf_ty: FnType<'a>,
-    fprintf_ty: FnType<'a>,
-    exit_ty: FnType<'a>,
     panic_fn: LlvmFunction<'a>,
     panic_ty: FnType<'a>,
-    stderr: Value<'a>,
     /// One identified LLVM struct type per `datac`, keyed by the `tir` name. The
     /// body is set once per declaration in `declare_structs`, before any
     /// function signature is built, so a `datac` parameter or return names a
@@ -162,23 +204,57 @@ struct Gen<'a> {
     /// resolves its field to the struct index a `getelementptr` needs without
     /// re-walking `program.structs`.
     field_index: HashMap<String, Vec<String>>,
+    /// The `DropPlan`, keyed by the same node identity `codegen_c.rs` reads, so
+    /// the two backends free the same set of owned locals at the same points
+    /// (MK7 §3.4).
+    drops: &'a DropPlan,
+    /// The runtime helpers this slice reaches, keyed by their mangled symbol.
+    /// `kelp_rt.c` defines them (compiled into the object `build.rs` leaves in
+    /// `OUT_DIR`), and the module only declares them: the C backend emits the
+    /// same text into one translation unit.
+    runtime: HashMap<String, RtFn<'a>>,
+    /// The generated per-`datac` drop functions (`kelp_drop_<name>`), the mirror
+    /// of the ones `codegen_c.rs` emits beside each typedef.
+    drop_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The `datac`/`enum` names that own memory, so `types::needs_drop` can
+    /// answer for a type without re-walking the declarations.
+    owned: HashSet<String>,
 }
 
 impl<'a> Gen<'a> {
-    fn new(ctx: &'a Context, module: &'a Module<'a>, program: &'a Program) -> Result<Self, String> {
+    fn new(
+        ctx: &'a Context,
+        module: &'a Module<'a>,
+        program: &'a Program,
+        drops: &'a DropPlan,
+    ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
-        // The runtime symbols S1 reaches: libc's `printf`/`fprintf`/`exit` and
-        // `stderr`, plus the IR-defined `kelp_panic` below. Declared once, with
-        // the one type each is called with.
+        // The one libc symbol this slice reaches: `printf`, for `print` and
+        // templates. `kelp_panic` and `kelp_assert` are the runtime's own now
+        // that its object is linked, so they are declared with the rest of the
+        // helpers instead of defined here.
         let printf_ty = ctx.fn_type(ctx.i32(), &[ptr], true);
         let printf_fn = module.add_function("printf", printf_ty);
-        let fprintf_ty = ctx.fn_type(ctx.i32(), &[ptr, ptr], true);
-        module.add_function("fprintf", fprintf_ty);
-        let exit_ty = ctx.fn_type(ctx.void(), &[ctx.i32()], false);
-        module.add_function("exit", exit_ty);
-        let panic_ty = ctx.fn_type(ctx.void(), &[ptr], false);
-        let panic_fn = module.add_function("kelp_panic", panic_ty);
-        let stderr = module.add_external_global("stderr", ptr);
+        // The builtin heap layouts, field for field the structs `kelp_rt.c`
+        // defines: a pointer, then a length, then a capacity (a `View` has no
+        // capacity). Keeping the order and the widths identical is what lets a
+        // pointer to one cross into the runtime (MK7 §3.3); the runtime's
+        // functions all take the pair by pointer or by value through the same
+        // C ABI the object was compiled for.
+        let mut structs = HashMap::new();
+        let bytes_ty = ctx.struct_type("kelp_Bytes");
+        ctx.struct_set_body(bytes_ty, &[ptr, ctx.i64(), ctx.i64()]);
+        structs.insert("Bytes".to_string(), bytes_ty);
+        let string_ty = ctx.struct_type("kelp_String");
+        ctx.struct_set_body(string_ty, &[ptr, ctx.i64(), ctx.i64()]);
+        structs.insert("String".to_string(), string_ty);
+        let view_ty = ctx.struct_type("kelp_View");
+        ctx.struct_set_body(view_ty, &[ptr, ctx.i64()]);
+        structs.insert("View".to_string(), view_ty);
+        let runtime = declare_runtime(ctx, module, bytes_ty, string_ty, view_ty);
+        let panic = *runtime
+            .get("kelp_panic")
+            .expect("kelp_panic is declared with the runtime");
         Ok(Gen {
             ctx,
             module,
@@ -187,18 +263,19 @@ impl<'a> Gen<'a> {
             funcs: HashMap::new(),
             printf_fn,
             printf_ty,
-            fprintf_ty,
-            exit_ty,
-            panic_fn,
-            panic_ty,
-            stderr,
-            structs: HashMap::new(),
+            panic_fn: panic.func,
+            panic_ty: panic.ty,
+            structs,
             field_index: HashMap::new(),
+            drops,
+            runtime,
+            drop_fns: HashMap::new(),
+            owned: owned_types(&program.structs, &program.enums),
         })
     }
 
     /// Refuse the program-level constructs this slice does not lower, declare
-    /// every `datac`, then declare every function and the runtime symbols.
+    /// every `datac`, its drop function, and every function.
     ///
     /// Refusing before any function is emitted means a program with an `enum`
     /// anywhere fails with the construct named, rather than with the first
@@ -225,6 +302,8 @@ impl<'a> Gen<'a> {
         // function. A gated *call* is a stdlib `extern fun` and is refused by
         // name at the call site (S3).
 
+        self.declare_drop_fns();
+
         let ctx = self.ctx;
 
         for f in &program.functions {
@@ -236,7 +315,7 @@ impl<'a> Gen<'a> {
                 continue;
             }
             if f.env.is_some() {
-                return Err(refuse("'a closure'", "S2B"));
+                return Err(refuse("'a closure'", "S2D"));
             }
             let (params, ret) = if f.name == "main" {
                 // The C backend's `main` is `int main(int, char**)`; S1 mirrors
@@ -277,11 +356,10 @@ impl<'a> Gen<'a> {
     fn declare_structs(&mut self) -> Result<(), String> {
         let program = self.program;
         let ctx = self.ctx;
-        let owned = owned_types(&program.structs, &program.enums);
         let enum_names: HashSet<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
         for s in &program.structs {
             for f in &s.fields {
-                refuse_datac_field(&f.ty, &owned, &enum_names)?;
+                refuse_datac_field(&f.ty, &enum_names)?;
             }
         }
         for s in &program.structs {
@@ -307,33 +385,84 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// Define `void @kelp_panic(ptr)`: the runtime's panic, written in IR here
-    /// because S1 links no runtime object (the C `librt` is S3, MK7 §3.2).
-    ///
-    /// It prints the same `panic: <msg>` line the C runtime's `kelp_panic` does
-    /// and exits 1, so the panic text a conversion's range check names is
-    /// byte-identical to the C backend's.
-    fn define_panic(&self) {
-        let f = self.panic_fn;
-        let entry = f.append_block("entry");
-        self.builder.position_at_end(entry);
-        let stderr = self
-            .builder
-            .build_load(self.ctx.opaque_ptr(), self.stderr, "stderr");
-        let fmt = self.builder.global_string("panic: %s\n", "panic.fmt");
-        let msg = f.get_param(0);
-        let fprintf = self
-            .module
-            .get_function("fprintf")
-            .expect("fprintf was declared in declare()");
-        self.builder.build_call(fprintf, self.fprintf_ty, &[stderr, fmt, msg], "");
-        let exit = self
-            .module
-            .get_function("exit")
-            .expect("exit was declared in declare()");
-        self.builder
-            .build_call(exit, self.exit_ty, &[self.ctx.const_int(self.ctx.i32(), 1, false)], "");
-        self.builder.build_ret_void();
+    /// Whether a value of `ty` owns memory in this program, which is exactly
+    /// "a drop is owed for it" (`types::needs_drop`). The distinction matters at
+    /// a staged temporary: an all-scalar `datac` may be staged for its address
+    /// freely, while one that owns memory has to reach a drop site.
+    fn owns_memory(&self, ty: &Ty) -> bool {
+        needs_drop(ty, &self.owned)
+    }
+
+    /// Declare one drop function per `datac` whose fields own memory
+    /// (`types::needs_drop`), the mirror of the routine `codegen_c.rs` writes
+    /// beside each typedef. The plan's targets call them by name.
+    fn declare_drop_fns(&mut self) {
+        let owned = owned_types(&self.program.structs, &self.program.enums);
+        for s in &self.program.structs {
+            if !needs_drop(&Ty::Struct(s.name.clone()), &owned) {
+                continue;
+            }
+            let name = format!("kelp_drop_{}", crate::types::c_ident(&s.name));
+            let ty = self
+                .ctx
+                .fn_type(self.ctx.void(), &[self.ctx.opaque_ptr()], false);
+            let func = self.module.add_function(&name, ty);
+            self.drop_fns.insert(s.name.clone(), (func, ty));
+        }
+    }
+
+    /// Define each generated drop: one call per owned field, in declaration
+    /// order, on the field's own address. A builtin buffer goes straight to the
+    /// runtime's drop; a nested owned `datac` recurses through its own.
+    fn emit_drop_fn_bodies(&self) -> Result<(), String> {
+        let owned = owned_types(&self.program.structs, &self.program.enums);
+        for s in &self.program.structs {
+            let Some((func, _)) = self.drop_fns.get(&s.name) else {
+                continue;
+            };
+            let entry = func.append_block("entry");
+            self.builder.position_at_end(entry);
+            let struct_ty = *self
+                .structs
+                .get(&s.name)
+                .ok_or_else(|| no_value(&format!("the datac '{}'", s.name)))?;
+            let self_ptr = func.get_param(0);
+            for (index, field) in s.fields.iter().enumerate() {
+                if !needs_drop(&field.ty, &owned) {
+                    continue;
+                }
+                let field_ptr =
+                    self.builder
+                        .build_struct_gep(struct_ty, self_ptr, index as u32, &field.name);
+                self.call_drop(field_ptr, &field.ty)?;
+            }
+            self.builder.build_ret_void();
+        }
+        Ok(())
+    }
+
+    /// Free the value at `ptr`: the runtime's builtin free, or the generated
+    /// per-`datac` drop. A type that owns nothing has no call, which is the same
+    /// silence `codegen_c.rs` keeps for a dropless field.
+    fn call_drop(&self, ptr: Value<'a>, ty: &Ty) -> Result<(), String> {
+        let (func, fty) = match ty {
+            Ty::Bytes | Ty::String => {
+                let symbol = drop_fn_name(ty);
+                let rt = self
+                    .runtime
+                    .get(&symbol)
+                    .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?;
+                (rt.func, rt.ty)
+            }
+            Ty::Struct(name) => match self.drop_fns.get(name) {
+                Some((func, fty)) => (*func, *fty),
+                // An unowned `datac` has no drop function and nothing to free.
+                None => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        self.builder.build_call(func, fty, &[ptr], "");
+        Ok(())
     }
 
     /// Emit every function body. Borrows `&self`: after `declare`, the module
@@ -420,8 +549,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// Emit a block's statements and then its tail: as a `return` when the tail
-    /// belongs to a value-returning function, discarded otherwise (the C backend
-    /// draws the same line in `write_function_body`).
+    /// belongs to a value-returning function, discarded otherwise, followed by
+    /// the block's end-of-scope drops (the C backend draws both lines in
+    /// `write_function_body`).
     fn emit_block_body(&mut self, block: &Block) -> Result<(), String> {
         for stmt in &block.stmts {
             if self.terminated {
@@ -432,16 +562,29 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if self.terminated {
             return Ok(());
         }
+        let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
             if self.ret_ty != Ty::Unit {
-                let value = self.value_of(tail)?;
-                self.g.builder.build_ret(value);
-                self.terminated = true;
+                // Read the returned value *before* freeing the frame's locals:
+                // the tail may read through one of them.
+                let value = if drops.is_empty() {
+                    self.value_of(tail)?
+                } else {
+                    self.value_of_then_drops(tail, &drops)?
+                };
+                if !self.terminated {
+                    self.g.builder.build_ret(value);
+                    self.terminated = true;
+                }
             } else {
                 self.emit_expr(tail)?;
+                if !self.terminated {
+                    self.emit_drops(&drops)?;
+                }
             }
+            return Ok(());
         }
-        Ok(())
+        self.emit_drops(&drops)
     }
 
     /// Emit a block as an expression: its tail is the block's value, `None` when
@@ -464,9 +607,26 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if self.terminated {
             return Ok(None);
         }
+        let drops = self.drops_at_block_end(block);
         match &block.tail {
+            // A unit tail is a statement, not a value: it is emitted and the
+            // block's own drops follow it, so a `{ ...; call() }` block in
+            // statement position costs nothing extra.
+            Some(tail) if tail.ty == Ty::Unit => {
+                self.emit_expr(tail)?;
+                if !self.terminated {
+                    self.emit_drops(&drops)?;
+                }
+                Ok(None)
+            }
+            // A block's value has to be read before its own end-of-scope drops
+            // run, so it passes through a temporary when anything is freed.
+            Some(tail) if !drops.is_empty() => Ok(Some(self.value_of_then_drops(tail, &drops)?)),
             Some(tail) => self.emit_expr(tail),
-            None => Ok(None),
+            None => {
+                self.emit_drops(&drops)?;
+                Ok(None)
+            }
         }
     }
 
@@ -492,20 +652,77 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     None => return Err(no_value(&format!("the initializer of '{name}'"))),
                 }
             }
-            Stmt::Return { value, .. } => match value {
-                Some(e) => {
-                    let v = self.value_of(e)?;
-                    self.g.builder.build_ret(v);
-                    self.terminated = true;
+            Stmt::Return { value, span } => {
+                let drops = self.drops_at_return(*span);
+                match value {
+                    Some(e) => {
+                        let v = if drops.is_empty() {
+                            self.value_of(e)?
+                        } else {
+                            self.value_of_then_drops(e, &drops)?
+                        };
+                        if !self.terminated {
+                            self.g.builder.build_ret(v);
+                        }
+                    }
+                    None => {
+                        self.emit_drops(&drops)?;
+                        self.emit_fallthrough_return()?;
+                    }
                 }
-                None => self.emit_fallthrough_return()?,
-            },
+                self.terminated = true;
+            }
             Stmt::While { cond, body } => self.emit_while(cond, body)?,
             Stmt::Expr(e) => {
                 self.emit_expr(e)?;
             }
         }
         Ok(())
+    }
+
+    fn drops_at_block_end(&self, block: &Block) -> Vec<DropTarget> {
+        self.g.drops.at_block_end(&self.fn_name, block).to_vec()
+    }
+
+    fn drops_at_return(&self, span: Span) -> Vec<DropTarget> {
+        self.g.drops.at_return(&self.fn_name, span).to_vec()
+    }
+
+    fn drops_at_assign(&self, span: Span) -> Vec<DropTarget> {
+        self.g.drops.at_assign(&self.fn_name, span).to_vec()
+    }
+
+    /// Free the still-live owned locals the plan names, in the plan's order
+    /// (reverse declaration order, so a later binding is freed before an earlier
+    /// one it may have taken its value from).
+    fn emit_drops(&mut self, targets: &[DropTarget]) -> Result<(), String> {
+        for t in targets {
+            let slot = self
+                .lookup(&t.name)
+                .ok_or_else(|| no_value(&format!("the owned local '{}'", t.name)))?;
+            self.g.call_drop(slot, &t.ty)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluate `e`, store it in a temporary, then run `drops`. A returned or
+    /// block-tailed value may read through a local being freed, so it has to be
+    /// read first (`codegen_c.rs::write_temp_then_drops`). An expression that
+    /// diverged leaves nothing to store and no drop to run.
+    fn value_of_then_drops(
+        &mut self,
+        e: &Expr,
+        drops: &[DropTarget],
+    ) -> Result<Value<'a>, String> {
+        let value = self.value_of(e)?;
+        if self.terminated {
+            return Ok(value);
+        }
+        let lty = self.lty(&e.ty)?;
+        let slot = self.temp_alloca(lty, "drop.tmp");
+        self.g.builder.build_store(value, slot);
+        self.emit_drops(drops)?;
+        Ok(self.g.builder.build_load(lty, slot, "drop.val"))
     }
 
     fn emit_while(&mut self, cond: &Expr, body: &Block) -> Result<(), String> {
@@ -541,14 +758,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::FloatLit(v) => Ok(Some(self.float_const(&e.ty, *v)?)),
             ExprKind::BoolLit(b) => Ok(Some(self.g.ctx.const_bool(*b))),
             ExprKind::StringLit(s) => Ok(Some(self.string_global(s)?)),
-            ExprKind::Ident(name) => Ok(Some(self.load_ident(name, &e.ty)?)),
+            ExprKind::Ident(name) => Ok(Some(self.load_ident(e, name)?)),
             ExprKind::Unary { op, expr } => Ok(Some(self.emit_unary(*op, expr, &e.ty)?)),
             ExprKind::Binary { op, lhs, rhs } => {
                 Ok(Some(self.emit_binary(*op, lhs, rhs)?))
             }
             ExprKind::Call { callee, args } => self.emit_call(callee, args),
             ExprKind::Assign { target, value } => {
-                self.emit_assign(target, value)?;
+                self.emit_assign(target, value, e.span)?;
                 Ok(None)
             }
             ExprKind::If {
@@ -564,13 +781,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // A borrow (`infer.rs::check_call_arg` synthesizes one for the
             // `datac` parameter whose type resolves to a shared or exclusive
             // borrow). `&str` is the pointer itself, as the C backend writes it;
-            // a `datac` borrow is the address of the place it borrows, which is
-            // the one indirection `getelementptr` needs.
+            // a `datac` or heap borrow is the address of the place it borrows,
+            // which is the one indirection `getelementptr` needs and the pointer
+            // the runtime's `const kelp_Bytes*` parameters take.
             ExprKind::Ref { expr: sub, .. } => {
                 if is_str_ref(&e.ty) {
                     return Ok(Some(self.value_of(sub)?));
                 }
-                if is_struct_ref(&e.ty) {
+                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) {
                     return Ok(Some(self.place_of(sub)?));
                 }
                 Err(refuse("'a borrow of a non-datac'", "S2B"))
@@ -667,19 +885,20 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The address of a *place* expression: a local's slot, a field of another
-    /// place, or the pointer a `datac` borrow names.
+    /// place, or the pointer a `datac` or heap borrow names.
     ///
     /// An rvalue base (`mk().field`, a literal's field) has no address, so it is
     /// stored into a temporary slot first, exactly as `codegen_c.rs` hoists one.
-    /// The temporary owns nothing here: every struct this slice lowers is
-    /// dropless, so there is nothing to free and no drop plan to run.
+    /// The temporary is handed back to the caller, which is what frees it: this
+    /// slice's `datac`s can own, so a staged temporary's drop is the caller's
+    /// business, not silently dropped here.
     fn place_of(&mut self, e: &Expr) -> Result<Value<'a>, String> {
         match &e.kind {
             ExprKind::Ident(name) => {
                 let slot = self
                     .lookup(name)
                     .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
-                if is_struct_ref(&e.ty) {
+                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) {
                     // The binding holds the borrow: its own value is the pointer.
                     Ok(self.g.builder.build_load(self.g.ctx.opaque_ptr(), slot, name))
                 } else {
@@ -697,6 +916,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Ref { expr: sub, .. } => self.place_of(sub),
             ExprKind::Deref { expr: sub } => self.value_of(sub),
             _ => {
+                // A staged temporary that owns memory has to be freed, and the
+                // one drop site that can do it is a call argument (handled in
+                // `arg_value`). Reaching one here means a shape whose owner no
+                // site would free, so it is refused by name rather than
+                // silently leaked.
+                if self.g.owns_memory(&e.ty) {
+                    return Err(refuse("'a field of an owned temporary'", "S2B"));
+                }
                 let value = self.value_of(e)?;
                 let lty = self.lty(&e.ty)?;
                 let slot = self.temp_alloca(lty, "field.base");
@@ -728,6 +955,63 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .ok_or_else(|| no_value("an expression that should produce a value"))
     }
 
+    /// One call argument. An explicit borrow of an owned *temporary* is staged
+    /// into a slot of its own and handed back in `held` for the caller to free
+    /// after the call, which is what `codegen_c.rs::stage_argument` does; every
+    /// other argument is its own value.
+    fn arg_value(
+        &mut self,
+        a: &Expr,
+        held: &mut Vec<(Value<'a>, Ty)>,
+    ) -> Result<Value<'a>, String> {
+        if let ExprKind::Ref { expr: sub, .. } = &a.kind {
+            if !is_str_ref(&a.ty) {
+                if let Some(root) = temporary_root(sub) {
+                    if self.g.owns_memory(&root.ty) {
+                        let root_ty = root.ty.clone();
+                        let lty = self.lty(&root_ty)?;
+                        let slot = self.temp_alloca(lty, "arg.tmp");
+                        let value = self.value_of(root)?;
+                        self.g.builder.build_store(value, slot);
+                        let ptr = self.chain_addr(slot, sub)?;
+                        held.push((slot, root_ty));
+                        return Ok(ptr);
+                    }
+                }
+            }
+        }
+        self.value_of(a)
+    }
+
+    /// The address of the field chain `e` read out of `root`, the staged
+    /// temporary its base is rooted at (the C backend's `chain_off`).
+    fn chain_addr(&mut self, root: Value<'a>, e: &Expr) -> Result<Value<'a>, String> {
+        match &e.kind {
+            ExprKind::FieldAccess { base, field } => {
+                let base_ptr = self.chain_addr(root, base)?;
+                let struct_name = struct_name_of_ty(&base.ty)
+                    .ok_or_else(|| refuse_type(&base.ty))?
+                    .to_string();
+                let struct_ty = *self
+                    .g
+                    .structs
+                    .get(&struct_name)
+                    .ok_or_else(|| no_value(&format!("the datac '{struct_name}'")))?;
+                let index = self
+                    .g
+                    .field_index
+                    .get(&struct_name)
+                    .and_then(|names| names.iter().position(|n| n == field))
+                    .ok_or_else(|| no_value(&format!("the field '{struct_name}.{field}'")))?;
+                Ok(self
+                    .g
+                    .builder
+                    .build_struct_gep(struct_ty, base_ptr, index as u32, field))
+            }
+            _ => Ok(root),
+        }
+    }
+
     fn int_const(&self, ty: &Ty, value: i128) -> Result<Value<'a>, String> {
         let lty = self.lty(ty)?;
         // Cut the `i128` literal to the expression's own type. `LLVMConstInt`
@@ -753,12 +1037,22 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.builder.global_string(text, "str"))
     }
 
-    fn load_ident(&self, name: &str, ty: &Ty) -> Result<Value<'a>, String> {
+    /// Load a binding. A load at a move site also clears the source slot: the
+    /// value is copied out and the binding is zeroed, so a drop the binding
+    /// still owes on a path that did not move it frees nothing rather than a
+    /// second copy (MK7 §3.4; `codegen_c.rs` writes `({0})` for the same
+    /// reason). A binding moved on every path gets no `at_move` entry, so this
+    /// leaves its slot alone and nothing drops it.
+    fn load_ident(&mut self, e: &Expr, name: &str) -> Result<Value<'a>, String> {
         let slot = self
             .lookup(name)
             .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
-        let lty = self.lty(ty)?;
-        Ok(self.g.builder.build_load(lty, slot, name))
+        let lty = self.lty(&e.ty)?;
+        let value = self.g.builder.build_load(lty, slot, name);
+        if self.g.owns_memory(&e.ty) && self.g.drops.moves_at(&self.fn_name, e) {
+            self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
+        }
+        Ok(value)
     }
 
     fn lookup(&self, name: &str) -> Option<Value<'a>> {
@@ -783,7 +1077,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(slot)
     }
 
-    fn emit_assign(&mut self, target: &Expr, value: &Expr) -> Result<(), String> {
+    fn emit_assign(&mut self, target: &Expr, value: &Expr, span: Span) -> Result<(), String> {
         let v = self.value_of(value)?;
         if self.terminated {
             return Ok(());
@@ -793,13 +1087,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let slot = self
                     .lookup(name)
                     .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
+                // The old value goes after the new one has been read (it may
+                // read through the binding being overwritten) and before it is
+                // stored (`DropPlan::at_assign`; `b = b` is not one of these).
+                let drops = self.drops_at_assign(span);
+                self.emit_drops(&drops)?;
                 self.g.builder.build_store(v, slot);
                 Ok(())
             }
             // A field write: the field's address, then a store of the new value.
-            // A struct this slice lowers owns nothing, so the value being
-            // overwritten needs no drop first; the drop plan (MK7 §3.4) belongs
-            // to the owned-field slice and is not reached here.
+            // The plan records `at_assign` only for an `Ident` target, so a
+            // field assignment frees nothing first, the same as the C backend.
             ExprKind::FieldAccess { base, field } => {
                 let (ptr, struct_ty, index) = self.field_place(base, field)?;
                 let field_ptr = self
@@ -1071,6 +1369,39 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(None);
         }
 
+        // `panic` reaches the runtime's `kelp_panic(const char*)`. The message
+        // is a `str`/`&str` (already the pointer) or an owned `String` (the
+        // buffer's `data`); the call never returns, so the block ends here and
+        // no later statement of this block may be emitted.
+        if callee == "panic" {
+            let arg = args
+                .first()
+                .ok_or_else(|| no_value("the argument of panic"))?;
+            let msg = self.heap_data_ptr(arg)?;
+            self.g
+                .builder
+                .build_call(self.g.panic_fn, self.g.panic_ty, &[msg], "");
+            self.g.builder.build_unreachable();
+            self.terminated = true;
+            return Ok(None);
+        }
+
+        // `assert` reaches the runtime's `kelp_assert(bool)`, which panics with
+        // the same "assertion failed" text the C backend gets.
+        if callee == "assert" {
+            let arg = args
+                .first()
+                .ok_or_else(|| no_value("the condition of assert"))?;
+            let cond = self.value_of(arg)?;
+            let rt = *self
+                .g
+                .runtime
+                .get("kelp_assert")
+                .ok_or_else(|| no_value("the runtime 'kelp_assert'"))?;
+            self.g.builder.build_call(rt.func, rt.ty, &[cond], "");
+            return Ok(None);
+        }
+
         // `n.to_u8()` and friends: the key is `"<src>#to_<dst>"`, the same shape
         // `codegen_c.rs::call_value` matches.
         if let Some((src, dst)) = callee.split_once("#to_") {
@@ -1086,9 +1417,10 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
 
         if let Some(info) = self.g.funcs.get(callee).cloned() {
+            let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
             for a in args {
-                values.push(self.value_of(a)?);
+                values.push(self.arg_value(a, &mut held)?);
             }
             // A call that yields `void` must not be given a name: an instruction
             // with a name has to have a value, and the verifier rejects a named
@@ -1097,17 +1429,62 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let yields_value = info.ret_ty != Ty::Unit;
             let name = if yields_value { "call" } else { "" };
             let v = self.g.builder.build_call(info.func, info.ty, &values, name);
+            // An owned temporary staged for the argument is freed *after* the
+            // call, as `codegen_c.rs::hoisted_call` frees it.
+            for (slot, ty) in held {
+                self.g.call_drop(slot, &ty)?;
+            }
             if !yields_value {
                 return Ok(None);
             }
             return Ok(Some(v));
         }
 
+        // A builtin method on `Bytes`/`String`/`View`: reached by declaration
+        // and never re-implemented here, with the machine-level signature
+        // `kelp_rt.c` is compiled with. A helper that returns a struct through
+        // the hidden pointer takes the destination as its explicit first
+        // argument, which is the same call clang would emit.
+        if let Some(rt) = self.g.runtime.get(&symbol_name(callee)).copied() {
+            let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+            if rt.sret {
+                let ret_ty = rt
+                    .ret
+                    .ok_or_else(|| no_value("the return type of an sret helper"))?;
+                let slot = self.temp_alloca(ret_ty, "sret.out");
+                let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len() + 1);
+                values.push(slot);
+                for a in args {
+                    values.push(self.arg_value(a, &mut held)?);
+                }
+                self.g.builder.build_call(rt.func, rt.ty, &values, "");
+                for (slot, ty) in held {
+                    self.g.call_drop(slot, &ty)?;
+                }
+                return Ok(Some(self.g.builder.build_load(ret_ty, slot, "sret.val")));
+            }
+            let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
+            for a in args {
+                values.push(self.arg_value(a, &mut held)?);
+            }
+            let name = if rt.yields { "call" } else { "" };
+            let v = self.g.builder.build_call(rt.func, rt.ty, &values, name);
+            for (slot, ty) in held {
+                self.g.call_drop(slot, &ty)?;
+            }
+            return Ok(if rt.yields { Some(v) } else { None });
+        }
+
         // Anything else is outside this slice. An `extern fun` is the runtime
-        // and is S3; any other name is a construct this stage has no lowering
-        // for.
+        // and is S3; a container method is the container slice; any other name
+        // is a construct this stage has no lowering for.
         let stage = if self.g.program.functions.iter().any(|f| f.name == callee && f.extern_) {
             "S3"
+        } else if ["List#", "Map#", "Box#", "Array#"]
+            .iter()
+            .any(|prefix| callee.starts_with(prefix))
+        {
+            "S2C"
         } else {
             "S2B"
         };
@@ -1211,24 +1588,33 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The `print` path for one value: `printf` with the specifier and promotion
-    /// `codegen_c.rs::printf_piece_with` uses, so stdout is byte-identical.
+    /// `codegen_c.rs::printf_piece_with` uses, so stdout is byte-identical. An
+    /// owned temporary is freed right after the `printf`, exactly where the C
+    /// backend frees it.
     fn emit_template_print(&mut self, newline: bool, arg: &Expr) -> Result<(), String> {
-        let (spec, value) = self.printf_piece(arg)?;
+        let (spec, mut values, hold) = self.printf_piece(arg)?;
         let fmt = if newline {
             format!("{spec}\n")
         } else {
-            spec.to_string()
+            spec
         };
         let fmt_ptr = self.string_global(&fmt)?;
+        let mut all = Vec::with_capacity(values.len() + 1);
+        all.push(fmt_ptr);
+        all.append(&mut values);
         self.g
             .builder
-            .build_call(self.g.printf_fn, self.g.printf_ty, &[fmt_ptr, value], "");
+            .build_call(self.g.printf_fn, self.g.printf_ty, &all, "");
+        if let Some((slot, ty)) = hold {
+            self.g.call_drop(slot, &ty)?;
+        }
         Ok(())
     }
 
     /// A template: one `printf` whose format string is the literal chunks (with
-    /// `%` doubled) plus one specifier per interpolated value. The C backend
-    /// builds the same format string in `codegen_c.rs`'s `Template` arm.
+    /// `%` doubled) plus each interpolated value's specifier. The C backend
+    /// builds the same format string in `codegen_c.rs`'s `Template` arm; an
+    /// interpolated owned temporary is freed after the `printf`, as `print`'s is.
     fn emit_template(
         &mut self,
         newline: bool,
@@ -1236,6 +1622,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     ) -> Result<(), String> {
         let mut fmt = String::new();
         let mut args: Vec<Value<'a>> = Vec::new();
+        let mut holds: Vec<(Value<'a>, Ty)> = Vec::new();
         for piece in pieces {
             match piece {
                 TemplatePiece::Text(text) => {
@@ -1248,9 +1635,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     }
                 }
                 TemplatePiece::Value(value) => {
-                    let (spec, v) = self.printf_piece(value)?;
-                    fmt.push_str(spec);
-                    args.push(v);
+                    let (spec, mut values, hold) = self.printf_piece(value)?;
+                    fmt.push_str(&spec);
+                    args.append(&mut values);
+                    if let Some((slot, ty)) = hold {
+                        holds.push((slot, ty));
+                    }
                 }
             }
         }
@@ -1264,47 +1654,147 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g
             .builder
             .build_call(self.g.printf_fn, self.g.printf_ty, &all, "");
+        for (slot, ty) in holds {
+            self.g.call_drop(slot, &ty)?;
+        }
         Ok(())
     }
 
-    /// The format specifier and the already-promoted argument for one value,
-    /// mirroring `codegen_c.rs::printf_piece_with` exactly.
-    fn printf_piece(&mut self, arg: &Expr) -> Result<(&'static str, Value<'a>), String> {
+    /// The `data` pointer of a value `panic` reads as C text: a `str`/`&str` is
+    /// already the pointer, an owned `String` (or a borrow of one) contributes
+    /// the first field of its buffer. This is the IR twin of the C backend's
+    /// `panic` argument staging, minus the rows it does not reach.
+    fn heap_data_ptr(&mut self, arg: &Expr) -> Result<Value<'a>, String> {
+        match &arg.ty {
+            Ty::Str => self.value_of(arg),
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => self.value_of(arg),
+            Ty::String => {
+                let v = self.value_of(arg)?;
+                let lty = self.lty(&arg.ty)?;
+                let slot = self.temp_alloca(lty, "panic.msg");
+                self.g.builder.build_store(v, slot);
+                let (data, _) = self.buffer_pair(slot, lty);
+                Ok(data)
+            }
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::String) => {
+                let ptr = self.place_of(arg)?;
+                let lty = self.lty(inner)?;
+                let (data, _) = self.buffer_pair(ptr, lty);
+                Ok(data)
+            }
+            other => Err(refuse_type(other)),
+        }
+    }
+
+    /// The `(data, len)` pair of a heap value or view, read out of the struct at
+    /// `ptr`. Field 0 is the pointer and field 1 the length in all three builtin
+    /// layouts, which is what lets one routine serve `Bytes`, `String` and
+    /// `View`.
+    fn buffer_pair(&self, ptr: Value<'a>, struct_ty: Type<'a>) -> (Value<'a>, Value<'a>) {
+        let data_ptr = self.g.builder.build_struct_gep(struct_ty, ptr, 0, "data");
+        let data = self
+            .g
+            .builder
+            .build_load(self.g.ctx.opaque_ptr(), data_ptr, "data");
+        let len_ptr = self.g.builder.build_struct_gep(struct_ty, ptr, 1, "len");
+        let len = self
+            .g
+            .builder
+            .build_load(self.g.ctx.i64(), len_ptr, "len");
+        (data, len)
+    }
+
+    /// If `arg` is a heap buffer or a view, its `(data, len)` pair and the
+    /// temporary the caller must free afterwards. `None` for anything else, which
+    /// then takes the scalar path.
+    fn buffer_fields(
+        &mut self,
+        arg: &Expr,
+    ) -> Result<Option<(Value<'a>, Value<'a>, Option<(Value<'a>, Ty)>)>, String> {
+        match &arg.ty {
+            Ty::Bytes | Ty::String => {
+                let v = self.value_of(arg)?;
+                let lty = self.lty(&arg.ty)?;
+                let slot = self.temp_alloca(lty, "buf.tmp");
+                self.g.builder.build_store(v, slot);
+                let (data, len) = self.buffer_pair(slot, lty);
+                Ok(Some((data, len, Some((slot, arg.ty.clone())))))
+            }
+            Ty::View => {
+                let v = self.value_of(arg)?;
+                let lty = self.lty(&arg.ty)?;
+                let slot = self.temp_alloca(lty, "view.tmp");
+                self.g.builder.build_store(v, slot);
+                let (data, len) = self.buffer_pair(slot, lty);
+                Ok(Some((data, len, None)))
+            }
+            Ty::Ref { inner, .. }
+                if matches!(**inner, Ty::Bytes | Ty::String | Ty::View) =>
+            {
+                let ptr = self.place_of(arg)?;
+                let lty = self.lty(inner)?;
+                let (data, len) = self.buffer_pair(ptr, lty);
+                Ok(Some((data, len, None)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The format specifier and the already-promoted variadic arguments for one
+    /// value, mirroring `codegen_c.rs::printf_piece_with` exactly. A heap buffer
+    /// or a view contributes `%.*s` with an `int` length and a pointer, so the
+    /// specifier comes back with two arguments; the third slot carries a
+    /// temporary the caller frees after the `printf`.
+    fn printf_piece(
+        &mut self,
+        arg: &Expr,
+    ) -> Result<(String, Vec<Value<'a>>, Option<(Value<'a>, Ty)>), String> {
+        if let Some((data, len, hold)) = self.buffer_fields(arg)? {
+            let len = self
+                .g
+                .builder
+                .build_int_cast(false, false, len, self.g.ctx.i32(), "len");
+            return Ok(("%.*s".to_string(), vec![len, data], hold));
+        }
         let v = self.value_of(arg)?;
-        Ok(match &arg.ty {
-            Ty::I32 => ("%d", v),
-            Ty::I64 => ("%lld", v),
-            Ty::U32 => ("%u", v),
-            Ty::U64 => ("%llu", v),
+        let spec: &'static str = match &arg.ty {
+            Ty::I32 => "%d",
+            Ty::I64 => "%lld",
+            Ty::U32 => "%u",
+            Ty::U64 => "%llu",
             // A vararg narrower than `int` must be promoted here: LLVM does not,
             // unlike C, whose default argument promotions do it for free.
-            Ty::U8 | Ty::U16 => (
-                "%u",
-                self.g
+            Ty::U8 | Ty::U16 => {
+                let promoted = self
+                    .g
                     .builder
-                    .build_int_cast(false, true, v, self.g.ctx.i32(), "promote"),
-            ),
-            Ty::Usize => ("%zu", v),
-            Ty::Isize => ("%lld", v),
+                    .build_int_cast(false, true, v, self.g.ctx.i32(), "promote");
+                return Ok(("%u".to_string(), vec![promoted], None));
+            }
+            Ty::Usize => "%zu",
+            Ty::Isize => "%lld",
             // `%f` reads a `double` out of the vector file, so an `f32` is
             // promoted, exactly as C's default argument promotions do.
-            Ty::F32 => (
-                "%f",
-                self.g
+            Ty::F32 => {
+                let promoted = self
+                    .g
                     .builder
-                    .build_fp_cast(true, v, self.g.ctx.f64(), "promote"),
-            ),
-            Ty::F64 => ("%f", v),
+                    .build_fp_cast(true, v, self.g.ctx.f64(), "promote");
+                return Ok(("%f".to_string(), vec![promoted], None));
+            }
+            Ty::F64 => "%f",
             Ty::Bool => {
                 let t = self.string_global("true")?;
                 let f = self.string_global("false")?;
-                ("%s", self.g.builder.build_select(v, t, f, "bool"))
+                let selected = self.g.builder.build_select(v, t, f, "bool");
+                return Ok(("%s".to_string(), vec![selected], None));
             }
-            Ty::Char => ("%c", v),
-            Ty::Str => ("%s", v),
-            Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => ("%s", v),
+            Ty::Char => "%c",
+            Ty::Str => "%s",
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => "%s",
             other => return Err(refuse_type(other)),
-        })
+        };
+        Ok((spec.to_string(), vec![v], None))
     }
 
     fn all_ones(&self, ty: &Ty) -> Result<Value<'a>, String> {
@@ -1349,8 +1839,108 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 }
 
-/// Map a `tir` type to its LLVM type. The scalar subset, `str`, and a `datac`
-/// `structs` holds a type for.
+/// Declare every runtime helper this slice calls, with the signature
+/// `kelp_rt.c` defines and the ABI shape it is compiled under (MK7 §3.3). The
+/// object `build.rs` produces is compiled from that same text, so a signature
+/// that drifts is caught by neither the verifier (which knows nothing of the
+/// object) nor `cc` at build time: it is caught only when a fixture runs. The
+/// list is therefore exactly the surface the S2B fixtures reach: `int` arguments
+/// are `i32`, `size_t` and `uint64_t` are `i64`, `uint8_t` is `i8`, `bool` is
+/// `i1`; a `View` (two eightbytes) travels by value in registers both ways;
+/// and a struct larger than that is returned through the hidden pointer this
+/// module models as an explicit first argument (see [`RtFn::sret`]).
+///
+/// `kelp_String__into_bytes`/`kelp_String__from_bytes` are deliberately absent:
+/// each takes a 24-byte struct *by value*, and LLVM's backend passes such an
+/// argument in registers while the SysV ABI puts it on the stack, so a call to
+/// one would not cross correctly. Leaving them out refuses the call by name
+/// rather than miscompiling it.
+fn declare_runtime<'a>(
+    ctx: &'a Context,
+    module: &'a Module<'a>,
+    bytes: Type<'a>,
+    string: Type<'a>,
+    view: Type<'a>,
+) -> HashMap<String, RtFn<'a>> {
+    let ptr = ctx.opaque_ptr();
+    let i1 = ctx.i1();
+    let i8 = ctx.i8();
+    let i64 = ctx.i64();
+    let void = ctx.void();
+    let mut out: HashMap<String, RtFn<'a>> = HashMap::new();
+    let decl = |out: &mut HashMap<String, RtFn<'a>>,
+                name: &str,
+                ret: Type<'a>,
+                params: &[Type<'a>],
+                yields: bool,
+                sret: bool| {
+        let (llvm_ret, mut all) = if sret {
+            (void, vec![ptr])
+        } else {
+            (ret, Vec::new())
+        };
+        all.extend_from_slice(params);
+        let ty = ctx.fn_type(llvm_ret, &all, false);
+        let func = module.add_function(name, ty);
+        out.insert(
+            name.to_string(),
+            RtFn {
+                func,
+                ty,
+                yields,
+                ret: if yields { Some(ret) } else { None },
+                sret,
+            },
+        );
+    };
+    // The panic path and the assertion: `kelp_panic` never returns, but the
+    // module still terminates the block it is called from with `unreachable`.
+    decl(&mut out, "kelp_panic", void, &[ptr], false, false);
+    decl(&mut out, "kelp_assert", void, &[i1], false, false);
+    // `kelp_Bytes`
+    decl(&mut out, "kelp_Bytes__empty", bytes, &[], true, true);
+    decl(&mut out, "kelp_Bytes__from_str", bytes, &[ptr], true, true);
+    decl(&mut out, "kelp_Bytes__clone", bytes, &[ptr], true, true);
+    decl(&mut out, "kelp_Bytes__len", i64, &[ptr], true, false);
+    decl(&mut out, "kelp_Bytes__is_empty", i1, &[ptr], true, false);
+    decl(&mut out, "kelp_Bytes__get", i8, &[ptr, i64], true, false);
+    decl(&mut out, "kelp_Bytes__set", void, &[ptr, i64, i8], false, false);
+    decl(&mut out, "kelp_Bytes__push", void, &[ptr, i8], false, false);
+    decl(&mut out, "kelp_Bytes__append", void, &[ptr, ptr], false, false);
+    decl(&mut out, "kelp_Bytes__reserve", void, &[ptr, i64], false, false);
+    decl(&mut out, "kelp_Bytes__clear", void, &[ptr], false, false);
+    decl(&mut out, "kelp_Bytes__as_str", ptr, &[ptr], true, false);
+    decl(&mut out, "kelp_bytes_drop", void, &[ptr], false, false);
+    // `kelp_String`
+    decl(&mut out, "kelp_String__empty", string, &[], true, true);
+    decl(&mut out, "kelp_String__from_str", string, &[ptr], true, true);
+    decl(&mut out, "kelp_String__clone", string, &[ptr], true, true);
+    decl(&mut out, "kelp_String__with_capacity", string, &[i64], true, true);
+    decl(&mut out, "kelp_String__len", i64, &[ptr], true, false);
+    decl(&mut out, "kelp_String__char_count", i64, &[ptr], true, false);
+    decl(&mut out, "kelp_String__is_empty", i1, &[ptr], true, false);
+    decl(&mut out, "kelp_String__as_str", ptr, &[ptr], true, false);
+    decl(&mut out, "kelp_String__view", view, &[ptr], true, false);
+    decl(&mut out, "kelp_String__push", void, &[ptr, i8], false, false);
+    decl(&mut out, "kelp_String__push_str", void, &[ptr, ptr], false, false);
+    decl(&mut out, "kelp_String__reserve", void, &[ptr, i64], false, false);
+    decl(&mut out, "kelp_String__clear", void, &[ptr], false, false);
+    decl(&mut out, "kelp_string_drop", void, &[ptr], false, false);
+    // `kelp_View`: the two-word struct is passed and returned by value, which is
+    // the ABI's `INTEGER, INTEGER` e-classes on this target, so it crosses
+    // unchanged.
+    decl(&mut out, "kelp_str__view", view, &[ptr], true, false);
+    decl(&mut out, "kelp_View__len", i64, &[view], true, false);
+    decl(&mut out, "kelp_View__is_empty", i1, &[view], true, false);
+    decl(&mut out, "kelp_View__get", i8, &[view, i64], true, false);
+    decl(&mut out, "kelp_View__slice", view, &[view, i64, i64], true, false);
+    decl(&mut out, "kelp_View__eq", i1, &[view, view], true, false);
+    decl(&mut out, "kelp_View__to_string", string, &[view], true, true);
+    out
+}
+
+/// Map a `tir` type to its LLVM type. The scalar subset, the builtin heap types,
+/// `str`, and a `datac` `structs` holds a type for.
 fn llvm_type<'a>(
     ctx: &'a Context,
     structs: &HashMap<String, Type<'a>>,
@@ -1371,6 +1961,24 @@ fn llvm_type<'a>(
         // here too.
         Ty::Str => ctx.opaque_ptr(),
         Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => ctx.opaque_ptr(),
+        // The builtin heap types, in the same field order `runtime/kelp_rt.c`
+        // defines them (MK7 §3.3). `View` is the borrowed pair.
+        Ty::Bytes => *structs
+            .get("Bytes")
+            .ok_or_else(|| no_value("the builtin 'Bytes' layout"))?,
+        Ty::String => *structs
+            .get("String")
+            .ok_or_else(|| no_value("the builtin 'String' layout"))?,
+        Ty::View => *structs
+            .get("View")
+            .ok_or_else(|| no_value("the builtin 'View' layout"))?,
+        // A borrow of a heap type is its address, which is the pointer every
+        // runtime helper taking `const kelp_Bytes*` wants.
+        Ty::Ref { inner, .. }
+            if matches!(**inner, Ty::Bytes | Ty::String | Ty::View) =>
+        {
+            ctx.opaque_ptr()
+        }
         // A `datac` parameter resolves to a borrow of the struct, and a borrow is
         // its address (MK7 §3.3: pass a pointer, not a value, between frames).
         Ty::Ref { inner, .. } if matches!(**inner, Ty::Struct(_)) => ctx.opaque_ptr(),
@@ -1423,6 +2031,44 @@ fn is_str_ref(ty: &Ty) -> bool {
     }
 }
 
+/// Whether a type is a borrow of one of the builtin heap types. A binding of
+/// such a type holds the pointer itself, exactly as a `datac` borrow does, so a
+/// place read has to load it rather than hand out the slot.
+fn is_heap_ref(ty: &Ty) -> bool {
+    matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes | Ty::String | Ty::View))
+}
+
+/// Whether an expression has stable storage, mirroring the subset of
+/// `codegen_c.rs::is_place` this slice lowers.
+fn is_place_expr(e: &Expr) -> bool {
+    matches!(
+        e.kind,
+        ExprKind::Ident(_) | ExprKind::FieldAccess { .. } | ExprKind::Deref { .. }
+    )
+}
+
+/// The rvalue a field chain hangs off, when the chain's own address is not
+/// storage already: the C backend's `temporary_root`, minus the rows this slice
+/// does not lower. `None` for a place, `Some(root)` for a chain rooted at an
+/// rvalue.
+fn temporary_root(expr: &Expr) -> Option<&Expr> {
+    let mut cur = expr;
+    loop {
+        match &cur.kind {
+            ExprKind::FieldAccess { base, .. } => {
+                // A chain that steps through a borrow lives in the pointee, so
+                // nothing has to be staged for it.
+                if matches!(base.ty, Ty::Ref { .. }) {
+                    return None;
+                }
+                cur = base;
+            }
+            _ => break,
+        }
+    }
+    if is_place_expr(cur) { None } else { Some(cur) }
+}
+
 /// A symbol name for a LLVM function, mirroring `codegen_c.rs::c_name` without
 /// reaching into that (private) helper: `main` keeps its name because the C
 /// runtime requires it, everything else gets the `kelp_` prefix and the same
@@ -1458,40 +2104,38 @@ fn int_width(ty: &Ty) -> Option<u32> {
 
 /// The refusal message for a construct this stage does not lower. `what` is the
 /// construct's name, quoted when it is a language word (`'enum'`) and a phrase
-/// when it is a shape; `stage` is the MK7 stage that will lower it: this slice is
-/// S2A (the plain-record lowering), S2B is the container and drop slice, S2C is
-/// the tagged union and the borrowed views, and S3 is the runtime.
+/// when it is a shape; `stage` is the MK7 stage that will lower it: this slice
+/// lowers plain records, owned fields, the drop plan and the runtime, S2C is the
+/// containers and the tagged union, S2D is closures and function values, and S3
+/// is the stdlib's `extern fun` bodies.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
 
 /// Refuse a `datac` field this slice cannot lay out, with the construct named.
 ///
-/// An owned field is the drop plan's problem (`types::needs_drop` is exactly
-/// "this field owns or transitively owns heap memory"), so it gets the one
-/// S2B wording rather than the field type's own; everything else that is not a
-/// scalar or an all-scalar `datac` is named by [`refuse_type`]. A `str`/`View`
-/// field is unreachable from the frontend (`types::is_borrowed_field_ty`
-/// rejects it), but it is refused here rather than mis-lowered if it ever
-/// appears. A field that names an `enum` is refused as the tagged-union slice:
-/// an `enum` is a `Ty::Struct` at the type level, so without this the enum name
-/// would be reported as a missing `datac`.
+/// A `String`/`Bytes` field and a field of an owned `datac` are laid out and
+/// dropped (MK7 §3.4); everything else that is not a scalar or an all-scalar
+/// `datac` is named by its own construct. A container field is the container
+/// slice (S2C), and the `str`/`View` rows are unreachable from the frontend
+/// (`types::is_borrowed_field_ty` rejects them) but are refused here rather than
+/// mis-lowered if they ever appear. A field that names an `enum` is refused as
+/// the tagged-union slice: an `enum` is a `Ty::Struct` at the type level, so
+/// without this the enum name would be reported as a missing `datac`.
 fn refuse_datac_field(
     ty: &Ty,
-    owned: &HashSet<String>,
     enum_names: &HashSet<&str>,
 ) -> Result<(), String> {
-    if needs_drop(ty, owned) {
-        return Err(refuse(
-            &format!("'a datac field of an owned type ({})'", ty.display()),
-            "S2B",
-        ));
-    }
     match ty {
+        Ty::Bytes | Ty::String => Ok(()),
+        Ty::List(_) => Err(refuse("'a List field'", "S2C")),
+        Ty::Box(_) => Err(refuse("'a Box field'", "S2C")),
+        Ty::Map(..) => Err(refuse("'a Map field'", "S2C")),
+        Ty::Array(..) => Err(refuse("'an array field'", "S2C")),
         Ty::Str => Err(refuse("'a 'str' field'", "S2C")),
         Ty::View => Err(refuse("'a 'View' field'", "S2C")),
         Ty::Ref { .. } => Err(refuse("'a reference field'", "S2B")),
-        Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2B")),
+        Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2D")),
         Ty::Struct(name) if enum_names.contains(name.as_str()) => {
             Err(refuse("'an enum field'", "S2C"))
         }
@@ -1522,20 +2166,22 @@ fn llvm_scalar_type(ty: &Ty) -> bool {
     )
 }
 
-/// Name the type in a refusal, with the stage that will lower it. Anything that
-/// owns memory is the container and drop slice (S2B); a borrowed view is S2C.
+/// Name the type in a refusal, with the stage that will lower it. A container
+/// is the container slice (S2C) and a function value the closure slice (S2D);
+/// the heap types are lowered above, so their rows are unreachable and kept only
+/// so the match stays total in the author's eye.
 fn refuse_type(ty: &Ty) -> String {
     let (what, stage) = match ty {
-        Ty::Struct(_) => ("'datac'", "S2A"),
+        Ty::Struct(_) => ("'datac'", "S2B"),
         Ty::Bytes => ("'Bytes'", "S2B"),
         Ty::String => ("'String'", "S2B"),
-        Ty::List(_) => ("'List'", "S2B"),
-        Ty::Box(_) => ("'Box'", "S2B"),
-        Ty::Map(..) => ("'Map'", "S2B"),
-        Ty::Array(..) => ("'an array'", "S2B"),
+        Ty::List(_) => ("'List'", "S2C"),
+        Ty::Box(_) => ("'Box'", "S2C"),
+        Ty::Map(..) => ("'Map'", "S2C"),
+        Ty::Array(..) => ("'an array'", "S2C"),
         Ty::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
-        Ty::Fn { .. } => ("'a function value'", "S2B"),
-        Ty::Closure { .. } => ("'a closure'", "S2B"),
+        Ty::Fn { .. } => ("'a function value'", "S2D"),
+        Ty::Closure { .. } => ("'a closure'", "S2D"),
         Ty::Str | Ty::View => ("a borrowed view", "S2C"),
         Ty::Unit => ("'unit'", "S1"),
         other => return refuse(&format!("the type '{}'", other.display()), "S1"),
@@ -1544,21 +2190,21 @@ fn refuse_type(ty: &Ty) -> String {
 }
 
 /// Name the expression in a refusal. A `FieldAccess` or a `StructLit` never
-/// reaches here: both are lowered. An `enum` construct is the tagged-union slice
-/// (S2C), and a function value or a container literal is S2B.
+/// reaches here: both are lowered. An `enum` construct and an array literal are
+/// S2C, and a function value, a closure and an indirect call are S2D.
 fn refuse_expr(kind: &ExprKind) -> String {
     let (what, stage) = match kind {
         ExprKind::EnumLit { .. } | ExprKind::EnumTag { .. } | ExprKind::EnumField { .. } => {
             ("'an enum'", "S2C")
         }
         ExprKind::Try { .. } => ("'the ? operator'", "S2C"),
-        ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2B"),
-        ExprKind::ClosureLit { .. } => ("'a closure'", "S2B"),
-        ExprKind::Capture { .. } => ("'a capture'", "S2B"),
-        ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2B"),
+        ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2D"),
+        ExprKind::ClosureLit { .. } => ("'a closure'", "S2D"),
+        ExprKind::Capture { .. } => ("'a capture'", "S2D"),
+        ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2D"),
         ExprKind::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
         ExprKind::Deref { .. } => ("'a dereference of a non-datac'", "S2B"),
-        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => ("'an array'", "S2B"),
+        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => ("'an array'", "S2C"),
         _ => ("'this expression'", "S2B"),
     };
     refuse(what, stage)
@@ -1569,4 +2215,46 @@ fn refuse_expr(kind: &ExprKind) -> String {
 /// leaves the user with a `--backend=c` line rather than a backtrace.
 fn no_value(what: &str) -> String {
     format!("internal error: the llvm backend has no value for {what} (MK7 S1)")
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use crate::llvm_ffi::{Context, Module};
+
+    /// The IR's builtin heap layouts must match the C structs in
+    /// `runtime/kelp_rt.c` field for field (MK7 §3.3): a pointer, a length and a
+    /// capacity in that order for `Bytes` and `String`, and a pointer and a
+    /// length for `View`. The verifier cannot see the object, so a reordered or
+    /// re-widened field would only be caught when a fixture printed the wrong
+    /// bytes; this pins the agreement where it is made.
+    #[test]
+    fn the_builtin_heap_layouts_match_the_c_runtime() {
+        let ctx = Context::new();
+        let module = Module::new(&ctx, "layout");
+        let ptr = ctx.opaque_ptr();
+        let bytes = ctx.struct_type("kelp_Bytes");
+        ctx.struct_set_body(bytes, &[ptr, ctx.i64(), ctx.i64()]);
+        let string = ctx.struct_type("kelp_String");
+        ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
+        let view = ctx.struct_type("kelp_View");
+        ctx.struct_set_body(view, &[ptr, ctx.i64()]);
+        // A named type is only printed once something references it, so one
+        // declaration each is what puts the bodies into the module text.
+        module.add_function("probe_bytes", ctx.fn_type(bytes, &[ptr], false));
+        module.add_function("probe_string", ctx.fn_type(string, &[ptr], false));
+        module.add_function("probe_view", ctx.fn_type(view, &[ptr], false));
+        let ir = module.to_ir_string();
+        assert!(
+            ir.contains("%kelp_Bytes = type { ptr, i64, i64 }"),
+            "unexpected Bytes layout:\n{ir}"
+        );
+        assert!(
+            ir.contains("%kelp_String = type { ptr, i64, i64 }"),
+            "unexpected String layout:\n{ir}"
+        );
+        assert!(
+            ir.contains("%kelp_View = type { ptr, i64 }"),
+            "unexpected View layout:\n{ir}"
+        );
+    }
 }

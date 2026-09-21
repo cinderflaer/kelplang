@@ -56,7 +56,7 @@ use llvm_sys::core::{
     LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
     LLVMBuildSub, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
-    LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstReal,
+    LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstNull, LLVMConstReal,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
     LLVMFunctionType, LLVMGetFirstInstruction, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget,
@@ -332,6 +332,21 @@ impl Context {
             // SAFETY: the type is live, and undef is a constant owned by the
             // context.
             raw: unsafe { LLVMGetUndef(ty.raw) },
+            context: PhantomData,
+        }
+    }
+
+    /// The all-zero constant of `ty` (`LLVMConstNull`): a null pointer, a zero
+    /// integer, or an aggregate's `zeroinitializer`.
+    ///
+    /// A move clears its source slot with this, so the drop a binding still owes
+    /// on a path that did not move it frees NULL rather than a second copy of
+    /// the same buffer (MK7 §3.4; the C backend writes `({0})` for the same
+    /// reason).
+    pub fn const_null(&self, ty: Type<'_>) -> Value<'_> {
+        Value {
+            // SAFETY: the type is live, and the constant is owned by the context.
+            raw: unsafe { LLVMConstNull(ty.raw) },
             context: PhantomData,
         }
     }
