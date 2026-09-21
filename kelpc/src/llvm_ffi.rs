@@ -35,7 +35,10 @@
 //! while codegen is running over it. LLVM does not free it; that is the usual
 //! borrow rule of the call, and codegen is synchronous.
 
-// The first caller (`codegen_llvm.rs`) lands next milestone, so nothing names this surface yet.
+// `codegen_llvm.rs` is the one caller now, but the wrapper keeps the
+// `as_raw` escape hatch and names more of the C API than the S1 lowering reaches
+// yet, so a method can sit unused without being dead in the sense worth a
+// warning. The allow goes away when the lowering stops growing.
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_uint, CStr, CString};
@@ -45,14 +48,24 @@ use std::ptr::null_mut;
 
 use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyModule};
 use llvm_sys::core::{
-    LLVMAddFunction, LLVMAppendBasicBlockInContext, LLVMBuildCall2, LLVMBuildGlobalString,
-    LLVMBuildRet, LLVMConstInt, LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext,
-    LLVMDisposeBuilder, LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext,
-    LLVMFloatTypeInContext, LLVMFunctionType, LLVMGetNamedFunction, LLVMGetTarget,
+    LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAppendBasicBlockInContext,
+    LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
+    LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt, LLVMBuildFPToSI,
+    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGlobalString, LLVMBuildICmp, LLVMBuildLShr,
+    LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid,
+    LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildSelect, LLVMBuildShl,
+    LLVMBuildStore,
+    LLVMBuildSub, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
+    LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstReal,
+    LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMDisposeBuilder,
+    LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
+    LLVMFunctionType, LLVMGetFirstInstruction, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget,
     LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext, LLVMInt64TypeInContext,
     LLVMInt8TypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext,
-    LLVMPositionBuilderAtEnd, LLVMPrintModuleToString, LLVMSetTarget,
+    LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString, LLVMSetTarget,
+    LLVMVoidTypeInContext,
 };
+use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate};
 use llvm_sys::prelude::{
     LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMTypeRef,
     LLVMValueRef,
@@ -211,6 +224,19 @@ impl Context {
         self.integer(LLVMInt64TypeInContext)
     }
 
+    /// `void`, the return type of a unit-returning function.
+    ///
+    /// A function that returns `void` still needs a function *type* whose return
+    /// type is this one, which is why it is a value in its own right.
+    pub fn void(&self) -> Type<'_> {
+        Type {
+            // SAFETY: the call takes the live context and returns a type owned
+            // by it.
+            raw: unsafe { LLVMVoidTypeInContext(self.raw) },
+            context: PhantomData,
+        }
+    }
+
     /// `float`, the width of Kelp's `f32`.
     pub fn f32(&self) -> Type<'_> {
         Type {
@@ -306,6 +332,22 @@ impl Context {
         self.const_int(self.i1(), u64::from(value), false)
     }
 
+    /// The floating-point constant `value` of type `ty` (`LLVMConstReal`).
+    ///
+    /// The C API takes the value as a C `double` and converts to `ty`'s own
+    /// format, so an `f32` constant carries the rounding a `f32` literal has,
+    /// and an infinity or a NaN literal is just the corresponding `double`
+    /// value: LLVM's `APFloat` conversion has a spelling for both, which
+    /// LLVM's textual printer then writes as a hexadecimal form (`0x7FF0...`)
+    /// because no decimal literal denotes one.
+    pub fn const_real(&self, ty: Type<'_>, value: f64) -> Value<'_> {
+        Value {
+            // SAFETY: both arguments are values LLVM copies into a constant.
+            raw: unsafe { LLVMConstReal(ty.raw, value) },
+            context: PhantomData,
+        }
+    }
+
     /// A named integer type, through one of the width-specific C calls.
     fn integer(
         &self,
@@ -389,6 +431,22 @@ impl<'ctx> Function<'ctx> {
     /// The underlying `LLVMValueRef` (a function is a value in LLVM).
     pub fn as_raw(self) -> LLVMValueRef {
         self.raw
+    }
+
+    /// The `index`-th parameter of this function (`LLVMGetParam`).
+    ///
+    /// The parameters exist as values as soon as the declaration does, which is
+    /// what lets a definition's entry block store each one into its slot before
+    /// any statement runs. The caller must not ask for an index past the last
+    /// parameter: the C API reads whatever the function's type says is there.
+    pub fn get_param(&self, index: usize) -> Value<'ctx> {
+        Value {
+            // SAFETY: the function is live and the index is in range by the
+            // caller's contract (its parameter list was taken from the same
+            // function type the declaration was made with).
+            raw: unsafe { LLVMGetParam(self.raw, index as c_uint) },
+            context: PhantomData,
+        }
     }
 
     /// Append an empty basic block named `name` (`LLVMAppendBasicBlockInContext`).
@@ -498,6 +556,21 @@ impl<'ctx> Module<'ctx> {
         }
     }
 
+    /// Declare an external global named `name` of type `ty` (`LLVMAddGlobal`).
+    ///
+    /// No initializer means the symbol is a declaration, resolved by the linker:
+    /// this is how a libc object such as `stderr` (a `FILE*`) enters the module
+    /// so a `load` can read it. A name the module already has is returned by
+    /// `LLVMAddGlobal`, so this is safe to call again for the same symbol.
+    pub fn add_external_global(&self, name: &str, ty: Type<'ctx>) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the module is live and the name is valid.
+            raw: unsafe { LLVMAddGlobal(self.raw, ty.as_raw(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
     /// The function named `name` if the module has one (`LLVMGetNamedFunction`).
     ///
     /// This is how a second mention of a runtime symbol (a second call to `puts`,
@@ -568,6 +641,75 @@ impl Drop for Module<'_> {
     }
 }
 
+/// Which integer binary operator to emit, named the way the language reads it
+/// rather than the way LLVM opcodes are numbered. A `Copy` stand-in for the C
+/// API's enum, so `codegen_llvm.rs` never reaches into `llvm-sys`.
+///
+/// `sdiv`/`udiv`, `srem`/`urem` and `ashr`/`lshr` are separate variants, not a
+/// signedness parameter: the signedness the language sees lives in the type and
+/// the lowerer picks the instruction. No variant carries `nsw` or `nuw`, because
+/// the language promises wrapping (MK7 §3.4) and a flagged form promises the
+/// opposite.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IntBinOp {
+    Add,
+    Sub,
+    Mul,
+    SDiv,
+    UDiv,
+    SRem,
+    URem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    LShr,
+    AShr,
+}
+
+/// Which floating-point binary operator to emit. Kept apart from [`IntBinOp`]
+/// because LLVM keeps them apart: `fadd` and `add` are different instructions and
+/// neither is a signedness choice of the other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FloatBinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// An integer comparison. The signed and unsigned spellings are separate because
+/// LLVM makes them a different instruction (`icmp slt` vs `icmp ult`), while the
+/// language decides by the operand's type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IntCmp {
+    Eq,
+    Ne,
+    Slt,
+    Sle,
+    Sgt,
+    Sge,
+    Ult,
+    Ule,
+    Ugt,
+    Uge,
+}
+
+/// A floating-point comparison, the ordered forms (`o` in LLVM's spelling).
+///
+/// `One` is `!=` as the language means it: true when the operands are unordered,
+/// so a NaN compares not-equal to everything, itself included. The other five
+/// are all false on a NaN, which is what an ordered predicate gives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RealCmp {
+    Oeq,
+    One,
+    Olt,
+    Ole,
+    Ogt,
+    Oge,
+}
+
 /// Guard for `LLVMBuilderRef`: where the next instruction is emitted.
 pub struct Builder<'ctx> {
     raw: LLVMBuilderRef,
@@ -602,6 +744,27 @@ impl<'ctx> Builder<'ctx> {
         // SAFETY: the builder and the block are live and belong to the same
         // context, which LLVM requires.
         unsafe { LLVMPositionBuilderAtEnd(self.raw, block.as_raw()) };
+    }
+
+    /// Emit subsequent instructions at the *start* of `block`, before its
+    /// first instruction (`LLVMGetFirstInstruction` + `LLVMPositionBuilderBefore`).
+    ///
+    /// This is the one insertion point that is valid in a block that already
+    /// ends in a terminator, which is exactly the case a local's alloca slot
+    /// needs: the slot belongs in the entry block (`mem2reg` promotes only
+    /// those), and by the time a `let` in a later statement allocates one the
+    /// entry block may already have been terminated by a `return`.
+    pub fn position_at_start(&self, block: BasicBlock<'ctx>) {
+        // SAFETY: the block is live; the returned instruction belongs to it.
+        let first = unsafe { LLVMGetFirstInstruction(block.as_raw()) };
+        if first.is_null() {
+            // SAFETY: an empty block takes an insertion point at its end.
+            unsafe { LLVMPositionBuilderAtEnd(self.raw, block.as_raw()) };
+        } else {
+            // SAFETY: the builder is live and `first` is an instruction of the
+            // block, which is the contract `LLVMPositionBuilderBefore` wants.
+            unsafe { LLVMPositionBuilderBefore(self.raw, first) };
+        }
     }
 
     /// Emit `ret v` (`LLVMBuildRet`).
@@ -657,7 +820,7 @@ impl<'ctx> Builder<'ctx> {
     /// pointer to it (`LLVMBuildGlobalString`).
     ///
     /// The pointer is what a `char*` parameter takes, which is how a Kelp string
-    /// literal reaches `puts` or the runtime's `printf` path.
+    /// literal reaches the runtime's `printf` path.
     ///
     /// Caveat from the C API: this one call is not builder-position independent.
     /// LLVM adds the global to the module of the builder's *current block*, so
@@ -672,6 +835,397 @@ impl<'ctx> Builder<'ctx> {
             // SAFETY: the builder is positioned inside a module, as documented
             // above, and both strings are valid.
             raw: unsafe { LLVMBuildGlobalString(self.raw, text.as_ptr(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `ret void` (`LLVMBuildRetVoid`), for a unit-returning function.
+    pub fn build_ret_void(&self) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned.
+            raw: unsafe { LLVMBuildRetVoid(self.raw) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit an unconditional branch to `dest` (`LLVMBuildBr`).
+    ///
+    /// A `br` terminates its block, so nothing else may follow it there.
+    pub fn build_br(&self, dest: BasicBlock<'ctx>) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and dest is live.
+            raw: unsafe { LLVMBuildBr(self.raw, dest.as_raw()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit a conditional branch on `cond` (`LLVMBuildCondBr`).
+    ///
+    /// `cond` is an `i1`; the lowering gets one from a comparison, or from
+    /// `xor`-ing a boolean, never from a wider integer.
+    pub fn build_cond_br(
+        &self,
+        cond: Value<'ctx>,
+        then_block: BasicBlock<'ctx>,
+        else_block: BasicBlock<'ctx>,
+    ) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and every argument is live.
+            raw: unsafe {
+                LLVMBuildCondBr(self.raw, cond.as_raw(), then_block.as_raw(), else_block.as_raw())
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `unreachable` (`LLVMBuildUnreachable`), the terminator for a block
+    /// the program cannot fall out of (the panic arm of a range check).
+    pub fn build_unreachable(&self) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned.
+            raw: unsafe { LLVMBuildUnreachable(self.raw) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit a stack slot of type `ty` (`LLVMBuildAlloca`).
+    ///
+    /// The lowerer emits these for locals and parameters: a Kelp binding is a
+    /// slot that is `store`d and `load`ed, which is how a name a `while` body
+    /// writes keeps one location, and how an `if` used as a value carries its
+    /// result to the join without an explicit phi. LLVM's `mem2reg` promotes
+    /// them back to SSA values.
+    pub fn build_alloca(&self, ty: Type<'ctx>, name: &str) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and the type is live.
+            raw: unsafe { LLVMBuildAlloca(self.raw, ty.as_raw(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `load ty, ptr value` (`LLVMBuildLoad2`).
+    ///
+    /// `ty` is the pointee type, passed explicitly because a pointer no longer
+    /// carries one; it must be the type the address was allocated with.
+    pub fn build_load(&self, ty: Type<'ctx>, ptr: Value<'ctx>, name: &str) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and both arguments are live.
+            raw: unsafe { LLVMBuildLoad2(self.raw, ty.as_raw(), ptr.as_raw(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `store value, ptr place` (`LLVMBuildStore`).
+    pub fn build_store(&self, value: Value<'ctx>, place: Value<'ctx>) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and both arguments are live.
+            raw: unsafe { LLVMBuildStore(self.raw, value.as_raw(), place.as_raw()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `phi ty [ ... ]` (`LLVMBuildPhi`).
+    ///
+    /// The value is incomplete until [`add_incoming`] runs, and an incomplete
+    /// phi fails verification. The lowerer uses a phi exactly where two control
+    /// flow paths carry one value to a join: a short-circuited `&&`/`||`.
+    ///
+    /// [`add_incoming`]: Builder::add_incoming
+    pub fn build_phi(&self, ty: Type<'ctx>, name: &str) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and the type is live.
+            raw: unsafe { LLVMBuildPhi(self.raw, ty.as_raw(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Add the `(value, predecessor)` pairs a phi joins (`LLVMAddIncoming`).
+    ///
+    /// The two slices are parallel and the phi must already have been emitted
+    /// into the block that follows the listed predecessors. Calling this once
+    /// with every predecessor is the whole input; calling it again appends.
+    pub fn add_incoming(&self, phi: Value<'ctx>, incoming: &[(Value<'ctx>, BasicBlock<'ctx>)]) {
+        let mut values: Vec<LLVMValueRef> = incoming.iter().map(|(v, _)| v.as_raw()).collect();
+        let mut blocks: Vec<LLVMBasicBlockRef> = incoming.iter().map(|(_, b)| b.as_raw()).collect();
+        // SAFETY: the phi is live, and the two parallel vectors are live for the
+        // duration of the call.
+        unsafe {
+            LLVMAddIncoming(
+                phi.as_raw(),
+                values.as_mut_ptr(),
+                blocks.as_mut_ptr(),
+                incoming.len() as c_uint,
+            )
+        };
+    }
+
+    /// Emit one of the integer binary operators `a op b`.
+    pub fn build_int_binop(
+        &self,
+        op: IntBinOp,
+        lhs: Value<'ctx>,
+        rhs: Value<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        // SAFETY: the builder is positioned and both operands are live. Every
+        // arm is one C API builder call that reads the same three arguments.
+        let raw = unsafe {
+            match op {
+                IntBinOp::Add => LLVMBuildAdd(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::Sub => LLVMBuildSub(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::Mul => LLVMBuildMul(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::SDiv => LLVMBuildSDiv(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::UDiv => LLVMBuildUDiv(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::SRem => LLVMBuildSRem(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::URem => LLVMBuildURem(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::And => LLVMBuildAnd(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::Or => LLVMBuildOr(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::Xor => LLVMBuildXor(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::Shl => LLVMBuildShl(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr()),
+                IntBinOp::LShr => {
+                    LLVMBuildLShr(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+                }
+                IntBinOp::AShr => {
+                    LLVMBuildAShr(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+                }
+            }
+        };
+        Value {
+            raw,
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `fneg value` (`LLVMBuildFNeg`), the one unary float instruction.
+    pub fn build_fneg(&self, value: Value<'ctx>, name: &str) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and the operand is live.
+            raw: unsafe { LLVMBuildFNeg(self.raw, value.as_raw(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit one of the floating-point binary operators `a op b`.
+    pub fn build_float_binop(
+        &self,
+        op: FloatBinOp,
+        lhs: Value<'ctx>,
+        rhs: Value<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        // SAFETY: the builder is positioned and both operands are live.
+        let raw = unsafe {
+            match op {
+                FloatBinOp::Add => {
+                    llvm_sys::core::LLVMBuildFAdd(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+                }
+                FloatBinOp::Sub => {
+                    llvm_sys::core::LLVMBuildFSub(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+                }
+                FloatBinOp::Mul => {
+                    llvm_sys::core::LLVMBuildFMul(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+                }
+                FloatBinOp::Div => {
+                    llvm_sys::core::LLVMBuildFDiv(self.raw, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+                }
+            }
+        };
+        Value {
+            raw,
+            context: PhantomData,
+        }
+    }
+
+    /// Emit an integer comparison (`LLVMBuildICmp`), yielding an `i1`.
+    pub fn build_icmp(
+        &self,
+        cmp: IntCmp,
+        lhs: Value<'ctx>,
+        rhs: Value<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let pred = match cmp {
+            IntCmp::Eq => LLVMIntPredicate::LLVMIntEQ,
+            IntCmp::Ne => LLVMIntPredicate::LLVMIntNE,
+            IntCmp::Slt => LLVMIntPredicate::LLVMIntSLT,
+            IntCmp::Sle => LLVMIntPredicate::LLVMIntSLE,
+            IntCmp::Sgt => LLVMIntPredicate::LLVMIntSGT,
+            IntCmp::Sge => LLVMIntPredicate::LLVMIntSGE,
+            IntCmp::Ult => LLVMIntPredicate::LLVMIntULT,
+            IntCmp::Ule => LLVMIntPredicate::LLVMIntULE,
+            IntCmp::Ugt => LLVMIntPredicate::LLVMIntUGT,
+            IntCmp::Uge => LLVMIntPredicate::LLVMIntUGE,
+        };
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and both operands are live.
+            raw: unsafe {
+                LLVMBuildICmp(self.raw, pred, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit a floating-point comparison (`LLVMBuildFCmp`), yielding an `i1`.
+    pub fn build_fcmp(
+        &self,
+        cmp: RealCmp,
+        lhs: Value<'ctx>,
+        rhs: Value<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let pred = match cmp {
+            RealCmp::Oeq => LLVMRealPredicate::LLVMRealOEQ,
+            RealCmp::One => LLVMRealPredicate::LLVMRealUNE,
+            RealCmp::Olt => LLVMRealPredicate::LLVMRealOLT,
+            RealCmp::Ole => LLVMRealPredicate::LLVMRealOLE,
+            RealCmp::Ogt => LLVMRealPredicate::LLVMRealOGT,
+            RealCmp::Oge => LLVMRealPredicate::LLVMRealOGE,
+        };
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and both operands are live.
+            raw: unsafe {
+                LLVMBuildFCmp(self.raw, pred, lhs.as_raw(), rhs.as_raw(), name.as_ptr())
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `select cond, then, else` (`LLVMBuildSelect`).
+    ///
+    /// The lowerer uses this to turn an `i1` into one of two pointers for a
+    /// boolean `print`, not to implement control flow: a `select` evaluates both
+    /// arms, so it cannot stand in for `&&`/`||` or an `if`.
+    pub fn build_select(
+        &self,
+        cond: Value<'ctx>,
+        then_value: Value<'ctx>,
+        else_value: Value<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and every argument is live.
+            raw: unsafe {
+                LLVMBuildSelect(
+                    self.raw,
+                    cond.as_raw(),
+                    then_value.as_raw(),
+                    else_value.as_raw(),
+                    name.as_ptr(),
+                )
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit an integer width conversion: `zext`, `sext` or `trunc`
+    /// (`LLVMBuildZExt`/`LLVMBuildSExt`/`LLVMBuildTrunc`).
+    ///
+    /// `signed` says whether the source is interpreted as signed, which decides
+    /// between a sign and a zero extension; a truncation ignores it, because
+    /// taking the low bits is the same operation either way. `widen` must be
+    /// true exactly when the target is wider than the source: a same-width
+    /// conversion emits nothing and the caller skips this method, and a wider
+    /// target with this false would emit a `trunc` that the verifier rejects.
+    pub fn build_int_cast(
+        &self,
+        signed: bool,
+        widen: bool,
+        value: Value<'ctx>,
+        ty: Type<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        // SAFETY: the builder is positioned and the value is live.
+        let raw = unsafe {
+            match (widen, signed) {
+                (true, true) => LLVMBuildSExt(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr()),
+                (true, false) => LLVMBuildZExt(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr()),
+                (false, _) => LLVMBuildTrunc(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr()),
+            }
+        };
+        Value {
+            raw,
+            context: PhantomData,
+        }
+    }
+
+    /// Emit a float width conversion: `fpext` when `widen`, else `fptrunc`
+    /// (`LLVMBuildFPExt`/`LLVMBuildFPTrunc`).
+    pub fn build_fp_cast(
+        &self,
+        widen: bool,
+        value: Value<'ctx>,
+        ty: Type<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        // SAFETY: the builder is positioned and the value is live.
+        let raw = unsafe {
+            if widen {
+                LLVMBuildFPExt(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr())
+            } else {
+                LLVMBuildFPTrunc(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr())
+            }
+        };
+        Value {
+            raw,
+            context: PhantomData,
+        }
+    }
+
+    /// Emit an integer-to-float conversion, `sitofp` or `uitofp`
+    /// (`LLVMBuildSIToFP`/`LLVMBuildUIToFP`), by the source's signedness.
+    pub fn build_int_to_fp(
+        &self,
+        signed: bool,
+        value: Value<'ctx>,
+        ty: Type<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        // SAFETY: the builder is positioned and the value is live.
+        let raw = unsafe {
+            if signed {
+                LLVMBuildSIToFP(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr())
+            } else {
+                LLVMBuildUIToFP(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr())
+            }
+        };
+        Value {
+            raw,
+            context: PhantomData,
+        }
+    }
+
+    /// Emit a float-to-integer conversion, `fptosi` or `fptoui`
+    /// (`LLVMBuildFPToSI`/`LLVMBuildFPToUI`), by the target's signedness.
+    pub fn build_fp_to_int(
+        &self,
+        signed: bool,
+        value: Value<'ctx>,
+        ty: Type<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        // SAFETY: the builder is positioned and the value is live.
+        let raw = unsafe {
+            if signed {
+                LLVMBuildFPToSI(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr())
+            } else {
+                LLVMBuildFPToUI(self.raw, value.as_raw(), ty.as_raw(), name.as_ptr())
+            }
+        };
+        Value {
+            raw,
             context: PhantomData,
         }
     }
