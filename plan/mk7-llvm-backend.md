@@ -363,16 +363,18 @@ labels the refusals already carry.
 | **S2A** | plain records: a `datac` whose fields are all dropless, with the C backend's field order and alignment, construction, field read and write, by-value parameters and returns | done 2026-09-21 |
 | **S2B** | the heap: the C runtime compiled once by `build.rs` instead of emitted per program, `str`/`String`/`Bytes`, an owned field, the drop plan, `panic`/`assert` | done 2026-09-21 |
 | **S2C** | tagged unions: `enum` at the C backend's `{ tag, union }` layout, `when`, `if let`, `?`, and one `switch` per drop | done 2026-09-21 |
-| **S2D** | containers: `List`, `Map`, `Box`, `[T; N]`, one monomorphized function set per instantiation | open |
+| **S2D** | containers: `List`, `Map`, `Box`, `[T; N]`, one monomorphized function set per instantiation | done 2026-09-21 |
 | **S2E** | closures and function values | open |
-| **S2F** | references that are not a `datac`: `&T` to a scalar, a `&T` field, and the dereference of one | open |
+| **S2F** | references that are not a `datac`: `&T` to a scalar, a borrow of a field, and the dereference of one | done 2026-09-21 |
 | **S3** | the runtime, the `extern fun` bodies, `pd` globals and the capability check | open |
 
-Two notes on the labels. The backend still refuses a borrow of a non-`datac`
-under `S2B`, which has landed: that label is stale and the first slice to touch
-those lines moves them to `S2F`. And one refusal carries a bare `S2` with no
-slice, the string literal containing NUL (`MISSING-k2VmP`), which the C backend
-carries through its `%.*s` path and the IR path does not.
+Two notes on the labels. The stale `S2B` label on the borrow of a non-`datac`
+is gone: S2F lowered the borrow of a scalar and of a field, its dereference and
+its store, the `&T` parameter and the `&T` return, and the only remaining
+refusals name S2E, S3 or the two owned-temporary shapes. The refusal that
+carried a bare `S2`, the string literal containing NUL (`MISSING-k2VmP`), stays,
+because the C backend does not carry it either: `printf("%s", "a\0b")` prints
+`a`, so the truncation is a C-backend defect and not an LLVM gap.
 
 The minimum for S7 is S1 to S4 plus the S6 decision. S5 is not required to flip but
 is required to believe the flip, and saying so is part of the flip's notes.
@@ -382,7 +384,7 @@ is required to believe the flip, and saying so is part of the flip's notes.
 | Gate | What happens to it |
 | --- | --- |
 | `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions left with the backend on 2026-09-21: the `.s`-level SysV classifier test, the assembly-text capability-check assertions and the two-backend differential test are gone. |
-| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (124 of the 219 the C backend builds at the MK7 S2D tip), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
+| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (129 of the 219 the C backend builds at the MK7 S2F tip), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
 | `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged; it was reduced to the C sweep on 2026-09-21 when the `asm` rows left. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired. |
 | `kelpc/tests/run-all-backends.sh` | **Repurpose.** `BACKENDS` gains `llvm`; `asm` left with the source on 2026-09-21. |
 | `codegen_asm.rs` and the `asm` rows of the tests | **Done early, on 2026-09-21.** The module, the `asm` baseline, the `.s`-level tests, the `Backend::Asm` variant and the fixture that existed only for its assertion are gone, and the C-only suite is green. The deletion moved ahead of LLVM parity by decision: the retired track's second-backend differential was already partial, and keeping it cost a hotspot test file plus permanently refused fixtures. |
