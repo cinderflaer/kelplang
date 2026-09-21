@@ -99,7 +99,8 @@ cargo build --release -p kelpc
 ```
 
 With no `-o`, the binary and the generated C land in `build/`
-beside the working directory. A directory with a
+beside the working directory (`--backend=llvm` leaves `.ll` and `.o` there
+instead). A directory with a
 [`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it — `name`,
 `version`, `entry` — builds the same way: `kelpc build myproject`.
 
@@ -108,10 +109,16 @@ One code generator is selectable today, with `--backend=` or `KELPC_BACKEND`:
 - **`c`** (the default) transpiles to C and hands the file to `cc -O2 -fwrapv -lm`.
   It is the reference backend: the fixture suite is written against it, and it
   stays selectable permanently as the oracle a second backend is compared with.
+- **`llvm`** lowers the typed IR to LLVM IR, emits an object and hands it to
+  `cc -O2 -lm`. It covers the scalar subset (MK7 stage S1): integers, floats,
+  `bool`, `char`, arithmetic, comparisons, `if`/`while`, calls and `print`, with
+  stdout identical to the `c` backend on those programs
+  (`kelpc/tests/run-llvm-scalar-subset.sh`). Anything outside the subset is
+  refused by name, naming the stage that will lower it.
 
-The next backend is LLVM IR (`plan/mk7-llvm-backend.md`), which adds the `llvm`
-name to `--backend=` when its scalar subset lands. The hand-written `asm` backend
-was removed on 2026-09-21; its tracked plan lives under `plan/asm-backend/`.
+The hand-written `asm` backend was removed on 2026-09-21; its tracked plan lives
+under `plan/asm-backend/`. `plan/mk7-llvm-backend.md` is the plan of record for
+what `llvm` still owes (stages S2 to S7).
 
 `kelpc check` runs everything a build runs except code generation: the same
 modules, the same type check, the same borrow check. It answers whether a
@@ -159,15 +166,15 @@ directory is not followed.
 
 ## Requirements
 
-- Rust, 2024 edition (rustc 1.85 or newer), to build the compiler. There are no
-  third-party dependencies today; the planned LLVM backend adds one (`llvm-sys`)
-  and a runtime `libLLVM` dependency, and `plan/mk7-llvm-backend.md` §1 is the
-  decision and its trade-offs.
+- Rust, 2024 edition (rustc 1.85 or newer), and the LLVM 21 development output,
+  to build the compiler: `llvm-sys` is a dependency of every build, not only of
+  `--backend=llvm`. `nix-shell shell.nix` provides it (`llvm-config`,
+  `include/llvm-c`) and sets `LLVM_SYS_211_PREFIX`;
+  `plan/mk7-llvm-backend.md` §1 is the decision and its trade-offs.
+- A `kelpc` built this way links `libLLVM-21.so` dynamically and needs it at
+  runtime, whichever backend it runs.
 - The `c` backend: a C compiler and glibc.
 - Optional: `valgrind`, for the memory gate.
-- For the LLVM backend once `llvm-sys` lands: `nix-shell shell.nix` provides the
-  LLVM development output (`llvm-config`, `include/llvm-c`) and sets
-  `LLVM_SYS_211_PREFIX`.
 
 ## Tests
 
