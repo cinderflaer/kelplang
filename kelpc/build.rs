@@ -55,6 +55,21 @@ fn main() {
             is moved into the result exactly as the by-value form moves it. */\n\
          kelp_String kelp_String__from_bytes_ptr(const kelp_Bytes* b) {{\n\
              return kelp_String__from_bytes(*b);\n\
+         }}\n\
+         \n\
+         /* The same for the reverse direction: `kelp_String__into_bytes` takes a
+\
+            24-byte `kelp_String` by value and returns a 24-byte `kelp_Bytes`, and
+\
+            an IR call cannot cross either by value (MK7 section 3.3,
+\
+            BUG-vN4tR). The adapter takes the receiver by pointer, so the IR
+\
+            stages the `String` into a slot of its own and the buffer moves into
+\
+            the result exactly as the by-value form moves it. */\n\
+         kelp_Bytes kelp_String__into_bytes_ptr(const kelp_String* self) {{\n\
+             return kelp_String__into_bytes(*self);\n\
          }}\n",
         source.display()
     );

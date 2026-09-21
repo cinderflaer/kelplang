@@ -210,20 +210,48 @@
 //!   helpers use: the declaration and the call are the same IR shape whether the
 //!   callee's text is in `kelp_rt.c` or in the program's own object.
 //! - that object is built per program from `<out>.externs.c`, which holds the
-//!   bodies `codegen_c.rs::write_extern` writes and the `std/rt` prototypes
-//!   `runtime_prototypes` writes, so the C text is the C backend's own (see
-//!   `externs_c_source` for why it cannot be a fixed object like `kelp_rt.o`).
+//!   bodies `codegen_c.rs::write_extern` writes, the capability glue, and the
+//!   `std/rt` prototypes `runtime_prototypes` writes, so the C text is the C
+//!   backend's own (see `program_c_source` for why it cannot be a fixed object
+//!   like `kelp_rt.o`).
 //!
-//! The capability check's runtime allowlist is **not** this slice: a gated call
-//! site the C backend would guard (one that names a resource argument) is
-//! refused by name rather than lowered unchecked, while a gated call that names
-//! no resource (`time.now_unix`, `rand.below`) lowers, which is what the C
-//! backend does with it too. `pd` globals and the two owned-temporary shapes
-//! (`String#into_bytes`, a field of an owned temporary) still refuse.
+//! # What S3 adds (MK7 S3, `pd` globals and the capability check)
 //!
-//! Everything else is **refused by name** with a clean diagnostic, never
-//! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
-//! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
+//! The rest of the runtime slice, and the security-relevant half of it.
+//!
+//! - a `pd` is a module-scope global with internal linkage, a zero
+//!   initializer, and the passdown's own mangled `pd#<name>` identifier
+//!   (`declare_pd_globals`). `kelp_init_pds` runs the initializers in
+//!   declaration order, so a chained one (`pd val doubled = base * 2`) reads
+//!   what an earlier one wrote, and `main` calls it first, exactly where the C
+//!   backend inserts `kelp_init_pds();`. An owned passdown is freed by the
+//!   generated `kelp_drop_pds`, which the initializer registers with `atexit`:
+//!   a `pd` has no scope to die at, so process exit is its only drop point.
+//!   A function that received no hidden parameter names the global directly,
+//!   which is what `main` and another `pd`'s initializer are.
+//! - a gated call site is guarded by the same runtime allowlist check the C
+//!   backend emits. `cap_plan` mirrors `codegen_c.rs::Gen::cap_plan` site for
+//!   site: the same domain, the same resource arguments, the same pattern
+//!   count, the same `.kp` call site. Every checked argument is evaluated
+//!   **once** into a value the check and the call share (BUG-Kf7Rn), and the
+//!   check is one `kelp_cap_check_path`/`_name`/`_host`/`_hostport`/`_port`
+//!   call against the module's compiled-in array.
+//! - that array is C data in the per-program object, escaped by the C backend's
+//!   own `c_string_literal`, and the check functions are the C backend's own
+//!   `runtime/cap_glue.c` with `#define static` around it, so the deny path's
+//!   text is the same bytes in both backends. The matcher and the path
+//!   normalizer stay Kelp (`std/rt`) and are lowered like any other code.
+//!
+//! The whole fixture corpus now lowers: `Backend::DEFAULT` is still `c`, but the
+//! `llvm` backend builds every one of the 221 corpus targets the C backend
+//! builds, with an empty refusal ranking (MK7 §4.1), and the differential sweep
+//! records no disagreement between the two.
+//!
+//! What remains in this file is **refused by name** with a clean diagnostic,
+//! never miscompiled and never a panic, for a shape the frontend does not
+//! currently produce: MK7 §2 keeps the C backend as the oracle and the escape
+//! hatch, so a refusal is `--backend=c` and a named construct. A wrong lowering
+//! is worse than a refusal, which is why the guards stay.
 //!
 //! # The rules this lowering keeps
 //!
@@ -267,8 +295,9 @@ use crate::llvm_ffi::{
     self, BasicBlock, Builder, Context, DataLayout, FloatBinOp, FnType, Function as LlvmFunction,
     IntBinOp, IntCmp, Module, RealCmp, TargetMachine, Type, Value,
 };
+use crate::diag::SourceMap;
 use crate::lexer::Span;
-use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt, TemplatePiece};
+use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
     drop_fn_name, list_c_type, list_clonable_elem, map_c_type, needs_drop, owned_types, struct_tag,
@@ -282,7 +311,12 @@ use crate::types::{
 /// (MK7 §4.4) so the IR is inspectable next to the binary, and keeps the object
 /// it hands `cc` as `<out>.o`. Linking itself is `driver::link_llvm_object`, the
 /// sibling of `driver::compile_c`.
-pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(), String> {
+pub fn compile(
+    program: &Program,
+    drops: &DropPlan,
+    sources: &SourceMap,
+    out_path: &Path,
+) -> Result<(), String> {
     llvm_ffi::initialize_native_target()?;
     let triple = llvm_ffi::default_target_triple();
     if triple.is_empty() {
@@ -301,7 +335,7 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     let machine = TargetMachine::for_host()?;
     let layout = machine.data_layout();
 
-    let mut lowering = Gen::new(&ctx, &module, program, drops, &layout)?;
+    let mut lowering = Gen::new(&ctx, &module, program, drops, sources, &layout)?;
     lowering.declare()?;
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
@@ -316,6 +350,9 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     // destructor, the shims) comes before the function bodies, the same order
     // the C backend writes them in.
     lowering.emit_closure_bodies()?;
+    // The `pd` globals' two generated functions (MK7 §5), whose bodies call
+    // the drops and container sets above.
+    lowering.emit_pd_globals()?;
     lowering.emit_all()?;
 
     // A caller must verify before emitting: LLVM's object writer assumes a
@@ -330,11 +367,11 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     let object_path = out_path.with_extension("o");
     machine.emit_object(&module, &object_path)?;
 
-    // The `extern fun` bodies this program reaches, as C, compiled into their
-    // own object (MK7 §3.2). Keeping the C source beside the IR is the same
-    // artifact contract the C backend's `<out>.c` has: the text an author can
-    // read is the text that was compiled.
-    let externs_object = match externs_c_source(program) {
+    // The `extern fun` bodies this program reaches and the capability check's
+    // own C half, compiled into their own object (MK7 §3.2, §5). Keeping the C
+    // source beside the IR is the same artifact contract the C backend's
+    // `<out>.c` has: the text an author can read is the text that was compiled.
+    let program_object = match program_c_source(program) {
         Some(source) => {
             let c_path = out_path.with_extension("externs.c");
             let obj_path = out_path.with_extension("externs.o");
@@ -345,7 +382,7 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
         None => None,
     };
 
-    crate::driver::link_llvm_object(&object_path, externs_object.as_deref(), out_path)
+    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path)
         .map_err(|e| e.message)
 }
 
@@ -377,6 +414,17 @@ struct RtFn<'a> {
     /// growing the wrapper with a parameter-attribute API. The declared type is
     /// therefore the C signature's ABI shape rather than its written spelling.
     sret: bool,
+}
+
+/// One gated call site's check plan, the mirror of what
+/// `codegen_c.rs::Gen::cap_plan` returns: the domain to match against, how many
+/// patterns the calling module holds for it, the call site as written, and
+/// which arguments are resource names.
+struct CapPlan {
+    domain: String,
+    pattern_count: usize,
+    at: String,
+    checks: Vec<crate::stdlib::CapCheck>,
 }
 
 /// One `enum`'s LLVM layout, mirroring the `{ tag, union }` typedef
@@ -498,6 +546,36 @@ struct Gen<'a> {
     clonable: HashSet<String>,
     /// The user types whose value has a derived order, for `List.sort`.
     sortable: HashSet<String>,
+    /// One module-scope global per `pd` (MK7 §3.1 and §5), keyed by the
+    /// internal `pd#<name>` identifier `tir` names it with, plus that
+    /// passdown's own type. The C backend's `static <type> <name>;` is the
+    /// same storage: a `pd` initializer fills it once and a function with no
+    /// hidden parameter of its own (`main`) reads it directly.
+    pd_globals: HashMap<String, (Value<'a>, Ty)>,
+    /// The generated `kelp_init_pds` and `kelp_drop_pds`, present only for a
+    /// program that declares a passdown. The init function is what `main`
+    /// calls first; the drop function is what `atexit` registers, the only
+    /// drop point an owned passdown has (`codegen_c.rs::write_pd_globals`).
+    init_pds_fn: Option<LlvmFunction<'a>>,
+    drop_pds_fn: Option<LlvmFunction<'a>>,
+    /// The runtime's two saved `argv` globals (`runtime/kelp_rt.c`), which
+    /// `main` writes and `process.args()` reads. They are `extern` here: the
+    /// runtime object defines them, exactly as it does for the C backend's
+    /// generated `main`.
+    argc_global: Value<'a>,
+    argv_global: Value<'a>,
+    /// The source map, which `cap_plan` reads for the `.kp` call site a
+    /// capability denial names. The C backend reads the same map for the same
+    /// text (`codegen_c.rs::cap_plan`), so the two cannot name different
+    /// places.
+    sources: &'a SourceMap,
+    /// The compiled-in allowlist array of each `(module, domain)` grant, keyed
+    /// by that pair. The data is C in the per-program object
+    /// (`program_c_source`); this is the symbol a check passes as `patterns`.
+    cap_arrays: HashMap<(String, String), Value<'a>>,
+    /// The capability check's C entry points (`kelp_cap_check_path` and
+    /// friends), declared with the signature `runtime/cap_glue.c` defines.
+    cap_fns: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -529,6 +607,7 @@ impl<'a> Gen<'a> {
         module: &'a Module<'a>,
         program: &'a Program,
         drops: &'a DropPlan,
+        sources: &'a SourceMap,
         layout: &'a DataLayout,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
@@ -594,14 +673,23 @@ impl<'a> Gen<'a> {
             instantiations: collect_instantiations(program),
             clonable: crate::types::clonable_types(&type_decls),
             sortable: crate::types::sortable_types(&type_decls),
+            pd_globals: HashMap::new(),
+            init_pds_fn: None,
+            drop_pds_fn: None,
+            argc_global: module.add_external_global("kelp_argc", ctx.i32()),
+            argv_global: module.add_external_global("kelp_argv", ctx.opaque_ptr()),
+            sources,
+            cap_arrays: HashMap::new(),
+            cap_fns: declare_cap_fns(ctx, module),
         })
     }
 
-    /// Refuse the program-level constructs this slice does not lower, declare
-    /// every `datac` and `enum`, their drop functions, and every function.
+    /// Declare every `datac` and `enum`, its drop, clone and comparator
+    /// functions, the container function sets, the passdown globals, the
+    /// capability allowlist declarations and every function.
     ///
-    /// Refusing before any function is emitted means a program with a construct
-    /// this slice cannot lower fails with the construct named, rather than with
+    /// Declaring everything before any body is emitted means a construct this
+    /// lowering cannot handle fails with that construct named, rather than with
     /// the first expression that mentions it.
     fn declare(&mut self) -> Result<(), String> {
         let program = self.program;
@@ -618,15 +706,26 @@ impl<'a> Gen<'a> {
         // aggregate type exists and before any signature names the `ptr` that
         // carries it.
         self.declare_closure_envs()?;
-        // A `pd` is a module global plus an `atexit` registration, which is the
-        // runtime slice's job.
-        if !program.pds.is_empty() {
-            return Err(refuse("'pd'", "S3"));
+        // A `pd` is a module-scope global, the generated `kelp_init_pds` that
+        // fills it in declaration order, and (for an owned one) the `atexit`
+        // registration that is its only drop point. Declared here, after the
+        // aggregate and container types a `pd`'s value may name, and filled in
+        // by `emit_pd_globals` once the drops it needs exist.
+        self.declare_pd_globals()?;
+        // Each `(module, domain)` grant's compiled-in allowlist array: the data
+        // is C in the per-program object (`program_c_source`, the same text and
+        // the same escaping the C backend writes), and this is the symbol a
+        // check passes to `kelp_cap_check_*` as `patterns`.
+        for grant in &program.caps {
+            let symbol = cap_array_symbol(&grant.module, &grant.domain);
+            let array = self.module.add_external_global(&symbol, self.ctx.opaque_ptr());
+            self.cap_arrays
+                .insert((grant.module.clone(), grant.domain.clone()), array);
         }
         // `program.caps` holds each module's granted patterns, which is data, not
-        // a construct: it is harmless to ignore while nothing calls a gated
-        // function. A gated *call* is a stdlib `extern fun` and is refused by
-        // name at the call site (S3).
+        // a construct. The allowlist arrays are declared above and the check
+        // itself is emitted at each gated call site (`cap_plan`,
+        // `emit_cap_checks`), exactly where the C backend emits it.
 
         self.declare_drop_fns();
         // The derived deep-copy and order, then the container function sets: a
@@ -647,15 +746,20 @@ impl<'a> Gen<'a> {
             // compiler (`externs.rs`), so the function is *declared* here with
             // the body's own C signature and a call lowers as a call to it
             // (MK7 S3). The body then reaches the link through the object
-            // `externs_c_source` builds.
+            // `program_c_source` builds.
             if f.extern_ {
                 self.declare_extern(f)?;
                 continue;
             }
             let (params, ret) = if f.name == "main" {
-                // The C backend's `main` is `int main(int, char**)`; S1 mirrors
-                // the type the C standard cares about and returns 0.
-                (Vec::new(), ctx.i32())
+                // The C backend's `main` is `int main(int, char**)`; this
+                // mirrors the type the C standard cares about and returns 0.
+                // The two parameters are not Kelp parameters: `main` saves
+                // them into the runtime's `kelp_argc`/`kelp_argv`, which is
+                // how `process.args()` reads this process's own argv (the
+                // passdown mechanism cannot carry it, because the one function
+                // that can take no hidden parameter is `main`).
+                (vec![ctx.i32(), ctx.opaque_ptr()], ctx.i32())
             } else {
                 let mut params: Vec<Type<'a>> = Vec::new();
                 // A literal that captured something receives its environment as
@@ -689,32 +793,136 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// Whether `codegen_c.rs::cap_plan` would emit a runtime allowlist check
-    /// for this call, which the LLVM backend cannot lower yet (MK7 S3): the
-    /// calling module holds the domain, and the call names at least one resource
-    /// argument to match against the patterns.
+    /// Declare one module-scope global per `pd`, plus the two generated
+    /// functions `codegen_c.rs::write_pd_globals` emits beside them (MK7 §3.1,
+    /// §5).
     ///
-    /// The whole gate is frontend: resolution already refuses an ungranted name,
-    /// so a call that reaches codegen is one the calling module may make. What
-    /// the check adds is the *pattern* test at the call site, and a call that
-    /// names no resource (`time.now_unix`, `rand.below`, `process.exit`) needs
-    /// none, exactly as it gets none from the C backend. This mirrors
-    /// `cap_plan` rather than re-deciding, because the two backends disagreeing
-    /// about which calls are checked is the security bug this refusal exists to
-    /// prevent.
+    /// Each global has internal linkage and a zero initializer, which is C's
+    /// `static <type> <name>;`: the storage is private to this object and the
+    /// linker never sees the name. The name is the passdown's own
+    /// `pd#<name>` identifier mangled once (`symbol_name`), so the storage a
+    /// function with no hidden parameter reads is the same one the initializer
+    /// filled.
+    ///
+    /// A `pd` initializer *is* code that runs, so a gated call inside one is
+    /// checked against the *declaring* module's grant (`Pd::module` is the
+    /// only carrier of that module, since an initializer is not a function).
+    /// The walk that emits it carries that module for the same reason.
+    fn declare_pd_globals(&mut self) -> Result<(), String> {
+        let ctx = self.ctx;
+        if self.program.pds.is_empty() {
+            return Ok(());
+        }
+        let owned: Vec<bool> = self
+            .program
+            .pds
+            .iter()
+            .map(|pd| self.owns_memory(&pd.value_ty))
+            .collect();
+        for pd in &self.program.pds {
+            let lty = llvm_type(ctx, &self.structs, &self.containers, &pd.value_ty)?;
+            let global = self.module.add_global(&symbol_name(&pd.name), lty);
+            global.set_initializer(ctx.const_null(lty));
+            global.set_internal_linkage();
+            self.pd_globals
+                .insert(pd.name.clone(), (global, pd.value_ty.clone()));
+        }
+        let void_fn = ctx.fn_type(ctx.void(), &[], false);
+        self.init_pds_fn = Some(self.module.add_function("kelp_init_pds", void_fn));
+        // An owned passdown has no scope to die at, so its drop point is process
+        // exit. A program whose passdowns all own nothing gets no handler at
+        // all, exactly as the C backend emits none.
+        if owned.iter().any(|owns| *owns) {
+            self.drop_pds_fn = Some(self.module.add_function("kelp_drop_pds", void_fn));
+        }
+        Ok(())
+    }
+
+    /// Fill the two generated functions declared by [`Gen::declare_pd_globals`]:
+    /// `kelp_drop_pds` frees every owned passdown in declaration order, and
+    /// `kelp_init_pds` registers it with `atexit` and then runs each
+    /// initializer in declaration order, storing the result into that
+    /// passdown's global.
+    ///
+    /// The order is what makes a chained initializer (`pd val doubled =
+    /// base * 2`) read the value an earlier one wrote. An initializer that
+    /// diverges (`panic`) ends the init function, so the remaining passdowns
+    /// are never assigned, which is the same fate the C backend's sequential
+    /// statements have.
+    fn emit_pd_globals(&self) -> Result<(), String> {
+        let Some(init_fn) = self.init_pds_fn else {
+            return Ok(());
+        };
+        if let Some(drop_fn) = self.drop_pds_fn {
+            let entry = drop_fn.append_block("entry");
+            self.builder.position_at_end(entry);
+            for pd in &self.program.pds {
+                if !self.owns_memory(&pd.value_ty) {
+                    continue;
+                }
+                let (global, _) = *self
+                    .pd_globals
+                    .get(&pd.name)
+                    .ok_or_else(|| no_value(&format!("the passdown '{}'", pd.qualified)))?;
+                self.call_drop(global, &pd.value_ty)?;
+            }
+            self.builder.build_ret_void();
+        }
+
+        let entry = init_fn.append_block("entry");
+        self.builder.position_at_end(entry);
+        if let Some(drop_fn) = self.drop_pds_fn {
+            let (atexit, ty) = self.libc_fn("atexit")?;
+            self.builder
+                .build_call(atexit, ty, &[drop_fn.as_value()], "");
+        }
+        let mut diverged = false;
+        for pd in &self.program.pds {
+            let (global, _) = *self
+                .pd_globals
+                .get(&pd.name)
+                .ok_or_else(|| no_value(&format!("the passdown '{}'", pd.qualified)))?;
+            let fg = FnGen::for_pd_init(self, pd, init_fn, entry, global)?;
+            diverged = fg.emit_pd_init()?;
+            if diverged {
+                break;
+            }
+        }
+        if !diverged {
+            self.builder.build_ret_void();
+        }
+        Ok(())
+    }
+
+    /// The gated-call plan for one call site, or `None` when the call is not a
+    /// checked one. The mirror of `codegen_c.rs::Gen::cap_plan`, field for
+    /// field on purpose: which calls are checked, against which domain, with
+    /// which arguments and which pattern count, is the security-relevant
+    /// decision, and two backends answering it differently would be a hole in
+    /// one of them.
+    ///
+    /// The whole gate is frontend: resolution already refuses an ungranted
+    /// name, so a call that reaches codegen is one the calling module may make.
+    /// What the check adds is the *pattern* test at the call site, and a call
+    /// that names no resource (`time.now_unix`, `rand.below`, `process.exit`)
+    /// needs none, exactly as it gets none from the C backend.
     ///
     /// A gated stdlib module calling its own item is not a checked call site:
     /// the declaring module holds no grant, so it never appears in
     /// `program.caps` for that domain.
-    fn gated_check_needed(&self, module: &str, domain: &str, callee: &str, args: &[Expr]) -> bool {
-        let holds = self
+    fn cap_plan(
+        &self,
+        module: &str,
+        callee: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<CapPlan> {
+        let domain = self.program.gated.get(callee)?;
+        let grant = self
             .program
             .caps
             .iter()
-            .any(|g| g.module == module && g.domain == domain);
-        if !holds {
-            return false;
-        }
+            .find(|g| g.module == module && g.domain == *domain)?;
         let arg_is_str: Vec<bool> = args
             .iter()
             .map(|a| crate::stdlib::is_str_like_ty(&a.ty))
@@ -722,7 +930,22 @@ impl<'a> Gen<'a> {
         // The per-call table is keyed on the bare name the author wrote
         // (`read`, not `fs.read`), the qualified key being what `gated` holds.
         let bare = callee.rsplit('.').next().unwrap_or(callee);
-        !crate::stdlib::checked_args(domain, bare, &arg_is_str).is_empty()
+        let checks = crate::stdlib::checked_args(domain, bare, &arg_is_str);
+        if checks.is_empty() {
+            return None;
+        }
+        // The call site, as the author wrote it: the same `locate` the C
+        // backend calls, so a denial names the same `file:line:col`.
+        let at = self
+            .sources
+            .locate(module, span)
+            .unwrap_or_else(|| module.to_string());
+        Some(CapPlan {
+            domain: domain.clone(),
+            pattern_count: grant.patterns.len(),
+            at,
+            checks,
+        })
     }
 
     /// Declare one `extern fun` as the C function its compiler-supplied body
@@ -1212,9 +1435,18 @@ struct FnGen<'g, 'a> {
     /// checked against (MK7 S3, `Gen::gated_check_needed`).
     module: String,
     ret_ty: Ty,
-    /// The function's `tir` body and parameter list, borrowed for `'a` from the
-    /// program so the walk does not hold a borrow of `self`.
-    body: &'a Block,
+    /// The function's `tir` body, borrowed for `'a` from the program so the
+    /// walk does not hold a borrow of `self`. `None` in the synthetic walk a
+    /// `pd` initializer is emitted through, whose single expression is in
+    /// `pd_init`.
+    body: Option<&'a Block>,
+    /// The `pd` initializer this walk emits, when it is the generated
+    /// `kelp_init_pds` rather than a function body, and the global it assigns
+    /// (`tir::Pd::init`, MK7 §5).
+    pd_init: Option<&'a Expr>,
+    pd_global: Option<Value<'a>>,
+    /// The parameter list, in declaration order (a `fun` literal's environment
+    /// first, when it has one).
     params: Vec<(String, Ty)>,
     /// The LLVM environment struct of this literal, when it captured something
     /// (S2E): `Some` makes the generated function take a hidden first `ptr`
@@ -1251,16 +1483,100 @@ impl<'g, 'a> FnGen<'g, 'a> {
             fn_name: f.name.clone(),
             module: f.module.clone(),
             ret_ty: f.ret.clone(),
-            body: &f.body,
+            body: Some(&f.body),
+            pd_init: None,
+            pd_global: None,
             params: f.params.clone(),
             env_ty,
             env_slot: None,
         })
     }
 
+    /// The synthetic walk a `pd` initializer is emitted through (MK7 §5): no
+    /// body, no parameters, and one expression whose result is stored into the
+    /// passdown's own global.
+    ///
+    /// `fn_name` is empty and the module is the declaring one, exactly as
+    /// `codegen_c.rs::write_pd_globals` builds its `Gen`: the drop plan has no
+    /// entry keyed to a `pd` (`borrowck.rs` keys by function, and an initializer
+    /// is not one), and a gated call inside the initializer is checked against
+    /// the module that declared it, which is the only carrier of that module.
+    fn for_pd_init(
+        g: &'g Gen<'a>,
+        pd: &'a Pd,
+        cur_fn: LlvmFunction<'a>,
+        entry: BasicBlock<'a>,
+        global: Value<'a>,
+    ) -> Result<Self, String> {
+        Ok(FnGen {
+            g,
+            cur_fn,
+            entry,
+            cur: entry,
+            terminated: false,
+            scopes: Vec::new(),
+            fn_name: String::new(),
+            module: pd.module.clone(),
+            ret_ty: pd.value_ty.clone(),
+            body: None,
+            pd_init: Some(&pd.init),
+            pd_global: Some(global),
+            params: Vec::new(),
+            env_ty: None,
+            env_slot: None,
+        })
+    }
+
+    /// Emit one `pd` initializer and store its value into the passdown's
+    /// global. Returns whether it diverged, which is what stops the enclosing
+    /// `kelp_init_pds` from assigning a later passdown into a block that has
+    /// already ended.
+    fn emit_pd_init(mut self) -> Result<bool, String> {
+        self.g.builder.position_at_end(self.entry);
+        self.scopes.push(HashMap::new());
+        let init = self
+            .pd_init
+            .ok_or_else(|| no_value("a passdown initializer"))?;
+        let value = self.emit_expr(init)?;
+        if !self.terminated {
+            let value = value.ok_or_else(|| no_value("the value of a passdown initializer"))?;
+            let global = self
+                .pd_global
+                .ok_or_else(|| no_value("the storage of a passdown initializer"))?;
+            self.g.builder.build_store(value, global);
+        }
+        Ok(self.terminated)
+    }
+
     fn emit(mut self) -> Result<(), String> {
         self.g.builder.position_at_end(self.entry);
         self.scopes.push(HashMap::new());
+
+        // A `pd` init function's body is the initializer walk, called first by
+        // `main`; the passdowns themselves are globals, so nothing is
+        // registered here.
+        if self.pd_init.is_some() {
+            self.emit_pd_init()?;
+            return Ok(());
+        }
+
+        // `main` runs the passdown initializers before its first statement,
+        // exactly where `codegen_c.rs::write_function` inserts
+        // `kelp_init_pds();`, and saves its own `argc`/`argv` into the
+        // runtime's globals, where `process.args()` reads them. `main`
+        // receives no hidden parameter, so it reads the generated globals
+        // directly; the slots a referencing function gets are bound below for
+        // every other function.
+        if self.fn_name == "main" {
+            if let Some(init) = self.g.init_pds_fn {
+                let ty = self.g.ctx.fn_type(self.g.ctx.void(), &[], false);
+                self.g.builder.build_call(init, ty, &[], "");
+            }
+            let argc = self.cur_fn.get_param(0);
+            let argv = self.cur_fn.get_param(1);
+            self.g.builder.build_store(argc, self.g.argc_global);
+            self.g.builder.build_store(argv, self.g.argv_global);
+        }
 
         // A literal that captured something receives its environment as a
         // hidden first parameter (S2E). Bind it into a slot of its own, so
@@ -1289,7 +1605,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
         }
 
-        let body = self.body;
+        let body = self
+            .body
+            .ok_or_else(|| no_value("the body of a function"))?;
         self.emit_block_body(body)?;
 
         if !self.terminated {
@@ -1528,7 +1846,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Binary { op, lhs, rhs } => {
                 Ok(Some(self.emit_binary(*op, lhs, rhs)?))
             }
-            ExprKind::Call { callee, args } => self.emit_call(callee, args, &e.ty),
+            ExprKind::Call { callee, args } => self.emit_call(callee, args, &e.ty, e.span),
             // `[a, b, c]`: the array struct is built field by field in order,
             // the same value the C compound literal is.
             ExprKind::ArrayLit(elems) => Ok(Some(self.emit_array_lit(elems, &e.ty)?)),
@@ -1614,6 +1932,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // scalar, `str` or a container, so the load is the pointee type's
             // own (`Ty::Str` loads the `char*` a `str` value is).
             ExprKind::Deref { expr: sub } => {
+                // `*p` on a `&str` is the view itself: a `str` is already the
+                // pointer, so there is no second indirection to load
+                // (`codegen_c.rs::expr_value` returns `expr_value(sub)` for the
+                // same node). This is the shape a `pd` of type `str` reads
+                // through, and a `&str` parameter read too.
+                if e.ty == Ty::Str {
+                    return Ok(Some(self.value_of(sub)?));
+                }
                 let ptr = self.value_of(sub)?;
                 let lty = self.lty(&e.ty)?;
                 Ok(Some(self.g.builder.build_load(lty, ptr, "deref")))
@@ -1661,6 +1987,40 @@ impl<'g, 'a> FnGen<'g, 'a> {
         field: &str,
         ty: &Ty,
     ) -> Result<Value<'a>, String> {
+        // A chain rooted at an rvalue that owns memory (`mkName().r`) has
+        // nowhere to hang the drop of the temporary: nothing else owns it and
+        // nothing else frees it. The root is copied into a slot, the field is
+        // read out of that copy, the temporary is dropped, and the value is
+        // handed on, so the temporary and every buffer its other fields own die
+        // at the end of the expression that read through it. This is
+        // `codegen_c.rs::staged_field_value`, and it is the reason a two-owned-
+        // field `datac` is the interesting case: the drop is at the temporary,
+        // not at the field.
+        //
+        // The value is read out before the drop runs, because a drop frees
+        // memory. `infer.rs` already refuses to read an *owned* field by value,
+        // so the value is never the buffer the drop frees.
+        if let Some(root) = temporary_root(base) {
+            if self.g.owns_memory(&root.ty) {
+                let root_ty = root.ty.clone();
+                let lty = self.lty(&root_ty)?;
+                let slot = self.temp_alloca(lty, "field.root");
+                let value = self.value_of(root)?;
+                self.g.builder.build_store(value, slot);
+                let base_ptr = self.chain_addr(slot, base)?;
+                let (struct_ty, index) = self.field_slot(&base.ty, field)?;
+                let field_ptr =
+                    self.g
+                        .builder
+                        .build_struct_gep(struct_ty, base_ptr, index, field);
+                let lty = self.lty(ty)?;
+                let read = self.g.builder.build_load(lty, field_ptr, field);
+                let out = self.temp_alloca(lty, "field.value");
+                self.g.builder.build_store(read, out);
+                self.g.call_drop(slot, &root_ty)?;
+                return Ok(self.g.builder.build_load(lty, out, "field"));
+            }
+        }
         let (ptr, struct_ty, index) = self.field_place(base, field)?;
         let field_ptr = self
             .g
@@ -2170,8 +2530,18 @@ impl<'g, 'a> FnGen<'g, 'a> {
         base: &Expr,
         field: &str,
     ) -> Result<(Value<'a>, Type<'a>, u32), String> {
-        let struct_name = struct_name_of_ty(&base.ty)
-            .ok_or_else(|| refuse_type(&base.ty))?
+        let (struct_ty, index) = self.field_slot(&base.ty, field)?;
+        let ptr = self.place_of(base)?;
+        Ok((ptr, struct_ty, index))
+    }
+
+    /// The LLVM struct type and field index a `datac` field resolves to, from
+    /// the base's type. Separated from [`Self::field_place`] because the staged
+    /// temporary path has the base's *address* already and only needs the
+    /// projection.
+    fn field_slot(&self, base_ty: &Ty, field: &str) -> Result<(Type<'a>, u32), String> {
+        let struct_name = struct_name_of_ty(base_ty)
+            .ok_or_else(|| refuse_type(base_ty))?
             .to_string();
         let index = self
             .g
@@ -2184,8 +2554,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .structs
             .get(&struct_name)
             .ok_or_else(|| no_value(&format!("the datac '{struct_name}'")))?;
-        let ptr = self.place_of(base)?;
-        Ok((ptr, struct_ty, index as u32))
+        Ok((struct_ty, index as u32))
     }
 
     /// The address of a *place* expression: a local's slot, a field of another
@@ -2199,9 +2568,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
     fn place_of(&mut self, e: &Expr) -> Result<Value<'a>, String> {
         match &e.kind {
             ExprKind::Ident(name) => {
-                let slot = self
-                    .lookup(name)
-                    .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
+                let slot = match self.lookup(name) {
+                    Some(slot) => slot,
+                    None => self
+                        .pd_place(name)
+                        .ok_or_else(|| no_value(&format!("the local '{name}'")))?,
+                };
                 if is_borrow_ty(&e.ty) {
                     // The binding holds the borrow: its own value is the pointer.
                     Ok(self.g.builder.build_load(self.g.ctx.opaque_ptr(), slot, name))
@@ -2240,12 +2612,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     return self.value_of(e);
                 }
                 // A staged temporary that owns memory has to be freed, and the
-                // one drop site that can do it is a call argument (handled in
-                // `arg_value`). Reaching one here means a shape whose owner no
-                // site would free, so it is refused by name rather than
-                // silently leaked.
+                // sites that own that duty are the borrow staging
+                // (`borrow_place`) and the value-position field read
+                // (`emit_field_read`); both intercept a chain rooted at an owned
+                // rvalue before it reaches here. Reaching one anyway means a
+                // shape no site claimed, so it is refused by name rather than
+                // silently leaked: an owned temporary nobody frees is a leak,
+                // and a hidden one is worse than a build failure.
                 if self.g.owns_memory(&e.ty) {
-                    return Err(refuse("'a field of an owned temporary'", "S2B"));
+                    return Err(refuse("'an owned temporary' at a place this lowering does not stage", "S3"));
                 }
                 let value = self.value_of(e)?;
                 let lty = self.lty(&e.ty)?;
@@ -2287,23 +2662,45 @@ impl<'g, 'a> FnGen<'g, 'a> {
         a: &Expr,
         held: &mut Vec<(Value<'a>, Ty)>,
     ) -> Result<Value<'a>, String> {
-        if let ExprKind::Ref { expr: sub, .. } = &a.kind {
-            if !is_str_ref(&a.ty) {
-                if let Some(root) = temporary_root(sub) {
-                    if self.g.owns_memory(&root.ty) {
-                        let root_ty = root.ty.clone();
-                        let lty = self.lty(&root_ty)?;
-                        let slot = self.temp_alloca(lty, "arg.tmp");
-                        let value = self.value_of(root)?;
-                        self.g.builder.build_store(value, slot);
-                        let ptr = self.chain_addr(slot, sub)?;
-                        held.push((slot, root_ty));
-                        return Ok(ptr);
-                    }
+        if matches!(a.kind, ExprKind::Ref { .. }) && !is_str_ref(&a.ty) {
+            return self.borrow_place(a, held);
+        }
+        self.value_of(a)
+    }
+
+    /// The address a borrow expression denotes, staging an owned temporary when
+    /// the borrow hangs off one.
+    ///
+    /// `mkName().name` borrows a field of a `datac` nothing else owns: the
+    /// temporary is copied into a slot of its own, the field's address is taken
+    /// inside that copy, and the slot is handed back in `held` for the caller to
+    /// free after its operation (the call or the `printf`). This is
+    /// `codegen_c.rs::stage_argument`'s borrow arm and
+    /// `stage_borrowed_field`, which stage the *whole* temporary and not the
+    /// field, so a `datac` that owns two buffers frees both.
+    ///
+    /// A borrow that is not rooted at an owned rvalue is an ordinary place, so
+    /// the question is only whether the chain's root is one.
+    fn borrow_place(
+        &mut self,
+        arg: &Expr,
+        held: &mut Vec<(Value<'a>, Ty)>,
+    ) -> Result<Value<'a>, String> {
+        if let ExprKind::Ref { expr: sub, .. } = &arg.kind {
+            if let Some(root) = temporary_root(sub) {
+                if self.g.owns_memory(&root.ty) {
+                    let root_ty = root.ty.clone();
+                    let lty = self.lty(&root_ty)?;
+                    let slot = self.temp_alloca(lty, "borrow.tmp");
+                    let value = self.value_of(root)?;
+                    self.g.builder.build_store(value, slot);
+                    let ptr = self.chain_addr(slot, sub)?;
+                    held.push((slot, root_ty));
+                    return Ok(ptr);
                 }
             }
         }
-        self.value_of(a)
+        self.place_of(arg)
     }
 
     /// One argument of a runtime or extern call. An owned aggregate over 16
@@ -2412,10 +2809,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// reason). A binding moved on every path gets no `at_move` entry, so this
     /// leaves its slot alone and nothing drops it.
     fn load_ident(&mut self, e: &Expr, name: &str) -> Result<Value<'a>, String> {
-        let slot = self
-            .lookup(name)
-            .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
         let lty = self.lty(&e.ty)?;
+        let slot = match self.lookup(name) {
+            Some(slot) => slot,
+            // A `pd` global named by a function with no hidden parameter of its
+            // own (`main`, or another `pd`'s initializer). Its storage outlives
+            // every frame, so it is never a move source and is never cleared.
+            None => match self.pd_place(name) {
+                Some(global) => return Ok(self.g.builder.build_load(lty, global, name)),
+                None => return Err(no_value(&format!("the local '{name}'"))),
+            },
+        };
         let value = self.g.builder.build_load(lty, slot, name);
         if self.g.owns_memory(&e.ty) && self.g.drops.moves_at(&self.fn_name, e) {
             self.g.builder.build_store(self.g.ctx.const_null(lty), slot);
@@ -2430,6 +2834,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
         }
         None
+    }
+
+    /// The module-scope global a `pd` names, when the name is not a local: the
+    /// hidden parameter a referencing function receives is bound in a scope
+    /// like any other parameter, so a miss here is `main` or a `pd` initializer
+    /// (`infer.rs::PdInfo::arg` hands those the global's own address).
+    fn pd_place(&self, name: &str) -> Option<Value<'a>> {
+        self.g.pd_globals.get(name).map(|(global, _)| *global)
     }
 
     /// Create a local's slot in the entry block and restore the insertion point.
@@ -2452,9 +2864,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         match &target.kind {
             ExprKind::Ident(name) => {
-                let slot = self
-                    .lookup(name)
-                    .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
+                let slot = match self.lookup(name) {
+                    Some(slot) => slot,
+                    None => self
+                        .pd_place(name)
+                        .ok_or_else(|| no_value(&format!("the local '{name}'")))?,
+                };
                 // The old value goes after the new one has been read (it may
                 // read through the binding being overwritten) and before it is
                 // stored (`DropPlan::at_assign`; `b = b` is not one of these).
@@ -2772,26 +3187,104 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.call(func, fty, &[v], "fill"))
     }
 
+    /// Evaluate each argument a capability check reads, once, into a value the
+    /// check and the call share. A checked argument is a `str` or `&str`
+    /// (`stdlib::is_str_like_ty`), which is a bare pointer with no ownership, so
+    /// `value_of` is exactly what the call path does with it (`arg_value` and
+    /// `rt_arg_value` both fall through to `value_of` for a `str`-like
+    /// argument). This is the eval-once half of BUG-Kf7Rn: a check that read a
+    /// fresh rendering of the expression could admit one value and the call
+    /// pass another.
+    fn prepare_checked_args(
+        &mut self,
+        args: &[Expr],
+        plan: Option<&CapPlan>,
+    ) -> Result<HashMap<usize, Value<'a>>, String> {
+        let mut prepared: HashMap<usize, Value<'a>> = HashMap::new();
+        let Some(plan) = plan else {
+            return Ok(prepared);
+        };
+        for check in &plan.checks {
+            for index in cap_check_indices(check) {
+                if prepared.contains_key(&index) {
+                    continue;
+                }
+                let value = self.value_of(&args[index])?;
+                prepared.insert(index, value);
+            }
+        }
+        Ok(prepared)
+    }
+
+    /// Emit the runtime allowlist checks for one call site, before the call:
+    /// one `kelp_cap_check_*` per resource argument, each with the domain, the
+    /// resource, the module's compiled-in pattern array and its count, the
+    /// calling module and the `.kp` call site.
+    ///
+    /// This is `codegen_c.rs::cap_checked_call`'s statement expression without
+    /// the statement: the same symbols, the same argument order, and the same
+    /// strings, because the deny path's text is pinned by the tests and the two
+    /// backends must produce it byte for byte.
+    fn emit_cap_checks(
+        &mut self,
+        plan: Option<&CapPlan>,
+        prepared: &HashMap<usize, Value<'a>>,
+    ) -> Result<(), String> {
+        use crate::stdlib::CapCheck;
+        let Some(plan) = plan else {
+            return Ok(());
+        };
+        let domain = self.string_global(&plan.domain)?;
+        let module = self.string_global(&self.module)?;
+        let at = self.string_global(&plan.at)?;
+        let patterns = *self
+            .g
+            .cap_arrays
+            .get(&(self.module.clone(), plan.domain.clone()))
+            .ok_or_else(|| no_value("the allowlist of a gated call site"))?;
+        let count = self.g.v_i64(plan.pattern_count as u64);
+        for check in &plan.checks {
+            let value = |index: usize| -> Result<Value<'a>, String> {
+                prepared
+                    .get(&index)
+                    .copied()
+                    .ok_or_else(|| no_value("a checked call argument"))
+            };
+            let (func, ty) = match check {
+                CapCheck::Path(_) => self.g.cap_fn("kelp_cap_check_path")?,
+                CapCheck::Name(_) => self.g.cap_fn("kelp_cap_check_name")?,
+                CapCheck::Host(_) => self.g.cap_fn("kelp_cap_check_host")?,
+                CapCheck::HostPort(..) => self.g.cap_fn("kelp_cap_check_hostport")?,
+                CapCheck::Port(_) => self.g.cap_fn("kelp_cap_check_port")?,
+            };
+            let args: Vec<Value<'a>> = match *check {
+                CapCheck::Path(i) | CapCheck::Name(i) | CapCheck::Host(i) => {
+                    vec![domain, value(i)?, patterns, count, module, at]
+                }
+                CapCheck::HostPort(host, port) => {
+                    vec![domain, value(host)?, value(port)?, patterns, count, module, at]
+                }
+                CapCheck::Port(i) => vec![domain, value(i)?, patterns, count, module, at],
+            };
+            self.g.builder.build_call(func, ty, &args, "");
+        }
+        Ok(())
+    }
+
     fn emit_call(
         &mut self,
         callee: &str,
         args: &[Expr],
         ret: &Ty,
+        span: Span,
     ) -> Result<Option<Value<'a>>, String> {
         // A gated call site the C backend would guard with a runtime allowlist
-        // check is refused by name: this slice lowers the `extern fun` bodies,
-        // not the capability check, and lowering a gated call *unchecked* would
-        // silently drop the check the C backend emits (MK7 S3). A gated call
-        // that names no resource is admitted by the domain gate alone and needs
-        // no check, so it is lowered here.
-        if let Some(domain) = self.g.program.gated.get(callee) {
-            if self
-                .g
-                .gated_check_needed(&self.module, domain, callee, args)
-            {
-                return Err(refuse(&format!("the gated call to '{callee}'"), "S3"));
-            }
-        }
+        // check is checked here the same way: `cap_plan` decides the domain,
+        // the arguments matched and the pattern count, and every resource
+        // argument is evaluated once into a value the check and the call share
+        // (BUG-Kf7Rn: evaluating it twice admits one value and passes another).
+        let plan = self.g.cap_plan(&self.module, callee, args, span);
+        let prepared = self.prepare_checked_args(args, plan.as_ref())?;
 
         // `print`/`print!` reach libc `printf`, as the C backend does.
         if callee == "print" || callee == "print!" {
@@ -2852,9 +3345,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if let Some(info) = self.g.funcs.get(callee).cloned() {
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
-            for a in args {
-                values.push(self.arg_value(a, &mut held)?);
+            for (index, a) in args.iter().enumerate() {
+                match prepared.get(&index) {
+                    Some(v) => values.push(*v),
+                    None => values.push(self.arg_value(a, &mut held)?),
+                }
             }
+            // The allowlist checks run before the call, after every argument has
+            // been evaluated: the statement expression `cap_checked_call` builds
+            // has the same order.
+            self.emit_cap_checks(plan.as_ref(), &prepared)?;
             // A call that yields `void` must not be given a name: an instruction
             // with a name has to have a value, and the verifier rejects a named
             // void one. A unit method (a `mut` receiver that writes a field and
@@ -2887,9 +3387,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let slot = self.temp_alloca(ret_ty, "sret.out");
                 let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len() + 1);
                 values.push(slot);
-                for a in args {
-                    values.push(self.rt_arg_value(a, &mut held)?);
+                for (index, a) in args.iter().enumerate() {
+                    match prepared.get(&index) {
+                        Some(v) => values.push(*v),
+                        None => values.push(self.rt_arg_value(a, &mut held)?),
+                    }
                 }
+                self.emit_cap_checks(plan.as_ref(), &prepared)?;
                 self.g.builder.build_call(rt.func, rt.ty, &values, "");
                 for (slot, ty) in held {
                     self.g.call_drop(slot, &ty)?;
@@ -2897,9 +3401,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 return Ok(Some(self.g.builder.build_load(ret_ty, slot, "sret.val")));
             }
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
-            for a in args {
-                values.push(self.rt_arg_value(a, &mut held)?);
+            for (index, a) in args.iter().enumerate() {
+                match prepared.get(&index) {
+                    Some(v) => values.push(*v),
+                    None => values.push(self.rt_arg_value(a, &mut held)?),
+                }
             }
+            self.emit_cap_checks(plan.as_ref(), &prepared)?;
             let name = if rt.yields { "call" } else { "" };
             let v = self.g.builder.build_call(rt.func, rt.ty, &values, name);
             for (slot, ty) in held {
@@ -2916,9 +3424,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
             };
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
-            for a in args {
-                values.push(self.arg_value(a, &mut held)?);
+            for (index, a) in args.iter().enumerate() {
+                match prepared.get(&index) {
+                    Some(v) => values.push(*v),
+                    None => values.push(self.arg_value(a, &mut held)?),
+                }
             }
+            self.emit_cap_checks(plan.as_ref(), &prepared)?;
             let yields_value = *ret != Ty::Unit;
             let name = if yields_value { "call" } else { "" };
             let v = self.g.builder.build_call(func, fty, &values, name);
@@ -3046,7 +3558,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// owned temporary is freed right after the `printf`, exactly where the C
     /// backend frees it.
     fn emit_template_print(&mut self, newline: bool, arg: &Expr) -> Result<(), String> {
-        let (spec, mut values, hold) = self.printf_piece(arg)?;
+        let (spec, mut values, holds) = self.printf_piece(arg)?;
         let fmt = if newline {
             format!("{spec}\n")
         } else {
@@ -3059,7 +3571,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g
             .builder
             .build_call(self.g.printf_fn, self.g.printf_ty, &all, "");
-        if let Some((slot, ty)) = hold {
+        for (slot, ty) in holds {
             self.g.call_drop(slot, &ty)?;
         }
         Ok(())
@@ -3089,12 +3601,10 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     }
                 }
                 TemplatePiece::Value(value) => {
-                    let (spec, mut values, hold) = self.printf_piece(value)?;
+                    let (spec, mut values, piece_holds) = self.printf_piece(value)?;
                     fmt.push_str(&spec);
                     args.append(&mut values);
-                    if let Some((slot, ty)) = hold {
-                        holds.push((slot, ty));
-                    }
+                    holds.extend(piece_holds);
                 }
             }
         }
@@ -3131,7 +3641,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 Ok(data)
             }
             Ty::Ref { inner, .. } if matches!(**inner, Ty::String) => {
-                let ptr = self.place_of(arg)?;
+                // A borrow of a field of an owned temporary (`panic(mk().msg)`)
+                // stages the temporary the way every other borrow argument
+                // does. Nothing is freed afterwards: a panic does not return, so
+                // the drop would be unreachable (`codegen_c.rs` leaves it out for
+                // the same reason).
+                let ptr = self.borrow_place(arg, &mut Vec::new())?;
                 let lty = self.lty(inner)?;
                 let (data, _) = self.buffer_pair(ptr, lty);
                 Ok(data)
@@ -3164,7 +3679,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     fn buffer_fields(
         &mut self,
         arg: &Expr,
-    ) -> Result<Option<(Value<'a>, Value<'a>, Option<(Value<'a>, Ty)>)>, String> {
+    ) -> Result<Option<(Value<'a>, Value<'a>, Vec<(Value<'a>, Ty)>)>, String> {
         match &arg.ty {
             Ty::Bytes | Ty::String => {
                 let v = self.value_of(arg)?;
@@ -3172,7 +3687,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let slot = self.temp_alloca(lty, "buf.tmp");
                 self.g.builder.build_store(v, slot);
                 let (data, len) = self.buffer_pair(slot, lty);
-                Ok(Some((data, len, Some((slot, arg.ty.clone())))))
+                Ok(Some((data, len, vec![(slot, arg.ty.clone())])))
             }
             Ty::View => {
                 let v = self.value_of(arg)?;
@@ -3180,15 +3695,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let slot = self.temp_alloca(lty, "view.tmp");
                 self.g.builder.build_store(v, slot);
                 let (data, len) = self.buffer_pair(slot, lty);
-                Ok(Some((data, len, None)))
+                Ok(Some((data, len, Vec::new())))
             }
             Ty::Ref { inner, .. }
                 if matches!(**inner, Ty::Bytes | Ty::String | Ty::View) =>
             {
-                let ptr = self.place_of(arg)?;
+                let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+                let ptr = self.borrow_place(arg, &mut held)?;
                 let lty = self.lty(inner)?;
                 let (data, len) = self.buffer_pair(ptr, lty);
-                Ok(Some((data, len, None)))
+                Ok(Some((data, len, held)))
             }
             _ => Ok(None),
         }
@@ -3202,13 +3718,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
     fn printf_piece(
         &mut self,
         arg: &Expr,
-    ) -> Result<(String, Vec<Value<'a>>, Option<(Value<'a>, Ty)>), String> {
-        if let Some((data, len, hold)) = self.buffer_fields(arg)? {
+    ) -> Result<(String, Vec<Value<'a>>, Vec<(Value<'a>, Ty)>), String> {
+        if let Some((data, len, holds)) = self.buffer_fields(arg)? {
             let len = self
                 .g
                 .builder
                 .build_int_cast(false, false, len, self.g.ctx.i32(), "len");
-            return Ok(("%.*s".to_string(), vec![len, data], hold));
+            return Ok(("%.*s".to_string(), vec![len, data], holds));
         }
         let v = self.value_of(arg)?;
         let spec: &'static str = match &arg.ty {
@@ -3223,7 +3739,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .g
                     .builder
                     .build_int_cast(false, true, v, self.g.ctx.i32(), "promote");
-                return Ok(("%u".to_string(), vec![promoted], None));
+                return Ok(("%u".to_string(), vec![promoted], Vec::new()));
             }
             Ty::Usize => "%zu",
             Ty::Isize => "%lld",
@@ -3234,21 +3750,21 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .g
                     .builder
                     .build_fp_cast(true, v, self.g.ctx.f64(), "promote");
-                return Ok(("%f".to_string(), vec![promoted], None));
+                return Ok(("%f".to_string(), vec![promoted], Vec::new()));
             }
             Ty::F64 => "%f",
             Ty::Bool => {
                 let t = self.string_global("true")?;
                 let f = self.string_global("false")?;
                 let selected = self.g.builder.build_select(v, t, f, "bool");
-                return Ok(("%s".to_string(), vec![selected], None));
+                return Ok(("%s".to_string(), vec![selected], Vec::new()));
             }
             Ty::Char => "%c",
             Ty::Str => "%s",
             Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => "%s",
             other => return Err(refuse_type(other)),
         };
-        Ok((spec.to_string(), vec![v], None))
+        Ok((spec.to_string(), vec![v], Vec::new()))
     }
 
     fn all_ones(&self, ty: &Ty) -> Result<Value<'a>, String> {
@@ -3522,6 +4038,60 @@ fn collect_instantiations(program: &Program) -> Instantiations {
 /// the C backend reaches them through the standard headers. The signatures are
 /// the ones `<stdlib.h>`/`<string.h>` declare, on the ABI this machine uses:
 /// `size_t` is `i64` and `int` is `i32`.
+/// The argument indices one capability check reads, in the order the check
+/// reads them. `codegen_c.rs::checked_arg_flags` enumerates the same set; this
+/// one keeps the order, which is what the two-argument `HostPort` check needs.
+fn cap_check_indices(check: &crate::stdlib::CapCheck) -> Vec<usize> {
+    use crate::stdlib::CapCheck;
+    match *check {
+        CapCheck::Path(i) | CapCheck::Name(i) | CapCheck::Host(i) | CapCheck::Port(i) => vec![i],
+        CapCheck::HostPort(host, port) => vec![host, port],
+    }
+}
+
+/// The symbol of the compiled-in allowlist array for one `(module, domain)`
+/// grant, spelled exactly as `codegen_c.rs::CapTable::symbol` spells it: the
+/// array is C data in the per-program object, and the IR declaration here has to
+/// name the same symbol the object defines.
+fn cap_array_symbol(module: &str, domain: &str) -> String {
+    format!(
+        "kelp_caps_{}_{}",
+        crate::types::c_ident(&module.replace('/', "_")),
+        domain
+    )
+}
+
+/// Declare the capability check's C entry points, with the signatures
+/// `runtime/cap_glue.c` defines.
+///
+/// The resource is a `const char*` for every check but the two that name a
+/// port, where it is the `uint16_t` the grant is matched on. `count` is a
+/// `size_t`, so `i64`. A declaration is free: the object only defines these when
+/// the program contains a gated call, and an unreferenced declaration leaves no
+/// undefined symbol behind.
+fn declare_cap_fns<'a>(
+    ctx: &'a Context,
+    module: &'a Module<'a>,
+) -> HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)> {
+    let ptr = ctx.opaque_ptr();
+    let i16t = ctx.i16();
+    let i64t = ctx.i64();
+    let void = ctx.void();
+    let mut out = HashMap::new();
+    let mut decl = |name: &'static str, params: &[Type<'a>]| {
+        let ty = ctx.fn_type(void, params, false);
+        let func = module.add_function(name, ty);
+        out.insert(name, (func, ty));
+    };
+    let text = [ptr, ptr, ptr, i64t, ptr, ptr];
+    decl("kelp_cap_check_path", &text);
+    decl("kelp_cap_check_name", &text);
+    decl("kelp_cap_check_host", &text);
+    decl("kelp_cap_check_hostport", &[ptr, ptr, i16t, ptr, i64t, ptr, ptr]);
+    decl("kelp_cap_check_port", &[ptr, i16t, ptr, i64t, ptr, ptr]);
+    out
+}
+
 fn declare_libc<'a>(
     ctx: &'a Context,
     module: &'a Module<'a>,
@@ -3543,6 +4113,11 @@ fn declare_libc<'a>(
     decl("memcmp", i32t, &[ptr, ptr, i64t]);
     decl("memset", ptr, &[ptr, i32t, i64t]);
     decl("strlen", i64t, &[ptr]);
+    // The one registration an owned `pd` has: its drop point is process exit
+    // (`codegen_c.rs::write_pd_globals`), so the generated `kelp_init_pds`
+    // hands `kelp_drop_pds` to `atexit`. Declared unconditionally like every
+    // other libc symbol here; an unused declaration costs nothing.
+    decl("atexit", i32t, &[ptr]);
     out
 }
 
@@ -3597,6 +4172,12 @@ impl<'a> Gen<'a> {
             .get(name)
             .copied()
             .ok_or_else(|| no_value(&format!("the libc function '{name}'")) )
+    }
+    fn cap_fn(&self, name: &str) -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+        self.cap_fns
+            .get(name)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the capability check '{name}'")))
     }
 
     /// Append a block to `func` without moving the builder. A caller that
@@ -6470,7 +7051,8 @@ const E_VALUE: u32 = 1;
 const E_LIVE: u32 = 2;
 
 /// The C translation unit carrying the compiler-supplied `extern fun` bodies
-/// this program reaches (MK7 S3, plan §3.2), or `None` when it reaches none.
+/// this program reaches and the capability check's own C half (MK7 S3,
+/// plan §3.2 and §5), or `None` when it needs neither.
 ///
 /// The bodies stay C. They are the one place an unportable primitive (`malloc`,
 /// `clock_gettime`, a raw `read` on a descriptor) is allowed to live, and their
@@ -6505,15 +7087,29 @@ const E_LIVE: u32 = 2;
 /// the program has. That is the property a link needs, and it is the reason this
 /// is not a build-time object like `kelp_rt.o`.
 ///
-/// # What is not here
+/// # The capability glue
 ///
-/// The capability glue (`runtime/cap_glue.c`) is not: no extern body calls it,
-/// and the gated *call site* that would is refused rather than lowered
-/// unchecked (`emit_call`). `pd` and its `atexit` registration are not this
-/// slice either.
-fn externs_c_source(program: &Program) -> Option<String> {
+/// `runtime/cap_glue.c` is the same text the C backend splices into a generated
+/// program that contains a gated call: the deny path, the buffered plumbing and
+/// the allowlist loops. It is emitted here, in the same object, for the same
+/// reason the extern bodies are: its checks call the Kelp matcher (`std/rt`),
+/// which exists only for a program that holds a grant, and it is C text that
+/// must not be re-derived (MK7 §3.2). The one difference is linkage: in the C
+/// backend the call sites are in the same translation unit and the glue is
+/// `static`, while here the callers are IR, so `#define static` around the
+/// include is what gives the check functions the external linkage the IR
+/// declares them with (`declare_cap_fns`).
+///
+/// The allowlist arrays are emitted here too, as C data, with the C backend's
+/// own escaper (`codegen_c.rs::c_string_literal`). They are not `static`: the IR
+/// names them by symbol (`cap_array_symbol`), and a static array would have no
+/// symbol to name.
+fn program_c_source(program: &Program) -> Option<String> {
     let externs: Vec<&Function> = program.functions.iter().filter(|f| f.extern_).collect();
-    if externs.is_empty() {
+    // `program.gated` is non-empty exactly when the program contains a gated
+    // call site, which is the condition the C backend emits the glue under.
+    let cap_glue = !program.gated.is_empty();
+    if externs.is_empty() && !cap_glue {
         return None;
     }
     let mut out = String::new();
@@ -6599,12 +7195,38 @@ fn externs_c_source(program: &Program) -> Option<String> {
         out.push('\n');
         crate::codegen_c::write_extern(&mut out, f);
     }
+
+    if cap_glue {
+        // Each module's granted patterns, as constant data, exactly as
+        // `codegen_c.rs::generate` writes them. An empty pattern list is `{
+        // NULL }` rather than omitted: a module can hold a domain with no
+        // patterns, and a call that names a resource still has to have an array
+        // to deny against.
+        out.push_str("\n/* capability allowlists, compiled in per module */\n");
+        for g in &program.caps {
+            out.push_str(&format!(
+                "const char* {}[] = {{ {}NULL }};\n",
+                cap_array_symbol(&g.module, &g.domain),
+                g.patterns
+                    .iter()
+                    .map(|p| format!("{}, ", crate::codegen_c::c_string_literal(p)))
+                    .collect::<String>()
+            ));
+        }
+        out.push_str("\n/* The capability check's C half, the text `codegen_c.rs`\n   \
+            splices into a generated program. `#define static` gives its\n   \
+            functions the external linkage the IR calls them with; the C\n   \
+            backend's own copy stays static, where the call sites are in the\n   \
+            same translation unit. */\n#define static\n");
+        out.push_str(crate::codegen_c::CAP_GLUE);
+        out.push_str("\n#undef static\n");
+    }
     Some(out)
 }
 
 /// Every container type a `tir` type names, outermost first.
 ///
-/// Used by [`externs_c_source`] to emit the container typedefs an extern
+/// Used by [`program_c_source`] to emit the container typedefs an extern
 /// signature names. It walks the type's own subterms because a `Box<List<T>>`
 /// names both typedefs, and it does not walk into a `datac` (an extern takes
 /// one by borrow, and the C body sees its forward-declared tag at most).
@@ -6666,13 +7288,12 @@ fn is_aggregate_ty(ty: &Ty) -> bool {
 /// `kelp_String__into_bytes` is deliberately absent: it takes a 24-byte struct
 /// *by value*, and LLVM's backend passes such an argument in registers while the
 /// SysV ABI puts it on the stack, so a call to one would not cross correctly.
-/// Leaving it out refuses the call by name rather than miscompiling it.
-/// `kelp_String__from_bytes` has the same 24-byte by-value argument, and because
-/// every `String` construction in the stdlib goes through it, it is not left
-/// out: the runtime object `build.rs` compiles carries a pointer-spelled
-/// adapter for it (`kelp_String__from_bytes_ptr`, BUG-vN4tR), registered below
-/// under the builtin's own mangled name so a call site reaches it through the
-/// same lookup every other runtime method uses.
+/// The runtime object carries pointer-spelled adapters for both directions
+/// (`kelp_String__from_bytes_ptr`, `kelp_String__into_bytes_ptr`, BUG-vN4tR),
+/// registered below under the builtin's own mangled name so a call site reaches
+/// them through the same lookup every other runtime method uses. Because every
+/// `String` construction in the stdlib goes through `from_bytes`, that direction
+/// is not left out.
 fn declare_runtime<'a>(
     ctx: &'a Context,
     module: &'a Module<'a>,
@@ -6780,6 +7401,26 @@ fn declare_runtime<'a>(
                 ty,
                 yields: true,
                 ret: Some(string),
+                sret: true,
+            },
+        );
+    }
+    // `String#into_bytes` has the opposite shape and the same problem: its C
+    // form takes a 24-byte `kelp_String` *by value* and returns a 24-byte
+    // `kelp_Bytes`. The adapter takes the receiver by pointer and returns the
+    // buffer through the hidden first argument, and `rt_arg_value` stages the
+    // receiver into a slot of its own, so the call never passes a 24-byte
+    // aggregate by value in either direction (BUG-vN4tR, MK7 §3.3).
+    {
+        let ty = ctx.fn_type(void, &[ptr, ptr], false);
+        let func = module.add_function("kelp_String__into_bytes_ptr", ty);
+        out.insert(
+            symbol_name("String#into_bytes"),
+            RtFn {
+                func,
+                ty,
+                yields: true,
+                ret: Some(bytes),
                 sret: true,
             },
         );
@@ -7082,14 +7723,13 @@ fn int_width(ty: &Ty) -> Option<u32> {
     })
 }
 
-/// The refusal message for a construct this stage does not lower. `what` is the
-/// construct's name, quoted when it is a language word (`'enum'`) and a phrase
-/// when it is a shape; `stage` is the MK7 stage that will lower it. Everything
-/// through S2E is lowered: plain records, owned fields, the drop plan, the
-/// runtime, the tagged union, the containers and arrays, the references that
-/// are not a `datac`, and closures and function values. What is left is S3:
-/// `pd` globals, the capability check's allowlist at a gated call site, and the
-/// two owned-temporary shapes.
+/// The refusal message for a construct the lowering does not handle. `what` is
+/// the construct's name, quoted when it is a language word (`'enum'`) and a
+/// phrase when it is a shape; `stage` is the MK7 stage that lowered it. Every
+/// stage that has landed still passes its label, so the string reads as
+/// history; a refusal that fires today names a shape the frontend does not
+/// currently produce, and it stays so that such a shape fails loudly rather
+/// than being miscompiled.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
@@ -7180,7 +7820,7 @@ fn no_value(what: &str) -> String {
 
 #[cfg(test)]
 mod layout_tests {
-    use super::externs_c_source;
+    use super::program_c_source;
     use crate::llvm_ffi::{Context, Module};
     use crate::tir::{Block, Function, Program};
     use crate::types::Ty;
@@ -7232,7 +7872,7 @@ mod layout_tests {
             caps: Vec::new(),
             gated: Default::default(),
         };
-        let source = externs_c_source(&program).expect("one extern fun is one body");
+        let source = program_c_source(&program).expect("one extern fun is one body");
 
         // The layout text, written once in the prelude and once in the runtime.
         let runtime = strip_c_comments(include_str!("../runtime/kelp_rt.c"));
@@ -7390,7 +8030,7 @@ mod layout_tests {
             .expect("an import of every shipped stdlib module resolves");
         let program = crate::infer::check_program(&loaded.program, &loaded.project)
             .expect("the shipped stdlib type-checks");
-        let source = externs_c_source(&program).expect("the stdlib declares extern funs");
+        let source = program_c_source(&program).expect("the stdlib declares extern funs");
 
         if let Err(e) = crate::driver::compile_c_object(
             &source,

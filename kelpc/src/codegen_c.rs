@@ -39,7 +39,7 @@ const RUNTIME: &str = include_str!("../runtime/kelp_rt.c");
 /// buffered plumbing, and the allowlist loops. The *matching* and the *path
 /// normalization* it calls are Kelp (`std/rt`), declared just before this text
 /// is emitted — see `runtime_prototypes` and `kelpc/runtime/cap_glue.c`.
-const CAP_GLUE: &str = include_str!("../runtime/cap_glue.c");
+pub(crate) const CAP_GLUE: &str = include_str!("../runtime/cap_glue.c");
 
 /// The C headers a generated program (and the `extern fun` bodies the LLVM
 /// backend compiles separately, MK7 §3.2) relies on. Included unconditionally:
@@ -3759,7 +3759,12 @@ fn c_float_literal(v: f64) -> String {
     format!("{v:?}")
 }
 
-fn c_string_literal(s: &str) -> String {
+/// A C string literal for `s`, escapes included. Shared with the LLVM
+/// backend, which writes a program's capability allowlist arrays as C data in
+/// the object it links (`codegen_llvm.rs::program_c_source`), so the escaping
+/// of a pattern cannot differ between the backends. Visibility only: the text
+/// the C backend generates is unchanged.
+pub(crate) fn c_string_literal(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

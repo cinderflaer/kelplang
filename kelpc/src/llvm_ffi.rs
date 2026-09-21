@@ -65,9 +65,11 @@ use llvm_sys::core::{
     LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
     LLVMInt64TypeInContext,
     LLVMInt8TypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext,
-    LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString, LLVMSetTarget,
+    LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
+    LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage, LLVMSetTarget,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMVoidTypeInContext,
 };
+use llvm_sys::LLVMLinkage;
 use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate};
 use llvm_sys::prelude::{
     LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMTypeRef,
@@ -499,6 +501,30 @@ impl<'ctx> Value<'ctx> {
     pub fn as_raw(self) -> LLVMValueRef {
         self.raw
     }
+
+    /// Give a module-scope global its initializer (`LLVMSetInitializer`), which
+    /// is what turns the declaration [`Module::add_global`] made into a
+    /// definition. The value must be an LLVM constant of the global's type.
+    pub fn set_initializer(&self, constant: Value<'ctx>) {
+        // SAFETY: the caller passes a global this wrapper created and a constant
+        // of its type; both are live in the same context.
+        unsafe { LLVMSetInitializer(self.raw, constant.as_raw()) };
+    }
+
+    /// Mark a global's storage read-only (`LLVMSetGlobalConstant`), the `const`
+    /// in `static const`.
+    pub fn set_constant(&self, is_constant: bool) {
+        // SAFETY: as above; the argument is a global handle's own ref.
+        unsafe { LLVMSetGlobalConstant(self.raw, is_constant as LLVMBool) };
+    }
+
+    /// Give a global internal linkage (`LLVMSetLinkage` with
+    /// `LLVMInternalLinkage`), which is C's `static`: the symbol is private to
+    /// this object and never a link-time name.
+    pub fn set_internal_linkage(&self) {
+        // SAFETY: as above; the argument is a global handle's own ref.
+        unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMInternalLinkage) };
+    }
 }
 
 /// A function: a declaration or a definition in a [`Module`].
@@ -657,6 +683,18 @@ impl<'ctx> Module<'ctx> {
     /// so a `load` can read it. A name the module already has is returned by
     /// `LLVMAddGlobal`, so this is safe to call again for the same symbol.
     pub fn add_external_global(&self, name: &str, ty: Type<'ctx>) -> Value<'ctx> {
+        self.add_global(name, ty)
+    }
+
+    /// Define a module-scope global named `name` of type `ty` (`LLVMAddGlobal`).
+    ///
+    /// The global's storage exists in this object; the caller gives it an
+    /// initializer and a linkage (`Value::set_initializer`,
+    /// `Value::set_internal_linkage`). Without an initializer an `LLVMAddGlobal`
+    /// with the default external linkage is a *declaration* the linker must
+    /// resolve, which is the shape [`Module::add_external_global`] wants and not
+    /// this one.
+    pub fn add_global(&self, name: &str, ty: Type<'ctx>) -> Value<'ctx> {
         let name = cstring(name);
         Value {
             // SAFETY: the module is live and the name is valid.
