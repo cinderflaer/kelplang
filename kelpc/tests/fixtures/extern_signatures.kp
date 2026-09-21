@@ -1,0 +1,48 @@
+// MK7 S3A: every shape an `extern fun` body's C signature has, in one program.
+//
+// A body is C (`kelpc/src/externs.rs`), so the LLVM backend declares each one
+// with *the C signature its body has*, not the written Kelp spelling, and the
+// two have to agree by hand: the verifier cannot see the object, and a
+// declaration that drifted would print a plausible wrong value rather than fail
+// to build (BUG-vN4tR, MK7 section 3.3).
+//
+// The shapes below are the whole surface:
+//
+//   * `math.sqrt`, `math.pow`, `math.floor` are a scalar argument and a scalar
+//     return through the vector register file, and `math.is_nan` is a `bool`.
+//   * `mem.alloc` returns a 24-byte `Bytes` through the hidden pointer clang
+//     gives such a return, so the caller passes a destination and loads it back.
+//   * `fmt.hex` and `str.from_f64` return a 24-byte `String` the same way.
+//   * `str.substring` returns a `&str`, which is the argument pointer itself,
+//     not a pointer to the argument.
+//   * `str.parse_i64` writes through a `*i64` out-parameter, so the value the
+//     caller reads back is evidence the pointer crossed the right way.
+//   * `path.normalize` is the one body whose reference is not to the C runtime
+//     at all: it calls `std.rt.path_normalize`, a Kelp function the resolver
+//     injects for `std/path`, so that link is exercised too.
+impl "std/math"
+impl "std/fmt"
+impl "std/mem"
+impl "std/str"
+impl "std/path"
+impl "std/result"
+
+fun main() {
+    print(math.sqrt(x = 2.0))
+    print(math.pow(base = 2.0, exp = 10.0))
+    print(math.floor(x = 2.75))
+    print(math.is_nan(x = 0.0))
+
+    var b = mem.alloc(2)
+    b.set(0, 104)
+    b.set(1, 105)
+    print(b)
+
+    print(fmt.hex(n = 255))
+    print(str.from_f64(x = 3.14159, decimals = 2))
+    print(str.substring(s = "hello", from = 1))
+    print(result.unwrap(r = str.parse_i64("42")))
+    print(result.is_err(r = str.parse_i64("nope")))
+    print(path.normalize("/a//b/./c"))
+    print(path.normalize("/a/b/../c"))
+}

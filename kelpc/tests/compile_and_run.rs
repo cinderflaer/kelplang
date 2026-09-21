@@ -1869,6 +1869,20 @@ fn std_math_overloads_resolve_on_argument_type() {
     );
 }
 
+/// MK7 S3A: the `extern fun` bodies in one program, one per C signature shape
+/// they have (a scalar return, a 24-byte `Bytes`/`String` returned through the
+/// hidden pointer, a `&str` return, a `*i64` out-parameter, and a body that
+/// calls into `std/rt`). This suite is backend-agnostic, so it validates the C
+/// backend's copy of the same bodies and the LLVM backend's declared calls to
+/// them against one literal output.
+#[test]
+fn extern_bodies_lower_with_their_c_signature() {
+    assert_compiles_and_runs(
+        "tests/fixtures/extern_signatures.kp",
+        "1.414214\n1024.000000\n2.000000\nfalse\nhi\nff\n3.14\nello\n42\ntrue\n/a/b/c\n/a/c\n",
+    );
+}
+
 #[test]
 fn str_views_borrow_and_owned_truncations_allocate() {
     assert_compiles_and_runs(

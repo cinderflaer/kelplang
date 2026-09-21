@@ -607,6 +607,87 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "stdlib_sort",
 ];
 
+/// The S3A extern fixtures: the ones whose heap an `extern fun` body allocates,
+/// converts or adopts. `extern_signatures` is this slice's own fixture (a
+/// `Bytes` from `mem.alloc`, a `String` from `fmt.hex`/`str.from_f64` and one
+/// from a parsed path), `path_normalize` is the body that calls into `std/rt`,
+/// and the rest are the stdlib paths that reach `String.from_bytes` (the
+/// 24-byte-by-value entry point the runtime object carries a pointer-spelled
+/// adapter for, MK7 section 3.3).
+const LLVM_EXTERN_FIXTURES: &[&str] = &[
+    "extern_signatures",
+    "path_normalize",
+    "stdlib_build",
+    "stdlib_fmt",
+    "stdlib_math",
+    "stdlib_mem",
+    "stdlib_str",
+    "string_views",
+];
+
+/// The S3A half of the memory gate: every extern-body binary the LLVM backend
+/// builds, run under valgrind. The bodies themselves are C and the C sweep
+/// covers them, but the *calls* to them, the `String.from_bytes` adapter and the
+/// buffers the bodies allocate and adopt move memory across that boundary, so
+/// this is where a buffer freed twice or handed over without an owner shows up.
+#[test]
+#[ignore = "builds the extern fixtures and runs each under valgrind; ground rule 1.5 keeps it out of the default suite"]
+fn the_llvm_extern_binaries_are_valgrind_clean() {
+    let Some(version) = valgrind_version() else {
+        println!(
+            "memory gate: valgrind is not on PATH, so the LLVM extern sweep is skipped"
+        );
+        return;
+    };
+
+    let dir = scratch_dir();
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
+
+    let mut checked = Vec::new();
+    let mut rejected = Vec::new();
+    for name in LLVM_EXTERN_FIXTURES {
+        let bin = dir.join(format!("llvm_{name}"));
+        if build("llvm", name, &bin) {
+            checked.push(run_under_valgrind("llvm", name, &bin, &dir));
+        } else {
+            rejected.push(*name);
+        }
+    }
+
+    println!(
+        "memory gate: {version} over {} LLVM extern fixture(s); {} refused by the backend and skipped",
+        checked.len(),
+        rejected.len(),
+    );
+    println!("{}", backend_summary("llvm extern", &checked, ""));
+
+    assert!(
+        checked.len() == LLVM_EXTERN_FIXTURES.len(),
+        "the LLVM backend refused {:?}, which this slice must build",
+        rejected,
+    );
+
+    let mut report = Vec::new();
+    let mut findings = 0;
+    for check in &checked {
+        for (pid, lines) in check.findings() {
+            findings += 1;
+            match pid {
+                Some(pid) => report.push(format!("{} '{}' (pid {pid}):", check.backend, check.fixture)),
+                None => report.push(format!("{} '{}':", check.backend, check.fixture)),
+            }
+            report.extend(lines.into_iter().map(|line| format!("    {line}")));
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "valgrind reported {findings} finding(s) over {} LLVM extern runs:\n{}",
+        checked.len(),
+        report.join("\n"),
+    );
+}
+
 /// The S2D half of the memory gate: every container binary the LLVM backend
 /// builds, run under valgrind. The C sweep above covers the oracle; this one
 /// covers the code the LLVM backend generates *instead* of C, which is the
