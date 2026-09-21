@@ -449,7 +449,7 @@ fn the_llvm_backend_builds_at_least_the_recorded_baseline() {
     assert!(
         built >= LLVM_BUILT_BASELINE,
         "the 'llvm' backend builds {built} corpus targets, down from the \
-         {LLVM_BUILT_BASELINE} recorded at the S2D tip: coverage was removed, and if that \
+         {LLVM_BUILT_BASELINE} recorded at the S3 tip: coverage was removed, and if that \
          was deliberate the constant is the line to change in the same commit",
     );
 
