@@ -337,3 +337,23 @@ fn line_col(src: &str, offset: usize) -> (usize, usize) {
     }
     (line, col)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_outdated_kind_is_labelled_and_spelled_the_same_way() {
+        // The register of outdated syntax is empty (`deprecated.rs`), so no
+        // source program produces this kind of finding today. What a consumer
+        // reads is the vocabulary, and this is what keeps the third kind on the
+        // two printers that spell it: prose, and `check --json`.
+        let d = Diagnostic::new("`x` is outdated".to_string(), Span::new(0, 1), "m");
+        let sources = SourceMap::new();
+        let json = sources.render_findings_json(&[(Severity::Outdated, &d)], false);
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"severity\":\"outdated\""), "{json}");
+        assert_eq!(Severity::Outdated.as_str(), "outdated");
+        assert_eq!(Severity::Outdated.label(), "outdated: ");
+    }
+}

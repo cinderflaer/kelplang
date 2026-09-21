@@ -1,24 +1,24 @@
 //! The deprecation contract for `kelpc build` and `kelpc run` (roadmap open
 //! item 74, `kelpc/src/deprecated.rs`).
 //!
-//! The register itself is unit-tested where it lives. What only a real
-//! invocation can settle is the contract around it:
+//! The register is **empty**: both entries it ever held, `impl "..." as name`
+//! and `impl "..." with caps(...)`, were removed in the one cycle their shared
+//! deadline sentence gave them, so no program can produce an `outdated:` finding
+//! today and `--deny-outdated` has nothing to deny. What only a real invocation
+//! can settle is the rest of the contract around that machinery:
 //!
-//!   1. outdated syntax **compiles** — the exit status is zero, the program
-//!      runs, and the finding is a warning on stderr;
-//!   2. the warning names the removal and the fix, and points at the clause
-//!      rather than at the line;
-//!   3. `--deny-outdated` makes the same finding an error, and stops before
-//!      anything is generated;
-//!   4. a program with no outdated syntax prints nothing at all, so the flag
-//!      and the warning do not become background noise.
+//!   1. a spelling that was on the register is a parse error that names its fix,
+//!      which is what a program still carrying it meets (the two cases below);
+//!   2. `--deny-outdated` leaves a program with nothing on the list exactly as
+//!      it was: it builds, it runs, and it prints nothing, which is what makes
+//!      the flag usable over a tree that is already migrated;
+//!   3. a dependency path is reached by the name under `deps/`, the spelling the
+//!      first entry pointed at while it existed.
 //!
-//! The register holds one entry, `impl "..." with caps(...)`, so the fixtures
-//! here import with the keyword. The other entry, `impl "..." as name`, was
-//! retired rather than migrated: the clause is gone from the parser, and the
-//! last case below is the refusal a program still carrying it meets. A
-//! dependency path reached by the name under `deps/` is the spelling the
-//! register pointed at while the clause existed.
+//! The wording an entry buys, and the id lookup behind it, are unit-tested where
+//! the register lives (`deprecated.rs`): with an empty register no source program
+//! can reach them, so an end-to-end case here would have to invent a permanent
+//! deprecation to have something to report.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -63,8 +63,8 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).to_string()
 }
 
-/// A two-module project whose import uses the outdated spelling: a real `fs`
-/// delegation written with the `with` keyword, so the case is about the
+/// A two-module project whose import still writes the removed `with` keyword.
+/// The grant under it is a real `fs` delegation, so the case is about the
 /// keyword rather than about a clause the resolver skips.
 fn caps_with_project(dir: &Path) -> PathBuf {
     write(dir, "src/util.kp", "fun answer().R: i32 = 42\n");
@@ -76,119 +76,9 @@ fn caps_with_project(dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn the_with_caps_spelling_warns_and_the_build_succeeds() {
-    let dir = scratch("caps-with");
-    let source = caps_with_project(&dir);
-    let out = dir.join("prog");
-
-    let result = build(&source, &out, false);
-    assert!(
-        result.status.success(),
-        "outdated syntax must still compile, got {:?}:\n{}",
-        result.status.code(),
-        stderr(&result)
-    );
-    let text = stderr(&result);
-    assert!(
-        text.contains("outdated: `impl \"...\" with caps(...)` is outdated"),
-        "the finding is not labelled `outdated:`:\n{text}"
-    );
-    assert!(
-        text.contains("will be removed in the next development cycle"),
-        "the warning does not name the removal:\n{text}"
-    );
-    assert!(
-        text.contains("drop the `with`"),
-        "the warning does not name the fix:\n{text}"
-    );
-    assert!(
-        text.contains(&format!("{}:1:13", source.display())),
-        "the warning does not point at the `with` token:\n{text}"
-    );
-    assert_eq!(
-        text.matches("outdated:").count(),
-        1,
-        "the finding is printed once, not once per load pass:\n{text}"
-    );
-
-    // The grant behind the keyword still works: the program builds and runs.
-    let ran = Command::new(&out).output().expect("run the built program");
-    assert!(ran.status.success());
-    assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n");
-}
-
-#[test]
-fn deny_outdated_turns_the_finding_into_an_error_and_writes_nothing() {
-    let dir = scratch("deny");
-    let source = caps_with_project(&dir);
-    let out = dir.join("prog");
-
-    let result = build(&source, &out, true);
-    assert!(
-        !result.status.success(),
-        "--deny-outdated must fail the build:\n{}",
-        stderr(&result)
-    );
-    let text = stderr(&result);
-    assert!(
-        text.contains("error: `impl \"...\" with caps(...)` is outdated"),
-        "the finding is not reported as an error:\n{text}"
-    );
-    assert!(
-        !out.exists(),
-        "a denied build must stop before it generates an artifact"
-    );
-}
-
-#[test]
-fn run_deny_outdated_refuses_to_run_the_program() {
-    let dir = scratch("run-deny");
-    let source = caps_with_project(&dir);
-
-    let result = kelpc()
-        .arg("run")
-        .arg(&source)
-        .arg("--deny-outdated")
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        !result.status.success(),
-        "the flag has to stop `run` before the program runs"
-    );
-    assert!(
-        String::from_utf8_lossy(&result.stdout).is_empty(),
-        "the program ran anyway:\n{}",
-        String::from_utf8_lossy(&result.stdout)
-    );
-}
-
-#[test]
-fn a_program_with_no_outdated_syntax_prints_nothing() {
-    let dir = scratch("clean");
-    write(&dir, "src/util.kp", "fun answer().R: i32 = 42\n");
-    let source = write(
-        &dir,
-        "src/main.kp",
-        "impl \"util\"\n\nfun main() {\n    print(util.answer())\n}\n",
-    );
-    let out = dir.join("prog");
-
-    let result = build(&source, &out, false);
-    assert!(result.status.success(), "{}", stderr(&result));
-    assert!(
-        stderr(&result).is_empty(),
-        "a clean build should print nothing, got:\n{}",
-        stderr(&result)
-    );
-    // The same source under the flag: nothing to deny.
-    let denied = build(&source, &out, true);
-    assert!(denied.status.success(), "{}", stderr(&denied));
-}
-
-#[test]
 fn the_impl_as_clause_is_gone() {
-    // The retired entry: not a warning, a refusal that names the fix, because
-    // the register only holds spellings that still compile.
+    // Retired with the first entry: not a warning, a refusal that names the fix,
+    // because the register only holds spellings that still compile.
     let dir = scratch("impl-as");
     write(&dir, "src/util.kp", "fun answer().R: i32 = 42\n");
     let source = write(
@@ -220,17 +110,106 @@ fn the_impl_as_clause_is_gone() {
 }
 
 #[test]
+fn the_with_caps_clause_is_gone() {
+    // Retired with the second and last entry, on the deadline its own finding
+    // stated. The refusal is the parser's, and it names the surviving spelling.
+    let dir = scratch("caps-with");
+    let source = caps_with_project(&dir);
+    let out = dir.join("prog");
+
+    let result = build(&source, &out, false);
+    assert!(
+        !result.status.success(),
+        "the clause is removed, so the build must fail:\n{}",
+        stderr(&result)
+    );
+    let text = stderr(&result);
+    assert!(
+        text.contains("`impl \"...\" with caps(...)` is gone: drop the `with`"),
+        "the refusal does not name the surviving spelling:\n{text}"
+    );
+    assert!(
+        text.contains("caps(fs = [\"/var/log/**\"])"),
+        "the refusal does not show the grant it means:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("{}:1:13", source.display())),
+        "the refusal does not point at the `with` token:\n{text}"
+    );
+    assert!(
+        !text.contains("outdated:"),
+        "a removed spelling is not a deprecation:\n{text}"
+    );
+    assert!(
+        !out.exists(),
+        "a refused build must not generate an artifact"
+    );
+
+    // The surviving spelling is the same clause: it compiles and runs, so the
+    // refusal above is about the keyword and nothing else.
+    write(
+        &dir,
+        "src/main.kp",
+        "impl \"util\" caps(fs = [\"/tmp/**\"])\n\nfun main() {\n    print(util.answer())\n}\n",
+    );
+    let fixed = build(&source, &out, false);
+    assert!(
+        fixed.status.success(),
+        "the surviving spelling must build:\n{}",
+        stderr(&fixed)
+    );
+    let ran = Command::new(&out).output().expect("run the built program");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n");
+}
+
+#[test]
+fn a_program_with_no_outdated_syntax_prints_nothing() {
+    let dir = scratch("clean");
+    write(&dir, "src/util.kp", "fun answer().R: i32 = 42\n");
+    let source = write(
+        &dir,
+        "src/main.kp",
+        "impl \"util\"\n\nfun main() {\n    print(util.answer())\n}\n",
+    );
+    let out = dir.join("prog");
+
+    let result = build(&source, &out, false);
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(
+        stderr(&result).is_empty(),
+        "a clean build should print nothing, got:\n{}",
+        stderr(&result)
+    );
+    // The same source under the flag: nothing on the list to deny, so the build
+    // is the build it was, and `run` runs the program rather than stopping at a
+    // finding. That is the whole of what `--deny-outdated` does while the
+    // register is empty.
+    let denied = build(&source, &out, true);
+    assert!(denied.status.success(), "{}", stderr(&denied));
+    assert!(stderr(&denied).is_empty(), "{}", stderr(&denied));
+
+    let ran = kelpc()
+        // `run` writes `build/<stem>` relative to the working directory when no
+        // `-o` is given, so the scratch directory is where it runs: the artifact
+        // belongs beside the program it was built from, not in the package root.
+        .current_dir(&dir)
+        .arg("run")
+        .arg(&source)
+        .arg("--deny-outdated")
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(ran.status.success(), "{}", stderr(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n");
+}
+
+#[test]
 fn a_dependency_is_reached_by_the_name_under_deps() {
-    // The spelling the register points at: no `as`, and the namespace comes
+    // The spelling the first entry pointed at: no `as`, and the namespace comes
     // from the path Coral copied the dependency to (`src/deps/<key>/`), which
     // is the key the `[dependencies]` line gave it.
     let dir = scratch("deps");
     write(&dir, "coral.toml", "name = \"depsdemo\"\n");
-    write(
-        &dir,
-        "src/deps/argparse/lib.kp",
-        "fun parse().R: i32 = 7\n",
-    );
+    write(&dir, "src/deps/argparse/lib.kp", "fun parse().R: i32 = 7\n");
     let source = write(
         &dir,
         "src/main.kp",

@@ -63,11 +63,6 @@ pub struct ImplDecl {
     /// imported module, and it is how the importing module states which
     /// patterns it is willing to hand over.
     pub caps: Vec<CapGrant>,
-    /// The span of the `with` in `with caps(...)`, when it was written. The
-    /// keyword carries no information (`impl` already means the module
-    /// declares what it imports), so the clause is outdated and this is what
-    /// the finding points at.
-    pub caps_with_span: Option<Span>,
     pub span: Span,
 }
 

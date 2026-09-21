@@ -691,16 +691,6 @@ impl Loader<'_> {
         let mut seen_aliases: HashSet<String> = HashSet::new();
         for imp in &program.impls {
             validate_impl_path(&imp.path, imp.span, id)?;
-            if let Some(span) = imp.caps_with_span {
-                // Still accepted, no longer wanted: `impl` already says the
-                // module declares what it imports, so the keyword states
-                // nothing the clause does not (`deprecated.rs`).
-                self.deprecations.push(crate::deprecated::finding(
-                    crate::deprecated::CAPS_WITH,
-                    span,
-                    id,
-                ));
-            }
             let alias = default_alias(&imp.path);
             validate_alias(&alias, imp.span, id)?;
             if !seen_aliases.insert(alias.clone()) {

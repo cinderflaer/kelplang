@@ -6,8 +6,9 @@
 //! it:
 //!
 //!   1. **it answers and writes nothing**: no artifact, no generated C;
-//!   2. **the exit status separates an error from a warning**: an outdated
-//!      finding on its own exits zero, the rule `lint` follows;
+//!   2. **the exit status separates an error from a warning**: a refused
+//!      spelling exits nonzero with an `error` finding; the register is empty,
+//!      so nothing exits zero as an `outdated` finding today.
 //!   3. **`--json` is a document a consumer reads without parsing a message**:
 //!      severity, message, and a file with a 1-based range, on stdout, with
 //!      nothing on stderr to interleave with it.
@@ -153,25 +154,39 @@ fn json_hands_back_a_finding_that_has_no_file_at_all() {
 }
 
 #[test]
-fn outdated_syntax_is_a_finding_rather_than_a_failure() {
-    let dir = scratch("outdated");
+fn a_removed_spelling_is_an_error_in_the_json_findings() {
+    // The register is empty, so the finding a `check` reports is a refusal:
+    // `impl "..." with caps(...)` was removed on its one-cycle deadline, and
+    // the message names the surviving spelling. The `outdated` severity stays
+    // in the vocabulary for the next entry (`diag.rs`).
+    let dir = scratch("caps-with-removed");
     let file = write(
         &dir,
         "main.kp",
         "impl \"std/fs\" with caps(fs = [\"/tmp/**\"])\n\nfun main() {\n    print(fs.exists(\"/tmp\"))\n}\n",
     );
     let out = check(&file, &["--json"]);
-    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(!out.status.success(), "{}", stderr_of(&out));
     let json = stdout_of(&out);
-    assert!(json.contains("\"ok\":true"), "{json}");
-    assert!(json.contains("\"severity\":\"outdated\""), "{json}");
-
-    // `--deny-outdated` is the migration gate: the same finding, as an error.
-    let denied = check(&file, &["--json", "--deny-outdated"]);
-    assert!(!denied.status.success());
-    let json = stdout_of(&denied);
     assert!(json.contains("\"ok\":false"), "{json}");
     assert!(json.contains("\"severity\":\"error\""), "{json}");
+    assert!(json.contains("is gone: drop the `with`"), "{json}");
+
+    // `--deny-outdated` is the migration gate, and with nothing on the register
+    // it changes nothing: the same refusal, and a migrated program still checks
+    // clean under the flag.
+    let denied = check(&file, &["--json", "--deny-outdated"]);
+    assert!(!denied.status.success());
+    assert!(stdout_of(&denied).contains("is gone: drop the `with`"));
+
+    let fixed = write(
+        &dir,
+        "fixed.kp",
+        "impl \"std/fs\" caps(fs = [\"/tmp/**\"])\n\nfun main() {\n    print(fs.exists(\"/tmp\"))\n}\n",
+    );
+    let ok = check(&fixed, &["--json", "--deny-outdated"]);
+    assert!(ok.status.success(), "{}", stderr_of(&ok));
+    assert!(stdout_of(&ok).contains("\"ok\":true"));
 }
 
 #[test]

@@ -53,30 +53,31 @@ pub struct Outdated {
     pub instead: &'static str,
 }
 
-/// `impl "..." with caps(...)`: the keyword in front of a capability grant
-/// (`syntax.md` 15.2).
-pub const CAPS_WITH: &str = "caps-with";
-
 /// Every outdated construct, in the order they were scheduled.
 ///
-/// One entry so far. `impl "..." as name` was the other, and the first: it was
-/// retired once a module's own name became its namespace, which is what the
-/// clause already said (`syntax.md` 13.1). An entry lives here only while the
-/// spelling still compiles, and the removal is the parser's, not this module's.
+/// **Empty, and that is the state a register is meant to reach.** Two entries
+/// lived here and both were removed in the cycle that followed `26.09.0`, which
+/// is the deadline each of them carried: `impl "..." as name`, retired once a
+/// module's own name became its namespace (`syntax.md` 13.1), and
+/// `impl "..." with caps(...)`, retired once `impl` alone was understood to
+/// mean "this module declares what it imports", so the keyword stated nothing
+/// the clause did not. Both are now refused by the parser by name, and the grant
+/// the second one introduced is unchanged: `impl "std/fs" caps(fs = ["/var/log/**"])`.
 ///
-/// `with caps(...)` is the same shape of redundancy: `impl` already means "this
-/// module declares what it imports", so the keyword states nothing the clause
-/// does not, and the grant it introduces is unchanged when it goes.
-pub const REGISTER: &[Outdated] = &[
-    Outdated {
-        id: CAPS_WITH,
-        what: "`impl \"...\" with caps(...)`",
-        instead: "drop the `with`: the grant is `impl \"std/fs\" caps(fs = [\"/var/log/**\"])`, and \
-                  the patterns, the domains and the no-escalation rule are exactly the same",
-    },
-];
+/// The register stays the mechanism for the next deprecation rather than being
+/// deleted with its entries: add an entry here, raise its finding where the
+/// spelling is read, and remove the spelling on the next development cycle. An
+/// entry survives only while the spelling still compiles, and the removal is the
+/// parser's, not this module's.
+pub const REGISTER: &[Outdated] = &[];
 
 /// The register entry with this id.
+///
+/// Nothing in the compiler calls this while the register is empty, and that is
+/// the point: it is the read path the next entry arrives through, kept with
+/// `finding` so adding an entry is data rather than new code. The tests below
+/// are what keep the two exercised.
+#[allow(dead_code)]
 pub fn find(id: &str) -> &'static Outdated {
     REGISTER
         .iter()
@@ -85,8 +86,17 @@ pub fn find(id: &str) -> &'static Outdated {
 }
 
 /// The finding for one register entry, at the span that names the construct.
+#[allow(dead_code)] // as `find`: the register's read path, awaiting its next entry
 pub fn finding(id: &str, span: Span, module: &str) -> Diagnostic {
-    let entry = find(id);
+    finding_for(find(id), span, module)
+}
+
+/// The finding for an entry already in hand.
+///
+/// Split from `finding` so a test can exercise the wording on an entry built in
+/// the test rather than one registered here: an empty register has no id to look
+/// up, and a test must not add a permanent deprecation to get one.
+fn finding_for(entry: &Outdated, span: Span, module: &str) -> Diagnostic {
     Diagnostic::new(
         format!("{} is outdated and {REMOVAL}: {}", entry.what, entry.instead),
         span,
@@ -99,6 +109,18 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+
+    /// An entry in the register's own shape, built here rather than registered:
+    /// with the register empty there is no id to look up, and a test must not
+    /// add a permanent deprecation to get one. What it pins is the wording an
+    /// entry buys.
+    fn sample_entry() -> Outdated {
+        Outdated {
+            id: "sample-entry",
+            what: "`impl \"...\" with caps(...)`",
+            instead: "drop the `with`: the grant is `impl \"std/fs\" caps(fs = [\"/var/log/**\"])`",
+        }
+    }
 
     #[test]
     fn every_id_is_unique() {
@@ -115,8 +137,13 @@ mod tests {
 
     #[test]
     fn every_finding_names_the_removal_and_the_fix() {
-        for entry in REGISTER {
-            let d = finding(entry.id, Span::new(0, 0), "m");
+        // The register is empty, so the sample is what keeps the wording under
+        // test today; the loop over the register is what the next entry gets
+        // for free, and a sample that passed while a real entry did not would
+        // be a test of nothing.
+        let sample = sample_entry();
+        for entry in REGISTER.iter().chain(std::iter::once(&sample)) {
+            let d = finding_for(entry, Span::new(0, 0), "m");
             assert!(d.message.contains("outdated"), "{}", d.message);
             assert!(
                 d.message.contains("will be removed in the next development cycle"),
@@ -144,24 +171,29 @@ mod tests {
     fn the_shipped_sources_carry_no_outdated_spelling() {
         // A deprecation in the stdlib is the worst kind: every program that
         // imports that module would be warned about a file it cannot edit.
+        //
+        // The register is empty, so there is no entry to search for, and the
+        // two things an entry needs are what this keeps: no shipped module
+        // writes a spelling a retired entry owned (the scan), and every shipped
+        // module parses (the walk below, which is where a refused spelling fails
+        // loudly, naming its fix). The next entry adds its own spelling here.
+        const RETIRED: &[&str] = &["with caps("];
         let mut ids: Vec<&str> = crate::stdlib::shipped().to_vec();
         ids.push(crate::stdlib::RT_MODULE);
         for id in ids {
             let text = crate::stdlib::source(id).expect("a shipped module has source");
+            for spelling in RETIRED {
+                assert!(
+                    !text.contains(spelling),
+                    "the shipped module '{id}' writes `{spelling}...)`, which is outdated \
+                     syntax: a program that imports it would be warned about a file it cannot edit"
+                );
+            }
             let tokens = Lexer::new(&text)
                 .tokenize()
                 .unwrap_or_else(|e| panic!("'{id}' does not lex: {}", e.message));
-            let program = Parser::new(tokens)
-                .parse_program()
-                .unwrap_or_else(|e| panic!("'{id}' does not parse: {}", e.message));
-            for imp in &program.impls {
-                assert!(
-                    imp.caps_with_span.is_none(),
-                    "the shipped module '{id}' writes `impl \"{}\" with caps(...)`, which is \
-                     outdated syntax: a program that imports it would be warned about a file it \
-                     cannot edit",
-                    imp.path
-                );
+            if let Err(e) = Parser::new(tokens).parse_program() {
+                panic!("'{id}' does not parse: {}", e.message);
             }
         }
     }
