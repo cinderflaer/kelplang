@@ -48,7 +48,9 @@ ELF-writer inventory that no longer has to be written).
   3 to 4 ms. LLVM *is* that toolchain's backend, so compile time stays where it is
   or rises: emitting IR, running the pass pipeline and running `LLVMCodeGen` is the
   work `cc -c` was already doing. The honest expectation is "at or above today's",
-  and `bench/speed`'s compile-time column is where that gets measured.
+  and `bench/speed`'s compile-time column is where that gets measured: §4.3's S6
+  table measured it at or slightly below the C path's, because the LLVM path links
+  the runtime object instead of recompiling the runtime in every program.
 - **A large external dependency.** LLVM is a C++ library of hundreds of megabytes.
   §1 is the decision about how `kelpc` links it.
 - **`cc` stays in the chain for linking**, at least at first (see §1.3).
@@ -300,28 +302,99 @@ exists for a different reason.
 
 ### 4.3 Performance and optimization level
 
-The question is no longer "write an optimizer", it is "which pipeline, by default".
-The C backend runs `cc -O2`, so today's default is `-O2`-equivalent and the LLVM
-backend should not regress from it.
+**S6 landed on 2026-09-21: the level is a flag, and `-O2` is the default.**
+`kelpc build -O<n>` accepts `-O0`, `-O1`, `-O2`, `-O3` and `-Os`, and `-O2` is the
+default so an absent flag cannot change what a default build produces (the C
+backend has always run `cc -O2`). `-Os` is accepted because both `cc` and LLVM
+accept it; `-Oz` is refused, because it is a clang-only spelling and the C
+backend's `cc` may be gcc, so a level has to be one both accept. An out-of-range
+or unparseable level is a diagnostic that lists the vocabulary, never a silent
+default.
 
-- **Recommendation: LLVM's `default<O2>` as the default**, with an `-O0`-equivalent
-  fast path added as a knob (a flag, and later a Coral build kind: `asm` speed was
-  the point of a dev build, and `-O0` IR emission is much cheaper than a pass
-  pipeline). The three answers the retired plan listed (accept `-O0` and document
-  it, write an optimizer, or split by build kind) collapse to the third, with no
-  optimizer to write.
-- The number to state at the flip is the compile-time column, since that is what
-  changes: `bench/speed`'s build time and the four workloads' runtime, both
-  backends, on an idle machine.
+**One level is one level for both backends.** The three spellings are built in one
+place (`kelpc/src/opt.rs`), so they cannot drift:
+
+| level | LLVM module pipeline | codegen level | `cc` flag |
+| --- | --- | --- | --- |
+| `-O0` | `default<O0>` (adds no pass) | `None` | `-O0` |
+| `-O1` | `default<O1>` | `Less` | `-O1` |
+| `-O2` | `default<O2>` | `Default` | `-O2` |
+| `-O3` | `default<O3>` | `Aggressive` | `-O3` |
+| `-Os` | `default<Os>` | `Default` | `-Os` |
+
+The pipeline runs over the module before the object is written, and the same `-O`
+reaches the C backend's `cc`, the per-program `extern` C object and the final link,
+so the differential sweep compares the two backends at one level rather than two.
+The textual IR is written **before** the pipeline runs, so `<out>.ll` is the
+lowering at every level: that is what the MK7 stage gates read, and an optimized
+module would answer a different question.
+
+**The corpus is the gate at every level.**
+`kelpc/tests/backend_coverage.rs::every_level_agrees_with_the_c_backend` rebuilds
+the whole corpus with both backends at each level and compares stdout and exit
+status. Recorded 2026-09-21: **223 of 380 targets built by `c`, 223 by `llvm`, 0
+refused, 0 mismatches, 0 crashes at each of `-O0`, `-O1`, `-O2`, `-O3` and
+`-Os`.** The whole fixture suite also runs under `llvm` at the default `-O2`: 357
+passed. A level that changes behaviour is a bug, not a tuning choice: the pipeline
+is the first thing in this project that can exploit IR we emitted without a
+licence for it (section 7), and the next paragraph is what it found.
+
+**The pipeline found one defect, and S6 fixes it.** Before this stage the module
+carried no `target datalayout`, so the passes and codegen worked from two different
+layouts. LLVM's default aligns an `i64` to 4; `x86-64` aligns it to 8, so a pass
+that folded a struct field to a byte offset put `{ i8, i64 }`'s second field at
+offset 4 where codegen read offset 8. It reproduced at `-O1` and above and only
+where the two layouts disagree: `heap_narrow_fields.kp` read 42 as `42 << 32`, and
+`list_datac_clone_sort.kp` lost the elements of a clone. The fix is
+`llvm_ffi::Module::set_data_layout`, which takes the string from the same
+`TargetMachine` that writes the object and runs before the pipeline. `-O0` runs no
+pass, which is why the corpus stayed green until the pipeline existed.
+
+**The measurement.** `bench/speed/optlevels.sh` (`bench/speed/results-optlevels.txt`)
+rebuilds and reruns `speed.kp` at each level for both backends, rounds outer so
+drift is shared, and reports the median of nine rounds:
+
+| level | backend | build ms | collatz ms | float ms | mix ms | fib ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| `-O0` | `c` | 130.7 | 447.2 | 255.0 | 200.9 | 26.9 |
+| `-O0` | `llvm` | 143.9 | 452.6 | 255.4 | 243.6 | 20.9 |
+| `-O1` | `c` | 257.2 | 81.5 | 104.7 | 168.1 | 13.2 |
+| `-O1` | `llvm` | 263.7 | 80.7 | 106.3 | 168.0 | 13.1 |
+| `-O2` | `c` | 297.2 | 81.1 | 109.2 | 164.8 | 23.1 |
+| `-O2` | `llvm` | 272.7 | 81.7 | 104.0 | 167.2 | 23.0 |
+| `-O3` | `c` | 305.6 | 80.9 | 95.3 | 164.0 | 23.1 |
+| `-O3` | `llvm` | 284.0 | 82.7 | 105.7 | 167.0 | 23.0 |
+| `-Os` | `c` | 239.5 | 83.1 | 107.6 | 168.2 | 23.2 |
+| `-Os` | `llvm` | 255.3 | 81.1 | 106.4 | 168.3 | 22.9 |
+
+Method: one `kelpc build` and one run per round and cell, nine rounds, medians,
+rounds the outer loop; checksums agree across every cell (each program did the same
+work). The C backend and both links used this machine's `cc` (clang 21.1.8) and the
+LLVM backend used LLVM 21.1.8; the machine's load average was about 2.2, close to
+the 2.5 to 2.7 the section 0 table was recorded at.
+
+What the table says. At the default `-O2` the two backends are level within a few
+percent on every workload, and the C column reproduces the section 0 table's `-O2`
+column on three of four workloads (81.1 against 81.5 ms on collatz, 164.8 against
+165.2 on mix, 23.1 against 23.3 on fib; float measures 109.2 against 100.4), so
+the default does not regress.
+The compile-time column is the honest one and it does not rise: at `-O2` the `llvm`
+path builds in 272.7 ms against the C path's 297.2 ms, because the C backend
+compiles the runtime text into every program while the `llvm` path links the
+runtime object the compiler already carries. It does rise against `-O0` (143.9 ms),
+which is the price of the pipeline. `-O0` is the cheap dev column; `-O1` is within
+noise of `-O2` on these workloads; `-O3` buys nothing here and `-Os` is for size.
+The section 0 expectation of "at or above today's" compile time is therefore
+corrected by the measurement, in the one direction that is a pleasant surprise.
 
 ### 4.4 Toolchain and artifacts
 
 - `cc` still links the object, and `libLLVM-21.so` is required to run `kelpc`. Both
   go in the release notes.
 - **The artifact contract changes.** The C path writes `<out>.c` next to the binary;
-  the LLVM path writes `<out>.ll` (textual IR) at `-O0`/`--emit-ir`, and optionally
-  `<out>.o`. Anything that reads the generated C breaks at the flip; the new
-  contract is decided and documented in the same change.
+  the LLVM path writes `<out>.ll` (textual IR, the lowering before the pass pipeline
+  of §4.3, at every level) and `<out>.o`. Anything that reads the generated C breaks
+  at the flip; the new contract is decided and documented in the same change.
 - **Debuggability.** DWARF is emitted, and it is a stated exit criterion rather than
   a nice-to-have: for a default backend, a crash report that points into generated
   IR instead of a Kelp source line is the difference between actionable and not.
@@ -351,7 +424,7 @@ green at every stage.
 | **S3** | the runtime, the externs and the capability check | done 2026-09-21 | `librt` linked, every `extern fun` a declared call, every gated call site checked, the deny path text identical, `pd` globals with their `atexit` drops |
 | **S4** | debug locations to DWARF | done 2026-09-21 | a fixture that crashes on purpose names a `.kp` line |
 | **S5** | fuzzing and conformance (D-4) | done 2026-09-21 | generated programs over the whole landed surface, every one built by both backends with byte-identical stdout and exit status and zero mismatches (`kelpc/tests/differential_fuzz.rs`), plus a checked-in conformance corpus |
-| **S6** | the optimization-level decision | a day, plus a bench run | one answer from §4.3, written down, with an idle-machine `bench/speed` table |
+| **S6** | the optimization-level decision | done 2026-09-21 | the `-O0` to `-O3` and `-Os` knob on `kelpc build` with `-O2` the default, one level for both backends, the corpus swept with both backends at every level (0 mismatches), the debug line table resolved at `-O0` and `-O2`, and an idle-machine `bench/speed` table written into §4.3 |
 | **S7** | the flip | a release | `llvm` is the default in a release, `c` the oracle and the escape hatch, both suites green |
 
 Stage 2 is one stage in the plan and was landed in slices, and the backend's
@@ -424,8 +497,8 @@ is required to believe the flip, and saying so is part of the flip's notes.
 | Gate | What happens to it |
 | --- | --- |
 | `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions left with the backend on 2026-09-21: the `.s`-level SysV classifier test, the assembly-text capability-check assertions and the two-backend differential test are gone. |
-| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (223 of the 223 the C backend builds at the MK7 S5 tip, so the refusal ranking is empty), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
-| `kelpc/tests/llvm_debug_info.rs` | **New, 2026-09-21 (S4).** Its fixture is `tests/llvm-debug/fault.kp`, outside `tests/fixtures/` on purpose: the coverage sweep treats a run that dies from a signal as a failure, which is right for the corpus and wrong for the one program whose job is to crash. The test reads the decoded line table of the built binary with `readelf` and resolves the fault through `gdb`. |
+| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (223 of the 223 the C backend builds at the MK7 S5 tip, so the refusal ranking is empty), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. **MK7 S6 added a level sweep to it**: `every_level_agrees_with_the_c_backend` rebuilds the corpus with both backends at each of `-O0`, `-O1`, `-O2`, `-O3` and `-Os` and applies the same crash and disagreement assertions at every one (0 mismatches each, §4.3). The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
+| `kelpc/tests/llvm_debug_info.rs` | **New, 2026-09-21 (S4).** Its fixture is `tests/llvm-debug/fault.kp`, outside `tests/fixtures/` on purpose: the coverage sweep treats a run that dies from a signal as a failure, which is right for the corpus and wrong for the one program whose job is to crash. The test reads the decoded line table of the built binary with `readelf` and resolves the fault through `gdb`. **S6 runs it at `-O0` and at `-O2`**, and the fixture's divisor changed with it: a constant `0` is folded at `-O2` and the division removed as undefined behavior, so the divisor is an `extern`-backed `str.parse_i64("0")` the pipeline cannot see into, and the fault still lands on `fault.kp:16` with its caller at `fault.kp:21`. |
 | `kelpc/tests/run-llvm-*.sh` | **One edit each, 2026-09-21 (S4).** The gates that read the generated IR back strip the `!dbg` attachment before comparing: they assert an instruction's shape, and where the line came from is a separate claim. |
 | `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged; its LLVM sweeps now cover the closures, the containers, the extern bodies, and (S3) the passdown and capability binaries, whose `atexit` drop and check glue are generated code the C sweep cannot see. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired. |
 | `kelpc/tests/run-all-backends.sh` | **Repurpose.** `BACKENDS` gains `llvm`; `asm` left with the source on 2026-09-21. |

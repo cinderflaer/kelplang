@@ -109,16 +109,22 @@ One code generator is selectable today, with `--backend=` or `KELPC_BACKEND`:
 - **`c`** (the default) transpiles to C and hands the file to `cc -O2 -fwrapv -lm`.
   It is the reference backend: the fixture suite is written against it, and it
   stays selectable permanently as the oracle a second backend is compared with.
-- **`llvm`** lowers the typed IR to LLVM IR, emits an object and hands it to
-  `cc -O2 -lm`. It covers the scalar subset (MK7 stage S1): integers, floats,
-  `bool`, `char`, arithmetic, comparisons, `if`/`while`, calls and `print`, with
-  stdout identical to the `c` backend on those programs
-  (`kelpc/tests/run-llvm-scalar-subset.sh`). Anything outside the subset is
-  refused by name, naming the stage that will lower it.
+- **`llvm`** lowers the typed IR to LLVM IR, runs LLVM's own pass pipeline over
+  the module, emits an object and hands it to `cc -lm`. It builds every program
+  the `c` backend builds, with stdout and exit status identical on the whole
+  fixture corpus.
+
+`build` and `run` take an optimization level: `-O0`, `-O1`, `-O2`, `-O3` or `-Os`,
+with `-O2` the default. One level is one level for both backends: it selects the
+LLVM pass pipeline and the target machine's codegen level, and it is the `-O` flag
+the `c` backend's `cc`, the per-program `extern` object and the final link are
+given. `-Oz` is refused because it is a clang-only spelling and the `c` backend's
+`cc` may be gcc; `-Os` is the size level. `-O0` runs no module pipeline and is the
+cheap dev build.
 
 The hand-written `asm` backend was removed on 2026-09-21; its tracked plan lives
 under `plan/asm-backend/`. `plan/mk7-llvm-backend.md` is the plan of record for
-what `llvm` still owes (stages S2 to S7).
+what `llvm` still owes (stage S7, the flip).
 
 `kelpc check` runs everything a build runs except code generation: the same
 modules, the same type check, the same borrow check. It answers whether a
