@@ -224,8 +224,19 @@ piece at a time (the retired track's §8 and `runtime/tests.md`).
 Where an aggregate must cross into the C runtime, pass a pointer, not a value. The
 one place layout has to match is the container header (`cap`, `len`, `data`) that
 Kelp types and the allocation functions both touch; it is declared once in
-`runtime/kelp_rt.h` and mirrored in `codegen_llvm.rs`, with a `static_assert` on the
-C side and a size/offset check in a test on the IR side.
+`runtime/kelp_rt.c` and mirrored in `codegen_llvm.rs`, with a `static_assert` on
+the C side and a size/offset check in a test on the IR side
+(`the_builtin_heap_layouts_match_the_c_runtime`).
+
+**Measured 2026-09-21, and "a pointer, not a value" is not only about layout**
+(BUG-vN4tR). Clang lowers a 24-byte struct argument and return to SysV itself
+(`byval`, `sret`), and LLVM 21.1.8's backend on `x86_64-unknown-linux-gnu` does not
+derive that lowering for an IR call that passes the aggregate by value: against
+clang's object the `sret`-shaped call dies with SIGSEGV and the `byval` one returns
+a wrong value. Both sides of an IR-to-IR call agree, so the verifier and the
+fixture suite are blind to it. An aggregate over 16 bytes therefore crosses to C
+with the pointer spelled out (`sret` is argument 0, so `void @f(ptr)` matches it)
+and never by value.
 
 ### 3.4 Move and borrow semantics on LLVM, and the UB surface
 
