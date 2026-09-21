@@ -98,21 +98,22 @@ cargo build --release -p kelpc
 ./target/release/kelpc fmt -w examples/hello.kp       # format in place (also: --check)
 ```
 
-With no `-o`, the binary and the generated C land in `build/`
-beside the working directory (`--backend=llvm` leaves `.ll` and `.o` there
-instead). A directory with a
+With no `-o`, the binary and the backend's intermediate land in `build/` beside
+the working directory: the default `llvm` backend leaves `<stem>.ll` and
+`<stem>.o`, and `--backend=c` leaves the generated `<stem>.c`. A directory with a
 [`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it — `name`,
 `version`, `entry` — builds the same way: `kelpc build myproject`.
 
-One code generator is selectable today, with `--backend=` or `KELPC_BACKEND`:
+Two code generators are selectable, with `--backend=` or `KELPC_BACKEND`:
 
-- **`c`** (the default) transpiles to C and hands the file to `cc -O2 -fwrapv -lm`.
-  It is the reference backend: the fixture suite is written against it, and it
-  stays selectable permanently as the oracle a second backend is compared with.
-- **`llvm`** lowers the typed IR to LLVM IR, runs LLVM's own pass pipeline over
-  the module, emits an object and hands it to `cc -lm`. It builds every program
-  the `c` backend builds, with stdout and exit status identical on the whole
-  fixture corpus.
+- **`llvm`** (the default since MK7 S7) lowers the typed IR to LLVM IR, runs
+  LLVM's own pass pipeline over the module, emits an object and hands it to
+  `cc -lm`. It builds every program the `c` backend builds, with stdout and exit
+  status identical on the whole fixture corpus, at every optimization level.
+- **`c`** transpiles to C and hands the file to `cc -O2 -fwrapv -lm`. It is the
+  reference backend: the fixture suite is written against it, and it stays
+  selectable permanently as the oracle the `llvm` backend is compared with and
+  as the escape hatch when `llvm` refuses a construct.
 
 `build` and `run` take an optimization level: `-O0`, `-O1`, `-O2`, `-O3` or `-Os`,
 with `-O2` the default. One level is one level for both backends: it selects the
@@ -123,8 +124,9 @@ given. `-Oz` is refused because it is a clang-only spelling and the `c` backend'
 cheap dev build.
 
 The hand-written `asm` backend was removed on 2026-09-21; its tracked plan lives
-under `plan/asm-backend/`. `plan/mk7-llvm-backend.md` is the plan of record for
-what `llvm` still owes (stage S7, the flip).
+under `plan/asm-backend/`. `plan/mk7-llvm-backend.md` is the plan of record. The
+S7 flip landed in code on 2026-09-21: `llvm` is the default and both backends
+stay in the suite. The release that announces the flip is still to be cut.
 
 `kelpc check` runs everything a build runs except code generation: the same
 modules, the same type check, the same borrow check. It answers whether a
@@ -185,14 +187,17 @@ directory is not followed.
 ## Tests
 
 ```sh
-cargo test                                   # unit tests + the fixture suite
+cargo test                                   # unit tests + the fixture suite, on the default backend
+KELPC_BACKEND=c cargo test                   # the same suite against the `c` oracle
 cargo test --test fmt                        # the formatter's corpus and properties
-./kelpc/tests/run-all-backends.sh            # the suite once per implemented backend
+./kelpc/tests/run-all-backends.sh            # the suite once per implemented backend (c and llvm)
 ```
 
 The fixture suite is backend-agnostic by construction: it compiles a fixture, runs
 the result, and compares stdout, so pointing `KELPC_BACKEND` at a backend
-validates it with no test edits. Two heavier checks exist and are `#[ignore]`d so
+validates it with no test edits. It follows the compiler's default when the
+variable is unset, so `cargo test` exercises `llvm` and `KELPC_BACKEND=c`
+exercises the oracle. Two heavier checks exist and are `#[ignore]`d so
 the default run stays fast:
 
 ```sh
