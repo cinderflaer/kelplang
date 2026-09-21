@@ -130,6 +130,33 @@
 //! a borrow of a non-`datac` and a dereference of one are `S2F` (the reference
 //! slice the stage-2 table reserves), not `S2B`.
 //!
+//! # What S2F adds (MK7 S2, the reference slice)
+//!
+//! Every borrow that is not a `datac`, a container, a heap type or `str`. A
+//! `Ty::Ref` is one pointer whatever the pointee (MK7 §3.1), so the pointee's
+//! own type decides the load and nothing else:
+//!
+//! - `&place` is the place's address: a scalar local's frame slot, a field of
+//!   one (a `getelementptr` into the same struct the datac slice already
+//!   projects), or the pointer a container method hands back. A binding of a
+//!   borrow type holds that pointer, so a place read loads it.
+//! - `*p` is a load of the pointee type, whatever that type is: a scalar, a
+//!   `datac`, `str` or a container. `*p = v` is a store through the same
+//!   pointer, and `(*p).field = v` is the datac slice's field store one
+//!   indirection in.
+//! - a `&T` parameter is a `ptr` in the signature and a borrow return is a
+//!   `ptr` result, so `infer.rs::implicit_borrow_wrap`'s `mut i64` parameter
+//!   and `syntax.md` 10.2's borrowed return are the same one-pointer transport
+//! - the panic tail (BUG-b2Ldp): a body whose tail is a `panic` diverges, so it
+//!   is emitted as a statement that ends the block with `unreachable` rather
+//!   than asked for a value it does not have. `codegen_c.rs::write_function_body`
+//!   draws the same line, and without it the backend reported its own
+//!   "internal error" for `move_param_return` and `panic_tail`.
+//!
+//! `str` and `View` are pointer-plus-length and are untouched: a `&str` is the
+//! pointer itself, and a borrow of a heap type stays the address the runtime
+//! helpers take.
+//!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
 //! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
@@ -991,6 +1018,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
+            // A body whose tail is a `panic` diverges: `infer.rs` accepts it
+            // against any declared return type, so it is a statement rather
+            // than a returned value (`codegen_c.rs::write_function_body`
+            // draws the same line). The call ends the block itself, so no
+            // `ret` and no drop follows it.
+            if is_diverging_tail(tail) {
+                self.emit_expr(tail)?;
+                return Ok(());
+            }
             if self.ret_ty != Ty::Unit {
                 // Read the returned value *before* freeing the frame's locals:
                 // the tail may read through one of them.
@@ -1263,28 +1299,25 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 e.span,
                 &e.ty,
             ),
-            // A borrow (`infer.rs::check_call_arg` synthesizes one for the
-            // `datac` parameter whose type resolves to a shared or exclusive
-            // borrow). `&str` is the pointer itself, as the C backend writes it;
-            // a `datac` or heap borrow is the address of the place it borrows,
-            // which is the one indirection `getelementptr` needs and the pointer
-            // the runtime's `const kelp_Bytes*` parameters take.
+            // A borrow (`infer.rs::check_call_arg` synthesizes one for a
+            // parameter whose type resolves to a shared or exclusive borrow,
+            // and `&x`/`&mut x` write one directly). `&str` is the pointer
+            // itself, as the C backend writes it, because there is no second
+            // indirection; every other pointee is the address of the place it
+            // borrows, which is the one indirection `getelementptr` needs and
+            // the pointer the runtime's `const kelp_Bytes*` parameters take.
+            // `Ty::Ref` is one pointer whatever the pointee (`llvm_type`), so
+            // the place's address is the borrow, scalar or `datac` alike.
             ExprKind::Ref { expr: sub, .. } => {
                 if is_str_ref(&e.ty) {
                     return Ok(Some(self.value_of(sub)?));
                 }
-                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) || is_container_ref(&e.ty) {
-                    return Ok(Some(self.place_of(sub)?));
-                }
-                Err(refuse("'a borrow of a non-datac'", "S2F"))
+                Ok(Some(self.place_of(sub)?))
             }
-            // `*p` through a borrow of a `datac`: the pointee is the struct the
-            // pointer addresses. A dereference of anything else is the borrow
-            // slice.
+            // `*p`: the pointee is whatever the pointer addresses, a `datac`, a
+            // scalar, `str` or a container, so the load is the pointee type's
+            // own (`Ty::Str` loads the `char*` a `str` value is).
             ExprKind::Deref { expr: sub } => {
-                if !matches!(&e.ty, Ty::Struct(_)) {
-                    return Err(refuse("'a dereference of a non-datac'", "S2F"));
-                }
                 let ptr = self.value_of(sub)?;
                 let lty = self.lty(&e.ty)?;
                 Ok(Some(self.g.builder.build_load(lty, ptr, "deref")))
@@ -1638,7 +1671,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let slot = self
                     .lookup(name)
                     .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
-                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) || is_container_ref(&e.ty) {
+                if is_borrow_ty(&e.ty) {
                     // The binding holds the borrow: its own value is the pointer.
                     Ok(self.g.builder.build_load(self.g.ctx.opaque_ptr(), slot, name))
                 } else {
@@ -1884,8 +1917,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.g.builder.build_store(v, field_ptr);
                 Ok(())
             }
-            // The only other place a Kelp assignment can name is `*p`: an
-            // assignment through a borrow, which is the reference slice.
+            // A store through a borrow: `*p = v` (or `(*p).field = v` through
+            // the `FieldAccess` arm above, whose `place_of` steps through the
+            // pointer). The pointer is the borrow's own value, so the store
+            // writes into whatever the borrow names.
+            ExprKind::Deref { expr: sub } => {
+                let ptr = self.value_of(sub)?;
+                self.g.builder.build_store(v, ptr);
+                Ok(())
+            }
+            // The only other place a Kelp assignment can name is a chain this
+            // slice cannot address, which the frontend does not produce.
             _ => Err(refuse("'assignment through a borrow'", "S2F")),
         }
     }
@@ -5595,10 +5637,16 @@ fn llvm_type<'a>(
         {
             ctx.opaque_ptr()
         }
-        // A borrow of anything but a `datac` or a container (a `mut i64`
-        // parameter, say) is the borrow slice, and it is named rather than
-        // mis-lowered to a pointer.
-        Ty::Ref { .. } => return Err(refuse("'a borrow of a non-datac'", "S2F")),
+        // Every other borrow is one pointer too (S2F): a `mut i64`
+        // parameter, an `&i32` local, a field borrow, a borrow a container
+        // method returns. A borrow of a function value or a closure stays
+        // out of the reference slice, so it is named as the closure slice.
+        Ty::Ref { inner, .. }
+            if matches!(**inner, Ty::Fn { .. } | Ty::Closure { .. }) =>
+        {
+            return Err(refuse("'a borrow of a function value'", "S2E"))
+        }
+        Ty::Ref { .. } => ctx.opaque_ptr(),
         Ty::Struct(name) => *structs
             .get(name)
             .ok_or_else(|| refuse(&format!("the datac '{name}'"), "S2A"))?,
@@ -5629,11 +5677,13 @@ fn struct_name_of_ty(ty: &Ty) -> Option<&str> {
     }
 }
 
-/// Whether a type is a borrow of a `datac`, the one `Ref` shape this slice
-/// lowers, because `infer.rs::implicit_borrow_wrap` gives every `datac`
-/// parameter that type.
-fn is_struct_ref(ty: &Ty) -> bool {
-    matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Struct(_)))
+/// Whether a type is a borrow: a `Ty::Ref` of anything. The binding holds one
+/// pointer, so a place read has to load it rather than hand out the slot; the
+/// pointee does not matter, because `llvm_type` gives every `Ref` the same
+/// `ptr` (S2F). `&str` is included, since a `&str` binding holds the `char*`
+/// itself.
+fn is_borrow_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Ref { .. })
 }
 
 /// Whether a type is a borrow of `str` (or `str` itself), which is the pointer
@@ -5646,23 +5696,13 @@ fn is_str_ref(ty: &Ty) -> bool {
     }
 }
 
-/// Whether a type is a borrow of one of the builtin heap types. A binding of
-/// such a type holds the pointer itself, exactly as a `datac` borrow does, so a
-/// place read has to load it rather than hand out the slot.
-fn is_heap_ref(ty: &Ty) -> bool {
-    matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes | Ty::String | Ty::View))
-}
-
-/// Whether a type is one of the four containers `List`, `Map`, `Box`, `[T; N]`.
-fn is_container_ty(ty: &Ty) -> bool {
-    matches!(ty, Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..))
-}
-
-/// Whether a type is a borrow of a container. A binding of such a type holds the
-/// pointer itself, exactly as a `datac` borrow does, so a place read has to load
-/// it rather than hand out the slot.
-fn is_container_ref(ty: &Ty) -> bool {
-    matches!(ty, Ty::Ref { inner, .. } if is_container_ty(inner))
+/// Whether a block's tail diverges instead of producing a value. `panic` is the
+/// one expression the frontend puts there (`infer.rs` accepts it against any
+/// declared return type), and the C backend special-cases the same call in
+/// `write_function_body`; without this a value-returning function whose tail is
+/// a `panic` asks the unit-typed call for a value and reports an internal error.
+fn is_diverging_tail(tail: &Expr) -> bool {
+    matches!(&tail.kind, ExprKind::Call { callee, .. } if callee == "panic")
 }
 
 /// Whether an expression has stable storage, mirroring the subset of
@@ -5833,10 +5873,10 @@ fn int_width(ty: &Ty) -> Option<u32> {
 /// The refusal message for a construct this stage does not lower. `what` is the
 /// construct's name, quoted when it is a language word (`'enum'`) and a phrase
 /// when it is a shape; `stage` is the MK7 stage that will lower it. Everything
-/// through S2D is lowered: plain records, owned fields, the drop plan, the
-/// runtime, the tagged union, and the containers and arrays. S2E is closures and
-/// function values, S2F is a borrow (of a scalar or a field) and its
-/// dereference, and S3 is `pd` and the stdlib's `extern fun` bodies.
+/// through S2F is lowered: plain records, owned fields, the drop plan, the
+/// runtime, the tagged union, the containers and arrays, and the references
+/// that are not a `datac` (S2E is closures and function values, and S3 is `pd`
+/// and the stdlib's `extern fun` bodies).
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
@@ -5857,9 +5897,11 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // contents through a pointer, an array inline, and both are complete
         // types by the time the `datac` that names one is given a body.
         Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => Ok(()),
-        // The frontend refuses a borrowed field (`types::is_borrowed_field_ty`),
-        // so these two rows are unreachable; they are named rather than
-        // mis-lowered if one ever appears.
+        // A borrowed field never reaches codegen at all: the frontend refuses
+        // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
+        // and a reference). These three rows are therefore unreachable, and are
+        // refused here rather than mis-lowered if one ever appears.
+        // `refuse_field` has to stay total over `Ty`, so the rows remain.
         Ty::Str => Err(refuse("'a 'str' field'", "S2F")),
         Ty::View => Err(refuse("'a 'View' field'", "S2F")),
         Ty::Ref { .. } => Err(refuse("'a reference field'", "S2F")),
@@ -5904,7 +5946,7 @@ fn refuse_type(ty: &Ty) -> String {
         Ty::Box(_) => ("'Box'", "S2D"),
         Ty::Map(..) => ("'Map'", "S2D"),
         Ty::Array(..) => ("'an array'", "S2D"),
-        Ty::Ref { .. } => ("'a borrow of a non-datac'", "S2F"),
+        Ty::Ref { .. } => ("'a borrow of a function value'", "S2E"),
         Ty::Fn { .. } => ("'a function value'", "S2E"),
         Ty::Closure { .. } => ("'a closure'", "S2E"),
         Ty::Str | Ty::View => ("a borrowed view", "S2D"),
@@ -5915,16 +5957,15 @@ fn refuse_type(ty: &Ty) -> String {
 }
 
 /// Name the expression in a refusal. A `FieldAccess`, a `StructLit`, an `enum`
-/// construct, a `?` and the two array literals never reach here: all are
-/// lowered. A function value, a closure and an indirect call are S2E.
+/// construct, a `?`, a borrow and a dereference and the two array literals
+/// never reach here: all are lowered. A function value, a closure and an
+/// indirect call are S2E.
 fn refuse_expr(kind: &ExprKind) -> String {
     let (what, stage) = match kind {
         ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2E"),
         ExprKind::ClosureLit { .. } => ("'a closure'", "S2E"),
         ExprKind::Capture { .. } => ("'a capture'", "S2E"),
         ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2E"),
-        ExprKind::Ref { .. } => ("'a borrow of a non-datac'", "S2F"),
-        ExprKind::Deref { .. } => ("'a dereference of a non-datac'", "S2F"),
         _ => ("'this expression'", "S2B"),
     };
     refuse(what, stage)
