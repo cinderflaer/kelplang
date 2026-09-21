@@ -55,10 +55,13 @@
 //!   `u64`-wide literal in an `i32` context is truncated first.
 //! - Signedness comes from `Ty`: `sdiv`/`udiv`, `srem`/`urem`, `ashr`/`lshr`,
 //!   `icmp slt` vs `ult`. `Shr` on a signed type is arithmetic.
-//! - No `nsw`, no `nuw`, no `inbounds` and no fast-math flag is ever emitted. The
-//!   plain forms wrap by definition, which is what the C backend's `-fwrapv`
-//!   promised; the C frontend flag has no counterpart here because there is
-//!   nothing to turn off.
+//! - No `nsw`/`nuw` on an arithmetic instruction, no `inbounds` on a
+//!   data-dependent GEP, and no fast-math flag is ever emitted. The plain forms
+//!   wrap by definition, which is what the C backend's `-fwrapv` promised; the C
+//!   frontend flag has no counterpart here because there is nothing to turn off.
+//!   The one `inbounds`/`nuw` in the IR is the struct-field GEP, where the index
+//!   is a compile-time constant inside an object of that exact type, so the
+//!   bounds are proven rather than asserted (see `llvm_ffi::Builder::build_struct_gep`).
 //! - Division does not invent a zero check. The only guard the language has is
 //!   constant folding in the frontend, and this backend mirrors that: a `sdiv` by
 //!   zero is UB in LLVM exactly as it is in C.
@@ -1397,7 +1400,7 @@ fn struct_name_of_ty(ty: &Ty) -> Option<&str> {
     }
 }
 
-/// Whether a type is a borrow of a `datac` — the one `Ref` shape this slice
+/// Whether a type is a borrow of a `datac`, the one `Ref` shape this slice
 /// lowers, because `infer.rs::implicit_borrow_wrap` gives every `datac`
 /// parameter that type.
 fn is_struct_ref(ty: &Ty) -> bool {

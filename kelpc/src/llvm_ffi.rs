@@ -977,10 +977,12 @@ impl<'ctx> Builder<'ctx> {
     /// the address of one field of the aggregate `p` points at.
     ///
     /// `ty` is the aggregate the pointer addresses, passed explicitly because a
-    /// pointer no longer carries a pointee type. This is the non-`inbounds`
-    /// form: MK7 §3.4 forbids `inbounds` unless the bounds are proven, and an
-    /// aggregate field address is inside an object the caller already owns, so
-    /// there is nothing here worth claiming.
+    /// pointer no longer carries a pointee type. LLVM's `CreateStructGEP` writes
+    /// the `inbounds` form, which is justified here and only here: the index is
+    /// a compile-time constant selecting a field of an object whose type is
+    /// `ty`, so the address is inside the object by construction. MK7 §3.4's rule
+    /// is about a *runtime* index into an array, where the bounds are not proven;
+    /// this call cannot express one.
     pub fn build_struct_gep(
         &self,
         ty: Type<'ctx>,
