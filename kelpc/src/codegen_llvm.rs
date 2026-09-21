@@ -1090,8 +1090,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             for a in args {
                 values.push(self.value_of(a)?);
             }
-            let v = self.g.builder.build_call(info.func, info.ty, &values, "call");
-            if info.ret_ty == Ty::Unit {
+            // A call that yields `void` must not be given a name: an instruction
+            // with a name has to have a value, and the verifier rejects a named
+            // void one. A unit method (a `mut` receiver that writes a field and
+            // returns nothing) is exactly that shape.
+            let yields_value = info.ret_ty != Ty::Unit;
+            let name = if yields_value { "call" } else { "" };
+            let v = self.g.builder.build_call(info.func, info.ty, &values, name);
+            if !yields_value {
                 return Ok(None);
             }
             return Ok(Some(v));
