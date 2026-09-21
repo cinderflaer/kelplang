@@ -14,9 +14,10 @@
 # This script carries the S1 and S2A lists forward and adds the S2B fixtures, so
 # one run is the whole opt-in surface at this stage. Its list is closed by
 # `--exact`: a fixture that has grown a construct outside the slice is refused
-# by name and is deliberately *not* here. Still outside: the containers
-# (`List`/`Map`/`Box`/arrays) and `enum`/`when` are S2C, closures and function
-# values are S2D, `pd` and `extern fun` are S3. A refusal is the correct S2B
+# by name and is deliberately *not* here. Still outside: the containers and
+# arrays (`List`/`Map`/`Box`/`[T; n]`) are S2D, `enum`/`when`/`if let`/`?` are the
+# S2C tagged-union slice (`run-llvm-enum-subset.sh`), closures and function
+# values are S2E, `pd` and `extern fun` are S3. A refusal is the correct S2B
 # answer, not a failure to hide.
 #
 # `owned_datac_fields_are_dropped_with_the_struct` (`string_field.kp`) is the

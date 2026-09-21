@@ -15,7 +15,8 @@
 # slice now lowers. A fixture that has grown a construct outside the slice is
 # refused by name and is deliberately *not* here: an owned field, an `enum`, a
 # container, an array, a `pd` and the runtime all refuse until their own slice
-# (S2B, S2C, S3), and a refusal is the correct S2A answer, not a failure to hide.
+# (S2B, S2C, S2D, S3), and a refusal is the correct S2A answer, not a failure to
+# hide.
 # Tying the gate to names rather than to a substring means a later fixture cannot
 # drift into it silently.
 #
