@@ -1178,6 +1178,16 @@ impl<'a> Lexer<'a> {
                     }
                     chunk_start = self.pos;
                 }
+                // A raw NUL byte is refused where the `\x00` escape is, and for
+                // the same reason: a `str` is NUL-terminated, so carrying the
+                // byte would truncate the literal in every backend instead of
+                // failing.
+                Some(b'\0') => {
+                    return Err(LexError {
+                        message: "a 'str' is NUL-terminated, so a raw NUL byte cannot be in a string literal".to_string(),
+                        span: Span::new(start, self.pos),
+                    })
+                }
                 Some(c) if c < 0x80 => text.push(c as char),
                 Some(c) => {
                     // A non-ASCII byte starts a multi-byte UTF-8 sequence.
@@ -1434,6 +1444,7 @@ mod tests {
     /// Each malformed shape is named at its own span: a byte literal is one
     /// ASCII character or a `\xNN` escape, and the escape is two hex digits in
     /// every literal form, with a string literal stopping at the ASCII range.
+    /// A raw NUL byte is refused like `\x00`, since a `str` cannot hold one.
     #[test]
     fn a_malformed_byte_literal_or_hex_escape_names_its_own_problem() {
         let cases = [
@@ -1444,6 +1455,9 @@ mod tests {
             ("b'\\x4'", "two hex digits"),
             ("\"\\xff\"", "not a text character"),
             ("\"\\x00\"", "NUL-terminated"),
+            // A raw NUL byte, written as `\0` in this Rust source, is the same
+            // defect as the escape above and must be refused the same way.
+            ("\"a\0b\"", "NUL-terminated"),
         ];
         for (src, needle) in cases {
             let err = Lexer::new(src).tokenize().unwrap_err();

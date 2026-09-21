@@ -2397,7 +2397,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     fn string_global(&self, text: &str) -> Result<Value<'a>, String> {
         // A global string is NUL-terminated, so an interior NUL would truncate
-        // silently. S1 refuses it by name rather than miscompiling it.
+        // silently. S1 refuses it by name rather than miscompiling it, and the
+        // frontend refuses a raw NUL in a string literal before this point.
         if text.as_bytes().contains(&0) {
             return Err(refuse("'a string literal containing NUL'", "S2"));
         }
