@@ -67,15 +67,16 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **76 of the 219 targets the C backend builds**, the rest refused.
+/// **124 of the 219 targets the C backend builds**, the rest refused.
 ///
-/// Recorded at MK7 S2C (the tagged union: `enum`, `when`, `if let`, `?`) on
-/// 2026-09-21, base commit 954a5ef. The 76 are 70 of the fixtures, the four
-/// manifests `alias_cross_file`, `alias_kpconf`, `namespace` and `shapes`, and
-/// the examples `fib.kp` and `hello.kp`. The write side of the same sweep found
-/// one target that builds and still disagrees with the C backend
-/// (`borrow_returned`), and two that fail with an `internal error` instead of a
-/// named refusal (`move_param_return`, `panic_tail`): see the two notes below.
+/// Recorded at MK7 S2D (the containers: `List`, `Map`, `Box`, `[T; N]`) on
+/// 2026-09-21. The 124 are 118 of the fixtures, the four manifests
+/// `alias_cross_file`, `alias_kpconf`, `namespace` and `shapes`, and the
+/// examples `fib.kp` and `hello.kp`. The sweep records no target that builds and
+/// then disagrees with the C backend: the one it found at S2C
+/// (`borrow_returned`) matches now, because the reference-place handling S2D
+/// landed covers it. Two targets still fail with an `internal error` instead of
+/// a named refusal (`move_param_return`, `panic_tail`): see the note below.
 ///
 /// This number may only rise. A slice that lowers a construct turns refusals
 /// into built targets, so the count changes and the constant is raised in the
@@ -90,36 +91,26 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// to trust once work has moved:
 ///
 /// ```text
-///   39  cannot lower 'List' yet (MK7 S2D)
-///   27  cannot lower 'pd' yet (MK7 S3)
-///   12  cannot lower 'a List field' yet (MK7 S2D)
-///   12  cannot lower the call to 'List#empty' yet (MK7 S2D)
-///    8  cannot lower the call to 'Map#new' yet (MK7 S2D)
-///    7  cannot lower 'a borrow of a non-datac' yet (MK7 S2B)
-///    7  cannot lower 'a Box field' yet (MK7 S2D)
-///    6  cannot lower the call to 'List#of' yet (MK7 S2D)
-///    5  cannot lower 'an array' yet (MK7 S2D)
+///   36  cannot lower the call to 'std.mem.alloc_raw' yet (MK7 S3)
+///   34  cannot lower 'pd' yet (MK7 S3)
+///    8  cannot lower 'a borrow of a non-datac' yet (MK7 S2F)
 ///    4  cannot lower 'a function-valued field' yet (MK7 S2E)
 ///    3  cannot lower 'a closure' yet (MK7 S2E)
+///    3  cannot lower 'a function value' yet (MK7 S2E)
 ///    2  internal error: no value for an expression that should produce one (MK7 S1)
-///    2  cannot lower the call to 'Box#empty' yet (MK7 S2D)
-///    2  cannot lower the call to 'Box#of' yet (MK7 S2D)
-///    1  cannot lower 'a field of an owned temporary' yet (MK7 S2B)
-///    1  cannot lower 'a function value' yet (MK7 S2E)
-///    1  cannot lower 'a Map field' yet (MK7 S2D)
-///    1  cannot lower 'an array field' yet (MK7 S2D)
-///    1  cannot lower the call to 'std.math.sqrt_raw' yet (MK7 S3)
-///    1  cannot lower the call to 'std.mem.alloc_raw' yet (MK7 S3)
+///    2  cannot lower 'a field of an owned temporary' yet (MK7 S2B)
 ///    1  cannot lower the call to 'String#into_bytes' yet (MK7 S2B)
+///    1  cannot lower the call to 'std.math.sqrt_raw' yet (MK7 S3)
+///    1  cannot lower the call to 'std.time.now_unix_raw' yet (MK7 S3)
 /// ```
 ///
-/// 104 of the 143 refusals are the container and array slice (S2D), 27 are the
-/// `pd`/stdlib extern slice (S3), 11 are closures and function values (S2E), 9
-/// are borrowed or owned-temporary shapes (S2B), and 2 are the internal error
-/// rather than any slice. So the ranking is dominated by one slice, S2D, and the
-/// honest reading is that this backend is a tagged-union backend and not much
-/// else yet.
-const LLVM_BUILT_BASELINE: usize = 76;
+/// 72 of the 95 refusals are the runtime and `pd` slice (S3, and 36 of those are
+/// the one `std.mem.alloc_raw` call), 10 are closures and function values (S2E),
+/// 8 are borrows (S2F), 3 are owned-temporary shapes (S2B), and 2 are the
+/// internal error rather than any slice. So the ranking is dominated by one
+/// slice, S3, and after it by a single extern: the container slice that was
+/// first by a wide margin is gone.
+const LLVM_BUILT_BASELINE: usize = 124;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
@@ -468,7 +459,7 @@ fn the_llvm_backend_builds_at_least_the_recorded_baseline() {
     assert!(
         built >= LLVM_BUILT_BASELINE,
         "the 'llvm' backend builds {built} corpus targets, down from the \
-         {LLVM_BUILT_BASELINE} recorded at 954a5ef: coverage was removed, and if that \
+         {LLVM_BUILT_BASELINE} recorded at the S2D tip: coverage was removed, and if that \
          was deliberate the constant is the line to change in the same commit",
     );
 
