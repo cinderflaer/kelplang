@@ -350,7 +350,7 @@ green at every stage.
 | **S2** | aggregates, containers and drops | 2 to 4 weeks | `datac`/`enum` layout, the container function sets, the drop plan: the whole fixture corpus minus the runtime rows |
 | **S3** | the runtime, the externs and the capability check | done 2026-09-21 | `librt` linked, every `extern fun` a declared call, every gated call site checked, the deny path text identical, `pd` globals with their `atexit` drops |
 | **S4** | debug locations to DWARF | done 2026-09-21 | a fixture that crashes on purpose names a `.kp` line |
-| **S5** | fuzzing and conformance (D-4) | runs alongside S2 and S3 | N generated programs, both backends, zero mismatches |
+| **S5** | fuzzing and conformance (D-4) | done 2026-09-21 | generated programs over the whole landed surface, every one built by both backends with byte-identical stdout and exit status and zero mismatches (`kelpc/tests/differential_fuzz.rs`), plus a checked-in conformance corpus |
 | **S6** | the optimization-level decision | a day, plus a bench run | one answer from §4.3, written down, with an idle-machine `bench/speed` table |
 | **S7** | the flip | a release | `llvm` is the default in a release, `c` the oracle and the escape hatch, both suites green |
 
@@ -373,8 +373,8 @@ Two notes on the labels. The stale `S2B` label on the borrow of a non-`datac`
 is gone: S2F lowered the borrow of a scalar and of a field, its dereference and
 its store, the `&T` parameter and the `&T` return, and S2E lowered the last
 borrow it named, the one of a function value or a closure. With S3 landed there
-are no refusals left: the `llvm` backend builds every one of the 221 corpus
-targets the C backend builds, the refusal ranking is empty, and the differential
+are no refusals left: the `llvm` backend builds every one of the corpus targets
+the C backend builds, the refusal ranking is empty, and the differential
 sweep records no disagreement. Two shapes that once refused are lowered rather
 than named: `String#into_bytes` crosses through the runtime object's
 pointer-spelled adapter, and an owned temporary reached outside a call argument
@@ -395,6 +395,27 @@ and `gdb` places the fault at `fault.kp:16` with its caller at `fault.kp:21`.
 What is not described is stated with it: the generated helpers carry no
 subprogram, and nothing here describes a variable or a type.
 
+S5 landed on 2026-09-21 as `kelpc/tests/differential_fuzz.rs`, a deterministic
+generator (SplitMix64, no new dependency) that turns a seed into a valid program
+over the landed surface, writes it to a file before it is built, builds it with
+both backends and compares stdout byte for byte and the exit status. The gate
+run is 512 seeds: 512 built by both backends and agreed, 0 refused by the
+frontend or the C backend, and 0 mismatches. The generator is biased toward the
+shapes this plan names as previously blind, so it does not re-find only what the
+corpus already covers: a float `List` element, an enum slice, an owned element
+read out of a container, a `datac` that owns a `String` inside another `datac`,
+a closure over an owned capture, and a `pd` read inside an initializer. It found
+two defects the curated corpus could not see, each now a fixture in the same
+commit as its fix: a plain `List<f64>` whose `contains` the backend emitted an
+integer compare for, which is invalid IR (`list_float_element.kp`), and an owned
+`pd` no expression reads, whose container function set `collect_instantiations`
+omitted so the backend reported an internal error where the C backend built it
+(`pd_owned_container.kp`). A conformance corpus of 24 generated programs is
+checked in under `kelpc/tests/fuzz-corpus/`, run differentially by the same file
+and kept equal to the generator, so the sweep is a permanent suite rather than a
+one-off run. The heavy fuzz run and the corpus run are both `#[ignore]`d with
+the seed list as a knob, the way the memory gate is.
+
 The minimum for S7 is S1 to S4 plus the S6 decision. S5 is not required to flip but
 is required to believe the flip, and saying so is part of the flip's notes.
 
@@ -403,7 +424,7 @@ is required to believe the flip, and saying so is part of the flip's notes.
 | Gate | What happens to it |
 | --- | --- |
 | `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions left with the backend on 2026-09-21: the `.s`-level SysV classifier test, the assembly-text capability-check assertions and the two-backend differential test are gone. |
-| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (221 of the 221 the C backend builds at the MK7 S3 tip, so the refusal ranking is empty), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
+| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (223 of the 223 the C backend builds at the MK7 S5 tip, so the refusal ranking is empty), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
 | `kelpc/tests/llvm_debug_info.rs` | **New, 2026-09-21 (S4).** Its fixture is `tests/llvm-debug/fault.kp`, outside `tests/fixtures/` on purpose: the coverage sweep treats a run that dies from a signal as a failure, which is right for the corpus and wrong for the one program whose job is to crash. The test reads the decoded line table of the built binary with `readelf` and resolves the fault through `gdb`. |
 | `kelpc/tests/run-llvm-*.sh` | **One edit each, 2026-09-21 (S4).** The gates that read the generated IR back strip the `!dbg` attachment before comparing: they assert an instruction's shape, and where the line came from is a separate claim. |
 | `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged; its LLVM sweeps now cover the closures, the containers, the extern bodies, and (S3) the passdown and capability binaries, whose `atexit` drop and check glue are generated code the C sweep cannot see. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired. |
