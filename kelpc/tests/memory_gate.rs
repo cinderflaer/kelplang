@@ -671,6 +671,88 @@ fn the_llvm_container_binaries_are_valgrind_clean() {
     );
 }
 
+/// The S2E closure fixtures the LLVM backend builds: the ones a closure or a
+/// function value gives heap to own. A capturing literal mallocs its
+/// environment and the closure value owns it from then on, so a missed drop is
+/// a leak and a second one a double free, and neither prints anything. The
+/// widening fixtures add the two other allocations: a shim allocates nothing,
+/// and a value whose identity the call knows gets a one-field heap environment
+/// (`closure_value_widening` reaches both). `try_drops_frame`'s closure is one
+/// the frame holds while `?` leaves it, so its environment is freed on the
+/// early-return path.
+const LLVM_CLOSURE_FIXTURES: &[&str] = &[
+    "closure_datac_borrow_param",
+    "closure_env_wide_ret",
+    "closure_move",
+    "closure_two_captures",
+    "closure_value_widening",
+    "fn_literal_capture",
+    "fn_value_plain",
+    "try_drops_frame",
+];
+
+/// The S2E half of the memory gate: every closure binary the LLVM backend
+/// builds, run under valgrind. The C sweep above covers the oracle; this covers
+/// the environment the LLVM backend generates the allocation, the capture stores
+/// and the destructor for, which is exactly the code another backend cannot
+/// check for it.
+#[test]
+#[ignore = "builds the closure fixtures and runs each under valgrind; ground rule 1.5 keeps it out of the default suite"]
+fn the_llvm_closure_binaries_are_valgrind_clean() {
+    let Some(version) = valgrind_version() else {
+        println!(
+            "memory gate: valgrind is not on PATH, so the LLVM closure sweep is skipped"
+        );
+        return;
+    };
+
+    let dir = scratch_dir();
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
+
+    let mut checked = Vec::new();
+    let mut rejected = Vec::new();
+    for name in LLVM_CLOSURE_FIXTURES {
+        let bin = dir.join(format!("llvm_{name}"));
+        if build("llvm", name, &bin) {
+            checked.push(run_under_valgrind("llvm", name, &bin, &dir));
+        } else {
+            rejected.push(*name);
+        }
+    }
+
+    println!(
+        "memory gate: {version} over {} LLVM closure fixture(s); {} refused by the backend and skipped",
+        checked.len(),
+        rejected.len(),
+    );
+    println!("{}", backend_summary("llvm closure", &checked, ""));
+
+    assert!(
+        !checked.is_empty(),
+        "the LLVM backend built none of the closure fixtures, so the sweep measured nothing",
+    );
+
+    let mut report = Vec::new();
+    let mut findings = 0;
+    for check in &checked {
+        for (pid, lines) in check.findings() {
+            findings += 1;
+            match pid {
+                Some(pid) => report.push(format!("{} '{}' (pid {pid}):", check.backend, check.fixture)),
+                None => report.push(format!("{} '{}':", check.backend, check.fixture)),
+            }
+            report.extend(lines.into_iter().map(|line| format!("    {line}")));
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "valgrind reported {findings} finding(s) over {} LLVM closure runs:\n{}",
+        checked.len(),
+        report.join("\n"),
+    );
+}
+
 /// Says what the ignored sweep would cover, and whether the tool it needs is
 /// here. It costs one `valgrind --version` spawn and never fails: valgrind is
 /// not a declared dependency of this repository, so a machine without it must
