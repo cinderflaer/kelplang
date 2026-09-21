@@ -12,10 +12,11 @@
 // of an rvalue (it does not for an owned field; taking the address of one is
 // invalid C, `heap_field_of_owned_temporary.kp`), so the fixture is in the
 // valgrind gate. The leak it pins is real in a backend that stages the
-// temporary itself, but the C binary exits clean: at `-O2` clang
-// dead-code-eliminates the `String.from_str` allocation whose only reader is
-// the field the program never prints, so it runs no `free` at all and still
-// reports none. The fixture stays for the next backend to be judged by.
+// temporary itself, and in the C backend as well: valgrind reports two 3-byte
+// losses at `kelp_String__from_str`, one for `print(mkName().r)` and one for
+// `take(mkName().r)`, because a `datac` a call returns and the program reads
+// only through a field is never dropped. That is BUG-t8Jqr, and this fixture is
+// the failing case filed with it rather than a passing one.
 datac Named(val r: i64, val name: String)
 
 fun mkName().R: Named = Named(r = 7, name = String.from_str("hi"))
