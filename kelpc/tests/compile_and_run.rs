@@ -20,12 +20,19 @@ fn kelpc_bin() -> PathBuf {
 /// The suite is backend-agnostic by construction: it compiles a fixture, runs
 /// the result, and compares stdout, so it never names a code generator. Which
 /// one runs is therefore a property of the *invocation*, not of the test, and
-/// `KELPC_BACKEND` is the only input that varies it. Reading the default from
-/// the environment rather than hard-coding `c` is what lets a second backend
-/// be validated by this whole suite with no edits here
-/// (`plan/mk7-llvm-backend.md`).
+/// `KELPC_BACKEND` is the only input that varies it (`plan/mk7-llvm-backend.md`).
+///
+/// The fallback follows the compiler's own default (`Backend::DEFAULT`) rather
+/// than pinning one backend, and since MK7 S7 that default is `llvm`. The two
+/// must agree, or a plain `cargo test` would measure a backend the compiler
+/// does not build with by default: the point of the flip is that an unqualified
+/// run exercises what an unqualified `kelpc build` does. `KELPC_BACKEND=c`
+/// points the whole suite at the oracle instead, which is how the C backend
+/// stays covered. `the_default_backend_is_llvm` below pins the compiler's side
+/// of that agreement by reading which intermediate a build with no backend
+/// setting writes.
 fn backend() -> String {
-    std::env::var("KELPC_BACKEND").unwrap_or_else(|_| "c".to_string())
+    std::env::var("KELPC_BACKEND").unwrap_or_else(|_| "llvm".to_string())
 }
 
 /// A `kelpc` invocation pinned to the backend under test.
@@ -4879,14 +4886,58 @@ fn an_unknown_command_prints_the_usage_and_fails() {
 // environment variable reach the compiler, not that a parser works.
 // ---------------------------------------------------------------------------
 
-/// The C backend is what every other test in this file is written against, so
-/// it has to be reachable by the flag, by the environment, and by default.
-/// Each case strips the other input, so a case passing because *both* were set
-/// is not possible.
+/// Which code generator a build used is visible in the intermediate it writes
+/// beside the artifact: the C backend keeps `<out>.c`, the LLVM backend its
+/// textual IR as `<out>.ll` (MK7 §4.4). Both backends build this fixture and
+/// print the same bytes, so the intermediate is the only place the choice
+/// shows, and it is what these tests read.
+fn build_is_llvm(bin: &Path) -> bool {
+    bin.with_extension("ll").is_file()
+}
+
+/// A build that names no backend must use the compiler's default, and since
+/// MK7 S7 that default is `llvm`. The artifact is not enough to assert this:
+/// both backends print `55`, so the test also pins the backend by the
+/// intermediate only `llvm` writes. This is the compiler's side of the
+/// agreement `backend()` above keeps on the harness's side.
 #[test]
-fn the_c_backend_is_selectable_by_flag_environment_and_default() {
+fn the_default_backend_is_llvm() {
+    let bin = out_path("backend_default");
+    let _ = std::fs::remove_file(bin.with_extension("ll"));
+    let _ = std::fs::remove_file(bin.with_extension("c"));
+    let out = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .arg("build")
+        .arg(fixture("tests/fixtures/while_accumulator.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        out.status.success(),
+        "a build with no backend setting should succeed, got:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        build_is_llvm(&bin),
+        "a build with no --backend should have used the llvm default, which \
+         writes <out>.ll beside the artifact"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
+}
+
+/// The C backend is what every other test in this file is written against, so
+/// it has to stay reachable after the flip: by the flag and by the environment.
+/// Each case strips the other input, so a case passing because *both* were set
+/// is not possible, and each asserts the `.c` intermediate so a fallback to the
+/// default cannot pass by accident.
+#[test]
+fn the_c_backend_is_selectable_by_flag_and_environment() {
     let bin = out_path("backend_selectable");
-    for case in ["default", "flag", "environment"] {
+    for case in ["flag", "environment"] {
+        let _ = std::fs::remove_file(bin.with_extension("c"));
+        let _ = std::fs::remove_file(bin.with_extension("ll"));
         let mut cmd = Command::new(kelpc_bin());
         cmd.env_remove("KELPC_BACKEND");
         cmd.arg("build");
@@ -4894,10 +4945,9 @@ fn the_c_backend_is_selectable_by_flag_environment_and_default() {
             "flag" => {
                 cmd.arg("--backend=c");
             }
-            "environment" => {
+            _ => {
                 cmd.env("KELPC_BACKEND", "c");
             }
-            _ => {}
         }
         let out = cmd
             .arg(fixture("tests/fixtures/while_accumulator.kp"))
@@ -4907,8 +4957,13 @@ fn the_c_backend_is_selectable_by_flag_environment_and_default() {
             .expect("failed to spawn kelpc");
         assert!(
             out.status.success(),
-            "the backend should be selectable by {case}, got:\n{}",
+            "the C backend should be selectable by {case}, got:\n{}",
             String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            bin.with_extension("c").is_file(),
+            "the {case} case should have used the C backend, which writes \
+             <out>.c beside the artifact"
         );
         let run = Command::new(&bin).output().expect("failed to run the binary");
         assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");

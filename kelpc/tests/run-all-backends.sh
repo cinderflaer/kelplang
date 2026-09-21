@@ -7,15 +7,17 @@
 # keeps the C backend usable as the differential oracle: a backend only earns
 # its place by agreeing with it, and agreement is only known if both are run.
 #
-# `BACKENDS` overrides the list. `llvm` is selectable from MK7 S1 and lowers the
-# whole corpus at S3, so `BACKENDS="c llvm"` runs both. The default stays `c`:
-# the C backend is the oracle every other backend is checked against, and the
-# per-slice gates are the separate `run-llvm-*.sh` scripts.
+# `BACKENDS` overrides the list. `llvm` is the compiler's default since MK7 S7
+# and lowers the whole corpus, so `BACKENDS="c llvm"` runs both and is the
+# default here: after the flip the oracle is no longer what a plain run
+# exercises, so running only `llvm` would stop checking the backend every other
+# one is compared against. The per-slice gates are the separate `run-llvm-*.sh`
+# scripts.
 #
 # Usage, from the repository root:  ./kelpc/tests/run-all-backends.sh
 set -e
 
-BACKENDS="${BACKENDS:-c}"
+BACKENDS="${BACKENDS:-c llvm}"
 
 fail=0
 for backend in $BACKENDS; do
