@@ -53,7 +53,7 @@ use llvm_sys::core::{
     LLVMArrayType2,
     LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
     LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt, LLVMBuildFPToSI,
-    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGlobalString, LLVMBuildICmp,
+    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGEP2, LLVMBuildGlobalString, LLVMBuildICmp,
     LLVMBuildInsertValue, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
     LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
@@ -1030,6 +1030,41 @@ impl<'ctx> Builder<'ctx> {
             // SAFETY: the builder is positioned and both arguments are live.
             raw: unsafe {
                 LLVMBuildStructGEP2(self.raw, ty.as_raw(), ptr.as_raw(), index as c_uint, name.as_ptr())
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `getelementptr ty, ptr p, i64 index` (`LLVMBuildGEP2`), the address
+    /// of the `index`-th `ty` at `p`.
+    ///
+    /// Deliberately the *non*-`inbounds` form: `index` is a runtime value here,
+    /// and the container function sets index past a length the bounds check just
+    /// proved only for the callers that guarded. MK7 §3.4 forbids `inbounds`
+    /// where the bounds are not proven at the point of the GEP, so this is the
+    /// plain form and the one `codegen_llvm.rs` uses for every data-dependent
+    /// element address (`List.data[i]`, `Map.entries[e]`).
+    pub fn build_gep(
+        &self,
+        ty: Type<'ctx>,
+        ptr: Value<'ctx>,
+        index: Value<'ctx>,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        let mut indices = [index.as_raw()];
+        Value {
+            // SAFETY: the builder is positioned, the type, pointer and index are
+            // live, and LLVM reads the index vector only during the call.
+            raw: unsafe {
+                LLVMBuildGEP2(
+                    self.raw,
+                    ty.as_raw(),
+                    ptr.as_raw(),
+                    indices.as_mut_ptr(),
+                    1,
+                    name.as_ptr(),
+                )
             },
             context: PhantomData,
         }

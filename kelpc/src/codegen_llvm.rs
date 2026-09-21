@@ -95,6 +95,41 @@
 //! match), so no runtime check is emitted here, exactly as the C backend emits
 //! no `default:` arm.
 //!
+//! # What S2D adds (MK7 S2, the container slice)
+//!
+//! `List<T>`, `Map<K, V>`, `Box<T>` and `[T; N]`. MK7 §3.2 names the one
+//! exception to "the runtime stays C": the monomorphized container code, which
+//! `codegen_c.rs` generates per element or value type and which therefore cannot
+//! live in a fixed C file. So it is generated into the module, as IR, one
+//! function set per instantiation, with the same function names, the same bodies
+//! and the same panics the C backend writes:
+//!
+//! - `List<T>` is `{ data, len, cap }`; `reserve` doubles through `realloc`, and
+//!   `get`/`set` run the same bounds check (`List.get: index out of bounds`). The
+//!   S1 methods (`sort`, `reverse`, `contains`, `slice`, `clone`) are emitted
+//!   with the same element gates `types::value_is_sortable` and its siblings
+//!   decide, so a `datac` element gets `sort` but never `contains`.
+//! - `Box<T>` is one pointer, `empty`/`of`/`get`/`set`/`take`, and `take` moves
+//!   the value out, which is what makes a recursive `datac` expressible.
+//! - `Map<K, V>` keeps its entries dense in insertion order and a separate
+//!   open-addressed index of `entry index + 1` (`0` empty, `SIZE_MAX`
+//!   tombstone), so `keys()` returns insertion order. Its key helpers are the
+//!   runtime's own (`kelp_map_hash`, `kelp_map_mix`, `kelp_map_key_eq`),
+//!   reached by declaration rather than re-derived.
+//! - `[T; N]` is inline, not a pointer: `len()` is the type's constant,
+//!   `get`/`set` are the same bounds check with the array's panic text, and the
+//!   repeat literal goes through a generated `fill` loop rather than N
+//!   initializers.
+//!
+//! A container header is an aggregate over 16 bytes, so it never crosses to the
+//! C runtime by value: every helper the module declares takes a pointer
+//! (BUG-vN4tR, MK7 §3.3), and `the_container_layouts_match_the_c_typedefs` pins
+//! the field-for-field agreement with `write_container_typedef`.
+//!
+//! The refusals the earlier slices left under a stale label are corrected here:
+//! a borrow of a non-`datac` and a dereference of one are `S2F` (the reference
+//! slice the stage-2 table reserves), not `S2B`.
+//!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
 //! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
@@ -143,7 +178,10 @@ use crate::llvm_ffi::{
 };
 use crate::lexer::Span;
 use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt, TemplatePiece};
-use crate::types::{drop_fn_name, needs_drop, owned_types, struct_tag, Ty};
+use crate::types::{
+    box_c_type, clone_fn_name, cmp_fn_name, drop_fn_name, list_c_type, list_clonable_elem,
+    map_c_type, needs_drop, owned_types, struct_tag, ty_mangle, Ty,
+};
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
 /// emit the object and link it with `cc`.
@@ -173,10 +211,15 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
 
     let mut lowering = Gen::new(&ctx, &module, program, drops, &layout)?;
     lowering.declare()?;
-    // The generated per-`datac` and per-`enum` drops are defined before the
-    // function bodies that call them, mirroring the order `codegen_c.rs` writes
-    // the typedef and its drop routine in.
+    // The generated per-`datac` and per-`enum` drops, clones and comparators are
+    // defined before the function bodies that call them, mirroring the order
+    // `codegen_c.rs` writes each typedef and its drop routine in. The container
+    // function sets come next, because a container's own drop calls the
+    // element's (MK7 §3.2: one monomorphized set per instantiation, generated
+    // into the module).
     lowering.emit_drop_fn_bodies()?;
+    lowering.emit_clone_cmp_bodies()?;
+    lowering.emit_container_bodies()?;
     lowering.emit_all()?;
 
     // A caller must verify before emitting: LLVM's object writer assumes a
@@ -297,6 +340,47 @@ struct Gen<'a> {
     /// The `datac`/`enum` names that own memory, so `types::needs_drop` can
     /// answer for a type without re-walking the declarations.
     owned: HashSet<String>,
+    /// The LLVM type of every container instantiation the program uses, keyed
+    /// by the `tir` container type. A container is a named struct built here
+    /// rather than in `llvm_type`, because it is created once and then resolved
+    /// by name (`Box<List<i32>>` names another instantiation).
+    containers: HashMap<Ty, Type<'a>>,
+    /// The entry struct of each `Map<K, V>` instantiation, keyed by the map
+    /// type: `{ key, value*, live }`, the shape `write_map`'s typedef has.
+    map_entries: HashMap<Ty, Type<'a>>,
+    /// The monomorphized container functions, keyed by their mangled symbol
+    /// (`kelp_List__i32__push`), with the signature they are declared under.
+    container_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The generated `kelp_clone_<name>` functions of a `datac`/`enum` whose
+    /// value can be deep-copied, the mirror of the ones `write_struct`/
+    /// `write_enum` emit beside each typedef.
+    clone_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The generated `kelp_cmp_<name>` functions of an orderable `datac`/`enum`.
+    cmp_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The libc primitives the container function sets call: the standard
+    /// headers' allocation, copy and scan functions, declared and never
+    /// re-implemented, exactly as the C backend reaches them.
+    libc: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
+    /// Every container instantiation the program mentions, so the module emits
+    /// exactly the sets it uses (mirrors `codegen_c::Instantiations`).
+    instantiations: Instantiations,
+    /// The user types whose value can be deep-copied, the same fixpoint
+    /// `codegen_c.rs` computes for `List.clone`/`List.slice`.
+    clonable: HashSet<String>,
+    /// The user types whose value has a derived order, for `List.sort`.
+    sortable: HashSet<String>,
+}
+
+/// Every container instantiation a program mentions, the mirror of
+/// `codegen_c::Instantiations` (MK7 S2D). Kept separate from the `datac` table
+/// because a container is lowered as a *function set*, one per element or value
+/// type, exactly as the C backend writes one C function set per instantiation.
+#[derive(Default, Clone)]
+struct Instantiations {
+    lists: HashSet<Ty>,
+    boxes: HashSet<Ty>,
+    maps: HashSet<(Ty, Ty)>,
+    arrays: HashSet<Ty>,
 }
 
 impl<'a> Gen<'a> {
@@ -334,6 +418,7 @@ impl<'a> Gen<'a> {
         let panic = *runtime
             .get("kelp_panic")
             .expect("kelp_panic is declared with the runtime");
+        let type_decls = type_decls(&program.structs, &program.enums);
         Ok(Gen {
             ctx,
             module,
@@ -352,6 +437,15 @@ impl<'a> Gen<'a> {
             runtime,
             drop_fns: HashMap::new(),
             owned: owned_types(&program.structs, &program.enums),
+            containers: HashMap::new(),
+            map_entries: HashMap::new(),
+            container_fns: HashMap::new(),
+            clone_fns: HashMap::new(),
+            cmp_fns: HashMap::new(),
+            libc: declare_libc(ctx, module),
+            instantiations: collect_instantiations(program),
+            clonable: crate::types::clonable_types(&type_decls),
+            sortable: crate::types::sortable_types(&type_decls),
         })
     }
 
@@ -363,7 +457,12 @@ impl<'a> Gen<'a> {
     /// the first expression that mentions it.
     fn declare(&mut self) -> Result<(), String> {
         let program = self.program;
-        // The aggregate types first, so a field this slice cannot lay out is
+        // The container types first, so a `datac` or `enum` field that *is* one
+        // resolves its own named struct rather than a refused type. A container
+        // typedef is emitted before every `datac` in the C backend for the same
+        // reason (a container holds its contents through a pointer).
+        self.declare_container_types()?;
+        // The aggregate types next, so a field this slice cannot lay out is
         // reported by its own construct rather than behind an unrelated std
         // declaration.
         self.declare_aggregates()?;
@@ -378,6 +477,11 @@ impl<'a> Gen<'a> {
         // name at the call site (S3).
 
         self.declare_drop_fns();
+        // The derived deep-copy and order, then the container function sets: a
+        // set's own `clone`/`sort`/drop calls the generated per-`datac`
+        // `kelp_clone_<name>`/`kelp_cmp_<name>`, so both exist first.
+        self.declare_clone_cmp_fns();
+        self.declare_container_fns()?;
 
         let ctx = self.ctx;
 
@@ -400,9 +504,9 @@ impl<'a> Gen<'a> {
                 let params = f
                     .params
                     .iter()
-                    .map(|(_, ty)| llvm_type(ctx, &self.structs, ty))
+                    .map(|(_, ty)| llvm_type(ctx, &self.structs, &self.containers, ty))
                     .collect::<Result<Vec<_>, _>>()?;
-                let ret = llvm_ret_type(ctx, &self.structs, &f.ret)?;
+                let ret = llvm_ret_type(ctx, &self.structs, &self.containers, &f.ret)?;
                 (params, ret)
             };
             let ty = ctx.fn_type(ret, &params, false);
@@ -512,7 +616,23 @@ impl<'a> Gen<'a> {
             .chain(program.enums.iter().map(|e| (e.order, Decl::Sum(e))))
             .collect();
         decls.sort_by_key(|(order, _)| *order);
+        // An array field is held *by value*, so its body has to be set before the
+        // `datac` or payload that names it. `emit_array_body` recurses into the
+        // arrays nested inside it, innermost first, exactly as `codegen_c.rs`
+        // emits them just before the declaration that needs them.
+        let mut emitted_arrays: HashSet<Ty> = HashSet::new();
         for (_, decl) in decls {
+            let field_tys: Vec<Ty> = match decl {
+                Decl::Record(s) => s.fields.iter().map(|f| f.ty.clone()).collect(),
+                Decl::Sum(e) => e
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                    .collect(),
+            };
+            for ty in &field_tys {
+                self.emit_array_body(ty, &mut emitted_arrays)?;
+            }
             match decl {
                 Decl::Record(s) => {
                     let ty = *self
@@ -522,12 +642,18 @@ impl<'a> Gen<'a> {
                     let fields = s
                         .fields
                         .iter()
-                        .map(|f| llvm_type(ctx, &self.structs, &f.ty))
+                        .map(|f| llvm_type(ctx, &self.structs, &self.containers, &f.ty))
                         .collect::<Result<Vec<_>, _>>()?;
                     ctx.struct_set_body(ty, &fields);
                 }
                 Decl::Sum(e) => self.declare_enum_body(e)?,
             }
+        }
+        // Every array the program uses that no by-value declaration pulled in
+        // earlier: a local, a parameter, a return value, a `Box` element.
+        let arrays: Vec<Ty> = self.instantiations.arrays.iter().cloned().collect();
+        for ty in &arrays {
+            self.emit_array_body(ty, &mut emitted_arrays)?;
         }
         Ok(())
     }
@@ -559,7 +685,7 @@ impl<'a> Gen<'a> {
             let fields = v
                 .fields
                 .iter()
-                .map(|f| llvm_type(ctx, &self.structs, &f.ty))
+                .map(|f| llvm_type(ctx, &self.structs, &self.containers, &f.ty))
                 .collect::<Result<Vec<_>, _>>()?;
             ctx.struct_set_body(payload_ty, &fields);
         }
@@ -751,6 +877,15 @@ impl<'a> Gen<'a> {
                 // An unowned `datac` has no drop function and nothing to free.
                 None => return Ok(()),
             },
+            // A container's drop is one of the monomorphized functions this
+            // slice generates into the module (`kelp_list_drop__i32`).
+            Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => {
+                let symbol = drop_fn_name(ty);
+                match self.container_fns.get(&symbol).copied() {
+                    Some((func, fty)) => (func, fty),
+                    None => return Ok(()),
+                }
+            }
             _ => return Ok(()),
         };
         self.builder.build_call(func, fty, &[ptr], "");
@@ -1061,7 +1196,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Binary { op, lhs, rhs } => {
                 Ok(Some(self.emit_binary(*op, lhs, rhs)?))
             }
-            ExprKind::Call { callee, args } => self.emit_call(callee, args),
+            ExprKind::Call { callee, args } => self.emit_call(callee, args, &e.ty),
+            // `[a, b, c]`: the array struct is built field by field in order,
+            // the same value the C compound literal is.
+            ExprKind::ArrayLit(elems) => Ok(Some(self.emit_array_lit(elems, &e.ty)?)),
+            // `[v; N]`: one call to the generated fill helper, so a large
+            // repeat is a loop rather than N initializers.
+            ExprKind::ArrayRepeat { value } => {
+                Ok(Some(self.emit_array_repeat(value, &e.ty)?))
+            }
             ExprKind::Assign { target, value } => {
                 self.emit_assign(target, value, e.span)?;
                 Ok(None)
@@ -1130,17 +1273,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 if is_str_ref(&e.ty) {
                     return Ok(Some(self.value_of(sub)?));
                 }
-                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) {
+                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) || is_container_ref(&e.ty) {
                     return Ok(Some(self.place_of(sub)?));
                 }
-                Err(refuse("'a borrow of a non-datac'", "S2B"))
+                Err(refuse("'a borrow of a non-datac'", "S2F"))
             }
             // `*p` through a borrow of a `datac`: the pointee is the struct the
             // pointer addresses. A dereference of anything else is the borrow
             // slice.
             ExprKind::Deref { expr: sub } => {
                 if !matches!(&e.ty, Ty::Struct(_)) {
-                    return Err(refuse("'a dereference of a non-datac'", "S2B"));
+                    return Err(refuse("'a dereference of a non-datac'", "S2F"));
                 }
                 let ptr = self.value_of(sub)?;
                 let lty = self.lty(&e.ty)?;
@@ -1495,7 +1638,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let slot = self
                     .lookup(name)
                     .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
-                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) {
+                if is_struct_ref(&e.ty) || is_heap_ref(&e.ty) || is_container_ref(&e.ty) {
                     // The binding holds the borrow: its own value is the pointer.
                     Ok(self.g.builder.build_load(self.g.ctx.opaque_ptr(), slot, name))
                 } else {
@@ -1521,6 +1664,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Ref { expr: sub, .. } => self.place_of(sub),
             ExprKind::Deref { expr: sub } => self.value_of(sub),
             _ => {
+                // A borrow-typed rvalue is already an address: a call returning
+                // `&T` (`List#get`/`Map#get` on an owned element) yields the
+                // pointer itself, which is exactly what a field read or a chain
+                // step wants. Staging it into a slot would hand back the
+                // address of the *pointer* instead of the pointee.
+                if matches!(e.ty, Ty::Ref { .. }) {
+                    return self.value_of(e);
+                }
                 // A staged temporary that owns memory has to be freed, and the
                 // one drop site that can do it is a call argument (handled in
                 // `arg_value`). Reaching one here means a shape whose owner no
@@ -1550,7 +1701,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     /// The LLVM type of a `tir` type, with this program's `datac` table.
     fn lty(&self, ty: &Ty) -> Result<Type<'a>, String> {
-        llvm_type(self.g.ctx, &self.g.structs, ty)
+        llvm_type(self.g.ctx, &self.g.structs, &self.g.containers, ty)
     }
 
     /// Evaluate an expression that must have a value, or report the internal
@@ -1733,7 +1884,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.g.builder.build_store(v, field_ptr);
                 Ok(())
             }
-            _ => Err(refuse("'assignment to a non-local place'", "S2B")),
+            // The only other place a Kelp assignment can name is `*p`: an
+            // assignment through a borrow, which is the reference slice.
+            _ => Err(refuse("'assignment through a borrow'", "S2F")),
         }
     }
 
@@ -1985,7 +2138,46 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(Some(phi))
     }
 
-    fn emit_call(&mut self, callee: &str, args: &[Expr]) -> Result<Option<Value<'a>>, String> {
+    /// `[a, b, c]` as one array *value*: the element array via `insertvalue`,
+    /// then the wrapper struct's single field.
+    fn emit_array_lit(
+        &mut self,
+        elems: &[Expr],
+        ty: &Ty,
+    ) -> Result<Value<'a>, String> {
+        let Ty::Array(elem, len) = ty else {
+            return Err(no_value("an array literal's type"));
+        };
+        let array_ty = self.g.cty(ty)?;
+        let elem_ty = self.lty(elem)?;
+        let arr_ty = self.g.ctx.array_type(elem_ty, *len);
+        let mut arr = self.g.ctx.undef(arr_ty);
+        for (index, e) in elems.iter().enumerate() {
+            let v = self.value_of(e)?;
+            arr = self.g.builder.build_insert_value(arr, v, index as u32, "elem");
+        }
+        let mut agg = self.g.ctx.undef(array_ty);
+        agg = self.g.builder.build_insert_value(agg, arr, 0, "v");
+        Ok(agg)
+    }
+
+    /// `[v; N]` through the generated `{array}__fill(v)` helper.
+    fn emit_array_repeat(&mut self, value: &Expr, ty: &Ty) -> Result<Value<'a>, String> {
+        let Ty::Array(elem, len) = ty else {
+            return Err(no_value("a repeat literal's type"));
+        };
+        let v = self.value_of(value)?;
+        let symbol = format!("{}__fill", crate::types::array_c_type(elem, *len));
+        let (func, fty) = self.g.cfn(&symbol)?;
+        Ok(self.g.call(func, fty, &[v], "fill"))
+    }
+
+    fn emit_call(
+        &mut self,
+        callee: &str,
+        args: &[Expr],
+        ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
         // `print`/`print!` reach libc `printf`, as the C backend does.
         if callee == "print" || callee == "print!" {
             let arg = args
@@ -2101,16 +2293,37 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(if rt.yields { Some(v) } else { None });
         }
 
+        // A builtin container method: the monomorphized function this slice
+        // generated into the module, named exactly as the C backend names it.
+        if let Some(symbol) = container_symbol(callee, args, ret) {
+            let Some((func, fty)) = self.g.container_fns.get(&symbol).copied() else {
+                return Err(refuse(&format!("the call to '{callee}'"), "S2D"));
+            };
+            let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+            let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
+            for a in args {
+                values.push(self.arg_value(a, &mut held)?);
+            }
+            let yields_value = *ret != Ty::Unit;
+            let name = if yields_value { "call" } else { "" };
+            let v = self.g.builder.build_call(func, fty, &values, name);
+            for (slot, ty) in held {
+                self.g.call_drop(slot, &ty)?;
+            }
+            return Ok(if yields_value { Some(v) } else { None });
+        }
+
         // Anything else is outside this slice. An `extern fun` is the runtime
-        // and is S3; a container method is the container slice; any other name
-        // is a construct this stage has no lowering for.
-        let stage = if self.g.program.functions.iter().any(|f| f.name == callee && f.extern_) {
-            "S3"
-        } else if ["List#", "Map#", "Box#", "Array#"]
+        // and is S3; any other name is a construct this stage has no lowering
+        // for.
+        let stage = if self
+            .g
+            .program
+            .functions
             .iter()
-            .any(|prefix| callee.starts_with(prefix))
+            .any(|f| f.name == callee && f.extern_)
         {
-            "S2D"
+            "S3"
         } else {
             "S2B"
         };
@@ -2465,6 +2678,2759 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 }
 
+// ===========================================================================
+// The containers (MK7 S2D): `List<T>`, `Map<K, V>`, `Box<T>` and `[T; N]`.
+//
+// MK7 §3.2 names the exception this section exists for: the fixed runtime stays
+// C, but the monomorphized container code cannot, because `codegen_c.rs`
+// generates one function set per element or value type. So this backend
+// generates the same sets into the module, one per instantiation, with the same
+// function names and the same bodies the C backend writes. A container's header
+// is a named struct whose field order and widths match the C typedefs field for
+// field, but it never crosses to C by value: the runtime helpers it calls take
+// a pointer (MK7 §3.3 and BUG-vN4tR).
+// ===========================================================================
+
+/// The `(name, each field's type)` pairs of every declaration, for the derived
+/// clone/order fixpoints. The mirror of `codegen_c::type_decls`.
+fn type_decls(
+    structs: &[crate::types::StructDef],
+    enums: &[crate::types::EnumDef],
+) -> Vec<(String, Vec<Ty>)> {
+    let enum_names: HashSet<&str> = enums.iter().map(|e| e.name.as_str()).collect();
+    let mut out: Vec<(String, Vec<Ty>)> = Vec::new();
+    for s in structs {
+        if enum_names.contains(s.name.as_str()) {
+            continue;
+        }
+        out.push((s.name.clone(), s.fields.iter().map(|f| f.ty.clone()).collect()));
+    }
+    for e in enums {
+        out.push((
+            e.name.clone(),
+            e.variants
+                .iter()
+                .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+                .collect(),
+        ));
+    }
+    out
+}
+
+/// Every container instantiation a program mentions, the mirror of
+/// `codegen_c::collect_containers`. Over-collecting is harmless (an unused set
+/// is unused code), under-collecting is not, so every expression's own type and
+/// every declaration's fields are noted, and a `Map` also notes the `List<K>`
+/// and `List<V>` its `keys`/`values` return.
+fn collect_instantiations(program: &Program) -> Instantiations {
+    fn note_ty(ty: &Ty, out: &mut Instantiations) {
+        match ty {
+            Ty::List(elem) => {
+                if **elem != Ty::Unit {
+                    out.lists.insert((**elem).clone());
+                }
+                note_ty(elem, out);
+            }
+            Ty::Box(elem) => {
+                if **elem != Ty::Unit {
+                    out.boxes.insert((**elem).clone());
+                }
+                note_ty(elem, out);
+            }
+            Ty::Map(key, value) => {
+                // An *open* map (`Map.new()` with no type anywhere yet) carries
+                // `Unit` in a slot, which names no instantiation; the first
+                // `insert` fills it in (`types::fill_open_container`).
+                if **key == Ty::Unit || **value == Ty::Unit {
+                    return;
+                }
+                // `keys()`/`values()` are generated with every map and return
+                // `List<K>`/`List<V>`, so both instantiations exist even when
+                // the program never calls them.
+                out.maps.insert(((**key).clone(), (**value).clone()));
+                out.lists.insert((**key).clone());
+                out.lists.insert((**value).clone());
+                note_ty(key, out);
+                note_ty(value, out);
+            }
+            Ty::Array(elem, _) => {
+                out.arrays.insert(ty.clone());
+                note_ty(elem, out);
+            }
+            Ty::Ref { inner, .. } => note_ty(inner, out),
+            _ => {}
+        }
+    }
+    fn note_block(block: &Block, out: &mut Instantiations) {
+        for stmt in &block.stmts {
+            match stmt {
+                Stmt::Let { init, .. } => note_expr(init, out),
+                Stmt::While { cond, body } => {
+                    note_expr(cond, out);
+                    note_block(body, out);
+                }
+                Stmt::Return { value, .. } => {
+                    if let Some(e) = value {
+                        note_expr(e, out);
+                    }
+                }
+                Stmt::Expr(e) => note_expr(e, out),
+            }
+        }
+        if let Some(tail) = &block.tail {
+            note_expr(tail, out);
+        }
+    }
+    fn note_expr(expr: &Expr, out: &mut Instantiations) {
+        note_ty(&expr.ty, out);
+        match &expr.kind {
+            ExprKind::Unary { expr, .. }
+            | ExprKind::Ref { expr, .. }
+            | ExprKind::Deref { expr }
+            | ExprKind::EnumTag { expr, .. }
+            | ExprKind::Try { expr, .. }
+            | ExprKind::FnToClosure { func: expr }
+            | ExprKind::ArrayRepeat { value: expr } => note_expr(expr, out),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                note_expr(lhs, out);
+                note_expr(rhs, out);
+            }
+            ExprKind::Assign { target, value } => {
+                note_expr(target, out);
+                note_expr(value, out);
+            }
+            ExprKind::Call { args, .. } | ExprKind::IndirectCall { args, .. } => {
+                if let ExprKind::IndirectCall { callee, .. } = &expr.kind {
+                    note_expr(callee, out);
+                }
+                for a in args {
+                    note_expr(a, out);
+                }
+            }
+            ExprKind::FieldAccess { base, .. }
+            | ExprKind::EnumField { base, .. } => note_expr(base, out),
+            ExprKind::StructLit { fields, .. } => {
+                for (_, v) in fields {
+                    note_expr(v, out);
+                }
+            }
+            ExprKind::EnumLit { fields, .. } => {
+                for f in fields {
+                    note_expr(f, out);
+                }
+            }
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                note_expr(cond, out);
+                note_block(then_block, out);
+                if let Some(b) = else_block {
+                    note_block(b, out);
+                }
+            }
+            ExprKind::Block(block) => note_block(block, out),
+            ExprKind::ClosureLit { captures, .. } => {
+                for c in captures {
+                    note_expr(c, out);
+                }
+            }
+            ExprKind::Template { pieces, .. } => {
+                for p in pieces {
+                    if let TemplatePiece::Value(v) = p {
+                        note_expr(v, out);
+                    }
+                }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for e in elems {
+                    note_expr(e, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Instantiations::default();
+    for s in &program.structs {
+        for f in &s.fields {
+            note_ty(&f.ty, &mut out);
+        }
+    }
+    for e in &program.enums {
+        for v in &e.variants {
+            for f in &v.fields {
+                note_ty(&f.ty, &mut out);
+            }
+        }
+    }
+    for f in &program.functions {
+        for (_, ty) in &f.params {
+            note_ty(ty, &mut out);
+        }
+        note_ty(&f.ret, &mut out);
+        if !f.extern_ && f.env.is_none() {
+            note_block(&f.body, &mut out);
+        }
+    }
+    out
+}
+
+/// Declare the libc primitives the container function sets reach, exactly as
+/// the C backend reaches them through the standard headers. The signatures are
+/// the ones `<stdlib.h>`/`<string.h>` declare, on the ABI this machine uses:
+/// `size_t` is `i64` and `int` is `i32`.
+fn declare_libc<'a>(
+    ctx: &'a Context,
+    module: &'a Module<'a>,
+) -> HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)> {
+    let ptr = ctx.opaque_ptr();
+    let i32t = ctx.i32();
+    let i64t = ctx.i64();
+    let void = ctx.void();
+    let mut out = HashMap::new();
+    let mut decl = |name: &'static str, ret: Type<'a>, params: &[Type<'a>]| {
+        let ty = ctx.fn_type(ret, params, false);
+        let func = module.add_function(name, ty);
+        out.insert(name, (func, ty));
+    };
+    decl("malloc", ptr, &[i64t]);
+    decl("realloc", ptr, &[ptr, i64t]);
+    decl("free", void, &[ptr]);
+    decl("memcpy", ptr, &[ptr, ptr, i64t]);
+    decl("memcmp", i32t, &[ptr, ptr, i64t]);
+    decl("memset", ptr, &[ptr, i32t, i64t]);
+    decl("strlen", i64t, &[ptr]);
+    out
+}
+
+impl<'a> Gen<'a> {
+    /// The pointer type LLVM 21 uses for every pointer.
+    fn pty(&self) -> Type<'a> {
+        self.ctx.opaque_ptr()
+    }
+
+    fn v_i64(&self, v: u64) -> Value<'a> {
+        self.ctx.const_int(self.ctx.i64(), v, false)
+    }
+
+    fn v_i32(&self, v: u64) -> Value<'a> {
+        self.ctx.const_int(self.ctx.i32(), v, false)
+    }
+
+    fn v_i8(&self, v: u64) -> Value<'a> {
+        self.ctx.const_int(self.ctx.i8(), v, false)
+    }
+
+    /// The `elem`-typed address `index` elements past `ptr`, the plain
+    /// non-`inbounds` GEP MK7 §3.4 wants for a data-dependent index.
+    fn gep(&self, elem: Type<'a>, ptr: Value<'a>, index: Value<'a>, name: &str) -> Value<'a> {
+        self.builder.build_gep(elem, ptr, index, name)
+    }
+
+    /// The address of field `idx` of the aggregate at `ptr`. The index is a
+    /// compile-time constant inside an object of that exact type, which is the
+    /// one place MK7 §3.4 allows the `inbounds` form.
+    fn fld(&self, agg: Type<'a>, ptr: Value<'a>, idx: u32, name: &str) -> Value<'a> {
+        self.builder.build_struct_gep(agg, ptr, idx, name)
+    }
+
+    fn ld(&self, ty: Type<'a>, ptr: Value<'a>, name: &str) -> Value<'a> {
+        self.builder.build_load(ty, ptr, name)
+    }
+
+    fn st(&self, value: Value<'a>, ptr: Value<'a>) {
+        self.builder.build_store(value, ptr);
+    }
+
+    fn cfn(&self, symbol: &str) -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+        self.container_fns
+            .get(symbol)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the container function '{symbol}'")))
+    }
+
+    fn libc_fn(&self, name: &str) -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+        self.libc
+            .get(name)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the libc function '{name}'")) )
+    }
+
+    /// Append a block to `func` without moving the builder. A caller that
+    /// creates several blocks before the terminator that branches to them
+    /// needs exactly this: the terminator goes into the *current* block, and
+    /// each destination is entered with an explicit `position_at_end`.
+    fn block(&self, func: LlvmFunction<'a>, name: &str) -> BasicBlock<'a> {
+        func.append_block(name)
+    }
+
+    /// A loop header: branch to a fresh block from wherever the builder is, and
+    /// continue in it. This is the one place a block is created *and* entered,
+    /// because a loop header is branched to once from the pre-header and once
+    /// from the body.
+    fn loop_header(&self, func: LlvmFunction<'a>, name: &str) -> BasicBlock<'a> {
+        let bb = func.append_block(name);
+        self.builder.build_br(bb);
+        self.builder.position_at_end(bb);
+        bb
+    }
+
+    /// Emit `kelp_panic(msg)` and terminate the block, for the bounds checks
+    /// and the empty-container panics whose text must be byte-identical to the
+    /// C backend's.
+    fn emit_panic(&self, msg: &str) -> Result<(), String> {
+        let ptr = self.builder.global_string(msg, "panic.msg");
+        self.builder
+            .build_call(self.panic_fn, self.panic_ty, &[ptr], "");
+        self.builder.build_unreachable();
+        Ok(())
+    }
+
+    fn call(&self, func: LlvmFunction<'a>, ty: FnType<'a>, args: &[Value<'a>], name: &str) -> Value<'a> {
+        self.builder.build_call(func, ty, args, name)
+    }
+
+    // ---- container types -------------------------------------------------
+
+    /// Create one named LLVM struct per container instantiation the program
+    /// uses, with no body yet. The bodies are set later (`set_container_bodies`
+    /// for the pointer containers, and alongside the aggregates for the inline
+    /// arrays), because an array's body names the element type it holds.
+    fn declare_container_types(&mut self) -> Result<(), String> {
+        let inst = self.instantiations.clone();
+        let mut lists: Vec<Ty> = inst.lists.iter().cloned().collect();
+        lists.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+        let mut boxes: Vec<Ty> = inst.boxes.iter().cloned().collect();
+        boxes.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+        let mut maps: Vec<(Ty, Ty)> = inst.maps.iter().cloned().collect();
+        maps.sort_by_key(|(k, v)| format!("{}{}", container_sort_name(k), container_sort_name(v)));
+        let mut arrays: Vec<Ty> = inst.arrays.iter().cloned().collect();
+        arrays.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+
+        for elem in &lists {
+            let ty = self.ctx.struct_type(&list_c_type(elem));
+            self.containers.insert(Ty::List(Box::new(elem.clone())), ty);
+        }
+        for elem in &boxes {
+            let ty = self.ctx.struct_type(&box_c_type(elem));
+            self.containers.insert(Ty::Box(Box::new(elem.clone())), ty);
+        }
+        for (key, value) in &maps {
+            let name = map_c_type(key, value);
+            let entry = self.ctx.struct_type(&format!("{name}_entry"));
+            let ty = self.ctx.struct_type(&name);
+            self.map_entries
+                .insert(Ty::Map(Box::new(key.clone()), Box::new(value.clone())), entry);
+            self.containers
+                .insert(Ty::Map(Box::new(key.clone()), Box::new(value.clone())), ty);
+        }
+        for arr in &arrays {
+            if let Ty::Array(elem, len) = arr {
+                let ty = self.ctx.struct_type(&crate::types::array_c_type(elem, *len));
+                self.containers.insert(arr.clone(), ty);
+            }
+        }
+        // The pointer containers have no by-value dependency on a user type, so
+        // their bodies are settable now, before any `datac` type exists.
+        self.set_container_bodies()
+    }
+
+    /// Set the bodies of every pointer container (`List`, `Box`, `Map`). Safe to
+    /// do before any `datac` body exists: a container holds its contents through
+    /// a pointer, so none of these fields names a user type by value.
+    fn set_container_bodies(&self) -> Result<(), String> {
+        let ptr = self.pty();
+        let i64t = self.ctx.i64();
+        let i8t = self.ctx.i8();
+        for (ty, lty) in &self.containers {
+            match ty {
+                Ty::List(_) => self.ctx.struct_set_body(*lty, &[ptr, i64t, i64t]),
+                Ty::Box(_) => self.ctx.struct_set_body(*lty, &[ptr]),
+                Ty::Map(_, _) => self.ctx.struct_set_body(
+                    *lty,
+                    &[ptr, i64t, i64t, i64t, ptr, i64t, i64t],
+                ),
+                _ => {}
+            }
+        }
+        for (map, entry_ty) in &self.map_entries {
+            if let Ty::Map(key, _) = map {
+                let key_ty = llvm_type(self.ctx, &self.structs, &self.containers, key)?;
+                self.ctx.struct_set_body(*entry_ty, &[key_ty, ptr, i8t]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Set one array instantiation's body, after any array nested inside it
+    /// (`emit_arrays_for`, the mirror of the C helper of the same name).
+    fn emit_array_body(&self, ty: &Ty, emitted: &mut HashSet<Ty>) -> Result<(), String> {
+        let Ty::Array(elem, len) = ty else {
+            return Ok(());
+        };
+        self.emit_array_body(elem, emitted)?;
+        if !emitted.insert(ty.clone()) {
+            return Ok(());
+        }
+        let elem_ty = llvm_type(self.ctx, &self.structs, &self.containers, elem)?;
+        let arr = self.ctx.array_type(elem_ty, *len);
+        if let Some(lty) = self.containers.get(ty) {
+            self.ctx.struct_set_body(*lty, &[arr]);
+        }
+        Ok(())
+    }
+
+    /// The libc call `malloc(sizeof(<ty>))` lowered to a constant byte count.
+    fn malloc_for(&self, ty: Type<'a>) -> Result<Value<'a>, String> {
+        let size = self.layout.abi_size_of(ty);
+        let (func, fty) = self.libc_fn("malloc")?;
+        Ok(self.call(func, fty, &[self.v_i64(size)], "heap"))
+    }
+
+    /// `kelp_panic("out of memory")` when `ptr` is NULL, the same check every
+    /// generated C allocation makes.
+    fn check_alloc(&self, ptr: Value<'a>, func: LlvmFunction<'a>) -> Result<(), String> {
+        let null = self.ctx.const_null(self.pty());
+        let isnull = self.builder.build_icmp(IntCmp::Eq, ptr, null, "oom");
+        let oom = self.block(func, "oom");
+        let ok = self.block(func, "alloc.ok");
+        self.builder.build_cond_br(isnull, oom, ok);
+        self.builder.position_at_end(oom);
+        self.emit_panic("out of memory")?;
+        self.builder.position_at_end(ok);
+        Ok(())
+    }
+
+}
+
+/// How deeply containers nest, used to emit a container after the containers it
+/// contains. The mirror of `codegen_c::container_depth`.
+fn container_depth(ty: &Ty) -> usize {
+    match ty {
+        Ty::List(elem) | Ty::Box(elem) => 1 + container_depth(elem),
+        Ty::Map(..) => 1,
+        Ty::Array(elem, _) => 1 + container_depth(elem),
+        _ => 0,
+    }
+}
+
+/// A stable sort key for the emission order: the C name of one element type.
+fn container_sort_name(ty: &Ty) -> String {
+    ty_mangle(ty)
+}
+
+/// One monomorphized container function: its mangled symbol, its LLVM return
+/// type and its LLVM parameter types. What `declare_container_fns` declares and
+/// `emit_container_bodies` defines, from one list, so the two cannot drift.
+struct CfnSpec<'a> {
+    symbol: String,
+    ret: Type<'a>,
+    params: Vec<Type<'a>>,
+}
+
+impl<'a> Gen<'a> {
+    fn lty2(&self, ty: &Ty) -> Result<Type<'a>, String> {
+        llvm_type(self.ctx, &self.structs, &self.containers, ty)
+    }
+
+    /// The named LLVM type of one container instantiation.
+    fn cty(&self, ty: &Ty) -> Result<Type<'a>, String> {
+        self.containers
+            .get(ty)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the container '{}'", ty.display())))
+    }
+
+    /// Position the builder at a fresh block of the named container function.
+    fn start(
+        &self,
+        symbol: &str,
+        name: &str,
+    ) -> Result<(LlvmFunction<'a>, BasicBlock<'a>), String> {
+        let (func, _) = self.cfn(symbol)?;
+        let bb = func.append_block(name);
+        self.builder.position_at_end(bb);
+        Ok((func, bb))
+    }
+
+    /// One runtime helper by symbol, with its declared type.
+    fn rt(&self, symbol: &str) -> Result<RtFn<'a>, String> {
+        self.runtime
+            .get(symbol)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the runtime '{symbol}'")))
+    }
+
+    /// Call an sret runtime helper: the destination pointer first, then the
+    /// real arguments (`RtFn::sret`).
+    fn sret_call(&self, symbol: &str, dst: Value<'a>, args: &[Value<'a>]) -> Result<(), String> {
+        let rt = self.rt(symbol)?;
+        let mut all = Vec::with_capacity(args.len() + 1);
+        all.push(dst);
+        all.extend_from_slice(args);
+        self.call(rt.func, rt.ty, &all, "");
+        Ok(())
+    }
+
+    /// Deep-copy one element value (a `String`/`Bytes` clone, a `datac`'s
+    /// generated clone, or a plain copy) into caller storage that owns nothing
+    /// yet. The mirror of `codegen_c::write_field_clone` for a container slot.
+    fn clone_into(&self, src: Value<'a>, dst: Value<'a>, elem: &Ty) -> Result<(), String> {
+        match elem {
+            Ty::String => self.sret_call("kelp_String__clone", dst, &[src]),
+            Ty::Bytes => self.sret_call("kelp_Bytes__clone", dst, &[src]),
+            Ty::Struct(name) => {
+                let (func, ty) = self
+                    .clone_fns
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| no_value(&format!("the clone of '{name}'")))?;
+                self.call(func, ty, &[src, dst], "");
+                Ok(())
+            }
+            _ => {
+                let elem_ty = self.lty2(elem)?;
+                let v = self.ld(elem_ty, src, "copy");
+                self.st(v, dst);
+                Ok(())
+            }
+        }
+    }
+
+    /// The value of a copied element (a scalar load), for a `Map` value. Only
+    /// reached for a `Copy` element or a `String`/`Bytes` clone, because
+    /// `list_clonable_elem` refuses a `datac`.
+    fn clone_value(&self, src: Value<'a>, elem: &Ty, slot: Value<'a>) -> Result<Value<'a>, String> {
+        match elem {
+            Ty::String => {
+                self.sret_call("kelp_String__clone", slot, &[src])?;
+                Ok(self.ld(self.lty2(elem)?, slot, "clone"))
+            }
+            Ty::Bytes => {
+                self.sret_call("kelp_Bytes__clone", slot, &[src])?;
+                Ok(self.ld(self.lty2(elem)?, slot, "clone"))
+            }
+            _ => Ok(self.ld(self.lty2(elem)?, src, "copy")),
+        }
+    }
+
+    /// Widen a scalar map key to the `uint64_t` `kelp_map_mix` takes, by the
+    /// key's own signedness, exactly as the C `(uint64_t)(k)` cast does.
+    fn key_to_u64(&self, key: &Ty, v: Value<'a>) -> Result<Value<'a>, String> {
+        let w = int_width(key).ok_or_else(|| no_value("a scalar map key"))?;
+        if w == 64 {
+            return Ok(v);
+        }
+        Ok(self
+            .builder
+            .build_int_cast(is_signed(key), true, v, self.ctx.i64(), "kw"))
+    }
+
+    /// The generated clone/cmp function handles, then the container sets.
+    fn declare_clone_cmp_fns(&mut self) {
+        let ptr = self.pty();
+        let void = self.ctx.void();
+        let i32t = self.ctx.i32();
+        let mut clonable: Vec<String> = self.clonable.iter().cloned().collect();
+        clonable.sort();
+        for name in clonable {
+            let ty = self.ctx.fn_type(void, &[ptr, ptr], false);
+            let func = self
+                .module
+                .add_function(&clone_fn_name(&Ty::Struct(name.clone())), ty);
+            self.clone_fns.insert(name, (func, ty));
+        }
+        let mut sortable: Vec<String> = self.sortable.iter().cloned().collect();
+        sortable.sort();
+        for name in sortable {
+            let ty = self.ctx.fn_type(i32t, &[ptr, ptr], false);
+            let func = self
+                .module
+                .add_function(&cmp_fn_name(&Ty::Struct(name.clone())), ty);
+            self.cmp_fns.insert(name, (func, ty));
+        }
+    }
+
+    /// The one list of functions each container kind is emitted with, gathered
+    /// before any body so a callee is always declared first.
+    fn list_specs(&self, elem: &Ty) -> Result<Vec<CfnSpec<'a>>, String> {
+        let base = list_c_type(elem);
+        let list = self.cty(&Ty::List(Box::new(elem.clone())))?;
+        let elem_ty = self.lty2(elem)?;
+        let ptr = self.pty();
+        let void = self.ctx.void();
+        let (i1t, i32t, i64t) = (self.ctx.i1(), self.ctx.i32(), self.ctx.i64());
+        let sortable = crate::types::value_is_sortable(elem, &self.sortable);
+        let clonable = crate::types::value_is_clonable(elem, &self.clonable);
+        let comparable = crate::types::list_comparable_elem(elem);
+        let mut out = vec![
+            spec(&format!("{base}__empty"), list, &[]),
+            spec(&format!("{base}__reserve"), void, &[ptr, i64t]),
+            spec(&format!("{base}__of"), list, &[elem_ty]),
+            spec(&format!("{base}__len"), i64t, &[ptr]),
+            spec(&format!("{base}__is_empty"), i1t, &[ptr]),
+            spec(&format!("{base}__push"), void, &[ptr, elem_ty]),
+            spec(&format!("{base}__bounds"), void, &[ptr, i64t]),
+        ];
+        if elem.is_copy() {
+            out.push(spec(&format!("{base}__get"), elem_ty, &[ptr, i64t]));
+        } else {
+            out.push(spec(&format!("{base}__get_const"), ptr, &[ptr, i64t]));
+        }
+        out.push(spec(&format!("{base}__set"), void, &[ptr, i64t, elem_ty]));
+        out.push(spec(&format!("{base}__pop"), elem_ty, &[ptr]));
+        out.push(spec(&format!("{base}__clear"), void, &[ptr]));
+        out.push(spec(&format!("{base}__reverse"), void, &[ptr]));
+        if sortable {
+            out.push(spec(&format!("{base}__cmp"), i32t, &[ptr, ptr]));
+            out.push(spec(&format!("{base}__sort"), void, &[ptr]));
+        }
+        // `contains` is gated on equality, which is a wider set than order in
+        // the C backend only for a `datac` element: `list_comparable_elem` is
+        // the same set as `list_sortable_elem`, so a `datac` element gets
+        // `sort` but never `contains`.
+        if comparable {
+            // A `String`/`Bytes` element is compared through a shared borrow
+            // (`contains_param`), every other comparable element by value.
+            let contains_param = if elem.is_copy() { elem_ty } else { ptr };
+            out.push(spec(&format!("{base}__contains"), i1t, &[ptr, contains_param]));
+        }
+        if clonable {
+            out.push(spec(&format!("{base}__slice"), list, &[ptr, i64t, i64t]));
+            out.push(spec(&format!("{base}__clone"), list, &[ptr]));
+        }
+        out.push(spec(&format!("{base}__insert"), void, &[ptr, i64t, elem_ty]));
+        out.push(spec(&format!("{base}__remove"), elem_ty, &[ptr, i64t]));
+        out.push(spec(
+            &drop_fn_name(&Ty::List(Box::new(elem.clone()))),
+            void,
+            &[ptr],
+        ));
+        Ok(out)
+    }
+
+    fn box_specs(&self, elem: &Ty) -> Result<Vec<CfnSpec<'a>>, String> {
+        let base = box_c_type(elem);
+        let boxed = self.cty(&Ty::Box(Box::new(elem.clone())))?;
+        let elem_ty = self.lty2(elem)?;
+        let ptr = self.pty();
+        let void = self.ctx.void();
+        let i1t = self.ctx.i1();
+        let mut out = vec![
+            spec(&format!("{base}__empty"), boxed, &[]),
+            spec(&format!("{base}__of"), boxed, &[elem_ty]),
+            spec(&format!("{base}__is_empty"), i1t, &[ptr]),
+        ];
+        if elem.is_copy() {
+            out.push(spec(&format!("{base}__get"), elem_ty, &[ptr]));
+        } else {
+            out.push(spec(&format!("{base}__get_const"), ptr, &[ptr]));
+        }
+        out.push(spec(&format!("{base}__set"), void, &[ptr, elem_ty]));
+        out.push(spec(&format!("{base}__take"), elem_ty, &[ptr]));
+        out.push(spec(
+            &drop_fn_name(&Ty::Box(Box::new(elem.clone()))),
+            void,
+            &[ptr],
+        ));
+        Ok(out)
+    }
+
+    fn array_specs(&self, elem: &Ty, len: u64) -> Result<Vec<CfnSpec<'a>>, String> {
+        let base = crate::types::array_c_type(elem, len);
+        let array = self.cty(&Ty::Array(Box::new(elem.clone()), len))?;
+        let elem_ty = self.lty2(elem)?;
+        let ptr = self.pty();
+        let void = self.ctx.void();
+        let (i1t, i64t) = (self.ctx.i1(), self.ctx.i64());
+        let mut out = vec![
+            spec(&format!("{base}__len"), i64t, &[ptr]),
+            spec(&format!("{base}__is_empty"), i1t, &[ptr]),
+            spec(&format!("{base}__bounds"), void, &[i64t]),
+        ];
+        if elem.is_copy() {
+            out.push(spec(&format!("{base}__get"), elem_ty, &[ptr, i64t]));
+        } else {
+            out.push(spec(&format!("{base}__get_const"), ptr, &[ptr, i64t]));
+        }
+        out.push(spec(&format!("{base}__set"), void, &[ptr, i64t, elem_ty]));
+        out.push(spec(&format!("{base}__fill"), array, &[elem_ty]));
+        out.push(spec(
+            &drop_fn_name(&Ty::Array(Box::new(elem.clone()), len)),
+            void,
+            &[ptr],
+        ));
+        Ok(out)
+    }
+
+    fn declare_container_fns(&mut self) -> Result<(), String> {
+        let mut specs: Vec<CfnSpec<'a>> = Vec::new();
+        for elem in self.lists_sorted() {
+            specs.extend(self.list_specs(&elem)?);
+        }
+        for elem in self.boxes_sorted() {
+            specs.extend(self.box_specs(&elem)?);
+        }
+        for (key, value) in self.maps_sorted() {
+            specs.extend(self.map_specs(&key, &value)?);
+        }
+        for arr in self.arrays_sorted() {
+            if let Ty::Array(elem, len) = arr {
+                specs.extend(self.array_specs(&elem, len)?);
+            }
+        }
+        for s in specs {
+            let ty = self.ctx.fn_type(s.ret, &s.params, false);
+            let func = self.module.add_function(&s.symbol, ty);
+            self.container_fns.insert(s.symbol, (func, ty));
+        }
+        Ok(())
+    }
+
+    fn lists_sorted(&self) -> Vec<Ty> {
+        let mut v: Vec<Ty> = self.instantiations.lists.iter().cloned().collect();
+        v.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+        v
+    }
+
+    fn boxes_sorted(&self) -> Vec<Ty> {
+        let mut v: Vec<Ty> = self.instantiations.boxes.iter().cloned().collect();
+        v.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+        v
+    }
+
+    fn maps_sorted(&self) -> Vec<(Ty, Ty)> {
+        let mut v: Vec<(Ty, Ty)> = self.instantiations.maps.iter().cloned().collect();
+        v.sort_by_key(|(k, val)| format!("{}{}", container_sort_name(k), container_sort_name(val)));
+        v
+    }
+
+    fn arrays_sorted(&self) -> Vec<Ty> {
+        let mut v: Vec<Ty> = self.instantiations.arrays.iter().cloned().collect();
+        v.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
+        v
+    }
+}
+
+/// One `CfnSpec` from its three parts.
+fn spec<'a>(symbol: &str, ret: Type<'a>, params: &[Type<'a>]) -> CfnSpec<'a> {
+    CfnSpec {
+        symbol: symbol.to_string(),
+        ret,
+        params: params.to_vec(),
+    }
+}
+
+/// The list's three fields, in the order `write_container_typedef` declares
+/// them: the buffer, the length, the capacity.
+const L_DATA: u32 = 0;
+const L_LEN: u32 = 1;
+const L_CAP: u32 = 2;
+
+impl<'a> Gen<'a> {
+    // ---- the derived clone and order of a datac/enum ---------------------
+
+    fn emit_clone_cmp_bodies(&self) -> Result<(), String> {
+        let ptr = self.pty();
+        let _ = ptr;
+        for s in &self.program.structs {
+            let fields: Vec<(String, Ty)> =
+                s.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
+            self.emit_record_clone(&s.name, &fields)?;
+            self.emit_record_cmp(&s.name, &fields)?;
+        }
+        for e in &self.program.enums {
+            self.emit_enum_clone(e)?;
+            self.emit_enum_cmp(e)?;
+        }
+        Ok(())
+    }
+
+    fn emit_record_clone(&self, name: &str, fields: &[(String, Ty)]) -> Result<(), String> {
+        let Some((func, _)) = self.clone_fns.get(name).copied() else {
+            return Ok(());
+        };
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let struct_ty = *self
+            .structs
+            .get(name)
+            .ok_or_else(|| no_value(&format!("the datac '{name}'")))?;
+        let src = func.get_param(0);
+        let dst = func.get_param(1);
+        for (i, (_, ty)) in fields.iter().enumerate() {
+            let s = self.fld(struct_ty, src, i as u32, "src");
+            let d = self.fld(struct_ty, dst, i as u32, "dst");
+            self.clone_into(s, d, ty)?;
+        }
+        self.builder.build_ret_void();
+        Ok(())
+    }
+
+    fn emit_record_cmp(&self, name: &str, fields: &[(String, Ty)]) -> Result<(), String> {
+        let Some((func, _)) = self.cmp_fns.get(name).copied() else {
+            return Ok(());
+        };
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let struct_ty = *self
+            .structs
+            .get(name)
+            .ok_or_else(|| no_value(&format!("the datac '{name}'")))?;
+        let a = func.get_param(0);
+        let b = func.get_param(1);
+        for (i, (_, ty)) in fields.iter().enumerate() {
+            let ap = self.fld(struct_ty, a, i as u32, "a");
+            let bp = self.fld(struct_ty, b, i as u32, "b");
+            let cont = self.emit_field_cmp(func, ap, bp, ty)?;
+            self.builder.position_at_end(cont);
+        }
+        self.builder.build_ret(self.v_i32(0));
+        Ok(())
+    }
+
+    /// One field's contribution to a derived order, returning the block the walk
+    /// continues in: the first differing field decides, exactly as
+    /// `write_field_cmp` returns early on the first difference.
+    fn emit_field_cmp(
+        &self,
+        func: LlvmFunction<'a>,
+        ap: Value<'a>,
+        bp: Value<'a>,
+        ty: &Ty,
+    ) -> Result<BasicBlock<'a>, String> {
+        let ret_ty = self.lty2(ty)?;
+        match ty {
+            Ty::String | Ty::Bytes => {
+                let (data_o, len_o) = (self.pty(), self.ctx.i64());
+                let alp = self.fld(ret_ty, ap, 1, "alen");
+                let blp = self.fld(ret_ty, bp, 1, "blen");
+                let alen = self.ld(len_o, alp, "alen");
+                let blen = self.ld(len_o, blp, "blen");
+                let min = self.builder.build_select(
+                    self.builder.build_icmp(IntCmp::Ult, alen, blen, "lt"),
+                    alen,
+                    blen,
+                    "n",
+                );
+                // min > 0 ? memcmp(ap.data, bp.data, min) : 0
+                let nonzero = self.builder.build_icmp(IntCmp::Ugt, min, self.v_i64(0), "nz");
+                let cmp_bb = func.append_block("cmp.bytes");
+                let after_cmp_bb = func.append_block("cmp.after");
+                self.builder.build_cond_br(nonzero, cmp_bb, after_cmp_bb);
+                self.builder.position_at_end(cmp_bb);
+                let adata = self.ld(data_o, self.fld(ret_ty, ap, 0, "ad"), "ad");
+                let bdata = self.ld(data_o, self.fld(ret_ty, bp, 0, "bd"), "bd");
+                let (memcmp, memcmp_ty) = self.libc_fn("memcmp")?;
+                let c = self.call(memcmp, memcmp_ty, &[adata, bdata, min], "memcmp");
+                let ne = self.builder.build_icmp(IntCmp::Ne, c, self.v_i32(0), "ne");
+                let diff_bb = func.append_block("cmp.diff");
+                let keep_bb = func.append_block("cmp.keep");
+                self.builder.build_cond_br(ne, diff_bb, keep_bb);
+                self.builder.position_at_end(diff_bb);
+                let sign = self.builder.build_select(
+                    self.builder.build_icmp(IntCmp::Slt, c, self.v_i32(0), "neg"),
+                    self.v_i32(u64::MAX),
+                    self.v_i32(1),
+                    "sign",
+                );
+                self.builder.build_ret(sign);
+                self.builder.position_at_end(keep_bb);
+                self.builder.build_br(after_cmp_bb);
+                self.builder.position_at_end(after_cmp_bb);
+                // Equal prefixes: the shorter buffer orders first.
+                let lengths_differ =
+                    self.builder.build_icmp(IntCmp::Ne, alen, blen, "lendiff");
+                let len_bb = func.append_block("cmp.len");
+                let cont = func.append_block("cmp.cont");
+                self.builder.build_cond_br(lengths_differ, len_bb, cont);
+                self.builder.position_at_end(len_bb);
+                let lsign = self.builder.build_select(
+                    self.builder.build_icmp(IntCmp::Ult, alen, blen, "alenlt"),
+                    self.v_i32(u64::MAX),
+                    self.v_i32(1),
+                    "lsign",
+                );
+                self.builder.build_ret(lsign);
+                self.builder.position_at_end(cont);
+                Ok(cont)
+            }
+            Ty::Struct(name) => {
+                let (func_c, ty_c) = self
+                    .cmp_fns
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| no_value(&format!("the order of '{name}'")))?;
+                let c = self.call(func_c, ty_c, &[ap, bp], "cmp");
+                let ne = self.builder.build_icmp(IntCmp::Ne, c, self.v_i32(0), "ne");
+                let diff = func.append_block("cmp.diff");
+                let cont = func.append_block("cmp.cont");
+                self.builder.build_cond_br(ne, diff, cont);
+                self.builder.position_at_end(diff);
+                self.builder.build_ret(c);
+                self.builder.position_at_end(cont);
+                Ok(cont)
+            }
+            _ => {
+                let av = self.ld(ret_ty, ap, "av");
+                let bv = self.ld(ret_ty, bp, "bv");
+                // C's `a != b` / `a < b` are `fcmp` for a float field, which is
+                // exactly the `<`/`!=` `write_field_cmp` writes down.
+                let (ne, lt) = if ty.is_float() {
+                    (
+                        self.builder.build_fcmp(RealCmp::One, av, bv, "ne"),
+                        self.builder.build_fcmp(RealCmp::Olt, av, bv, "lt"),
+                    )
+                } else {
+                    let pred = if is_signed(ty) { IntCmp::Slt } else { IntCmp::Ult };
+                    (
+                        self.builder.build_icmp(IntCmp::Ne, av, bv, "ne"),
+                        self.builder.build_icmp(pred, av, bv, "lt"),
+                    )
+                };
+                let diff = func.append_block("cmp.diff");
+                let cont = func.append_block("cmp.cont");
+                self.builder.build_cond_br(ne, diff, cont);
+                self.builder.position_at_end(diff);
+                let sign = self.builder.build_select(lt, self.v_i32(u64::MAX), self.v_i32(1), "sign");
+                self.builder.build_ret(sign);
+                self.builder.position_at_end(cont);
+                Ok(cont)
+            }
+        }
+    }
+
+    fn emit_enum_clone(&self, e: &crate::types::EnumDef) -> Result<(), String> {
+        let Some((func, _)) = self.clone_fns.get(&e.name).copied() else {
+            return Ok(());
+        };
+        let info = self
+            .enums
+            .get(&e.name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let src = func.get_param(0);
+        let dst = func.get_param(1);
+        let tag_ptr = self.fld(info.llvm_ty, src, ENUM_TAG_FIELD, "tag");
+        let tag = self.ld(self.ctx.i32(), tag_ptr, "tag");
+        self.st(tag, self.fld(info.llvm_ty, dst, ENUM_TAG_FIELD, "tag"));
+        let mut cont = entry;
+        for (i, v) in e.variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            self.builder.position_at_end(cont);
+            let is_i = self
+                .builder
+                .build_icmp(IntCmp::Eq, tag, self.v_i32(i as u64), "isvar");
+            let then_bb = func.append_block("clone.v");
+            let next = func.append_block("clone.next");
+            self.builder.build_cond_br(is_i, then_bb, next);
+            self.builder.position_at_end(then_bb);
+            let src_union = self.fld(info.llvm_ty, src, ENUM_UNION_FIELD, "kelp_v");
+            let dst_union = self.fld(info.llvm_ty, dst, ENUM_UNION_FIELD, "kelp_v");
+            for (fi, field) in v.fields.iter().enumerate() {
+                let s = self.fld(
+                    info.variants[i].payload_ty,
+                    src_union,
+                    fi as u32,
+                    "f",
+                );
+                let d = self.fld(
+                    info.variants[i].payload_ty,
+                    dst_union,
+                    fi as u32,
+                    "f",
+                );
+                self.clone_into(s, d, &field.ty)?;
+            }
+            self.builder.build_br(next);
+            cont = next;
+        }
+        self.builder.position_at_end(cont);
+        self.builder.build_ret_void();
+        Ok(())
+    }
+
+    fn emit_enum_cmp(&self, e: &crate::types::EnumDef) -> Result<(), String> {
+        let Some((func, _)) = self.cmp_fns.get(&e.name).copied() else {
+            return Ok(());
+        };
+        let info = self
+            .enums
+            .get(&e.name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let a = func.get_param(0);
+        let b = func.get_param(1);
+        let ta = self.ld(
+            self.ctx.i32(),
+            self.fld(info.llvm_ty, a, ENUM_TAG_FIELD, "tag"),
+            "ta",
+        );
+        let tb = self.ld(
+            self.ctx.i32(),
+            self.fld(info.llvm_ty, b, ENUM_TAG_FIELD, "tag"),
+            "tb",
+        );
+        // A different tag orders first, so every value of one variant sorts
+        // together.
+        let ne = self.builder.build_icmp(IntCmp::Ne, ta, tb, "tagdiff");
+        let diff = func.append_block("cmp.tag");
+        let cont0 = func.append_block("cmp.variants");
+        self.builder.build_cond_br(ne, diff, cont0);
+        self.builder.position_at_end(diff);
+        let lt = self.builder.build_icmp(IntCmp::Slt, ta, tb, "lt");
+        let sign = self.builder.build_select(lt, self.v_i32(u64::MAX), self.v_i32(1), "sign");
+        self.builder.build_ret(sign);
+
+        let mut cont = cont0;
+        for (i, v) in e.variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            self.builder.position_at_end(cont);
+            let is_i = self
+                .builder
+                .build_icmp(IntCmp::Eq, ta, self.v_i32(i as u64), "isvar");
+            let then_bb = func.append_block("cmp.v");
+            let next = func.append_block("cmp.next");
+            self.builder.build_cond_br(is_i, then_bb, next);
+            self.builder.position_at_end(then_bb);
+            let a_union = self.fld(info.llvm_ty, a, ENUM_UNION_FIELD, "kelp_v");
+            let b_union = self.fld(info.llvm_ty, b, ENUM_UNION_FIELD, "kelp_v");
+            let mut inner = then_bb;
+            for (fi, field) in v.fields.iter().enumerate() {
+                self.builder.position_at_end(inner);
+                let ap = self.fld(info.variants[i].payload_ty, a_union, fi as u32, "f");
+                let bp = self.fld(info.variants[i].payload_ty, b_union, fi as u32, "f");
+                inner = self.emit_field_cmp(func, ap, bp, &field.ty)?;
+            }
+            self.builder.position_at_end(inner);
+            self.builder.build_br(next);
+            cont = next;
+        }
+        self.builder.position_at_end(cont);
+        self.builder.build_ret(self.v_i32(0));
+        Ok(())
+    }
+
+    /// One `List<T>` function set, the mirror of `codegen_c::write_list` and
+    /// `write_list_s1`. The list is `{ data, len, cap }`, the element's size and
+    /// drop decide the bodies, and every bounds check panics with the C
+    /// backend's own text.
+    fn emit_list_bodies(&self, elem: &Ty) -> Result<(), String> {
+        let base = list_c_type(elem);
+        let list_ty = self.cty(&Ty::List(Box::new(elem.clone())))?;
+        let elem_ty = self.lty2(elem)?;
+        let elem_size = self.layout.abi_size_of(elem_ty);
+        let ptr = self.pty();
+        let (i1t, i32t, i64t) = (self.ctx.i1(), self.ctx.i32(), self.ctx.i64());
+        let drop_elem = needs_drop(elem, &self.owned);
+        let sortable = crate::types::value_is_sortable(elem, &self.sortable);
+        let clonable = crate::types::value_is_clonable(elem, &self.clonable);
+        let comparable = crate::types::list_comparable_elem(elem);
+
+        // --- empty ---
+        {
+            let _ = self.start(&format!("{base}__empty"), "entry")?;
+            let l = self.builder.build_alloca(list_ty, "l");
+            self.st(self.ctx.const_null(list_ty), l);
+            let v = self.ld(list_ty, l, "ret");
+            self.builder.build_ret(v);
+        }
+
+        // --- reserve(self, want) ---
+        {
+            let (f, _) = self.start(&format!("{base}__reserve"), "entry")?;
+            let self_p = f.get_param(0);
+            let want = f.get_param(1);
+            let cap = self.ld(i64t, self.fld(list_ty, self_p, L_CAP, "cap"), "cap");
+            let enough = self.builder.build_icmp(IntCmp::Ule, want, cap, "enough");
+            let done = self.block(f, "ret");
+            let grow = self.block(f, "grow");
+            self.builder.build_cond_br(enough, done, grow);
+            self.builder.position_at_end(grow);
+            let cap_slot = self.builder.build_alloca(i64t, "cap");
+            let zero = self.builder.build_icmp(IntCmp::Eq, cap, self.v_i64(0), "zero");
+            let start = self.builder.build_select(zero, self.v_i64(4), cap, "start");
+            self.st(start, cap_slot);
+            let header = self.loop_header(f, "grow.cond");
+            let c = self.ld(i64t, cap_slot, "cap");
+            let need = self.builder.build_icmp(IntCmp::Ult, c, want, "need");
+            let body = self.block(f, "grow.body");
+            let exit = self.block(f, "grow.end");
+            self.builder.build_cond_br(need, body, exit);
+            self.builder.position_at_end(body);
+            let c2 = self.ld(i64t, cap_slot, "cap");
+            let doubled = self.builder.build_int_binop(IntBinOp::Mul, c2, self.v_i64(2), "cap2");
+            self.st(doubled, cap_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let final_cap = self.ld(i64t, cap_slot, "cap");
+            let size = self
+                .builder
+                .build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(elem_size), "bytes");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (realloc, rty) = self.libc_fn("realloc")?;
+            let buf = self.call(realloc, rty, &[data, size], "buf");
+            self.check_alloc(buf, f)?;
+            self.st(buf, self.fld(list_ty, self_p, L_DATA, "data"));
+            self.st(final_cap, self.fld(list_ty, self_p, L_CAP, "cap"));
+            self.builder.build_br(done);
+            self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+
+        // --- of(v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__of"), "entry")?;
+            let v = f.get_param(0);
+            let l = self.builder.build_alloca(list_ty, "l");
+            self.st(self.ctx.const_null(list_ty), l);
+            let (reserve, rty) = self.cfn(&format!("{base}__reserve"))?;
+            self.call(reserve, rty, &[l, self.v_i64(1)], "");
+            let data = self.ld(ptr, self.fld(list_ty, l, L_DATA, "data"), "data");
+            let addr = self.gep(elem_ty, data, self.v_i64(0), "at");
+            self.st(v, addr);
+            self.st(self.v_i64(1), self.fld(list_ty, l, L_LEN, "len"));
+            let out = self.ld(list_ty, l, "of");
+            self.builder.build_ret(out);
+        }
+
+        // --- len / is_empty ---
+        {
+            let (f, _) = self.start(&format!("{base}__len"), "entry")?;
+            let n = self.ld(i64t, self.fld(list_ty, f.get_param(0), L_LEN, "len"), "len");
+            self.builder.build_ret(n);
+        }
+        {
+            let (f, _) = self.start(&format!("{base}__is_empty"), "entry")?;
+            let n = self.ld(i64t, self.fld(list_ty, f.get_param(0), L_LEN, "len"), "len");
+            let e = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "empty");
+            self.builder.build_ret(e);
+        }
+
+        // --- push(self, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__push"), "entry")?;
+            let self_p = f.get_param(0);
+            let v = f.get_param(1);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let want = self.builder.build_int_binop(IntBinOp::Add, len, self.v_i64(1), "want");
+            let (reserve, rty) = self.cfn(&format!("{base}__reserve"))?;
+            self.call(reserve, rty, &[self_p, want], "");
+            let n = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let addr = self.gep(elem_ty, data, n, "at");
+            self.st(v, addr);
+            let next = self.builder.build_int_binop(IntBinOp::Add, n, self.v_i64(1), "len1");
+            self.st(next, self.fld(list_ty, self_p, L_LEN, "len"));
+            self.builder.build_ret_void();
+        }
+
+        // --- bounds(self, i) ---
+        {
+            let (f, _) = self.start(&format!("{base}__bounds"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let bad = self.builder.build_icmp(IntCmp::Uge, i, len, "oob");
+            let oob = self.block(f, "oob");
+            let ok = self.block(f, "inbounds");
+            self.builder.build_cond_br(bad, oob, ok);
+            self.builder.position_at_end(oob);
+            self.emit_panic("List.get: index out of bounds")?;
+            self.builder.position_at_end(ok);
+            self.builder.build_ret_void();
+        }
+
+        // --- get / get_const ---
+        if elem.is_copy() {
+            let (f, _) = self.start(&format!("{base}__get"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let (bounds, bty) = self.cfn(&format!("{base}__bounds"))?;
+            self.call(bounds, bty, &[self_p, i], "");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let addr = self.gep(elem_ty, data, i, "at");
+            let v = self.ld(elem_ty, addr, "get");
+            self.builder.build_ret(v);
+        } else {
+            let (f, _) = self.start(&format!("{base}__get_const"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let (bounds, bty) = self.cfn(&format!("{base}__bounds"))?;
+            self.call(bounds, bty, &[self_p, i], "");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let addr = self.gep(elem_ty, data, i, "at");
+            self.builder.build_ret(addr);
+        }
+
+        // --- set(self, i, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__set"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let v = f.get_param(2);
+            let (bounds, bty) = self.cfn(&format!("{base}__bounds"))?;
+            self.call(bounds, bty, &[self_p, i], "");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let addr = self.gep(elem_ty, data, i, "at");
+            if drop_elem {
+                self.call_drop(addr, elem)?;
+            }
+            self.st(v, addr);
+            self.builder.build_ret_void();
+        }
+
+        // --- pop(self) ---
+        {
+            let (f, _) = self.start(&format!("{base}__pop"), "entry")?;
+            let self_p = f.get_param(0);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let empty = self.builder.build_icmp(IntCmp::Eq, len, self.v_i64(0), "empty");
+            let bad = self.block(f, "empty");
+            let ok = self.block(f, "pop");
+            self.builder.build_cond_br(empty, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("List.pop: the list is empty")?;
+            self.builder.position_at_end(ok);
+            let last = self.builder.build_int_binop(IntBinOp::Sub, len, self.v_i64(1), "last");
+            self.st(last, self.fld(list_ty, self_p, L_LEN, "len"));
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let addr = self.gep(elem_ty, data, last, "at");
+            let v = self.ld(elem_ty, addr, "pop");
+            self.builder.build_ret(v);
+        }
+
+        // --- clear(self) ---
+        {
+            let (f, _) = self.start(&format!("{base}__clear"), "entry")?;
+            let self_p = f.get_param(0);
+            if drop_elem {
+                let i_slot = self.builder.build_alloca(i64t, "i");
+                self.st(self.v_i64(0), i_slot);
+                let header = self.loop_header(f, "clear.cond");
+                let i = self.ld(i64t, i_slot, "i");
+                let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+                let more = self.builder.build_icmp(IntCmp::Ult, i, len, "more");
+                let body = self.block(f, "clear.body");
+                let exit = self.block(f, "clear.end");
+                self.builder.build_cond_br(more, body, exit);
+                self.builder.position_at_end(body);
+                let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+                let addr = self.gep(elem_ty, data, i, "at");
+                self.call_drop(addr, elem)?;
+                let next = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+                self.st(next, i_slot);
+                self.builder.build_br(header);
+                self.builder.position_at_end(exit);
+            }
+            self.st(self.v_i64(0), self.fld(list_ty, self_p, L_LEN, "len"));
+            self.builder.build_ret_void();
+        }
+
+        // --- reverse(self) ---
+        {
+            let (f, _) = self.start(&format!("{base}__reverse"), "entry")?;
+            let self_p = f.get_param(0);
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            self.st(self.v_i64(0), i_slot);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            self.st(len, j_slot);
+            let header = self.loop_header(f, "rev.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let j = self.ld(i64t, j_slot, "j");
+            let i1 = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            let more = self.builder.build_icmp(IntCmp::Ult, i1, j, "more");
+            let body = self.block(f, "rev.body");
+            let exit = self.block(f, "rev.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let jm = self.builder.build_int_binop(IntBinOp::Sub, j, self.v_i64(1), "j1");
+            self.st(jm, j_slot);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let ai = self.gep(elem_ty, data, i, "ai");
+            let aj = self.gep(elem_ty, data, jm, "aj");
+            let tv = self.ld(elem_ty, ai, "t");
+            let u = self.ld(elem_ty, aj, "u");
+            self.st(u, ai);
+            self.st(tv, aj);
+            let inx = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(inx, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            self.builder.build_ret_void();
+        }
+
+        // --- insert(self, i, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__insert"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let v = f.get_param(2);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let bad = self.builder.build_icmp(IntCmp::Ugt, i, len, "oob");
+            let oob = self.block(f, "oob");
+            let ok = self.block(f, "insert");
+            self.builder.build_cond_br(bad, oob, ok);
+            self.builder.position_at_end(oob);
+            self.emit_panic("List.insert: index out of bounds")?;
+            self.builder.position_at_end(ok);
+            let want = self.builder.build_int_binop(IntBinOp::Add, len, self.v_i64(1), "want");
+            let (reserve, rty) = self.cfn(&format!("{base}__reserve"))?;
+            self.call(reserve, rty, &[self_p, want], "");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            self.st(len, j_slot);
+            let header = self.loop_header(f, "shift.cond");
+            let j = self.ld(i64t, j_slot, "j");
+            let more = self.builder.build_icmp(IntCmp::Ugt, j, i, "more");
+            let body = self.block(f, "shift.body");
+            let exit = self.block(f, "shift.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let jm = self.builder.build_int_binop(IntBinOp::Sub, j, self.v_i64(1), "j1");
+            let src = self.gep(elem_ty, data, jm, "src");
+            let dst = self.gep(elem_ty, data, j, "dst");
+            let sv = self.ld(elem_ty, src, "sv");
+            self.st(sv, dst);
+            self.st(jm, j_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let at = self.gep(elem_ty, data, i, "at");
+            self.st(v, at);
+            let len1 = self.builder.build_int_binop(IntBinOp::Add, len, self.v_i64(1), "len1");
+            self.st(len1, self.fld(list_ty, self_p, L_LEN, "len"));
+            self.builder.build_ret_void();
+        }
+
+        // --- remove(self, i) ---
+        {
+            let (f, _) = self.start(&format!("{base}__remove"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let bad = self.builder.build_icmp(IntCmp::Uge, i, len, "oob");
+            let oob = self.block(f, "oob");
+            let ok = self.block(f, "remove");
+            self.builder.build_cond_br(bad, oob, ok);
+            self.builder.position_at_end(oob);
+            self.emit_panic("List.remove: index out of bounds")?;
+            self.builder.position_at_end(ok);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let out_slot = self.builder.build_alloca(elem_ty, "out");
+            let at = self.gep(elem_ty, data, i, "at");
+            self.st(self.ld(elem_ty, at, "v"), out_slot);
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            self.st(i, j_slot);
+            let header = self.loop_header(f, "shift.cond");
+            let j = self.ld(i64t, j_slot, "j");
+            let j1 = self.builder.build_int_binop(IntBinOp::Add, j, self.v_i64(1), "j1");
+            let more = self.builder.build_icmp(IntCmp::Ult, j1, len, "more");
+            let body = self.block(f, "shift.body");
+            let exit = self.block(f, "shift.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let src = self.gep(elem_ty, data, j1, "src");
+            let dst = self.gep(elem_ty, data, j, "dst");
+            let sv = self.ld(elem_ty, src, "sv");
+            self.st(sv, dst);
+            self.st(j1, j_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let len1 = self.builder.build_int_binop(IntBinOp::Sub, len, self.v_i64(1), "len1");
+            self.st(len1, self.fld(list_ty, self_p, L_LEN, "len"));
+            let out = self.ld(elem_ty, out_slot, "removed");
+            self.builder.build_ret(out);
+        }
+
+        // --- cmp(a, b) and sort(self) ---
+        if sortable {
+            let (f, _) = self.start(&format!("{base}__cmp"), "entry")?;
+            let a = f.get_param(0);
+            let b = f.get_param(1);
+            let av = self.ld(elem_ty, a, "a");
+            let bv = self.ld(elem_ty, b, "b");
+            let out = match elem {
+                Ty::Bool => {
+                    let ax = self.builder.build_int_cast(false, true, av, i32t, "ax");
+                    let bx = self.builder.build_int_cast(false, true, bv, i32t, "bx");
+                    self.builder.build_int_binop(IntBinOp::Sub, ax, bx, "cmp")
+                }
+                Ty::String | Ty::Bytes => {
+                    let alen = self.ld(i64t, self.fld(elem_ty, a, 1, "alen"), "alen");
+                    let blen = self.ld(i64t, self.fld(elem_ty, b, 1, "blen"), "blen");
+                    let min = self.builder.build_select(
+                        self.builder.build_icmp(IntCmp::Ult, alen, blen, "lt"),
+                        alen,
+                        blen,
+                        "n",
+                    );
+                    let adata = self.ld(ptr, self.fld(elem_ty, a, 0, "ad"), "ad");
+                    let bdata = self.ld(ptr, self.fld(elem_ty, b, 0, "bd"), "bd");
+                    let (memcmp, mty) = self.libc_fn("memcmp")?;
+                    let c = self.call(memcmp, mty, &[adata, bdata, min], "memcmp");
+                    let c1 = self.builder.build_select(
+                        self.builder.build_icmp(IntCmp::Slt, c, self.v_i32(0), "neg"),
+                        self.v_i32(u64::MAX),
+                        self.v_i32(1),
+                        "c1",
+                    );
+                    let npos = self.builder.build_icmp(IntCmp::Ugt, min, self.v_i64(0), "npos");
+                    let cnonzero = self.builder.build_icmp(IntCmp::Ne, c, self.v_i32(0), "cnz");
+                    let taken = self
+                        .builder
+                        .build_int_binop(IntBinOp::And, npos, cnonzero, "taken");
+                    let llt = self.builder.build_icmp(IntCmp::Ult, alen, blen, "llt");
+                    let lgt = self.builder.build_icmp(IntCmp::Ugt, alen, blen, "lgt");
+                    let len_cmp = self.builder.build_select(
+                        llt,
+                        self.v_i32(u64::MAX),
+                        self.builder.build_select(lgt, self.v_i32(1), self.v_i32(0), "l0"),
+                        "lc",
+                    );
+                    self.builder.build_select(taken, c1, len_cmp, "cmp")
+                }
+                Ty::Struct(name) => {
+                    let (cmp, cty2) = self
+                        .cmp_fns
+                        .get(name)
+                        .copied()
+                        .ok_or_else(|| no_value(&format!("the order of '{name}'")))?;
+                    self.call(cmp, cty2, &[a, b], "cmp")
+                }
+                _ => {
+                    // `(*a > *b) - (*a < *b)`, with `fcmp` for a float element
+                    // (a `List<f64>` sorts, and C's `>`/`<` on a double are
+                    // `fcmp ogt`/`olt`).
+                    let (gt, lt) = if elem.is_float() {
+                        (
+                            self.builder.build_fcmp(RealCmp::Ogt, av, bv, "gt"),
+                            self.builder.build_fcmp(RealCmp::Olt, av, bv, "lt"),
+                        )
+                    } else {
+                        let pred_gt = if is_signed(elem) { IntCmp::Sgt } else { IntCmp::Ugt };
+                        let pred_lt = if is_signed(elem) { IntCmp::Slt } else { IntCmp::Ult };
+                        (
+                            self.builder.build_icmp(pred_gt, av, bv, "gt"),
+                            self.builder.build_icmp(pred_lt, av, bv, "lt"),
+                        )
+                    };
+                    let g = self.builder.build_int_cast(false, true, gt, i32t, "g");
+                    let l = self.builder.build_int_cast(false, true, lt, i32t, "l");
+                    self.builder.build_int_binop(IntBinOp::Sub, g, l, "cmp")
+                }
+            };
+            self.builder.build_ret(out);
+
+            // sort(self): insertion sort, stable and in place, the mirror of
+            // `write_list_s1`'s loop.
+            let (f, _) = self.start(&format!("{base}__sort"), "entry")?;
+            let self_p = f.get_param(0);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            let v_slot = self.builder.build_alloca(elem_ty, "v");
+            self.st(self.v_i64(1), i_slot);
+            let outer = self.loop_header(f, "sort.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, len, "more");
+            let obody = self.block(f, "sort.body");
+            let oexit = self.block(f, "sort.end");
+            self.builder.build_cond_br(more, obody, oexit);
+            self.builder.position_at_end(obody);
+            let at = self.gep(elem_ty, data, i, "at");
+            self.st(self.ld(elem_ty, at, "v"), v_slot);
+            self.st(i, j_slot);
+            let inner = self.loop_header(f, "sort.inner");
+            let j = self.ld(i64t, j_slot, "j");
+            let jpos = self.builder.build_icmp(IntCmp::Ugt, j, self.v_i64(0), "jpos");
+            let cond = self.block(f, "sort.inner.cond");
+            let iexit = self.block(f, "sort.inner.end");
+            self.builder.build_cond_br(jpos, cond, iexit);
+            self.builder.position_at_end(cond);
+            let jm = self.builder.build_int_binop(IntBinOp::Sub, j, self.v_i64(1), "j1");
+            let prev = self.gep(elem_ty, data, jm, "prev");
+            let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
+            let c = self.call(cmpsym, cmpty, &[prev, v_slot], "cmp");
+            let swap = self.builder.build_icmp(IntCmp::Sgt, c, self.v_i32(0), "gt");
+            let ibody = self.block(f, "sort.inner.body");
+            self.builder.build_cond_br(swap, ibody, iexit);
+            self.builder.position_at_end(ibody);
+            let dst = self.gep(elem_ty, data, j, "dst");
+            self.st(self.ld(elem_ty, prev, "pv"), dst);
+            self.st(jm, j_slot);
+            self.builder.build_br(inner);
+            self.builder.position_at_end(iexit);
+            let jfin = self.ld(i64t, j_slot, "j");
+            let slot = self.gep(elem_ty, data, jfin, "slot");
+            self.st(self.ld(elem_ty, v_slot, "vv"), slot);
+            let inext = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(inext, i_slot);
+            self.builder.build_br(outer);
+            self.builder.position_at_end(oexit);
+            self.builder.build_ret_void();
+        }
+
+        // --- contains(self, v) ---
+        if comparable {
+            let (f, _) = self.start(&format!("{base}__contains"), "entry")?;
+            let self_p = f.get_param(0);
+            let v = f.get_param(1);
+            let out_slot = self.builder.build_alloca(i1t, "found");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            self.st(self.ctx.const_bool(false), out_slot);
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "has.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, len, "more");
+            let body = self.block(f, "has.body");
+            let exit = self.block(f, "has.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let at = self.gep(elem_ty, data, i, "at");
+            let hit = match elem {
+                Ty::String | Ty::Bytes => {
+                    let alen = self.ld(i64t, self.fld(elem_ty, at, 1, "alen"), "alen");
+                    let vlen = self.ld(i64t, self.fld(elem_ty, v, 1, "vlen"), "vlen");
+                    let leq = self.builder.build_icmp(IntCmp::Eq, alen, vlen, "leq");
+                    let zero = self.builder.build_icmp(IntCmp::Eq, vlen, self.v_i64(0), "z");
+                    // `zleq` is computed in `body`, so the phi is the first
+                    // instruction of `after` (a phi must be grouped at the top).
+                    let zeros = self.builder.build_int_binop(IntBinOp::And, zero, leq, "zleq");
+                    let data_cmp = self.block(f, "has.cmp");
+                    let after = self.block(f, "has.after");
+                    self.builder.build_cond_br(zero, after, data_cmp);
+                    self.builder.position_at_end(data_cmp);
+                    let adata = self.ld(ptr, self.fld(elem_ty, at, 0, "ad"), "ad");
+                    let vdata = self.ld(ptr, self.fld(elem_ty, v, 0, "vd"), "vd");
+                    let (memcmp, mty) = self.libc_fn("memcmp")?;
+                    let c = self.call(memcmp, mty, &[adata, vdata, vlen], "memcmp");
+                    let c0 = self.builder.build_icmp(IntCmp::Eq, c, self.v_i32(0), "c0");
+                    // Length first, then the bytes: `"app"` must not equal
+                    // `"apple"` even though `memcmp` over the shorter prefix
+                    // says the bytes agree.
+                    let ceq = self.builder.build_int_binop(IntBinOp::And, leq, c0, "ceq");
+                    self.builder.build_br(after);
+                    self.builder.position_at_end(after);
+                    let hit_phi = self.builder.build_phi(i1t, "hit");
+                    self.builder.add_incoming(hit_phi, &[(zeros, body), (ceq, data_cmp)]);
+                    hit_phi
+                }
+                _ => self.builder.build_icmp(IntCmp::Eq, self.ld(elem_ty, at, "av"), v, "hit"),
+            };
+            let found = self.block(f, "has.found");
+            let next = self.block(f, "has.next");
+            self.builder.build_cond_br(hit, found, next);
+            self.builder.position_at_end(found);
+            self.st(self.ctx.const_bool(true), out_slot);
+            self.builder.build_br(exit);
+            self.builder.position_at_end(next);
+            let inext = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(inext, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let out = self.ld(i1t, out_slot, "found");
+            self.builder.build_ret(out);
+        }
+
+        // --- slice(self, from, to) and clone(self) ---
+        if clonable {
+            let (f, _) = self.start(&format!("{base}__slice"), "entry")?;
+            let self_p = f.get_param(0);
+            let from = f.get_param(1);
+            let to = f.get_param(2);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let a = self.builder.build_icmp(IntCmp::Ugt, from, to, "from_gt_to");
+            let b = self.builder.build_icmp(IntCmp::Ugt, to, len, "to_gt_len");
+            let bad = self.builder.build_int_binop(IntBinOp::Or, a, b, "oob");
+            let oob = self.block(f, "oob");
+            let ok = self.block(f, "slice");
+            self.builder.build_cond_br(bad, oob, ok);
+            self.builder.position_at_end(oob);
+            self.emit_panic("List.slice: range out of bounds")?;
+            self.builder.position_at_end(ok);
+            let out_slot = self.builder.build_alloca(list_ty, "out");
+            self.st(self.ctx.const_null(list_ty), out_slot);
+            let n = self.builder.build_int_binop(IntBinOp::Sub, to, from, "n");
+            let (reserve, rty) = self.cfn(&format!("{base}__reserve"))?;
+            self.call(reserve, rty, &[out_slot, n], "");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            self.st(from, i_slot);
+            let header = self.loop_header(f, "slice.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, to, "more");
+            let body = self.block(f, "slice.body");
+            let exit = self.block(f, "slice.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let src = self.gep(elem_ty, data, i, "src");
+            let olen = self.ld(i64t, self.fld(list_ty, out_slot, L_LEN, "olen"), "olen");
+            let odata = self.ld(ptr, self.fld(list_ty, out_slot, L_DATA, "odata"), "odata");
+            let dst = self.gep(elem_ty, odata, olen, "dst");
+            self.clone_into(src, dst, elem)?;
+            let olen1 = self.builder.build_int_binop(IntBinOp::Add, olen, self.v_i64(1), "olen1");
+            self.st(olen1, self.fld(list_ty, out_slot, L_LEN, "len"));
+            let inext = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(inext, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let out = self.ld(list_ty, out_slot, "slice");
+            self.builder.build_ret(out);
+
+            let (f, _) = self.start(&format!("{base}__clone"), "entry")?;
+            let self_p = f.get_param(0);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let (slice, sty) = self.cfn(&format!("{base}__slice"))?;
+            let out = self.call(slice, sty, &[self_p, self.v_i64(0), len], "clone");
+            self.builder.build_ret(out);
+        }
+
+        // --- drop(self) ---
+        {
+            let (f, _) = self.start(&drop_fn_name(&Ty::List(Box::new(elem.clone()))), "entry")?;
+            let self_p = f.get_param(0);
+            let (clear, cty2) = self.cfn(&format!("{base}__clear"))?;
+            self.call(clear, cty2, &[self_p], "");
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[data], "");
+            self.st(self.ctx.const_null(ptr), self.fld(list_ty, self_p, L_DATA, "data"));
+            self.st(self.v_i64(0), self.fld(list_ty, self_p, L_CAP, "cap"));
+            self.builder.build_ret_void();
+        }
+        Ok(())
+    }
+
+    // ---- container bodies -------------------------------------------------
+
+    fn emit_container_bodies(&self) -> Result<(), String> {
+        for elem in self.lists_sorted() {
+            self.emit_list_bodies(&elem)?;
+        }
+        for elem in self.boxes_sorted() {
+            self.emit_box_bodies(&elem)?;
+        }
+        for (key, value) in self.maps_sorted() {
+            self.emit_map_bodies(&key, &value)?;
+        }
+        for arr in self.arrays_sorted() {
+            if let Ty::Array(elem, len) = arr {
+                self.emit_array_bodies(&elem, len)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One `Box<T>` function set, the mirror of `codegen_c::write_box`. The box
+    /// holds one pointer or `NULL`; `take` moves the value out, which is what
+    /// makes a recursive `datac` expressible without `Option`.
+    fn emit_box_bodies(&self, elem: &Ty) -> Result<(), String> {
+        let base = box_c_type(elem);
+        let box_ty = self.cty(&Ty::Box(Box::new(elem.clone())))?;
+        let elem_ty = self.lty2(elem)?;
+        let ptr = self.pty();
+        let i1t = self.ctx.i1();
+        let drop_elem = needs_drop(elem, &self.owned);
+        let null = self.ctx.const_null(ptr);
+
+        // --- empty ---
+        {
+            let _ = self.start(&format!("{base}__empty"), "entry")?;
+            let b = self.builder.build_alloca(box_ty, "b");
+            self.st(null, self.fld(box_ty, b, 0, "value"));
+            let v = self.ld(box_ty, b, "empty");
+            self.builder.build_ret(v);
+        }
+
+        // --- of(v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__of"), "entry")?;
+            let v = f.get_param(0);
+            let b = self.builder.build_alloca(box_ty, "b");
+            let p = self.malloc_for(elem_ty)?;
+            self.check_alloc(p, f)?;
+            self.st(v, p);
+            self.st(p, self.fld(box_ty, b, 0, "value"));
+            let out = self.ld(box_ty, b, "of");
+            self.builder.build_ret(out);
+        }
+
+        // --- is_empty ---
+        {
+            let (f, _) = self.start(&format!("{base}__is_empty"), "entry")?;
+            let value = self.ld(ptr, self.fld(box_ty, f.get_param(0), 0, "value"), "value");
+            let e = self.builder.build_icmp(IntCmp::Eq, value, null, "empty");
+            self.builder.build_ret(e);
+        }
+
+        // --- get / get_const ---
+        if elem.is_copy() {
+            let (f, _) = self.start(&format!("{base}__get"), "entry")?;
+            let value = self.ld(ptr, self.fld(box_ty, f.get_param(0), 0, "value"), "value");
+            let empty = self.builder.build_icmp(IntCmp::Eq, value, null, "empty");
+            let bad = self.block(f, "empty");
+            let ok = self.block(f, "get");
+            self.builder.build_cond_br(empty, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("Box.get: the box is empty")?;
+            self.builder.position_at_end(ok);
+            let v = self.ld(elem_ty, value, "get");
+            self.builder.build_ret(v);
+        } else {
+            let (f, _) = self.start(&format!("{base}__get_const"), "entry")?;
+            let value = self.ld(ptr, self.fld(box_ty, f.get_param(0), 0, "value"), "value");
+            let empty = self.builder.build_icmp(IntCmp::Eq, value, null, "empty");
+            let bad = self.block(f, "empty");
+            let ok = self.block(f, "get");
+            self.builder.build_cond_br(empty, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("Box.get: the box is empty")?;
+            self.builder.position_at_end(ok);
+            self.builder.build_ret(value);
+        }
+
+        // --- set(self, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__set"), "entry")?;
+            let self_p = f.get_param(0);
+            let v = f.get_param(1);
+            let slot = self.fld(box_ty, self_p, 0, "value");
+            let value = self.ld(ptr, slot, "value");
+            let empty = self.builder.build_icmp(IntCmp::Eq, value, null, "empty");
+            let null_bb = self.block(f, "alloc");
+            let have_bb = self.block(f, "have");
+            let stored = self.block(f, "store");
+            self.builder.build_cond_br(empty, null_bb, have_bb);
+            self.builder.position_at_end(null_bb);
+            let p = self.malloc_for(elem_ty)?;
+            self.check_alloc(p, f)?;
+            self.st(p, slot);
+            self.builder.build_br(stored);
+            self.builder.position_at_end(have_bb);
+            if drop_elem {
+                self.call_drop(value, elem)?;
+            }
+            self.builder.build_br(stored);
+            self.builder.position_at_end(stored);
+            let now = self.ld(ptr, slot, "value");
+            self.st(v, now);
+            self.builder.build_ret_void();
+        }
+
+        // --- take(self) ---
+        {
+            let (f, _) = self.start(&format!("{base}__take"), "entry")?;
+            let self_p = f.get_param(0);
+            let slot = self.fld(box_ty, self_p, 0, "value");
+            let value = self.ld(ptr, slot, "value");
+            let empty = self.builder.build_icmp(IntCmp::Eq, value, null, "empty");
+            let bad = self.block(f, "empty");
+            let ok = self.block(f, "take");
+            self.builder.build_cond_br(empty, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("Box.take: the box is empty")?;
+            self.builder.position_at_end(ok);
+            let v = self.ld(elem_ty, value, "take");
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[value], "");
+            self.st(null, slot);
+            self.builder.build_ret(v);
+        }
+
+        // --- drop(self) ---
+        {
+            let (f, _) = self.start(&drop_fn_name(&Ty::Box(Box::new(elem.clone()))), "entry")?;
+            let self_p = f.get_param(0);
+            let slot = self.fld(box_ty, self_p, 0, "value");
+            let value = self.ld(ptr, slot, "value");
+            let empty = self.builder.build_icmp(IntCmp::Eq, value, null, "empty");
+            let done = self.block(f, "ret");
+            let live = self.block(f, "live");
+            self.builder.build_cond_br(empty, done, live);
+            self.builder.position_at_end(live);
+            if drop_elem {
+                self.call_drop(value, elem)?;
+            }
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[value], "");
+            self.st(null, slot);
+            self.builder.build_br(done);
+            self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+        let _ = i1t;
+        Ok(())
+    }
+
+    /// One `[T; N]` function set, the mirror of `codegen_c::write_array`. The
+    /// array is `{ T v[N] }` held inline, so nothing here allocates; `len()` is
+    /// the type's own constant and `get`/`set` are the same bounds check
+    /// `List` uses.
+    fn emit_array_bodies(&self, elem: &Ty, len: u64) -> Result<(), String> {
+        let base = crate::types::array_c_type(elem, len);
+        let array_ty = self.cty(&Ty::Array(Box::new(elem.clone()), len))?;
+        let elem_ty = self.lty2(elem)?;
+        let i64t = self.ctx.i64();
+        let i1t = self.ctx.i1();
+        let drop_elem = needs_drop(elem, &self.owned);
+        let n = self.v_i64(len);
+
+        // --- len / is_empty ---
+        {
+            let (f, _) = self.start(&format!("{base}__len"), "entry")?;
+            let _ = f;
+            self.builder.build_ret(n);
+        }
+        {
+            let (f, _) = self.start(&format!("{base}__is_empty"), "entry")?;
+            let _ = f;
+            self.builder.build_ret(self.ctx.const_bool(false));
+        }
+
+        // --- bounds(i) ---
+        {
+            let (f, _) = self.start(&format!("{base}__bounds"), "entry")?;
+            let i = f.get_param(0);
+            let bad = self.builder.build_icmp(IntCmp::Uge, i, n, "oob");
+            let oob = self.block(f, "oob");
+            let ok = self.block(f, "inbounds");
+            self.builder.build_cond_br(bad, oob, ok);
+            self.builder.position_at_end(oob);
+            self.emit_panic("Array.get: index out of bounds")?;
+            self.builder.position_at_end(ok);
+            self.builder.build_ret_void();
+        }
+
+        // --- get / get_const ---
+        if elem.is_copy() {
+            let (f, _) = self.start(&format!("{base}__get"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let (bounds, bty) = self.cfn(&format!("{base}__bounds"))?;
+            self.call(bounds, bty, &[i], "");
+            let v0 = self.fld(array_ty, self_p, 0, "v");
+            let addr = self.gep(elem_ty, v0, i, "at");
+            let v = self.ld(elem_ty, addr, "get");
+            self.builder.build_ret(v);
+        } else {
+            let (f, _) = self.start(&format!("{base}__get_const"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let (bounds, bty) = self.cfn(&format!("{base}__bounds"))?;
+            self.call(bounds, bty, &[i], "");
+            let v0 = self.fld(array_ty, self_p, 0, "v");
+            let addr = self.gep(elem_ty, v0, i, "at");
+            self.builder.build_ret(addr);
+        }
+
+        // --- set(self, i, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__set"), "entry")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let v = f.get_param(2);
+            let (bounds, bty) = self.cfn(&format!("{base}__bounds"))?;
+            self.call(bounds, bty, &[i], "");
+            let v0 = self.fld(array_ty, self_p, 0, "v");
+            let addr = self.gep(elem_ty, v0, i, "at");
+            if drop_elem {
+                self.call_drop(addr, elem)?;
+            }
+            self.st(v, addr);
+            self.builder.build_ret_void();
+        }
+
+        // --- fill(v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__fill"), "entry")?;
+            let v = f.get_param(0);
+            let out = self.builder.build_alloca(array_ty, "r");
+            let v0 = self.fld(array_ty, out, 0, "v");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "fill.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let body = self.block(f, "fill.body");
+            let exit = self.block(f, "fill.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let addr = self.gep(elem_ty, v0, i, "at");
+            self.st(v, addr);
+            let next = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(next, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let out_v = self.ld(array_ty, out, "fill");
+            self.builder.build_ret(out_v);
+        }
+
+        // --- drop(self) ---
+        {
+            let (f, _) = self.start(
+                &drop_fn_name(&Ty::Array(Box::new(elem.clone()), len)),
+                "entry",
+            )?;
+            let self_p = f.get_param(0);
+            if drop_elem {
+                let v0 = self.fld(array_ty, self_p, 0, "v");
+                let i_slot = self.builder.build_alloca(i64t, "i");
+                self.st(self.v_i64(0), i_slot);
+                let header = self.loop_header(f, "drop.cond");
+                let i = self.ld(i64t, i_slot, "i");
+                let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+                let body = self.block(f, "drop.body");
+                let exit = self.block(f, "drop.end");
+                self.builder.build_cond_br(more, body, exit);
+                self.builder.position_at_end(body);
+                let addr = self.gep(elem_ty, v0, i, "at");
+                self.call_drop(addr, elem)?;
+                let next = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+                self.st(next, i_slot);
+                self.builder.build_br(header);
+                self.builder.position_at_end(exit);
+            }
+            self.builder.build_ret_void();
+        }
+        let _ = i1t;
+        Ok(())
+    }
+
+    fn map_key_arg(&self, key: &Ty) -> Result<Type<'a>, String> {
+        if key == &Ty::String {
+            Ok(self.pty())
+        } else {
+            self.lty2(key)
+        }
+    }
+
+    fn map_specs(&self, key: &Ty, value: &Ty) -> Result<Vec<CfnSpec<'a>>, String> {
+        let base = map_c_type(key, value);
+        let map_ty = self.cty(&Ty::Map(Box::new(key.clone()), Box::new(value.clone())))?;
+        let value_ty = self.lty2(value)?;
+        let key_arg = self.map_key_arg(key)?;
+        let list_key_ty = self.cty(&Ty::List(Box::new(key.clone())))?;
+        let list_value_ty = self.cty(&Ty::List(Box::new(value.clone())))?;
+        let ptr = self.pty();
+        let void = self.ctx.void();
+        let (i1t, i64t) = (self.ctx.i1(), self.ctx.i64());
+        let clonable = list_clonable_elem(value);
+        let mut out = vec![
+            spec(&format!("{base}__new"), map_ty, &[]),
+            spec(&format!("{base}__find"), i64t, &[ptr, key_arg, ptr]),
+            spec(&format!("{base}__rehash"), void, &[ptr, i64t]),
+            spec(&format!("{base}__insert"), void, &[ptr, key_arg, value_ty]),
+            spec(&format!("{base}__has"), i1t, &[ptr, key_arg]),
+        ];
+        if value.is_copy() {
+            out.push(spec(&format!("{base}__get"), value_ty, &[ptr, key_arg]));
+        } else {
+            out.push(spec(&format!("{base}__get_const"), ptr, &[ptr, key_arg]));
+        }
+        if clonable {
+            out.push(spec(
+                &format!("{base}__get_or"),
+                value_ty,
+                &[ptr, key_arg, value_ty],
+            ));
+        }
+        out.push(spec(&format!("{base}__remove"), value_ty, &[ptr, key_arg]));
+        out.push(spec(&format!("{base}__clear"), void, &[ptr]));
+        out.push(spec(&format!("{base}__len"), i64t, &[ptr]));
+        out.push(spec(&format!("{base}__is_empty"), i1t, &[ptr]));
+        out.push(spec(&format!("{base}__keys"), list_key_ty, &[ptr]));
+        if clonable {
+            out.push(spec(&format!("{base}__values"), list_value_ty, &[ptr]));
+        }
+        out.push(spec(
+            &drop_fn_name(&Ty::Map(Box::new(key.clone()), Box::new(value.clone()))),
+            void,
+            &[ptr],
+        ));
+        Ok(out)
+    }
+
+    /// `kelp_map_hash`/`kelp_map_mix` over a key *argument* (a `str` view for a
+    /// `String` key, the value itself for a scalar), the mirror of
+    /// `write_map`'s `hash_arg`.
+    fn map_key_hash_arg(&self, key: &Ty, k: Value<'a>) -> Result<Value<'a>, String> {
+        if key == &Ty::String {
+            let (strlen, sty) = self.libc_fn("strlen")?;
+            let n = self.call(strlen, sty, &[k], "len");
+            let rt = self.rt("kelp_map_hash")?;
+            Ok(self.call(rt.func, rt.ty, &[k, n], "hash"))
+        } else {
+            let wide = self.key_to_u64(key, k)?;
+            let rt = self.rt("kelp_map_mix")?;
+            Ok(self.call(rt.func, rt.ty, &[wide], "hash"))
+        }
+    }
+
+    /// The same hash over a *stored* key (a `kelp_String` inline in the entry,
+    /// or a scalar).
+    fn map_key_hash_stored(
+        &self,
+        key: &Ty,
+        entry_ty: Type<'a>,
+        entry: Value<'a>,
+    ) -> Result<Value<'a>, String> {
+        if key == &Ty::String {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            let data = self.ld(self.pty(), self.fld(self.lty2(key)?, key_addr, 0, "d"), "d");
+            let len = self.ld(self.ctx.i64(), self.fld(self.lty2(key)?, key_addr, 1, "n"), "n");
+            let rt = self.rt("kelp_map_hash")?;
+            Ok(self.call(rt.func, rt.ty, &[data, len], "hash"))
+        } else {
+            let key_ty = self.lty2(key)?;
+            let kv = self.ld(key_ty, self.fld(entry_ty, entry, 0, "key"), "key");
+            let wide = self.key_to_u64(key, kv)?;
+            let rt = self.rt("kelp_map_mix")?;
+            Ok(self.call(rt.func, rt.ty, &[wide], "hash"))
+        }
+    }
+
+    /// Whether the entry's stored key equals the argument `k`.
+    fn map_key_eq_stored(
+        &self,
+        key: &Ty,
+        entry_ty: Type<'a>,
+        entry: Value<'a>,
+        k: Value<'a>,
+    ) -> Result<Value<'a>, String> {
+        if key == &Ty::String {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            let (strlen, sty) = self.libc_fn("strlen")?;
+            let n = self.call(strlen, sty, &[k], "len");
+            let rt = self.rt("kelp_map_key_eq")?;
+            Ok(self.call(rt.func, rt.ty, &[key_addr, k, n], "eq"))
+        } else {
+            let key_ty = self.lty2(key)?;
+            let kv = self.ld(key_ty, self.fld(entry_ty, entry, 0, "key"), "key");
+            Ok(self.builder.build_icmp(IntCmp::Eq, kv, k, "eq"))
+        }
+    }
+
+    /// The key value an `insert` stores: a `String` key is copied in from the
+    /// `str` view, a scalar key is stored as it arrived.
+    fn map_key_value(&self, key: &Ty, k: Value<'a>, slot: Value<'a>) -> Result<Value<'a>, String> {
+        if key == &Ty::String {
+            self.sret_call("kelp_String__from_str", slot, &[k])?;
+            Ok(self.ld(self.lty2(key)?, slot, "key"))
+        } else {
+            Ok(k)
+        }
+    }
+
+    /// A copy of the entry's stored key, for `keys()`: a `String` is cloned, a
+    /// scalar is loaded.
+    fn map_key_clone(
+        &self,
+        key: &Ty,
+        entry_ty: Type<'a>,
+        entry: Value<'a>,
+        slot: Value<'a>,
+    ) -> Result<Value<'a>, String> {
+        if key == &Ty::String {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            self.sret_call("kelp_String__clone", slot, &[key_addr])?;
+            Ok(self.ld(self.lty2(key)?, slot, "key"))
+        } else {
+            let key_ty = self.lty2(key)?;
+            Ok(self.ld(key_ty, self.fld(entry_ty, entry, 0, "key"), "key"))
+        }
+    }
+
+    /// Free the entry's stored key: a `String` buffer is freed, a scalar owns
+    /// nothing.
+    fn map_key_drop(
+        &self,
+        key: &Ty,
+        entry_ty: Type<'a>,
+        entry: Value<'a>,
+    ) -> Result<(), String> {
+        if key == &Ty::String {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            let rt = self.rt("kelp_string_drop")?;
+            self.call(rt.func, rt.ty, &[key_addr], "");
+        }
+        Ok(())
+    }
+
+    /// One `Map<K, V>` function set, the mirror of `codegen_c::write_map`.
+    /// Entries sit in insertion order in a dense array and a separate
+    /// open-addressed index of `entry index + 1` (`0` empty, `SIZE_MAX`
+    /// tombstone) does the lookup.
+    fn emit_map_bodies(&self, key: &Ty, value: &Ty) -> Result<(), String> {
+        let base = map_c_type(key, value);
+        let map_ty = self.cty(&Ty::Map(Box::new(key.clone()), Box::new(value.clone())))?;
+        let entry_ty = *self
+            .map_entries
+            .get(&Ty::Map(Box::new(key.clone()), Box::new(value.clone())))
+            .ok_or_else(|| no_value("the map entry layout"))?;
+        let key_ty = self.lty2(key)?;
+        let value_ty = self.lty2(value)?;
+        let key_arg = self.map_key_arg(key)?;
+        let list_key_ty = self.cty(&Ty::List(Box::new(key.clone())))?;
+        let list_value_ty = self.cty(&Ty::List(Box::new(value.clone())))?;
+        let ptr = self.pty();
+        let (i1t, i8t, i64t) = (self.ctx.i1(), self.ctx.i8(), self.ctx.i64());
+        let entry_size = self.layout.abi_size_of(entry_ty);
+        let value_drops = needs_drop(value, &self.owned);
+        let clonable = list_clonable_elem(value);
+        let size_max = u64::MAX;
+
+        // --- new ---
+        {
+            let _ = self.start(&format!("{base}__new"), "entry")?;
+            let m = self.builder.build_alloca(map_ty, "m");
+            self.st(self.ctx.const_null(map_ty), m);
+            let v = self.ld(map_ty, m, "new");
+            self.builder.build_ret(v);
+        }
+
+        // --- find(self, k, found_out) ---
+        {
+            let (f, _) = self.start(&format!("{base}__find"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let found_p = f.get_param(2);
+            self.st(self.ctx.const_bool(false), found_p);
+            let icap = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
+            let zero = self.builder.build_icmp(IntCmp::Eq, icap, self.v_i64(0), "noindex");
+            let none = self.block(f, "find.none");
+            let cont = self.block(f, "find.cont");
+            self.builder.build_cond_br(zero, none, cont);
+            self.builder.position_at_end(none);
+            self.builder.build_ret(self.v_i64(0));
+            self.builder.position_at_end(cont);
+            let mask = self.builder.build_int_binop(IntBinOp::Sub, icap, self.v_i64(1), "mask");
+            let h = self.map_key_hash_arg(key, k)?;
+            let i0 = self.builder.build_int_binop(IntBinOp::And, h, mask, "i0");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            let tomb_slot = self.builder.build_alloca(i64t, "tomb");
+            self.st(i0, i_slot);
+            self.st(self.v_i64(size_max), tomb_slot);
+            let loop_bb = self.block(f, "find.loop");
+            let empty_bb = self.block(f, "find.empty");
+            let probe_bb = self.block(f, "find.probe");
+            let tomb_bb = self.block(f, "find.tomb");
+            let live_bb = self.block(f, "find.live");
+            let eq_bb = self.block(f, "find.eq");
+            let found_bb = self.block(f, "find.found");
+            let next_bb = self.block(f, "find.next");
+            self.builder.build_br(loop_bb);
+            // loop
+            self.builder.position_at_end(loop_bb);
+            let i = self.ld(i64t, i_slot, "i");
+            let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let slot_addr = self.gep(i64t, index, i, "slot");
+            let slot = self.ld(i64t, slot_addr, "slot");
+            let iszero = self.builder.build_icmp(IntCmp::Eq, slot, self.v_i64(0), "iszero");
+            self.builder.build_cond_br(iszero, empty_bb, probe_bb);
+            self.builder.position_at_end(empty_bb);
+            // empty: the first tombstone seen, else this slot
+            self.builder.position_at_end(empty_bb);
+            let t = self.ld(i64t, tomb_slot, "tomb");
+            let istomb = self.builder.build_icmp(IntCmp::Eq, t, self.v_i64(size_max), "istomb");
+            let sel = self.builder.build_select(istomb, i, t, "slot");
+            self.builder.build_ret(sel);
+            // probe: tombstone, or a live entry to compare
+            self.builder.position_at_end(probe_bb);
+            let istomb2 = self.builder.build_icmp(IntCmp::Eq, slot, self.v_i64(size_max), "istomb");
+            self.builder.build_cond_br(istomb2, tomb_bb, live_bb);
+            self.builder.position_at_end(tomb_bb);
+            let t2 = self.ld(i64t, tomb_slot, "tomb");
+            let istomb3 = self.builder.build_icmp(IntCmp::Eq, t2, self.v_i64(size_max), "istomb");
+            let keep = self.builder.build_select(istomb3, i, t2, "tomb");
+            self.st(keep, tomb_slot);
+            self.builder.build_br(next_bb);
+            self.builder.position_at_end(live_bb);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let e0 = self.builder.build_int_binop(IntBinOp::Sub, slot, self.v_i64(1), "e");
+            let entry = self.gep(entry_ty, entries, e0, "entry");
+            let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
+            let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
+            self.builder.build_cond_br(dead, next_bb, eq_bb);
+            self.builder.position_at_end(eq_bb);
+            let eq = self.map_key_eq_stored(key, entry_ty, entry, k)?;
+            self.builder.build_cond_br(eq, found_bb, next_bb);
+            self.builder.position_at_end(found_bb);
+            self.st(self.ctx.const_bool(true), found_p);
+            self.builder.build_ret(i);
+            self.builder.position_at_end(next_bb);
+            let i1 = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            let i2 = self.builder.build_int_binop(IntBinOp::And, i1, mask, "i2");
+            self.st(i2, i_slot);
+            self.builder.build_br(loop_bb);
+        }
+
+        // --- rehash(self, want) ---
+        {
+            let (f, _) = self.start(&format!("{base}__rehash"), "entry")?;
+            let self_p = f.get_param(0);
+            let want = f.get_param(1);
+            let cap_slot = self.builder.build_alloca(i64t, "cap");
+            self.st(self.v_i64(8), cap_slot);
+            let header = self.loop_header(f, "rehash.cond");
+            let cap = self.ld(i64t, cap_slot, "cap");
+            let four = self.builder.build_int_binop(IntBinOp::Mul, want, self.v_i64(4), "want4");
+            let need = self.builder.build_icmp(IntCmp::Ult, cap, four, "need");
+            let body = self.block(f, "rehash.body");
+            let exit = self.block(f, "rehash.end");
+            self.builder.build_cond_br(need, body, exit);
+            self.builder.position_at_end(body);
+            let cap2 = self.builder.build_int_binop(IntBinOp::Mul, cap, self.v_i64(2), "cap2");
+            self.st(cap2, cap_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let final_cap = self.ld(i64t, cap_slot, "cap");
+            let old = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[old], "");
+            let bytes = self.builder.build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(8), "bytes");
+            let (malloc, mty) = self.libc_fn("malloc")?;
+            let buf = self.call(malloc, mty, &[bytes], "index");
+            self.check_alloc(buf, f)?;
+            let (memset, sety) = self.libc_fn("memset")?;
+            self.call(memset, sety, &[buf, self.v_i32(0), bytes], "");
+            self.st(buf, self.fld(map_ty, self_p, M_INDEX, "index"));
+            self.st(final_cap, self.fld(map_ty, self_p, M_INDEX_CAP, "index_cap"));
+            self.st(self.v_i64(0), self.fld(map_ty, self_p, M_INDEX_USED, "index_used"));
+            // Walk the live entries and re-place each in the fresh index.
+            let i_slot = self.builder.build_alloca(i64t, "e");
+            self.st(self.v_i64(0), i_slot);
+            let eh = self.loop_header(f, "rehash.walk");
+            let e = self.ld(i64t, i_slot, "e");
+            let count = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let more = self.builder.build_icmp(IntCmp::Ult, e, count, "more");
+            let ebody = self.block(f, "rehash.walk.body");
+            let eexit = self.block(f, "rehash.walk.end");
+            self.builder.build_cond_br(more, ebody, eexit);
+            self.builder.position_at_end(ebody);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
+            let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
+            let skip = self.block(f, "rehash.skip");
+            let place = self.block(f, "rehash.place");
+            self.builder.build_cond_br(dead, skip, place);
+            self.builder.position_at_end(place);
+            let h = self.map_key_hash_stored(key, entry_ty, entry)?;
+            let mask = self.builder.build_int_binop(IntBinOp::Sub, final_cap, self.v_i64(1), "mask");
+            let j_slot = self.builder.build_alloca(i64t, "slot");
+            let j0 = self.builder.build_int_binop(IntBinOp::And, h, mask, "j0");
+            self.st(j0, j_slot);
+            let jh = self.loop_header(f, "rehash.probe");
+            let j = self.ld(i64t, j_slot, "j");
+            let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let slot_addr = self.gep(i64t, index, j, "at");
+            let holder = self.ld(i64t, slot_addr, "holder");
+            let occupied = self.builder.build_icmp(IntCmp::Ne, holder, self.v_i64(0), "occupied");
+            let jbody = self.block(f, "rehash.probe.body");
+            let jexit = self.block(f, "rehash.probe.end");
+            self.builder.build_cond_br(occupied, jbody, jexit);
+            self.builder.position_at_end(jbody);
+            let jn = self.builder.build_int_binop(IntBinOp::Add, j, self.v_i64(1), "j1");
+            let jm = self.builder.build_int_binop(IntBinOp::And, jn, mask, "jm");
+            self.st(jm, j_slot);
+            self.builder.build_br(jh);
+            self.builder.position_at_end(jexit);
+            let jf = self.ld(i64t, j_slot, "j");
+            let index2 = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let placed = self.gep(i64t, index2, jf, "at");
+            let ep1 = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "ep1");
+            self.st(ep1, placed);
+            let used = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_USED, "used"), "used");
+            let used1 = self.builder.build_int_binop(IntBinOp::Add, used, self.v_i64(1), "used1");
+            self.st(used1, self.fld(map_ty, self_p, M_INDEX_USED, "used"));
+            self.builder.build_br(skip);
+            self.builder.position_at_end(skip);
+            let en = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "e1");
+            self.st(en, i_slot);
+            self.builder.build_br(eh);
+            self.builder.position_at_end(eexit);
+            self.builder.build_ret_void();
+        }
+
+        // --- has(self, k) ---
+        {
+            let (f, _) = self.start(&format!("{base}__has"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let found_slot = self.builder.build_alloca(i1t, "found");
+            let (find, fnty) = self.cfn(&format!("{base}__find"))?;
+            self.call(find, fnty, &[self_p, k, found_slot], "");
+            let out = self.ld(i1t, found_slot, "has");
+            self.builder.build_ret(out);
+        }
+
+        // --- get / get_const ---
+        if value.is_copy() {
+            let (f, _) = self.start(&format!("{base}__get"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let found_slot = self.builder.build_alloca(i1t, "found");
+            let (find, fnty) = self.cfn(&format!("{base}__find"))?;
+            let slot = self.call(find, fnty, &[self_p, k, found_slot], "slot");
+            let found = self.ld(i1t, found_slot, "found");
+            let missing = self.builder.build_icmp(IntCmp::Eq, found, self.ctx.const_bool(false), "missing");
+            let bad = self.block(f, "missing");
+            let ok = self.block(f, "get");
+            self.builder.build_cond_br(missing, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("Map.get: key not found")?;
+            self.builder.position_at_end(ok);
+            let value_ptr = self.map_value_ptr(map_ty, entry_ty, self_p, slot)?;
+            let v = self.ld(value_ty, value_ptr, "get");
+            self.builder.build_ret(v);
+        } else {
+            let (f, _) = self.start(&format!("{base}__get_const"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let found_slot = self.builder.build_alloca(i1t, "found");
+            let (find, fnty) = self.cfn(&format!("{base}__find"))?;
+            let slot = self.call(find, fnty, &[self_p, k, found_slot], "slot");
+            let found = self.ld(i1t, found_slot, "found");
+            let missing = self.builder.build_icmp(IntCmp::Eq, found, self.ctx.const_bool(false), "missing");
+            let bad = self.block(f, "missing");
+            let ok = self.block(f, "get");
+            self.builder.build_cond_br(missing, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("Map.get: key not found")?;
+            self.builder.position_at_end(ok);
+            let value_ptr = self.map_value_ptr(map_ty, entry_ty, self_p, slot)?;
+            self.builder.build_ret(value_ptr);
+        }
+
+        // --- get_or(self, k, fallback) ---
+        if clonable {
+            let (f, _) = self.start(&format!("{base}__get_or"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let fallback = f.get_param(2);
+            let found_slot = self.builder.build_alloca(i1t, "found");
+            let clone_slot = self.builder.build_alloca(value_ty, "clone");
+            let (find, fnty) = self.cfn(&format!("{base}__find"))?;
+            let slot = self.call(find, fnty, &[self_p, k, found_slot], "slot");
+            let found = self.ld(i1t, found_slot, "found");
+            let missing = self.builder.build_icmp(IntCmp::Eq, found, self.ctx.const_bool(false), "missing");
+            let fb_slot = self.builder.build_alloca(value_ty, "fallback");
+            self.st(fallback, fb_slot);
+            let miss = self.block(f, "missing");
+            let hit = self.block(f, "hit");
+            self.builder.build_cond_br(missing, miss, hit);
+            self.builder.position_at_end(miss);
+            let out = self.ld(value_ty, fb_slot, "fallback");
+            self.builder.build_ret(out);
+            self.builder.position_at_end(hit);
+            let value_ptr = self.map_value_ptr(map_ty, entry_ty, self_p, slot)?;
+            let result = self.clone_value(value_ptr, value, clone_slot)?;
+            match value {
+                Ty::String => {
+                    let rt = self.rt("kelp_string_drop")?;
+                    self.call(rt.func, rt.ty, &[fb_slot], "");
+                }
+                Ty::Bytes => {
+                    let rt = self.rt("kelp_bytes_drop")?;
+                    self.call(rt.func, rt.ty, &[fb_slot], "");
+                }
+                _ => {}
+            }
+            self.builder.build_ret(result);
+        }
+
+        // --- remove(self, k) ---
+        {
+            let (f, _) = self.start(&format!("{base}__remove"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let found_slot = self.builder.build_alloca(i1t, "found");
+            let (find, fnty) = self.cfn(&format!("{base}__find"))?;
+            let slot = self.call(find, fnty, &[self_p, k, found_slot], "slot");
+            let found = self.ld(i1t, found_slot, "found");
+            let missing = self.builder.build_icmp(IntCmp::Eq, found, self.ctx.const_bool(false), "missing");
+            let bad = self.block(f, "missing");
+            let ok = self.block(f, "remove");
+            self.builder.build_cond_br(missing, bad, ok);
+            self.builder.position_at_end(bad);
+            self.emit_panic("Map.remove: key not found")?;
+            self.builder.position_at_end(ok);
+            let index0 = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let holder0 = self.ld(i64t, self.gep(i64t, index0, slot, "at"), "holder");
+            let e = self.builder.build_int_binop(IntBinOp::Sub, holder0, self.v_i64(1), "e");
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
+            let value_ptr = self.ld(ptr, value_slot, "value");
+            let out_slot = self.builder.build_alloca(value_ty, "out");
+            self.st(self.ld(value_ty, value_ptr, "v"), out_slot);
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[value_ptr], "");
+            self.st(self.ctx.const_null(ptr), value_slot);
+            self.map_key_drop(key, entry_ty, entry)?;
+            self.st(self.v_i8(0), self.fld(entry_ty, entry, E_LIVE, "live"));
+            let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let slot_addr = self.gep(i64t, index, slot, "at");
+            self.st(self.v_i64(size_max), slot_addr);
+            let len = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
+            let len1 = self.builder.build_int_binop(IntBinOp::Sub, len, self.v_i64(1), "len1");
+            self.st(len1, self.fld(map_ty, self_p, M_LEN, "len"));
+            let out = self.ld(value_ty, out_slot, "removed");
+            self.builder.build_ret(out);
+        }
+
+        // --- insert(self, k, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__insert"), "entry")?;
+            let self_p = f.get_param(0);
+            let k = f.get_param(1);
+            let v = f.get_param(2);
+            let key_slot = self.builder.build_alloca(key_ty, "key.tmp");
+            let icap = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
+            let iused = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_USED, "iused"), "iused");
+            let len = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
+            let needs = self.builder.build_int_binop(IntBinOp::Add, iused, self.v_i64(1), "need");
+            let needs4 = self.builder.build_int_binop(IntBinOp::Mul, needs, self.v_i64(4), "need4");
+            let cap3 = self.builder.build_int_binop(IntBinOp::Mul, icap, self.v_i64(3), "cap3");
+            let crowded = self.builder.build_icmp(IntCmp::Uge, needs4, cap3, "crowded");
+            let noindex = self.builder.build_icmp(IntCmp::Eq, icap, self.v_i64(0), "noindex");
+            let grow = self.builder.build_int_binop(IntBinOp::Or, crowded, noindex, "grow");
+            let rehash_bb = self.block(f, "insert.rehash");
+            let placed = self.block(f, "insert.placed");
+            self.builder.build_cond_br(grow, rehash_bb, placed);
+            self.builder.position_at_end(rehash_bb);
+            let want = self.builder.build_int_binop(IntBinOp::Add, len, self.v_i64(1), "want");
+            let (rehash, rhty) = self.cfn(&format!("{base}__rehash"))?;
+            self.call(rehash, rhty, &[self_p, want], "");
+            self.builder.build_br(placed);
+            self.builder.position_at_end(placed);
+            let found_slot = self.builder.build_alloca(i1t, "found");
+            let (find, fnty) = self.cfn(&format!("{base}__find"))?;
+            let slot = self.call(find, fnty, &[self_p, k, found_slot], "slot");
+            let found = self.ld(i1t, found_slot, "found");
+            let have = self.block(f, "insert.replace");
+            let fresh = self.block(f, "insert.fresh");
+            self.builder.build_cond_br(found, have, fresh);
+            self.builder.position_at_end(have);
+            let value_ptr = self.map_value_ptr(map_ty, entry_ty, self_p, slot)?;
+            if value_drops {
+                self.call_drop(value_ptr, value)?;
+            }
+            self.st(v, value_ptr);
+            self.builder.build_ret_void();
+            self.builder.position_at_end(fresh);
+            let count = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let ecap = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_CAP, "ecap"), "ecap");
+            let full = self.builder.build_icmp(IntCmp::Eq, count, ecap, "full");
+            let resize = self.block(f, "insert.resize");
+            let have_space = self.block(f, "insert.space");
+            self.builder.build_cond_br(full, resize, have_space);
+            self.builder.position_at_end(resize);
+            let is_zero = self.builder.build_icmp(IntCmp::Eq, ecap, self.v_i64(0), "zero");
+            let double = self.builder.build_int_binop(IntBinOp::Mul, ecap, self.v_i64(2), "double");
+            let new_cap = self.builder.build_select(is_zero, self.v_i64(8), double, "newcap");
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let bytes = self.builder.build_int_binop(IntBinOp::Mul, new_cap, self.v_i64(entry_size), "bytes");
+            let (realloc, rty) = self.libc_fn("realloc")?;
+            let new_entries = self.call(realloc, rty, &[entries, bytes], "entries");
+            self.check_alloc(new_entries, f)?;
+            self.st(new_entries, self.fld(map_ty, self_p, M_ENTRIES, "entries"));
+            self.st(new_cap, self.fld(map_ty, self_p, M_ENTRY_CAP, "entry_cap"));
+            self.builder.build_br(have_space);
+            self.builder.position_at_end(have_space);
+            let e = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let e1 = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "e1");
+            self.st(e1, self.fld(map_ty, self_p, M_ENTRY_COUNT, "entry_count"));
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let key_value = self.map_key_value(key, k, key_slot)?;
+            self.st(key_value, self.fld(entry_ty, entry, E_KEY, "key"));
+            let value_ptr = self.malloc_for(value_ty)?;
+            self.check_alloc(value_ptr, f)?;
+            self.st(value_ptr, self.fld(entry_ty, entry, E_VALUE, "value"));
+            self.st(v, value_ptr);
+            self.st(self.v_i8(1), self.fld(entry_ty, entry, E_LIVE, "live"));
+            // Bump `index_used` only when the slot was empty (not a tombstone).
+            let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let slot_addr = self.gep(i64t, index, slot, "at");
+            let holder = self.ld(i64t, slot_addr, "holder");
+            let was_empty = self.builder.build_icmp(IntCmp::Eq, holder, self.v_i64(0), "wasempty");
+            let bump = self.block(f, "insert.bump");
+            let done = self.block(f, "insert.done");
+            self.builder.build_cond_br(was_empty, bump, done);
+            self.builder.position_at_end(bump);
+            let used = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_USED, "used"), "used");
+            let used1 = self.builder.build_int_binop(IntBinOp::Add, used, self.v_i64(1), "used1");
+            self.st(used1, self.fld(map_ty, self_p, M_INDEX_USED, "index_used"));
+            self.builder.build_br(done);
+            self.builder.position_at_end(done);
+            let index2 = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let slot_addr2 = self.gep(i64t, index2, slot, "at");
+            let ep1 = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "ep1");
+            self.st(ep1, slot_addr2);
+            let len2 = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
+            let len3 = self.builder.build_int_binop(IntBinOp::Add, len2, self.v_i64(1), "len1");
+            self.st(len3, self.fld(map_ty, self_p, M_LEN, "len"));
+            self.builder.build_ret_void();
+        }
+
+        // --- clear(self) ---
+        {
+            let (f, _) = self.start(&format!("{base}__clear"), "entry")?;
+            let self_p = f.get_param(0);
+            let i_slot = self.builder.build_alloca(i64t, "e");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "clear.cond");
+            let e = self.ld(i64t, i_slot, "e");
+            let count = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let more = self.builder.build_icmp(IntCmp::Ult, e, count, "more");
+            let body = self.block(f, "clear.body");
+            let exit = self.block(f, "clear.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
+            let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
+            let skip = self.block(f, "clear.skip");
+            let free_bb = self.block(f, "clear.free");
+            self.builder.build_cond_br(dead, skip, free_bb);
+            self.builder.position_at_end(free_bb);
+            let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
+            let value_ptr = self.ld(ptr, value_slot, "value");
+            if value_drops {
+                self.call_drop(value_ptr, value)?;
+            }
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[value_ptr], "");
+            self.st(self.ctx.const_null(ptr), value_slot);
+            self.map_key_drop(key, entry_ty, entry)?;
+            self.st(self.v_i8(0), self.fld(entry_ty, entry, E_LIVE, "live"));
+            self.builder.build_br(skip);
+            self.builder.position_at_end(skip);
+            let en = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "e1");
+            self.st(en, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            self.st(self.v_i64(0), self.fld(map_ty, self_p, M_ENTRY_COUNT, "entry_count"));
+            self.st(self.v_i64(0), self.fld(map_ty, self_p, M_LEN, "len"));
+            self.st(self.v_i64(0), self.fld(map_ty, self_p, M_INDEX_USED, "index_used"));
+            let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let noindex = self.builder.build_icmp(IntCmp::Eq, index, self.ctx.const_null(ptr), "noindex");
+            let clear_index = self.block(f, "clear.index");
+            let end = self.block(f, "clear.ret");
+            self.builder.build_cond_br(noindex, end, clear_index);
+            self.builder.position_at_end(clear_index);
+            let icap = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
+            let bytes = self.builder.build_int_binop(IntBinOp::Mul, icap, self.v_i64(8), "bytes");
+            let (memset, sety) = self.libc_fn("memset")?;
+            self.call(memset, sety, &[index, self.v_i32(0), bytes], "");
+            self.builder.build_br(end);
+            self.builder.position_at_end(end);
+            self.builder.build_ret_void();
+        }
+
+        // --- len / is_empty ---
+        {
+            let (f, _) = self.start(&format!("{base}__len"), "entry")?;
+            let n = self.ld(i64t, self.fld(map_ty, f.get_param(0), M_LEN, "len"), "len");
+            self.builder.build_ret(n);
+        }
+        {
+            let (f, _) = self.start(&format!("{base}__is_empty"), "entry")?;
+            let n = self.ld(i64t, self.fld(map_ty, f.get_param(0), M_LEN, "len"), "len");
+            let e = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "empty");
+            self.builder.build_ret(e);
+        }
+
+        // --- keys(self) ---
+        {
+            let (f, _) = self.start(&format!("{base}__keys"), "entry")?;
+            let self_p = f.get_param(0);
+            let out_slot = self.builder.build_alloca(list_key_ty, "out");
+            let key_slot = self.builder.build_alloca(key_ty, "key.tmp");
+            self.st(self.ctx.const_null(list_key_ty), out_slot);
+            let len = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
+            let list_reserve = self.cfn(&format!("kelp_List__{}__reserve", ty_mangle(key)))?;
+            self.call(list_reserve.0, list_reserve.1, &[out_slot, len], "");
+            let i_slot = self.builder.build_alloca(i64t, "e");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "keys.cond");
+            let e = self.ld(i64t, i_slot, "e");
+            let count = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let more = self.builder.build_icmp(IntCmp::Ult, e, count, "more");
+            let body = self.block(f, "keys.body");
+            let exit = self.block(f, "keys.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
+            let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
+            let skip = self.block(f, "keys.skip");
+            let append = self.block(f, "keys.append");
+            self.builder.build_cond_br(dead, skip, append);
+            self.builder.position_at_end(append);
+            let kv = self.map_key_clone(key, entry_ty, entry, key_slot)?;
+            let olen = self.ld(i64t, self.fld(list_key_ty, out_slot, L_LEN, "olen"), "olen");
+            let odata = self.ld(ptr, self.fld(list_key_ty, out_slot, L_DATA, "odata"), "odata");
+            let dst = self.gep(key_ty, odata, olen, "dst");
+            self.st(kv, dst);
+            let olen1 = self.builder.build_int_binop(IntBinOp::Add, olen, self.v_i64(1), "olen1");
+            self.st(olen1, self.fld(list_key_ty, out_slot, L_LEN, "len"));
+            self.builder.build_br(skip);
+            self.builder.position_at_end(skip);
+            let en = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "e1");
+            self.st(en, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let out = self.ld(list_key_ty, out_slot, "keys");
+            self.builder.build_ret(out);
+        }
+
+        // --- values(self) ---
+        if clonable {
+            let (f, _) = self.start(&format!("{base}__values"), "entry")?;
+            let self_p = f.get_param(0);
+            let out_slot = self.builder.build_alloca(list_value_ty, "out");
+            let clone_slot = self.builder.build_alloca(value_ty, "value.tmp");
+            self.st(self.ctx.const_null(list_value_ty), out_slot);
+            let len = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
+            let list_reserve = self.cfn(&format!("kelp_List__{}__reserve", ty_mangle(value)))?;
+            self.call(list_reserve.0, list_reserve.1, &[out_slot, len], "");
+            let i_slot = self.builder.build_alloca(i64t, "e");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "values.cond");
+            let e = self.ld(i64t, i_slot, "e");
+            let count = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let more = self.builder.build_icmp(IntCmp::Ult, e, count, "more");
+            let body = self.block(f, "values.body");
+            let exit = self.block(f, "values.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
+            let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
+            let skip = self.block(f, "values.skip");
+            let append = self.block(f, "values.append");
+            self.builder.build_cond_br(dead, skip, append);
+            self.builder.position_at_end(append);
+            let value_ptr = self.ld(ptr, self.fld(entry_ty, entry, E_VALUE, "value"), "value");
+            let vv = self.clone_value(value_ptr, value, clone_slot)?;
+            let olen = self.ld(i64t, self.fld(list_value_ty, out_slot, L_LEN, "olen"), "olen");
+            let odata = self.ld(ptr, self.fld(list_value_ty, out_slot, L_DATA, "odata"), "odata");
+            let dst = self.gep(value_ty, odata, olen, "dst");
+            self.st(vv, dst);
+            let olen1 = self.builder.build_int_binop(IntBinOp::Add, olen, self.v_i64(1), "olen1");
+            self.st(olen1, self.fld(list_value_ty, out_slot, L_LEN, "len"));
+            self.builder.build_br(skip);
+            self.builder.position_at_end(skip);
+            let en = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "e1");
+            self.st(en, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let out = self.ld(list_value_ty, out_slot, "values");
+            self.builder.build_ret(out);
+        }
+
+        // --- drop(self) ---
+        {
+            let (f, _) = self.start(
+                &drop_fn_name(&Ty::Map(Box::new(key.clone()), Box::new(value.clone()))),
+                "entry",
+            )?;
+            let self_p = f.get_param(0);
+            let i_slot = self.builder.build_alloca(i64t, "e");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "drop.cond");
+            let e = self.ld(i64t, i_slot, "e");
+            let count = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_COUNT, "count"), "count");
+            let more = self.builder.build_icmp(IntCmp::Ult, e, count, "more");
+            let body = self.block(f, "drop.body");
+            let exit = self.block(f, "drop.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let entry = self.gep(entry_ty, entries, e, "entry");
+            let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
+            let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
+            let skip = self.block(f, "drop.skip");
+            let free_bb = self.block(f, "drop.free");
+            self.builder.build_cond_br(dead, skip, free_bb);
+            self.builder.position_at_end(free_bb);
+            let value_ptr = self.ld(ptr, self.fld(entry_ty, entry, E_VALUE, "value"), "value");
+            if value_drops {
+                self.call_drop(value_ptr, value)?;
+            }
+            let (free, fty) = self.libc_fn("free")?;
+            self.call(free, fty, &[value_ptr], "");
+            self.map_key_drop(key, entry_ty, entry)?;
+            self.builder.build_br(skip);
+            self.builder.position_at_end(skip);
+            let en = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "e1");
+            self.st(en, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+            let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            self.call(free, fty, &[entries], "");
+            self.call(free, fty, &[index], "");
+            self.st(self.ctx.const_null(map_ty), self_p);
+            self.builder.build_ret_void();
+        }
+        let _ = (value_ty, list_value_ty, list_key_ty, key_arg);
+        Ok(())
+    }
+
+    /// The address of the value cell an entry holds: `entries[e].value`, where
+    /// `slot` is the index-slot result `find` returned (`entries[slot - 1]`).
+    fn map_value_ptr(
+        &self,
+        map_ty: Type<'a>,
+        entry_ty: Type<'a>,
+        self_p: Value<'a>,
+        slot: Value<'a>,
+    ) -> Result<Value<'a>, String> {
+        // `slot` is the *index* slot `find` returned; the entry it names is
+        // `index[slot] - 1`, exactly the C `self->index[slot] - 1`.
+        let index = self.ld(self.pty(), self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+        let holder = self.ld(self.ctx.i64(), self.gep(self.ctx.i64(), index, slot, "at"), "holder");
+        let e = self.builder.build_int_binop(IntBinOp::Sub, holder, self.v_i64(1), "e");
+        let entries = self.ld(self.pty(), self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
+        let entry = self.gep(entry_ty, entries, e, "entry");
+        let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
+        Ok(self.ld(self.pty(), value_slot, "value"))
+    }
+}
+
+/// The map's fields, in the order `write_container_typedef` declares them, and
+/// one entry's three, in `write_map`'s order.
+const M_ENTRIES: u32 = 0;
+const M_ENTRY_COUNT: u32 = 1;
+const M_ENTRY_CAP: u32 = 2;
+const M_LEN: u32 = 3;
+const M_INDEX: u32 = 4;
+const M_INDEX_CAP: u32 = 5;
+const M_INDEX_USED: u32 = 6;
+const E_KEY: u32 = 0;
+const E_VALUE: u32 = 1;
+const E_LIVE: u32 = 2;
+
 /// Declare every runtime helper this slice calls, with the signature
 /// `kelp_rt.c` defines and the ABI shape it is compiled under (MK7 §3.3). The
 /// object `build.rs` produces is compiled from that same text, so a signature
@@ -2562,14 +5528,25 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_View__slice", view, &[view, i64, i64], true, false);
     decl(&mut out, "kelp_View__eq", i1, &[view, view], true, false);
     decl(&mut out, "kelp_View__to_string", string, &[view], true, true);
+    // The map key helpers `write_map` calls: `#define static` in `build.rs`
+    // gives them external linkage, so the IR declares them rather than
+    // re-deriving the hash and the equality (MK7 §3.2, §3.3). `kelp_map_hash`
+    // is FNV-1a over the key's bytes; `kelp_map_mix` is the 64-bit finalizer a
+    // scalar key goes through; `kelp_map_key_eq` compares a stored `String`
+    // against a `str` view length-aware.
+    decl(&mut out, "kelp_map_hash", i64, &[ptr, i64], true, false);
+    decl(&mut out, "kelp_map_mix", i64, &[i64], true, false);
+    decl(&mut out, "kelp_map_key_eq", i1, &[ptr, ptr, i64], true, false);
     out
 }
 
 /// Map a `tir` type to its LLVM type. The scalar subset, the builtin heap types,
-/// `str`, and a `datac` `structs` holds a type for.
+/// `str`, a `datac` `structs` holds a type for, and a container `containers`
+/// holds a named struct for.
 fn llvm_type<'a>(
     ctx: &'a Context,
     structs: &HashMap<String, Type<'a>>,
+    containers: &HashMap<Ty, Type<'a>>,
     ty: &Ty,
 ) -> Result<Type<'a>, String> {
     Ok(match ty {
@@ -2608,9 +5585,20 @@ fn llvm_type<'a>(
         // A `datac` parameter resolves to a borrow of the struct, and a borrow is
         // its address (MK7 §3.3: pass a pointer, not a value, between frames).
         Ty::Ref { inner, .. } if matches!(**inner, Ty::Struct(_)) => ctx.opaque_ptr(),
-        // A borrow of anything but a `datac` (a `mut i64` parameter, say) is the
-        // borrow slice, and it is named rather than mis-lowered to a pointer.
-        Ty::Ref { .. } => return Err(refuse("'a borrow of a non-datac'", "S2B")),
+        // A container is a named struct here; a borrow of one is its address,
+        // which is what every method's `self` and every container parameter is.
+        Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => *containers
+            .get(ty)
+            .ok_or_else(|| no_value(&format!("the container '{}'", ty.display())))?,
+        Ty::Ref { inner, .. }
+            if matches!(**inner, Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..)) =>
+        {
+            ctx.opaque_ptr()
+        }
+        // A borrow of anything but a `datac` or a container (a `mut i64`
+        // parameter, say) is the borrow slice, and it is named rather than
+        // mis-lowered to a pointer.
+        Ty::Ref { .. } => return Err(refuse("'a borrow of a non-datac'", "S2F")),
         Ty::Struct(name) => *structs
             .get(name)
             .ok_or_else(|| refuse(&format!("the datac '{name}'"), "S2A"))?,
@@ -2622,12 +5610,13 @@ fn llvm_type<'a>(
 fn llvm_ret_type<'a>(
     ctx: &'a Context,
     structs: &HashMap<String, Type<'a>>,
+    containers: &HashMap<Ty, Type<'a>>,
     ty: &Ty,
 ) -> Result<Type<'a>, String> {
     if *ty == Ty::Unit {
         Ok(ctx.void())
     } else {
-        llvm_type(ctx, structs, ty)
+        llvm_type(ctx, structs, containers, ty)
     }
 }
 
@@ -2662,6 +5651,18 @@ fn is_str_ref(ty: &Ty) -> bool {
 /// place read has to load it rather than hand out the slot.
 fn is_heap_ref(ty: &Ty) -> bool {
     matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Bytes | Ty::String | Ty::View))
+}
+
+/// Whether a type is one of the four containers `List`, `Map`, `Box`, `[T; N]`.
+fn is_container_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..))
+}
+
+/// Whether a type is a borrow of a container. A binding of such a type holds the
+/// pointer itself, exactly as a `datac` borrow does, so a place read has to load
+/// it rather than hand out the slot.
+fn is_container_ref(ty: &Ty) -> bool {
+    matches!(ty, Ty::Ref { inner, .. } if is_container_ty(inner))
 }
 
 /// Whether an expression has stable storage, mirroring the subset of
@@ -2717,6 +5718,85 @@ fn round_up(size: u64, align: u32) -> u64 {
     size.div_ceil(align) * align
 }
 
+/// The mangled symbol of the monomorphized function a builtin container method
+/// resolves to, mirroring `codegen_c.rs::call_value`'s name construction: the
+/// element type comes from the receiver argument (or, for the associated
+/// `List.of(v)`/`Box.of(v)`, from `v` itself, and for `empty`/`Map.new()` from
+/// the call's own result type). `get` has two spellings, by value for a `Copy`
+/// element and by pointer for an owned one, decided by the call's own result
+/// type. `None` for a call that is not a container method.
+fn container_symbol(callee: &str, args: &[Expr], ret: &Ty) -> Option<String> {
+    use crate::types::{array_c_type, array_elem_of, array_len_of, box_c_type, box_elem_of};
+    for (prefix, name_of, elem_of) in [
+        (
+            "List#",
+            crate::types::list_c_type as fn(&Ty) -> String,
+            crate::types::list_elem_of as fn(&Ty) -> Option<&Ty>,
+        ),
+        (
+            "Box#",
+            box_c_type as fn(&Ty) -> String,
+            box_elem_of as fn(&Ty) -> Option<&Ty>,
+        ),
+    ] {
+        let Some(op) = callee.strip_prefix(prefix) else {
+            continue;
+        };
+        let elem = if op == "of" {
+            args.first().map(|a| a.ty.clone())
+        } else if op == "empty" || op == "new" {
+            elem_of(ret).cloned()
+        } else {
+            args.first().and_then(|a| elem_of(&a.ty)).cloned()
+        };
+        if let Some(elem) = elem {
+            let base = name_of(&elem);
+            let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
+                "get_const"
+            } else {
+                op
+            };
+            return Some(format!("{base}__{suffix}"));
+        }
+    }
+    if let Some(op) = callee.strip_prefix("Array#") {
+        let e = args.first()?;
+        let elem = array_elem_of(&e.ty)?.clone();
+        let len = array_len_of(&e.ty)?;
+        let base = array_c_type(&elem, len);
+        let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
+            "get_const"
+        } else {
+            op
+        };
+        return Some(format!("{base}__{suffix}"));
+    }
+    if let Some(op) = callee.strip_prefix("Map#") {
+        let (value, key) = if op == "new" {
+            (
+                crate::types::map_elem_of(ret).cloned(),
+                crate::types::map_key_of(ret).cloned(),
+            )
+        } else {
+            let e = args.first()?;
+            (
+                crate::types::map_elem_of(&e.ty).cloned(),
+                crate::types::map_key_of(&e.ty).cloned(),
+            )
+        };
+        if let (Some(value), Some(key)) = (value, key) {
+            let base = map_c_type(&key, &value);
+            let suffix = if op == "get" && matches!(ret, Ty::Ref { .. }) {
+                "get_const"
+            } else {
+                op
+            };
+            return Some(format!("{base}__{suffix}"));
+        }
+    }
+    None
+}
+
 /// A symbol name for a LLVM function, mirroring `codegen_c.rs::c_name` without
 /// reaching into that (private) helper: `main` keeps its name because the C
 /// runtime requires it, everything else gets the `kelp_` prefix and the same
@@ -2752,10 +5832,11 @@ fn int_width(ty: &Ty) -> Option<u32> {
 
 /// The refusal message for a construct this stage does not lower. `what` is the
 /// construct's name, quoted when it is a language word (`'enum'`) and a phrase
-/// when it is a shape; `stage` is the MK7 stage that will lower it: this slice
-/// lowers plain records, owned fields, the drop plan, the runtime and the tagged
-/// union, S2D is the containers and arrays, S2E is closures and function values,
-/// and S3 is the stdlib's `extern fun` bodies.
+/// when it is a shape; `stage` is the MK7 stage that will lower it. Everything
+/// through S2D is lowered: plain records, owned fields, the drop plan, the
+/// runtime, the tagged union, and the containers and arrays. S2E is closures and
+/// function values, S2F is a borrow (of a scalar or a field) and its
+/// dereference, and S3 is `pd` and the stdlib's `extern fun` bodies.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
@@ -2772,13 +5853,16 @@ fn refuse(what: &str, stage: &str) -> String {
 fn refuse_field(ty: &Ty) -> Result<(), String> {
     match ty {
         Ty::Bytes | Ty::String => Ok(()),
-        Ty::List(_) => Err(refuse("'a List field'", "S2D")),
-        Ty::Box(_) => Err(refuse("'a Box field'", "S2D")),
-        Ty::Map(..) => Err(refuse("'a Map field'", "S2D")),
-        Ty::Array(..) => Err(refuse("'an array field'", "S2D")),
-        Ty::Str => Err(refuse("'a 'str' field'", "S2D")),
-        Ty::View => Err(refuse("'a 'View' field'", "S2D")),
-        Ty::Ref { .. } => Err(refuse("'a reference field'", "S2B")),
+        // A container field is laid out now (S2D): a `List`/`Box`/`Map` holds its
+        // contents through a pointer, an array inline, and both are complete
+        // types by the time the `datac` that names one is given a body.
+        Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => Ok(()),
+        // The frontend refuses a borrowed field (`types::is_borrowed_field_ty`),
+        // so these two rows are unreachable; they are named rather than
+        // mis-lowered if one ever appears.
+        Ty::Str => Err(refuse("'a 'str' field'", "S2F")),
+        Ty::View => Err(refuse("'a 'View' field'", "S2F")),
+        Ty::Ref { .. } => Err(refuse("'a reference field'", "S2F")),
         Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2E")),
         Ty::Struct(_) => Ok(()),
         other if llvm_scalar_type(other) => Ok(()),
@@ -2820,7 +5904,7 @@ fn refuse_type(ty: &Ty) -> String {
         Ty::Box(_) => ("'Box'", "S2D"),
         Ty::Map(..) => ("'Map'", "S2D"),
         Ty::Array(..) => ("'an array'", "S2D"),
-        Ty::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
+        Ty::Ref { .. } => ("'a borrow of a non-datac'", "S2F"),
         Ty::Fn { .. } => ("'a function value'", "S2E"),
         Ty::Closure { .. } => ("'a closure'", "S2E"),
         Ty::Str | Ty::View => ("a borrowed view", "S2D"),
@@ -2831,17 +5915,16 @@ fn refuse_type(ty: &Ty) -> String {
 }
 
 /// Name the expression in a refusal. A `FieldAccess`, a `StructLit`, an `enum`
-/// construct and a `?` never reach here: all are lowered. An array literal is
-/// S2D, and a function value, a closure and an indirect call are S2E.
+/// construct, a `?` and the two array literals never reach here: all are
+/// lowered. A function value, a closure and an indirect call are S2E.
 fn refuse_expr(kind: &ExprKind) -> String {
     let (what, stage) = match kind {
         ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2E"),
         ExprKind::ClosureLit { .. } => ("'a closure'", "S2E"),
         ExprKind::Capture { .. } => ("'a capture'", "S2E"),
         ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2E"),
-        ExprKind::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
-        ExprKind::Deref { .. } => ("'a dereference of a non-datac'", "S2B"),
-        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => ("'an array'", "S2D"),
+        ExprKind::Ref { .. } => ("'a borrow of a non-datac'", "S2F"),
+        ExprKind::Deref { .. } => ("'a dereference of a non-datac'", "S2F"),
         _ => ("'this expression'", "S2B"),
     };
     refuse(what, stage)
@@ -2893,5 +5976,54 @@ mod layout_tests {
             ir.contains("%kelp_View = type { ptr, i64 }"),
             "unexpected View layout:\n{ir}"
         );
+    }
+
+    /// The container headers the module builds must match the C typedefs in
+    /// `codegen_c.rs::write_container_typedef` field for field, because a
+    /// container's own runtime helpers and the `kelp_rt.c` entry points read
+    /// the same fields by the same offsets. The verifier cannot see the object
+    /// and a Kelp-only fixture cannot see a reordered field that both sides of
+    /// an IR-to-IR call agree on, so the agreement is pinned where it is made.
+    ///
+    /// The list is the whole container surface: `List` and `Bytes`/`String`
+    /// share the `{ptr, len, cap}` shape, `Box` is one pointer, the map is the
+    /// dense entries plus the separate index, one entry is `{key, value*, live}`,
+    /// and an array is its inline storage. A change to any of these lines is a
+    /// change to the ABI the C runtime and the monomorphized sets share.
+    #[test]
+    fn the_container_layouts_match_the_c_typedefs() {
+        let ctx = Context::new();
+        let module = Module::new(&ctx, "containers");
+        let ptr = ctx.opaque_ptr();
+        let i64t = ctx.i64();
+        let i8t = ctx.i8();
+        let string = ctx.struct_type("kelp_String");
+        ctx.struct_set_body(string, &[ptr, i64t, i64t]);
+        let list = ctx.struct_type("kelp_List__i32");
+        ctx.struct_set_body(list, &[ptr, i64t, i64t]);
+        let boxed = ctx.struct_type("kelp_Box__i32");
+        ctx.struct_set_body(boxed, &[ptr]);
+        let entry = ctx.struct_type("kelp_Map__String__i32_entry");
+        ctx.struct_set_body(entry, &[string, ptr, i8t]);
+        let map = ctx.struct_type("kelp_Map__String__i32");
+        ctx.struct_set_body(map, &[ptr, i64t, i64t, i64t, ptr, i64t, i64t]);
+        let arr = ctx.struct_type("kelp_Array__u8__4");
+        ctx.struct_set_body(arr, &[ctx.array_type(ctx.i8(), 4)]);
+        // A named type is only printed once something references it.
+        module.add_function("probe_list", ctx.fn_type(list, &[], false));
+        module.add_function("probe_box", ctx.fn_type(boxed, &[], false));
+        module.add_function("probe_map", ctx.fn_type(map, &[], false));
+        module.add_function("probe_entry", ctx.fn_type(entry, &[ptr], false));
+        module.add_function("probe_array", ctx.fn_type(arr, &[], false));
+        let ir = module.to_ir_string();
+        for want in [
+            "%kelp_List__i32 = type { ptr, i64, i64 }",
+            "%kelp_Box__i32 = type { ptr }",
+            "%kelp_Map__String__i32_entry = type { %kelp_String, ptr, i8 }",
+            "%kelp_Map__String__i32 = type { ptr, i64, i64, i64, ptr, i64, i64 }",
+            "%kelp_Array__u8__4 = type { [4 x i8] }",
+        ] {
+            assert!(ir.contains(want), "missing '{want}':\n{ir}");
+        }
     }
 }
