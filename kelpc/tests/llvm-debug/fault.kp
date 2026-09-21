@@ -1,0 +1,22 @@
+// The fixture of MK7 S4 (`plan/mk7-llvm-backend.md` §4.4): a program whose job
+// is to fault, so that a fault address exists for `addr2line`, `llvm-symbolizer`
+// or `gdb` to resolve.
+//
+// The fault is a signed division by a run-time zero, which traps with SIGFPE on
+// this target. `zero` is a binding rather than a literal argument, so the
+// frontend never sees a constant divisor and never folds the expression: the
+// `idiv` really does execute, and the faulting instruction belongs to the
+// `return` statement of `divide` below, which is what the fault has to resolve
+// to.
+//
+// `panic` and `assert` are not used because they are clean runtime calls that
+// end the process deliberately, and this fixture exists to produce a *hardware*
+// fault the debugger has to place in the source.
+fun divide(dividend: i64, divisor: i64).R: i64 {
+    return dividend / divisor
+}
+
+fun main() {
+    val zero: i64 = 0
+    print(divide(10, zero))
+}
