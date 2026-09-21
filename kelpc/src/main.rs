@@ -2,6 +2,7 @@ mod ast;
 mod backend;
 mod borrowck;
 mod codegen_c;
+mod codegen_llvm;
 mod deprecated;
 mod diag;
 mod driver;
@@ -279,6 +280,15 @@ fn build(path: &str, out_path: &Path, backend: Backend, deny_outdated: bool) -> 
             let c_source = codegen_c::generate(&typed, &drops, &sources);
             if let Err(e) = driver::compile_c(&c_source, out_path) {
                 eprintln!("error: {}", e.message);
+                return false;
+            }
+        }
+        Backend::Llvm => {
+            // The LLVM backend builds its own module, writes the textual IR
+            // beside the binary, and links the object itself; the C source
+            // string the arm above writes has no counterpart here.
+            if let Err(message) = codegen_llvm::compile(&typed, out_path) {
+                eprintln!("error: {message}");
                 return false;
             }
         }

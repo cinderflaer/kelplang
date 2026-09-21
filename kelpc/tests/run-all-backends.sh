@@ -7,8 +7,11 @@
 # keeps the C backend usable as the differential oracle: a backend only earns
 # its place by agreeing with it, and agreement is only known if both are run.
 #
-# `BACKENDS` overrides the list: `BACKENDS=llvm ./kelpc/tests/run-all-backends.sh`
-# once the LLVM backend is selectable.
+# `BACKENDS` overrides the list. `llvm` is selectable at MK7 S1 (the scalar
+# subset; everything else is refused by name), so `BACKENDS="c llvm"` runs both.
+# The default stays `c`: the C backend is the oracle every other backend is
+# checked against, and the S1 subset gate is the separate script
+# `run-llvm-scalar-subset.sh`.
 #
 # Usage, from the repository root:  ./kelpc/tests/run-all-backends.sh
 set -e

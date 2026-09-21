@@ -46,3 +46,37 @@ pub fn compile_c(c_source: &str, out_path: &Path) -> Result<(), CompileError> {
 
     Ok(())
 }
+
+/// Links the object `codegen_llvm` wrote into the final binary: the LLVM
+/// backend's *finishing* step, the sibling of [`compile_c`].
+///
+/// The same `cc` invocation as `compile_c`, and for the same reason (MK7 §1.3
+/// keeps the C linker, so `glibc_lib_dir()` and the `crt1.o` lookup stay
+/// unchanged), with one difference: there is no `-fwrapv` here. That flag is a
+/// C-frontend flag that pins signed overflow; the LLVM backend emits plain
+/// `add`/`sub`/`mul` IR, which wraps by definition, so the guarantee is already
+/// in the object and the flag would be inert. `-lm` is for `std/math`'s externs
+/// and is free whether or not they are used.
+pub fn link_llvm_object(object_path: &Path, out_path: &Path) -> Result<(), CompileError> {
+    let output = Command::new("cc")
+        .arg("-O2")
+        .arg("-o")
+        .arg(out_path)
+        .arg(object_path)
+        .arg("-lm")
+        .output()
+        .map_err(|e| CompileError {
+            message: format!("could not invoke 'cc': {e}"),
+        })?;
+
+    if !output.status.success() {
+        return Err(CompileError {
+            message: format!(
+                "cc failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        });
+    }
+
+    Ok(())
+}

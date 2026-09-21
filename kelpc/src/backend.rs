@@ -1,23 +1,21 @@
 //! Which code generator `kelpc build` uses.
 //!
 //! This is the backend *seam*, built by the retired hand-written track and now
-//! the seam the LLVM backend (`plan/mk7-llvm-backend.md`) plugs into. Until that
-//! backend exists there is nothing to abstract over, so this module deliberately
-//! holds only the selector: how a backend is named, which names exist, and how
-//! the choice is resolved from the command line and the environment. The `match`
-//! that calls a generator stays at its single call site in `main.rs`, and it
-//! becomes a trait only when a third backend makes the interface worth naming.
+//! the seam the LLVM backend (`plan/mk7-llvm-backend.md`, `codegen_llvm.rs`)
+//! plugs into. It holds only the selector: how a backend is named, which names
+//! exist, and how the choice is resolved from the command line and the
+//! environment. The `match` that calls a generator stays at its single call site
+//! in `main.rs`, and it becomes a trait only when a third backend makes the
+//! interface worth naming.
 //!
-//! Why the seam exists at all before the second backend does: the fixture suite
+//! Why the seam exists at all before the second backend did: the fixture suite
 //! is backend-agnostic by construction (compile, run, compare stdout), so a
 //! second backend is validated by running the suite again with `KELPC_BACKEND`
-//! set to it. That means the *only* thing this branch needs before any generator
-//! work starts is a way to say which backend to use, and a suite that cannot be
-//! pointed at a second backend cannot validate one.
+//! set to it.
 //!
 //! The hand-written `asm` backend this seam was built for was removed on
-//! 2026-09-21 (`plan/asm-backend/plan.md`); `llvm` is the name the seam will
-//! carry next.
+//! 2026-09-21 (`plan/asm-backend/plan.md`). `llvm` is the name the seam carries
+//! now, at MK7 S1: the scalar subset, with everything else refused by name.
 
 /// A code generator `kelpc` can lower a typed program with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +25,10 @@ pub enum Backend {
     /// every other backend is checked against. It is never deleted and never
     /// stops being maintained.
     C,
+    /// Lower `tir` to LLVM IR, let LLVM emit the object, and hand that to `cc`
+    /// (MK7). At S1 it covers the scalar subset only: anything else is refused
+    /// by name with a `--backend=c` way out.
+    Llvm,
 }
 
 /// Names a later tier will claim. Recognized, deliberately not selectable.
@@ -42,11 +44,12 @@ impl Backend {
 
     /// Every backend that can actually be selected. The integration suite loops
     /// over this to run the fixtures once per backend.
-    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C];
+    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C, Backend::Llvm];
 
     pub fn name(self) -> &'static str {
         match self {
             Backend::C => "c",
+            Backend::Llvm => "llvm",
         }
     }
 
@@ -67,6 +70,7 @@ impl Backend {
     pub fn parse(name: &str) -> Result<Backend, String> {
         match name {
             "c" => Ok(Backend::C),
+            "llvm" => Ok(Backend::Llvm),
             reserved if RESERVED.contains(&reserved) => Err(format!(
                 "backend '{reserved}' is planned but not implemented yet \
                  (see plan/mk7-llvm-backend.md); {}",
@@ -134,7 +138,7 @@ mod tests {
 
     #[test]
     fn an_unknown_backend_lists_the_implemented_ones() {
-        let e = resolve(Some("llvm"), None).unwrap_err();
+        let e = resolve(Some("rust"), None).unwrap_err();
         // Exact equality, not a search. Comparing the whole message is what
         // makes this a real assertion: `contains("own")` would match the word
         // "unknown", which is how this test first went wrong, and no
@@ -143,7 +147,7 @@ mod tests {
         assert_eq!(
             e,
             format!(
-                "unknown backend 'llvm'; expected one of: {}",
+                "unknown backend 'rust'; expected one of: {}",
                 offered.join(", ")
             )
         );

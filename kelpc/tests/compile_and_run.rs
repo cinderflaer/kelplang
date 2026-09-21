@@ -4952,10 +4952,10 @@ fn an_unknown_backend_is_rejected_and_a_planned_one_says_so() {
             .expect("failed to spawn kelpc")
     };
 
-    let unknown = build_with("llvm");
+    let unknown = build_with("rust");
     assert!(!unknown.status.success(), "an unknown backend must be rejected");
     let stderr = String::from_utf8_lossy(&unknown.stderr);
-    assert!(stderr.contains("unknown backend 'llvm'"), "{stderr}");
+    assert!(stderr.contains("unknown backend 'rust'"), "{stderr}");
     // The suggestion must not name a backend that cannot be selected. The names
     // are quoted so that "unknown" cannot satisfy the check by containing
     // "own".
