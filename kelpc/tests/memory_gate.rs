@@ -834,6 +834,119 @@ fn the_llvm_closure_binaries_are_valgrind_clean() {
     );
 }
 
+/// The S3 `pd` and capability fixtures the LLVM backend builds: the ones that
+/// give a module-scope global something to own, and the ones that run the
+/// capability glue.
+///
+/// A `pd` is storage that outlives every frame, so its drop point is the
+/// `atexit` handler the generated `kelp_init_pds` registers; a missed handler
+/// leaks, and one that frees twice fails here rather than in production. The
+/// capability glue allocates: `kelp_cap_check_path` builds a `PATH_MAX` scratch
+/// buffer on the stack and the matcher runs over it, and the deny path exits
+/// through glibc's `atexit` chain, which is where a `pd` drop and the deny path
+/// meet. Everything here also prints nothing about memory, so valgrind is the
+/// only instrument that can see it.
+const LLVM_PD_CAP_FIXTURES: &[&str] = &[
+    // The passdowns, including the owned one and the container-typed one.
+    "passdowns",
+    "passdown_datac",
+    "passdown_globals",
+    "pd_owned",
+    "pd_shadowed",
+    "pd_argument_forwarding",
+    "pd_var_write",
+    "pd_write_reaches_callers",
+    "pd_var_datac_reassign",
+    "pd_var_copy_read_twice",
+    "pd_var_mut_argument",
+    "pd_var_read_only_datac",
+    "pd_var_read_only_shared",
+    "list_field",
+    "for_loop",
+    // A gated call with a resource argument, checked at the call site.
+    "caps_time_rand",
+    "fs_errno",
+    "fs_fallible",
+    "fs_path_family",
+    "fs_symlink_kind",
+    "io_stdio",
+    "io_streams",
+    "io_write_bodies",
+    "net_loopback",
+    "net_poll",
+    "net_resolve",
+    "net_timeout",
+    "path_absolute",
+    "process_spawn",
+    // The last three refusals: the receiver adapter and the owned-temporary
+    // staging.
+    "string_basic",
+    "heap_field_of_temporary",
+    "heap_field_of_owned_temporary",
+];
+
+/// The S3 half of the memory gate: every `pd` and capability binary the LLVM
+/// backend builds, run under valgrind. `pd` storage and the capability glue are
+/// the two places this slice touches memory across a boundary the C sweep
+/// cannot see: the `atexit` drop is registered by generated IR, and the check
+/// calls into the C glue through the per-program object.
+#[test]
+#[ignore = "builds the passdown and capability fixtures and runs each under valgrind; ground rule 1.5 keeps it out of the default suite"]
+fn the_llvm_passdown_and_capability_binaries_are_valgrind_clean() {
+    let Some(version) = valgrind_version() else {
+        println!(
+            "memory gate: valgrind is not on PATH, so the LLVM passdown and capability sweep is skipped"
+        );
+        return;
+    };
+
+    let dir = scratch_dir();
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
+
+    let mut checked = Vec::new();
+    let mut rejected = Vec::new();
+    for name in LLVM_PD_CAP_FIXTURES {
+        let bin = dir.join(format!("llvm_{name}"));
+        if build("llvm", name, &bin) {
+            checked.push(run_under_valgrind("llvm", name, &bin, &dir));
+        } else {
+            rejected.push(*name);
+        }
+    }
+
+    println!(
+        "memory gate: {version} over {} LLVM passdown/capability fixture(s); {} refused by the backend and skipped",
+        checked.len(),
+        rejected.len(),
+    );
+    println!("{}", backend_summary("llvm passdown/capability", &checked, ""));
+
+    assert!(
+        !checked.is_empty(),
+        "the LLVM backend built none of the passdown or capability fixtures, so the sweep measured nothing",
+    );
+
+    let mut report = Vec::new();
+    let mut findings = 0;
+    for check in &checked {
+        for (pid, lines) in check.findings() {
+            findings += 1;
+            match pid {
+                Some(pid) => report.push(format!("{} '{}' (pid {pid}):", check.backend, check.fixture)),
+                None => report.push(format!("{} '{}':", check.backend, check.fixture)),
+            }
+            report.extend(lines.into_iter().map(|line| format!("    {line}")));
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "valgrind reported {findings} finding(s) over {} LLVM passdown/capability runs:\n{}",
+        checked.len(),
+        report.join("\n"),
+    );
+}
+
 /// Says what the ignored sweep would cover, and whether the tool it needs is
 /// here. It costs one `valgrind --version` spawn and never fails: valgrind is
 /// not a declared dependency of this repository, so a machine without it must
