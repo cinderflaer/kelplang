@@ -18,7 +18,8 @@
 //! [`Context`] (`LLVMContextCreate`/`LLVMContextDispose`), [`Module`]
 //! (`LLVMModuleCreateWithNameInContext`/`LLVMDisposeModule`), [`Builder`]
 //! (`LLVMCreateBuilderInContext`/`LLVMDisposeBuilder`) and [`TargetMachine`]
-//! (`LLVMCreateTargetMachine`/`LLVMDisposeTargetMachine`).
+//! (`LLVMCreateTargetMachine`/`LLVMDisposeTargetMachine`). [`DataLayout`] is a
+//! fifth, added for the tagged-union layout (MK7 S2C).
 //!
 //! Every other handle is a `Copy` newtype over a bare LLVM pointer:
 //! [`Type`], [`FnType`], [`Value`], [`Function`] and [`BasicBlock`]. LLVM owns
@@ -48,14 +49,15 @@ use std::ptr::null_mut;
 
 use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyModule};
 use llvm_sys::core::{
-    LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAppendBasicBlockInContext,
+    LLVMAddCase, LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAppendBasicBlockInContext,
+    LLVMArrayType2,
     LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
     LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt, LLVMBuildFPToSI,
     LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGlobalString, LLVMBuildICmp,
     LLVMBuildInsertValue, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
     LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
-    LLVMBuildSub, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
+    LLVMBuildSub, LLVMBuildSwitch, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
     LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstNull, LLVMConstReal,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
@@ -71,11 +73,14 @@ use llvm_sys::prelude::{
     LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMTypeRef,
     LLVMValueRef,
 };
-use llvm_sys::target::{LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget};
+use llvm_sys::target::{
+    LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMDisposeTargetData, LLVMTargetDataRef,
+    LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
+};
 use llvm_sys::target_machine::{
-    LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMCreateTargetMachine,
-    LLVMDisposeTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMRelocMode,
-    LLVMTargetMachineEmitToFile, LLVMTargetMachineRef,
+    LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMCreateTargetDataLayout,
+    LLVMCreateTargetMachine, LLVMDisposeTargetMachine, LLVMGetDefaultTargetTriple,
+    LLVMGetTargetFromTriple, LLVMRelocMode, LLVMTargetMachineEmitToFile, LLVMTargetMachineRef,
 };
 
 /// A `CString` for a name or a path on its way into the C API.
@@ -303,6 +308,21 @@ impl Context {
             // SAFETY: the context is live and the name is a valid C string; the
             // type is owned by the context.
             raw: unsafe { LLVMStructCreateNamed(self.raw, name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// The array type `[count x elem]` (`LLVMArrayType2`).
+    ///
+    /// The tagged-union layout is the one caller: a union has no LLVM type of
+    /// its own, so it is emitted as a struct anchored on the widest payload's
+    /// alignment type plus a byte array to the union's size (see
+    /// `codegen_llvm.rs::enum_union_body`).
+    pub fn array_type(&self, elem: Type<'_>, count: u64) -> Type<'_> {
+        Type {
+            // SAFETY: the element type is live and owned by this context; the
+            // array type is owned by the context too.
+            raw: unsafe { LLVMArrayType2(elem.as_raw(), count) },
             context: PhantomData,
         }
     }
@@ -1059,6 +1079,41 @@ impl<'ctx> Builder<'ctx> {
     /// The two slices are parallel and the phi must already have been emitted
     /// into the block that follows the listed predecessors. Calling this once
     /// with every predecessor is the whole input; calling it again appends.
+    /// Emit `switch ty value, label %default [ ... ]` (`LLVMBuildSwitch`).
+    ///
+    /// The switch starts with no cases; [`add_case`] supplies them. The lowering
+    /// uses one per generated `enum` drop, the same shape the C backend's
+    /// `switch (v->kelp_tag)` has, and the default block is where an unknown tag
+    /// lands: it is a compiler-visible hole rather than a runtime check, exactly
+    /// as the C backend's missing `default:` arm is.
+    ///
+    /// [`add_case`]: Builder::add_case
+    pub fn build_switch(
+        &self,
+        value: Value<'ctx>,
+        default: BasicBlock<'ctx>,
+        cases: u32,
+    ) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and both arguments are live. The
+            // case count is a hint LLVM uses to size the instruction, not the
+            // list of cases, which `add_case` appends to.
+            raw: unsafe {
+                LLVMBuildSwitch(self.raw, value.as_raw(), default.as_raw(), cases as c_uint)
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Add one `case` arm to a switch (`LLVMAddCase`): when `value` equals
+    /// `on`, control goes to `dest`. `case` must name the switch and `dest` a
+    /// block of the same function.
+    pub fn add_case(&self, case: Value<'ctx>, on: Value<'ctx>, dest: BasicBlock<'ctx>) {
+        // SAFETY: the switch and both handles are live; every case added before
+        // the block containing the switch is terminated is part of it.
+        unsafe { LLVMAddCase(case.as_raw(), on.as_raw(), dest.as_raw()) };
+    }
+
     pub fn add_incoming(&self, phi: Value<'ctx>, incoming: &[(Value<'ctx>, BasicBlock<'ctx>)]) {
         let mut values: Vec<LLVMValueRef> = incoming.iter().map(|(v, _)| v.as_raw()).collect();
         let mut blocks: Vec<LLVMBasicBlockRef> = incoming.iter().map(|(_, b)| b.as_raw()).collect();
@@ -1469,6 +1524,59 @@ impl Drop for TargetMachine {
     fn drop(&mut self) {
         // SAFETY: raw came from LLVMCreateTargetMachine and is disposed once.
         unsafe { LLVMDisposeTargetMachine(self.raw) };
+    }
+}
+
+/// Guard for `LLVMTargetDataRef`: the layout the target machine computes for a
+/// type.
+///
+/// The LLVM backend needs two numbers from it to build a tagged union, because
+/// an LLVM struct has no way to declare a field's alignment other than through
+/// the field's own type: the widest payload's size sets the union's size, and
+/// its alignment is the field type the union is anchored on (see
+/// `codegen_llvm.rs::enum_union_type`). Asking the target instead of assuming
+/// keeps the layout a property of the triple rather than of x86-64 (MK7 §3.1).
+///
+/// Created from a [`TargetMachine`] with [`TargetMachine::data_layout`] and
+/// disposed on drop.
+pub struct DataLayout {
+    raw: LLVMTargetDataRef,
+}
+
+impl TargetMachine {
+    /// This machine's data layout (`LLVMCreateTargetDataLayout`), disposed on
+    /// drop. LLVM allocates a fresh `LLVMTargetDataRef` per call, so this is a
+    /// guard rather than a view of data the machine owns.
+    pub fn data_layout(&self) -> DataLayout {
+        // SAFETY: the machine is live and owns the target it was created from.
+        DataLayout {
+            raw: unsafe { LLVMCreateTargetDataLayout(self.raw) },
+        }
+    }
+}
+
+impl DataLayout {
+    /// The store size of `ty` in bytes as the target lays it out
+    /// (`LLVMABISizeOfType`), including the trailing padding up to the type's
+    /// own alignment. `ty` must be a sized type.
+    pub fn abi_size_of(&self, ty: Type<'_>) -> u64 {
+        // SAFETY: the layout and the type are live, and the type has a body
+        // (an opaque one would be LLVM's own error, not unsoundness here).
+        unsafe { LLVMABISizeOfType(self.raw, ty.as_raw()) }
+    }
+
+    /// The ABI alignment of `ty` in bytes as the target lays it out
+    /// (`LLVMABIAlignmentOfType`). `ty` must be a sized type.
+    pub fn abi_alignment_of(&self, ty: Type<'_>) -> u32 {
+        // SAFETY: as above.
+        unsafe { LLVMABIAlignmentOfType(self.raw, ty.as_raw()) }
+    }
+}
+
+impl Drop for DataLayout {
+    fn drop(&mut self) {
+        // SAFETY: raw came from LLVMCreateTargetDataLayout and is disposed once.
+        unsafe { LLVMDisposeTargetData(self.raw) };
     }
 }
 

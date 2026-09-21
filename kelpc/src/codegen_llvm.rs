@@ -61,6 +61,40 @@
 //! such a struct by value are left out, so a call to one is refused by name
 //! rather than crossed wrongly. `View` is two eightbytes and crosses unchanged.
 //!
+//! # What S2C adds (MK7 S2, the tagged-union slice)
+//!
+//! An `enum` lowers to the `{ tag, union }` shape `codegen_c.rs::write_enum`
+//! emits today (MK7 §3.1), with the same tag width and the same payload
+//! offsets:
+//!
+//! - the tag is an `i32` at offset 0, the variant's index, exactly the C
+//!   `int32_t kelp_tag`
+//! - the union is emitted as a struct anchored on the widest payload's own
+//!   alignment type and sized to the widest payload, which is the only way an
+//!   LLVM struct can be given an alignment: the anchor is what puts the payload
+//!   at the offset the C `union` gets (`enum_union_body`)
+//! - each variant's payload is an identified struct with the variant's fields in
+//!   declaration order, so a payload field's offset is the C variant struct's
+//! - a variant with no payload keeps one byte, which is the `char kelp_none`
+//!   `write_enum` gives it, so a payload-less-only enum is still the C size
+//! - construction writes the zeroinitializer, then the tag, then each payload
+//!   field into the union member's address, the same bytes the C compound
+//!   literal's designators write
+//! - the per-`enum` drop is one `switch` on the tag (`emit_drop_fn_bodies`), with
+//!   a case per variant that owns a payload field, and the default block is the
+//!   exit: only the live variant's payloads are freed
+//!
+//! `when`, `if let` and `?` need no node of their own: the frontend desugars
+//! `when` (and therefore `if let`) into an `If` chain over `EnumTag`/`EnumField`
+//! (`infer.rs::check_when`), so this slice lowers those two nodes plus `EnumLit`
+//! and `Try`, which is what `tir.rs` actually carries. A `when` over a `&Shape`
+//! and a `when` over a `move` shape differ only in the `place_of` call behind
+//! the tag read.
+//!
+//! Exhaustiveness is the frontend's job (`check_when` refuses a non-exhaustive
+//! match), so no runtime check is emitted here, exactly as the C backend emits
+//! no `default:` arm.
+//!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
 //! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
@@ -104,8 +138,8 @@ use std::path::Path;
 use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{DropPlan, DropTarget};
 use crate::llvm_ffi::{
-    self, BasicBlock, Builder, Context, FloatBinOp, FnType, Function as LlvmFunction, IntBinOp,
-    IntCmp, Module, RealCmp, TargetMachine, Type, Value,
+    self, BasicBlock, Builder, Context, DataLayout, FloatBinOp, FnType, Function as LlvmFunction,
+    IntBinOp, IntCmp, Module, RealCmp, TargetMachine, Type, Value,
 };
 use crate::lexer::Span;
 use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt, TemplatePiece};
@@ -129,11 +163,19 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     let mut module = Module::new(&ctx, "kelp");
     module.set_triple(&triple);
 
-    let mut lowering = Gen::new(&ctx, &module, program, drops)?;
+    // The target machine is created here, before any type is built, because the
+    // tagged union's size and alignment are read back from its data layout
+    // (`declare_aggregates`). It is the same machine the object is written with,
+    // so the layout the types were built for and the layout codegen assumes
+    // cannot be two different ones.
+    let machine = TargetMachine::for_host()?;
+    let layout = machine.data_layout();
+
+    let mut lowering = Gen::new(&ctx, &module, program, drops, &layout)?;
     lowering.declare()?;
-    // The generated per-`datac` drops are defined before the function bodies
-    // that call them, mirroring the order `codegen_c.rs` writes the typedef and
-    // its drop routine in.
+    // The generated per-`datac` and per-`enum` drops are defined before the
+    // function bodies that call them, mirroring the order `codegen_c.rs` writes
+    // the typedef and its drop routine in.
     lowering.emit_drop_fn_bodies()?;
     lowering.emit_all()?;
 
@@ -147,7 +189,6 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     })?;
 
     let object_path = out_path.with_extension("o");
-    let machine = TargetMachine::for_host()?;
     machine.emit_object(&module, &object_path)?;
 
     crate::driver::link_llvm_object(&object_path, out_path).map_err(|e| e.message)
@@ -183,6 +224,35 @@ struct RtFn<'a> {
     sret: bool,
 }
 
+/// One `enum`'s LLVM layout, mirroring the `{ tag, union }` typedef
+/// `codegen_c.rs::write_enum` emits (MK7 §3.1).
+#[derive(Clone)]
+struct EnumInfo<'a> {
+    /// The outer struct: field 0 is the `i32` tag, field 1 the union.
+    llvm_ty: Type<'a>,
+    /// The union type. It is a struct anchored on the widest payload's own
+    /// alignment type, sized to the widest payload; the anchor field is what
+    /// makes LLVM place it where the C `union` sits (`enum_union_body`).
+    union_ty: Type<'a>,
+    /// One payload type per variant, in declaration order. A variant with no
+    /// payload gets a bare `i8`, which is the one-byte `char kelp_none` the C
+    /// typedef gives it, so `union` sizes agree.
+    variants: Vec<EnumVariant<'a>>,
+}
+
+/// One variant's payload: the identified struct its fields live in, and those
+/// fields' `tir` types (the drop needs the types, the access needs the struct).
+#[derive(Clone)]
+struct EnumVariant<'a> {
+    payload_ty: Type<'a>,
+    fields: Vec<Ty>,
+}
+
+/// The tag is field 0 and the union field 1 of every `enum` struct, so those two
+/// indices are named once rather than spelled at each projection.
+const ENUM_TAG_FIELD: u32 = 0;
+const ENUM_UNION_FIELD: u32 = 1;
+
 /// Module-level state: the context, the module, the builder, and the runtime
 /// symbols every function shares. Per-function state lives in [`FnGen`].
 struct Gen<'a> {
@@ -195,11 +265,19 @@ struct Gen<'a> {
     printf_ty: FnType<'a>,
     panic_fn: LlvmFunction<'a>,
     panic_ty: FnType<'a>,
+    /// The target's data layout, read for the tagged union's size and alignment.
+    /// An LLVM struct has no field-alignment annotation, so the type is built
+    /// from the numbers the target reports rather than from an assumption about
+    /// x86-64 (`TargetMachine::data_layout`).
+    layout: &'a DataLayout,
     /// One identified LLVM struct type per `datac`, keyed by the `tir` name. The
-    /// body is set once per declaration in `declare_structs`, before any
+    /// body is set once per declaration in `declare_aggregates`, before any
     /// function signature is built, so a `datac` parameter or return names a
-    /// complete type.
+    /// complete type. An `enum` is a `Ty::Struct` too, so its outer type is in
+    /// this same table, which is what lets `llvm_type` resolve one name.
     structs: HashMap<String, Type<'a>>,
+    /// Each `enum`'s layout, keyed by the same `tir` name.
+    enums: HashMap<String, EnumInfo<'a>>,
     /// Each `datac`'s field names in declaration order, so a `FieldAccess`
     /// resolves its field to the struct index a `getelementptr` needs without
     /// re-walking `program.structs`.
@@ -227,6 +305,7 @@ impl<'a> Gen<'a> {
         module: &'a Module<'a>,
         program: &'a Program,
         drops: &'a DropPlan,
+        layout: &'a DataLayout,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -265,7 +344,9 @@ impl<'a> Gen<'a> {
             printf_ty,
             panic_fn: panic.func,
             panic_ty: panic.ty,
+            layout,
             structs,
+            enums: HashMap::new(),
             field_index: HashMap::new(),
             drops,
             runtime,
@@ -275,27 +356,21 @@ impl<'a> Gen<'a> {
     }
 
     /// Refuse the program-level constructs this slice does not lower, declare
-    /// every `datac`, its drop function, and every function.
+    /// every `datac` and `enum`, their drop functions, and every function.
     ///
-    /// Refusing before any function is emitted means a program with an `enum`
-    /// anywhere fails with the construct named, rather than with the first
-    /// expression that mentions it.
+    /// Refusing before any function is emitted means a program with a construct
+    /// this slice cannot lower fails with the construct named, rather than with
+    /// the first expression that mentions it.
     fn declare(&mut self) -> Result<(), String> {
         let program = self.program;
-        // The `datac` types first, so a field this slice cannot lay out is
+        // The aggregate types first, so a field this slice cannot lay out is
         // reported by its own construct rather than behind an unrelated std
         // declaration.
-        self.declare_structs()?;
+        self.declare_aggregates()?;
         // A `pd` is a module global plus an `atexit` registration, which is the
         // runtime slice's job.
         if !program.pds.is_empty() {
             return Err(refuse("'pd'", "S3"));
-        }
-        // An `enum` is the tagged-union slice (the `{tag, union}` layout and the
-        // `switch` per drop, MK7 §3.1), separate from the plain-record lowering
-        // this slice does, so it keeps its own stage label.
-        if !program.enums.is_empty() {
-            return Err(refuse("'enum'", "S2C"));
         }
         // `program.caps` holds each module's granted patterns, which is data, not
         // a construct: it is harmless to ignore while nothing calls a gated
@@ -315,7 +390,7 @@ impl<'a> Gen<'a> {
                 continue;
             }
             if f.env.is_some() {
-                return Err(refuse("'a closure'", "S2D"));
+                return Err(refuse("'a closure'", "S2E"));
             }
             let (params, ret) = if f.name == "main" {
                 // The C backend's `main` is `int main(int, char**)`; S1 mirrors
@@ -353,15 +428,38 @@ impl<'a> Gen<'a> {
     /// so a field may refer to a `datac` declared later in the vector; the
     /// frontend already guarantees the by-value dependency is acyclic, and the
     /// order here only has to be *a* complete one.
-    fn declare_structs(&mut self) -> Result<(), String> {
+    /// Declare one identified LLVM type per `datac` and per `enum`, and set
+    /// every body, in the program's merged declaration order (MK7 §3.1).
+    ///
+    /// Field and payload types are checked before any type is created, so an
+    /// aggregate this slice cannot lay out fails with the construct named and
+    /// nothing half declared. Every named type is created first and its body set
+    /// afterwards, so a field may name a type whose body is set later in the
+    /// same pass; the frontend already guarantees the by-value dependency is
+    /// acyclic, and `order` (`types::StructDef::order` / `EnumDef::order`) is
+    /// that topological order, shared by the two lists.
+    ///
+    /// The tagged union is where that order matters for a second reason: the
+    /// union's size and alignment are read back from the target's data layout,
+    /// so every payload type it measures is complete by the time it is built.
+    fn declare_aggregates(&mut self) -> Result<(), String> {
         let program = self.program;
         let ctx = self.ctx;
-        let enum_names: HashSet<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
         for s in &program.structs {
             for f in &s.fields {
-                refuse_datac_field(&f.ty, &enum_names)?;
+                refuse_field(&f.ty)?;
             }
         }
+        for e in &program.enums {
+            for v in &e.variants {
+                for f in &v.fields {
+                    refuse_field(&f.ty)?;
+                }
+            }
+        }
+
+        // Create every named type before any body is set, so a body may refer
+        // to a type whose own body comes later in this same pass.
         for s in &program.structs {
             let ty = ctx.struct_type(&struct_tag(&s.name));
             self.structs.insert(s.name.clone(), ty);
@@ -370,19 +468,129 @@ impl<'a> Gen<'a> {
                 s.fields.iter().map(|f| f.name.clone()).collect(),
             );
         }
-        for s in &program.structs {
-            let ty = *self
-                .structs
-                .get(&s.name)
-                .expect("every datac got a type above");
-            let fields = s
+        for e in &program.enums {
+            let llvm_ty = ctx.struct_type(&struct_tag(&e.name));
+            self.structs.insert(e.name.clone(), llvm_ty);
+            let union_ty = ctx.struct_type(&enum_union_name(&e.name));
+            let variants = e
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(i, v)| EnumVariant {
+                    // A payload-less variant is a bare `i8` rather than an empty
+                    // struct: an empty struct is zero bytes in LLVM and one in
+                    // C, and the one byte is what sizes a union every variant of
+                    // which carries nothing.
+                    payload_ty: if v.fields.is_empty() {
+                        ctx.i8()
+                    } else {
+                        ctx.struct_type(&enum_payload_name(&e.name, i))
+                    },
+                    fields: v.fields.iter().map(|f| f.ty.clone()).collect(),
+                })
+                .collect();
+            self.enums.insert(
+                e.name.clone(),
+                EnumInfo {
+                    llvm_ty,
+                    union_ty,
+                    variants,
+                },
+            );
+        }
+
+        // Set every body in the merged declaration order, so a field or payload
+        // only ever names a type whose body is already complete.
+        enum Decl<'p> {
+            Record(&'p crate::types::StructDef),
+            Sum(&'p crate::types::EnumDef),
+        }
+        let mut decls: Vec<(usize, Decl)> = program
+            .structs
+            .iter()
+            .map(|s| (s.order, Decl::Record(s)))
+            .chain(program.enums.iter().map(|e| (e.order, Decl::Sum(e))))
+            .collect();
+        decls.sort_by_key(|(order, _)| *order);
+        for (_, decl) in decls {
+            match decl {
+                Decl::Record(s) => {
+                    let ty = *self
+                        .structs
+                        .get(&s.name)
+                        .expect("every datac got a type above");
+                    let fields = s
+                        .fields
+                        .iter()
+                        .map(|f| llvm_type(ctx, &self.structs, &f.ty))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    ctx.struct_set_body(ty, &fields);
+                }
+                Decl::Sum(e) => self.declare_enum_body(e)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Set one `enum`'s three bodies: each variant's payload struct, the union,
+    /// then the outer `{ i32, union }`.
+    ///
+    /// The union's shape is the whole subtlety. C's `union { struct v0; struct
+    /// v1; }` places every member at offset 0 inside the union and sizes the
+    /// union to its widest member aligned to its widest alignment. LLVM has no
+    /// union type and no per-field alignment, so the union becomes a struct
+    /// **anchored on an integer type with the union's own alignment** and padded
+    /// out to the union's size. The anchor is what makes LLVM align the union
+    /// field to the payload's alignment, which is the offset C gives it; the
+    /// padding is what makes the whole `enum` the size C gives it. Both numbers
+    /// come from the target's data layout rather than from x86-64 arithmetic.
+    fn declare_enum_body(&mut self, e: &crate::types::EnumDef) -> Result<(), String> {
+        let ctx = self.ctx;
+        let info = self
+            .enums
+            .get(&e.name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
+        for (i, v) in e.variants.iter().enumerate() {
+            let payload_ty = info.variants[i].payload_ty;
+            if v.fields.is_empty() {
+                continue;
+            }
+            let fields = v
                 .fields
                 .iter()
                 .map(|f| llvm_type(ctx, &self.structs, &f.ty))
                 .collect::<Result<Vec<_>, _>>()?;
-            ctx.struct_set_body(ty, &fields);
+            ctx.struct_set_body(payload_ty, &fields);
         }
+        let body = self.enum_union_body(&info);
+        ctx.struct_set_body(info.union_ty, &body);
+        ctx.struct_set_body(info.llvm_ty, &[ctx.i32(), info.union_ty]);
         Ok(())
+    }
+
+    /// The union's field list: the alignment anchor, then a byte array filling
+    /// out to the union's size. The byte count is exactly what makes the `enum`
+    /// the size its widest payload rounds up to, so a value of the type is the
+    /// same object the C typedef declares.
+    fn enum_union_body(&self, info: &EnumInfo<'a>) -> Vec<Type<'a>> {
+        let mut align = 1u32;
+        let mut size = 0u64;
+        for v in &info.variants {
+            align = align.max(self.layout.abi_alignment_of(v.payload_ty));
+            size = size.max(self.layout.abi_size_of(v.payload_ty));
+        }
+        let union_size = round_up(size, align);
+        // An integer of exactly the union's alignment: LLVM gives `iN` the
+        // alignment of the smallest power-of-two byte width that covers it, so
+        // the anchor is what forces the union field to `align`.
+        let anchor = self.ctx.int(align * 8);
+        let anchor_size = self.layout.abi_size_of(anchor);
+        let pad = union_size.saturating_sub(anchor_size);
+        if pad == 0 {
+            return vec![anchor];
+        }
+        vec![anchor, self.ctx.array_type(self.ctx.i8(), pad)]
     }
 
     /// Whether a value of `ty` owns memory in this program, which is exactly
@@ -393,7 +601,7 @@ impl<'a> Gen<'a> {
         needs_drop(ty, &self.owned)
     }
 
-    /// Declare one drop function per `datac` whose fields own memory
+    /// Declare one drop function per `datac` or `enum` that owns memory
     /// (`types::needs_drop`), the mirror of the routine `codegen_c.rs` writes
     /// beside each typedef. The plan's targets call them by name.
     fn declare_drop_fns(&mut self) {
@@ -409,11 +617,27 @@ impl<'a> Gen<'a> {
             let func = self.module.add_function(&name, ty);
             self.drop_fns.insert(s.name.clone(), (func, ty));
         }
+        // An `enum` whose own name is in `owned` has at least one variant with
+        // an owned payload field, so its drop has at least one case.
+        for e in &self.program.enums {
+            if !needs_drop(&Ty::Struct(e.name.clone()), &owned) {
+                continue;
+            }
+            let name = format!("kelp_drop_{}", crate::types::c_ident(&e.name));
+            let ty = self
+                .ctx
+                .fn_type(self.ctx.void(), &[self.ctx.opaque_ptr()], false);
+            let func = self.module.add_function(&name, ty);
+            self.drop_fns.insert(e.name.clone(), (func, ty));
+        }
     }
 
-    /// Define each generated drop: one call per owned field, in declaration
-    /// order, on the field's own address. A builtin buffer goes straight to the
-    /// runtime's drop; a nested owned `datac` recurses through its own.
+    /// Define each generated drop: for a `datac`, one call per owned field in
+    /// declaration order, on the field's own address; for an `enum`, one
+    /// `switch` on the live tag, so only the live variant's owned payload fields
+    /// are freed (MK7 §3.1, "one `switch` per drop"). A builtin buffer goes
+    /// straight to the runtime's drop; a nested owned aggregate recurses through
+    /// its own drop.
     fn emit_drop_fn_bodies(&self) -> Result<(), String> {
         let owned = owned_types(&self.program.structs, &self.program.enums);
         for s in &self.program.structs {
@@ -438,6 +662,74 @@ impl<'a> Gen<'a> {
             }
             self.builder.build_ret_void();
         }
+        for e in &self.program.enums {
+            if !self.drop_fns.contains_key(&e.name) {
+                continue;
+            }
+            self.emit_enum_drop_body(e, &owned)?;
+        }
+        Ok(())
+    }
+
+    /// One `enum`'s drop: `switch (tag) { case v: <drop v's owned payload>
+    /// ... }`, which is the C backend's version of the same function and the
+    /// only place a tagged union frees anything.
+    ///
+    /// Only a variant with at least one owned payload field gets a case, exactly
+    /// as `write_enum` skips the variants with nothing to free. The default block
+    /// is the exit and there is no runtime tag check: every tag a program can
+    /// produce is one of the variants, and the frontend's exhaustiveness is what
+    /// says so.
+    fn emit_enum_drop_body(&self, e: &crate::types::EnumDef, owned: &HashSet<String>) -> Result<(), String> {
+        let (func, _) = *self
+            .drop_fns
+            .get(&e.name)
+            .ok_or_else(|| no_value(&format!("the drop of '{}'", e.name)))?;
+        let info = self
+            .enums
+            .get(&e.name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let self_ptr = func.get_param(0);
+        let tag_ptr = self
+            .builder
+            .build_struct_gep(info.llvm_ty, self_ptr, ENUM_TAG_FIELD, "tag");
+        let tag = self.builder.build_load(self.ctx.i32(), tag_ptr, "tag");
+
+        let done = func.append_block("drop.end");
+        let cases: Vec<(usize, BasicBlock<'a>)> = e
+            .variants
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.fields.iter().any(|f| needs_drop(&f.ty, owned)))
+            .map(|(i, _)| (i, func.append_block(&format!("drop.v{i}"))))
+            .collect();
+        let switch = self.builder.build_switch(tag, done, cases.len() as u32);
+        for (index, block) in &cases {
+            let on = self.ctx.const_int(self.ctx.i32(), *index as u64, false);
+            self.builder.add_case(switch, on, *block);
+        }
+        for (index, block) in &cases {
+            self.builder.position_at_end(*block);
+            let payload_ty = info.variants[*index].payload_ty;
+            let union_ptr = self
+                .builder
+                .build_struct_gep(info.llvm_ty, self_ptr, ENUM_UNION_FIELD, "kelp_v");
+            for (fi, field) in e.variants[*index].fields.iter().enumerate() {
+                if !needs_drop(&field.ty, owned) {
+                    continue;
+                }
+                let field_ptr =
+                    self.builder
+                        .build_struct_gep(payload_ty, union_ptr, fi as u32, &field.name);
+                self.call_drop(field_ptr, &field.ty)?;
+            }
+            self.builder.build_br(done);
+        }
+        self.builder.position_at_end(done);
+        self.builder.build_ret_void();
         Ok(())
     }
 
@@ -692,6 +984,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.drops.at_assign(&self.fn_name, span).to_vec()
     }
 
+    /// Owned locals freed by the `?` at `span`, on its failure arm only: the same
+    /// set and the same order a written `return` frees (`DropPlan::at_try`).
+    fn drops_at_try(&self, span: Span) -> Vec<DropTarget> {
+        self.g.drops.at_try(&self.fn_name, span).to_vec()
+    }
+
     /// Free the still-live owned locals the plan names, in the plan's order
     /// (reverse declaration order, so a later binding is freed before an earlier
     /// one it may have taken its value from).
@@ -778,6 +1076,50 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 Ok(Some(self.emit_field_read(base, field, &e.ty)?))
             }
             ExprKind::StructLit { name, fields } => Ok(Some(self.emit_struct_lit(name, fields)?)),
+            // `Enum.Variant(payload = ...)`: the tag, then each payload field
+            // into the variant's union member.
+            ExprKind::EnumLit {
+                enum_name,
+                variant,
+                fields,
+            } => Ok(Some(self.emit_enum_lit(enum_name, *variant, fields)?)),
+            // The tag test a `when`/`if let` arm lowers to. `expr` is a place
+            // (`infer.rs::check_when_scrutinee` guarantees it), so this reads a
+            // field of it rather than of a copy.
+            ExprKind::EnumTag { expr, variant } => {
+                Ok(Some(self.emit_enum_tag(expr, *variant)?))
+            }
+            // One payload field of one variant, read out of a value whose tag is
+            // already known to be `variant`. It is a *place*, which is what lets
+            // an owned payload be bound as a borrow rather than moved out.
+            ExprKind::EnumField {
+                base,
+                variant,
+                field,
+            } => Ok(Some(self.emit_enum_field(base, *variant, *field, &e.ty)?)),
+            // `expr?`: the operand once, then a branch on its failure tag. The
+            // failure arm rebuilds the failure in the enclosing function's
+            // return type, frees the frame (`DropPlan::at_try`) and returns; the
+            // success arm is the operator's own value.
+            ExprKind::Try {
+                expr: sub,
+                source,
+                target,
+                ok_variant,
+                err_variant,
+                target_err_variant,
+                err_has_payload,
+            } => self.emit_try(
+                sub,
+                source,
+                target,
+                *ok_variant,
+                *err_variant,
+                *target_err_variant,
+                *err_has_payload,
+                e.span,
+                &e.ty,
+            ),
             // A borrow (`infer.rs::check_call_arg` synthesizes one for the
             // `datac` parameter whose type resolves to a shared or exclusive
             // borrow). `&str` is the pointer itself, as the C backend writes it;
@@ -859,6 +1201,261 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(agg)
     }
 
+    /// The layout of the `enum` a (possibly borrowed) expression's type names.
+    /// A clone, because the callers all need to walk a place mutably at the same
+    /// time, and the layout is a handful of `Copy` handles.
+    fn enum_info_of(&self, ty: &Ty) -> Result<EnumInfo<'a>, String> {
+        let name = struct_name_of_ty(ty).ok_or_else(|| refuse_type(ty))?;
+        self.g
+            .enums
+            .get(name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{name}'")))
+    }
+
+    /// The address of an `enum` place, plus its layout. `place_of` decides
+    /// whether that address is the local's own slot or the pointer a `&Shape`
+    /// binding holds, so a `move` parameter and a borrowed one take the same
+    /// path here.
+    fn enum_place(&mut self, base: &Expr) -> Result<(Value<'a>, EnumInfo<'a>), String> {
+        let info = self.enum_info_of(&base.ty)?;
+        let ptr = self.place_of(base)?;
+        Ok((ptr, info))
+    }
+
+    /// `expr.kelp_tag == variant`: the tag test a `when`/`if let` arm lowers to.
+    /// The comparison is on `i32` because that is the C typedef's tag width, and
+    /// the variant index is the same compile-time constant both backends write.
+    fn emit_enum_tag(&mut self, base: &Expr, variant: usize) -> Result<Value<'a>, String> {
+        let (ptr, info) = self.enum_place(base)?;
+        let tag_ptr = self
+            .g
+            .builder
+            .build_struct_gep(info.llvm_ty, ptr, ENUM_TAG_FIELD, "tag");
+        let tag = self.g.builder.build_load(self.g.ctx.i32(), tag_ptr, "tag");
+        let want = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
+        Ok(self
+            .g
+            .builder
+            .build_icmp(IntCmp::Eq, tag, want, "isvar"))
+    }
+
+    /// The address of one payload field of one variant, inside the union. The
+    /// union's own address is the enum's field 1; the address inside it is the
+    /// *variant payload struct*'s field index, which is the C
+    /// `kelp_v.kelp_v_<Variant>.<field>` path with the same offsets.
+    fn enum_field_place(
+        &mut self,
+        base: &Expr,
+        variant: usize,
+        field: usize,
+    ) -> Result<Value<'a>, String> {
+        let (ptr, info) = self.enum_place(base)?;
+        let payload_ty = info
+            .variants
+            .get(variant)
+            .ok_or_else(|| no_value(&format!("the variant {variant} of an enum")))?
+            .payload_ty;
+        let union_ptr = self
+            .g
+            .builder
+            .build_struct_gep(info.llvm_ty, ptr, ENUM_UNION_FIELD, "kelp_v");
+        Ok(self
+            .g
+            .builder
+            .build_struct_gep(payload_ty, union_ptr, field as u32, "field"))
+    }
+
+    /// Read one payload field of one variant as a value.
+    fn emit_enum_field(
+        &mut self,
+        base: &Expr,
+        variant: usize,
+        field: usize,
+        ty: &Ty,
+    ) -> Result<Value<'a>, String> {
+        let ptr = self.enum_field_place(base, variant, field)?;
+        let lty = self.lty(ty)?;
+        Ok(self.g.builder.build_load(lty, ptr, "payload"))
+    }
+
+    /// Build one `enum` value: a zeroinitializer, the tag, then each payload
+    /// field stored into the variant's union member.
+    ///
+    /// A tagged union has no single LLVM value to build field by field, because
+    /// the union field's type is not the variant's payload type; the address of
+    /// the union is, so the literal is materialized in a temporary and loaded
+    /// back. The zeroinitializer is what the C compound literal does for the
+    /// members its designators do not mention, so an `enum` copied by value never
+    /// carries an undefined byte.
+    fn emit_enum_lit(
+        &mut self,
+        name: &str,
+        variant: usize,
+        fields: &[Expr],
+    ) -> Result<Value<'a>, String> {
+        let info = self
+            .g
+            .enums
+            .get(name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{name}'")))?;
+        let slot = self.temp_alloca(info.llvm_ty, "enum.tmp");
+        self.g
+            .builder
+            .build_store(self.g.ctx.const_null(info.llvm_ty), slot);
+        let tag_ptr = self
+            .g
+            .builder
+            .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
+        let tag = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
+        self.g.builder.build_store(tag, tag_ptr);
+        if !fields.is_empty() {
+            let payload_ty = info
+                .variants
+                .get(variant)
+                .ok_or_else(|| no_value(&format!("the variant {variant} of '{name}'")))?
+                .payload_ty;
+            let union_ptr = self
+                .g
+                .builder
+                .build_struct_gep(info.llvm_ty, slot, ENUM_UNION_FIELD, "kelp_v");
+            for (index, field) in fields.iter().enumerate() {
+                let value = self.value_of(field)?;
+                let field_ptr = self.g.builder.build_struct_gep(
+                    payload_ty,
+                    union_ptr,
+                    index as u32,
+                    "field",
+                );
+                self.g.builder.build_store(value, field_ptr);
+            }
+        }
+        Ok(self.g.builder.build_load(info.llvm_ty, slot, "enum"))
+    }
+
+    /// `expr?`: evaluate the operand once into a temporary, branch on its failure
+    /// tag, and on the failure path rebuild the failure in the enclosing
+    /// function's return type, free the frame, and return.
+    ///
+    /// This is the C backend's statement expression, as control flow: the two
+    /// arms are two blocks and the operator's value is the success payload read
+    /// out of the temporary. The temporary is deliberately never dropped: exactly
+    /// one variant's payload is moved out of it on either path, and dropping what
+    /// is left would free what was moved.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_try(
+        &mut self,
+        sub: &Expr,
+        source: &str,
+        target: &str,
+        ok_variant: usize,
+        err_variant: usize,
+        target_err_variant: usize,
+        err_has_payload: bool,
+        span: Span,
+        ty: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        let src = self
+            .g
+            .enums
+            .get(source)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{source}'")))?;
+        let dst = self
+            .g
+            .enums
+            .get(target)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{target}'")))?;
+        let src_ty = src.llvm_ty;
+        let dst_ty = dst.llvm_ty;
+
+        let value = self.value_of(sub)?;
+        // An operand that diverged (`panic(...)?`) leaves the block terminated and
+        // no tag to test; the failure path is already the only one.
+        if self.terminated {
+            return Ok(None);
+        }
+        let src_slot = self.temp_alloca(src_ty, "try.src");
+        self.g.builder.build_store(value, src_slot);
+        let tag_ptr = self
+            .g
+            .builder
+            .build_struct_gep(src_ty, src_slot, ENUM_TAG_FIELD, "tag");
+        let tag = self.g.builder.build_load(self.g.ctx.i32(), tag_ptr, "tag");
+        let want = self.g.ctx.const_int(self.g.ctx.i32(), err_variant as u64, false);
+        let failed = self.g.builder.build_icmp(IntCmp::Eq, tag, want, "iserr");
+
+        let fail_bb = self.cur_fn.append_block("try.err");
+        let ok_bb = self.cur_fn.append_block("try.ok");
+        self.g.builder.build_cond_br(failed, fail_bb, ok_bb);
+
+        // The failure arm: the failure value in the *enclosing function's* return
+        // type, then the frame's drops, then the return. The payload is copied,
+        // not moved, because the source temporary is never dropped either.
+        self.g.builder.position_at_end(fail_bb);
+        self.cur = fail_bb;
+        self.terminated = false;
+        let dst_slot = self.temp_alloca(dst_ty, "try.ret");
+        self.g
+            .builder
+            .build_store(self.g.ctx.const_null(dst_ty), dst_slot);
+        let dst_tag_ptr = self
+            .g
+            .builder
+            .build_struct_gep(dst_ty, dst_slot, ENUM_TAG_FIELD, "tag");
+        let dst_tag = self
+            .g
+            .ctx
+            .const_int(self.g.ctx.i32(), target_err_variant as u64, false);
+        self.g.builder.build_store(dst_tag, dst_tag_ptr);
+        if err_has_payload {
+            let src_payload_ty = src.variants[err_variant].payload_ty;
+            let src_union = self
+                .g
+                .builder
+                .build_struct_gep(src_ty, src_slot, ENUM_UNION_FIELD, "kelp_v");
+            let src_field = self
+                .g
+                .builder
+                .build_struct_gep(src_payload_ty, src_union, 0, "payload");
+            let payload_ty = self.lty(&src.variants[err_variant].fields[0])?;
+            let payload = self.g.builder.build_load(payload_ty, src_field, "payload");
+            let dst_payload_ty = dst.variants[target_err_variant].payload_ty;
+            let dst_union = self
+                .g
+                .builder
+                .build_struct_gep(dst_ty, dst_slot, ENUM_UNION_FIELD, "kelp_v");
+            let dst_field = self
+                .g
+                .builder
+                .build_struct_gep(dst_payload_ty, dst_union, 0, "payload");
+            self.g.builder.build_store(payload, dst_field);
+        }
+        let drops = self.drops_at_try(span);
+        self.emit_drops(&drops)?;
+        let ret = self.g.builder.build_load(dst_ty, dst_slot, "try.ret");
+        self.g.builder.build_ret(ret);
+        self.terminated = true;
+
+        // The success arm is where the operator's value lives.
+        self.g.builder.position_at_end(ok_bb);
+        self.cur = ok_bb;
+        self.terminated = false;
+        let ok_payload_ty = src.variants[ok_variant].payload_ty;
+        let ok_union = self
+            .g
+            .builder
+            .build_struct_gep(src_ty, src_slot, ENUM_UNION_FIELD, "kelp_v");
+        let ok_field = self
+            .g
+            .builder
+            .build_struct_gep(ok_payload_ty, ok_union, 0, "payload");
+        let lty = self.lty(ty)?;
+        Ok(Some(self.g.builder.build_load(lty, ok_field, "try.ok")))
+    }
+
     /// The address of `base.field`, plus the LLVM struct type it indexes and the
     /// field's index: what a field read and a field write both need.
     fn field_place(
@@ -912,6 +1509,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .builder
                     .build_struct_gep(struct_ty, ptr, index, field))
             }
+            // One payload field of one variant: the same union projection a
+            // read takes, handed out as an address. This is what a pattern
+            // binding of an owned payload borrows through.
+            ExprKind::EnumField {
+                base,
+                variant,
+                field,
+            } => self.enum_field_place(base, *variant, *field),
             // A borrow in a place position is already an address.
             ExprKind::Ref { expr: sub, .. } => self.place_of(sub),
             ExprKind::Deref { expr: sub } => self.value_of(sub),
@@ -1007,6 +1612,27 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .g
                     .builder
                     .build_struct_gep(struct_ty, base_ptr, index as u32, field))
+            }
+            // A chain that steps through an enum payload: the union field, then
+            // the variant's payload struct, then the field.
+            ExprKind::EnumField {
+                base,
+                variant,
+                field,
+            } => {
+                let base_ptr = self.chain_addr(root, base)?;
+                let info = self.enum_info_of(&base.ty)?;
+                let union_ptr = self.g.builder.build_struct_gep(
+                    info.llvm_ty,
+                    base_ptr,
+                    ENUM_UNION_FIELD,
+                    "kelp_v",
+                );
+                let payload_ty = info.variants[*variant].payload_ty;
+                Ok(self
+                    .g
+                    .builder
+                    .build_struct_gep(payload_ty, union_ptr, *field as u32, "field"))
             }
             _ => Ok(root),
         }
@@ -1484,7 +2110,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .iter()
             .any(|prefix| callee.starts_with(prefix))
         {
-            "S2C"
+            "S2D"
         } else {
             "S2B"
         };
@@ -2043,19 +2669,23 @@ fn is_heap_ref(ty: &Ty) -> bool {
 fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,
-        ExprKind::Ident(_) | ExprKind::FieldAccess { .. } | ExprKind::Deref { .. }
+        ExprKind::Ident(_)
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::EnumField { .. }
+            | ExprKind::Deref { .. }
     )
 }
 
 /// The rvalue a field chain hangs off, when the chain's own address is not
 /// storage already: the C backend's `temporary_root`, minus the rows this slice
 /// does not lower. `None` for a place, `Some(root)` for a chain rooted at an
-/// rvalue.
+/// rvalue. An `enum` payload field is part of a chain exactly as a `datac` field
+/// is (`codegen_c.rs` walks the two the same way).
 fn temporary_root(expr: &Expr) -> Option<&Expr> {
     let mut cur = expr;
     loop {
         match &cur.kind {
-            ExprKind::FieldAccess { base, .. } => {
+            ExprKind::FieldAccess { base, .. } | ExprKind::EnumField { base, .. } => {
                 // A chain that steps through a borrow lives in the pointee, so
                 // nothing has to be staged for it.
                 if matches!(base.ty, Ty::Ref { .. }) {
@@ -2067,6 +2697,24 @@ fn temporary_root(expr: &Expr) -> Option<&Expr> {
         }
     }
     if is_place_expr(cur) { None } else { Some(cur) }
+}
+
+/// The identified LLVM type name of one `enum`'s union, and of one variant's
+/// payload struct. Named after the tag `struct_tag` gives the enum, so the IR
+/// names the same type the C spelling does and two enums cannot collide.
+fn enum_union_name(name: &str) -> String {
+    format!("{}.kelp_v", struct_tag(name))
+}
+
+fn enum_payload_name(name: &str, variant: usize) -> String {
+    format!("{}.kelp_v_{variant}", struct_tag(name))
+}
+
+/// `size` rounded up to a multiple of `align`, which is a power of two. The
+/// union's size rule, the same one C's own layout uses.
+fn round_up(size: u64, align: u32) -> u64 {
+    let align = align as u64;
+    size.div_ceil(align) * align
 }
 
 /// A symbol name for a LLVM function, mirroring `codegen_c.rs::c_name` without
@@ -2105,40 +2753,33 @@ fn int_width(ty: &Ty) -> Option<u32> {
 /// The refusal message for a construct this stage does not lower. `what` is the
 /// construct's name, quoted when it is a language word (`'enum'`) and a phrase
 /// when it is a shape; `stage` is the MK7 stage that will lower it: this slice
-/// lowers plain records, owned fields, the drop plan and the runtime, S2C is the
-/// containers and the tagged union, S2D is closures and function values, and S3
-/// is the stdlib's `extern fun` bodies.
+/// lowers plain records, owned fields, the drop plan, the runtime and the tagged
+/// union, S2D is the containers and arrays, S2E is closures and function values,
+/// and S3 is the stdlib's `extern fun` bodies.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
 
-/// Refuse a `datac` field this slice cannot lay out, with the construct named.
+/// Refuse a `datac` field or an `enum` payload field this slice cannot lay out,
+/// with the construct named.
 ///
-/// A `String`/`Bytes` field and a field of an owned `datac` are laid out and
-/// dropped (MK7 §3.4); everything else that is not a scalar or an all-scalar
-/// `datac` is named by its own construct. A container field is the container
-/// slice (S2C), and the `str`/`View` rows are unreachable from the frontend
+/// A `String`/`Bytes` field, a field of an owned aggregate and a field that
+/// names a `datac` or an `enum` are laid out (MK7 §3.1, §3.4); everything else
+/// is named by its own construct. A container or array field is the container
+/// slice (S2D), and the `str`/`View` rows are unreachable from the frontend
 /// (`types::is_borrowed_field_ty` rejects them) but are refused here rather than
-/// mis-lowered if they ever appear. A field that names an `enum` is refused as
-/// the tagged-union slice: an `enum` is a `Ty::Struct` at the type level, so
-/// without this the enum name would be reported as a missing `datac`.
-fn refuse_datac_field(
-    ty: &Ty,
-    enum_names: &HashSet<&str>,
-) -> Result<(), String> {
+/// mis-lowered if they ever appear.
+fn refuse_field(ty: &Ty) -> Result<(), String> {
     match ty {
         Ty::Bytes | Ty::String => Ok(()),
-        Ty::List(_) => Err(refuse("'a List field'", "S2C")),
-        Ty::Box(_) => Err(refuse("'a Box field'", "S2C")),
-        Ty::Map(..) => Err(refuse("'a Map field'", "S2C")),
-        Ty::Array(..) => Err(refuse("'an array field'", "S2C")),
-        Ty::Str => Err(refuse("'a 'str' field'", "S2C")),
-        Ty::View => Err(refuse("'a 'View' field'", "S2C")),
+        Ty::List(_) => Err(refuse("'a List field'", "S2D")),
+        Ty::Box(_) => Err(refuse("'a Box field'", "S2D")),
+        Ty::Map(..) => Err(refuse("'a Map field'", "S2D")),
+        Ty::Array(..) => Err(refuse("'an array field'", "S2D")),
+        Ty::Str => Err(refuse("'a 'str' field'", "S2D")),
+        Ty::View => Err(refuse("'a 'View' field'", "S2D")),
         Ty::Ref { .. } => Err(refuse("'a reference field'", "S2B")),
-        Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2D")),
-        Ty::Struct(name) if enum_names.contains(name.as_str()) => {
-            Err(refuse("'an enum field'", "S2C"))
-        }
+        Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2E")),
         Ty::Struct(_) => Ok(()),
         other if llvm_scalar_type(other) => Ok(()),
         other => Err(refuse_type(other)),
@@ -2146,8 +2787,8 @@ fn refuse_datac_field(
 }
 
 /// Whether a `tir` type is one of the scalars the S1 lowering already emits. A
-/// type that is not a scalar and not a `datac` is refused by name in
-/// `refuse_datac_field`, so this only has to recognize the scalars.
+/// type that is not a scalar and not an aggregate is refused by name in
+/// `refuse_field`, so this only has to recognize the scalars.
 fn llvm_scalar_type(ty: &Ty) -> bool {
     matches!(
         ty,
@@ -2167,7 +2808,7 @@ fn llvm_scalar_type(ty: &Ty) -> bool {
 }
 
 /// Name the type in a refusal, with the stage that will lower it. A container
-/// is the container slice (S2C) and a function value the closure slice (S2D);
+/// is the container slice (S2D) and a function value the closure slice (S2E);
 /// the heap types are lowered above, so their rows are unreachable and kept only
 /// so the match stays total in the author's eye.
 fn refuse_type(ty: &Ty) -> String {
@@ -2175,36 +2816,32 @@ fn refuse_type(ty: &Ty) -> String {
         Ty::Struct(_) => ("'datac'", "S2B"),
         Ty::Bytes => ("'Bytes'", "S2B"),
         Ty::String => ("'String'", "S2B"),
-        Ty::List(_) => ("'List'", "S2C"),
-        Ty::Box(_) => ("'Box'", "S2C"),
-        Ty::Map(..) => ("'Map'", "S2C"),
-        Ty::Array(..) => ("'an array'", "S2C"),
+        Ty::List(_) => ("'List'", "S2D"),
+        Ty::Box(_) => ("'Box'", "S2D"),
+        Ty::Map(..) => ("'Map'", "S2D"),
+        Ty::Array(..) => ("'an array'", "S2D"),
         Ty::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
-        Ty::Fn { .. } => ("'a function value'", "S2D"),
-        Ty::Closure { .. } => ("'a closure'", "S2D"),
-        Ty::Str | Ty::View => ("a borrowed view", "S2C"),
+        Ty::Fn { .. } => ("'a function value'", "S2E"),
+        Ty::Closure { .. } => ("'a closure'", "S2E"),
+        Ty::Str | Ty::View => ("a borrowed view", "S2D"),
         Ty::Unit => ("'unit'", "S1"),
         other => return refuse(&format!("the type '{}'", other.display()), "S1"),
     };
     refuse(what, stage)
 }
 
-/// Name the expression in a refusal. A `FieldAccess` or a `StructLit` never
-/// reaches here: both are lowered. An `enum` construct and an array literal are
-/// S2C, and a function value, a closure and an indirect call are S2D.
+/// Name the expression in a refusal. A `FieldAccess`, a `StructLit`, an `enum`
+/// construct and a `?` never reach here: all are lowered. An array literal is
+/// S2D, and a function value, a closure and an indirect call are S2E.
 fn refuse_expr(kind: &ExprKind) -> String {
     let (what, stage) = match kind {
-        ExprKind::EnumLit { .. } | ExprKind::EnumTag { .. } | ExprKind::EnumField { .. } => {
-            ("'an enum'", "S2C")
-        }
-        ExprKind::Try { .. } => ("'the ? operator'", "S2C"),
-        ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2D"),
-        ExprKind::ClosureLit { .. } => ("'a closure'", "S2D"),
-        ExprKind::Capture { .. } => ("'a capture'", "S2D"),
-        ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2D"),
+        ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2E"),
+        ExprKind::ClosureLit { .. } => ("'a closure'", "S2E"),
+        ExprKind::Capture { .. } => ("'a capture'", "S2E"),
+        ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2E"),
         ExprKind::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
         ExprKind::Deref { .. } => ("'a dereference of a non-datac'", "S2B"),
-        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => ("'an array'", "S2C"),
+        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => ("'an array'", "S2D"),
         _ => ("'this expression'", "S2B"),
     };
     refuse(what, stage)
