@@ -335,7 +335,7 @@ green at every stage.
 | stage | what | effort | exit criterion |
 | --- | --- | --- | --- |
 | **S0** | the seam | done | `Backend`, `--backend=`, `KELPC_BACKEND` |
-| **S1** | IR for the scalar subset, `llvm` selectable | days to 2 weeks | arithmetic, comparisons, `if`/`while`, calls, `print` of the scalars: byte-identical stdout on the fixtures that use only those |
+| **S1** | IR for the scalar subset, `llvm` selectable | done 2026-09-21 | arithmetic, comparisons, `if`/`while`, calls, `print` of the scalars: byte-identical stdout on the fixtures that use only those (`kelpc/tests/run-llvm-scalar-subset.sh`) |
 | **S2** | aggregates, containers and drops | 2 to 4 weeks | `datac`/`enum` layout, the container function sets, the drop plan, `pd` globals: the whole fixture corpus minus the runtime rows |
 | **S3** | the runtime, the externs and the capability check | days | `librt` linked, every `extern fun` a declared call, the deny path text identical |
 | **S4** | debug locations to DWARF | days | a fixture that crashes on purpose names a `.kp` line |
