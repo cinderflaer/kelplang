@@ -560,6 +560,117 @@ fn no_fixture_leaks_or_touches_freed_memory_under_valgrind() {
 // this file without any of the sweep's cost.
 // ---------------------------------------------------------------------------
 
+/// The container fixtures the LLVM backend builds, the ones whose binaries the
+/// monomorphized `List`/`Map`/`Box`/`[T; N]` function sets generated into the
+/// module (MK7 S2D) own heap memory for. A fixed list, not a sweep: only these
+/// fixtures exercise those sets, and a fixture that uses a container but also
+/// calls `std/mem` or reads a `pd` is refused by the backend (S3) rather than
+/// built, so it would be skipped anyway.
+const LLVM_CONTAINER_FIXTURES: &[&str] = &[
+    "array_basic",
+    "array_bounds",
+    "array_bounds_set",
+    "array_owned",
+    "array_wide_and_float",
+    "box_basic",
+    "box_empty_panic",
+    "box_field_take",
+    "box_owned_elements",
+    "box_recursive",
+    "container_element_from_use",
+    "enum_container",
+    "enum_in_containers",
+    "enum_recursive",
+    "float_datac_containers",
+    "generic_recursive",
+    "list_basic",
+    "list_datac_element",
+    "list_element_widths",
+    "list_growth_and_rebuild",
+    "list_insert_bounds",
+    "list_insert_remove_shifts",
+    "list_narrow_element_pop",
+    "list_owned_replacement",
+    "list_pop_empty",
+    "list_remove_bounds",
+    "list_slice_insert",
+    "list_sort_kinds",
+    "map_clear_then_reuse",
+    "map_growth_and_rehash",
+    "map_key_types",
+    "map_key_widths",
+    "map_missing_key",
+    "map_remove_missing",
+    "map_tombstones_and_reuse",
+    "nested_literal_staging",
+    "recursive_datac",
+    "stdlib_sort",
+];
+
+/// The S2D half of the memory gate: every container binary the LLVM backend
+/// builds, run under valgrind. The C sweep above covers the oracle; this one
+/// covers the code the LLVM backend generates *instead* of C, which is the
+/// part another backend cannot check for it: a container's drop, its growth
+/// (`realloc`), a map's tombstone reuse and an `[T; N]`'s element drops all
+/// free memory in generated IR, and only valgrind sees a double free or a leak
+/// in it.
+#[test]
+#[ignore = "builds the container fixtures and runs each under valgrind; ground rule 1.5 keeps it out of the default suite"]
+fn the_llvm_container_binaries_are_valgrind_clean() {
+    let Some(version) = valgrind_version() else {
+        println!(
+            "memory gate: valgrind is not on PATH, so the LLVM container sweep is skipped"
+        );
+        return;
+    };
+
+    let dir = scratch_dir();
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
+
+    let mut checked = Vec::new();
+    let mut rejected = Vec::new();
+    for name in LLVM_CONTAINER_FIXTURES {
+        let bin = dir.join(format!("llvm_{name}"));
+        if build("llvm", name, &bin) {
+            checked.push(run_under_valgrind("llvm", name, &bin, &dir));
+        } else {
+            rejected.push(*name);
+        }
+    }
+
+    println!(
+        "memory gate: {version} over {} LLVM container fixture(s); {} refused by the backend and skipped",
+        checked.len(),
+        rejected.len(),
+    );
+    println!("{}", backend_summary("llvm container", &checked, ""));
+
+    assert!(
+        !checked.is_empty(),
+        "the LLVM backend built none of the container fixtures, so the sweep measured nothing",
+    );
+
+    let mut report = Vec::new();
+    let mut findings = 0;
+    for check in &checked {
+        for (pid, lines) in check.findings() {
+            findings += 1;
+            match pid {
+                Some(pid) => report.push(format!("{} '{}' (pid {pid}):", check.backend, check.fixture)),
+                None => report.push(format!("{} '{}':", check.backend, check.fixture)),
+            }
+            report.extend(lines.into_iter().map(|line| format!("    {line}")));
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "valgrind reported {findings} finding(s) over {} LLVM container runs:\n{}",
+        checked.len(),
+        report.join("\n"),
+    );
+}
+
 /// Says what the ignored sweep would cover, and whether the tool it needs is
 /// here. It costs one `valgrind --version` spawn and never fails: valgrind is
 /// not a declared dependency of this repository, so a machine without it must
