@@ -1,0 +1,29 @@
+level back    build_ms    collatz      float        mix        fib
+---------------------------------------------------------------------
+-O0   c          130.7      447.2      255.0      200.9       26.9
+-O0   llvm       143.9      452.6      255.4      243.6       20.9
+-O1   c          257.2       81.5      104.7      168.1       13.2
+-O1   llvm       263.7       80.7      106.3      168.0       13.1
+-O2   c          297.2       81.1      109.2      164.8       23.1
+-O2   llvm       272.7       81.7      104.0      167.2       23.0
+-O3   c          305.6       80.9       95.3      164.0       23.1
+-O3   llvm       284.0       82.7      105.7      167.0       23.0
+-Os   c          239.5       83.1      107.6      168.2       23.2
+-Os   llvm       255.3       81.1      106.4      168.3       22.9
+
+checksums (all levels and backends must agree):
+  -O0   c     collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O0   llvm  collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O1   c     collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O1   llvm  collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O2   c     collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O2   llvm  collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O3   c     collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -O3   llvm  collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -Os   c     collatz=131434424 float=57735026 mix=542344 fib=5702887
+  -Os   llvm  collatz=131434424 float=57735026 mix=542344 fib=5702887
+all checksums agree
+
+method: medians of 9 interleaved rounds; one kelpc build and one run per round and cell.
+built by /mnt/bigdrive/projects/KelpLANG/worktrees/kelp/llvm-s6-opt-levels/target/release/kelpc on xenoo at 2026-09-21T18:59:57Z.
+the C backend's compiler and both backends' linker: clang version 21.1.8 (/run/current-system/sw/bin/cc)

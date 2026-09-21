@@ -26,11 +26,11 @@ the timings comparable: they prove the four programs did the same work.
 
 ## Caveats worth knowing
 
-- **Kelp compiles to C** and shells out to `clang -O2`, so Kelp and C++ share a
+- **Kelp compiles to C** and shells out to `cc -O2`, so Kelp and C++ share a
   backend and a single C++ file's `-O2` flags. Kelp being level with C++ is the
-  expected result, not a surprise — what the numbers can show is that Kelp's own
-  front end adds nothing (no bounds checks, no hidden allocation, no slow ABI)
-  on these workloads.
+  expected result, not a surprise. Kelp's own front end adds nothing (no bounds
+  checks, no hidden allocation, no slow ABI) on these workloads: what the numbers
+  can show is that.
 - **Rust is built with `rustc -O`** (no cargo, no LTO), C++ with
   `clang++ -O2`, Kelp with `kelpc build` (its whole pipeline plus the `cc` call).
   Python has no compile step: it parses and compiles at import, which is why
@@ -44,3 +44,21 @@ the timings comparable: they prove the four programs did the same work.
   summation order and FMA contraction can differ in the last bits.
 - The compiled languages' measurements are ~0.1–0.4 s per workload; the
   numbers are stable to about 1% across trials on this machine.
+
+## `optlevels.sh`: the two backends across the optimization levels
+
+`optlevels.sh` is the MK7 S6 measurement: `kelpc`'s C and LLVM backends on the
+same four workloads at each level `-O` accepts (`-O0`, `-O1`, `-O2`, `-O3`,
+`-Os`), plus what each level costs to compile. It writes
+`results-optlevels.txt`. Rounds are the outer loop and cells (level, backend) the
+inner one, so drift is shared; the reported number is the median of nine rounds,
+not one run. Two environments are worth distinguishing, and the report names the
+one it used:
+
+- Outside `nix-shell`, `cc` is this machine's clang 21.1.8, the compiler the
+  section above and `plan/mk7-llvm-backend.md` section 0 were measured with. Pass
+  a prebuilt binary with `KELPC=target/release/kelpc ./optlevels.sh` if LLVM's
+  build half (`llvm-config`) is not on the PATH.
+- Inside `nix-shell`, `cc` is gcc 15.3.0 (the shell's stdenv shadows the system
+  `cc`), which changes the C backend's numbers; the differential suite runs there.
+
