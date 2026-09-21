@@ -19,10 +19,12 @@
 //! (`LLVMModuleCreateWithNameInContext`/`LLVMDisposeModule`), [`Builder`]
 //! (`LLVMCreateBuilderInContext`/`LLVMDisposeBuilder`) and [`TargetMachine`]
 //! (`LLVMCreateTargetMachine`/`LLVMDisposeTargetMachine`). [`DataLayout`] is a
-//! fifth, added for the tagged-union layout (MK7 S2C).
+//! fifth, added for the tagged-union layout (MK7 S2C), and [`DebugBuilder`] a
+//! sixth, added with the DWARF debug metadata (MK7 S4).
 //!
 //! Every other handle is a `Copy` newtype over a bare LLVM pointer:
-//! [`Type`], [`FnType`], [`Value`], [`Function`] and [`BasicBlock`]. LLVM owns
+//! [`Type`], [`FnType`], [`Value`], [`Function`], [`BasicBlock`] and
+//! [`Metadata`]. LLVM owns
 //! the object behind each one (a type is owned by its context, a function and a
 //! basic block by their module), so the pointer must not outlive its owner. The
 //! `'ctx` lifetime every one of them carries ties it to the [`Context`] that
@@ -42,6 +44,7 @@
 // warning. The allow goes away when the lowering stops growing.
 #![allow(dead_code)]
 
+use std::cell::Cell;
 use std::ffi::{c_char, c_uint, CStr, CString};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -49,7 +52,8 @@ use std::ptr::null_mut;
 
 use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyModule};
 use llvm_sys::core::{
-    LLVMAddCase, LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAppendBasicBlockInContext,
+    LLVMAddCase, LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAddModuleFlag,
+    LLVMAddNamedMetadataOperand, LLVMAppendBasicBlockInContext,
     LLVMArrayType2,
     LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
     LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt, LLVMBuildFPToSI,
@@ -64,16 +68,24 @@ use llvm_sys::core::{
     LLVMFunctionType, LLVMGetFirstInstruction, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget,
     LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
     LLVMInt64TypeInContext,
-    LLVMInt8TypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext,
+    LLVMInt8TypeInContext, LLVMMetadataAsValue, LLVMModuleCreateWithNameInContext,
+    LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
-    LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage, LLVMSetTarget,
-    LLVMStructCreateNamed, LLVMStructSetBody, LLVMVoidTypeInContext,
+    LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage,
+    LLVMSetTarget,
+    LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVoidTypeInContext,
+};
+use llvm_sys::debuginfo::{
+    LLVMCreateDIBuilder, LLVMDIBuilderCreateCompileUnit, LLVMDIBuilderCreateDebugLocation,
+    LLVMDIBuilderCreateFile, LLVMDIBuilderCreateFunction, LLVMDIBuilderCreateSubroutineType,
+    LLVMDIBuilderFinalize, LLVMDebugMetadataVersion, LLVMDisposeDIBuilder,
+    LLVMDWARFEmissionKind, LLVMDWARFSourceLanguage, LLVMDIFlagPrototyped, LLVMSetSubprogram,
 };
 use llvm_sys::LLVMLinkage;
-use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate};
+use llvm_sys::{LLVMIntPredicate, LLVMModuleFlagBehavior, LLVMRealPredicate};
 use llvm_sys::prelude::{
-    LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMModuleRef, LLVMTypeRef,
-    LLVMValueRef,
+    LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef,
+    LLVMMetadataRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
 };
 use llvm_sys::target::{
     LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMDisposeTargetData, LLVMTargetDataRef,
@@ -752,6 +764,57 @@ impl<'ctx> Module<'ctx> {
         }
     }
 
+    /// Record `cu` as this module's compile unit, in the `llvm.dbg.cu` named
+    /// metadata node (`LLVMAddNamedMetadataOperand`).
+    ///
+    /// A `DICompileUnit` is a metadata node and nothing else: it has to be
+    /// named by this node as well, or the object carries no DWARF at all. The
+    /// C API's `LLVMDIBuilderCreateCompileUnit` builds the node and stops
+    /// there, exactly as clang's frontend does the same second half by hand.
+    pub fn add_debug_compile_unit(&self, cu: Metadata<'ctx>) {
+        const KEY: &str = "llvm.dbg.cu";
+        let key = cstring(KEY);
+        // SAFETY: the module is live and `cu` belongs to the same context, which
+        // is what makes the metadata's context match the module's.
+        unsafe {
+            LLVMAddNamedMetadataOperand(
+                self.raw,
+                key.as_ptr(),
+                LLVMMetadataAsValue(self.context, cu.raw),
+            )
+        };
+    }
+
+    /// Set the `Debug Info Version` module flag (`LLVMAddModuleFlag`) to the
+    /// version this LLVM's metadata is written in
+    /// (`LLVMDebugMetadataVersion`).
+    ///
+    /// The object writer reads this flag to decide whether the module carries
+    /// debug info at all; without it the debug sections are dropped, so the
+    /// compile unit above is not enough on its own. `LLVMAddModuleFlag` is a
+    /// no-op when the flag already exists.
+    pub fn set_debug_info_version(&self) {
+        const KEY: &str = "Debug Info Version";
+        let key = cstring(KEY);
+        // SAFETY: the context is live, the key outlives the call, and the value
+        // is an `i32` constant in that context, which is the metadata shape the
+        // flag requires.
+        unsafe {
+            let value = LLVMConstInt(
+                LLVMInt32TypeInContext(self.context),
+                LLVMDebugMetadataVersion() as u64,
+                0,
+            );
+            LLVMAddModuleFlag(
+                self.raw,
+                LLVMModuleFlagBehavior::LLVMModuleFlagBehaviorWarning,
+                key.as_ptr(),
+                KEY.len(),
+                LLVMValueAsMetadata(value),
+            )
+        };
+    }
+
     /// The module as textual LLVM IR (`LLVMPrintModuleToString`).
     ///
     /// This is the `--emit-ir` text of MK7 §4.4, and the binary already has an
@@ -897,6 +960,33 @@ impl<'ctx> Builder<'ctx> {
             // block, which is the contract `LLVMPositionBuilderBefore` wants.
             unsafe { LLVMPositionBuilderBefore(self.raw, first) };
         }
+    }
+
+    /// Give every subsequent instruction this source location
+    /// (`LLVMSetCurrentDebugLocation2`).
+    ///
+    /// This is one call per *statement*, not one per instruction: LLVM's
+    /// builder hands the location to each instruction it creates, which is how
+    /// a `.kp` line reaches the line table of the object without the lowering
+    /// touching every `build_*` call (MK7 §4.4). The location stays current
+    /// until the next call to this or to [`clear_debug_location`], so the
+    /// lowering sets it where the C backend writes its `#line` marker.
+    ///
+    /// [`clear_debug_location`]: Builder::clear_debug_location
+    pub fn set_debug_location(&self, location: Metadata<'ctx>) {
+        // SAFETY: the builder is live and the location is a metadata node in the
+        // builder's own context, which is what LLVM's IRBuilder requires.
+        unsafe { LLVMSetCurrentDebugLocation2(self.raw, location.raw) };
+    }
+
+    /// Give every subsequent instruction no source location
+    /// (`LLVMSetCurrentDebugLocation2` with a null location).
+    ///
+    /// A generated function must not inherit the location of the one emitted
+    /// before it; an instruction with no location is honest, a wrong one is not.
+    pub fn clear_debug_location(&self) {
+        // SAFETY: the builder is live; LLVM reads a null location as "none".
+        unsafe { LLVMSetCurrentDebugLocation2(self.raw, null_mut()) };
     }
 
     /// Emit `ret v` (`LLVMBuildRet`).
@@ -1696,6 +1786,291 @@ impl Drop for DataLayout {
     fn drop(&mut self) {
         // SAFETY: raw came from LLVMCreateTargetDataLayout and is disposed once.
         unsafe { LLVMDisposeTargetData(self.raw) };
+    }
+}
+
+/// Handle for `LLVMMetadataRef`: one debug descriptor (a file, a compile unit,
+/// a subroutine type, a subprogram or a source location).
+///
+/// LLVM owns the node: it lives in the metadata context of the LLVM context
+/// that built it and is freed with that context, so this is a `Copy` handle
+/// rather than a guard. The lifetime marker ties it to the [`Context`] the
+/// [`DebugBuilder`] that made it was built in, which is what stops a node from
+/// outliving the context it belongs to.
+#[derive(Clone, Copy)]
+pub struct Metadata<'ctx> {
+    raw: LLVMMetadataRef,
+    context_marker: PhantomData<&'ctx Context>,
+}
+
+/// Guard for `LLVMDIBuilderRef`: the DWARF debug-information builder of one
+/// module.
+///
+/// This is where the metadata a `.kp` file and a `.kp` line become DWARF is
+/// constructed (MK7 §4.4). The C API's builder is a `DIBuilder` in C++, and it
+/// is disposed here the same way [`Context`] and [`Module`] are: the builder
+/// must be finalized before it is disposed, so [`DebugBuilder::finalize`] runs
+/// first, and it must be disposed before the module it was built for drops,
+/// which the lifetime marker and the ordinary drop order of the two guards give.
+///
+/// The builder carries no ordering requirement of its own beyond that: a
+/// subprogram may be created before or after the function it describes, as long
+/// as the module is live for both.
+pub struct DebugBuilder<'ctx> {
+    raw: LLVMDIBuilderRef,
+    // The context is kept rather than re-read from the module: a source location
+    // is built from the context plus a scope, and LLVM has no "builder's
+    // context" accessor. Valid because the marker ties this to the guard that
+    // owns the context.
+    context: LLVMContextRef,
+    // `finalize` is idempotent from LLVM's side only in the sense that nothing
+    // reads its return; running it twice is harmless but running it after the
+    // module has been written is too late, so the flag is what keeps the drop
+    // path from being the second caller.
+    finalized: Cell<bool>,
+    context_marker: PhantomData<&'ctx Context>,
+}
+
+impl<'ctx> DebugBuilder<'ctx> {
+    /// A debug builder for `module` (`LLVMCreateDIBuilder`), finalized and
+    /// disposed on drop.
+    ///
+    /// The unresolved-node variant is not used: everything here is created
+    /// explicitly, in order, and nothing is left for a later pass to tie up.
+    pub fn new(module: &Module<'ctx>) -> Self {
+        DebugBuilder {
+            // SAFETY: the module is live for 'ctx, and the builder is owned and
+            // disposed on drop.
+            raw: unsafe { LLVMCreateDIBuilder(module.as_raw()) },
+            context: module.context,
+            finalized: Cell::new(false),
+            context_marker: PhantomData,
+        }
+    }
+
+    /// A file descriptor for `path` (`LLVMDIBuilderCreateFile`).
+    ///
+    /// DWARF carries a file as a name plus a directory; a reader joins them and
+    /// an empty directory means the compilation directory. `split_path` keeps
+    /// the two parts of a `.kp` path apart for that reason.
+    pub fn file(&self, path: &Path) -> Metadata<'ctx> {
+        let (directory, filename) = split_path(path);
+        let filename = cstring(&filename);
+        let directory = cstring(&directory);
+        Metadata {
+            // SAFETY: the builder is live and both strings outlive the call.
+            raw: unsafe {
+                LLVMDIBuilderCreateFile(
+                    self.raw,
+                    filename.as_ptr(),
+                    filename.as_bytes().len(),
+                    directory.as_ptr(),
+                    directory.as_bytes().len(),
+                )
+            },
+            context_marker: PhantomData,
+        }
+    }
+
+    /// A compile unit whose main file is `file`
+    /// (`LLVMDIBuilderCreateCompileUnit`).
+    ///
+    /// The language is spelled `C` because DWARF has no Kelp code and the tag is
+    /// otherwise inert: what this milestone emits is a line table (a file, a
+    /// subprogram and a source location per statement), never a type or a
+    /// variable, so nothing downstream reads the language out of the unit.
+    ///
+    /// `isOptimized` is false because no optimization pass pipeline runs over
+    /// this module: the IR the lowering wrote is the IR the target machine
+    /// lowers. The flag says exactly that, and a debugger that believed
+    /// otherwise would under-report what it can read (MK7 §4.3 has not chosen a
+    /// pipeline yet).
+    pub fn compile_unit(&self, file: Metadata<'ctx>, producer: &str) -> Metadata<'ctx> {
+        let producer = cstring(producer);
+        let empty = cstring("");
+        Metadata {
+            // SAFETY: the builder is live, `file` is a metadata node in the same
+            // context, and every string outlives the call. Empty is passed for
+            // the flags, the split name, the sysroot and the SDK, and 0 for the
+            // runtime version and the DWO id: there is no split DWARF and no
+            // profiled debug info here.
+            raw: unsafe {
+                LLVMDIBuilderCreateCompileUnit(
+                    self.raw,
+                    LLVMDWARFSourceLanguage::LLVMDWARFSourceLanguageC,
+                    file.raw,
+                    producer.as_ptr(),
+                    producer.as_bytes().len(),
+                    0,
+                    empty.as_ptr(),
+                    0,
+                    0,
+                    empty.as_ptr(),
+                    0,
+                    LLVMDWARFEmissionKind::LLVMDWARFEmissionKindFull,
+                    0,
+                    0,
+                    0,
+                    empty.as_ptr(),
+                    0,
+                    empty.as_ptr(),
+                    0,
+                )
+            },
+            context_marker: PhantomData,
+        }
+    }
+
+    /// The type of a subroutine that takes no arguments and returns nothing
+    /// (`LLVMDIBuilderCreateSubroutineType`).
+    ///
+    /// One shared node for every function is enough because nothing here
+    /// describes a parameter or a value: the unit is a line table, and a
+    /// subprogram needs a type only to be well formed. `LLVMDIFlagPrototyped`
+    /// says the empty list is a real prototype rather than an unknown one.
+    pub fn subroutine_type(&self, file: Metadata<'ctx>) -> Metadata<'ctx> {
+        // An empty parameter list is an empty array, and LLVM's C API takes the
+        // array as a pointer plus a length. The zero-length array is borrowed
+        // for the call only; LLVM copies it into a metadata node.
+        let mut params: [LLVMMetadataRef; 0] = [];
+        Metadata {
+            // SAFETY: the builder is live, `file` belongs to its context, and the
+            // array pointer is valid for the zero elements the length claims.
+            raw: unsafe {
+                LLVMDIBuilderCreateSubroutineType(
+                    self.raw,
+                    file.raw,
+                    params.as_mut_ptr(),
+                    0,
+                    LLVMDIFlagPrototyped,
+                )
+            },
+            context_marker: PhantomData,
+        }
+    }
+
+    /// A subprogram `name` defined at `line` of `file`, in `scope`, with the
+    /// subroutine type `ty` (`LLVMDIBuilderCreateFunction`).
+    ///
+    /// `scope` is the function's file, which is what clang passes for a
+    /// file-scope function; the unit is the builder's own compile unit either
+    /// way, so the descriptor does not have to be handed the unit to be part of
+    /// it. `linkage_name` is the symbol the object defines, which is not always
+    /// the `.kp` name (a mangled function keeps its mangled symbol).
+    /// `scope_line` is the line the body opens on and is given the same value as
+    /// `line`, which is what a one-line declaration wants; `is_local_to_unit`
+    /// and `is_optimized` are false for the reasons `compile_unit` gives.
+    #[allow(clippy::too_many_arguments)]
+    pub fn subprogram(
+        &self,
+        scope: Metadata<'ctx>,
+        name: &str,
+        linkage_name: &str,
+        file: Metadata<'ctx>,
+        line: u32,
+        ty: Metadata<'ctx>,
+    ) -> Metadata<'ctx> {
+        let name = cstring(name);
+        let linkage_name = cstring(linkage_name);
+        Metadata {
+            // SAFETY: the builder is live, every metadata node belongs to its
+            // context, and the strings outlive the call.
+            raw: unsafe {
+                LLVMDIBuilderCreateFunction(
+                    self.raw,
+                    scope.raw,
+                    name.as_ptr(),
+                    name.as_bytes().len(),
+                    linkage_name.as_ptr(),
+                    linkage_name.as_bytes().len(),
+                    file.raw,
+                    line,
+                    ty.raw,
+                    0,
+                    1,
+                    line,
+                    LLVMDIFlagPrototyped,
+                    0,
+                )
+            },
+            context_marker: PhantomData,
+        }
+    }
+
+    /// A source location at `line:column` inside `scope`
+    /// (`LLVMDIBuilderCreateDebugLocation`).
+    ///
+    /// There is no inlined-at location: nothing in either backend inlines.
+    pub fn location(&self, line: u32, column: u32, scope: Metadata<'ctx>) -> Metadata<'ctx> {
+        Metadata {
+            // SAFETY: the builder's context is live and `scope` is a metadata
+            // node in it; a null inlined-at is LLVM's "not inlined".
+            raw: unsafe {
+                LLVMDIBuilderCreateDebugLocation(
+                    self.context,
+                    line,
+                    column,
+                    scope.raw,
+                    null_mut(),
+                )
+            },
+            context_marker: PhantomData,
+        }
+    }
+
+    /// Attach `subprogram` to `function` (`LLVMSetSubprogram`), which is what
+    /// makes `function`'s own line the subprogram's `line` in the object.
+    pub fn set_subprogram(&self, function: Function<'ctx>, subprogram: Metadata<'ctx>) {
+        // SAFETY: the function and the metadata node are live and belong to one
+        // module's context.
+        unsafe { LLVMSetSubprogram(function.as_raw(), subprogram.raw) };
+    }
+
+    /// Construct the descriptors the builder deferred
+    /// (`LLVMDIBuilderFinalize`).
+    ///
+    /// This must run after the last metadata node is made and before the module
+    /// is written, so `codegen_llvm.rs` calls it explicitly; the `Drop` below
+    /// repeats it only for a builder that never got there, because disposing an
+    /// unfinalized builder is what LLVM's own contract forbids.
+    pub fn finalize(&self) {
+        if self.finalized.replace(true) {
+            return;
+        }
+        // SAFETY: the builder is live and this is its first finalize.
+        unsafe { LLVMDIBuilderFinalize(self.raw) };
+    }
+
+    /// The underlying `LLVMDIBuilderRef`, for a C API call this wrapper lacks.
+    pub fn as_raw(&self) -> LLVMDIBuilderRef {
+        self.raw
+    }
+}
+
+impl Drop for DebugBuilder<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the builder is live; `finalize` runs at most once either way.
+        self.finalize();
+        // SAFETY: raw came from LLVMCreateDIBuilder and is disposed once.
+        unsafe { LLVMDisposeDIBuilder(self.raw) };
+    }
+}
+
+/// Split a `.kp` path into the directory and the file name a `DIFile` carries
+/// (`LLVMDIBuilderCreateFile`).
+///
+/// DWARF keeps the two apart and a reader joins them, so an empty directory
+/// means "the compilation directory". A bare file name therefore gets `.`, the
+/// directory that means the process's working directory, rather than an empty
+/// string a reader would have to interpret.
+fn split_path(path: &Path) -> (String, String) {
+    match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => (
+            dir.to_string_lossy().into_owned(),
+            name.to_string_lossy().into_owned(),
+        ),
+        (_, Some(name)) => (".".to_string(), name.to_string_lossy().into_owned()),
+        _ => (String::new(), path.to_string_lossy().into_owned()),
     }
 }
 

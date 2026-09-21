@@ -61,6 +61,12 @@ pub struct Function {
     pub params: Vec<(String, Ty)>,
     pub ret: Ty,
     pub body: Block,
+    /// Source span of the declaration (or, for a `fun` literal, of the literal
+    /// itself). Like every other `Span` here it is only meaningful together
+    /// with `module`, and it is what a backend names as the function's own
+    /// line: the C backend's diagnostics and the LLVM backend's `DISubprogram`
+    /// both resolve it through `diag::SourceMap`.
+    pub span: Span,
     /// Canonical id of the module this function was declared in — needed so
     /// `borrowck.rs` can tag its diagnostics with the right source file (a
     /// `Span` is only meaningful inside its own file).

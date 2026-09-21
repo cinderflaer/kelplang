@@ -151,6 +151,21 @@ impl SourceMap {
         ))
     }
 
+    /// The path, line and column of `span` in `module`, when the module's
+    /// text is known.
+    ///
+    /// [`SourceMap::locate`] and [`SourceMap::line_directive`] are this value
+    /// formatted two ways; the LLVM backend's DWARF needs the three parts
+    /// apart, because a `DIFile` carries the path while a `DILocation` carries
+    /// the numbers. All three go through one `line_col` call, so the line a
+    /// `#line` directive names and the line a debug location names cannot
+    /// drift.
+    pub fn path_line_col(&self, module: &str, span: Span) -> Option<(&Path, u32, u32)> {
+        let f = self.files.get(module)?;
+        let (line, col) = line_col(&f.text, span.start);
+        Some((f.path.as_path(), line as u32, col as u32))
+    }
+
     /// Prints `error: ...` plus an `--> file:line:col` location to stderr.
     pub fn report(&self, d: &Diagnostic) {
         self.report_as(d, Severity::Error);

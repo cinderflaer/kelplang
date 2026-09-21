@@ -183,8 +183,18 @@ KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/fixtures/float_datac_containers.kp -o "$CONTAINER_OUT/float" >/dev/null
 KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/fixtures/array_owned.kp -o "$CONTAINER_OUT/array" >/dev/null
-FLOAT_IR="$CONTAINER_OUT/float.ll"
-ARRAY_IR="$CONTAINER_OUT/array.ll"
+# MK7 S4 attaches a `!dbg` location to every instruction and every function
+# definition. The assertions below are about the shape of the instruction, not
+# about the source line it came from, so each IR file is read through a copy
+# with the debug metadata stripped. That a statement resolves to a `.kp` line is
+# a separate claim, checked end to end by `cargo test --test llvm_debug_info`.
+strip_dbg() {
+    sed -E 's/, !dbg ![0-9]+//g; s/ !dbg ![0-9]+//g' "$1" > "$1.nodbg"
+    echo "$1.nodbg"
+}
+
+FLOAT_IR="$(strip_dbg "$CONTAINER_OUT/float.ll")"
+ARRAY_IR="$(strip_dbg "$CONTAINER_OUT/array.ll")"
 for want in \
     '%kelp_List__V2 = type { ptr, i64, i64 }' \
     '%kelp_Box__V2 = type { ptr }' \

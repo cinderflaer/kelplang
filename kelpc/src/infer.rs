@@ -5618,6 +5618,10 @@ fn check_function(
         },
         ret: sig.ret.clone(),
         body,
+        // The declaration's own span, which is the line a backend names as the
+        // function's: the C backend writes nothing for it today, and the LLVM
+        // backend's `DISubprogram` reads it (MK7 S4).
+        span: f.span,
         module: f.module.clone(),
         extern_: f.extern_,
         // Only a `fun` literal that captured something has an environment;
@@ -6069,6 +6073,9 @@ fn check_fn_literal(
         params: tir_params,
         ret,
         body: checked,
+        // A literal has no `fun` declaration of its own, so the literal's own
+        // span is the only line that describes it.
+        span,
         module: ctx.module.clone(),
         extern_: false,
         env,

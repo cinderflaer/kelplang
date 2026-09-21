@@ -228,10 +228,20 @@ KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/fixtures/borrow_returned.kp -o "$REF_OUT/returned" >/dev/null
 KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/fixtures/panic_tail.kp -o "$REF_OUT/panic" >/dev/null
-SCALAR_IR="$REF_OUT/scalar.ll"
-F64_IR="$REF_OUT/scalar_f64.ll"
-RETURNED_IR="$REF_OUT/returned.ll"
-PANIC_IR="$REF_OUT/panic.ll"
+# MK7 S4 attaches a `!dbg` location to every instruction and every function
+# definition. The assertions below are about the shape of the instruction, not
+# about the source line it came from, so each IR file is read through a copy
+# with the debug metadata stripped. That a statement resolves to a `.kp` line is
+# a separate claim, checked end to end by `cargo test --test llvm_debug_info`.
+strip_dbg() {
+    sed -E 's/, !dbg ![0-9]+//g; s/ !dbg ![0-9]+//g' "$1" > "$1.nodbg"
+    echo "$1.nodbg"
+}
+
+SCALAR_IR="$(strip_dbg "$REF_OUT/scalar.ll")"
+F64_IR="$(strip_dbg "$REF_OUT/scalar_f64.ll")"
+RETURNED_IR="$(strip_dbg "$REF_OUT/returned.ll")"
+PANIC_IR="$(strip_dbg "$REF_OUT/panic.ll")"
 for want in \
     'define void @kelp_add(ptr %0, i64 %1) {' \
     'define i64 @kelp_accumulate(ptr %0, i64 %1, i64 %2) {'
@@ -299,9 +309,9 @@ KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/fixtures/closure_two_captures.kp -o "$REF_OUT/ctc" >/dev/null
 KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/fixtures/closure_value_widening.kp -o "$REF_OUT/cvw" >/dev/null
-FNP_IR="$REF_OUT/fnp.ll"
-CTC_IR="$REF_OUT/ctc.ll"
-CVW_IR="$REF_OUT/cvw.ll"
+FNP_IR="$(strip_dbg "$REF_OUT/fnp.ll")"
+CTC_IR="$(strip_dbg "$REF_OUT/ctc.ll")"
+CVW_IR="$(strip_dbg "$REF_OUT/cvw.ll")"
 for want in \
     '%kelp_Closure__i32__i32 = type { ptr, ptr, ptr }' \
     'define i32 @kelp_apply(ptr %0, i32 %1) {' \

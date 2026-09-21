@@ -280,11 +280,46 @@
 //!   is a plain cast, a narrowing that can lose a value is a range check that
 //!   panics with the call's own `.kp` spelling.
 //!
-//! # No debug locations at S1
+//! # What S4 adds (MK7 S4, the debug locations)
 //!
-//! The C backend writes a `#line` per statement so `cc` can name a `.kp` line.
-//! The LLVM equivalent is DWARF, which is S4 (MK7 §5); S1 emits no debug metadata,
-//! and the artifact contract it does carry is the textual IR beside the binary.
+//! DWARF, so that a fault in an `llvm`-built binary names a `.kp` file and line.
+//! MK7 §4.4 states this as an exit criterion rather than a nice-to-have: a crash
+//! report that points into generated IR instead of a Kelp source line is the
+//! difference between actionable and not, and the C backend buys the same
+//! resolution with one `#line` per statement (`codegen_c.rs::write_line_marker`).
+//!
+//! - one compile unit for the module, named in `llvm.dbg.cu` and marked by the
+//!   `Debug Info Version` module flag: the two halves are what make the object
+//!   carry the sections at all, and a compile unit alone reaches the object as
+//!   nothing
+//! - one `DIFile` per `.kp` source, and one `DISubprogram` per `.kp`-declared
+//!   function, whose own line is the line its declaration opens on (`tir`
+//!   `Function::span`, which S4 added for exactly this)
+//! - one `DILocation` per statement and per block tail, given to LLVM's builder
+//!   so every instruction the statement emits carries it. The spans are the four
+//!   `codegen_c.rs::write_stmt` writes its `#line` from, and the line and column
+//!   are read through the accessor both backends share
+//!   (`diag::SourceMap::path_line_col`), so the two cannot name different lines
+//!   for one statement
+//!
+//! The DWARF builder itself is `llvm_ffi::DebugBuilder`, which owns the
+//! `unsafe`; this module only says which span belongs to which instruction.
+//!
+//! Two things are deliberately **not** described, because describing them would
+//! mean naming a line that is not theirs: the generated helpers (the per-`datac`
+//! drops, the container function sets, the closure machinery and `kelp_drop_pds`)
+//! carry no subprogram and so no location, and neither does an `extern fun`
+//! declaration, whose body is C compiled into the program's own object. A
+//! passdown initializer *is* a `.kp` expression, so the generated
+//! `kelp_init_pds` does carry a subprogram and its statements do carry their own
+//! lines; the one piece of glue in it, the `atexit` registration, is attributed
+//! to the first passdown, since a call inside a function with debug info must
+//! have a location and the registration exists for that passdown's drop.
+//!
+//! Nothing here describes a variable or a type. The unit is a line table: what a
+//! reader gets is the file and the line, which is what the exit criterion asks
+//! for, and a debugger is told so through `isOptimized: false` and a subroutine
+//! type with no parameters.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -292,8 +327,9 @@ use std::path::Path;
 use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{DropPlan, DropTarget};
 use crate::llvm_ffi::{
-    self, BasicBlock, Builder, Context, DataLayout, FloatBinOp, FnType, Function as LlvmFunction,
-    IntBinOp, IntCmp, Module, RealCmp, TargetMachine, Type, Value,
+    self, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
+    Function as LlvmFunction, IntBinOp, IntCmp, Metadata, Module, RealCmp, TargetMachine, Type,
+    Value,
 };
 use crate::diag::SourceMap;
 use crate::lexer::Span;
@@ -354,6 +390,10 @@ pub fn compile(
     // the drops and container sets above.
     lowering.emit_pd_globals()?;
     lowering.emit_all()?;
+
+    // Every location has been attached now, so the debug descriptors are
+    // constructed and frozen before the module is written (MK7 S4, §4.4).
+    lowering.finalize_debug();
 
     // A caller must verify before emitting: LLVM's object writer assumes a
     // verified module and can crash on an unverified one rather than fail.
@@ -576,6 +616,22 @@ struct Gen<'a> {
     /// The capability check's C entry points (`kelp_cap_check_path` and
     /// friends), declared with the signature `runtime/cap_glue.c` defines.
     cap_fns: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The DWARF debug-information builder (MK7 S4 §4.4): the one place a
+    /// `.kp` file and line become metadata. It owns the compile unit, the
+    /// per-module `DIFile`s and the per-function `DISubprogram`s, and it is
+    /// finalized before the module is verified or written.
+    debug: DebugBuilder<'a>,
+    /// The `DISubprogram` of each `.kp`-declared function, keyed by the same
+    /// `Function::name` the lowering looks a function up by. A function with no
+    /// entry here has no `.kp` source behind it (an `extern fun`, whose body is
+    /// C and compiled separately, or a module whose text was never registered),
+    /// so its instructions carry no location rather than a wrong one.
+    debug_scopes: HashMap<String, Metadata<'a>>,
+    /// The `DISubprogram` of the generated `kelp_init_pds`, when the program
+    /// has passdowns with a registered source. The passdown initializers are
+    /// emitted into that one function, and its scope is what makes their
+    /// statements resolve to the `.kp` line that declared them.
+    pd_init_scope: Option<Metadata<'a>>,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -681,6 +737,9 @@ impl<'a> Gen<'a> {
             sources,
             cap_arrays: HashMap::new(),
             cap_fns: declare_cap_fns(ctx, module),
+            debug: DebugBuilder::new(module),
+            debug_scopes: HashMap::new(),
+            pd_init_scope: None,
         })
     }
 
@@ -790,7 +849,163 @@ impl<'a> Gen<'a> {
                 },
             );
         }
+        // The DWARF skeleton last, because it needs each function's LLVM value
+        // to attach a subprogram to, and the passdown globals for the generated
+        // `kelp_init_pds`.
+        self.declare_debug();
         Ok(())
+    }
+
+    /// Build the DWARF skeleton (MK7 S4, §4.4): one compile unit for the
+    /// module, one `DIFile` per `.kp` source, one `DISubprogram` per
+    /// `.kp`-declared function.
+    ///
+    /// Nothing here is a source *location* yet. The locations are given to the
+    /// builder as each statement is emitted (`FnGen::locate`), which is what
+    /// puts the statement, not only the function, in the line table: the same
+    /// resolution one `#line` per statement buys the C backend
+    /// (`codegen_c.rs::write_line_marker`).
+    ///
+    /// The line and column come from the same `Span`s the C backend feeds to
+    /// `diag::SourceMap::line_directive`, through the one accessor both share
+    /// (`diag::SourceMap::path_line_col`), so the two backends cannot name
+    /// different lines for one statement.
+    ///
+    /// A program whose sources were never registered gets no compile unit and
+    /// no subprogram at all, and every instruction then carries no location.
+    fn declare_debug(&mut self) {
+        let program = self.program;
+        let sources = self.sources;
+        // The compile unit's own file: the module that declares `main`, since
+        // that is the translation unit's entry point, falling back to the first
+        // declaration. A program with no function to describe has no line to
+        // name, so it gets no metadata rather than an empty compile unit.
+        let main_module = program
+            .functions
+            .iter()
+            .find(|f| f.name == "main" && !f.extern_)
+            .or_else(|| program.functions.iter().find(|f| !f.extern_))
+            .map(|f| f.module.clone());
+        let Some(main_module) = main_module else {
+            return;
+        };
+        // One `DIFile` per module the program declares a function in. A
+        // `DILocation`'s file is its scope's, and a function belongs to exactly
+        // one module, so one file per module is what every location inside its
+        // functions resolves through.
+        let mut files: HashMap<String, Metadata<'a>> = HashMap::new();
+        for f in &program.functions {
+            if files.contains_key(&f.module) {
+                continue;
+            }
+            if let Some((path, _, _)) = sources.path_line_col(&f.module, f.span) {
+                files.insert(f.module.clone(), self.debug.file(path));
+            }
+        }
+        let Some(&main_file) = files.get(&main_module) else {
+            return;
+        };
+        // The producer is the human-facing release name, padded the way every
+        // other spelling of it is (`main.rs::release_name`).
+        let producer = format!("kelpc {}", crate::release_name(crate::VERSION));
+        let cu = self.debug.compile_unit(main_file, &producer);
+        // A compile unit that is not named in `llvm.dbg.cu`, beside the `Debug
+        // Info Version` flag, is dropped from the object: both halves are what
+        // makes the sections exist.
+        self.module.add_debug_compile_unit(cu);
+        self.module.set_debug_info_version();
+
+        for f in &program.functions {
+            // An `extern fun` has no body in this module: its C text is
+            // compiled into the program's own object (S3A), so there is no
+            // instruction here to locate.
+            if f.extern_ {
+                continue;
+            }
+            let (Some(&file), Some((_, line, _))) =
+                (files.get(&f.module), sources.path_line_col(&f.module, f.span))
+            else {
+                continue;
+            };
+            let ty = self.debug.subroutine_type(file);
+            let sp = self.debug.subprogram(
+                file,
+                &f.name,
+                &symbol_name(&f.name),
+                file,
+                line,
+                ty,
+            );
+            if let Some(info) = self.funcs.get(&f.name) {
+                self.debug.set_subprogram(info.func, sp);
+            }
+            self.debug_scopes.insert(f.name.clone(), sp);
+        }
+
+        // The passdown initializers are emitted into one generated function, so
+        // they share one subprogram. Its file is the first passdown's, which is
+        // exact for the common case of one `.kp` file and only approximate for a
+        // program whose passdowns come from several: the *lines* of the
+        // statements below are each passdown's own, and only the scope's file is
+        // shared.
+        if let Some(init_fn) = self.init_pds_fn {
+            // Every initializer has to be locatable before the function gets a
+            // subprogram: a function that carries debug info must have a
+            // location on each of its calls (LLVM's verifier says so, because
+            // the inliner needs one), and one initializer from a module with no
+            // registered source would leave the whole function unverifiable.
+            let all_located = program
+                .pds
+                .iter()
+                .all(|pd| sources.path_line_col(&pd.module, pd.init.span).is_some());
+            if let (true, Some(pd)) = (all_located, program.pds.first()) {
+                if let (Some(&file), Some((_, line, _))) = (
+                    files.get(&pd.module),
+                    sources.path_line_col(&pd.module, pd.init.span),
+                ) {
+                    let ty = self.debug.subroutine_type(file);
+                    let sp = self.debug.subprogram(
+                        file,
+                        "kelp_init_pds",
+                        "kelp_init_pds",
+                        file,
+                        line,
+                        ty,
+                    );
+                    self.debug.set_subprogram(init_fn, sp);
+                    self.pd_init_scope = Some(sp);
+                }
+            }
+        }
+    }
+
+    /// Point the builder at the `.kp` line `span` of `module` names, in
+    /// `scope`, so every instruction emitted until the next call to this
+    /// carries it (MK7 S4, §4.4).
+    ///
+    /// The LLVM half of `codegen_c.rs::write_line_marker`: `codegen_llvm.rs`
+    /// calls it from the same places, with the same spans, so the two backends
+    /// put a statement at the same source line.
+    ///
+    /// A span the source map cannot resolve, or a function with no subprogram,
+    /// clears the location instead. An instruction that names no line is
+    /// honest, and one that names a line it did not come from is not.
+    fn locate(&self, scope: Option<Metadata<'a>>, module: &str, span: Span) {
+        match (scope, self.sources.path_line_col(module, span)) {
+            (Some(scope), Some((_, line, column))) => self
+                .builder
+                .set_debug_location(self.debug.location(line, column, scope)),
+            _ => self.builder.clear_debug_location(),
+        }
+    }
+
+    /// Finalize the DWARF metadata (`LLVMDIBuilderFinalize`).
+    ///
+    /// This must run after the last location is attached and before the module
+    /// is verified or written, so `compile` calls it between `emit_all` and
+    /// `Module::verify`.
+    fn finalize_debug(&self) {
+        self.debug.finalize();
     }
 
     /// Declare one module-scope global per `pd`, plus the two generated
@@ -872,6 +1087,17 @@ impl<'a> Gen<'a> {
         let entry = init_fn.append_block("entry");
         self.builder.position_at_end(entry);
         if let Some(drop_fn) = self.drop_pds_fn {
+            // The registration is generated glue with no `.kp` statement of its
+            // own, but it is a call inside a function that carries a subprogram,
+            // and LLVM's verifier requires such a call to have a location. It is
+            // attributed to the first passdown's initializer, which is the
+            // passdown whose drop it registers, through the same helper the
+            // initializer statements themselves use.
+            let first = self.program.pds.first();
+            match first {
+                Some(pd) => self.locate(self.pd_init_scope, &pd.module, pd.init.span),
+                None => self.builder.clear_debug_location(),
+            }
             let (atexit, ty) = self.libc_fn("atexit")?;
             self.builder
                 .build_call(atexit, ty, &[drop_fn.as_value()], "");
@@ -1455,6 +1681,15 @@ struct FnGen<'g, 'a> {
     /// The slot holding the hidden environment pointer, bound in the entry
     /// block. One location, so `mem2reg` can promote it out.
     env_slot: Option<Value<'a>>,
+    /// The `DISubprogram` this function's source locations hang from, when it
+    /// has one (MK7 S4). `None` leaves every instruction of the body without a
+    /// location.
+    debug_scope: Option<Metadata<'a>>,
+    /// The `.kp` span that names this function's own line, which is the
+    /// location its entry block starts under. `None` for the synthetic walk a
+    /// passdown initializer is emitted through, which has a span of its own
+    /// instead.
+    decl_span: Option<Span>,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -1489,6 +1724,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             params: f.params.clone(),
             env_ty,
             env_slot: None,
+            debug_scope: g.debug_scopes.get(&f.name).copied(),
+            decl_span: Some(f.span),
         })
     }
 
@@ -1524,7 +1761,32 @@ impl<'g, 'a> FnGen<'g, 'a> {
             params: Vec::new(),
             env_ty: None,
             env_slot: None,
+            debug_scope: g.pd_init_scope,
+            decl_span: Some(pd.init.span),
         })
+    }
+
+    /// Aim the builder at the `.kp` line `span` names, so every instruction
+    /// emitted until the next call to this carries it (MK7 S4, §4.4).
+    ///
+    /// This is the LLVM half of `codegen_c.rs::write_line_marker`, called from
+    /// the same places with the same span, so the two backends put a statement
+    /// at the same source line. A span the source map cannot resolve, or a
+    /// function with no subprogram, clears the location instead: an instruction
+    /// that names no line is honest, and one that names a line it did not come
+    /// from is not.
+    fn locate(&self, span: Span) {
+        self.g.locate(self.debug_scope, &self.module, span);
+    }
+
+    /// Start the function under its own declaration line, which is what makes
+    /// the entry block, and so the prologue, resolve to the function rather
+    /// than to the previous function's last statement.
+    fn locate_entry(&self) {
+        match self.decl_span {
+            Some(span) => self.locate(span),
+            None => self.g.builder.clear_debug_location(),
+        }
     }
 
     /// Emit one `pd` initializer and store its value into the passdown's
@@ -1533,6 +1795,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// already ended.
     fn emit_pd_init(mut self) -> Result<bool, String> {
         self.g.builder.position_at_end(self.entry);
+        // The initializer is a `.kp` expression, so it resolves to its own line
+        // even though it is emitted into a generated function (MK7 S4).
+        self.locate_entry();
         self.scopes.push(HashMap::new());
         let init = self
             .pd_init
@@ -1550,6 +1815,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     fn emit(mut self) -> Result<(), String> {
         self.g.builder.position_at_end(self.entry);
+        // The entry block starts under the function's own line: the parameter
+        // slots and the `kelp_init_pds` call are part of the function, so they
+        // must not carry whatever the previously emitted function left behind
+        // (MK7 S4).
+        self.locate_entry();
         self.scopes.push(HashMap::new());
 
         // A `pd` init function's body is the initializer walk, called first by
@@ -1632,6 +1902,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         let drops = self.drops_at_block_end(block);
         if let Some(tail) = &block.tail {
+            // The tail is an expression in statement position here, and the C
+            // backend marks it as one (`codegen_c.rs::write_block_body`).
+            self.locate(tail.span);
             // A body whose tail is a `panic` diverges: `infer.rs` accepts it
             // against any declared return type, so it is a statement rather
             // than a returned value (`codegen_c.rs::write_function_body`
@@ -1685,6 +1958,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(None);
         }
         let drops = self.drops_at_block_end(block);
+        if let Some(tail) = &block.tail {
+            self.locate(tail.span);
+        }
         match &block.tail {
             // A unit tail is a statement, not a value: it is emitted and the
             // block's own drops follow it, so a `{ ...; call() }` block in
@@ -1708,6 +1984,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        // One location per statement, from the span the statement itself
+        // carries: a `Let` is the initializer's span (its first token *is* the
+        // `val`), a `Return` carries its own, a `While` its condition's. The
+        // same four spans `codegen_c.rs::write_stmt` writes its `#line` from.
+        match stmt {
+            Stmt::Let { init, .. } => self.locate(init.span),
+            Stmt::Return { span, .. } => self.locate(*span),
+            Stmt::While { cond, .. } => self.locate(cond.span),
+            Stmt::Expr(e) => self.locate(e.span),
+        }
         match stmt {
             Stmt::Let { name, ty, init } => {
                 let value = self.emit_expr(init)?;
@@ -7821,6 +8107,7 @@ fn no_value(what: &str) -> String {
 #[cfg(test)]
 mod layout_tests {
     use super::program_c_source;
+    use crate::lexer::Span;
     use crate::llvm_ffi::{Context, Module};
     use crate::tir::{Block, Function, Program};
     use crate::types::Ty;
@@ -7865,6 +8152,9 @@ mod layout_tests {
                     stmts: Vec::new(),
                     tail: None,
                 },
+                // A span of zero: this declaration is synthesized for the
+                // test, and the DWARF skeleton is built from a real one.
+                span: Span::new(0, 0),
                 module: "std/mem".to_string(),
                 extern_: true,
                 env: None,

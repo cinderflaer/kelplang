@@ -147,16 +147,26 @@ KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
 KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
     kelpc/tests/projects/caps_net_denied/main.kp -o "$REF_OUT/cnd" >/dev/null
 
-PD_IR="$REF_OUT/pd.ll"
-PDOWN_IR="$REF_OUT/pdown.ll"
-FS_IR="$REF_OUT/fs.ll"
-NETL_IR="$REF_OUT/netl.ll"
-NETR_IR="$REF_OUT/netr.ll"
-PS_IR="$REF_OUT/ps.ll"
-SB_IR="$REF_OUT/sb.ll"
-HF_IR="$REF_OUT/hfb.ll"
-HFV_IR="$REF_OUT/hfv.ll"
-CND_IR="$REF_OUT/cnd.ll"
+# MK7 S4 attaches a `!dbg` location to every instruction and every function
+# definition. The assertions below are about the shape of the instruction, not
+# about the source line it came from, so each IR file is read through a copy
+# with the debug metadata stripped. That a statement resolves to a `.kp` line is
+# a separate claim, checked end to end by `cargo test --test llvm_debug_info`.
+strip_dbg() {
+    sed -E 's/, !dbg ![0-9]+//g; s/ !dbg ![0-9]+//g' "$1" > "$1.nodbg"
+    echo "$1.nodbg"
+}
+
+PD_IR="$(strip_dbg "$REF_OUT/pd.ll")"
+PDOWN_IR="$(strip_dbg "$REF_OUT/pdown.ll")"
+FS_IR="$(strip_dbg "$REF_OUT/fs.ll")"
+NETL_IR="$(strip_dbg "$REF_OUT/netl.ll")"
+NETR_IR="$(strip_dbg "$REF_OUT/netr.ll")"
+PS_IR="$(strip_dbg "$REF_OUT/ps.ll")"
+SB_IR="$(strip_dbg "$REF_OUT/sb.ll")"
+HF_IR="$(strip_dbg "$REF_OUT/hfb.ll")"
+HFV_IR="$(strip_dbg "$REF_OUT/hfv.ll")"
+CND_IR="$(strip_dbg "$REF_OUT/cnd.ll")"
 
 # A `pd` is a module-scope global with internal linkage and a zero initializer,
 # the C backend's `static <type> <name>;`. The initializer function runs the
