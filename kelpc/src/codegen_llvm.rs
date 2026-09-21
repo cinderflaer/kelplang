@@ -193,6 +193,34 @@
 //! environment and the widened value's, the same two libc calls the generated C
 //! makes.
 //!
+//! # What S3A adds (MK7 S3, the `extern fun` bodies)
+//!
+//! The compiler-supplied bodies of `extern fun` declarations (`externs.rs`),
+//! which are C and stay C (MK7 §3.2): the raw allocator, the byte reads behind
+//! `str`, `malloc`-shaped `String`/`Bytes` construction, `sqrt`, `clock_gettime`
+//! and the rest of the unportable primitives the stdlib is a Kelp wrapper
+//! around.
+//!
+//! - every `extern fun` the program carries is **declared** with the exact
+//!   signature its C body has, not the written one: an owned parameter is a
+//!   borrow (so it is a pointer), and a `Bytes`/`String` return is 24 bytes, so
+//!   it comes back through the hidden first argument clang compiles the body's
+//!   `return` into (`declare_extern`, BUG-vN4tR).
+//! - a call to one is lowered as a call through the same table the runtime
+//!   helpers use: the declaration and the call are the same IR shape whether the
+//!   callee's text is in `kelp_rt.c` or in the program's own object.
+//! - that object is built per program from `<out>.externs.c`, which holds the
+//!   bodies `codegen_c.rs::write_extern` writes and the `std/rt` prototypes
+//!   `runtime_prototypes` writes, so the C text is the C backend's own (see
+//!   `externs_c_source` for why it cannot be a fixed object like `kelp_rt.o`).
+//!
+//! The capability check's runtime allowlist is **not** this slice: a gated call
+//! site the C backend would guard (one that names a resource argument) is
+//! refused by name rather than lowered unchecked, while a gated call that names
+//! no resource (`time.now_unix`, `rand.below`) lowers, which is what the C
+//! backend does with it too. `pd` globals and the two owned-temporary shapes
+//! (`String#into_bytes`, a field of an owned temporary) still refuse.
+//!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
 //! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
@@ -302,7 +330,23 @@ pub fn compile(program: &Program, drops: &DropPlan, out_path: &Path) -> Result<(
     let object_path = out_path.with_extension("o");
     machine.emit_object(&module, &object_path)?;
 
-    crate::driver::link_llvm_object(&object_path, out_path).map_err(|e| e.message)
+    // The `extern fun` bodies this program reaches, as C, compiled into their
+    // own object (MK7 §3.2). Keeping the C source beside the IR is the same
+    // artifact contract the C backend's `<out>.c` has: the text an author can
+    // read is the text that was compiled.
+    let externs_object = match externs_c_source(program) {
+        Some(source) => {
+            let c_path = out_path.with_extension("externs.c");
+            let obj_path = out_path.with_extension("externs.o");
+            crate::driver::compile_c_object(&source, &c_path, &obj_path)
+                .map_err(|e| e.message)?;
+            Some(obj_path)
+        }
+        None => None,
+    };
+
+    crate::driver::link_llvm_object(&object_path, externs_object.as_deref(), out_path)
+        .map_err(|e| e.message)
 }
 
 /// One declared callable: the LLVM function, its LLVM type, and the `tir` return
@@ -397,9 +441,11 @@ struct Gen<'a> {
     /// the two backends free the same set of owned locals at the same points
     /// (MK7 §3.4).
     drops: &'a DropPlan,
-    /// The runtime helpers this slice reaches, keyed by their mangled symbol.
-    /// `kelp_rt.c` defines them (compiled into the object `build.rs` leaves in
-    /// `OUT_DIR`), and the module only declares them: the C backend emits the
+    /// The runtime helpers this slice reaches, keyed by their mangled symbol,
+    /// plus every `extern fun` the program carries (S3). `kelp_rt.c` defines the
+    /// helpers (compiled into the object `build.rs` leaves in `OUT_DIR`) and the
+    /// program's own object defines the extern bodies (`externs.rs`), and in both
+    /// cases the module only *declares* the function: the C backend emits the
     /// same text into one translation unit.
     runtime: HashMap<String, RtFn<'a>>,
     /// The generated per-`datac` drop functions (`kelp_drop_<name>`), the mirror
@@ -597,11 +643,13 @@ impl<'a> Gen<'a> {
         let ctx = self.ctx;
 
         for f in &program.functions {
-            // An `extern fun` is a declaration the runtime owns, not a body S1
-            // can lower. Skip it here and refuse if a call names it, which keeps
-            // a program that merely declares one (through an unused import)
-            // buildable.
+            // An `extern fun` has no `.kp` body: its C text is supplied by the
+            // compiler (`externs.rs`), so the function is *declared* here with
+            // the body's own C signature and a call lowers as a call to it
+            // (MK7 S3). The body then reaches the link through the object
+            // `externs_c_source` builds.
             if f.extern_ {
+                self.declare_extern(f)?;
                 continue;
             }
             let (params, ret) = if f.name == "main" {
@@ -638,6 +686,117 @@ impl<'a> Gen<'a> {
                 },
             );
         }
+        Ok(())
+    }
+
+    /// Whether `codegen_c.rs::cap_plan` would emit a runtime allowlist check
+    /// for this call, which the LLVM backend cannot lower yet (MK7 S3): the
+    /// calling module holds the domain, and the call names at least one resource
+    /// argument to match against the patterns.
+    ///
+    /// The whole gate is frontend: resolution already refuses an ungranted name,
+    /// so a call that reaches codegen is one the calling module may make. What
+    /// the check adds is the *pattern* test at the call site, and a call that
+    /// names no resource (`time.now_unix`, `rand.below`, `process.exit`) needs
+    /// none, exactly as it gets none from the C backend. This mirrors
+    /// `cap_plan` rather than re-deciding, because the two backends disagreeing
+    /// about which calls are checked is the security bug this refusal exists to
+    /// prevent.
+    ///
+    /// A gated stdlib module calling its own item is not a checked call site:
+    /// the declaring module holds no grant, so it never appears in
+    /// `program.caps` for that domain.
+    fn gated_check_needed(&self, module: &str, domain: &str, callee: &str, args: &[Expr]) -> bool {
+        let holds = self
+            .program
+            .caps
+            .iter()
+            .any(|g| g.module == module && g.domain == domain);
+        if !holds {
+            return false;
+        }
+        let arg_is_str: Vec<bool> = args
+            .iter()
+            .map(|a| crate::stdlib::is_str_like_ty(&a.ty))
+            .collect();
+        // The per-call table is keyed on the bare name the author wrote
+        // (`read`, not `fs.read`), the qualified key being what `gated` holds.
+        let bare = callee.rsplit('.').next().unwrap_or(callee);
+        !crate::stdlib::checked_args(domain, bare, &arg_is_str).is_empty()
+    }
+
+    /// Declare one `extern fun` as the C function its compiler-supplied body
+    /// defines (MK7 S3).
+    ///
+    /// The declared type is the **C ABI's** shape of that function, not its
+    /// written spelling. An aggregate larger than two eightbytes comes back
+    /// through a hidden pointer in the first argument slot, which is what clang
+    /// compiles the body's `return` into; LLVM's own lowering of an aggregate
+    /// *return* is not that, so declaring the return by value would produce a
+    /// call that segfaults against the clang object (BUG-vN4tR, MK7 §3.3).
+    ///
+    /// Nothing here can see that object, so the agreement is kept by reading, and
+    /// the shapes it depends on are stated rather than assumed:
+    ///
+    /// * every parameter is a pointer or a scalar. `infer.rs`'s
+    ///   `implicit_borrow_wrap` turns a parameter that owns memory into a borrow,
+    ///   and the runtime's own text uses `kelp_data->len` accordingly, so no
+    ///   aggregate crosses *into* the C body by value. The guard below stays so
+    ///   that a future extern whose parameter is a bare aggregate fails by name
+    ///   rather than crossing wrongly.
+    /// * the only aggregate returns in the whole extern table are `Bytes` and
+    ///   `String`, both 24 bytes, so both take `sret`; `str` is a bare pointer
+    ///   and every other return is a scalar.
+    fn declare_extern(&mut self, f: &Function) -> Result<(), String> {
+        let ctx = self.ctx;
+        let ret_llvm = if f.ret == Ty::Unit {
+            None
+        } else {
+            Some(llvm_type(ctx, &self.structs, &self.containers, &f.ret)?)
+        };
+        let sret = ret_llvm
+            .map(|ty| is_aggregate_ty(&f.ret) && self.layout.abi_size_of(ty) > 16)
+            .unwrap_or(false);
+        let mut params: Vec<Type<'a>> = Vec::new();
+        if sret {
+            params.push(ctx.opaque_ptr());
+        }
+        for (pname, pty) in &f.params {
+            let llvm_pty = llvm_type(ctx, &self.structs, &self.containers, pty)?;
+            if is_aggregate_ty(pty) && self.layout.abi_size_of(llvm_pty) > 16 {
+                return Err(refuse(
+                    &format!("the extern '{}' taking '{}' by value", f.name, pname),
+                    "S3",
+                ));
+            }
+            params.push(llvm_pty);
+        }
+        // A struct that comes back through the hidden pointer returns `void`
+        // here, and the destination is argument 0: that is the shape clang
+        // compiles the C function's return into, and it is not what an LLVM
+        // *value* return of the same struct lowers to (BUG-vN4tR).
+        let ret = match (sret, ret_llvm) {
+            (true, _) => ctx.void(),
+            (false, Some(ty)) => ty,
+            (false, None) => ctx.void(),
+        };
+        let ty = ctx.fn_type(ret, &params, false);
+        let symbol = symbol_name(&f.name);
+        let func = self.module.add_function(&symbol, ty);
+        // The declarations live in the same table as the runtime helpers, and a
+        // call reaches either through the same lookup (`emit_call`): a body and
+        // a `kelp_rt.c` helper differ in where their text is compiled, not in how
+        // the IR calls them.
+        self.runtime.insert(
+            symbol,
+            RtFn {
+                func,
+                ty,
+                yields: ret_llvm.is_some(),
+                ret: ret_llvm,
+                sret,
+            },
+        );
         Ok(())
     }
 
@@ -1048,6 +1207,10 @@ struct FnGen<'g, 'a> {
     /// created in the entry block so `mem2reg` can promote it.
     scopes: Vec<HashMap<String, Value<'a>>>,
     fn_name: String,
+    /// Canonical id of the module the function was declared in. The capability
+    /// gate is per module, so a gated call site has to know whose grant it is
+    /// checked against (MK7 S3, `Gen::gated_check_needed`).
+    module: String,
     ret_ty: Ty,
     /// The function's `tir` body and parameter list, borrowed for `'a` from the
     /// program so the walk does not hold a borrow of `self`.
@@ -1086,6 +1249,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             terminated: false,
             scopes: Vec::new(),
             fn_name: f.name.clone(),
+            module: f.module.clone(),
             ret_ty: f.ret.clone(),
             body: &f.body,
             params: f.params.clone(),
@@ -2142,6 +2306,29 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.value_of(a)
     }
 
+    /// One argument of a runtime or extern call. An owned aggregate over 16
+    /// bytes is spelled as a pointer, which is the only way such an argument
+    /// crosses to C (BUG-vN4tR, MK7 §3.3): the value is staged into a slot of its
+    /// own and the slot's address is what crosses. The value is *moved* into the
+    /// call, so unlike `arg_value`'s borrow staging the slot is not freed
+    /// afterwards. Everything else follows `arg_value`.
+    fn rt_arg_value(
+        &mut self,
+        a: &Expr,
+        held: &mut Vec<(Value<'a>, Ty)>,
+    ) -> Result<Value<'a>, String> {
+        if is_aggregate_ty(&a.ty) {
+            let lty = self.lty(&a.ty)?;
+            if self.g.layout.abi_size_of(lty) > 16 {
+                let slot = self.temp_alloca(lty, "arg.byref");
+                let value = self.value_of(a)?;
+                self.g.builder.build_store(value, slot);
+                return Ok(slot);
+            }
+        }
+        self.arg_value(a, held)
+    }
+
     /// The address of the field chain `e` read out of `root`, the staged
     /// temporary its base is rooted at (the C backend's `chain_off`).
     fn chain_addr(&mut self, root: Value<'a>, e: &Expr) -> Result<Value<'a>, String> {
@@ -2590,6 +2777,21 @@ impl<'g, 'a> FnGen<'g, 'a> {
         args: &[Expr],
         ret: &Ty,
     ) -> Result<Option<Value<'a>>, String> {
+        // A gated call site the C backend would guard with a runtime allowlist
+        // check is refused by name: this slice lowers the `extern fun` bodies,
+        // not the capability check, and lowering a gated call *unchecked* would
+        // silently drop the check the C backend emits (MK7 S3). A gated call
+        // that names no resource is admitted by the domain gate alone and needs
+        // no check, so it is lowered here.
+        if let Some(domain) = self.g.program.gated.get(callee) {
+            if self
+                .g
+                .gated_check_needed(&self.module, domain, callee, args)
+            {
+                return Err(refuse(&format!("the gated call to '{callee}'"), "S3"));
+            }
+        }
+
         // `print`/`print!` reach libc `printf`, as the C backend does.
         if callee == "print" || callee == "print!" {
             let arg = args
@@ -2685,7 +2887,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len() + 1);
                 values.push(slot);
                 for a in args {
-                    values.push(self.arg_value(a, &mut held)?);
+                    values.push(self.rt_arg_value(a, &mut held)?);
                 }
                 self.g.builder.build_call(rt.func, rt.ty, &values, "");
                 for (slot, ty) in held {
@@ -2695,7 +2897,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
             for a in args {
-                values.push(self.arg_value(a, &mut held)?);
+                values.push(self.rt_arg_value(a, &mut held)?);
             }
             let name = if rt.yields { "call" } else { "" };
             let v = self.g.builder.build_call(rt.func, rt.ty, &values, name);
@@ -6266,6 +6468,189 @@ const E_KEY: u32 = 0;
 const E_VALUE: u32 = 1;
 const E_LIVE: u32 = 2;
 
+/// The C translation unit carrying the compiler-supplied `extern fun` bodies
+/// this program reaches (MK7 S3, plan §3.2), or `None` when it reaches none.
+///
+/// The bodies stay C. They are the one place an unportable primitive (`malloc`,
+/// `clock_gettime`, a raw `read` on a descriptor) is allowed to live, and their
+/// text is what the C backend compiles into each generated program. Every byte
+/// of that text here comes from the same emitters the C backend uses:
+/// `codegen_c.rs::write_extern` writes the signature and the body, and
+/// `runtime_prototypes` declares the Kelp half of the runtime
+/// (`std/rt`) that one body calls. A second copy of either would be the drift
+/// this slice has to avoid.
+///
+/// # Why this object is generated per program, not compiled once
+///
+/// MK7 §3.2 compiles the *runtime* once, in `build.rs`, because a fixed object
+/// serves every program. The extern bodies cannot be served that way, for two
+/// reasons that are properties of the bodies themselves:
+///
+/// * a body may name a symbol that only exists when its own module is loaded.
+///   `std.path.normalize_raw` calls `kelp_std__rt__path_normalize`, a Kelp
+///   function the resolver injects only for a program that imports `std/path`.
+///   A single object linked into every binary would carry that undefined
+///   reference into programs that never mention `path.normalize`, and the link
+///   would fail for all of them. Nothing in the object could be dropped by the
+///   linker either: the object is not an archive and its sections are not
+///   garbage-collected by default.
+/// * a body may name a monomorphized type. `process.spawn_raw` takes a
+///   `List<String>`, so the C signature `write_extern` writes for it names
+///   `kelp_List__String`, a typedef that exists only for the program that uses
+///   it.
+///
+/// Emitting exactly `program.functions`' extern set, which is the set the C
+/// backend emits, keeps the object's undefined references to exactly the symbols
+/// the program has. That is the property a link needs, and it is the reason this
+/// is not a build-time object like `kelp_rt.o`.
+///
+/// # What is not here
+///
+/// The capability glue (`runtime/cap_glue.c`) is not: no extern body calls it,
+/// and the gated *call site* that would is refused rather than lowered
+/// unchecked (`emit_call`). `pd` and its `atexit` registration are not this
+/// slice either.
+fn externs_c_source(program: &Program) -> Option<String> {
+    let externs: Vec<&Function> = program.functions.iter().filter(|f| f.extern_).collect();
+    if externs.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    out.push_str(
+        "/* Generated by the llvm backend: the compiler-supplied `extern fun`\n   \
+         bodies this program reaches (MK7 S3, plan/mk7-llvm-backend.md 3.2).\n   \
+         The bodies are C text in `kelpc/src/externs.rs`; the signatures come\n   \
+         from `codegen_c.rs::write_extern`, so this file is the C backend's\n   \
+         copy of the same functions. */\n",
+    );
+    out.push_str(crate::codegen_c::C_HEADERS);
+
+    // The builtin layouts, field for field the structs `runtime/kelp_rt.c`
+    // defines (MK7 §3.3). Only the types an extern signature names are
+    // repeated, and `layout_tests::the_extern_prelude_matches_the_c_runtime`
+    // pins them against that file.
+    out.push_str(
+        "/* The builtin heap layouts of `runtime/kelp_rt.c`: the extern bodies\n   \
+         read and return these by value, so their field order and widths have to\n   \
+         be the runtime's own (MK7 3.3). */\n\
+         typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_Bytes;\n\
+         typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_String;\n\
+         typedef struct { const char* ptr; size_t len; } kelp_View;\n",
+    );
+
+    // A body whose signature names a monomorphized container needs that
+    // typedef (`process.spawn_raw`'s `List<String>`), and the C backend writes
+    // it with the same function. The set is collected from the signatures
+    // rather than from the whole program: a container the externs never name is
+    // not this file's business.
+    let mut containers: Vec<Ty> = Vec::new();
+    for f in &externs {
+        collect_container_tys(&f.ret, &mut containers);
+        for (_, ty) in &f.params {
+            collect_container_tys(ty, &mut containers);
+        }
+    }
+    if !containers.is_empty() {
+        out.push('\n');
+        for ty in &containers {
+            crate::codegen_c::write_container_typedef(&mut out, ty);
+        }
+    }
+
+    // The runtime helpers and globals the bodies call and read, declared and
+    // never defined here: the definitions are in the object `build.rs` compiles
+    // from `runtime/kelp_rt.c`, whose `#define static` is what gives them the
+    // external linkage these declarations name. `cc` is invoked with
+    // `-Werror=implicit-function-declaration`, so a body that reached a helper
+    // missing from this list would fail the build rather than call it through an
+    // invented signature.
+    out.push_str(
+        "\n/* The runtime's own functions and process globals, defined in the\n   \
+         object `build.rs` compiles from `runtime/kelp_rt.c`. */\n\
+         void kelp_panic(const char* msg);\n\
+         void kelp_panic_at(const char* msg, int p);\n\
+         void kelp_panic_errno(const char* msg);\n\
+         void kelp_panic_gai(const char* msg, int rc);\n\
+         void kelp_io_flush_stdio(int fd);\n\
+         bool kelp_utf8_valid(const unsigned char* p, size_t n);\n\
+         kelp_Bytes kelp_bytes_alloc_raw(size_t n);\n\
+         void kelp_bytes_drop(kelp_Bytes* b);\n\
+         kelp_String kelp_String__empty(void);\n\
+         kelp_String kelp_String__from_str(const char* text);\n\
+         kelp_String kelp_String__from_bytes(kelp_Bytes b);\n\
+         extern int kelp_argc;\n\
+         extern char** kelp_argv;\n",
+    );
+
+    // The Kelp half of the runtime (`std/rt`), declared with the C backend's
+    // own prototype writer. Only `path.normalize` calls into it today, and the
+    // resolver injects the module exactly when a program can reach that call, so
+    // the reference always has a definition. The list is the whole module rather
+    // than the one function: it is one emitter, and an unused declaration costs
+    // nothing.
+    let prototypes = crate::codegen_c::runtime_prototypes(program);
+    if !prototypes.is_empty() {
+        out.push('\n');
+        out.push_str(&prototypes);
+    }
+
+    for f in &externs {
+        out.push('\n');
+        crate::codegen_c::write_extern(&mut out, f);
+    }
+    Some(out)
+}
+
+/// Every container type a `tir` type names, outermost first.
+///
+/// Used by [`externs_c_source`] to emit the container typedefs an extern
+/// signature names. It walks the type's own subterms because a `Box<List<T>>`
+/// names both typedefs, and it does not walk into a `datac` (an extern takes
+/// one by borrow, and the C body sees its forward-declared tag at most).
+fn collect_container_tys(ty: &Ty, out: &mut Vec<Ty>) {
+    match ty {
+        Ty::List(elem) | Ty::Box(elem) => {
+            if !out.contains(ty) {
+                out.push(ty.clone());
+            }
+            collect_container_tys(elem, out);
+        }
+        Ty::Map(key, value) => {
+            if !out.contains(ty) {
+                out.push(ty.clone());
+            }
+            collect_container_tys(key, out);
+            collect_container_tys(value, out);
+        }
+        Ty::Array(elem, _) => {
+            if !out.contains(ty) {
+                out.push(ty.clone());
+            }
+            collect_container_tys(elem, out);
+        }
+        Ty::Ref { inner, .. } => collect_container_tys(inner, out),
+        _ => {}
+    }
+}
+
+/// Whether a `tir` type is lowered to an LLVM aggregate rather than a scalar or
+/// a pointer. Only an aggregate can be too large to cross a C boundary by value,
+/// which is the one thing the verifier cannot see (BUG-vN4tR).
+fn is_aggregate_ty(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Bytes
+            | Ty::String
+            | Ty::View
+            | Ty::Struct(_)
+            | Ty::List(_)
+            | Ty::Box(_)
+            | Ty::Map(..)
+            | Ty::Array(..)
+            | Ty::Closure { .. }
+    )
+}
+
 /// Declare every runtime helper this slice calls, with the signature
 /// `kelp_rt.c` defines and the ABI shape it is compiled under (MK7 §3.3). The
 /// object `build.rs` produces is compiled from that same text, so a signature
@@ -6277,11 +6662,16 @@ const E_LIVE: u32 = 2;
 /// and a struct larger than that is returned through the hidden pointer this
 /// module models as an explicit first argument (see [`RtFn::sret`]).
 ///
-/// `kelp_String__into_bytes`/`kelp_String__from_bytes` are deliberately absent:
-/// each takes a 24-byte struct *by value*, and LLVM's backend passes such an
-/// argument in registers while the SysV ABI puts it on the stack, so a call to
-/// one would not cross correctly. Leaving them out refuses the call by name
-/// rather than miscompiling it.
+/// `kelp_String__into_bytes` is deliberately absent: it takes a 24-byte struct
+/// *by value*, and LLVM's backend passes such an argument in registers while the
+/// SysV ABI puts it on the stack, so a call to one would not cross correctly.
+/// Leaving it out refuses the call by name rather than miscompiling it.
+/// `kelp_String__from_bytes` has the same 24-byte by-value argument, and because
+/// every `String` construction in the stdlib goes through it, it is not left
+/// out: the runtime object `build.rs` compiles carries a pointer-spelled
+/// adapter for it (`kelp_String__from_bytes_ptr`, BUG-vN4tR), registered below
+/// under the builtin's own mangled name so a call site reaches it through the
+/// same lookup every other runtime method uses.
 fn declare_runtime<'a>(
     ctx: &'a Context,
     module: &'a Module<'a>,
@@ -6372,6 +6762,27 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_map_hash", i64, &[ptr, i64], true, false);
     decl(&mut out, "kelp_map_mix", i64, &[i64], true, false);
     decl(&mut out, "kelp_map_key_eq", i1, &[ptr, ptr, i64], true, false);
+    // `String#from_bytes`'s C entry point takes a 24-byte `kelp_Bytes` by value,
+    // which an IR call cannot cross (BUG-vN4tR, above). The runtime object's
+    // adapter spells that argument as a pointer, and it returns the `String`
+    // through the hidden first argument clang gives a 24-byte return.
+    {
+        let ty = ctx.fn_type(void, &[ptr, ptr], false);
+        let func = module.add_function("kelp_String__from_bytes_ptr", ty);
+        out.insert(
+            // The key is the *builtin's* mangled name, so `emit_call` finds it
+            // with the same `symbol_name(callee)` lookup it uses for every
+            // other runtime method; the function it calls is the adapter.
+            symbol_name("String#from_bytes"),
+            RtFn {
+                func,
+                ty,
+                yields: true,
+                ret: Some(string),
+                sret: true,
+            },
+        );
+    }
     out
 }
 
@@ -6676,7 +7087,8 @@ fn int_width(ty: &Ty) -> Option<u32> {
 /// through S2E is lowered: plain records, owned fields, the drop plan, the
 /// runtime, the tagged union, the containers and arrays, the references that
 /// are not a `datac`, and closures and function values. What is left is S3:
-/// `pd` globals, the `extern fun` bodies and the capability check.
+/// `pd` globals, the capability check's allowlist at a gated call site, and the
+/// two owned-temporary shapes.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
@@ -6767,7 +7179,125 @@ fn no_value(what: &str) -> String {
 
 #[cfg(test)]
 mod layout_tests {
+    use super::externs_c_source;
     use crate::llvm_ffi::{Context, Module};
+    use crate::tir::{Block, Function, Program};
+    use crate::types::Ty;
+
+    /// C comments removed, so a struct laid out over several commented lines in
+    /// `runtime/kelp_rt.c` can be compared with the one-line typedef the extern
+    /// prelude writes.
+    fn strip_c_comments(text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(start) = rest.find("/*") {
+            out.push_str(&rest[..start]);
+            match rest[start..].find("*/") {
+                Some(end) => rest = &rest[start + end + 2..],
+                None => {
+                    rest = "";
+                    break;
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// The extern prelude repeats the builtin struct layouts and declares every
+    /// runtime helper the bodies call (MK7 §3.3). The C compiler checks a
+    /// prototype's arity, not its agreement with a definition in another
+    /// translation unit, so the agreement is pinned here by reading both texts:
+    /// each repeated typedef is the same field-for-field shape, and each declared
+    /// helper and process global is one `runtime/kelp_rt.c` actually defines.
+    #[test]
+    fn the_extern_prelude_matches_the_c_runtime() {
+        let program = Program {
+            structs: Vec::new(),
+            enums: Vec::new(),
+            pds: Vec::new(),
+            functions: vec![Function {
+                name: "std.mem.alloc_raw".to_string(),
+                params: vec![("n".to_string(), Ty::Usize)],
+                ret: Ty::Bytes,
+                body: Block {
+                    stmts: Vec::new(),
+                    tail: None,
+                },
+                module: "std/mem".to_string(),
+                extern_: true,
+                env: None,
+            }],
+            caps: Vec::new(),
+            gated: Default::default(),
+        };
+        let source = externs_c_source(&program).expect("one extern fun is one body");
+
+        // The layout text, written once in the prelude and once in the runtime.
+        let runtime = strip_c_comments(include_str!("../runtime/kelp_rt.c"));
+        let squeeze = |text: &str| text.split_whitespace().collect::<String>();
+        let runtime = squeeze(&runtime);
+        let layouts = [
+            "typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_Bytes;",
+            "typedef struct { unsigned char* data; size_t len; size_t cap; } kelp_String;",
+            "typedef struct { const char* ptr; size_t len; } kelp_View;",
+        ];
+        for want in layouts {
+            assert!(
+                source.contains(want),
+                "the extern prelude does not declare '{want}':\n{source}"
+            );
+            assert!(
+                runtime.contains(&squeeze(want)),
+                "'runtime/kelp_rt.c' does not define '{want}'"
+            );
+        }
+
+        // Every declared helper and global: named here so a body that starts
+        // calling a new one has to add it to both places at once.
+        let declarations = [
+            "void kelp_panic(const char* msg);",
+            "void kelp_panic_at(const char* msg, int p);",
+            "void kelp_panic_errno(const char* msg);",
+            "void kelp_panic_gai(const char* msg, int rc);",
+            "void kelp_io_flush_stdio(int fd);",
+            "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
+            "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",
+            "void kelp_bytes_drop(kelp_Bytes* b);",
+            "kelp_String kelp_String__empty(void);",
+            "kelp_String kelp_String__from_str(const char* text);",
+            "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
+        ];
+        for decl in declarations {
+            assert!(
+                source.contains(decl),
+                "the extern prelude does not declare '{decl}':\n{source}"
+            );
+            let name = decl
+                .split_whitespace()
+                .nth(1)
+                .and_then(|rest| rest.split('(').next())
+                .expect("a declaration has a name");
+            assert!(
+                runtime.contains(&format!("{name}(")),
+                "'runtime/kelp_rt.c' does not define '{name}'"
+            );
+        }
+        // The two process globals: `build.rs` strips `static`, so the object
+        // defines them with the external linkage the prelude declares.
+        for decl in ["extern int kelp_argc;", "extern char** kelp_argv;"] {
+            assert!(
+                source.contains(decl),
+                "the extern prelude does not declare '{decl}':\n{source}"
+            );
+        }
+        for want in ["int kelp_argc = 0;", "char** kelp_argv = NULL;"] {
+            assert!(
+                runtime.contains(&squeeze(want)),
+                "'runtime/kelp_rt.c' does not define '{want}'"
+            );
+        }
+    }
 
     /// The IR's builtin heap layouts must match the C structs in
     /// `runtime/kelp_rt.c` field for field (MK7 §3.3): a pointer, a length and a
@@ -6804,6 +7334,73 @@ mod layout_tests {
             ir.contains("%kelp_View = type { ptr, i64 }"),
             "unexpected View layout:\n{ir}"
         );
+    }
+
+    /// Every `extern fun` the compiler ships, compiled against the prelude the
+    /// LLVM backend emits for it (MK7 S3A).
+    ///
+    /// The corpus cannot reach this: the modules whose bodies are the widest
+    /// (`std/fs`, `std/net`, `std/process`, `std/io`) each carry a `pd`, so the
+    /// backend refuses those programs before it would emit their externs file.
+    /// This test runs the front end only, which `pd` does not disturb, so the
+    /// program is the whole shipped extern surface at once and `cc` is the
+    /// judge: a body that calls a runtime helper the prelude forgot, or one that
+    /// needs a header it does not include, fails here rather than in the slice
+    /// that lowers `pd`.
+    #[test]
+    fn every_shipped_extern_body_compiles_against_the_prelude() {
+        use crate::diag::SourceMap;
+
+        let modules = [
+            "std/mem",
+            "std/str",
+            "std/path",
+            "std/math",
+            "std/fs",
+            "std/time",
+            "std/rand",
+            "std/env",
+            "std/fmt",
+            "std/io",
+            "std/process",
+            "std/net",
+            "std/encoding",
+            "std/list",
+            "std/option",
+            "std/result",
+        ];
+        let mut entry_source = String::new();
+        for id in modules {
+            entry_source.push_str(&format!("impl \"{id}\"\n"));
+        }
+        entry_source.push_str("\nfun main() {\n    print(1)\n}\n");
+
+        let dir = std::env::temp_dir().join(format!(
+            "kelp_extern_prelude_{}_{}",
+            std::process::id(),
+            modules.len()
+        ));
+        std::fs::create_dir_all(&dir).expect("a scratch directory for the entry file");
+        let entry = dir.join("main.kp");
+        std::fs::write(&entry, entry_source).expect("the entry file");
+
+        let mut sources = SourceMap::new();
+        let loaded = crate::resolve::load(&entry, &mut sources)
+            .expect("an import of every shipped stdlib module resolves");
+        let program = crate::infer::check_program(&loaded.program, &loaded.project)
+            .expect("the shipped stdlib type-checks");
+        let source = externs_c_source(&program).expect("the stdlib declares extern funs");
+
+        if let Err(e) = crate::driver::compile_c_object(
+            &source,
+            &dir.join("all.externs.c"),
+            &dir.join("all.externs.o"),
+        ) {
+            panic!(
+                "a shipped extern body does not compile against the prelude: {}",
+                e.message
+            );
+        }
     }
 
     /// The container headers the module builds must match the C typedefs in

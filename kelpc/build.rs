@@ -45,7 +45,17 @@ fn main() {
          #include <stdlib.h>\n\
          #include <string.h>\n\
          #define static\n\
-         #include \"{}\"\n",
+         #include \"{}\"\n\
+         \n\
+         /* The pointer-spelled entry point for `String.from_bytes`, whose C form\n\
+            takes a 24-byte `kelp_Bytes` by value. An IR call cannot cross such an\n\
+            argument (MK7 section 3.3, BUG-vN4tR), so the IR declares this adapter\n\
+            and hands it a pointer. It is C to C inside this translation unit, where\n\
+            both sides are compiled by the same compiler and agree, and the buffer\n\
+            is moved into the result exactly as the by-value form moves it. */\n\
+         kelp_String kelp_String__from_bytes_ptr(const kelp_Bytes* b) {{\n\
+             return kelp_String__from_bytes(*b);\n\
+         }}\n",
         source.display()
     );
     std::fs::write(&wrapper, body).expect("could not write the runtime wrapper");

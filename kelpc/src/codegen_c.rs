@@ -41,6 +41,36 @@ const RUNTIME: &str = include_str!("../runtime/kelp_rt.c");
 /// is emitted — see `runtime_prototypes` and `kelpc/runtime/cap_glue.c`.
 const CAP_GLUE: &str = include_str!("../runtime/cap_glue.c");
 
+/// The C headers a generated program (and the `extern fun` bodies the LLVM
+/// backend compiles separately, MK7 §3.2) relies on. Included unconditionally:
+/// `std/math`'s externs call the C library directly, and an unused declaration
+/// costs nothing. One list rather than two, because the C text is one text.
+pub(crate) const C_HEADERS: &str = "\
+#include <errno.h>\n\
+#include <limits.h>\n\
+#include <dirent.h>\n\
+#include <fcntl.h>\n\
+#include <arpa/inet.h>\n\
+#include <math.h>\n\
+#include <netdb.h>\n\
+#include <netinet/in.h>\n\
+#include <poll.h>\n\
+#include <sys/socket.h>\n\
+#include <sys/sendfile.h>\n\
+#include <sys/stat.h>\n\
+#include <sys/types.h>\n\
+#include <sys/wait.h>\n\
+#include <time.h>\n\
+#include <unistd.h>\n\
+#include <stdint.h>\n\
+#include <stdbool.h>\n\
+// `isize` is `ptrdiff_t` (`types.rs`), which is `stddef.h`'s and not brought\n\
+// in by any of the headers above or below.\n\
+#include <stddef.h>\n\
+#include <stdio.h>\n\
+#include <stdlib.h>\n\
+#include <string.h>\n\n";
+
 /// Which function keys are gated, and each module's patterns per domain.
 /// Built once per program in `generate`; `Gen` carries a reference to it so
 /// every call site can decide whether a check is needed without threading
@@ -99,32 +129,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let path_loaded = program.functions.iter().any(|f| f.module == "std/path");
     let cap_needed = !program.gated.is_empty();
     let mut out = String::new();
-    // Included unconditionally: `std/math`'s externs call the C library
-    // directly, and an unused declaration costs nothing.
-    out.push_str("#include <errno.h>\n");
-    out.push_str("#include <limits.h>\n");
-    out.push_str("#include <dirent.h>\n");
-    out.push_str("#include <fcntl.h>\n");
-    out.push_str("#include <arpa/inet.h>\n");
-    out.push_str("#include <math.h>\n");
-    out.push_str("#include <netdb.h>\n");
-    out.push_str("#include <netinet/in.h>\n");
-    out.push_str("#include <poll.h>\n");
-    out.push_str("#include <sys/socket.h>\n");
-    out.push_str("#include <sys/sendfile.h>\n");
-    out.push_str("#include <sys/stat.h>\n");
-    out.push_str("#include <sys/types.h>\n");
-    out.push_str("#include <sys/wait.h>\n");
-    out.push_str("#include <time.h>\n");
-    out.push_str("#include <unistd.h>\n");
-    out.push_str("#include <stdint.h>\n");
-    out.push_str("#include <stdbool.h>\n");
-    // `isize` is `ptrdiff_t` (`types.rs`), which is `stddef.h`'s and not
-    // brought in by any of the headers above or below.
-    out.push_str("#include <stddef.h>\n");
-    out.push_str("#include <stdio.h>\n");
-    out.push_str("#include <stdlib.h>\n");
-    out.push_str("#include <string.h>\n\n");
+    out.push_str(C_HEADERS);
     out.push_str(RUNTIME);
     out.push('\n');
     if path_loaded || cap_needed {
@@ -409,7 +414,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 /// than from `.kp` source (see `externs.rs`). `infer.rs` has already rejected
 /// an `extern` with no known body, so reaching the `expect` here would mean
 /// the table and the checker disagreed.
-fn write_extern(out: &mut String, f: &Function) {
+pub(crate) fn write_extern(out: &mut String, f: &Function) {
     let body = crate::externs::body(&f.module, &f.name)
         .unwrap_or_else(|| panic!("no compiler-supplied body for extern '{}'", f.name));
     // The C signature renames every parameter (`n` -> `kelp_n`), so a body's C
@@ -793,7 +798,7 @@ fn write_enum(
 /// emitted yet (`List<Tree>` inside `Tree`) and a mutually recursive pair
 /// (M8). A `datac` element is therefore spelled by its struct tag here
 /// (`container_elem_c_type`), which is forward-declared by `write_tags`.
-fn write_container_typedef(out: &mut String, ty: &Ty) {
+pub(crate) fn write_container_typedef(out: &mut String, ty: &Ty) {
     match ty {
         Ty::Closure { params, ret } => {
             write_closure_typedef(out, params, ret);
@@ -1880,7 +1885,7 @@ fn write_env(out: &mut String, f: &Function, owned: &HashSet<String>) {
 /// generated from the module's functions rather than written out as text, so a
 /// rename in `std/rt.kp` cannot leave a stale name behind in a C string: the
 /// prototype and the definition are two spellings of one `c_name`.
-fn runtime_prototypes(program: &Program) -> String {
+pub(crate) fn runtime_prototypes(program: &Program) -> String {
     let mut out = String::new();
     out.push_str("// The capability matcher, written in Kelp (`std/rt`): one\n");
     out.push_str("// implementation for every backend (MK7 \u{a7}8).\n");

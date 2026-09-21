@@ -59,6 +59,51 @@ pub fn compile_c(c_source: &str, out_path: &Path) -> Result<(), CompileError> {
     Ok(())
 }
 
+/// Compiles one generated C translation unit into an object, the way
+/// [`compile_c`] compiles a whole program's generated C. The LLVM backend needs
+/// it for the `extern fun` bodies, which stay C (MK7 §3.2) but whose object is
+/// emitted per program: see `codegen_llvm::externs_c_source` for why a fixed
+/// object cannot carry them.
+///
+/// The flags are the ones the runtime object `build.rs` compiles under
+/// (`-O2 -fwrapv`), so a body that does arithmetic at the edge of a signed range
+/// wraps the way the C backend's `-O2 -fwrapv` compiled copy of it does.
+/// `-Werror=implicit-function-declaration` is the one extra: the bodies call the
+/// runtime helpers through prototypes written out beside them, and C99 makes an
+/// undeclared call a warning, so a helper whose prototype went missing would be
+/// called through an invented `int` signature instead of failing the build.
+pub fn compile_c_object(
+    c_source: &str,
+    c_path: &Path,
+    obj_path: &Path,
+) -> Result<(), CompileError> {
+    std::fs::write(c_path, c_source).map_err(|e| CompileError {
+        message: format!("could not write generated C to '{}': {e}", c_path.display()),
+    })?;
+    let output = Command::new("cc")
+        .arg("-c")
+        .arg("-O2")
+        .arg("-fwrapv")
+        .arg("-Werror=implicit-function-declaration")
+        .arg("-o")
+        .arg(obj_path)
+        .arg(c_path)
+        .output()
+        .map_err(|e| CompileError {
+            message: format!("could not invoke 'cc': {e}"),
+        })?;
+    if !output.status.success() {
+        return Err(CompileError {
+            message: format!(
+                "cc failed to build '{}':\n{}",
+                c_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// Links the object `codegen_llvm` wrote into the final binary: the LLVM
 /// backend's *finishing* step, the sibling of [`compile_c`].
 ///
@@ -70,7 +115,17 @@ pub fn compile_c(c_source: &str, out_path: &Path) -> Result<(), CompileError> {
 /// backend emits plain `add`/`sub`/`mul` IR, which wraps by definition, so the
 /// guarantee is already in the object and the flag would be inert. `-lm` is for
 /// `std/math`'s externs and is free whether or not they are used.
-pub fn link_llvm_object(object_path: &Path, out_path: &Path) -> Result<(), CompileError> {
+///
+/// `externs_object` is the object [`compile_c_object`] built from the program's
+/// `extern fun` bodies, or `None` when the program reaches none of them. It is
+/// an ordinary object on the link line, after the IR object and before `-lm`, so
+/// a body that calls a runtime helper resolves against the runtime object above
+/// it and one that calls `sqrt` resolves against the library below.
+pub fn link_llvm_object(
+    object_path: &Path,
+    externs_object: Option<&Path>,
+    out_path: &Path,
+) -> Result<(), CompileError> {
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
         std::process::id(),
@@ -82,12 +137,17 @@ pub fn link_llvm_object(object_path: &Path, out_path: &Path) -> Result<(), Compi
             runtime_path.display()
         ),
     })?;
-    let output = Command::new("cc")
+    let mut command = Command::new("cc");
+    command
         .arg("-O2")
         .arg("-o")
         .arg(out_path)
         .arg(object_path)
-        .arg(&runtime_path)
+        .arg(&runtime_path);
+    if let Some(externs) = externs_object {
+        command.arg(externs);
+    }
+    let output = command
         .arg("-lm")
         .output()
         .map_err(|e| CompileError {
