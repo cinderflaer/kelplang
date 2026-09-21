@@ -388,6 +388,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
         match stmt {
             Stmt::Let { name, ty, init } => {
                 let value = self.emit_expr(init)?;
+                // An initializer that diverged leaves the binding dead: emitting
+                // its store would put an instruction after the block's terminator.
+                if self.terminated {
+                    return Ok(());
+                }
                 let slot = self.alloca(ty, name)?;
                 self.scopes
                     .last_mut()
@@ -538,6 +543,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
 
     fn emit_assign(&mut self, target: &Expr, value: &Expr) -> Result<(), String> {
         let v = self.value_of(value)?;
+        if self.terminated {
+            return Ok(());
+        }
         match &target.kind {
             ExprKind::Ident(name) => {
                 let slot = self
@@ -769,8 +777,6 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(None);
         }
 
-        let lty = llvm_type(self.g.ctx, ty)?;
-        let phi = self.g.builder.build_phi(lty, "if");
         let mut incoming: Vec<(Value<'a>, BasicBlock<'a>)> = Vec::new();
         if then_reaches {
             let v = match then_val {
@@ -788,10 +794,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         if incoming.is_empty() {
             // Both arms diverge, so this value is never used; the merge is dead.
+            // The phi must not be built first: one with no incoming does not
+            // verify.
             self.g.builder.build_unreachable();
             self.terminated = true;
             return Ok(Some(self.zero_const(ty)?));
         }
+        let lty = llvm_type(self.g.ctx, ty)?;
+        let phi = self.g.builder.build_phi(lty, "if");
         self.g.builder.add_incoming(phi, &incoming);
         Ok(Some(phi))
     }
