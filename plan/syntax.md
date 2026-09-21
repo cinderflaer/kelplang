@@ -1465,6 +1465,7 @@ impl "std/time"
 - The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.kp` extension is not written.
 - `impl` lines come first in the file.
 - The namespace is the module's own name: the last path segment, so `impl "shapes/circle"` gives `circle.area(...)` and `impl "std/fs"` gives `fs.read(...)`. A **dependency's entry module** is named after the directory Coral fetched it into: a path ending in `/lib` under `deps/` takes the name of its folder, which is the `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse.parse(...)`) or, for a whole-repository dependency, the library's own folder inside it (`impl "deps/fpl/json/lib"` is `json.write(...)`). Everything else under `deps/` is an internal module with its own name. `as name`, which used to override this, is **removed**: `impl "std/path" as p` is a parse error naming the fix, and the name to change is the one at the call sites.
+- A capability grant is written in the same clause: `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (15.2). The `with` that used to precede `caps` is **removed** as well, and the grant under it is unchanged: `impl "std/fs" with caps(...)` is a parse error that names the surviving spelling (15.2, 23).
 - Imports are transitive: a file that imports a module also loads what that module imports.
 - Import cycles and missing modules are errors, and the missing-module message names the file it expected.
 - Only the entry module has unprefixed names. Every other module is reached through its namespace.
@@ -1591,7 +1592,7 @@ impl "logger" caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
 - `net` patterns are `host`, `host:port`, `*.host`, `*:port` or `*`, matched as names, never as resolved addresses. `127.0.0.1:*` does not cover `localhost`.
 - `fs` and `process` patterns are absolute paths, normalized lexically and resolved through symlinks before matching, so a symlink inside the grant that points outside it is denied.
 - An empty pattern list denies everything: `caps(process = [])` is a grant that permits no program.
-- The clause stands on its own: `with caps(...)` is the older spelling of the same grant, and it is **outdated** (`23`). `impl` already means "this module declares what it imports", so the keyword says nothing the clause does not, and it is removed on the next development cycle.
+- The clause stands on its own: `impl "std/fs" caps(fs = ["/var/log/**"])` is the whole grant. `with caps(...)` was the older spelling of the same grant, and it is **removed**, not deprecated (`23`): `impl "std/fs" with caps(...)` is a parse error that names the surviving spelling, and the domains, the patterns and the no-escalation rule are exactly the same without the keyword. `impl` already means "this module declares what it imports", so the keyword said nothing the clause does not.
 
 ### 15.3 Runtime checks
 
@@ -2140,8 +2141,9 @@ directory walk are printed as raw strings and are not in that data.
 program      := line* EOF
 line         := impl | const | pd | datac | enum | fun
 
-impl         := "impl" string [ "with" "caps" "(" grant ("," grant)* ")" ]
-                // `as name` was removed (13.1): the parser refuses it, and `as` stays a keyword
+impl         := "impl" string [ "caps" "(" grant ("," grant)* ")" ]
+                // `as name` was removed (13.1) and `with caps(...)` with it (15.2):
+                // the parser refuses each by name, and `as` stays a keyword
 grant        := ident "=" "[" string ("," string)* "]"
 const        := "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
@@ -2523,6 +2525,10 @@ outdated: `impl "..." with caps(...)` is outdated and will be removed in the nex
   --> src/main.kp:2:13
 ```
 
+That finding is the shape an entry produces, shown here from the entry the
+register last held; **the register is empty today** (23.1), so no program
+produces one.
+
 A program that uses an outdated spelling **more than once gets one finding per
 use**, and one finding per use is all it gets: a load reads each module twice
 (once to discover the module graph, once to decide), so a finding collected by
@@ -2530,7 +2536,8 @@ that reading is deduplicated at the end of it.
 
 - **It is not an error, and the build succeeds.** The label is `outdated: `, which is neither `error:` nor `warning: `: a lint's `warning: ` is a style opinion (19), this is a promise about a later version, and nothing is removed on the day its warning first appears.
 - **The warning names the removal.** Every entry is removed on the next development cycle, and that sentence is shared by every entry, so no entry can promise a different deadline.
-- **`--deny-outdated` turns the findings into errors** (`kelpc build <path> --deny-outdated`, and the same flag on `run`). That is the migration gate: a project (or its CI) that wants to hear about its own code fails the build instead of reading a warning. A program with nothing on the list builds exactly as it did before the flag.
+- **`--deny-outdated` turns the findings into errors** (`kelpc build <path> --deny-outdated`, and the same flag on `run`). That is the migration gate: a project (or its CI) that wants to hear about its own code fails the build instead of reading a warning. A program with nothing on the list builds exactly as it did before the flag; with the register empty, every program is such a program.
+- **A removed spelling is not a deprecation.** Once an entry's cycle is over the spelling is deleted from the parser, and what a stale program meets is a parse error that names the fix, not an `outdated:` finding. That is the state of both entries below.
 - **`kelpc fmt` never rewrites one spelling into another**, for the reason it never rewrites anything: it copies the token it was given. The edit is the author's.
 - **`kelpc lint` does not report deprecations.** A lint is a style pass over tokens; a deprecation is reported where the syntax is read, which is the load a build performs.
 - **The compiler's own sources carry none.** The shipped stdlib is migrated before an entry is written, because a deprecation there would warn every program that imports that module about a file its reader cannot edit. A unit test in `deprecated.rs` keeps that true.
@@ -2538,10 +2545,20 @@ that reading is deduplicated at the end of it.
 
 ### 23.1 The register, as it stands
 
+**Empty.** Both entries it held were removed on the one-cycle deadline their
+shared sentence gave them, and the mechanism stays for the next spelling:
+
 | id | Outdated | Write instead |
 | --- | --- | --- |
-| `caps-with` | `impl "path" with caps(...)` | `impl "path" caps(...)`, with the same domains and the same patterns: `impl "std/fs" caps(fs = ["/var/log/**"])`. |
+| `impl-as` (retired) | `impl "path" as name` | `impl "path"`, and reach the module by its own name (13.1). |
+| `caps-with` (retired) | `impl "path" with caps(...)` | `impl "path" caps(...)`, with the same domains and the same patterns: `impl "std/fs" caps(fs = ["/var/log/**"])` (15.2). |
 
-The first entry was `impl-as` (`impl "path" as name`), and it is **retired**: the
-clause is gone from the parser, so it is refused rather than warned about. Its fix
-lives in 13.1, and a stale clause is a parse error that names it.
+The first entry, `impl "path" as name`, was retired first: the clause is gone
+from the parser, so it is refused rather than warned about, its fix lives in 13.1,
+and a stale clause is a parse error that names it. The second,
+`impl "path" with caps(...)`, went the same way: `with` carries no information
+(`impl` already means "this module declares what it imports"), the grant keeps
+every domain and pattern without it, and 15.2 carries the surviving spelling.
+Keeping it for its own cycle would have meant a finding that named a deadline
+that had already passed, which is the drift the shared sentence exists to
+prevent.
