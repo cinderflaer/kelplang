@@ -13,13 +13,13 @@
 # object from the same `write_extern` text the C backend emits.
 #
 # This script carries the S1, S2A, S2B, S2C, S2D, S2F and S2E lists forward and
-# adds the S3A fixtures, so one run is the whole opt-in surface at this stage.
+# adds the S3A fixtures, so one run is the whole opt-in surface at this slice.
 # Its list is closed by `--exact`: a fixture that has grown a construct outside
-# the slice is refused by name and is deliberately *not* here. Still outside:
-# `pd` and the capability check's runtime allowlist at a gated call site are the
-# rest of S3, and the two S2B leftovers (`String#into_bytes` and "a field of an
-# owned temporary") stay refused. A refusal is the correct answer for those, not
-# a failure to hide.
+# the slice is refused by name and is deliberately *not* here. The rest of S3
+# (`pd`, the capability check at a gated call site, and the two S2B leftovers)
+# landed in `kelpc/tests/run-llvm-pd-caps.sh`, which is what carries this list
+# forward now: this gate keeps the earlier slices green, not the whole opt-in
+# surface.
 #
 # The fixtures that make this slice worth its own gate:
 #
@@ -34,7 +34,8 @@
 #   * `time_and_rand_are_gated_domains_with_no_named_resource`
 #     (`caps_time_rand.kp`) is a gated domain call with no resource argument, so
 #     the domain gate alone admits it and no allowlist check is owed: this slice
-#     lowers it, and the two gated calls that *do* name a resource still refuse.
+#     lowers it, and a gated call that *does* name a resource is lowered with its
+#     check by the S3 gate above.
 #   * `a_compiler_shipped_stdlib_module_can_be_imported` (`stdlib_mem.kp`),
 #     `stdlib_fmt_formats_numbers_hex_padding_and_bytes` (`stdlib_fmt.kp`),
 #     `the_str_stdlib_module_runs_from_kelp_source` (`stdlib_str.kp`),
@@ -458,25 +459,20 @@ if ! grep -qxF 'define i1 @kelp_std__rt__path_normalize(ptr %0, ptr %1) {' "$PAT
     exit 1
 fi
 
-# A gated call that *names a resource* is refused by name, because the runtime
-# allowlist check the C backend emits at that call site is the rest of S3 and
-# lowering the call unchecked would drop the check. The C backend builds the
-# same program, so the refusal is a gap and not a broken fixture.
+# A gated call that *names a resource* is no longer refused: the MK7 S3 rest
+# slice lowers the runtime allowlist check, and `kelpc/tests/run-llvm-pd-caps.sh`
+# is its gate. The assertion that used to sit here (that the `llvm` backend
+# refused `caps_env` by name) moved there as the deny-path diff, which builds the
+# same programs under both backends and compares stderr and the exit status.
 if ! KELPC_BACKEND=c ./target/release/kelpc build \
     kelpc/tests/projects/caps_env/main.kp -o "$REF_OUT/caps_env_c" >/dev/null; then
-    echo "the C backend no longer builds 'caps_env', so the refusal below proves nothing" >&2
+    echo "the C backend no longer builds 'caps_env', which the S3 gate builds too" >&2
     exit 1
 fi
-if KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
-    kelpc/tests/projects/caps_env/main.kp -o "$REF_OUT/caps_env" \
-    >"$REF_OUT/caps_env.err" 2>&1; then
-    echo "the llvm backend lowered a gated call instead of refusing it by name" >&2
-    exit 1
-fi
-if ! grep -q "cannot lower the gated call to 'std.env.has'" "$REF_OUT/caps_env.err"; then
-    echo "the llvm backend refused 'caps_env' with the wrong message:" >&2
-    cat "$REF_OUT/caps_env.err" >&2
+if ! KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+    kelpc/tests/projects/caps_env/main.kp -o "$REF_OUT/caps_env" >/dev/null; then
+    echo "the $BACKEND backend refuses 'caps_env', whose gated call the S3 rest slice lowers" >&2
     exit 1
 fi
 
-echo "$BACKEND gate passed: $(printf '%s\n' $TESTS | wc -l) fixtures, and the scalar, float and borrow-return signatures, the panic tail, the closure fat pointer, environment, indirect call and widening, the extern declarations and their sret/adapter shapes, and the gated-call refusal read back out of the IR"
+echo "$BACKEND gate passed: $(printf '%s\n' $TESTS | wc -l) fixtures, and the scalar, float and borrow-return signatures, the panic tail, the closure fat pointer, environment, indirect call and widening, the extern declarations and their sret/adapter shapes, and the gated call's lowered check read back out of the IR"
