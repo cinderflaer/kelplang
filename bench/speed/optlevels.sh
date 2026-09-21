@@ -37,6 +37,19 @@ ROUNDS="${BENCH_ROUNDS:-9}"
 LEVELS="${BENCH_LEVELS:--O0 -O1 -O2 -O3 -Os}"
 BACKENDS="${BENCH_BACKENDS:-c llvm}"
 
+# `KELPC_ORACLE` is the project's one backend switch, and it names only the C
+# oracle; unsetting it selects the default `llvm` backend. This wrapper keeps the
+# measurement's two-backend shape now that the user-facing selector is gone. The
+# retired `KELPC_BACKEND` is stripped either way, so a stale export cannot refuse
+# a build.
+build_backend() {
+    if [ "$backend" = "c" ]; then
+        env -u KELPC_BACKEND KELPC_ORACLE=c "$KELPC" build "$DIR/speed.kp" "$level" -o "$bin"
+    else
+        env -u KELPC_BACKEND -u KELPC_ORACLE "$KELPC" build "$DIR/speed.kp" "$level" -o "$bin"
+    fi
+}
+
 mkdir -p "$OUT"
 rm -f "$OUT"/*.tsv "$OUT"/*.out "$OUT"/*.log
 
@@ -66,7 +79,7 @@ for round in $(seq 1 "$ROUNDS"); do
         for backend in $BACKENDS; do
             bin="$OUT/speed_${backend}${level}"
             c0=$(now)
-            if ! "$KELPC" build "$DIR/speed.kp" "$level" "--backend=$backend" -o "$bin" \
+            if ! build_backend \
                 >"$OUT/${backend}${level}.build.log" 2>&1; then
                 echo "build FAILED: $backend $level" >&2
                 tail -5 "$OUT/${backend}${level}.build.log" >&2

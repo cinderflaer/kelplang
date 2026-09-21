@@ -261,7 +261,9 @@ fn build_kelp_driver(paths: &[String]) -> PathBuf {
     let bin = tmp("path_normalize_kelp");
     std::fs::write(&src, kelp_driver(paths)).expect("writing the Kelp driver");
     let out = Command::new(kelpc_bin())
-        .args(["build", "--backend=c"])
+        .arg("build")
+        .env_remove("KELPC_BACKEND")
+        .env("KELPC_ORACLE", "c")
         .arg(&src)
         .arg("-o")
         .arg(&bin)

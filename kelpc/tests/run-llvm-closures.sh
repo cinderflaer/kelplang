@@ -69,6 +69,19 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
+# KELPC_ORACLE is the project's one backend switch, and it names only the C
+# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
+# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
+# BACKEND=c sets the switch and anything else removes it. The retired
+# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+backend_env() {
+    if [ "$BACKEND" = "c" ]; then
+        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
+    else
+        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
+    fi
+}
+
 # The S1 scalar fixtures, the S2A `datac` fixtures, the S2B runtime fixtures,
 # the S2C tagged-union fixtures, the S2D container fixtures, the S2F reference
 # fixtures, and the S2E closure and function-value fixtures. `hello.kp` and
@@ -200,7 +213,7 @@ a_library_may_take_a_closure_over_its_own_type
 # filter, so this is one invocation and one build. `--exact` is what keeps a new
 # fixture whose name merely contains a listed name out of the gate.
 # shellcheck disable=SC2086
-KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
+backend_env cargo test --release --test compile_and_run -- \
     --exact $TESTS
 
 # The reference shapes those fixtures exercise, read back out of the IR the
@@ -220,13 +233,13 @@ KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
 # generated IR, which the harness does not expose.
 REF_OUT="$(mktemp -d)"
 trap 'rm -rf "$REF_OUT"' EXIT
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/scalar_borrow.kp -o "$REF_OUT/scalar" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/scalar_borrow_f64.kp -o "$REF_OUT/scalar_f64" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/borrow_returned.kp -o "$REF_OUT/returned" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/panic_tail.kp -o "$REF_OUT/panic" >/dev/null
 # MK7 S4 attaches a `!dbg` location to every instruction and every function
 # definition. The assertions below are about the shape of the instruction, not
@@ -303,11 +316,11 @@ fi
 # known function (the environment is ignored, nothing is allocated) and
 # `kelp_coerce__<sig>` with its `kelp_coerce_drop__<sig>` for one whose identity
 # the call knows, plus the per-signature `kelp_closure_drop__<sig>`.
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/fn_value_plain.kp -o "$REF_OUT/fnp" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/closure_two_captures.kp -o "$REF_OUT/ctc" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/closure_value_widening.kp -o "$REF_OUT/cvw" >/dev/null
 FNP_IR="$(strip_dbg "$REF_OUT/fnp.ll")"
 CTC_IR="$(strip_dbg "$REF_OUT/ctc.ll")"

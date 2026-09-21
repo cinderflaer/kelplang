@@ -20,30 +20,37 @@ fn kelpc_bin() -> PathBuf {
 /// The suite is backend-agnostic by construction: it compiles a fixture, runs
 /// the result, and compares stdout, so it never names a code generator. Which
 /// one runs is therefore a property of the *invocation*, not of the test, and
-/// `KELPC_BACKEND` is the only input that varies it (`plan/mk7-llvm-backend.md`).
-///
-/// The fallback follows the compiler's own default (`Backend::DEFAULT`) rather
-/// than pinning one backend, and since MK7 S7 that default is `llvm`. The two
-/// must agree, or a plain `cargo test` would measure a backend the compiler
-/// does not build with by default: the point of the flip is that an unqualified
-/// run exercises what an unqualified `kelpc build` does. `KELPC_BACKEND=c`
-/// points the whole suite at the oracle instead, which is how the C backend
-/// stays covered. `the_default_backend_is_llvm` below pins the compiler's side
-/// of that agreement by reading which intermediate a build with no backend
-/// setting writes.
+/// the project's oracle switch (`KELPC_ORACLE`) is the only input that varies
+/// it (`plan/mk7-llvm-backend.md`). The switch names only the C backend, and
+/// unset means the compiler's own default (`Backend::DEFAULT`), which since MK7
+/// S7 is `llvm`, so an unqualified run exercises what an unqualified
+/// `kelpc build` does and `KELPC_ORACLE=c` points the whole suite at the oracle
+/// instead, which is how the C backend stays covered. `the_default_backend_is_llvm`
+/// below pins the compiler's side of that agreement by reading which
+/// intermediate a build with no backend setting writes.
 fn backend() -> String {
-    std::env::var("KELPC_BACKEND").unwrap_or_else(|_| "llvm".to_string())
+    match std::env::var("KELPC_ORACLE").as_deref() {
+        Ok("c") => "c".to_string(),
+        _ => "llvm".to_string(),
+    }
 }
 
 /// A `kelpc` invocation pinned to the backend under test.
 ///
-/// The variable is passed explicitly rather than inherited so that the suite's
-/// child processes cannot disagree with `backend()` about which backend is
-/// being exercised — an inherited value that differs from this one would make
-/// a failure impossible to attribute.
+/// The oracle switch is passed explicitly rather than inherited so that the
+/// suite's child processes cannot disagree with `backend()` about which backend
+/// is being exercised; an inherited value that differs from this one would make
+/// a failure impossible to attribute. The retired `KELPC_BACKEND` is stripped
+/// for the same reason: a developer's stale export must not turn every build in
+/// the run into the refusal that variable now earns.
 fn kelpc() -> Command {
     let mut cmd = Command::new(kelpc_bin());
-    cmd.env("KELPC_BACKEND", backend());
+    cmd.env_remove("KELPC_BACKEND");
+    if backend() == "c" {
+        cmd.env("KELPC_ORACLE", "c");
+    } else {
+        cmd.env_remove("KELPC_ORACLE");
+    }
     cmd
 }
 
@@ -199,12 +206,13 @@ fn when_desugars_to_if_else_chain() {
 /// file rather than the entry module's.
 #[test]
 fn the_generated_c_maps_statements_back_to_their_kp_lines() {
-    // `--backend=c` explicitly: the file this reads is one only that backend
-    // writes, so the test must not follow a `KELPC_BACKEND` naming another one.
+    // `KELPC_ORACLE=c` explicitly: the file this reads is one only that
+    // backend writes, so the test must not follow the suite's default.
     let source = fixture("tests/fixtures/when_expr.kp");
     let bin = out_path("line_markers_single");
     let build = kelpc()
-        .args(["build", "--backend=c"])
+        .env("KELPC_ORACLE", "c")
+        .args(["build"])
         .arg(&source)
         .arg("-o")
         .arg(&bin)
@@ -235,7 +243,8 @@ fn the_generated_c_maps_statements_back_to_their_kp_lines() {
     let root = project("shapes").join("src");
     let bin = out_path("line_markers_project");
     let build = kelpc()
-        .args(["build", "--backend=c"])
+        .env("KELPC_ORACLE", "c")
+        .args(["build"])
         .arg(root.join("main.kp"))
         .arg("-o")
         .arg(&bin)
@@ -4880,10 +4889,12 @@ fn an_unknown_command_prints_the_usage_and_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// The backend seam. `plan/mk7-llvm-backend.md` makes the selector the
-// precondition for every later stage, so it is asserted end-to-end here rather
-// than only in `backend.rs`'s unit tests: what matters is that the flag and the
-// environment variable reach the compiler, not that a parser works.
+// The backend seam. The user-facing selector is gone (`plan/mk7-llvm-backend.md`
+// §2), so what is asserted end-to-end here is the shape that replaced it: every
+// build gets `llvm`, the retired flag and the retired environment variable are
+// refused by name, and the project's one remaining switch points at the C
+// oracle. These are end-to-end rather than only `backend.rs` unit tests because
+// what matters is that the refusal and the switch reach the compiler.
 // ---------------------------------------------------------------------------
 
 /// Which code generator a build used is visible in the intermediate it writes
@@ -4907,6 +4918,7 @@ fn the_default_backend_is_llvm() {
     let _ = std::fs::remove_file(bin.with_extension("c"));
     let out = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
         .arg("build")
         .arg(fixture("tests/fixtures/while_accumulator.kp"))
         .arg("-o")
@@ -4920,54 +4932,42 @@ fn the_default_backend_is_llvm() {
     );
     assert!(
         build_is_llvm(&bin),
-        "a build with no --backend should have used the llvm default, which \
-         writes <out>.ll beside the artifact"
+        "a build with no backend setting should have used the llvm default, \
+         which writes <out>.ll beside the artifact"
     );
     let run = Command::new(&bin).output().expect("failed to run the binary");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
 }
 
 /// The C backend is what every other test in this file is written against, so
-/// it has to stay reachable after the flip: by the flag and by the environment.
-/// Each case strips the other input, so a case passing because *both* were set
-/// is not possible, and each asserts the `.c` intermediate so a fallback to the
-/// default cannot pass by accident.
+/// it has to stay reachable after the user-facing choice is removed: the
+/// project's oracle switch still selects it. The `.c` intermediate is asserted
+/// so a fallback to the default cannot pass by accident.
 #[test]
-fn the_c_backend_is_selectable_by_flag_and_environment() {
-    let bin = out_path("backend_selectable");
-    for case in ["flag", "environment"] {
-        let _ = std::fs::remove_file(bin.with_extension("c"));
-        let _ = std::fs::remove_file(bin.with_extension("ll"));
-        let mut cmd = Command::new(kelpc_bin());
-        cmd.env_remove("KELPC_BACKEND");
-        cmd.arg("build");
-        match case {
-            "flag" => {
-                cmd.arg("--backend=c");
-            }
-            _ => {
-                cmd.env("KELPC_BACKEND", "c");
-            }
-        }
-        let out = cmd
-            .arg(fixture("tests/fixtures/while_accumulator.kp"))
-            .arg("-o")
-            .arg(&bin)
-            .output()
-            .expect("failed to spawn kelpc");
-        assert!(
-            out.status.success(),
-            "the C backend should be selectable by {case}, got:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            bin.with_extension("c").is_file(),
-            "the {case} case should have used the C backend, which writes \
-             <out>.c beside the artifact"
-        );
-        let run = Command::new(&bin).output().expect("failed to run the binary");
-        assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
-    }
+fn the_oracle_switch_selects_the_c_backend() {
+    let bin = out_path("backend_oracle");
+    let _ = std::fs::remove_file(bin.with_extension("c"));
+    let _ = std::fs::remove_file(bin.with_extension("ll"));
+    let out = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .args(["build"])
+        .arg(fixture("tests/fixtures/while_accumulator.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        out.status.success(),
+        "the oracle switch should select the C backend, got:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        bin.with_extension("c").is_file(),
+        "KELPC_ORACLE=c should have used the C backend, which writes <out>.c \
+         beside the artifact"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
 }
 
 /// A build with no `-o` writes into `build/<stem>`, and creates that directory
@@ -5034,81 +5034,107 @@ fn a_build_with_no_output_path_lands_in_build() {
     );
 }
 
-/// An explicit `--backend` must win, or a one-off override of a run whose
-/// environment already names another backend would be impossible.
+/// The two refusals that replace the selector, each carrying the exact text the
+/// retired spellings are reported with. An exact comparison, not a search: a
+/// message that drifted into "unknown flag" while a test only looked for the
+/// word "backend" would keep passing while telling the caller the wrong thing.
+const FLAG_GONE: &str = "--backend is gone: kelpc builds every program with the llvm backend, and the C backend is kept as the project's own oracle rather than as a user choice";
+const ENV_GONE: &str = "KELPC_BACKEND is gone: kelpc builds every program with the llvm backend, and the C backend is kept as the project's own oracle rather than as a user choice";
+
+/// A caller who still passes `--backend=c` is asking for a choice that no longer
+/// exists. The refusal names the change and says which backend the build gets,
+/// rather than reading as a flag that was never heard of.
 #[test]
-fn an_explicit_backend_flag_wins_over_the_environment() {
+fn the_backend_flag_is_gone() {
     let out = kelpc()
         .args(["build", "--backend=c"])
         .arg(fixture("tests/fixtures/while_accumulator.kp"))
         .arg("-o")
-        .arg(out_path("backend_flag_wins"))
-        // A value that is not selectable yet: if the environment won, this
-        // build would fail, so success is the assertion.
-        .env("KELPC_BACKEND", "own")
+        .arg(out_path("backend_flag_gone"))
         .output()
         .expect("failed to spawn kelpc");
-    assert!(
-        out.status.success(),
-        "the flag should have won over KELPC_BACKEND=own, got:\n{}",
-        String::from_utf8_lossy(&out.stderr)
+    assert!(!out.status.success(), "--backend must be refused");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.trim_end(),
+        format!("error: {FLAG_GONE}"),
+        "the refusal for --backend=c should name the change"
     );
 }
 
-/// A typo and a planned-but-unbuilt backend are different mistakes, and the
-/// messages must not be interchangeable: one is the caller's error, the other
-/// is the roadmap's.
+/// A shell that still exports `KELPC_BACKEND` is the case silence would get
+/// wrong: its builds would use `llvm` while the export says the C backend. The
+/// variable is refused by name whatever it holds, so the caller learns the
+/// truth instead of measuring the wrong backend.
 #[test]
-fn an_unknown_backend_is_rejected_and_a_planned_one_says_so() {
-    let build_with = |value: &str| {
-        kelpc()
-            .args(["build", "--backend", value])
+fn the_backend_environment_variable_is_gone() {
+    for value in ["c", "llvm"] {
+        let out = kelpc()
+            .args(["build"])
             .arg(fixture("tests/fixtures/while_accumulator.kp"))
             .arg("-o")
-            .arg(out_path("backend_rejected"))
+            .arg(out_path("backend_env_gone"))
+            .env("KELPC_BACKEND", value)
             .output()
-            .expect("failed to spawn kelpc")
-    };
-
-    let unknown = build_with("rust");
-    assert!(!unknown.status.success(), "an unknown backend must be rejected");
-    let stderr = String::from_utf8_lossy(&unknown.stderr);
-    assert!(stderr.contains("unknown backend 'rust'"), "{stderr}");
-    // The suggestion must not name a backend that cannot be selected. The names
-    // are quoted so that "unknown" cannot satisfy the check by containing
-    // "own".
-    assert!(stderr.contains("expected one of:"), "{stderr}");
-    assert!(!stderr.contains("'own'"), "{stderr}");
-
-    // Only the tiers that are genuinely still ahead are reserved: a reserved
-    // name is a roadmap item, and reporting an implemented one that way would
-    // be as wrong as calling a typo planned.
-    for planned in ["own"] {
-        let out = build_with(planned);
-        assert!(!out.status.success(), "'{planned}' is not implemented yet");
-        let stderr = String::from_utf8_lossy(&out.stderr);
+            .expect("failed to spawn kelpc");
         assert!(
-            stderr.contains(&format!("backend '{planned}'"))
-                && stderr.contains("planned but not implemented"),
-            "'{planned}' should be reported as planned, got:\n{stderr}"
+            !out.status.success(),
+            "KELPC_BACKEND={value} must be refused"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            stderr.trim_end(),
+            format!("error: {ENV_GONE}"),
+            "the refusal for KELPC_BACKEND={value} should name the change"
         );
     }
 }
 
-/// An empty value is a mistake, not an instruction to use the default: a
-/// script that computes the backend name and produces an empty string must
-/// fail rather than silently build with the wrong one.
+/// The oracle switch is not a choice: a value that is not the C backend's name
+/// is refused by name, so a suite run cannot believe it measured the oracle and
+/// measure the default instead.
 #[test]
-fn an_empty_backend_value_is_reported_rather_than_defaulted() {
+fn a_non_oracle_value_for_the_oracle_switch_is_refused() {
+    for value in ["llvm", "own", "rust"] {
+        let out = kelpc()
+            .args(["build"])
+            .arg(fixture("tests/fixtures/while_accumulator.kp"))
+            .arg("-o")
+            .arg(out_path("backend_oracle_bad"))
+            .env("KELPC_ORACLE", value)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            !out.status.success(),
+            "KELPC_ORACLE={value} must be refused"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("KELPC_ORACLE names '{value}'"))
+                && stderr.contains("accepts only 'c'"),
+            "KELPC_ORACLE={value} should be refused with the one value it accepts, got:\n{stderr}"
+        );
+    }
+}
+
+/// An empty value is a mistake, not an instruction to use the default: a script
+/// that computes the value and produces an empty string must fail rather than
+/// silently measure the default backend.
+#[test]
+fn an_empty_oracle_value_is_reported_rather_than_defaulted() {
     let out = kelpc()
         .args(["build"])
         .arg(fixture("tests/fixtures/while_accumulator.kp"))
         .arg("-o")
-        .arg(out_path("backend_empty"))
-        .env("KELPC_BACKEND", "")
+        .arg(out_path("backend_oracle_empty"))
+        .env("KELPC_ORACLE", "")
         .output()
         .expect("failed to spawn kelpc");
-    assert!(!out.status.success(), "an empty backend must be reported");
+    assert!(
+        !out.status.success(),
+        "an empty oracle value must be reported"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("KELPC_BACKEND is set but empty"), "{stderr}");
+    assert!(stderr.contains("KELPC_ORACLE is set but empty"), "{stderr}");
 }
+

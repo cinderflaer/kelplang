@@ -58,18 +58,21 @@ fn out_path(name: &str) -> PathBuf {
 /// backtrace and the finding is reported rather than papered over.
 const LEVELS: &[&str] = &["-O0", "-O2"];
 
-/// Build the faulting fixture with the `llvm` backend at `level`. The backend
-/// and the level are pinned by flag rather than by `KELPC_BACKEND`, so a
-/// `KELPC_BACKEND=c` run of the suite cannot quietly check the C backend's
-/// `#line` behavior instead of DWARF, and one level cannot stand in for another.
-/// `tag` names the calling test, and it and the level both go into the artifact
-/// path: libtest runs these tests in parallel threads, and two builds of one
-/// fixture that shared a path would race for its object file.
+/// Build the faulting fixture with the `llvm` backend at `level`. The oracle
+/// switch is removed, so a run of the suite that points itself at the C oracle
+/// cannot quietly check the C backend's `#line` behavior instead of DWARF; the
+/// retired `KELPC_BACKEND` is removed for the same reason. The level is pinned
+/// by flag because one level cannot stand in for another. `tag` names the
+/// calling test, and it and the level both go into the artifact path: libtest
+/// runs these tests in parallel threads, and two builds of one fixture that
+/// shared a path would race for its object file.
 fn build_fault(level: &str, tag: &str) -> PathBuf {
     let source = fixture("fault.kp");
     let bin = out_path(&format!("fault{level}_{tag}"));
     let build = Command::new(env!("CARGO_BIN_EXE_kelpc"))
-        .args(["build", "--backend=llvm", level])
+        .env_remove("KELPC_ORACLE")
+        .env_remove("KELPC_BACKEND")
+        .args(["build", level])
         .arg(&source)
         .arg("-o")
         .arg(&bin)
@@ -77,7 +80,7 @@ fn build_fault(level: &str, tag: &str) -> PathBuf {
         .expect("failed to spawn kelpc");
     assert!(
         build.status.success(),
-        "expected '{}' to build with --backend=llvm {level}, but it failed:\n{}",
+        "expected '{}' to build with the llvm backend at {level}, but it failed:\n{}",
         source.display(),
         String::from_utf8_lossy(&build.stderr)
     );

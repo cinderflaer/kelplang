@@ -45,6 +45,19 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
+# KELPC_ORACLE is the project's one backend switch, and it names only the C
+# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
+# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
+# BACKEND=c sets the switch and anything else removes it. The retired
+# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+backend_env() {
+    if [ "$BACKEND" = "c" ]; then
+        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
+    else
+        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
+    fi
+}
+
 # The S1 scalar fixtures, the S2A `datac` fixtures, the S2B runtime fixtures and
 # the S2C tagged-union fixtures. `hello.kp` and `fib.kp` are under `examples/`;
 # the rest are under `kelpc/tests/fixtures/`.
@@ -113,7 +126,7 @@ explicit_type_arguments_are_written_at_the_call
 # filter, so this is one invocation and one build. `--exact` is what keeps a new
 # fixture whose name merely contains a listed name out of the gate.
 # shellcheck disable=SC2086
-KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
+backend_env cargo test --release --test compile_and_run -- \
     --exact $TESTS
 
 # The layouts those fixtures exercise, read back out of the IR the backend
@@ -130,7 +143,7 @@ KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
 # generated IR, which the harness does not expose.
 LAYOUT_OUT="$(mktemp -d)"
 trap 'rm -rf "$LAYOUT_OUT"' EXIT
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/enum_layout.kp -o "$LAYOUT_OUT/enum_layout" >/dev/null
 # MK7 S4 attaches a `!dbg` location to every instruction and every function
 # definition. The assertions below are about the shape of the instruction, not

@@ -48,14 +48,20 @@ fun main() {
 ";
 
 /// Builds `dir/main.kp` with one backend, asserts the build succeeds, runs the
-/// binary and returns the denial it printed on stderr.
+/// binary and returns the denial it printed on stderr. `c` is pinned through the
+/// project's oracle switch; any other name is the default `llvm` backend.
 fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
     let bin = dir.join(bin_name);
-    let build = kelpc()
-        .arg("build")
+    let mut cmd = kelpc();
+    cmd.arg("build");
+    cmd.env_remove("KELPC_BACKEND");
+    if backend == "c" {
+        cmd.env("KELPC_ORACLE", "c");
+    } else {
+        cmd.env_remove("KELPC_ORACLE");
+    }
+    let build = cmd
         .arg(dir.join("main.kp"))
-        .arg("--backend")
-        .arg(backend)
         .arg("-o")
         .arg(&bin)
         .output()

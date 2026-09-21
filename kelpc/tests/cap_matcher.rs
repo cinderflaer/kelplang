@@ -356,15 +356,17 @@ fn build_c_driver(cases: &[Case]) -> PathBuf {
 
 /// Builds the Kelp side with the C backend.
 ///
-/// The backend is pinned rather than taken from `KELPC_BACKEND`: this test is
-/// about the matcher, not about which backend is under test. Pinning makes the
-/// corpus run once per suite invocation with the same result.
+/// The backend is pinned to the C oracle rather than taken from the suite's
+/// default: this test is about the matcher, not about which backend is under
+/// test. Pinning makes the corpus run once per suite invocation with the same
+/// result.
 fn build_kelp_driver(cases: &[Case]) -> PathBuf {
     let src = tmp("cap_matcher_kelp.kp");
     let bin = tmp("cap_matcher_kelp");
     std::fs::write(&src, kelp_driver(cases)).expect("writing the Kelp driver");
     let out = Command::new(c_bin())
-        .args(["build", "--backend=c"])
+        .arg("build")
+        .env("KELPC_ORACLE", "c")
         .arg(&src)
         .arg("-o")
         .arg(&bin)
@@ -483,7 +485,8 @@ fn the_generated_capability_check_calls_the_kelp_matcher() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/caps_time_rand.kp");
     let bin = tmp("cap_matcher_wiring");
     let out = Command::new(c_bin())
-        .args(["build", "--backend=c"])
+        .arg("build")
+        .env("KELPC_ORACLE", "c")
         .arg(&fixture)
         .arg("-o")
         .arg(&bin)

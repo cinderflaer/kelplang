@@ -19,9 +19,10 @@
 //!    closures and function values. The same seed always produces the same
 //!    text, so a failure has a name a reader can quote.
 //! 2. **The differential run.** Each program is written to a file *before* it is
-//!    built, built with both `--backend=c` and `--backend=llvm`, and both
-//!    binaries are run. Stdout must match byte for byte and the exit statuses
-//!    must match. A disagreement is a failure and never a skip.
+//!    built, built with both the C oracle (through the project's internal
+//!    switch) and the default `llvm` backend, and both binaries are run. Stdout
+//!    must match byte for byte and the exit statuses must match. A disagreement
+//!    is a failure and never a skip.
 //! 3. **The conformance corpus.** `tests/fuzz-corpus/*.kp` holds a checked-in
 //!    subset of the generator's own output, one file per seed, so the sweep
 //!    grows into a permanent suite instead of a one-off run. The corpus is run
@@ -987,12 +988,17 @@ fn scratch_root() -> PathBuf {
 }
 
 fn build(backend: &str, source: &Path, bin: &Path) -> Output {
-    Command::new(kelpc_bin())
-        .args(["build", &format!("--backend={backend}")])
-        .arg(source)
+    let mut cmd = Command::new(kelpc_bin());
+    cmd.arg("build");
+    cmd.env_remove("KELPC_BACKEND");
+    if backend == "c" {
+        cmd.env("KELPC_ORACLE", "c");
+    } else {
+        cmd.env_remove("KELPC_ORACLE");
+    }
+    cmd.arg(source)
         .arg("-o")
         .arg(bin)
-        .env_remove("KELPC_BACKEND")
         .output()
         .unwrap_or_else(|e| panic!("failed to spawn kelpc to build '{}': {e}", source.display()))
 }

@@ -1,116 +1,122 @@
-//! Which code generator `kelpc build` uses.
+//! Which code generator `kelpc` uses.
 //!
-//! This is the backend *seam*, built by the retired hand-written track and now
-//! the seam the LLVM backend (`plan/mk7-llvm-backend.md`, `codegen_llvm.rs`)
-//! plugs into. It holds only the selector: how a backend is named, which names
-//! exist, and how the choice is resolved from the command line and the
-//! environment. The `match` that calls a generator stays at its single call site
-//! in `main.rs`, and it becomes a trait only when a third backend makes the
-//! interface worth naming.
+//! Since MK7 S7 (2026-09-21) `Backend::DEFAULT` is `Llvm`, and the user-facing
+//! selector is gone: `kelpc` has **one backend for anyone building a program**.
+//! There is no `--backend=` flag and no `KELPC_BACKEND`, and neither `usage()`
+//! nor the README offers a choice. `c` is not offered because it is not a user
+//! surface any more, not because it was deleted.
 //!
-//! Why the seam exists at all before the second backend did: the fixture suite
-//! is backend-agnostic by construction (compile, run, compare stdout), so a
-//! second backend is validated by running the suite again with `KELPC_BACKEND`
-//! set to it.
+//! The C backend is kept as the **project's own oracle**. It is the thing every
+//! `llvm` build is compared against, by the differential sweep
+//! (`kelpc/tests/backend_coverage.rs`), the fuzzer and conformance corpus
+//! (`kelpc/tests/differential_fuzz.rs`) and `run-all-backends.sh`, and it stays
+//! in the tree, in the suite and in CI. The one way to reach it is the internal
+//! switch [`ORACLE_ENV`], which the project's own suite sets and which accepts
+//! exactly `c`: a value it does not know is an error, because a run that
+//! believes it measured the oracle and did not is worse than a refusal.
 //!
-//! The hand-written `asm` backend this seam was built for was removed on
-//! 2026-09-21 (`plan/asm-backend/plan.md`). `llvm` is the name the seam carries
-//! now, and since MK7 S7 (2026-09-21) it is the default; `c` stays selectable as
-//! the oracle and the escape hatch.
+//! The seam itself is unchanged from the retired hand-written track that built
+//! it: the names, `Backend::DEFAULT`, and the one `match` that calls a generator
+//! (at its single call site in `main.rs`). It becomes a trait only when a third
+//! backend makes the interface worth naming.
 
 /// A code generator `kelpc` can lower a typed program with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
-    /// Transpile to C, then hand the source to `cc`. The original backend, the
-    /// one the whole test suite is written against, and the differential oracle
-    /// every other backend is checked against. It is never deleted and never
-    /// stops being maintained.
+    /// Transpile to C, then hand the source to `cc`. The original backend, and
+    /// the **differential oracle** every `llvm` build is checked against. It is
+    /// never deleted and never stops being maintained, but it is reachable only
+    /// through the project's oracle switch, never from a user surface.
     C,
     /// Lower `tir` to LLVM IR, let LLVM emit the object, and hand that to `cc`
-    /// (MK7), with `cc` still the linker. Since MK7 S7 it is the default, and it
-    /// lowers the whole corpus the C backend builds; a shape it cannot lower is
-    /// refused by name with a `--backend=c` way out.
+    /// (MK7), with `cc` still the linker. Since MK7 S7 it is the default and the
+    /// only backend a user can build with, and it lowers the whole corpus the C
+    /// backend builds.
     Llvm,
 }
 
-/// Names a later tier will claim. Recognized, deliberately not selectable.
-const RESERVED: &[&str] = &["own"];
+/// The environment variable that points the compiler at the C backend.
+///
+/// This is the project's **oracle switch**, not a user surface: it exists so
+/// the suite can build every fixture with the C backend and compare the result
+/// with the `llvm` build. It accepts exactly one value, [`Backend::C`]'s name,
+/// and anything else is an error rather than a silent fallback. It is
+/// deliberately absent from `usage()` and the README, which describe only what
+/// a person building a program can do.
+pub const ORACLE_ENV: &str = "KELPC_ORACLE";
+
+/// The environment variable that used to choose a backend. Retired, and named
+/// here only so the refusal and its test can name it.
+pub const RETIRED_ENV: &str = "KELPC_BACKEND";
+
+/// The refusal for `--backend`, which the command line no longer accepts.
+///
+/// A retired spelling names its fix rather than reading as an unknown flag
+/// (the parser's `impl "..." as name` refusal is the same shape), and it says
+/// which backend the build will get, because the caller asked for a different
+/// one.
+pub const FLAG_RETIRED: &str =
+    "--backend is gone: kelpc builds every program with the llvm backend, and the C \
+     backend is kept as the project's own oracle rather than as a user choice";
+
+/// The refusal for a set `KELPC_BACKEND`, which is no longer read.
+///
+/// Silently ignoring the variable is the one option that must not be taken: a
+/// shell that still exports it would keep believing its builds used the C
+/// backend while every one of them used `llvm`. The refusal says the same thing
+/// the flag's does, for the same reason.
+pub const ENV_RETIRED: &str =
+    "KELPC_BACKEND is gone: kelpc builds every program with the llvm backend, and the C \
+     backend is kept as the project's own oracle rather than as a user choice";
 
 impl Backend {
-    /// What `--backend` and `KELPC_BACKEND` mean when neither is given.
+    /// What a build with no backend setting uses.
     ///
     /// `llvm` became the default at MK7 S7, on the measurements §4.3 records:
     /// it builds all 223 corpus targets the C backend builds, with an empty
     /// refusal ranking and 0 mismatches, 0 crashes and 0 refusals at every
     /// optimization level from `-O0` to `-O3` and `-Os`, and the whole fixture
-    /// suite is green under it. The C backend is not replaced by that: it is
-    /// the differential oracle every backend is checked against, so `c` stays
-    /// selectable forever as the oracle and the escape hatch. A flip with no
-    /// way back is how a second backend becomes unmaintained, so both names
-    /// stay in `IMPLEMENTED` and the suite keeps running both.
+    /// suite is green under it. The C backend is not replaced by that: it is the
+    /// differential oracle, so the suite keeps building with it and comparing the
+    /// result.
     pub const DEFAULT: Backend = Backend::Llvm;
 
-    /// Every backend that can actually be selected. The integration suite loops
-    /// over this to run the fixtures once per backend.
-    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C, Backend::Llvm];
-
+    /// The name a backend is spelled by: `--backend=` and `KELPC_BACKEND` when
+    /// those existed, and [`ORACLE_ENV`] now. Both variants keep one, so a
+    /// diagnostic names a backend in the same word the switch accepts.
     pub fn name(self) -> &'static str {
         match self {
             Backend::C => "c",
             Backend::Llvm => "llvm",
         }
     }
-
-    /// The value that appears in `--backend=`/`KELPC_BACKEND` diagnostics: the
-    /// implemented names, then the reserved ones called out separately, so an
-    /// error never suggests a name that cannot work.
-    fn expected_list() -> String {
-        let implemented: Vec<&str> = Self::IMPLEMENTED.iter().map(|b| b.name()).collect();
-        format!(
-            "expected one of: {}",
-            implemented.join(", ")
-        )
-    }
-
-    /// Parses a backend name. The error text is the whole point of this
-    /// function: a reserved name must not read as a typo, and a typo must list
-    /// what does work.
-    pub fn parse(name: &str) -> Result<Backend, String> {
-        match name {
-            "c" => Ok(Backend::C),
-            "llvm" => Ok(Backend::Llvm),
-            reserved if RESERVED.contains(&reserved) => Err(format!(
-                "backend '{reserved}' is planned but not implemented yet \
-                 (see plan/mk7-llvm-backend.md); {}",
-                Self::expected_list()
-            )),
-            other => Err(format!(
-                "unknown backend '{other}'; {}",
-                Self::expected_list()
-            )),
-        }
-    }
 }
 
-/// Resolves the backend from the command line and the environment.
+/// Resolves the backend from the environment.
 ///
-/// The explicit `--backend=` argument wins over `KELPC_BACKEND`, which is what
-/// makes a one-off override of a whole test run possible without editing the
-/// command that sets it. An empty value is a mistake worth reporting rather
-/// than silently reading as "unset".
-pub fn resolve(flag: Option<&str>, env: Option<&str>) -> Result<Backend, String> {
-    match (flag, env) {
-        (Some(name), _) => Backend::parse(name),
-        (None, Some(name)) => {
-            if name.is_empty() {
-                return Err(format!(
-                    "KELPC_BACKEND is set but empty; {}",
-                    Backend::expected_list()
-                ));
-            }
-            Backend::parse(name)
-        }
-        (None, None) => Ok(Backend::DEFAULT),
+/// `retired_set` says whether `KELPC_BACKEND` is set at all, and any set value
+/// is refused ([`ENV_RETIRED`]); the value is not reported because the variable,
+/// not its value, is what was retired. `oracle` is whatever `KELPC_ORACLE`
+/// holds, and only `c` is a value: a wrong one is an error rather than a silent
+/// fallback, so a suite run cannot believe it measured the oracle and measure
+/// the default instead. An unreadable (non-UTF-8) value reads as unset, the
+/// same way an empty one is reported rather than defaulted.
+pub fn resolve(retired_set: bool, oracle: Option<&str>) -> Result<Backend, String> {
+    if retired_set {
+        return Err(ENV_RETIRED.to_string());
+    }
+    match oracle {
+        None => Ok(Backend::DEFAULT),
+        Some(name) if name == Backend::C.name() => Ok(Backend::C),
+        Some("") => Err(format!(
+            "{ORACLE_ENV} is set but empty; it is the project's oracle switch and accepts only '{}'",
+            Backend::C.name()
+        )),
+        Some(other) => Err(format!(
+            "{ORACLE_ENV} names '{other}', and it accepts only '{}': it is the project's \
+             oracle switch, not a backend choice",
+            Backend::C.name()
+        )),
     }
 }
 
@@ -120,73 +126,69 @@ mod tests {
 
     #[test]
     fn the_default_is_the_llvm_backend() {
-        assert_eq!(resolve(None, None).unwrap(), Backend::Llvm);
+        assert_eq!(resolve(false, None).unwrap(), Backend::Llvm);
         assert_eq!(Backend::DEFAULT.name(), "llvm");
     }
 
+    /// The oracle is still reachable after the selector was removed: the change
+    /// takes away the choice, not the backend. `c` is what `KELPC_ORACLE`
+    /// accepts, and a run of the suite through it is unchanged.
     #[test]
-    fn the_flag_wins_over_the_environment() {
-        assert_eq!(resolve(Some("c"), Some("own")).unwrap(), Backend::C);
+    fn the_oracle_switch_selects_the_c_backend() {
+        assert_eq!(resolve(false, Some("c")).unwrap(), Backend::C);
     }
 
-    /// The oracle is still reachable after the flip, by either source: the
-    /// change is a default, not a removal. Both names are covered because both
-    /// must stay selectable.
+    /// Both variants keep a name, and each is what the switch or the default
+    /// spells, so a diagnostic can name a backend in one word.
     #[test]
-    fn an_implemented_backend_is_selectable_from_either_source() {
-        for b in Backend::IMPLEMENTED {
-            assert_eq!(resolve(Some(b.name()), None).unwrap(), *b);
-            assert_eq!(resolve(None, Some(b.name())).unwrap(), *b);
+    fn every_backend_has_its_own_name() {
+        assert_eq!(Backend::C.name(), "c");
+        assert_eq!(Backend::Llvm.name(), "llvm");
+        assert_ne!(Backend::C.name(), Backend::Llvm.name());
+    }
+
+    /// The retired variable is refused whatever it holds, including the name of
+    /// a backend that still exists: the variable is what went away, and a value
+    /// it could carry is not a way back in.
+    #[test]
+    fn the_retired_variable_is_refused_whatever_its_value() {
+        for value in [None, Some("c"), Some("llvm"), Some("own"), Some("")] {
+            let e = resolve(true, value).unwrap_err();
+            assert_eq!(e, ENV_RETIRED);
         }
     }
 
-    /// A reserved name must not be reported as unknown: the two messages mean
-    /// different things, and only one of them is the user's mistake.
+    /// The two refusals name the change rather than reading as a typo, and each
+    /// names itself.
     #[test]
-    fn a_reserved_backend_says_planned_instead_of_unknown() {
-        let e = resolve(Some("own"), None).unwrap_err();
-        assert!(e.contains("planned but not implemented"), "{e}");
-        assert!(!e.contains("unknown"), "{e}");
-    }
-
-    #[test]
-    fn an_unknown_backend_lists_the_implemented_ones() {
-        let e = resolve(Some("rust"), None).unwrap_err();
-        // Exact equality, not a search. Comparing the whole message is what
-        // makes this a real assertion: `contains("own")` would match the word
-        // "unknown", which is how this test first went wrong, and no
-        // subtraction over `RESERVED` avoids the same trap for short names.
-        let offered: Vec<&str> = Backend::IMPLEMENTED.iter().map(|b| b.name()).collect();
-        assert_eq!(
-            e,
-            format!(
-                "unknown backend 'rust'; expected one of: {}",
-                offered.join(", ")
-            )
-        );
-    }
-
-    #[test]
-    fn an_empty_environment_value_is_reported() {
-        let e = resolve(None, Some("")).unwrap_err();
-        assert!(e.contains("KELPC_BACKEND is set but empty"), "{e}");
-    }
-
-    /// Every selectable backend must round-trip through its own name, so the
-    /// suite's per-backend loop can pass the name it read back in.
-    #[test]
-    fn every_implemented_backend_round_trips_its_name() {
-        for b in Backend::IMPLEMENTED {
-            assert_eq!(Backend::parse(b.name()).unwrap(), *b);
+    fn a_retired_spelling_names_itself_and_the_change() {
+        assert!(FLAG_RETIRED.starts_with("--backend is gone:"), "{FLAG_RETIRED}");
+        assert!(ENV_RETIRED.starts_with("KELPC_BACKEND is gone:"), "{ENV_RETIRED}");
+        for message in [FLAG_RETIRED, ENV_RETIRED] {
+            assert!(message.contains("llvm"), "{message}");
+            assert!(message.contains("oracle"), "{message}");
         }
     }
 
-    /// The reserved list and the implemented list must not overlap, or a name
-    /// would be both suggested and refused.
+    /// The switch accepts one value only. `llvm` is refused even though it names
+    /// a backend, because the switch is the oracle switch and not a choice.
     #[test]
-    fn reserved_and_implemented_names_are_disjoint() {
-        for b in Backend::IMPLEMENTED {
-            assert!(!RESERVED.contains(&b.name()), "{}", b.name());
+    fn an_oracle_value_other_than_c_is_refused() {
+        for value in ["llvm", "own", "rust"] {
+            let e = resolve(false, Some(value)).unwrap_err();
+            assert!(
+                e.contains("accepts only 'c'"),
+                "'{value}' should be refused for not being the oracle: {e}"
+            );
         }
+    }
+
+    /// An empty value is a mistake, not an instruction to use the default: a
+    /// script that computes a name and produces an empty string must fail rather
+    /// than silently measure the wrong backend.
+    #[test]
+    fn an_empty_oracle_value_is_reported() {
+        let e = resolve(false, Some("")).unwrap_err();
+        assert!(e.contains("KELPC_ORACLE is set but empty"), "{e}");
     }
 }

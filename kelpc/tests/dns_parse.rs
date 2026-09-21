@@ -761,7 +761,9 @@ fn build_kelp_driver(cases: &[Case]) -> PathBuf {
     let bin = dir.join("dns_parse_kelp");
     std::fs::write(&src, kelp_driver(cases)).expect("writing the Kelp driver");
     let out = Command::new(kelpc_bin())
-        .args(["build", "--backend=c"])
+        .arg("build")
+        .env_remove("KELPC_BACKEND")
+        .env("KELPC_ORACLE", "c")
         .arg(&src)
         .arg("-o")
         .arg(&bin)

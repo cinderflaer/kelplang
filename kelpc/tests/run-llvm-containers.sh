@@ -48,6 +48,19 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
+# KELPC_ORACLE is the project's one backend switch, and it names only the C
+# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
+# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
+# BACKEND=c sets the switch and anything else removes it. The retired
+# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+backend_env() {
+    if [ "$BACKEND" = "c" ]; then
+        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
+    else
+        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
+    fi
+}
+
 # The S1 scalar fixtures, the S2A `datac` fixtures, the S2B runtime fixtures,
 # the S2C tagged-union fixtures, and the S2D container fixtures. `hello.kp` and
 # `fib.kp` are under `examples/`; the rest are under `kelpc/tests/fixtures/`.
@@ -161,7 +174,7 @@ sorting_and_slicing_a_list_of_owned_elements_moves_them_safely
 # filter, so this is one invocation and one build. `--exact` is what keeps a new
 # fixture whose name merely contains a listed name out of the gate.
 # shellcheck disable=SC2086
-KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
+backend_env cargo test --release --test compile_and_run -- \
     --exact $TESTS
 
 # The container layouts those fixtures exercise, read back out of the IR the
@@ -179,9 +192,9 @@ KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
 # generated IR, which the harness does not expose.
 CONTAINER_OUT="$(mktemp -d)"
 trap 'rm -rf "$CONTAINER_OUT"' EXIT
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/float_datac_containers.kp -o "$CONTAINER_OUT/float" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/array_owned.kp -o "$CONTAINER_OUT/array" >/dev/null
 # MK7 S4 attaches a `!dbg` location to every instruction and every function
 # definition. The assertions below are about the shape of the instruction, not

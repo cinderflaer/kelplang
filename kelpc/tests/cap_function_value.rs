@@ -88,12 +88,19 @@ fn shapes(item: &str) -> [(&'static str, String); 4] {
     ]
 }
 
+/// Builds `dir/main.kp` with one backend. `c` is pinned through the project's
+/// oracle switch; any other name is the default `llvm` backend, so the helper
+/// keeps naming the backend its call sites ask for without a user surface.
 fn build(dir: &Path, backend: &str, bin_name: &str) -> Output {
-    kelpc()
-        .arg("build")
-        .arg(dir.join("main.kp"))
-        .arg("--backend")
-        .arg(backend)
+    let mut cmd = kelpc();
+    cmd.arg("build");
+    cmd.env_remove("KELPC_BACKEND");
+    if backend == "c" {
+        cmd.env("KELPC_ORACLE", "c");
+    } else {
+        cmd.env_remove("KELPC_ORACLE");
+    }
+    cmd.arg(dir.join("main.kp"))
         .arg("-o")
         .arg(dir.join(bin_name))
         .output()

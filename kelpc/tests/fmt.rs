@@ -2045,11 +2045,13 @@ fn large_unformatted_source() -> String {
 
 /// The verdict `kelpc build` reaches for a file or a project: its exit code and
 /// its stderr, which is the reference `kelpc fmt` has to agree with. The backend
-/// is pinned to `c`, and these files fail in the front end, before any backend
-/// runs.
+/// is pinned to the C oracle, and these files fail in the front end, before any
+/// backend runs.
 fn build_verdict(entry: &Path, out: &Path) -> (Option<i32>, String) {
     let output = kelpc()
-        .args(["build", "--backend=c"])
+        .arg("build")
+        .env_remove("KELPC_BACKEND")
+        .env("KELPC_ORACLE", "c")
         .arg(entry)
         .arg("-o")
         .arg(out)
@@ -2264,7 +2266,9 @@ const FORMATTED_CR_STRING: &str = "fun main() {\n    print(\"a\rb\")\n}\n";
 
 fn build(source: &Path, binary: &Path) -> Output {
     kelpc()
-        .args(["build", "--backend=c"])
+        .arg("build")
+        .env_remove("KELPC_BACKEND")
+        .env("KELPC_ORACLE", "c")
         .arg(source)
         .arg("-o")
         .arg(binary)

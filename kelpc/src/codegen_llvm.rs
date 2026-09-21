@@ -252,9 +252,9 @@
 //!
 //! What remains in this file is **refused by name** with a clean diagnostic,
 //! never miscompiled and never a panic, for a shape the frontend does not
-//! currently produce: MK7 §2 keeps the C backend as the oracle and the escape
-//! hatch, so a refusal is `--backend=c` and a named construct. A wrong lowering
-//! is worse than a refusal, which is why the guards stay.
+//! currently produce: MK7 §2 keeps the C backend as the project's own oracle,
+//! so a refusal names the construct and says the shortfall is the backend's. A
+//! wrong lowering is worse than a refusal, which is why the guards stay.
 //!
 //! # The rules this lowering keeps
 //!
@@ -8073,10 +8073,10 @@ fn int_width(ty: &Ty) -> Option<u32> {
 /// phrase when it is a shape; `stage` is the MK7 stage that lowered it. Every
 /// stage that has landed still passes its label, so the string reads as
 /// history; a refusal that fires today names a shape the frontend does not
-/// currently produce, and it stays so that such a shape fails loudly rather
-/// than being miscompiled.
+/// currently produce, so it says the shortfall is the backend's rather than
+/// sending the caller to a backend they cannot choose.
 fn refuse(what: &str, stage: &str) -> String {
-    format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
+    format!("the llvm backend cannot lower {what} yet (MK7 {stage}); this is a compiler defect")
 }
 
 /// Refuse a `datac` field or an `enum` payload field this slice cannot lay out,
@@ -8158,7 +8158,7 @@ fn refuse_type(ty: &Ty) -> String {
 
 /// The internal-error text for a value position the lowering expected to hold a
 /// value and did not. It is an `Err`, not a panic: even an internal mistake
-/// leaves the user with a `--backend=c` line rather than a backtrace.
+/// leaves the user with a named line rather than a backtrace.
 fn no_value(what: &str) -> String {
     format!("internal error: the llvm backend has no value for {what} (MK7 S1)")
 }

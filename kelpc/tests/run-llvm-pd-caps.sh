@@ -64,6 +64,19 @@ cd "$(dirname "$0")/../.."
 
 BACKEND="${BACKEND:-llvm}"
 
+# KELPC_ORACLE is the project's one backend switch, and it names only the C
+# oracle; unsetting it selects the default llvm backend. This wrapper keeps the
+# gate's one-backend-at-a-time shape now that the user-facing selector is gone:
+# BACKEND=c sets the switch and anything else removes it. The retired
+# KELPC_BACKEND is stripped either way, so a stale export cannot refuse a build.
+backend_env() {
+    if [ "$BACKEND" = "c" ]; then
+        env -u KELPC_BACKEND KELPC_ORACLE=c "$@"
+    else
+        env -u KELPC_BACKEND -u KELPC_ORACLE "$@"
+    fi
+}
+
 # The fixtures and projects this slice turns from a refusal into a built target,
 # by their test names: the `pd` and passdown fixtures, the ones that reach a
 # gated call with a resource argument (`fs`, `net`, `process`), the two
@@ -114,7 +127,7 @@ the_net_check_matches_the_host_as_written
 # filter, so this is one invocation and one build. `--exact` is what keeps a new
 # fixture whose name merely contains a listed name out of the gate.
 # shellcheck disable=SC2086
-KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
+backend_env cargo test --release --test compile_and_run -- \
     --exact $TESTS
 
 # The shapes those fixtures exercise, read back out of the IR the backend writes
@@ -126,25 +139,25 @@ KELPC_BACKEND="$BACKEND" cargo test --release --test compile_and_run -- \
 # matters for them is the IR shape, not an expected stdout.
 REF_OUT="$(mktemp -d)"
 trap 'rm -rf "$REF_OUT"' EXIT
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/passdowns.kp -o "$REF_OUT/pd" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/pd_owned.kp -o "$REF_OUT/pdown" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/fs_errno.kp -o "$REF_OUT/fs" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/net_loopback.kp -o "$REF_OUT/netl" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/net_resolve.kp -o "$REF_OUT/netr" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/process_spawn.kp -o "$REF_OUT/ps" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/string_basic.kp -o "$REF_OUT/sb" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/heap_field_of_owned_temporary.kp -o "$REF_OUT/hfb" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/heap_field_of_temporary.kp -o "$REF_OUT/hfv" >/dev/null
-KELPC_BACKEND="$BACKEND" ./target/release/kelpc build \
+backend_env ./target/release/kelpc build \
     kelpc/tests/projects/caps_net_denied/main.kp -o "$REF_OUT/cnd" >/dev/null
 
 # MK7 S4 attaches a `!dbg` location to every instruction and every function
@@ -341,13 +354,13 @@ do
     mkdir -p "/tmp/kelp_$project"
     printf 'FILECONTENT\n' > "/tmp/kelp_$project/a" 2>/dev/null || true
     target="kelpc/tests/projects/$project/main.kp"
-    if ! KELPC_BACKEND=c ./target/release/kelpc build "$target" \
+    if ! KELPC_ORACLE=c ./target/release/kelpc build "$target" \
         -o "$REF_OUT/$project-c" >/dev/null 2>"$REF_OUT/$project.c.build"; then
         echo "the C backend no longer builds '$project', so the diff below proves nothing" >&2
         cat "$REF_OUT/$project.c.build" >&2
         exit 1
     fi
-    if ! KELPC_BACKEND="$BACKEND" ./target/release/kelpc build "$target" \
+    if ! backend_env ./target/release/kelpc build "$target" \
         -o "$REF_OUT/$project-l" >/dev/null 2>"$REF_OUT/$project.l.build"; then
         echo "the $BACKEND backend no longer builds '$project'" >&2
         cat "$REF_OUT/$project.l.build" >&2

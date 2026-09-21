@@ -2,7 +2,7 @@
 //! (MK7 §4.1 and §6, `plan/mk7-llvm-backend.md`).
 //!
 //! `kelpc/tests/compile_and_run.rs` is backend-agnostic by construction: it
-//! compiles a fixture with whichever backend `KELPC_BACKEND` names and compares
+//! compiles a fixture with whichever backend its run is pointed at and compares
 //! the run to a literal an author wrote. This file is the other half. It always
 //! builds *both* backends, so the C backend is an oracle rather than a second
 //! opinion, and it records how much of the corpus the `llvm` backend accepts so
@@ -51,8 +51,10 @@
 //! cargo test --release --test backend_coverage -- --ignored --nocapture
 //! ```
 //!
-//! The compiler is invoked with `--backend=` on the command line rather than
-//! through `KELPC_BACKEND`, so the environment cannot change what is measured.
+//! The compiler is invoked through the project's internal oracle switch rather
+//! than the retired `KELPC_BACKEND`: `c` sets the switch and any other backend
+//! name is the default `llvm` backend with the switch removed, so the
+//! environment cannot change what is measured.
 
 use std::collections::BTreeMap;
 use std::os::unix::process::ExitStatusExt;
@@ -227,17 +229,23 @@ fn level_slot(level: Option<&str>) -> &'static str {
     }
 }
 
-/// Builds one target with one backend, pinned by flag rather than by
-/// environment so the sweep's two halves cannot disagree about which backend
-/// produced which binary. `level` is the `-O` flag for a level sweep, or `None`
-/// for the default run (which passes no flag, the way the suite always has).
+/// Builds one target with one backend, pinned by the oracle switch rather than
+/// by the retired `KELPC_BACKEND` so the sweep's two halves cannot disagree
+/// about which backend produced which binary. `c` sets the switch; any other
+/// name is the default `llvm` backend, with the switch removed so an inherited
+/// value cannot change what is measured. `level` is the `-O` flag for a level
+/// sweep, or `None` for the default run (which passes no flag, the way the suite
+/// always has).
 fn build(backend: &str, source: &Path, bin: &Path, level: Option<&str>) -> Output {
     let mut command = Command::new(kelpc_bin());
-    command
-        .args(["build", &format!("--backend={backend}")])
-        .arg(source)
-        .arg("-o")
-        .arg(bin);
+    command.arg("build");
+    command.env_remove("KELPC_BACKEND");
+    if backend == "c" {
+        command.env("KELPC_ORACLE", "c");
+    } else {
+        command.env_remove("KELPC_ORACLE");
+    }
+    command.arg(source).arg("-o").arg(bin);
     if let Some(level) = level {
         command.arg(level);
     }

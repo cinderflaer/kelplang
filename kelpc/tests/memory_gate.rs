@@ -8,8 +8,9 @@
 //!
 //! What one sweep does, for every `tests/fixtures/*.kp`:
 //!
-//! - build the fixture with an explicit `--backend=c` flag. A fixture the C
-//!   backend itself rejects has no binary and is skipped.
+//! - build the fixture through the project's internal oracle switch, which is
+//!   the only way to reach the C backend now. A fixture the C backend itself
+//!   rejects has no binary and is skipped.
 //! - run each binary under valgrind with leak checking and error detection
 //!   on: `--leak-check=full --show-leak-kinds=all
 //!   --errors-for-leak-kinds=definite,indirect,possible`. The program's stdin
@@ -106,18 +107,25 @@ fn fixture_names() -> Vec<String> {
     names
 }
 
-/// Builds one fixture with one backend, pinned by flag rather than by
-/// environment. `KELPC_BACKEND` is removed from the child's environment for the
-/// same reason: the flag is what selects the backend, and an inherited value
-/// must not be able to change what this file measures.
+/// Builds one fixture with one backend, pinned by the oracle switch rather than
+/// by the retired `KELPC_BACKEND`: `c` sets the switch and any other name is the
+/// default `llvm` backend with the switch removed. The retired variable is
+/// stripped in either case, so an inherited value cannot turn a build into its
+/// refusal and cannot change what this file measures.
 fn build(backend: &str, name: &str, bin: &Path) -> bool {
     let source = fixture_dir().join(format!("{name}.kp"));
-    let out = Command::new(kelpc_bin())
-        .args(["build", &format!("--backend={backend}")])
+    let mut cmd = Command::new(kelpc_bin());
+    cmd.arg("build");
+    cmd.env_remove("KELPC_BACKEND");
+    if backend == "c" {
+        cmd.env("KELPC_ORACLE", "c");
+    } else {
+        cmd.env_remove("KELPC_ORACLE");
+    }
+    let out = cmd
         .arg(&source)
         .arg("-o")
         .arg(bin)
-        .env_remove("KELPC_BACKEND")
         .output()
         .unwrap_or_else(|e| {
             panic!(

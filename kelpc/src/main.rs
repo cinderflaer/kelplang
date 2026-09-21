@@ -73,7 +73,7 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
          {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
@@ -81,24 +81,19 @@ fn usage() {
          {BIN_NAME} fmt --check <path>...\n       \
          {BIN_NAME} lint <path>...\n       \
          {BIN_NAME} version\n\n\
-         The backend may also be chosen with the KELPC_BACKEND environment\n\
-         variable; an explicit --backend wins over it. The default is 'llvm'.\n\
-         The 'c' backend stays selectable as the differential oracle and the\n\
-         escape hatch.\n\n\
          The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
-         default, the level the C backend has always used. One level is one\n\
-         level for both backends: it selects the LLVM pass pipeline and the\n\
-         target machine's codegen level, and it is the -O flag the C backend's\n\
-         cc and the final link are given. -Oz is not offered: it is a clang-only\n\
-         spelling and the C backend's cc may be gcc, so the vocabulary has to\n\
-         be one both accept; -Os is for size.\n\n\
+         default. One level is one level for the whole build: it selects the\n\
+         LLVM pass pipeline and the target machine's codegen level, and it is\n\
+         the -O flag the per-program C object and the final link are given.\n\
+         -Oz is not offered: it is a clang-only spelling and the linking cc may\n\
+         be gcc, so the vocabulary has to be one both accept; -Os is for size.\n\n\
          A spelling in the register of outdated syntax still compiles, and\n\
          build and run print it as an 'outdated:' warning naming what to write\n\
          instead and saying it is removed in the next development cycle.\n\
          --deny-outdated turns those findings into errors, which is the\n\
          migration gate for a project that wants to know when its own code is\n\
          on the list.\n\n\
-         With no -o, the binary and the C it was generated from are written to\n\\
+         With no -o, the binary and the backend's intermediate are written to\n\
          {BUILD_DIR}/<file stem>, which the compiler creates if it is missing.\n\n\
          check runs everything a build runs except code generation: the same\n\
          modules, the same type check and the same borrow check, so it answers\n\
@@ -292,10 +287,10 @@ fn build(
         }
     };
 
-    // The backend seam. A second backend adds its own arm here, and the fixture
-    // suite already knows how to validate it: it is backend-agnostic by
-    // construction, so a second run with `KELPC_BACKEND=<name>` exercises the
-    // same fixtures against it.
+    // The backend seam, and the only place a code generator is named. Both arms
+    // are live: `llvm` is what every build gets, and `c` is reached only through
+    // the project's oracle switch (`backend::ORACLE_ENV`), which is how the
+    // suite builds the fixtures it compares an `llvm` build against.
     match backend {
         Backend::C => {
             let c_source = codegen_c::generate(&typed, &drops, &sources);
@@ -988,22 +983,25 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // A scan rather than a positional read: `--backend` may come before or
-    // after the source path, and both it and `-o` take a value. The source
-    // path is the first argument that is neither.
+    // A scan rather than a positional read: `-o` may come before or after the
+    // source path and takes a value, so the source path is the first argument
+    // that is neither a flag nor the value of one.
     let mut path: Option<String> = None;
     let mut out: Option<PathBuf> = None;
-    let mut backend_flag: Option<String> = None;
     let mut deny_outdated = false;
     let mut opt = OptLevel::DEFAULT;
     let mut i = 2;
     while i < args.len() {
         let arg = args[i].as_str();
-        let takes_value = arg == "-o" || arg == "--backend";
-        let inline = arg
-            .strip_prefix("--backend=")
-            .or_else(|| arg.strip_prefix("-o="));
-        if takes_value {
+        if arg == "--backend" || arg.starts_with("--backend=") {
+            // The flag that used to choose a backend is refused by name rather
+            // than read as a value or reported as an unknown flag: a caller who
+            // still passes it needs to know the choice is gone and which
+            // backend the program gets, not that the spelling was never heard
+            // of. `--backend=<name>` is the same flag run together.
+            eprintln!("error: {}", backend::FLAG_RETIRED);
+            return ExitCode::FAILURE;
+        } else if arg == "-o" {
             let value = match args.get(i + 1) {
                 Some(v) => v.clone(),
                 None => {
@@ -1011,18 +1009,10 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            if arg == "-o" {
-                out = Some(PathBuf::from(value));
-            } else {
-                backend_flag = Some(value);
-            }
+            out = Some(PathBuf::from(value));
             i += 2;
-        } else if let Some(value) = inline {
-            if arg.starts_with("--backend=") {
-                backend_flag = Some(value.to_string());
-            } else {
-                out = Some(PathBuf::from(value));
-            }
+        } else if let Some(value) = arg.strip_prefix("-o=") {
+            out = Some(PathBuf::from(value));
             i += 1;
         } else if arg == "--deny-outdated" {
             deny_outdated = true;
@@ -1057,11 +1047,14 @@ fn main() -> ExitCode {
         }
     };
 
-    // The flag wins over the environment, so one-off runs are possible without
-    // editing whatever set the variable. A non-UTF-8 value reads as unset, the
-    // same as an empty one being reported rather than silently defaulting.
-    let env_backend = std::env::var("KELPC_BACKEND").ok();
-    let backend = match backend::resolve(backend_flag.as_deref(), env_backend.as_deref()) {
+    // The backend. `KELPC_BACKEND` is gone, and a set one is refused rather than
+    // ignored; the only switch left is the project's oracle switch
+    // (`backend::ORACLE_ENV`), which accepts only the C backend. Presence, not
+    // the value, is what makes a stale `KELPC_BACKEND` a refusal, so even a
+    // non-UTF-8 one is reported.
+    let retired_set = std::env::var_os(backend::RETIRED_ENV).is_some();
+    let env_oracle = std::env::var(backend::ORACLE_ENV).ok();
+    let backend = match backend::resolve(retired_set, env_oracle.as_deref()) {
         Ok(b) => b,
         Err(message) => {
             eprintln!("error: {message}");
