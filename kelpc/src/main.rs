@@ -10,6 +10,7 @@ mod fmt;
 mod infer;
 mod lexer;
 mod lint;
+mod llvm_ffi;
 mod parser;
 mod preprocess;
 mod pretty;

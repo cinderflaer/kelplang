@@ -13,3 +13,19 @@ name = "kelpc"
 path = "src/main.rs"
 
 [dependencies]
+# MK7 §1.2: the raw C API bindings, wrapped by `kelpc/src/llvm_ffi.rs`, rather
+# than `inkwell` (whose API tracks the LLVM major, so an LLVM bump would force a
+# wrapper bump in lockstep) or hand-written `extern "C"` declarations (one more
+# thing to maintain at LLVM's pace). The crate version encodes the LLVM version:
+# 211 is the LLVM 21.1 line, which is the `libLLVM-21.so` this machine ships.
+#
+# MK7 §1.3: `prefer-dynamic` makes that link dynamic against the host `libLLVM`,
+# located through `llvm-config` or `LLVM_SYS_211_PREFIX`. The feature has to be
+# named: `llvm-sys` links statically when its features are left alone, which
+# copies the LLVM objects into every binary built here and so produces none of
+# the runtime cost §1.3 rejected. Static linking is rejected there because a
+# static LLVM is hundreds of megabytes and minutes of link time on every
+# `cargo build`. The choice costs a runtime dependency on `libLLVM-21.so`, which
+# §4.4 requires the release notes to name (a `kelpc` built this way does not
+# start without it, the same way the system `clang` does not).
+llvm-sys = { version = "211.1", features = ["prefer-dynamic"] }
