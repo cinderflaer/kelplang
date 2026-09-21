@@ -349,7 +349,7 @@ green at every stage.
 | **S1** | IR for the scalar subset, `llvm` selectable | done 2026-09-21 | arithmetic, comparisons, `if`/`while`, calls, `print` of the scalars: byte-identical stdout on the fixtures that use only those (`kelpc/tests/run-llvm-scalar-subset.sh`) |
 | **S2** | aggregates, containers and drops | 2 to 4 weeks | `datac`/`enum` layout, the container function sets, the drop plan: the whole fixture corpus minus the runtime rows |
 | **S3** | the runtime, the externs and the capability check | done 2026-09-21 | `librt` linked, every `extern fun` a declared call, every gated call site checked, the deny path text identical, `pd` globals with their `atexit` drops |
-| **S4** | debug locations to DWARF | days | a fixture that crashes on purpose names a `.kp` line |
+| **S4** | debug locations to DWARF | done 2026-09-21 | a fixture that crashes on purpose names a `.kp` line |
 | **S5** | fuzzing and conformance (D-4) | runs alongside S2 and S3 | N generated programs, both backends, zero mismatches |
 | **S6** | the optimization-level decision | a day, plus a bench run | one answer from §4.3, written down, with an idle-machine `bench/speed` table |
 | **S7** | the flip | a release | `llvm` is the default in a release, `c` the oracle and the escape hatch, both suites green |
@@ -383,6 +383,18 @@ containing NUL (`BUG-f5Kvq`) stays refused, because the C backend does not carry
 it either: `printf("%s", "a\0b")` prints `a`, so the truncation is a C-backend
 defect and not an LLVM gap.
 
+S4 landed on 2026-09-21 with the corpus still empty of refusals and still
+agreeing with the C backend: one compile unit named in `llvm.dbg.cu` and marked
+by the `Debug Info Version` module flag, one `DIFile` per `.kp` source, one
+`DISubprogram` per `.kp`-declared function with its declaration's own line, and
+one `DILocation` per statement, from the same spans the C backend feeds to
+`diag::SourceMap::line_directive`. The exit criterion is proved end to end by
+`kelpc/tests/llvm_debug_info.rs`: the decoded line table of an `llvm` binary
+names the `.kp` file and lines, the fixture's run-time division by zero traps,
+and `gdb` places the fault at `fault.kp:16` with its caller at `fault.kp:21`.
+What is not described is stated with it: the generated helpers carry no
+subprogram, and nothing here describes a variable or a type.
+
 The minimum for S7 is S1 to S4 plus the S6 decision. S5 is not required to flip but
 is required to believe the flip, and saying so is part of the flip's notes.
 
@@ -392,6 +404,8 @@ is required to believe the flip, and saying so is part of the flip's notes.
 | --- | --- |
 | `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions left with the backend on 2026-09-21: the `.s`-level SysV classifier test, the assembly-text capability-check assertions and the two-backend differential test are gone. |
 | `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (221 of the 221 the C backend builds at the MK7 S3 tip, so the refusal ranking is empty), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
+| `kelpc/tests/llvm_debug_info.rs` | **New, 2026-09-21 (S4).** Its fixture is `tests/llvm-debug/fault.kp`, outside `tests/fixtures/` on purpose: the coverage sweep treats a run that dies from a signal as a failure, which is right for the corpus and wrong for the one program whose job is to crash. The test reads the decoded line table of the built binary with `readelf` and resolves the fault through `gdb`. |
+| `kelpc/tests/run-llvm-*.sh` | **One edit each, 2026-09-21 (S4).** The gates that read the generated IR back strip the `!dbg` attachment before comparing: they assert an instruction's shape, and where the line came from is a separate claim. |
 | `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged; its LLVM sweeps now cover the closures, the containers, the extern bodies, and (S3) the passdown and capability binaries, whose `atexit` drop and check glue are generated code the C sweep cannot see. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired. |
 | `kelpc/tests/run-all-backends.sh` | **Repurpose.** `BACKENDS` gains `llvm`; `asm` left with the source on 2026-09-21. |
 | `codegen_asm.rs` and the `asm` rows of the tests | **Done early, on 2026-09-21.** The module, the `asm` baseline, the `.s`-level tests, the `Backend::Asm` variant and the fixture that existed only for its assertion are gone, and the C-only suite is green. The deletion moved ahead of LLVM parity by decision: the retired track's second-backend differential was already partial, and keeping it cost a hotspot test file plus permanently refused fixtures. |
