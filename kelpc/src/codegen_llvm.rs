@@ -17,6 +17,30 @@
 //! - calls: user functions, `print`/`print!`, and the `"<src>#to_<dst>"` numeric
 //!   conversions
 //!
+//! # What S2A adds (MK7 S2, the `datac` slice)
+//!
+//! A `datac` whose fields are all scalars or earlier all-scalar `datac`s lowers
+//! to an LLVM identified struct with the same field order and natural alignment
+//! the C backend's typedef has (MK7 §3.1). Covered:
+//!
+//! - the struct type itself, as an identified (named) struct type, body set once
+//!   per declaration in program order
+//! - construction (`StructLit`, one `insertvalue` per field in declaration
+//!   order), field read (`FieldAccess`, a `getelementptr` plus a `load`), field
+//!   write, and whole-value assignment
+//! - a struct as a local, as a `move` parameter, as a return value, and nested
+//!   inside another struct
+//! - the shared or exclusive borrow a `datac` parameter resolves to
+//!   (`infer.rs::implicit_borrow_wrap`): `Ty::Ref` of a struct is the struct's
+//!   address, so `p.x` through a borrowed `datac` parameter is the same
+//!   `getelementptr` a plain local field read is
+//!
+//! A move is a load and a store (MK7 §3.4). Every struct this slice lowers has a
+//! field set that owns nothing, so `types::needs_drop` is false for it and the
+//! drop plan is empty: there is no second drop to leave behind because there is
+//! no first one. An owned field is the container/drop slice and is refused by
+//! name below.
+//!
 //! Everything else is **refused by name** with a clean diagnostic, never
 //! miscompiled and never a panic: MK7 §2 keeps the C backend as the oracle and
 //! the escape hatch, so a refusal is `--backend=c` and an honest stage number.
@@ -51,7 +75,7 @@
 //! The LLVM equivalent is DWARF, which is S4 (MK7 §5); S1 emits no debug metadata,
 //! and the artifact contract it does carry is the textual IR beside the binary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::ast::{BinOp, UnOp};
@@ -60,7 +84,7 @@ use crate::llvm_ffi::{
     IntCmp, Module, RealCmp, TargetMachine, Type, Value,
 };
 use crate::tir::{Block, Expr, ExprKind, Function, Program, Stmt, TemplatePiece};
-use crate::types::Ty;
+use crate::types::{needs_drop, owned_types, struct_tag, Ty};
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
 /// emit the object and link it with `cc`.
@@ -126,6 +150,15 @@ struct Gen<'a> {
     panic_fn: LlvmFunction<'a>,
     panic_ty: FnType<'a>,
     stderr: Value<'a>,
+    /// One identified LLVM struct type per `datac`, keyed by the `tir` name. The
+    /// body is set once per declaration in `declare_structs`, before any
+    /// function signature is built, so a `datac` parameter or return names a
+    /// complete type.
+    structs: HashMap<String, Type<'a>>,
+    /// Each `datac`'s field names in declaration order, so a `FieldAccess`
+    /// resolves its field to the struct index a `getelementptr` needs without
+    /// re-walking `program.structs`.
+    field_index: HashMap<String, Vec<String>>,
 }
 
 impl<'a> Gen<'a> {
@@ -156,25 +189,33 @@ impl<'a> Gen<'a> {
             panic_fn,
             panic_ty,
             stderr,
+            structs: HashMap::new(),
+            field_index: HashMap::new(),
         })
     }
 
-    /// Refuse the program-level constructs S1 does not lower, then declare every
-    /// function and the runtime symbols.
+    /// Refuse the program-level constructs this slice does not lower, declare
+    /// every `datac`, then declare every function and the runtime symbols.
     ///
-    /// Refusing before any function is emitted means a program with a `datac`
+    /// Refusing before any function is emitted means a program with an `enum`
     /// anywhere fails with the construct named, rather than with the first
     /// expression that mentions it.
     fn declare(&mut self) -> Result<(), String> {
         let program = self.program;
-        if !program.structs.is_empty() {
-            return Err(refuse("'datac'", "S2"));
-        }
-        if !program.enums.is_empty() {
-            return Err(refuse("'enum'", "S2"));
-        }
+        // The `datac` types first, so a field this slice cannot lay out is
+        // reported by its own construct rather than behind an unrelated std
+        // declaration.
+        self.declare_structs()?;
+        // A `pd` is a module global plus an `atexit` registration, which is the
+        // runtime slice's job.
         if !program.pds.is_empty() {
-            return Err(refuse("'pd'", "S2"));
+            return Err(refuse("'pd'", "S3"));
+        }
+        // An `enum` is the tagged-union slice (the `{tag, union}` layout and the
+        // `switch` per drop, MK7 §3.1), separate from the plain-record lowering
+        // this slice does, so it keeps its own stage label.
+        if !program.enums.is_empty() {
+            return Err(refuse("'enum'", "S2C"));
         }
         // `program.caps` holds each module's granted patterns, which is data, not
         // a construct: it is harmless to ignore while nothing calls a gated
@@ -192,7 +233,7 @@ impl<'a> Gen<'a> {
                 continue;
             }
             if f.env.is_some() {
-                return Err(refuse("'a closure'", "S2"));
+                return Err(refuse("'a closure'", "S2B"));
             }
             let (params, ret) = if f.name == "main" {
                 // The C backend's `main` is `int main(int, char**)`; S1 mirrors
@@ -202,9 +243,9 @@ impl<'a> Gen<'a> {
                 let params = f
                     .params
                     .iter()
-                    .map(|(_, ty)| llvm_type(ctx, ty))
+                    .map(|(_, ty)| llvm_type(ctx, &self.structs, ty))
                     .collect::<Result<Vec<_>, _>>()?;
-                let ret = llvm_ret_type(ctx, &f.ret)?;
+                let ret = llvm_ret_type(ctx, &self.structs, &f.ret)?;
                 (params, ret)
             };
             let ty = ctx.fn_type(ret, &params, false);
@@ -217,6 +258,48 @@ impl<'a> Gen<'a> {
                     ret_ty: f.ret.clone(),
                 },
             );
+        }
+        Ok(())
+    }
+
+    /// Declare one identified LLVM struct type per `datac`, with the fields in
+    /// declaration order and the target's natural alignment (MK7 §3.1).
+    ///
+    /// Field types are checked before any type is created, so a `datac` this
+    /// slice cannot lay out fails with the construct named and nothing half
+    /// declared. Every named type is created first and its body set afterwards,
+    /// so a field may refer to a `datac` declared later in the vector; the
+    /// frontend already guarantees the by-value dependency is acyclic, and the
+    /// order here only has to be *a* complete one.
+    fn declare_structs(&mut self) -> Result<(), String> {
+        let program = self.program;
+        let ctx = self.ctx;
+        let owned = owned_types(&program.structs, &program.enums);
+        let enum_names: HashSet<&str> = program.enums.iter().map(|e| e.name.as_str()).collect();
+        for s in &program.structs {
+            for f in &s.fields {
+                refuse_datac_field(&f.ty, &owned, &enum_names)?;
+            }
+        }
+        for s in &program.structs {
+            let ty = ctx.struct_type(&struct_tag(&s.name));
+            self.structs.insert(s.name.clone(), ty);
+            self.field_index.insert(
+                s.name.clone(),
+                s.fields.iter().map(|f| f.name.clone()).collect(),
+            );
+        }
+        for s in &program.structs {
+            let ty = *self
+                .structs
+                .get(&s.name)
+                .expect("every datac got a type above");
+            let fields = s
+                .fields
+                .iter()
+                .map(|f| llvm_type(ctx, &self.structs, &f.ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            ctx.struct_set_body(ty, &fields);
         }
         Ok(())
     }
@@ -471,12 +554,168 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 else_block,
             } => self.emit_if(cond, then_block, else_block.as_ref(), &e.ty),
             ExprKind::Block(block) => self.emit_block_value(block),
+            ExprKind::FieldAccess { base, field } => {
+                Ok(Some(self.emit_field_read(base, field, &e.ty)?))
+            }
+            ExprKind::StructLit { name, fields } => Ok(Some(self.emit_struct_lit(name, fields)?)),
+            // A borrow (`infer.rs::check_call_arg` synthesizes one for the
+            // `datac` parameter whose type resolves to a shared or exclusive
+            // borrow). `&str` is the pointer itself, as the C backend writes it;
+            // a `datac` borrow is the address of the place it borrows, which is
+            // the one indirection `getelementptr` needs.
+            ExprKind::Ref { expr: sub, .. } => {
+                if is_str_ref(&e.ty) {
+                    return Ok(Some(self.value_of(sub)?));
+                }
+                if is_struct_ref(&e.ty) {
+                    return Ok(Some(self.place_of(sub)?));
+                }
+                Err(refuse("'a borrow of a non-datac'", "S2B"))
+            }
+            // `*p` through a borrow of a `datac`: the pointee is the struct the
+            // pointer addresses. A dereference of anything else is the borrow
+            // slice.
+            ExprKind::Deref { expr: sub } => {
+                if !matches!(&e.ty, Ty::Struct(_)) {
+                    return Err(refuse("'a dereference of a non-datac'", "S2B"));
+                }
+                let ptr = self.value_of(sub)?;
+                let lty = self.lty(&e.ty)?;
+                Ok(Some(self.g.builder.build_load(lty, ptr, "deref")))
+            }
             ExprKind::Template { newline, pieces } => {
                 self.emit_template(*newline, pieces)?;
                 Ok(None)
             }
             other => Err(refuse_expr(other)),
         }
+    }
+
+    /// Read one `datac` field: the base's address, a `getelementptr` to the
+    /// field's index, then a load of the field's own type.
+    ///
+    /// `ty` is the field expression's `tir` type, which is the pointee type the
+    /// load needs and does not have to be recovered from the struct table.
+    fn emit_field_read(
+        &mut self,
+        base: &Expr,
+        field: &str,
+        ty: &Ty,
+    ) -> Result<Value<'a>, String> {
+        let (ptr, struct_ty, index) = self.field_place(base, field)?;
+        let field_ptr = self
+            .g
+            .builder
+            .build_struct_gep(struct_ty, ptr, index, field);
+        let lty = self.lty(ty)?;
+        Ok(self.g.builder.build_load(lty, field_ptr, field))
+    }
+
+    /// Build a `datac` value: one `insertvalue` per field, in declaration order.
+    ///
+    /// `tir::ExprKind::StructLit` always lists every field, in declaration
+    /// order (`infer.rs` zips the definition's fields with the checked
+    /// arguments), so the index of each value is its position in the vector and
+    /// the starting `undef` is fully overwritten.
+    fn emit_struct_lit(
+        &mut self,
+        name: &str,
+        fields: &[(String, Expr)],
+    ) -> Result<Value<'a>, String> {
+        let lty = *self
+            .g
+            .structs
+            .get(name)
+            .ok_or_else(|| no_value(&format!("the datac '{name}'")))?;
+        let mut agg = self.g.ctx.undef(lty);
+        for (index, (fname, fexpr)) in fields.iter().enumerate() {
+            let value = self.value_of(fexpr)?;
+            agg = self
+                .g
+                .builder
+                .build_insert_value(agg, value, index as u32, fname);
+        }
+        Ok(agg)
+    }
+
+    /// The address of `base.field`, plus the LLVM struct type it indexes and the
+    /// field's index: what a field read and a field write both need.
+    fn field_place(
+        &mut self,
+        base: &Expr,
+        field: &str,
+    ) -> Result<(Value<'a>, Type<'a>, u32), String> {
+        let struct_name = struct_name_of_ty(&base.ty)
+            .ok_or_else(|| refuse_type(&base.ty))?
+            .to_string();
+        let index = self
+            .g
+            .field_index
+            .get(&struct_name)
+            .and_then(|names| names.iter().position(|n| n == field))
+            .ok_or_else(|| no_value(&format!("the field '{struct_name}.{field}'")))?;
+        let struct_ty = *self
+            .g
+            .structs
+            .get(&struct_name)
+            .ok_or_else(|| no_value(&format!("the datac '{struct_name}'")))?;
+        let ptr = self.place_of(base)?;
+        Ok((ptr, struct_ty, index as u32))
+    }
+
+    /// The address of a *place* expression: a local's slot, a field of another
+    /// place, or the pointer a `datac` borrow names.
+    ///
+    /// An rvalue base (`mk().field`, a literal's field) has no address, so it is
+    /// stored into a temporary slot first, exactly as `codegen_c.rs` hoists one.
+    /// The temporary owns nothing here: every struct this slice lowers is
+    /// dropless, so there is nothing to free and no drop plan to run.
+    fn place_of(&mut self, e: &Expr) -> Result<Value<'a>, String> {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                let slot = self
+                    .lookup(name)
+                    .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
+                if is_struct_ref(&e.ty) {
+                    // The binding holds the borrow: its own value is the pointer.
+                    Ok(self.g.builder.build_load(self.g.ctx.opaque_ptr(), slot, name))
+                } else {
+                    Ok(slot)
+                }
+            }
+            ExprKind::FieldAccess { base, field } => {
+                let (ptr, struct_ty, index) = self.field_place(base, field)?;
+                Ok(self
+                    .g
+                    .builder
+                    .build_struct_gep(struct_ty, ptr, index, field))
+            }
+            // A borrow in a place position is already an address.
+            ExprKind::Ref { expr: sub, .. } => self.place_of(sub),
+            ExprKind::Deref { expr: sub } => self.value_of(sub),
+            _ => {
+                let value = self.value_of(e)?;
+                let lty = self.lty(&e.ty)?;
+                let slot = self.temp_alloca(lty, "field.base");
+                self.g.builder.build_store(value, slot);
+                Ok(slot)
+            }
+        }
+    }
+
+    /// An alloca for a temporary, created at the start of the entry block like
+    /// a named local, so `mem2reg` can promote it and a loop body does not grow
+    /// the stack once per iteration.
+    fn temp_alloca(&self, ty: Type<'a>, name: &str) -> Value<'a> {
+        self.g.builder.position_at_start(self.entry);
+        let slot = self.g.builder.build_alloca(ty, name);
+        self.g.builder.position_at_end(self.cur);
+        slot
+    }
+
+    /// The LLVM type of a `tir` type, with this program's `datac` table.
+    fn lty(&self, ty: &Ty) -> Result<Type<'a>, String> {
+        llvm_type(self.g.ctx, &self.g.structs, ty)
     }
 
     /// Evaluate an expression that must have a value, or report the internal
@@ -487,7 +726,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     fn int_const(&self, ty: &Ty, value: i128) -> Result<Value<'a>, String> {
-        let lty = llvm_type(self.g.ctx, ty)?;
+        let lty = self.lty(ty)?;
         // Cut the `i128` literal to the expression's own type. `LLVMConstInt`
         // takes the low 64 bits and truncates to the type's width, which is the
         // same narrowing `codegen_c.rs` spells as a C cast; the sign flag is
@@ -499,7 +738,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if !ty.is_float() {
             return Err(refuse(&format!("a float literal of type '{}'", ty.display()), "S1"));
         }
-        Ok(self.g.ctx.const_real(llvm_type(self.g.ctx, ty)?, value))
+        Ok(self.g.ctx.const_real(self.lty(ty)?, value))
     }
 
     fn string_global(&self, text: &str) -> Result<Value<'a>, String> {
@@ -515,7 +754,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let slot = self
             .lookup(name)
             .ok_or_else(|| no_value(&format!("the local '{name}'")))?;
-        let lty = llvm_type(self.g.ctx, ty)?;
+        let lty = self.lty(ty)?;
         Ok(self.g.builder.build_load(lty, slot, name))
     }
 
@@ -534,7 +773,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// in a later statement allocates one the entry block may already have been
     /// terminated by a `return`, so the slot goes at the block's *start*.
     fn alloca(&self, ty: &Ty, name: &str) -> Result<Value<'a>, String> {
-        let lty = llvm_type(self.g.ctx, ty)?;
+        let lty = self.lty(ty)?;
         self.g.builder.position_at_start(self.entry);
         let slot = self.g.builder.build_alloca(lty, name);
         self.g.builder.position_at_end(self.cur);
@@ -554,7 +793,20 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.g.builder.build_store(v, slot);
                 Ok(())
             }
-            _ => Err(refuse("'assignment to a non-local place'", "S2")),
+            // A field write: the field's address, then a store of the new value.
+            // A struct this slice lowers owns nothing, so the value being
+            // overwritten needs no drop first; the drop plan (MK7 §3.4) belongs
+            // to the owned-field slice and is not reached here.
+            ExprKind::FieldAccess { base, field } => {
+                let (ptr, struct_ty, index) = self.field_place(base, field)?;
+                let field_ptr = self
+                    .g
+                    .builder
+                    .build_struct_gep(struct_ty, ptr, index, field);
+                self.g.builder.build_store(v, field_ptr);
+                Ok(())
+            }
+            _ => Err(refuse("'assignment to a non-local place'", "S2B")),
         }
     }
 
@@ -800,7 +1052,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             self.terminated = true;
             return Ok(Some(self.zero_const(ty)?));
         }
-        let lty = llvm_type(self.g.ctx, ty)?;
+        let lty = self.lty(ty)?;
         let phi = self.g.builder.build_phi(lty, "if");
         self.g.builder.add_incoming(phi, &incoming);
         Ok(Some(phi))
@@ -842,12 +1094,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(Some(v));
         }
 
-        // Anything else is outside S1. An `extern fun` is the runtime and is S3;
-        // any other name is a construct this stage has no lowering for.
+        // Anything else is outside this slice. An `extern fun` is the runtime
+        // and is S3; any other name is a construct this stage has no lowering
+        // for.
         let stage = if self.g.program.functions.iter().any(|f| f.name == callee && f.extern_) {
             "S3"
         } else {
-            "S2"
+            "S2B"
         };
         Err(refuse(&format!("the call to '{callee}'"), stage))
     }
@@ -860,7 +1113,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         arg: &Expr,
     ) -> Result<Value<'a>, String> {
         let v = self.value_of(arg)?;
-        let to_ty = llvm_type(self.g.ctx, to)?;
+        let to_ty = self.lty(to)?;
 
         // Integer to float: `int_bounds` has no bounds for a float target, so
         // `numeric_conversion` treats it as a plain cast, and so does this.
@@ -883,7 +1136,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return Ok(self.cast_int(from, to, v)?);
         }
 
-        let from_ty = llvm_type(self.g.ctx, from)?;
+        let from_ty = self.lty(from)?;
         let signed = is_signed(from);
         let mut checks: Vec<Value<'a>> = Vec::new();
         // Only the bounds the source's own range cannot rule out, as
@@ -941,7 +1194,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if fw == tw {
             return Ok(v);
         }
-        let to_ty = llvm_type(self.g.ctx, to)?;
+        let to_ty = self.lty(to)?;
         Ok(self
             .g
             .builder
@@ -1048,16 +1301,20 @@ impl<'g, 'a> FnGen<'g, 'a> {
     fn all_ones(&self, ty: &Ty) -> Result<Value<'a>, String> {
         let bits = int_width(ty).ok_or_else(|| refuse_type(ty))?;
         let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
-        Ok(self.g.ctx.const_int(llvm_type(self.g.ctx, ty)?, mask, false))
+        Ok(self.g.ctx.const_int(self.lty(ty)?, mask, false))
     }
 
     fn zero_const(&self, ty: &Ty) -> Result<Value<'a>, String> {
         if ty.is_float() {
-            Ok(self.g.ctx.const_real(llvm_type(self.g.ctx, ty)?, 0.0))
+            Ok(self.g.ctx.const_real(self.lty(ty)?, 0.0))
         } else if *ty == Ty::Bool {
             Ok(self.g.ctx.const_bool(false))
         } else if ty.is_integer() || *ty == Ty::Char {
-            Ok(self.g.ctx.const_int(llvm_type(self.g.ctx, ty)?, 0, false))
+            Ok(self.g.ctx.const_int(self.lty(ty)?, 0, false))
+        } else if matches!(ty, Ty::Struct(_)) {
+            // Only reached for a value the frontend already guarantees is
+            // present on every path that reads it, so `undef` is never observed.
+            Ok(self.g.ctx.undef(self.lty(ty)?))
         } else {
             Err(refuse_type(ty))
         }
@@ -1083,8 +1340,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 }
 
-/// Map a `tir` type to its LLVM type. The scalar subset plus `str`.
-fn llvm_type<'a>(ctx: &'a Context, ty: &Ty) -> Result<Type<'a>, String> {
+/// Map a `tir` type to its LLVM type. The scalar subset, `str`, and a `datac`
+/// `structs` holds a type for.
+fn llvm_type<'a>(
+    ctx: &'a Context,
+    structs: &HashMap<String, Type<'a>>,
+    ty: &Ty,
+) -> Result<Type<'a>, String> {
     Ok(match ty {
         Ty::I32 | Ty::U32 | Ty::Char => ctx.i32(),
         Ty::I64 | Ty::U64 | Ty::Usize | Ty::Isize => ctx.i64(),
@@ -1100,16 +1362,55 @@ fn llvm_type<'a>(ctx: &'a Context, ty: &Ty) -> Result<Type<'a>, String> {
         // here too.
         Ty::Str => ctx.opaque_ptr(),
         Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => ctx.opaque_ptr(),
+        // A `datac` parameter resolves to a borrow of the struct, and a borrow is
+        // its address (MK7 §3.3: pass a pointer, not a value, between frames).
+        Ty::Ref { inner, .. } if matches!(**inner, Ty::Struct(_)) => ctx.opaque_ptr(),
+        // A borrow of anything but a `datac` (a `mut i64` parameter, say) is the
+        // borrow slice, and it is named rather than mis-lowered to a pointer.
+        Ty::Ref { .. } => return Err(refuse("'a borrow of a non-datac'", "S2B")),
+        Ty::Struct(name) => *structs
+            .get(name)
+            .ok_or_else(|| refuse(&format!("the datac '{name}'"), "S2A"))?,
         other => return Err(refuse_type(other)),
     })
 }
 
 /// The return type of a function: `void` for unit, otherwise the type itself.
-fn llvm_ret_type<'a>(ctx: &'a Context, ty: &Ty) -> Result<Type<'a>, String> {
+fn llvm_ret_type<'a>(
+    ctx: &'a Context,
+    structs: &HashMap<String, Type<'a>>,
+    ty: &Ty,
+) -> Result<Type<'a>, String> {
     if *ty == Ty::Unit {
         Ok(ctx.void())
     } else {
-        llvm_type(ctx, ty)
+        llvm_type(ctx, structs, ty)
+    }
+}
+
+/// The name of the `datac` a (possibly borrowed) type names, if any.
+fn struct_name_of_ty(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(name) => Some(name),
+        Ty::Ref { inner, .. } => struct_name_of_ty(inner),
+        _ => None,
+    }
+}
+
+/// Whether a type is a borrow of a `datac` — the one `Ref` shape this slice
+/// lowers, because `infer.rs::implicit_borrow_wrap` gives every `datac`
+/// parameter that type.
+fn is_struct_ref(ty: &Ty) -> bool {
+    matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Struct(_)))
+}
+
+/// Whether a type is a borrow of `str` (or `str` itself), which is the pointer
+/// rather than a second indirection.
+fn is_str_ref(ty: &Ty) -> bool {
+    match ty {
+        Ty::Str => true,
+        Ty::Ref { inner, .. } => matches!(**inner, Ty::Str),
+        _ => false,
     }
 }
 
@@ -1146,53 +1447,112 @@ fn int_width(ty: &Ty) -> Option<u32> {
     })
 }
 
-/// The refusal message for a construct S1 does not lower. `what` is the
-/// construct's name, quoted when it is a language word (`'datac'`) and a phrase
-/// when it is a shape; `stage` is the MK7 stage that will lower it.
+/// The refusal message for a construct this stage does not lower. `what` is the
+/// construct's name, quoted when it is a language word (`'enum'`) and a phrase
+/// when it is a shape; `stage` is the MK7 stage that will lower it: this slice is
+/// S2A (the plain-record lowering), S2B is the container and drop slice, S2C is
+/// the tagged union and the borrowed views, and S3 is the runtime.
 fn refuse(what: &str, stage: &str) -> String {
     format!("the llvm backend cannot lower {what} yet (MK7 {stage}); use --backend=c")
 }
 
-/// Name the type in a refusal, with the stage that will lower it.
+/// Refuse a `datac` field this slice cannot lay out, with the construct named.
+///
+/// An owned field is the drop plan's problem (`types::needs_drop` is exactly
+/// "this field owns or transitively owns heap memory"), so it gets the one
+/// S2B wording rather than the field type's own; everything else that is not a
+/// scalar or an all-scalar `datac` is named by [`refuse_type`]. A `str`/`View`
+/// field is unreachable from the frontend (`types::is_borrowed_field_ty`
+/// rejects it), but it is refused here rather than mis-lowered if it ever
+/// appears. A field that names an `enum` is refused as the tagged-union slice:
+/// an `enum` is a `Ty::Struct` at the type level, so without this the enum name
+/// would be reported as a missing `datac`.
+fn refuse_datac_field(
+    ty: &Ty,
+    owned: &HashSet<String>,
+    enum_names: &HashSet<&str>,
+) -> Result<(), String> {
+    if needs_drop(ty, owned) {
+        return Err(refuse(
+            &format!("'a datac field of an owned type ({})'", ty.display()),
+            "S2B",
+        ));
+    }
+    match ty {
+        Ty::Str => Err(refuse("'a 'str' field'", "S2C")),
+        Ty::View => Err(refuse("'a 'View' field'", "S2C")),
+        Ty::Ref { .. } => Err(refuse("'a reference field'", "S2B")),
+        Ty::Fn { .. } | Ty::Closure { .. } => Err(refuse("'a function-valued field'", "S2B")),
+        Ty::Struct(name) if enum_names.contains(name.as_str()) => {
+            Err(refuse("'an enum field'", "S2C"))
+        }
+        Ty::Struct(_) => Ok(()),
+        other if llvm_scalar_type(other) => Ok(()),
+        other => Err(refuse_type(other)),
+    }
+}
+
+/// Whether a `tir` type is one of the scalars the S1 lowering already emits. A
+/// type that is not a scalar and not a `datac` is refused by name in
+/// `refuse_datac_field`, so this only has to recognize the scalars.
+fn llvm_scalar_type(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::I32
+            | Ty::I64
+            | Ty::U32
+            | Ty::U64
+            | Ty::Usize
+            | Ty::Isize
+            | Ty::U8
+            | Ty::U16
+            | Ty::F32
+            | Ty::F64
+            | Ty::Bool
+            | Ty::Char
+    )
+}
+
+/// Name the type in a refusal, with the stage that will lower it. Anything that
+/// owns memory is the container and drop slice (S2B); a borrowed view is S2C.
 fn refuse_type(ty: &Ty) -> String {
     let (what, stage) = match ty {
-        Ty::Struct(_) => ("'datac'", "S2"),
-        Ty::Bytes => ("'Bytes'", "S2"),
-        Ty::String => ("'String'", "S2"),
-        Ty::View => ("'View'", "S2"),
-        Ty::List(_) => ("'List'", "S2"),
-        Ty::Box(_) => ("'Box'", "S2"),
-        Ty::Map(..) => ("'Map'", "S2"),
-        Ty::Array(..) => ("'an array'", "S2"),
-        Ty::Ref { .. } => ("'a reference'", "S2"),
-        Ty::Fn { .. } => ("'a function value'", "S2"),
-        Ty::Closure { .. } => ("'a closure'", "S2"),
+        Ty::Struct(_) => ("'datac'", "S2A"),
+        Ty::Bytes => ("'Bytes'", "S2B"),
+        Ty::String => ("'String'", "S2B"),
+        Ty::List(_) => ("'List'", "S2B"),
+        Ty::Box(_) => ("'Box'", "S2B"),
+        Ty::Map(..) => ("'Map'", "S2B"),
+        Ty::Array(..) => ("'an array'", "S2B"),
+        Ty::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
+        Ty::Fn { .. } => ("'a function value'", "S2B"),
+        Ty::Closure { .. } => ("'a closure'", "S2B"),
+        Ty::Str | Ty::View => ("a borrowed view", "S2C"),
         Ty::Unit => ("'unit'", "S1"),
         other => return refuse(&format!("the type '{}'", other.display()), "S1"),
     };
     refuse(what, stage)
 }
 
-/// Name the expression in a refusal.
+/// Name the expression in a refusal. A `FieldAccess` or a `StructLit` never
+/// reaches here: both are lowered. An `enum` construct is the tagged-union slice
+/// (S2C), and a function value or a container literal is S2B.
 fn refuse_expr(kind: &ExprKind) -> String {
-    let what = match kind {
-        ExprKind::FieldAccess { .. } => "'a field read'",
-        ExprKind::StructLit { .. } => "'a datac literal'",
+    let (what, stage) = match kind {
         ExprKind::EnumLit { .. } | ExprKind::EnumTag { .. } | ExprKind::EnumField { .. } => {
-            "'an enum'"
+            ("'an enum'", "S2C")
         }
-        ExprKind::Try { .. } => "'the ? operator'",
-        ExprKind::FnRef(_) => "'a function value'",
-        ExprKind::ClosureLit { .. } => "'a closure'",
-        ExprKind::Capture { .. } => "'a capture'",
-        ExprKind::FnToClosure { .. } => "'a function value'",
-        ExprKind::IndirectCall { .. } => "'a call through a function value'",
-        ExprKind::Ref { .. } => "'a borrow'",
-        ExprKind::Deref { .. } => "'a dereference'",
-        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => "'an array'",
-        _ => "'this expression'",
+        ExprKind::Try { .. } => ("'the ? operator'", "S2C"),
+        ExprKind::FnRef(_) | ExprKind::FnToClosure { .. } => ("'a function value'", "S2B"),
+        ExprKind::ClosureLit { .. } => ("'a closure'", "S2B"),
+        ExprKind::Capture { .. } => ("'a capture'", "S2B"),
+        ExprKind::IndirectCall { .. } => ("'a call through a function value'", "S2B"),
+        ExprKind::Ref { .. } => ("'a borrow of a non-datac'", "S2B"),
+        ExprKind::Deref { .. } => ("'a dereference of a non-datac'", "S2B"),
+        ExprKind::ArrayLit(_) | ExprKind::ArrayRepeat { .. } => ("'an array'", "S2B"),
+        _ => ("'this expression'", "S2B"),
     };
-    refuse(what, "S2")
+    refuse(what, stage)
 }
 
 /// The internal-error text for a value position the lowering expected to hold a

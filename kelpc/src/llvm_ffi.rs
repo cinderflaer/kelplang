@@ -51,19 +51,20 @@ use llvm_sys::core::{
     LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAppendBasicBlockInContext,
     LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
     LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt, LLVMBuildFPToSI,
-    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGlobalString, LLVMBuildICmp, LLVMBuildLShr,
-    LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi, LLVMBuildRet, LLVMBuildRetVoid,
-    LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildSelect, LLVMBuildShl,
-    LLVMBuildStore,
+    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGlobalString, LLVMBuildICmp,
+    LLVMBuildInsertValue, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
+    LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
+    LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
     LLVMBuildSub, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
     LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstReal,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
     LLVMFunctionType, LLVMGetFirstInstruction, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget,
-    LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext, LLVMInt64TypeInContext,
+    LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
+    LLVMInt64TypeInContext,
     LLVMInt8TypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString, LLVMSetTarget,
-    LLVMVoidTypeInContext,
+    LLVMStructCreateNamed, LLVMStructSetBody, LLVMVoidTypeInContext,
 };
 use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate};
 use llvm_sys::prelude::{
@@ -285,6 +286,52 @@ impl Context {
         Type {
             // SAFETY: the width is in range and the context is live.
             raw: unsafe { llvm_sys::core::LLVMIntTypeInContext(self.raw, bits) },
+            context: PhantomData,
+        }
+    }
+
+    /// A named aggregate type, `%name` in textual IR (`LLVMStructCreateNamed`).
+    ///
+    /// The type starts *opaque* (no body), which is what lets a `datac` be
+    /// named before its fields' own types exist: `struct_set_body` fills it in
+    /// once every field type does. LLVM's layout, not this wrapper's, is what
+    /// makes the result agree with the C struct `codegen_c.rs` writes, natural
+    /// alignment included.
+    pub fn struct_type(&self, name: &str) -> Type<'_> {
+        let name = cstring(name);
+        Type {
+            // SAFETY: the context is live and the name is a valid C string; the
+            // type is owned by the context.
+            raw: unsafe { LLVMStructCreateNamed(self.raw, name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Set a named aggregate's body: `fields`, in declaration order
+    /// (`LLVMStructSetBody`).
+    ///
+    /// `Packed` is 0, so the fields get the target's natural alignment and
+    /// padding, which is exactly the C layout the backend must match
+    /// (MK7 §3.1). Calling this twice on one type is legal in the C API but
+    /// replaces the body, so the lowering does it once per declaration.
+    pub fn struct_set_body(&self, ty: Type<'_>, fields: &[Type<'_>]) {
+        let mut raw: Vec<LLVMTypeRef> = fields.iter().map(|f| f.raw).collect();
+        // SAFETY: the type is a named struct owned by this context, the field
+        // vector is live for the call, and 0 is `packed = false`.
+        unsafe {
+            LLVMStructSetBody(ty.raw, raw.as_mut_ptr(), raw.len() as c_uint, 0)
+        }
+    }
+
+    /// The undefined value of `ty` (`LLVMGetUndef`).
+    ///
+    /// The starting aggregate for a chain of `insertvalue`: each field is
+    /// written before the value is read, so the undef parts are never observed.
+    pub fn undef(&self, ty: Type<'_>) -> Value<'_> {
+        Value {
+            // SAFETY: the type is live, and undef is a constant owned by the
+            // context.
+            raw: unsafe { LLVMGetUndef(ty.raw) },
             context: PhantomData,
         }
     }
@@ -922,6 +969,54 @@ impl<'ctx> Builder<'ctx> {
         Value {
             // SAFETY: the builder is positioned and both arguments are live.
             raw: unsafe { LLVMBuildStore(self.raw, value.as_raw(), place.as_raw()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `getelementptr ty, ptr p, i32 0, i32 index` (`LLVMBuildStructGEP2`),
+    /// the address of one field of the aggregate `p` points at.
+    ///
+    /// `ty` is the aggregate the pointer addresses, passed explicitly because a
+    /// pointer no longer carries a pointee type. This is the non-`inbounds`
+    /// form: MK7 §3.4 forbids `inbounds` unless the bounds are proven, and an
+    /// aggregate field address is inside an object the caller already owns, so
+    /// there is nothing here worth claiming.
+    pub fn build_struct_gep(
+        &self,
+        ty: Type<'ctx>,
+        ptr: Value<'ctx>,
+        index: u32,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and both arguments are live.
+            raw: unsafe {
+                LLVMBuildStructGEP2(self.raw, ty.as_raw(), ptr.as_raw(), index as c_uint, name.as_ptr())
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `insertvalue agg, elt, index` (`LLVMBuildInsertValue`): `agg` with
+    /// field `index` replaced by `elt`.
+    ///
+    /// The lowering builds a `datac` literal this way, starting from
+    /// [`Context::undef`] and writing every field in declaration order, so no
+    /// aggregate is ever stored and re-loaded just to be constructed.
+    pub fn build_insert_value(
+        &self,
+        agg: Value<'ctx>,
+        elt: Value<'ctx>,
+        index: u32,
+        name: &str,
+    ) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and all three arguments are live.
+            raw: unsafe {
+                LLVMBuildInsertValue(self.raw, agg.as_raw(), elt.as_raw(), index as c_uint, name.as_ptr())
+            },
             context: PhantomData,
         }
     }
