@@ -1,0 +1,308 @@
+// fuzz seed 47; shapes: scalar, datac, owns, enum, try, strings, list, list_float, list_owned, box, array, refs, pd
+
+pd val z_base = 20
+pd val z_doubled = z_base * 2
+pd val z_name = String.from_str("data")
+pd val z_origin = ZPoint(x = z_base, y = z_doubled)
+pd val z_primes = List.of(7)
+
+datac ZPoint(var x: i32, var y: i32)
+
+datac ZVec(val x: f64, val y: f64)
+
+datac ZLabel(val text: String)
+
+datac ZRow(val name: String, val tag: i32, val inner: ZLabel)
+
+enum ZShape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+
+enum ZMsg {
+    Num(val n: i32)
+    Text(val s: String)
+    Nil
+}
+
+enum ZRes {
+    Ok(val value: i32)
+    Err(val why: i32)
+}
+
+fun z_psum(p: ZPoint).R: i32 = p.x + p.y
+fun z_vsum(v: ZVec).R: f64 = v.x + v.y
+fun z_try(n: i32).R: ZRes {
+    if n > 0 {
+        return ZRes.Ok(value = n)
+    }
+    return ZRes.Err(why = 0)
+}
+fun z_chain(n: i32).R: ZRes {
+    val v = z_try(n)?
+    return ZRes.Ok(value = v + 1)
+}
+fun z_val(r: ZRes).R: i32 = when r {
+    Ok(v) -> v
+    Err(_e) -> -1
+}
+fun z_msg_int(m: ZMsg).R: i32 = when m {
+    Num(n) -> n
+    Text(t) -> t.len().to_i32()
+    Nil -> -1
+}
+fun z_pair_sum(p: [f64; 2]).R: f64 = p.get(i = 0) + p.get(i = 1)
+fun z_bump(p: mut i32, d: i32) {
+    *p = *p + d
+}
+fun z_scale_f(p: mut f64, by: f64) {
+    *p = *p * by
+}
+
+fun main() {
+    {
+        val a = (-2)
+        val b = (-33)
+        val x = 0.125
+        val y = 3.75
+        print(b)
+        print((b / 2))
+        print(((x / 10.0) * (100.0 + y)))
+        print(((0.125 >= ((0.125 * x) + (3.75 - y))) && (((b / 4) % 7) <= a)))
+        if ((0.125 >= ((0.125 * x) + (3.75 - y))) && (((b / 4) % 7) <= a)) {
+            print((b - (-18)))
+        } else {
+            print(b)
+        }
+        var i = 0
+        var acc = 0
+        while i < 4 {
+            if (true || ((i << 3) <= (i * i))) {
+                acc = acc + ((33 / 9) / 2)
+            } else {
+                acc = acc - ((34 + (-25)) - ((-31) * b))
+            }
+            i = i + 1
+        }
+        print(acc)
+        print(!((((-16) / 9) == (b / 7)) || false))
+    }
+
+    {
+        var p = ZPoint(x = 10, y = (-7))
+        print(p.x)
+        p.x = p.x + (-16)
+        print(p.x)
+        print(z_psum(p))
+        val v = ZVec(x = 0.25, y = 3.75)
+        print(z_vsum(v))
+        val w = ZVec(x = 2.25, y = 10.0)
+        print(w.x)
+        print(z_vsum(w))
+    }
+
+    {
+        val row = ZRow(name = String.from_str("seed"), tag = 28, inner = ZLabel(text = String.from_str("x")))
+        print(row.name)
+        print(row.tag)
+        print(row.inner.text)
+        print(row.inner.text.len())
+        val owner = ZRow(name = String.from_str("kelp"), tag = 22, inner = ZLabel(text = String.from_str("data")))
+        val moved = owner
+        print(moved.name)
+        print(moved.inner.text)
+    }
+
+    {
+        val s = ZShape.Empty
+        when s {
+            Circle(r) -> print(r)
+            Rect(w, h) -> print(w * h)
+            Empty -> print(0.0)
+        }
+        val m = ZMsg.Nil
+        when m {
+            Num(n) -> print(n)
+            Text(t) -> print(t)
+            Nil -> print("nil")
+        }
+        if let Num(k) = m {
+            print(k)
+        } else {
+            print(-1)
+        }
+        if let Circle(r) = s {
+            print(r * 2.0)
+        }
+    }
+
+    {
+        print(z_val(r = z_try(33)))
+        print(z_val(r = z_try(-40)))
+        print(z_val(r = z_chain(33)))
+        print(z_val(r = z_chain(-40)))
+    }
+
+    {
+        var b = Bytes.empty()
+        b.push(122)
+        b.push(71)
+        val tail = Bytes.from_str("word")
+        b.append(tail)
+        print(b.len())
+        print(b.get(0))
+        print(b.is_empty())
+        val s = String.from_str("alpha")
+        print(s)
+        print(s.len())
+        val e = String.from_str("text")
+        print(e)
+    }
+
+    {
+        var xs: List<i32> = List.empty()
+        print(xs.len())
+        print(xs.is_empty())
+        xs.push(30)
+        xs.push((-14))
+        xs.push(8)
+        print(xs.get(0))
+        xs.set(1, (-12))
+        print(xs.get(1))
+        print(xs.pop())
+        var i: usize = 0
+        var sum = 0
+        while i < xs.len() {
+            sum = sum + xs.get(i)
+            i += 1
+        }
+        print(sum)
+        for v in xs {
+            print(v)
+        }
+        xs.reverse()
+        print(xs.get(0))
+        xs.clear()
+        print(xs.len())
+    }
+
+    {
+        var fs: List<f64> = List.empty()
+        fs.push(0.25)
+        fs.push(0.25)
+        fs.push(3.75)
+        fs.push(0.25)
+        print(fs.len())
+        print(fs.get(0))
+        print(fs.get(3))
+        print(fs.contains(0.25))
+        print(fs.contains(0.25))
+        fs.sort()
+        print(fs.get(0))
+        print(fs.get(3))
+        val copy = fs.clone()
+        print(copy.len())
+        val mid = fs.slice(0, 2)
+        print(mid.get(0))
+        print(mid.get(1))
+        var i: usize = 0
+        var s = 0.0
+        while i < fs.len() {
+            s = s + fs.get(i)
+            i += 1
+        }
+        print(s)
+        var narrow: List<f32> = List.empty()
+        narrow.push(1.5)
+        narrow.push(2.5)
+        print(narrow.get(1))
+        print(narrow.contains(2.5))
+    }
+
+    {
+        var msgs: List<ZMsg> = List.empty()
+        msgs.push(ZMsg.Text(s = String.from_str("kelp")))
+        msgs.push(ZMsg.Num(n = (-22)))
+        msgs.push(ZMsg.Nil)
+        print(msgs.len())
+        print(z_msg_int(m = msgs.get(0)))
+        msgs.set(i = 1, v = ZMsg.Text(s = String.from_str("seed")))
+        print(z_msg_int(m = msgs.get(1)))
+        val taken = msgs.pop()
+        print(z_msg_int(m = taken))
+        msgs.clear()
+        print(msgs.len())
+        var labels: List<ZLabel> = List.empty()
+        labels.push(ZLabel(text = String.from_str("x")))
+        labels.push(ZLabel(text = String.from_str("data")))
+        print(labels.get(0).text)
+        val last = labels.pop()
+        print(last.text)
+        labels.clear()
+        print(labels.len())
+    }
+
+    {
+        var b: Box<i32> = Box.empty()
+        print(b.is_empty())
+        b.set((-29))
+        print(b.get())
+        print(b.take())
+        print(b.is_empty())
+        val lb = Box.of(ZLabel(text = String.from_str("text")))
+        print(lb.get().text)
+        val nested = Box.of(Box.of(1))
+        print(nested.get().get())
+        var fb: Box<f64> = Box.empty()
+        fb.set(0.25)
+        print(fb.get())
+    }
+
+    {
+        val xs: [i32; 3] = [(-27), 14, (-40)]
+        print(xs.len())
+        print(xs.get(i = 1))
+        for v in xs {
+            print(v)
+        }
+        var buf: [f64; 3] = [0.125, 0.25, 100.0]
+        buf.set(i = 2, v = 0.125)
+        print(buf.get(i = 2))
+        val pair: [f64; 2] = [0.25, 100.0]
+        print(z_pair_sum(pair))
+        val grid: [[i32; 2]; 2] = [[(-31), (-39)], [35, (-23)]]
+        print(grid.get(i = 1).get(i = 0))
+        val pts: [ZPoint; 2] = [ZPoint(x = (-27), y = 14), ZPoint(x = (-40), y = (-31))]
+        print(pts.get(i = 0).x)
+        print(pts.get(i = 1).y)
+    }
+
+    {
+        var n: i32 = 35
+        z_bump(n, (-14))
+        print(n)
+        var f: f64 = 7.5
+        z_scale_f(f, 2.25)
+        print(f)
+        val r = &n
+        print(*r)
+        var p = ZPoint(x = 17, y = (-13))
+        val q = &p
+        print((*q).x)
+        p.y = p.y + (-14)
+        print((*q).y)
+    }
+
+    {
+        print(z_base)
+        print(z_doubled)
+        print(z_name)
+        print(z_primes.len())
+        print(z_primes.get(0))
+        print(z_origin.x)
+        print(z_origin.y)
+        print(z_origin.x + z_origin.y)
+    }
+
+}

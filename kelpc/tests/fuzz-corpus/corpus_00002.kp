@@ -1,0 +1,240 @@
+// fuzz seed 2; shapes: scalar, calls, owns, try, list, list_float, box, refs, closure, pd
+
+pd val z_base = 2
+pd val z_doubled = z_base * 2
+pd val z_name = String.from_str("data")
+pd val z_origin = ZPoint(x = z_base, y = z_doubled)
+pd val z_primes = List.of(7)
+
+datac ZPoint(var x: i32, var y: i32)
+
+datac ZVec(val x: f64, val y: f64)
+
+datac ZLabel(val text: String)
+
+datac ZRow(val name: String, val tag: i32, val inner: ZLabel)
+
+enum ZShape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+
+enum ZMsg {
+    Num(val n: i32)
+    Text(val s: String)
+    Nil
+}
+
+enum ZRes {
+    Ok(val value: i32)
+    Err(val why: i32)
+}
+
+fun z_add(a: i32, b: i32).R: i32 = ((b - a) & ((-37) * (-31)))
+fun z_scale(a: f64, b: f64).R: f64 = 100.0
+fun z_mk(n: i32).R: ZPoint = ZPoint(x = n, y = n + 1)
+fun z_try(n: i32).R: ZRes {
+    if n > 0 {
+        return ZRes.Ok(value = n)
+    }
+    return ZRes.Err(why = 0)
+}
+fun z_chain(n: i32).R: ZRes {
+    val v = z_try(n)?
+    return ZRes.Ok(value = v + 1)
+}
+fun z_val(r: ZRes).R: i32 = when r {
+    Ok(v) -> v
+    Err(_e) -> -1
+}
+fun z_bump(p: mut i32, d: i32) {
+    *p = *p + d
+}
+fun z_scale_f(p: mut f64, by: f64) {
+    *p = *p * by
+}
+fun z_double(v: i32).R: i32 = v * 2
+fun z_apply(f: fun(i32).R: i32, v: i32).R: i32 = f(v)
+
+fun main() {
+    {
+        val a = 31
+        val b = (-30)
+        val x = 3.75
+        val y = 2.25
+        print(((2 - a) | (a & b)))
+        print(((((-25) ^ 1) + b) / 7))
+        print(((0.5 / 100.0) + (0.0625 - x)))
+        print((((y / 3.75) - (x - x)) <= ((y - y) / 0.5)))
+        if (((y / 3.75) - (x - x)) <= ((y - y) / 0.5)) {
+            print((-40))
+        } else {
+            print(((-38) & 6))
+        }
+        var i = 0
+        var acc = 0
+        while i < 5 {
+            if (((i + (-26)) * (17 ^ 6)) >= (i & (10 + b))) {
+                acc = acc + (((-7) + 28) / 2)
+            } else {
+                acc = acc - (-27)
+            }
+            i = i + 1
+        }
+        print(acc)
+        print(!(!true))
+    }
+
+    {
+        print(z_add(24, 15))
+        print(z_add(z_add(29, 12), 20))
+        print(z_scale(0.0625, 10.0))
+        val p = z_mk((-28))
+        print(p.x)
+        print(p.y)
+    }
+
+    {
+        val row = ZRow(name = String.from_str("alpha"), tag = 5, inner = ZLabel(text = String.from_str("alpha")))
+        print(row.name)
+        print(row.tag)
+        print(row.inner.text)
+        print(row.inner.text.len())
+        val owner = ZRow(name = String.from_str("seed"), tag = 23, inner = ZLabel(text = String.from_str("seed")))
+        val moved = owner
+        print(moved.name)
+        print(moved.inner.text)
+    }
+
+    {
+        print(z_val(r = z_try(40)))
+        print(z_val(r = z_try(-9)))
+        print(z_val(r = z_chain(40)))
+        print(z_val(r = z_chain(-9)))
+    }
+
+    {
+        var xs: List<i32> = List.empty()
+        print(xs.len())
+        print(xs.is_empty())
+        xs.push((-12))
+        xs.push(36)
+        xs.push((-19))
+        print(xs.get(0))
+        xs.set(1, (-15))
+        print(xs.get(1))
+        print(xs.pop())
+        var i: usize = 0
+        var sum = 0
+        while i < xs.len() {
+            sum = sum + xs.get(i)
+            i += 1
+        }
+        print(sum)
+        for v in xs {
+            print(v)
+        }
+        xs.reverse()
+        print(xs.get(0))
+        xs.clear()
+        print(xs.len())
+    }
+
+    {
+        var fs: List<f64> = List.empty()
+        fs.push(3.75)
+        fs.push(1.5)
+        fs.push(10.0)
+        fs.push(100.0)
+        print(fs.len())
+        print(fs.get(0))
+        print(fs.get(3))
+        print(fs.contains(100.0))
+        print(fs.contains(3.75))
+        fs.sort()
+        print(fs.get(0))
+        print(fs.get(3))
+        val copy = fs.clone()
+        print(copy.len())
+        val mid = fs.slice(0, 2)
+        print(mid.get(0))
+        print(mid.get(1))
+        var i: usize = 0
+        var s = 0.0
+        while i < fs.len() {
+            s = s + fs.get(i)
+            i += 1
+        }
+        print(s)
+        var narrow: List<f32> = List.empty()
+        narrow.push(1.5)
+        narrow.push(2.5)
+        print(narrow.get(1))
+        print(narrow.contains(2.5))
+    }
+
+    {
+        var b: Box<i32> = Box.empty()
+        print(b.is_empty())
+        b.set((-15))
+        print(b.get())
+        print(b.take())
+        print(b.is_empty())
+        val lb = Box.of(ZLabel(text = String.from_str("seed")))
+        print(lb.get().text)
+        val nested = Box.of(Box.of(16))
+        print(nested.get().get())
+        var fb: Box<f64> = Box.empty()
+        fb.set(0.5)
+        print(fb.get())
+    }
+
+    {
+        var n: i32 = 7
+        z_bump(n, 38)
+        print(n)
+        var f: f64 = 7.5
+        z_scale_f(f, 0.5)
+        print(f)
+        val r = &n
+        print(*r)
+        var p = ZPoint(x = 23, y = 23)
+        val q = &p
+        print((*q).x)
+        p.y = p.y + 38
+        print((*q).y)
+    }
+
+    {
+        val s = String.from_str("kelp")
+        val f = fun() .R: usize = s.len()
+        print(f())
+        val k = (-23)
+        val g = fun(x: i32).R: i32 = x + k
+        print(g((-29)))
+        val h = z_double
+        print(h((-29)))
+        print(z_apply(z_double, (-29)))
+        print(z_apply(h, (-29)))
+        var i = 0
+        while i < 3 {
+            val t = String.from_str("kelp")
+            val c = fun() .R: usize = t.len()
+            print(c())
+            i = i + 1
+        }
+    }
+
+    {
+        print(z_base)
+        print(z_doubled)
+        print(z_name)
+        print(z_primes.len())
+        print(z_primes.get(0))
+        print(z_origin.x)
+        print(z_origin.y)
+        print(z_origin.x + z_origin.y)
+    }
+
+}

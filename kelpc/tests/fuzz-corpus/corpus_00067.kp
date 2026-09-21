@@ -1,0 +1,279 @@
+// fuzz seed 67; shapes: scalar, owns, enum, strings, list, list_float, list_owned, map, box, closure, pd
+
+pd val z_base = 7
+pd val z_doubled = z_base * 2
+pd val z_name = String.from_str("text")
+pd val z_origin = ZPoint(x = z_base, y = z_doubled)
+pd val z_primes = List.of(7)
+
+datac ZPoint(var x: i32, var y: i32)
+
+datac ZVec(val x: f64, val y: f64)
+
+datac ZLabel(val text: String)
+
+datac ZRow(val name: String, val tag: i32, val inner: ZLabel)
+
+enum ZShape {
+    Circle(val r: f64)
+    Rect(val w: f64, val h: f64)
+    Empty
+}
+
+enum ZMsg {
+    Num(val n: i32)
+    Text(val s: String)
+    Nil
+}
+
+enum ZRes {
+    Ok(val value: i32)
+    Err(val why: i32)
+}
+
+fun z_msg_int(m: ZMsg).R: i32 = when m {
+    Num(n) -> n
+    Text(t) -> t.len().to_i32()
+    Nil -> -1
+}
+fun z_double(v: i32).R: i32 = v * 2
+fun z_apply(f: fun(i32).R: i32, v: i32).R: i32 = f(v)
+
+fun main() {
+    {
+        val a = 10
+        val b = 3
+        val x = 3.75
+        val y = 0.5
+        print((28 | (a % 3)))
+        print((((10 & (-40)) * (8 * a)) * ((a % 4) & a)))
+        print(((y * x) + (3.75 * y)))
+        print(((y + y) <= (0.125 + 3.75)))
+        if ((y + y) <= (0.125 + 3.75)) {
+            print(21)
+        } else {
+            print((2 ^ (-7)))
+        }
+        var i = 0
+        var acc = 0
+        while i < 4 {
+            if (!(true && ((1.5 - 7.5) > (x * x)))) {
+                acc = acc + (i | (37 / 7))
+            } else {
+                acc = acc - ((a << 3) - (27 << 2))
+            }
+            i = i + 1
+        }
+        print(acc)
+        print(!(((19 | a) ^ ((-1) & 0)) < ((b / 6) | ((-3) << 0))))
+    }
+
+    {
+        val row = ZRow(name = String.from_str("data"), tag = 16, inner = ZLabel(text = String.from_str("alpha")))
+        print(row.name)
+        print(row.tag)
+        print(row.inner.text)
+        print(row.inner.text.len())
+        val owner = ZRow(name = String.from_str("data"), tag = 10, inner = ZLabel(text = String.from_str("seed")))
+        val moved = owner
+        print(moved.name)
+        print(moved.inner.text)
+    }
+
+    {
+        val s = ZShape.Rect(w = 100.0, h = 7.5)
+        when s {
+            Circle(r) -> print(r)
+            Rect(w, h) -> print(w * h)
+            Empty -> print(0.0)
+        }
+        val m = ZMsg.Num(n = (-37))
+        when m {
+            Num(n) -> print(n)
+            Text(t) -> print(t)
+            Nil -> print("nil")
+        }
+        if let Num(k) = m {
+            print(k)
+        } else {
+            print(-1)
+        }
+        if let Circle(r) = s {
+            print(r * 2.0)
+        }
+    }
+
+    {
+        var b = Bytes.empty()
+        b.push(200)
+        b.push(168)
+        val tail = Bytes.from_str("x")
+        b.append(tail)
+        print(b.len())
+        print(b.get(0))
+        print(b.is_empty())
+        val s = String.from_str("seed")
+        print(s)
+        print(s.len())
+        val e = String.from_str("seed")
+        print(e)
+    }
+
+    {
+        var xs: List<i32> = List.empty()
+        print(xs.len())
+        print(xs.is_empty())
+        xs.push((-11))
+        xs.push(19)
+        xs.push(8)
+        print(xs.get(0))
+        xs.set(1, 35)
+        print(xs.get(1))
+        print(xs.pop())
+        var i: usize = 0
+        var sum = 0
+        while i < xs.len() {
+            sum = sum + xs.get(i)
+            i += 1
+        }
+        print(sum)
+        for v in xs {
+            print(v)
+        }
+        xs.reverse()
+        print(xs.get(0))
+        xs.clear()
+        print(xs.len())
+    }
+
+    {
+        var fs: List<f64> = List.empty()
+        fs.push(7.5)
+        fs.push(2.25)
+        fs.push(2.25)
+        fs.push(10.0)
+        print(fs.len())
+        print(fs.get(0))
+        print(fs.get(3))
+        print(fs.contains(10.0))
+        print(fs.contains(7.5))
+        fs.sort()
+        print(fs.get(0))
+        print(fs.get(3))
+        val copy = fs.clone()
+        print(copy.len())
+        val mid = fs.slice(0, 2)
+        print(mid.get(0))
+        print(mid.get(1))
+        var i: usize = 0
+        var s = 0.0
+        while i < fs.len() {
+            s = s + fs.get(i)
+            i += 1
+        }
+        print(s)
+        var narrow: List<f32> = List.empty()
+        narrow.push(1.5)
+        narrow.push(2.5)
+        print(narrow.get(1))
+        print(narrow.contains(2.5))
+    }
+
+    {
+        var msgs: List<ZMsg> = List.empty()
+        msgs.push(ZMsg.Text(s = String.from_str("word")))
+        msgs.push(ZMsg.Num(n = 21))
+        msgs.push(ZMsg.Nil)
+        print(msgs.len())
+        print(z_msg_int(m = msgs.get(0)))
+        msgs.set(i = 1, v = ZMsg.Text(s = String.from_str("beta")))
+        print(z_msg_int(m = msgs.get(1)))
+        val taken = msgs.pop()
+        print(z_msg_int(m = taken))
+        msgs.clear()
+        print(msgs.len())
+        var labels: List<ZLabel> = List.empty()
+        labels.push(ZLabel(text = String.from_str("text")))
+        labels.push(ZLabel(text = String.from_str("hi")))
+        print(labels.get(0).text)
+        val last = labels.pop()
+        print(last.text)
+        labels.clear()
+        print(labels.len())
+    }
+
+    {
+        var m: Map<i64, i32> = Map.new()
+        print(m.len())
+        m.insert(4, (-8))
+        m.insert(25, 22)
+        print(m.len())
+        print(m.get(4))
+        print(m.has(25))
+        print(m.has(1))
+        print(m.get_or(1, 99))
+        m.insert(4, (-21))
+        print(m.get(4))
+        print(m.remove(25))
+        print(m.len())
+        val ks = m.keys()
+        var i: usize = 0
+        while i < ks.len() {
+            print(ks.get(i))
+            i += 1
+        }
+        var bools: Map<bool, i64> = Map.new()
+        bools.insert(true, 5)
+        bools.insert(false, 7)
+        print(bools.get(true))
+        print(bools.len())
+    }
+
+    {
+        var b: Box<i32> = Box.empty()
+        print(b.is_empty())
+        b.set(22)
+        print(b.get())
+        print(b.take())
+        print(b.is_empty())
+        val lb = Box.of(ZLabel(text = String.from_str("word")))
+        print(lb.get().text)
+        val nested = Box.of(Box.of(1))
+        print(nested.get().get())
+        var fb: Box<f64> = Box.empty()
+        fb.set(0.0625)
+        print(fb.get())
+    }
+
+    {
+        val s = String.from_str("data")
+        val f = fun() .R: usize = s.len()
+        print(f())
+        val k = (-37)
+        val g = fun(x: i32).R: i32 = x + k
+        print(g(37))
+        val h = z_double
+        print(h(37))
+        print(z_apply(z_double, 37))
+        print(z_apply(h, 37))
+        var i = 0
+        while i < 3 {
+            val t = String.from_str("alpha")
+            val c = fun() .R: usize = t.len()
+            print(c())
+            i = i + 1
+        }
+    }
+
+    {
+        print(z_base)
+        print(z_doubled)
+        print(z_name)
+        print(z_primes.len())
+        print(z_primes.get(0))
+        print(z_origin.x)
+        print(z_origin.y)
+        print(z_origin.x + z_origin.y)
+    }
+
+}
