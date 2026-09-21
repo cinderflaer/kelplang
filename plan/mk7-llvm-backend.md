@@ -348,7 +348,7 @@ green at every stage.
 | **S0** | the seam | done | `Backend`, `--backend=`, `KELPC_BACKEND` |
 | **S1** | IR for the scalar subset, `llvm` selectable | done 2026-09-21 | arithmetic, comparisons, `if`/`while`, calls, `print` of the scalars: byte-identical stdout on the fixtures that use only those (`kelpc/tests/run-llvm-scalar-subset.sh`) |
 | **S2** | aggregates, containers and drops | 2 to 4 weeks | `datac`/`enum` layout, the container function sets, the drop plan, `pd` globals: the whole fixture corpus minus the runtime rows |
-| **S3** | the runtime, the externs and the capability check | days | `librt` linked, every `extern fun` a declared call, the deny path text identical |
+| **S3** | the runtime, the externs and the capability check | externs done 2026-09-21; `pd` and the check open | `librt` linked, every `extern fun` a declared call, the deny path text identical |
 | **S4** | debug locations to DWARF | days | a fixture that crashes on purpose names a `.kp` line |
 | **S5** | fuzzing and conformance (D-4) | runs alongside S2 and S3 | N generated programs, both backends, zero mismatches |
 | **S6** | the optimization-level decision | a day, plus a bench run | one answer from §4.3, written down, with an idle-machine `bench/speed` table |
@@ -366,7 +366,8 @@ labels the refusals already carry.
 | **S2D** | containers: `List`, `Map`, `Box`, `[T; N]`, one monomorphized function set per instantiation | done 2026-09-21 |
 | **S2E** | closures and function values | done 2026-09-21 |
 | **S2F** | references that are not a `datac`: `&T` to a scalar, a borrow of a field, and the dereference of one | done 2026-09-21 |
-| **S3** | the runtime, the `extern fun` bodies, `pd` globals and the capability check | open |
+| **S3A** | the `extern fun` bodies: the C text the C backend emits, compiled per program and linked | done 2026-09-21 |
+| **S3** | `pd` globals with their `atexit` drops, and the capability check: the allowlist arrays, the matcher and the deny path | open |
 
 Two notes on the labels. The stale `S2B` label on the borrow of a non-`datac`
 is gone: S2F lowered the borrow of a scalar and of a field, its dereference and
@@ -376,7 +377,7 @@ refusals name S3 or the two owned-temporary shapes. Five targets whose *first*
 refusal was S2E now stop at an S3 one instead, because their `impl` is lowered
 whole and `std/str` reaches `std.mem.alloc_raw`: `closure_basic`, the three
 `stdlib_*` callback fixtures and `fn_value` (a `pd` read). The refusal that
-carried a bare `S2`, the string literal containing NUL (`MISSING-k2VmP`), stays,
+carried a bare `S2`, the string literal containing NUL (`BUG-f5Kvq`), stays,
 because the C backend does not carry it either: `printf("%s", "a\0b")` prints
 `a`, so the truncation is a C-backend defect and not an LLVM gap.
 
@@ -388,7 +389,7 @@ is required to believe the flip, and saying so is part of the flip's notes.
 | Gate | What happens to it |
 | --- | --- |
 | `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions left with the backend on 2026-09-21: the `.s`-level SysV classifier test, the assembly-text capability-check assertions and the two-backend differential test are gone. |
-| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (140 of the 220 the C backend builds at the MK7 S2E tip, with no refusal naming a closure or a function value any more), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
+| `kelpc/tests/backend_coverage.rs` | **Rebuilt for LLVM, 2026-09-21.** The differential sweep builds every fixture the C backend builds with `llvm` too, runs both and compares stdout and the exit status byte for byte, ratchets `LLVM_BUILT_BASELINE` (183 of the 221 the C backend builds at the MK7 S3A tip, with only the `pd` globals and two owned-temporary shapes left), and prints the refusals ranked by message. Its first run found a silent miscompile (`BUG-q7Whn`) and two internal errors (`BUG-b2Ldp`), which is the instrument doing its job. The heavy tests are `#[ignore]`d so the default suite stays cheap: run them with `-- --ignored --nocapture`. |
 | `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged; it was reduced to the C sweep on 2026-09-21 when the `asm` rows left. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired. |
 | `kelpc/tests/run-all-backends.sh` | **Repurpose.** `BACKENDS` gains `llvm`; `asm` left with the source on 2026-09-21. |
 | `codegen_asm.rs` and the `asm` rows of the tests | **Done early, on 2026-09-21.** The module, the `asm` baseline, the `.s`-level tests, the `Backend::Asm` variant and the fixture that existed only for its assertion are gone, and the C-only suite is green. The deletion moved ahead of LLVM parity by decision: the retired track's second-backend differential was already partial, and keeping it cost a hotspot test file plus permanently refused fixtures. |
