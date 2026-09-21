@@ -2,12 +2,9 @@
 // `stat`/`lstat` read-and-predicate bodies, `remove`/`mkdir`/`mkdir_all`, and
 // the directory-and-link set (`list`, `symlink`, `read_link`, `is_symlink`).
 //
-// The gated wrappers (`fs.read`, `fs.write_text`, ...) are refused in the
-// `asm` backend until the capability check is emitted at the call site, so
-// this fixture pins the syscall bodies themselves: each is built by both
-// backends and its stdout compared byte for byte, which is the only
-// acceptance target the bodies have today. It moves to the wrappers once the
-// check lands.
+// The fixture calls the raw externs directly rather than through the gated
+// wrappers (`fs.read`, `fs.write_text`, ...), so each syscall body is pinned on
+// its own by the fixture's stdout.
 impl "std/fs"
 
 fun main() {

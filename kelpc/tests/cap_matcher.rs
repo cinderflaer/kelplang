@@ -357,10 +357,8 @@ fn build_c_driver(cases: &[Case]) -> PathBuf {
 /// Builds the Kelp side with the C backend.
 ///
 /// The backend is pinned rather than taken from `KELPC_BACKEND`: this test is
-/// about the matcher, not about which backend is under test, and the asm backend
-/// does not compile the runtime module in yet (it refuses every gated call rather
-/// than emitting one unchecked). Pinning makes the corpus run once per suite
-/// invocation with the same result.
+/// about the matcher, not about which backend is under test. Pinning makes the
+/// corpus run once per suite invocation with the same result.
 fn build_kelp_driver(cases: &[Case]) -> PathBuf {
     let src = tmp("cap_matcher_kelp.kp");
     let bin = tmp("cap_matcher_kelp");

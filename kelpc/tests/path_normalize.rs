@@ -255,7 +255,7 @@ fn build_c_driver(paths: &[String]) -> PathBuf {
 
 /// Builds the Kelp side with the C backend, for the same reason `cap_matcher.rs`
 /// pins it: this test is about the normalizer, not about which backend is being
-/// validated, and the asm backend does not compile the runtime module in yet.
+/// validated.
 fn build_kelp_driver(paths: &[String]) -> PathBuf {
     let src = tmp("path_normalize_kelp.kp");
     let bin = tmp("path_normalize_kelp");

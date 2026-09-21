@@ -1,19 +1,15 @@
-//! The valgrind memory gate for both backends (MK7 §5's definition of done).
+//! The valgrind memory gate (MK7 §5's definition of done).
 //!
-//! `plan/asm-backend/plan.md` §5's definition of done has always asked for a
-//! memory gate for the asm backend, and the AddressSanitizer gate in
-//! `compile_and_run.rs` (`heap_fixtures_are_double_free_and_leak_clean`)
-//! cannot supply one: it rebuilds the *generated C* with
-//! `cc -fsanitize=address`, so it has nothing to instrument once `kelpc` emits
-//! its own assembly. Valgrind runs an asm-generated binary like any other, so
-//! it is the gate the asm backend can actually be judged by.
+//! The AddressSanitizer gate in `compile_and_run.rs`
+//! (`heap_fixtures_are_double_free_and_leak_clean`) rebuilds the *generated C*
+//! with `cc -fsanitize=address`, so it has nothing to instrument once a backend
+//! writes its own object instead of C. Valgrind runs any binary, so it is the
+//! gate a backend that emits its own code can actually be judged by.
 //!
 //! What one sweep does, for every `tests/fixtures/*.kp`:
 //!
-//! - build the fixture with an explicit `--backend=` flag, `c` first — the C
-//!   backend is the oracle — and `asm` where the asm backend accepts it. A
-//!   fixture the C backend itself rejects has no binary and is skipped; a
-//!   fixture the asm backend refuses is counted and skipped.
+//! - build the fixture with an explicit `--backend=c` flag. A fixture the C
+//!   backend itself rejects has no binary and is skipped.
 //! - run each binary under valgrind with leak checking and error detection
 //!   on: `--leak-check=full --show-leak-kinds=all
 //!   --errors-for-leak-kinds=definite,indirect,possible`. The program's stdin
@@ -37,22 +33,14 @@
 //!
 //! **Ground rule 1.5** (`plan/asm-backend/plan.md`): nothing may make the
 //! default `cargo test` slower or needier. A sweep builds ~130 fixtures and
-//! runs ~180 binaries under valgrind, which is about a minute — far too much
-//! for the default suite — and valgrind is not a declared dependency of this
-//! repository. Every test that runs the sweep is therefore `#[ignore]`d, and
-//! the default run only checks that valgrind is discoverable and prints what
-//! the sweep would cover. Run the sweep explicitly:
+//! runs each under valgrind, which is about a minute, and valgrind is not a
+//! declared dependency of this repository. Every test that runs the sweep is
+//! therefore `#[ignore]`d, and the default run only checks that valgrind is
+//! discoverable and prints what the sweep would cover. Run the sweep explicitly:
 //!
 //! ```text
 //! cargo test --test memory_gate -- --ignored --nocapture
-//! KELPC_BACKEND=asm cargo test --test memory_gate -- --ignored --nocapture
 //! ```
-//!
-//! The second command is the same sweep with the suite's own backend variable
-//! pointed at `asm`: both backends are selected by explicit `--backend=`
-//! flags, and `KELPC_BACKEND` is removed from every child's environment, so
-//! the environment cannot change what is measured. The second run is here to
-//! prove exactly that.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -119,10 +107,9 @@ fn fixture_names() -> Vec<String> {
 }
 
 /// Builds one fixture with one backend, pinned by flag rather than by
-/// environment so the sweep's two halves cannot disagree about which backend
-/// produced which binary. `KELPC_BACKEND` is removed from the child's
-/// environment for the same reason: the flag is what selects the backend, and
-/// an inherited value must not be able to change what this file measures.
+/// environment. `KELPC_BACKEND` is removed from the child's environment for the
+/// same reason: the flag is what selects the backend, and an inherited value
+/// must not be able to change what this file measures.
 fn build(backend: &str, name: &str, bin: &Path) -> bool {
     let source = fixture_dir().join(format!("{name}.kp"));
     let out = Command::new(kelpc_bin())
@@ -416,18 +403,6 @@ fn run_under_valgrind(backend: &'static str, name: &str, bin: &Path, dir: &Path)
 struct Sweep {
     /// Fixtures the C backend builds, each run under valgrind.
     c_checked: Vec<Check>,
-    /// Fixtures both backends build, each run under valgrind.
-    asm_checked: Vec<Check>,
-    /// How many of `asm_checked` belong to a fixture the C backend itself
-    /// rejects. Without them a leak in a shape only the asm backend accepts
-    /// would have no gate at all. `heap_field_of_owned_temporary` was that
-    /// shape until both backends learned to stage and free a field of an
-    /// rvalue, and the branch stays because the next one will be: a fixture
-    /// that only one backend builds is exactly the one whose drops nothing
-    /// else checks.
-    asm_only: usize,
-    /// Fixtures the C backend builds and the asm backend refuses, sorted.
-    asm_refused: Vec<String>,
     /// Fixtures the C backend itself rejects: there is no binary to check.
     c_rejected: usize,
     /// How many `*.kp` files the sweep looked at.
@@ -443,41 +418,21 @@ fn run_sweep() -> Sweep {
         .unwrap_or_else(|e| panic!("failed to create '{}': {e}", dir.display()));
 
     let mut c_checked = Vec::new();
-    let mut asm_checked = Vec::new();
-    let mut asm_only = 0;
-    let mut asm_refused = Vec::new();
     let mut c_rejected = 0;
 
     for name in &names {
         let c_bin = dir.join(format!("c_{name}"));
         if !build("c", name, &c_bin) {
             // The C backend is the oracle and the compile-error fixtures are
-            // rejected by design, so there is no C binary to run — but the asm
-            // backend may still build one, and a binary no sweep runs is a leak
-            // nothing would catch.
+            // rejected by design, so there is no binary to run.
             c_rejected += 1;
-            let asm_bin = dir.join(format!("asm_{name}"));
-            if build("asm", name, &asm_bin) {
-                asm_checked.push(run_under_valgrind("asm", name, &asm_bin, &dir));
-                asm_only += 1;
-            }
             continue;
         }
         c_checked.push(run_under_valgrind("c", name, &c_bin, &dir));
-
-        let asm_bin = dir.join(format!("asm_{name}"));
-        if !build("asm", name, &asm_bin) {
-            asm_refused.push(name.clone());
-            continue;
-        }
-        asm_checked.push(run_under_valgrind("asm", name, &asm_bin, &dir));
     }
 
     Sweep {
         c_checked,
-        asm_checked,
-        asm_only,
-        asm_refused,
         c_rejected,
         fixtures: names.len(),
         elapsed: started.elapsed(),
@@ -511,28 +466,12 @@ fn print_summary(sweep: &Sweep, version: &str) {
         "memory gate: {version} over kelpc/tests/fixtures ({} .kp files)",
         sweep.fixtures,
     );
-    println!(
-        "{}",
-        backend_summary("c", &sweep.c_checked, "")
-    );
-    println!(
-        "{}",
-        backend_summary(
-            "asm",
-            &sweep.asm_checked,
-            &format!(
-                ", {} fixture(s) refused by the asm backend (skipped), \
-                 {} of the checked ones from a fixture the C backend itself rejects",
-                sweep.asm_refused.len(),
-                sweep.asm_only,
-            ),
-        )
-    );
+    println!("{}", backend_summary("c", &sweep.c_checked, ""));
     println!(
         "  {} fixture(s) the C backend itself rejects were skipped: there is no binary to check",
         sweep.c_rejected,
     );
-    for check in sweep.c_checked.iter().chain(sweep.asm_checked.iter()) {
+    for check in &sweep.c_checked {
         let children: Vec<Process> = check
             .processes()
             .into_iter()
@@ -540,7 +479,7 @@ fn print_summary(sweep: &Sweep, version: &str) {
             .collect();
         for child in &children {
             println!(
-                "  fork child of '{}' ({}) — pid {}, {} error(s); checked, not excused",
+                "  fork child of '{}' ({}): pid {}, {} error(s); checked, not excused",
                 check.fixture,
                 check.backend,
                 child.pid,
@@ -548,17 +487,15 @@ fn print_summary(sweep: &Sweep, version: &str) {
             );
         }
     }
-    let runs = sweep.c_checked.len() + sweep.asm_checked.len();
+    let runs = sweep.c_checked.len();
     let non_zero = sweep
         .c_checked
         .iter()
-        .chain(sweep.asm_checked.iter())
         .filter(|check| check.exit != Some(0))
         .count();
     let panics = sweep
         .c_checked
         .iter()
-        .chain(sweep.asm_checked.iter())
         .filter(|check| check.program_stderr.starts_with("panic:"))
         .count();
     println!(
@@ -572,22 +509,20 @@ fn print_summary(sweep: &Sweep, version: &str) {
     );
 }
 
-/// The gate itself: every fixture the C backend builds, every one the asm
-/// backend also builds, and any fixture only the asm backend builds, each run
-/// under valgrind. A leak, a double free, an invalid
-/// read or an invalid write in either backend — in the process valgrind was
-/// launched on or in a child it forked — fails this test, and the failure
-/// quotes valgrind's own lines for it.
+/// The gate itself: every fixture the C backend builds, each run under
+/// valgrind. A leak, a double free, an invalid read or an invalid write, in the
+/// process valgrind was launched on or in a child it forked, fails this test,
+/// and the failure quotes valgrind's own lines for it.
 ///
 /// Run it with `cargo test --test memory_gate -- --ignored --nocapture`; without
 /// `--nocapture` the harness swallows the summary.
 #[test]
-#[ignore = "the sweep builds ~130 fixtures and runs ~180 binaries under valgrind; ground rule 1.5 keeps it out of the default suite"]
-fn neither_backend_leaks_or_touches_freed_memory_under_valgrind() {
+#[ignore = "the sweep builds ~130 fixtures and runs each under valgrind; ground rule 1.5 keeps it out of the default suite"]
+fn no_fixture_leaks_or_touches_freed_memory_under_valgrind() {
     let Some(version) = valgrind_version() else {
         println!(
             "memory gate: valgrind is not on PATH, so the sweep is skipped — install valgrind to \
-             check either backend's drops for leaks, double frees and invalid accesses"
+             check the binaries' drops for leaks, double frees and invalid accesses"
         );
         return;
     };
@@ -599,17 +534,10 @@ fn neither_backend_leaks_or_touches_freed_memory_under_valgrind() {
         !sweep.c_checked.is_empty(),
         "the C backend built no fixture at all, so the sweep measured nothing",
     );
-    if sweep.asm_checked.is_empty() {
-        println!(
-            "note: the asm backend built none of the {} fixtures the C backend builds; only the C \
-             backend was checked",
-            sweep.c_checked.len(),
-        );
-    }
 
     let mut report = Vec::new();
     let mut findings = 0;
-    for check in sweep.c_checked.iter().chain(sweep.asm_checked.iter()) {
+    for check in &sweep.c_checked {
         for (pid, lines) in check.findings() {
             findings += 1;
             match pid {
@@ -622,7 +550,7 @@ fn neither_backend_leaks_or_touches_freed_memory_under_valgrind() {
     assert!(
         report.is_empty(),
         "valgrind reported {findings} finding(s) over {} runs:\n{}",
-        sweep.c_checked.len() + sweep.asm_checked.len(),
+        sweep.c_checked.len(),
         report.join("\n"),
     );
 }
@@ -647,13 +575,12 @@ fn the_sweep_reports_what_it_would_cover() {
     match valgrind_version() {
         Some(version) => println!(
             "memory gate: {version} is on PATH; the ignored sweep builds every one of these {fixtures} \
-             fixtures with `--backend=c` and every one the asm backend accepts with `--backend=asm`, \
-             then runs each binary under `--leak-check=full`. Run it with:\n    \
+             fixtures with `--backend=c`, then runs each binary under `--leak-check=full`. Run it with:\n    \
              cargo test --test memory_gate -- --ignored --nocapture"
         ),
         None => println!(
             "memory gate: valgrind is not on PATH, so the ignored sweep is skipped; install valgrind \
-             to check the asm backend's drops for leaks, double frees and invalid accesses"
+             to check the binaries' drops for leaks, double frees and invalid accesses"
         ),
     }
 }

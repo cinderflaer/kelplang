@@ -172,9 +172,8 @@ pub enum CapCheck {
 
 /// Whether a type is `str` or a borrow of one: the arguments a capability
 /// check treats as resource names, and so the input `checked_args` reads. It
-/// lives here rather than beside either caller because both backends ask the
-/// same question: `codegen_c.rs` builds the check from the answer, and
-/// `codegen_asm.rs` refuses exactly the calls the answer makes a check for.
+/// lives here rather than beside its caller because the question is about the
+/// language's types, not about one backend's code generation.
 ///
 /// `Ty` is named in full rather than imported: this module is otherwise about
 /// the shipped sources and the domains, not about the type checker.

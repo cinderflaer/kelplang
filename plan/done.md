@@ -1457,7 +1457,7 @@ which the heap fixtures are also re-run under AddressSanitizer).
 ## The formatter, the 2024 edition, and the own backend's `Map` slice
 
 Three things shipped in one session. Two are not MK7 work and are recorded here; the third is recorded in
-detail in `mk7-own-backend.md` §0 and §5.
+detail in `plan/asm-backend/plan.md` §0 and §5.
 
 **`kelpc fmt`** (roadmap open item 13) is the enforcement story the style rules never had. It is a
 *token-level* formatter: `lexer.rs` gained an additive trivia mode (`TokenKind::Comment`, a `keep_comments`
@@ -1493,7 +1493,7 @@ allocations and 7008 bytes for the growth fixture), which pins the rehash count 
 numbers.
 
 **Suite at this record**: 107 unit, 266 end-to-end, 52 formatter, 2 capability-matcher, 1 path-normalizer and
-1 memory gate. `mk7-own-backend.md` §0 is current as of this date.
+1 memory gate. `plan/asm-backend/plan.md` §0 is current as of this date.
 
 ## A `pd var` borrow is shared unless it is written: roadmap item 17 (DONE)
 

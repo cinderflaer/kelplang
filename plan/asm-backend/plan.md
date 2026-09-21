@@ -2,7 +2,9 @@
 
 > **ARCHIVED 2026-09-20. Superseded, not deleted.** The compiler's next backend is LLVM IR, not a
 > hand-written one; `plan/mk7-llvm-backend.md` is the plan of record. The `asm` tier this file
-> describes is retired, and its code goes when the LLVM backend passes the corpus. Kept because the
+> describes is retired, and its code was removed on 2026-09-21: `codegen_asm.rs`, the `Backend::Asm`
+> variant, the `asm` rows of the tests and the fixture that existed only for its assertion are gone.
+> Kept because the
 > measurements and the fixture ranking are still history; `plan/asm-backend/README.md` says what each
 > archived file holds.
 

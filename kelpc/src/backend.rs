@@ -1,31 +1,32 @@
 //! Which code generator `kelpc build` uses.
 //!
-//! This is the backend *seam*, built by the retired hand-written track (MK7
-//! stage 1, `plan/asm-backend/plan.md`) and now the seam the LLVM backend
-//! (`plan/mk7-llvm-backend.md`) plugs into. Until
-//! there is a second backend there is nothing to abstract over, so this module
-//! deliberately holds only the selector: how a backend is named, which names
-//! exist, and how the choice is resolved from the command line and the
-//! environment. The `match` that calls a generator stays at its single call
-//! site in `main.rs`, and it becomes a trait only when a third backend makes
-//! the interface worth naming.
+//! This is the backend *seam*, built by the retired hand-written track and now
+//! the seam the LLVM backend (`plan/mk7-llvm-backend.md`) plugs into. Until that
+//! backend exists there is nothing to abstract over, so this module deliberately
+//! holds only the selector: how a backend is named, which names exist, and how
+//! the choice is resolved from the command line and the environment. The `match`
+//! that calls a generator stays at its single call site in `main.rs`, and it
+//! becomes a trait only when a third backend makes the interface worth naming.
 //!
-//! Why the seam exists at all before the second backend does: the fixture
-//! suite is backend-agnostic by construction (compile, run, compare stdout),
-//! so a second backend is validated by running the suite again with
-//! `KELPC_BACKEND` set to it. That means the *only* thing this branch needs
-//! before any generator work starts is a way to say which backend to use —
-//! and a suite that cannot be pointed at a second backend cannot validate one.
+//! Why the seam exists at all before the second backend does: the fixture suite
+//! is backend-agnostic by construction (compile, run, compare stdout), so a
+//! second backend is validated by running the suite again with `KELPC_BACKEND`
+//! set to it. That means the *only* thing this branch needs before any generator
+//! work starts is a way to say which backend to use, and a suite that cannot be
+//! pointed at a second backend cannot validate one.
+//!
+//! The hand-written `asm` backend this seam was built for was removed on
+//! 2026-09-21 (`plan/asm-backend/plan.md`); `llvm` is the name the seam will
+//! carry next.
 
 /// A code generator `kelpc` can lower a typed program with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
-    /// Transpile to C, then hand the source to `cc`. The original backend, and
-    /// the one the whole test suite is written against.
+    /// Transpile to C, then hand the source to `cc`. The original backend, the
+    /// one the whole test suite is written against, and the differential oracle
+    /// every other backend is checked against. It is never deleted and never
+    /// stops being maintained.
     C,
-    /// Emit x86-64 assembly text, then hand it to `as` and `ld`. MK7 tier 1:
-    /// this drops the C compiler from the chain while still linking libc.
-    Asm,
 }
 
 /// Names a later tier will claim. Recognized, deliberately not selectable.
@@ -34,20 +35,18 @@ const RESERVED: &[&str] = &["own"];
 impl Backend {
     /// What `--backend` and `KELPC_BACKEND` mean when neither is given.
     ///
-    /// The C backend stays the default for the whole of MK7: it is the
-    /// differential oracle every other backend is checked against, so making
-    /// the new one default would remove the reference the comparison is
-    /// against.
+    /// The C backend stays the default: it is the differential oracle every
+    /// other backend is checked against, so making the new one default would
+    /// remove the reference the comparison is against.
     pub const DEFAULT: Backend = Backend::C;
 
-    /// Every backend that can actually be selected. The integration suite
-    /// loops over this to run the fixtures once per backend.
-    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C, Backend::Asm];
+    /// Every backend that can actually be selected. The integration suite loops
+    /// over this to run the fixtures once per backend.
+    pub const IMPLEMENTED: &'static [Backend] = &[Backend::C];
 
     pub fn name(self) -> &'static str {
         match self {
             Backend::C => "c",
-            Backend::Asm => "asm",
         }
     }
 
@@ -63,12 +62,11 @@ impl Backend {
     }
 
     /// Parses a backend name. The error text is the whole point of this
-    /// function: a reserved name must not read as a typo, and a typo must
-    /// list what does work.
+    /// function: a reserved name must not read as a typo, and a typo must list
+    /// what does work.
     pub fn parse(name: &str) -> Result<Backend, String> {
         match name {
             "c" => Ok(Backend::C),
-            "asm" => Ok(Backend::Asm),
             reserved if RESERVED.contains(&reserved) => Err(format!(
                 "backend '{reserved}' is planned but not implemented yet \
                  (see plan/mk7-llvm-backend.md); {}",

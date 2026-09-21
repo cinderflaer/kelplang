@@ -22,8 +22,8 @@ fn kelpc_bin() -> PathBuf {
 /// one runs is therefore a property of the *invocation*, not of the test, and
 /// `KELPC_BACKEND` is the only input that varies it. Reading the default from
 /// the environment rather than hard-coding `c` is what lets a second backend
-/// be validated by this whole suite with no edits here — see
-/// `plan/mk7-own-backend.md` stage 1.
+/// be validated by this whole suite with no edits here
+/// (`plan/mk7-llvm-backend.md`).
 fn backend() -> String {
     std::env::var("KELPC_BACKEND").unwrap_or_else(|_| "c".to_string())
 }
@@ -186,7 +186,7 @@ fn when_desugars_to_if_else_chain() {
 #[test]
 fn the_generated_c_maps_statements_back_to_their_kp_lines() {
     // `--backend=c` explicitly: the file this reads is one only that backend
-    // writes, so the test must not follow `KELPC_BACKEND=asm`.
+    // writes, so the test must not follow a `KELPC_BACKEND` naming another one.
     let source = fixture("tests/fixtures/when_expr.kp");
     let bin = out_path("line_markers_single");
     let build = kelpc()
@@ -701,8 +701,8 @@ fn a_pd_var_write_reaches_the_callers_that_hold_it() {
 #[test]
 fn a_pd_var_of_a_two_word_datac_is_writable_through_its_borrow() {
     // The write is `*p = v` on the passdown's hidden borrow, and the operand is
-    // a use: the asm backend's live-range analysis missing it put the write in
-    // another parameter's storage instead of refusing it.
+    // a use: missing it puts the write in another parameter's storage instead
+    // of refusing it.
     assert_compiles_and_runs(
         "tests/fixtures/pd_var_datac_reassign.kp",
         "1,2\n3,6\n",
@@ -735,12 +735,12 @@ fn a_float_scalar_can_be_borrowed_and_written_through_the_pointer() {
 
 #[test]
 fn passdown_storage_is_a_global_that_main_initializes() {
-    // MK7 §5: what the asm backend has to do instead of the C backend's
-    // hidden-argument plumbing — one `.bss` object per `pd`, assigned by a
-    // sequence at the top of `main`, and a hidden parameter whose value is that
-    // object's address. An initializer that reads an earlier passdown pins the
-    // initialization order, and `bump` pins the case where the caller has no
-    // hidden parameter and so passes the global's own address.
+    // What a backend without the C backend's hidden-argument plumbing does
+    // instead: one global per `pd`, assigned by a sequence at the top of
+    // `main`, and a hidden parameter whose value is that object's address. An
+    // initializer that reads an earlier passdown pins the initialization order,
+    // and `bump` pins the case where the caller has no hidden parameter and so
+    // passes the global's own address.
     assert_compiles_and_runs(
         "tests/fixtures/passdown_globals.kp",
         "10 20 0\n1 2 3\n10 20 2\n1 2 3\n10 20 12\n1 2 3\n3\n",
@@ -1140,10 +1140,9 @@ fn stdlib_fmt_formats_numbers_hex_padding_and_bytes() {
 ///
 /// `String` is a MEMORY-class aggregate like `Bytes`; `View` is the first heap
 /// type that is *two* INTEGER eightbytes, so it travels in a register pair
-/// rather than through the hidden pointer — a shape no heap fixture had reached
-/// before this one. Both are pinned against the C backend by
-/// `the_two_backends_agree_on_the_scalar_fixtures`, because a wrong register
-/// pair is a wrong string rather than a build failure.
+/// rather than through the hidden pointer, a shape no heap fixture had reached
+/// before this one. A wrong register pair is a wrong string rather than a build
+/// failure, which is why the printed bytes are pinned here.
 #[test]
 fn string_and_view_construct_measure_slice_and_convert() {
     assert_compiles_and_runs(
@@ -1154,9 +1153,9 @@ fn string_and_view_construct_measure_slice_and_convert() {
 
 /// The bug the spec's own uncertainty list found, and the reason it mattered:
 /// `String.with_capacity(0)` left `data == NULL` while claiming to be an empty
-/// string, so the first thing that treated it as a C string — `as_str` through
-/// `strlen` — segfaulted. This fixture crashed the C backend before the fix and
-/// now passes on both, which is what makes it worth keeping: the hole was in a
+/// string, so the first thing that treated it as a C string (`as_str` through
+/// `strlen`) segfaulted. This fixture crashed the C backend before the fix and
+/// now passes, which is what makes it worth keeping: the hole was in a
 /// constructor nothing in the corpus called with zero.
 #[test]
 fn a_string_with_zero_capacity_is_a_valid_empty_string() {
@@ -1167,13 +1166,11 @@ fn a_string_with_zero_capacity_is_a_valid_empty_string() {
 }
 
 /// A literal that does not fit the type its context gave it is narrowed to that
-/// type by both backends, in the same place in the pipeline.
+/// type in the front end, before any backend sees it.
 ///
 /// This is the fixture that would have caught the C backend emitting such a
-/// literal at its full width and letting C's arithmetic conversions decide: the
-/// two backends disagreed on `1000000000007 % 1000000007` by exactly the
-/// difference between a 64-bit and a 32-bit remainder, and no existing fixture
-/// had a literal wider than its own type in it.
+/// literal at its full width and letting C's arithmetic conversions decide the
+/// remainder: no existing fixture had a literal wider than its own type in it.
 #[test]
 fn an_out_of_range_literal_narrows_to_its_inferred_type() {
     assert_compiles_and_runs(
@@ -1219,11 +1216,11 @@ fn a_fallible_conversion_returns_an_option_instead_of_panicking() {
     );
 }
 
-/// MK7 §5: the remainder of a division at every integer width. This is the
-/// fixture that was missing when the asm backend moved a narrow remainder into
-/// a sixty-four-bit destination — a real `as` failure for `%` on `i32`/`u8`/
-/// `u16` that no fixture had ever reached, because the only fixtures dividing a
-/// narrow value were refused for other reasons first.
+/// The remainder of a division at every integer width. This is the fixture that
+/// was missing when a narrow remainder was moved into a sixty-four-bit
+/// destination: `%` on `i32`/`u8`/`u16` came out wrong at a width no fixture had
+/// reached, because the only fixtures dividing a narrow value were refused for
+/// other reasons first.
 #[test]
 fn remainder_works_at_every_integer_width() {
     assert_compiles_and_runs(
@@ -1516,8 +1513,6 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
     // `util.outside()` is the control, out of the grant on every evaluation,
     // and its denial is asserted whole rather than by substring, so the path,
     // the location, the `granted:` line and its indentation are all pinned.
-    // Both backends are held to all of it: MK7 §5 item 7 step 1 gave the asm
-    // backend the check that produces this text.
     let dir = caps_scratch("double_eval");
     std::fs::write(dir.join("a"), "FILECONTENT").unwrap();
     let target = project("caps_double_eval").join("main.kp");
@@ -1611,19 +1606,7 @@ fn a_granted_module_reads_inside_its_grant_through_a_primitive() {
 fn the_position_tables_keep_the_mode_and_the_directory_out_of_the_check() {
     // `fs.open_raw(path, "r")` must be checked on the path and not on the mode
     // (a relative "r" denies), and `process.spawn_raw(dir, program, ...)` on the
-    // program and not on the directory. The mirror case is the next test; the
-    // entries themselves are pinned for *both* backends in `codegen_asm.rs`'s
-    // `cap_decision` unit tests, because the asm backend refuses these two
-    // externs outright (no body yet) and never reaches a call site.
-    if backend() != "c" {
-        eprintln!(
-            "note: `fs.open_raw` and `process.spawn_raw` have no asm body yet, so the asm \
-             backend refuses a program that calls one before any check; backend '{}' runs \
-             nothing here (the position entries are pinned in the unit tests)",
-            backend()
-        );
-        return;
-    }
+    // program and not on the directory. The mirror case is the next test.
     let dir = caps_scratch("raw_positions");
     std::fs::write(dir.join("note.txt"), "note content\n").unwrap();
     assert_project_runs(
@@ -1639,16 +1622,6 @@ fn the_spawn_check_matches_the_program_and_not_the_directory() {
     // The mirror of the case above: the directory is inside the grant and the
     // program is not, so the denial has to name the *program*. Checking
     // argument 0 would have denied the directory and let the program through.
-    // C-only for the same reason as the case above: `process.spawn_raw` has no
-    // asm body yet, so a program that calls it is refused before the check.
-    if backend() != "c" {
-        eprintln!(
-            "note: `process.spawn_raw` has no asm body yet, so the asm backend refuses a \
-             program that calls it before any check; backend '{}' runs nothing here",
-            backend()
-        );
-        return;
-    }
     assert_project_denied_at_runtime(
         "caps_raw_positions_denied",
         &project("caps_raw_positions_denied").join("main.kp"),
@@ -1746,17 +1719,6 @@ fn a_granted_module_calls_a_gated_receiver_method_with_no_pattern() {
     // governs. A false denial here would leave every tool that manages its own
     // children unbuildable.
     //
-    // C-only: both methods reach `reap_raw`, and the asm backend has no body
-    // for the `std/process` externs yet, so it refuses the program by name
-    // before any gate question is asked.
-    if backend() != "c" {
-        eprintln!(
-            "note: `Child.wait`/`Child.is_running` reach the `std/process` externs, which \
-             have no asm body yet; backend '{}' runs nothing here",
-            backend()
-        );
-        return;
-    }
     assert_project_runs(
         "caps_method_granted",
         &project("caps_method_granted").join("main.kp"),
@@ -1767,11 +1729,9 @@ fn a_granted_module_calls_a_gated_receiver_method_with_no_pattern() {
 #[test]
 fn a_pd_initializer_outside_the_grant_is_denied_at_runtime() {
     // The initializer is checked at compile time against its module's grant and
-    // has to be checked at run time against the same module's patterns: the C
-    // backend emitted no check at all, and the asm backend emitted one under
-    // `main`'s identity, which scans the entry module's `/**` allowlist and
-    // admits everything. Both halves are pinned whole here, including the
-    // module name and the `granted:` block from `util`'s own allowlist.
+    // has to be checked at run time against the same module's patterns. The
+    // denial is pinned whole here, including the module name and the `granted:`
+    // block from `util`'s own allowlist.
     let target = project("pd_gated_denied").join("main.kp");
     let bin = out_path("pd_gated_denied");
     let build = kelpc()
@@ -1810,46 +1770,6 @@ fn a_pd_initializer_inside_the_grant_still_runs() {
         "true\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn the_pd_frames_check_scans_the_pd_modules_own_allowlist() {
-    // Read back out of the assembly rather than argued: the check the emitted
-    // `main` runs for the initializer passes `kelp_caps_util_fs` in the
-    // allowlist register, and never `kelp_caps_main_fs`. Under the fail-open
-    // this pin exists for, both symbols are in the file (every grant's array
-    // is emitted) and only the register the check loads tells them apart.
-    if backend() != "asm" {
-        eprintln!(
-            "note: this assertion reads the emitted assembly, so it is asm-backend-only; \
-             backend '{}' is not checked by it",
-            backend()
-        );
-        return;
-    }
-    let bin = out_path("pd_gated_denied_asm_check");
-    let build = kelpc()
-        .arg("build")
-        .arg(project("pd_gated_denied").join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected project 'pd_gated_denied' to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let s = std::fs::read_to_string(bin.with_extension("s"))
-        .expect("the asm backend writes the assembly next to the binary");
-    assert!(
-        s.contains("lea rdx, [rip+kelp_caps_util_fs]"),
-        "the check for the `pd` initializer does not scan the declaring module's own allowlist"
-    );
-    assert!(
-        !s.contains("lea rdx, [rip+kelp_caps_main_fs]"),
-        "the check for the `pd` initializer scans the entry module's allowlist"
-    );
 }
 
 #[test]
@@ -2081,11 +2001,10 @@ fn a_view_keeps_its_provenance_through_a_pattern_binding() {
     );
 }
 
-/// A function that returns a borrow other than `&str` — a `datac`, a `String`,
-/// a `Bytes`, and a returned `if` whose arms both derive from the reference
-/// parameter. The assembly backend classified a returned pointer for `str`
-/// alone, so every one of these was refused by name; both backends build it
-/// now and have to agree byte for byte.
+/// A function that returns a borrow other than `&str`: a `datac`, a `String`, a
+/// `Bytes`, and a returned `if` whose arms both derive from the reference
+/// parameter. Each is a shape a return-class classifier can get wrong, so the
+/// stdout of all four is pinned.
 #[test]
 fn a_function_may_return_a_borrow_of_any_type() {
     assert_compiles_and_runs(
@@ -2114,10 +2033,10 @@ fn byte_literals_are_u8_and_carry_hex_escapes() {
 }
 
 /// `isize` is `ptrdiff_t`, and the C backend emitted that name without
-/// including `<stddef.h>`, so every shape of the type failed to compile there
-/// while the assembly backend built all of them. One shape per way a type can
-/// appear, which is why this is a fixture and not a one-line repro: a local, a
-/// parameter, a return, a `datac` field and a `List` element.
+/// including `<stddef.h>`, so every shape of the type failed to compile. One
+/// shape per way a type can appear, which is why this is a fixture and not a
+/// one-line repro: a local, a parameter, a return, a `datac` field and a `List`
+/// element.
 #[test]
 fn isize_works_in_every_position_a_type_can_appear_in() {
     assert_compiles_and_runs(
@@ -2168,12 +2087,12 @@ fn integer_to_float_conversions_widen_and_round() {
 
 #[test]
 fn printing_a_string_or_a_float_uses_the_right_register_file() {
-    // MK7 §5 item 8: `%s` reads a pointer out of the *integer* register file
-    // and `%f` reads a value out of `xmm`, a variadic call says how many vector
-    // registers it used in `al`, and the two files are numbered independently —
-    // so a template interpolating one of each is where getting that wrong is
-    // silent rather than a crash. The u64 cases are the other half: bit 63 set
-    // is the one integer-to-float conversion `cvtsi2sd` alone gets wrong.
+    // `%s` reads a pointer out of the *integer* register file and `%f` reads a
+    // value out of `xmm`, a variadic call says how many vector registers it used
+    // in `al`, and the two files are numbered independently, so a template
+    // interpolating one of each is where getting that wrong is silent rather
+    // than a crash. The u64 cases are the other half: bit 63 set is the one
+    // integer-to-float conversion a plain conversion alone gets wrong.
     assert_compiles_and_runs(
         "tests/fixtures/asm_float_print.kp",
         "2.500000\n0.250000\n0.125000\nn=7 half=2.500000 ok=false s=kelp\n2.500000 0.250000\n\
@@ -2335,8 +2254,8 @@ fn a_borrow_cannot_be_an_array_element() {
 #[test]
 fn a_const_may_call_a_function_and_the_call_is_evaluated_at_compile_time() {
     // A-19: parameters are bound, a `while` loop runs and a recursive call
-    // terminates, all inside the compiler. The result is a literal at
-    // every use site, so both backends agree on it.
+    // terminates, all inside the compiler. The result is a literal at every use
+    // site, so no backend sees the call.
     assert_compiles_and_runs(
         "tests/fixtures/const_fn.kp",
         "24\n120\n128\n144\n",
@@ -2359,24 +2278,12 @@ fn a_modules_own_items_are_reachable_bare_inside_it() {
 /// leak fails the suite. If `cc` has no AddressSanitizer the check is skipped
 /// — the one place in this suite that depends on a toolchain feature.
 ///
-/// It is therefore also the one test that is **C-backend-only**: it recompiles
-/// `kelpc`'s generated `.c` with `cc -fsanitize=address`, so under another
-/// backend there is no such file and nothing to instrument. That is not a gap
-/// this test can close by being cleverer — an own backend cannot borrow C's
-/// sanitizer to verify its own code, which is exactly why `plan/mk7-own-backend.md`
-/// records the transfer of the memory-safety argument as Tier 3's obligation
-/// rather than this suite's. Under a second backend the test reports that and
-/// passes, so the suite stays green while the obligation stays visible.
+/// It works by rebuilding `kelpc`'s generated `.c` with `cc -fsanitize=address`,
+/// so it is specific to the C backend: another backend writes no `.c` for it to
+/// instrument, and `memory_gate.rs`'s valgrind sweep is the gate that covers a
+/// backend writing its own object instead.
 #[test]
 fn heap_fixtures_are_double_free_and_leak_clean() {
-    if backend() != "c" {
-        eprintln!(
-            "note: the AddressSanitizer gate instruments the generated C, so it is \
-             C-backend-only; backend '{}' is not checked by it",
-            backend()
-        );
-        return;
-    }
     let fixtures = [
         "heap_bytes",
         "heap_move_then_rebind",
@@ -2655,10 +2562,9 @@ fn a_forward_reference_between_datacs_is_rejected() {
 }
 
 // MK7 §5 item 4, the float-in-aggregate slice: a `datac` or `enum` payload
-// holding an `f32`/`f64`, classified per eightbyte. stdout covers the values;
-// the `.s` assertion below covers the registers, because both ends of a
-// generated call are this backend and a consistently *wrong* register file is
-// invisible to a differential stdout diff.
+// holding an `f32`/`f64`, classified per eightbyte. The fixture's stdout covers
+// the values; a consistently wrong register file is the failure a literal
+// cannot see.
 
 #[test]
 fn a_float_field_datac_travels_in_the_vector_register_file() {
@@ -2719,154 +2625,6 @@ fn a_field_of_an_owned_temporary_is_dropped_per_read() {
         "tests/fixtures/heap_field_of_owned_temporary.kp",
         "aa\nbb\n2\naa\n4\n3\n2\n2\n",
     );
-}
-
-/// The text of one labelled function's body in an emitted `.s` — from
-/// `name:` to its `.size` directive.
-fn function_body_in_asm(s: &str, name: &str) -> String {
-    let start = s
-        .find(&format!("\n{name}:\n"))
-        .unwrap_or_else(|| panic!("no `{name}` in the emitted assembly"))
-        + 1;
-    let end = s[start..]
-        .find(&format!("\n    .size {name},"))
-        .unwrap_or_else(|| panic!("no `.size` for `{name}`"))
-        + start;
-    s[start..end].to_string()
-}
-
-/// A function's epilogue in an emitted `.s` — from its `.Lret` label to the
-/// end of the body. The literal-building stores appear before the label, so
-/// this is how a return's own register loads are told from them.
-fn epilogue_in_asm(body: &str) -> &str {
-    let at = body.rfind(".Lret").expect("a function has a return label");
-    &body[at..]
-}
-
-/// A function's parameter stores — everything before the first use of the
-/// parameter slot (`lea r11`), which is where the body proper starts. The
-/// arithmetic after it legitimately uses `xmm` for a float, so "no vector
-/// register in the prologue" is the claim, not "none in the function".
-fn prologue_in_asm(body: &str) -> &str {
-    match body.find("    lea r11") {
-        Some(i) => &body[..i],
-        None => body,
-    }
-}
-
-/// MK7 §5 item 4's authority test: the SysV class each aggregate eightbyte
-/// travels in, read straight out of the emitted assembly.
-///
-/// This is the only kind of check that can catch the failure the differential
-/// sweep cannot: both the caller and the callee are this backend, so putting a
-/// value in the wrong register *at every call* still prints the right answer.
-/// The expectations are the registers the C backend's own binary uses for the
-/// same declarations, read with `objdump`. The test is asm-only — there is no
-/// `.s` under the C backend — and reports that and passes, the way the
-/// AddressSanitizer gate reports itself as C-only.
-#[test]
-fn the_classifier_puts_each_aggregate_eightbyte_in_its_own_register_file() {
-    if backend() != "asm" {
-        eprintln!(
-            "note: the register-level ABI assertions read the emitted assembly, so they are \
-             asm-backend-only; backend '{}' is not checked by them",
-            backend()
-        );
-        return;
-    }
-    let bin = out_path("float_datac_abi_registers");
-    let build = kelpc()
-        .arg("build")
-        .arg(fixture("tests/fixtures/float_datac_boundary.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected the boundary fixture to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let s = std::fs::read_to_string(bin.with_extension("s"))
-        .expect("assemble_and_link keeps <out>.s beside the binary");
-
-    // Parameters: one eightbyte per register, in each file, in eightbyte order.
-    let sum2 = function_body_in_asm(&s, "kelp_sum2");
-    assert!(sum2.contains("movsd [rbp-40], xmm0"), "{sum2}");
-    assert!(!sum2.contains(", rdi"), "{sum2}");
-
-    let sum1 = function_body_in_asm(&s, "kelp_sum1");
-    assert!(sum1.contains("movss [rbp-40], xmm0"), "{sum1}");
-
-    let addmix = function_body_in_asm(&s, "kelp_addmix");
-    let int_at = addmix.find("mov QWORD PTR [rbp-48], rdi").expect("integer first eightbyte");
-    let sse_at = addmix.find("movsd [rbp-40], xmm0").expect("SSE second eightbyte");
-    assert!(int_at < sse_at, "{addmix}");
-
-    let addmix2 = function_body_in_asm(&s, "kelp_addmix2");
-    let sse_at = addmix2.find("movsd [rbp-48], xmm0").expect("SSE first eightbyte");
-    let int_at = addmix2.find("mov QWORD PTR [rbp-40], rdi").expect("integer second eightbyte");
-    assert!(sse_at < int_at, "{addmix2}");
-
-    let sumf = function_body_in_asm(&s, "kelp_sumf");
-    assert!(sumf.contains("movsd [rbp-48], xmm0"), "{sumf}");
-    assert!(sumf.contains("movsd [rbp-40], xmm1"), "{sumf}");
-
-    let sum3 = function_body_in_asm(&s, "kelp_sum3");
-    assert!(sum3.contains("movsd [rbp-48], xmm0"), "{sum3}");
-    assert!(sum3.contains("movss [rbp-40], xmm1"), "{sum3}");
-
-    // MEMORY class: the value is copied out of the caller's outgoing area at
-    // `[rbp+16]`, and no register at all is involved.
-    let sumbig = function_body_in_asm(&s, "kelp_sumbig");
-    assert!(sumbig.contains("mov rax, QWORD PTR [rbp+16]"), "{sumbig}");
-    assert!(!prologue_in_asm(&sumbig).contains("xmm"), "{sumbig}");
-
-    // Returns: the same rows, from the return label's register loads.
-    let mk2 = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mk2")).to_string();
-    assert!(mk2.contains("movsd xmm0, QWORD PTR [rbp"), "{mk2}");
-    assert!(!mk2.contains("mov rax, QWORD PTR [rbp"), "{mk2}");
-
-    let mkf = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkf")).to_string();
-    assert!(mkf.contains("movsd xmm0, QWORD PTR [rbp"), "{mkf}");
-    assert!(mkf.contains("movsd xmm1, QWORD PTR [rbp"), "{mkf}");
-
-    let mkmix = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkmix")).to_string();
-    let rax_at = mkmix.find("mov rax, QWORD PTR [rbp").expect("integer first");
-    let xmm_at = mkmix.find("movsd xmm0, QWORD PTR [rbp").expect("SSE second");
-    assert!(rax_at < xmm_at, "{mkmix}");
-
-    let mkmix2 = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkmix2")).to_string();
-    let xmm_at = mkmix2.find("movsd xmm0, QWORD PTR [rbp").expect("SSE first");
-    let rax_at = mkmix2.find("mov rax, QWORD PTR [rbp").expect("integer second");
-    assert!(xmm_at < rax_at, "{mkmix2}");
-
-    // MEMORY return: the hidden pointer comes back in `rax`, no register.
-    let mkbig = epilogue_in_asm(&function_body_in_asm(&s, "kelp_mkbig")).to_string();
-    assert!(mkbig.contains("mov rax, QWORD PTR [rbp-32]"), "{mkbig}");
-    assert!(!mkbig.contains("xmm"), "{mkbig}");
-
-    // The union merge: two sixteen-byte enums that differ only in whether a
-    // non-float variant shares the payload's eightbyte. `Merge` must be
-    // INTEGER/INTEGER (`rdi` + `rsi`); `Pure` INTEGER/SSE (`rdi` + `xmm0`).
-    let build = kelpc()
-        .arg("build")
-        .arg(fixture("tests/fixtures/float_enum_register_file.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
-    let s = std::fs::read_to_string(bin.with_extension("s")).expect("the emitted `.s`");
-
-    let take_merge = function_body_in_asm(&s, "kelp_takeMerge");
-    assert!(take_merge.contains("mov QWORD PTR [rbp-48], rdi"), "{take_merge}");
-    assert!(take_merge.contains("mov QWORD PTR [rbp-40], rsi"), "{take_merge}");
-    assert!(!prologue_in_asm(&take_merge).contains("xmm"), "{take_merge}");
-
-    let take_pure = function_body_in_asm(&s, "kelp_takePure");
-    assert!(take_pure.contains("mov QWORD PTR [rbp-48], rdi"), "{take_pure}");
-    assert!(take_pure.contains("movsd [rbp-40], xmm0"), "{take_pure}");
 }
 
 // ---------------------------------------------------------------------------
@@ -3065,13 +2823,12 @@ fn a_list_copies_elements_at_their_own_width() {
 
 #[test]
 fn a_narrow_aggregate_field_is_read_at_its_own_width() {
-    // The regression fixture for a wrong-width load in `codegen_asm.rs`'s
-    // `field_read` (MK7 §5's enum slice, fixed after): the aggregate arm
-    // loaded a whole `QWORD` whatever the field's own width was. A padded
-    // stack slot absorbs the extra bytes, so both backends printed the same
-    // number and the differential sweep could not see it — but a field read
-    // out of a `Box` block, which is `sizeof(Outer)` bytes and nothing more,
-    // made the load cross the allocation, which the valgrind sweep reports.
+    // The regression fixture for a wrong-width load in an aggregate field read:
+    // the read loaded a whole `QWORD` whatever the field's own width was. A
+    // padded stack slot absorbs the extra bytes, so the printed number came out
+    // right and a stdout comparison could not see it, but a field read out of a
+    // `Box` block, which is `sizeof(Outer)` bytes and nothing more, made the
+    // load cross the allocation, which the valgrind sweep reports.
     // Field widths 1, 2, 3, 4, 5 and 7 are here (the ones the machine cannot
     // move in one instruction are 3, 5 and 7), each read whole and byte by
     // byte, plus an 8-byte field, for which the single load is right.
@@ -3452,86 +3209,6 @@ fn path_absolute_resolves_a_relative_argument_against_a_base() {
     );
 }
 
-/// MK7 §5 item 7 step 1: the capability check the asm backend emits for a
-/// gated path call, read back out of the assembly rather than argued. This is
-/// the asm-side analogue of `cap_matcher.rs`'s
-/// `the_generated_capability_check_calls_the_kelp_matcher`: the check runs
-/// before the call it gates, the allowlist it scans is the calling module's
-/// own compiled-in array, and the check routine itself is made of the three
-/// calls the C glue makes, in the same order.
-#[test]
-fn the_asm_capability_check_runs_before_the_gated_call() {
-    if backend() != "asm" {
-        eprintln!(
-            "note: this assertion reads the emitted assembly, so it is asm-backend-only; \
-             backend '{}' is not checked by it",
-            backend()
-        );
-        return;
-    }
-    let bin = out_path("caps_gated_path_asm_check");
-    let build = kelpc()
-        .arg("build")
-        .arg(fixture("tests/fixtures/caps_gated_path.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected the gated-path fixture to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let s = std::fs::read_to_string(bin.with_extension("s"))
-        .expect("assemble_and_link keeps <out>.s beside the binary");
-
-    // The call site: the check first, then the call it gates, with the
-    // calling module's own allowlist and its pattern count.
-    let main = function_body_in_asm(&s, "main");
-    let check = main
-        .find("call kelp_rt$cap_check_path")
-        .unwrap_or_else(|| panic!("no capability check in `main`:\n{main}"));
-    let call = main
-        .find("call kelp_std__fs__read")
-        .unwrap_or_else(|| panic!("no gated call in `main`:\n{main}"));
-    assert!(
-        check < call,
-        "the check must run before the call it gates:\n{main}"
-    );
-    assert!(
-        main.contains("lea rdx, [rip+kelp_caps_caps_gated_path_fs]"),
-        "the check must scan the calling module's compiled-in allowlist:\n{main}"
-    );
-    assert!(
-        main.contains("mov ecx, 1"),
-        "the check must be handed the pattern count:\n{main}"
-    );
-
-    // The check routine: normalize, match, deny — the three pieces of the C
-    // glue, in the order the deny falls back to.
-    let check_body = function_body_in_asm(&s, "kelp_rt$cap_check_path");
-    let normalize = check_body
-        .find("call kelp_std__rt__path_normalize")
-        .unwrap_or_else(|| panic!("no path_normalize in the check:\n{check_body}"));
-    let glob = check_body
-        .find("call kelp_std__rt__glob_match")
-        .unwrap_or_else(|| panic!("no glob_match in the check:\n{check_body}"));
-    let deny = check_body
-        .find("call kelp_rt$cap_deny")
-        .unwrap_or_else(|| panic!("no deny path in the check:\n{check_body}"));
-    assert!(
-        normalize < glob && glob < deny,
-        "the check must normalize, then match, then deny:\n{check_body}"
-    );
-
-    // The allowlist itself, in the C backend's layout: one pointer per
-    // pattern, `NULL`-terminated.
-    assert!(
-        s.contains("kelp_caps_caps_gated_path_fs:\n"),
-        "the allowlist array is not in .rodata"
-    );
-}
-
 /// MK7 §5 item 7 step 1's other half: a call whose wide return value is
 /// discarded. A return wider than one eightbyte is written by the callee
 /// through a hidden pointer, so the caller supplies the storage even when the
@@ -3573,9 +3250,8 @@ fn a_symlink_is_seen_reported_and_left_alone_by_the_walk() {
 // ---------------------------------------------------------------------------
 // S4: the `std/fs` path family, called through its raw externs.
 //
-// The gated wrappers are refused by the `asm` backend until the capability
-// check lands, so the fixture reaches the bodies directly; it is the only
-// differential acceptance target the family has until then.
+// The fixture calls the raw externs directly rather than through the gated
+// wrappers, so each body is exercised on its own.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -3826,78 +3502,6 @@ fn a_net_pattern_that_is_not_a_host_is_rejected() {
         "caps_bad_net_pattern",
         &project("caps_bad_net_pattern").join("main.kp"),
         "is not a host",
-    );
-}
-
-/// MK7 §5 item 7 step 2: the `net` host:port check, read back out of the
-/// assembly. The step 1 assertion's sibling for the one `net` kind whose call
-/// site passes its location on the stack, and the pin for the argument-position
-/// rule the plan names: the host is the call's argument 0 and the port argument
-/// 1, so the check reads each from its own pushed slot.
-#[test]
-fn the_asm_net_hostport_check_reads_the_host_and_port_arguments() {
-    if backend() != "asm" {
-        eprintln!(
-            "note: this assertion reads the emitted assembly, so it is \
-             asm-backend-only; backend '{}' is not checked by it",
-            backend()
-        );
-        return;
-    }
-    let bin = out_path("caps_net_denied_asm_check");
-    let build = kelpc()
-        .arg("build")
-        .arg(project("caps_net_denied").join("main.kp"))
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("failed to spawn kelpc");
-    assert!(
-        build.status.success(),
-        "expected the net-denied project to compile, but it failed:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let s = std::fs::read_to_string(bin.with_extension("s"))
-        .expect("assemble_and_link keeps <out>.s beside the binary");
-
-    // The call site: the check first, then the call it gates, with the calling
-    // module's own allowlist and its pattern count.
-    let util = function_body_in_asm(&s, "kelp_util__connect_by_another_name");
-    let check = util
-        .find("call kelp_rt$cap_check_hostport")
-        .unwrap_or_else(|| panic!("no host:port check in `util`:\n{util}"));
-    let call = util
-        .find("call kelp_std__net__connect")
-        .unwrap_or_else(|| panic!("no gated call in `util`:\n{util}"));
-    assert!(
-        check < call,
-        "the check must run before the call it gates:\n{util}"
-    );
-    assert!(
-        util.contains("lea rcx, [rip+kelp_caps_util_net]"),
-        "the host:port check must scan the calling module's allowlist:\n{util}"
-    );
-    // The argument-position rule: both arguments are pushed before the check,
-    // so the port (argument 1) is nearest the top and the host (argument 0) is
-    // one slot below it. Reading them the other way round would format
-    // `<port>:<host>` and deny every well-formed call.
-    assert!(
-        util.contains("mov rsi, QWORD PTR [rsp+8]")
-            && util.contains("mov rdx, QWORD PTR [rsp+0]"),
-        "the host must be read from argument 0 and the port from argument 1:\n{util}"
-    );
-
-    // The check routine: match, then deny.
-    let body = function_body_in_asm(&s, "kelp_rt$cap_check_hostport");
-    let match_call = body
-        .find("call kelp_std__rt__host_match")
-        .unwrap_or_else(|| panic!("no host_match in the check:\n{body}"));
-    let deny = body
-        .find("call kelp_rt$cap_deny")
-        .unwrap_or_else(|| panic!("no deny path in the check:\n{body}"));
-    assert!(
-        match_call < deny,
-        "the check must match, then deny:\n{body}"
     );
 }
 
@@ -5210,10 +4814,10 @@ fn an_unknown_command_prints_the_usage_and_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// The backend seam (MK7 stage 1). `plan/mk7-own-backend.md` makes the selector
-// the precondition for every later stage, so it is asserted end-to-end here
-// rather than only in `backend.rs`'s unit tests: what matters is that the flag
-// and the environment variable reach the compiler, not that a parser works.
+// The backend seam. `plan/mk7-llvm-backend.md` makes the selector the
+// precondition for every later stage, so it is asserted end-to-end here rather
+// than only in `backend.rs`'s unit tests: what matters is that the flag and the
+// environment variable reach the compiler, not that a parser works.
 // ---------------------------------------------------------------------------
 
 /// The C backend is what every other test in this file is written against, so
@@ -5249,128 +4853,6 @@ fn the_c_backend_is_selectable_by_flag_environment_and_default() {
         );
         let run = Command::new(&bin).output().expect("failed to run the binary");
         assert_eq!(String::from_utf8_lossy(&run.stdout), "55\n");
-    }
-}
-
-/// The differential gate, at the level the whole MK7 argument rests on: the
-/// same fixture built by both backends must print the same bytes.
-///
-/// This is the one test that would catch a miscompile the fixture assertions
-/// cannot, because those compare against a *literal* an author wrote — a wrong
-/// literal and a wrong backend agree with each other. Comparing the two
-/// backends against each other is what makes the C backend an oracle rather
-/// than a second opinion, and it is why `codegen_c.rs` is never deleted
-/// (`plan/mk7-own-backend.md` §1.1).
-///
-/// The fixture list is deliberately scalar programs: it grows as the asm
-/// backend covers more, and a fixture that the asm backend still refuses makes
-/// this test fail, which is the intended signal — the list is a coverage
-/// assertion, not a wish list.
-#[test]
-fn the_two_backends_agree_on_the_scalar_fixtures() {
-    for name in [
-        "while_accumulator",
-        "if_expr",
-        "named_args",
-        "bitwise",
-        "asm_float_scalars",
-        // MK7 §5 item 4's fourth slice: the two ABI shapes it adds (a borrowed
-        // `datac` temporary, and a `MEMORY`-class value passed by value in the
-        // caller's argument area) go through the oracle too. The risk register
-        // calls aggregate passing the place silent miscompiles live, and a
-        // shared wrong literal is exactly what comparing the two backends
-        // catches and a `assert_compiles_and_runs` on its own cannot.
-        "borrow_temp_slots",
-        "datac_memory_class_by_value",
-        // MK7 §5 item 8's print gaps are the other place a wrong register is
-        // silent: `%f` reads `xmm`, `%s` reads an integer register, and `al`
-        // counts vector registers. A literal that looks right in both backends
-        // is exactly what this test exists to rule out.
-        "asm_float_print",
-        // ...and a `pd` is the other other: the same identifier is a hidden
-        // parameter inside a function and a global in `main`, and getting that
-        // wrong reads the wrong storage rather than failing to build.
-        "passdown_globals",
-        // MK7 §5 item 1: the extern path. These three are the first fixtures
-        // that build under the asm backend only because an `extern fun` became
-        // a call-site concern rather than a program-level refusal, and each one
-        // pins a different half of it. `escapes` and `char_literals` reach
-        // `std/str`'s three byte primitives — `strlen` through the PLT, plus
-        // this backend's own bounds-checked `byte_at_raw` — while importing a
-        // module whose other 40-odd functions are heap-typed, so they are also
-        // the proof that an unreachable function is not this program's code
-        // (`live_functions`). `stdlib_math` is the libm agreement: the C
-        // backend calls `sqrt`/`floor` and so does this one, and the point of
-        // comparing them is that a hand-written backend getting the *value*
-        // right by a different route would still be a divergence.
-        "escapes",
-        "char_literals",
-        "stdlib_math",
-        // MK7 §5's first heap slice: a `Bytes` is a MEMORY-class aggregate that
-        // owns its buffer, so these four pin the two things a wrong
-        // implementation gets *quietly* wrong rather than loudly — the hidden
-        // return pointer and the caller's outgoing argument area on the ABI
-        // side, and where the `free` lands on the lifetime side. A leak prints
-        // nothing at all, which is why the fixture literals alone cannot see
-        // it; `valgrind` over the same binaries is the memory gate (see §5).
-        "heap_returned",
-        "heap_param_borrow",
-        "heap_drops_in_control_flow",
-        "heap_reassign",
-        "stdlib_mem",
-        // ...and the division the asm backend could not even assemble at
-        // narrow widths until this slice's probe found it: the remainder's
-        // register is the one place a hand-written `idiv`/`div` can read the
-        // wrong half of the dividend and print a plausible wrong number.
-        "int_mod_narrow",
-        // ...and the two the *same* probe found in the other direction: a
-        // literal wider than its inferred type, and a zero-capacity `String`
-        // whose `data` was NULL. Both were invisible to a fixture literal
-        // because no fixture had ever written either shape.
-        "int_literal_width",
-        "string_with_capacity_zero",
-        // ...and the radix literals, where the two backends could disagree on
-        // the *value* of a literal before anything else sees it: `0xffffffff`
-        // narrowed to an `i32` is the same two's-complement question
-        // `int_literal_width` pins, one spelling further out.
-        "int_literals",
-        // ...and `isize` in every position, where the two backends disagreed by
-        // construction rather than by arithmetic: only the C preamble was wrong.
-        "isize_kinds",
-        // ...and the byte literals, which are `u8` values from the lexer and
-        // so take the narrow-integer path through both backends, plus a string
-        // with a hex escape, where the escape reaches code generation as an
-        // ordinary character.
-        "byte_literals",
-        // MK7 §5's next slice: a scalar borrow and the store through it. A
-        // wrong pointer is a wrong number or a wild write, not a build
-        // failure, which is exactly what comparing the two backends catches.
-        "scalar_borrow",
-        "scalar_borrow_f64",
-    ] {
-        let source = format!("tests/fixtures/{name}.kp");
-        let mut outputs = Vec::new();
-        for backend in ["c", "asm"] {
-            let bin = out_path(&format!("differential_{backend}_{name}"));
-            let build = Command::new(kelpc_bin())
-                .args(["build", &format!("--backend={backend}")])
-                .arg(fixture(&source))
-                .arg("-o")
-                .arg(&bin)
-                .output()
-                .expect("failed to spawn kelpc");
-            assert!(
-                build.status.success(),
-                "the '{backend}' backend could not build '{source}':\n{}",
-                String::from_utf8_lossy(&build.stderr)
-            );
-            let run = Command::new(&bin).output().expect("failed to run the binary");
-            outputs.push(String::from_utf8_lossy(&run.stdout).to_string());
-        }
-        assert_eq!(
-            outputs[0], outputs[1],
-            "the 'c' and 'asm' backends disagree on '{source}'"
-        );
     }
 }
 
@@ -5480,9 +4962,9 @@ fn an_unknown_backend_is_rejected_and_a_planned_one_says_so() {
     assert!(stderr.contains("expected one of:"), "{stderr}");
     assert!(!stderr.contains("'own'"), "{stderr}");
 
-    // Only the tiers that are genuinely still ahead are reserved now that
-    // `asm` is selectable: a reserved name is a roadmap item, and reporting an
-    // implemented one that way would be as wrong as calling a typo planned.
+    // Only the tiers that are genuinely still ahead are reserved: a reserved
+    // name is a roadmap item, and reporting an implemented one that way would
+    // be as wrong as calling a typo planned.
     for planned in ["own"] {
         let out = build_with(planned);
         assert!(!out.status.success(), "'{planned}' is not implemented yet");

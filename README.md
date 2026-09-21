@@ -98,22 +98,20 @@ cargo build --release -p kelpc
 ./target/release/kelpc fmt -w examples/hello.kp       # format in place (also: --check)
 ```
 
-With no `-o`, the binary and the generated C (or assembly) land in `build/`
+With no `-o`, the binary and the generated C land in `build/`
 beside the working directory. A directory with a
 [`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it — `name`,
 `version`, `entry` — builds the same way: `kelpc build myproject`.
 
-Two code generators are selectable, with `--backend=` or `KELPC_BACKEND`:
+One code generator is selectable today, with `--backend=` or `KELPC_BACKEND`:
 
 - **`c`** (the default) transpiles to C and hands the file to `cc -O2 -fwrapv -lm`.
-- **`asm`** emits x86-64 assembly itself and finishes with `as` and `ld`. No C
-  compiler is in that chain. This backend is **retired as a direction**: the next
-  backend is LLVM IR (`plan/mk7-llvm-backend.md`), and `asm` is removed once that
-  backend passes the fixture corpus. It stays selectable until then.
+  It is the reference backend: the fixture suite is written against it, and it
+  stays selectable permanently as the oracle a second backend is compared with.
 
-The C backend is the reference: every fixture is built by both and the two
-binaries' stdout is compared, so a construct the `asm` backend does not lower
-yet is refused by name rather than silently miscompiled.
+The next backend is LLVM IR (`plan/mk7-llvm-backend.md`), which adds the `llvm`
+name to `--backend=` when its scalar subset lands. The hand-written `asm` backend
+was removed on 2026-09-21; its tracked plan lives under `plan/asm-backend/`.
 
 `kelpc check` runs everything a build runs except code generation: the same
 modules, the same type check, the same borrow check. It answers whether a
@@ -151,7 +149,7 @@ directory is not followed.
 
 | path | what is there |
 | --- | --- |
-| `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_c`, `codegen_asm`, `driver` |
+| `kelpc/src/` | the compiler: `lexer`, `preprocess`, `parser`, `infer` (types, generics, capabilities), `borrowck` (moves, drops), `codegen_c`, `driver` |
 | `kelpc/std/` | the standard library, written in Kelp and embedded into the compiler |
 | `kelpc/runtime/` | the reviewed C that is still C: the capability glue `codegen_c.rs` emits (`cap_glue.c`), and the C matcher/normalizer the §8 differential tests compare the Kelp versions against |
 | `kelpc/tests/` | the fixture suite, the multi-file project fixtures, the matcher/normalizer corpora, the formatter corpus, and `run-all-backends.sh` |
@@ -166,28 +164,26 @@ directory is not followed.
   and a runtime `libLLVM` dependency, and `plan/mk7-llvm-backend.md` §1 is the
   decision and its trade-offs.
 - The `c` backend: a C compiler and glibc.
-- The `asm` backend: `as` and `ld` (binutils) and the glibc it links against. If
-  the library directory is not found automatically, set `KELPC_GLIBC_DIR` to the
-  directory holding `crt1.o` and `libc.so`.
 - Optional: `valgrind`, for the memory gate.
+- For the LLVM backend once `llvm-sys` lands: `nix-shell shell.nix` provides the
+  LLVM development output (`llvm-config`, `include/llvm-c`) and sets
+  `LLVM_SYS_211_PREFIX`.
 
 ## Tests
 
 ```sh
 cargo test                                   # unit tests + the fixture suite
 cargo test --test fmt                        # the formatter's corpus and properties
-KELPC_BACKEND=asm cargo test --test compile_and_run
-BACKENDS="c asm" ./kelpc/tests/run-all-backends.sh
+./kelpc/tests/run-all-backends.sh            # the suite once per implemented backend
 ```
 
-The fixture suite is backend-agnostic by construction — it compiles a fixture,
-runs the result, and compares stdout — so pointing `KELPC_BACKEND` at a backend
-validates it with no test edits. Three heavier checks exist and are `#[ignore]`d
-so the default run stays fast:
+The fixture suite is backend-agnostic by construction: it compiles a fixture, runs
+the result, and compares stdout, so pointing `KELPC_BACKEND` at a backend
+validates it with no test edits. Two heavier checks exist and are `#[ignore]`d so
+the default run stays fast:
 
 ```sh
-cargo test --test backend_coverage -- --ignored --nocapture   # differential sweep + refusal ranking
-cargo test --test memory_gate    -- --ignored                 # valgrind over both backends' binaries
+cargo test --test memory_gate    -- --ignored                 # valgrind over the built binaries
 cargo test --test cap_matcher    -- --ignored                 # the capability matcher against its C reference
 ```
 
@@ -212,5 +208,5 @@ the compiler; these two are the tooling around it.
 | `plan/roadmap.md` | the plan: the marks, the open items, and the backlog in its last part |
 | `plan/done.md` | the milestone record of what has shipped |
 | `plan/mk7-llvm-backend.md` | the plan of record for the compiler's next backend, LLVM IR |
-| `plan/asm-backend/` | the retired hand-written backend track: its plans, its call-overhead and call-cost measurements, and the encoder/ELF inventory |
+| `plan/asm-backend/` | the removed hand-written backend track: its plans, its call-overhead and call-cost measurements, and the encoder/ELF inventory |
 | `bench/speed/README.md` | what the benchmark measures and how |

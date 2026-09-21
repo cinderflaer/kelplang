@@ -8,8 +8,11 @@ Nothing here is a plan of record, nothing here is maintained, and no file here i
 re-measured when the compiler moves.
 
 The plan of record for the compiler's next backend is `../mk7-llvm-backend.md`.
-The `asm` backend's source (`kelpc/src/codegen_asm.rs` and its tests) is removed
-once the LLVM backend passes the corpus, in one commit.
+The `asm` backend's source was removed on 2026-09-21: `kelpc/src/codegen_asm.rs`,
+the `Backend::Asm` variant, the `asm` rows of the tests and the fixture that
+existed only for its assertion are gone. The removal was moved ahead of LLVM
+parity by decision, because the retired track's second-backend differential was
+already partial and keeping it cost a hotspot test file.
 
 ## Why the track was retired
 

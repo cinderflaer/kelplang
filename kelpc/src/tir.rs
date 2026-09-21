@@ -136,9 +136,8 @@ pub struct Expr {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     /// An integer literal, at `i128` so that a `const` folded to the top of
-    /// `u64`'s range is representable; `codegen_c.rs` and `codegen_asm.rs` both
-    /// cut it to the expression's own type, which is what makes the width the
-    /// type's rather than the literal's.
+    /// `u64`'s range is representable; codegen cuts it to the expression's own
+    /// type, which is what makes the width the type's rather than the literal's.
     IntLit(i128),
     /// `'a'` — the code point, already checked against the type
     /// `infer.rs` resolved for it. Codegen casts it to that type's C

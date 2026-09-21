@@ -1,22 +1,21 @@
 // MK7 §5: reading a *field* of an owned call temporary. `mkName()` returns a
 // `datac` that owns a `String`, and every read below borrows a field of the
-// temporary rather than the temporary itself — so nothing else owns it and it
-// has to be freed once the statement that read through it is done. This
-// backend stages the temporary into a scratch slot so the field has an
-// address, and the staging is what leaked: the slot was built and the borrow
-// taken, but no drop site was recorded for it, so the `Named` the call
-// returned outlived the statement and its `String` was never freed.
+// temporary rather than the temporary itself, so nothing else owns it and it
+// has to be freed once the statement that read through it is done. The backend
+// stages the temporary into a scratch slot so the field has an address, and the
+// staging is what leaked: the slot was built and the borrow taken, but no drop
+// site was recorded for it, so the `Named` the call returned outlived the
+// statement and its `String` was never freed.
 //
 // The field read here is the `i64` one, which is what makes this fixture a
 // *C-buildable* shape: the C backend emits a valid `printf` for a scalar field
-// of an rvalue (it does not for an owned field — taking the address of one is
-// invalid C, `heap_field_of_owned_temporary.kp`), so this fixture is in both
-// the differential sweep and the valgrind gate. The leak it pins is real
-// under valgrind even though the C binary exits clean: at `-O2` clang
+// of an rvalue (it does not for an owned field; taking the address of one is
+// invalid C, `heap_field_of_owned_temporary.kp`), so the fixture is in the
+// valgrind gate. The leak it pins is real in a backend that stages the
+// temporary itself, but the C binary exits clean: at `-O2` clang
 // dead-code-eliminates the `String.from_str` allocation whose only reader is
-// the field the program never prints, so the C binary runs no `free` at all
-// and still reports none — the oracle for this shape is the asm binary's
-// valgrind log, not the C binary's silent exit.
+// the field the program never prints, so it runs no `free` at all and still
+// reports none. The fixture stays for the next backend to be judged by.
 datac Named(val r: i64, val name: String)
 
 fun mkName().R: Named = Named(r = 7, name = String.from_str("hi"))

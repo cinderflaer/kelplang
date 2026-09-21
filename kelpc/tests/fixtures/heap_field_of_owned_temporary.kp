@@ -6,14 +6,10 @@
 // The fix stages the temporary itself and drops *it*, which is why a
 // two-owned-field `datac` is the interesting case and not a one-field one.
 //
-// This fixture used to be asm-backend-only, and reported itself so under the
-// C backend: the same shape was invalid C there. `codegen_c.rs` emitted
+// The same shape was invalid C before the fix: `codegen_c.rs` emitted
 // `(&(kelp_mkName()).kelp_r)`, the address of a field of an rvalue, and `cc`
-// rejected it (`heap_field_of_owned_temporary.kp`'s own probe in the slice's
-// blockquote). Both backends now stage the temporary and free *it*, so the
-// fixture is in the differential sweep and in the leak gate under each of
-// them; `memory_gate.rs`'s asm-only branch is the general mechanism for any
-// fixture the C backend rejects, and no longer fires for this one.
+// rejected it. The backend now stages the temporary and frees *it*, so the
+// fixture builds and is in the valgrind leak gate.
 datac Named(val r: String, val name: String)
 
 // The container spelling of the same rvalue: `kelp_List__i32` is what the

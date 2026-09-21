@@ -2846,16 +2846,14 @@ impl<'a> Gen<'a> {
                 // resolved for it from its context. Without the cast a literal
                 // wider than that type was emitted at its full 64-bit value and
                 // the operation was then performed at that width by C's usual
-                // arithmetic conversions — so `print(1000000000007 %
+                // arithmetic conversions, so `print(1000000000007 %
                 // 1000000007)`, whose expression type is `i32`, printed the
-                // 64-bit remainder (999993014) here while the asm backend, which
-                // cuts every literal to its own width, printed the 32-bit one
-                // (-727379961). Both halves of that disagreement were
-                // unobservable until a fixture was written for it, because a
-                // literal that fits its type is unaffected either way. This is
-                // the same narrowing the declaration path (`val x: i32 =
-                // 1000000000007`) already performed, and the same one
-                // `codegen_asm.rs`'s `IntLit` does.
+                // 64-bit remainder (999993014) instead of the 32-bit one
+                // (-727379961). The mistake was unobservable until a fixture was
+                // written for it, because a literal that fits its type is
+                // unaffected either way. This is the same narrowing the
+                // declaration path (`val x: i32 = 1000000000007`) already
+                // performed.
                 format!("(({})({}))", expr.ty.c_type(), v)
             }
             // A character literal is an integer constant with the code point

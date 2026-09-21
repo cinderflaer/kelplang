@@ -2045,9 +2045,8 @@ fn large_unformatted_source() -> String {
 
 /// The verdict `kelpc build` reaches for a file or a project: its exit code and
 /// its stderr, which is the reference `kelpc fmt` has to agree with. The backend
-/// is pinned to `c` for the same reason the semantic test pins it — the asm
-/// backend is under change by another workflow — and these files fail in the
-/// front end, before any backend runs.
+/// is pinned to `c`, and these files fail in the front end, before any backend
+/// runs.
 fn build_verdict(entry: &Path, out: &Path) -> (Option<i32>, String) {
     let output = kelpc()
         .args(["build", "--backend=c"])
@@ -2300,9 +2299,8 @@ fn buildable_candidates() -> Vec<PathBuf> {
 
 /// A formatted program is the same program: building the original and the
 /// formatted copy with the C backend, and running both, yields identical stdout
-/// and the same exit status. The backend is pinned to `c` because the asm
-/// backend is under change by a concurrent workflow and this test is about the
-/// formatter, not the backend.
+/// and the same exit status. The backend is pinned to `c` because this test is
+/// about the formatter, not the backend.
 ///
 /// The formatted copy is written into a mirror of the tree the original lives in
 /// and built from there, so a project's imports still resolve — the same reason

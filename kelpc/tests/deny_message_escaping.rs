@@ -2,10 +2,9 @@
 //! domain into the generated C as a string literal, and a `.kp` path may hold
 //! a backslash or a double quote. Passed through raw, the backslash is eaten as
 //! a C escape (the denial prints the path with the byte dropped) and the quote
-//! closes the literal (the generated C does not compile at all). The asm
-//! backend interns the bytes directly, so it is the oracle: for the same source
-//! path both backends must print the denial byte for byte, and the C build must
-//! succeed.
+//! closes the literal (the generated C does not compile at all). The C backend
+//! must escape the bytes it interns, and the denial must still print the path
+//! as it is on disk.
 //!
 //! The shape comes from the source *directory* name rather than the file name,
 //! because that is how the fuzzing lane measured it and because a directory is
@@ -81,41 +80,35 @@ fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
 }
 
 /// The same project under one shape of special byte in its directory name: the
-/// C backend compiles it, both backends deny it, the denial names the directory
-/// as it is on disk, and the two denials are identical.
-fn both_backends_deny_identically(shape: &str) {
+/// C backend compiles it, the binary denies the call, and the denial names the
+/// directory as it is on disk.
+fn the_denial_names_the_source_directory(shape: &str) {
     let dir = scratch(shape);
     fs::write(dir.join("u.kp"), UNIT).expect("write u.kp");
     fs::write(dir.join("main.kp"), MAIN).expect("write main.kp");
 
     let c = denial(&dir, "c", "c.bin");
-    let asm = denial(&dir, "asm", "asm.bin");
 
     let c_text = String::from_utf8_lossy(&c);
     assert!(
         c_text.contains("is outside the fs capability granted to module 'u'"),
-        "the C backend's binary did not deny the call:\n{c_text}"
+        "the compiled binary did not deny the call:\n{c_text}"
     );
     let dir_text = dir.to_string_lossy();
     assert!(
         c_text.contains(dir_text.as_ref()),
-        "the C backend's denial does not name the source directory as it is on \
+        "the denial does not name the source directory as it is on \
          disk ('{dir_text}'):\n{c_text}"
-    );
-    assert_eq!(
-        c, asm,
-        "the C and asm backends print different denial messages for a source \
-         path under '{dir_text}'"
     );
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn denial_message_survives_a_backslash_in_the_source_path() {
-    both_backends_deny_identically("esc\\bs");
+    the_denial_names_the_source_directory("esc\\bs");
 }
 
 #[test]
 fn denial_message_survives_a_quote_in_the_source_path() {
-    both_backends_deny_identically("esc\"qt");
+    the_denial_names_the_source_directory("esc\"qt");
 }

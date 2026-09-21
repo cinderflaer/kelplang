@@ -100,28 +100,20 @@ fn build(dir: &Path, backend: &str, bin_name: &str) -> Output {
         .expect("failed to spawn kelpc")
 }
 
-/// Builds `dir/main.kp` under both backends with `import_line` and `body` and
-/// asserts each build is refused with a message that names `item` and holds
-/// `needle`, and that the two backends print the same text. The two backends
-/// agreeing on the front end's message is what makes the backend's own refusal
-/// unreachable rather than load-bearing: inference has already answered, so
-/// codegen never sees the construct.
-fn refused_identically(name: &str, import_line: &str, body: &str, item: &str, needle: &str) {
+/// Builds `dir/main.kp` with `import_line` and `body` and asserts the build is
+/// refused with a message that names `item` and holds `needle`. The refusal is
+/// the front end's, not a backend's: inference has already answered, so no
+/// code generator ever sees the construct.
+fn refused(name: &str, import_line: &str, body: &str, item: &str, needle: &str) {
     let dir = scratch(name);
     project(&dir, import_line, body);
 
     let c = build(&dir, "c", "c.bin");
-    let asm = build(&dir, "asm", "asm.bin");
     assert!(
         !c.status.success(),
-        "expected the c backend to refuse '{item}' named in {name}, but it built"
-    );
-    assert!(
-        !asm.status.success(),
-        "expected the asm backend to refuse '{item}' named in {name}, but it built"
+        "expected the build to refuse '{item}' named in {name}, but it built"
     );
     let c_text = String::from_utf8_lossy(&c.stderr).to_string();
-    let asm_text = String::from_utf8_lossy(&asm.stderr).to_string();
     assert!(
         c_text.contains(item),
         "the refusal for {name} does not name '{item}':\n{c_text}"
@@ -129,10 +121,6 @@ fn refused_identically(name: &str, import_line: &str, body: &str, item: &str, ne
     assert!(
         c_text.contains(needle),
         "the refusal for {name} does not say '{needle}':\n{c_text}"
-    );
-    assert_eq!(
-        c_text, asm_text,
-        "the c and asm backends refuse '{item}' in {name} with different messages"
     );
     let _ = fs::remove_dir_all(&dir);
 }
@@ -144,7 +132,7 @@ fn refused_identically(name: &str, import_line: &str, body: &str, item: &str, ne
 fn a_granted_module_cannot_name_a_gated_item_as_a_function_value() {
     for item in ["fs.read", "fs.read_raw"] {
         for (shape, body) in shapes(item) {
-            refused_identically(
+            refused(
                 &format!("granted_{}_{}", item.replace('.', "_"), shape),
                 GRANT,
                 &body,
@@ -162,7 +150,7 @@ fn a_granted_module_cannot_name_a_gated_item_as_a_function_value() {
 fn an_ungranted_module_cannot_name_a_gated_item_as_a_function_value() {
     for item in ["fs.read", "fs.read_raw"] {
         for (shape, body) in shapes(item) {
-            refused_identically(
+            refused(
                 &format!("ungranted_{}_{}", item.replace('.', "_"), shape),
                 NO_GRANT,
                 &body,
@@ -187,27 +175,24 @@ fn a_function_literal_over_a_gated_call_is_still_checked() {
         "fun leak().R: usize {\n    val f = fun(p: &str).R: Bytes = fs.read(p)\n    return f(\"/etc/hostname\").len()\n}",
     );
 
-    for backend in ["c", "asm"] {
-        let bin_name = format!("{backend}.bin");
-        let build = build(&dir, backend, &bin_name);
-        assert!(
-            build.status.success(),
-            "expected the {backend} backend to build a function literal over 'fs.read':\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let run = Command::new(dir.join(&bin_name))
-            .output()
-            .expect("failed to run the compiled binary");
-        assert!(
-            !run.status.success(),
-            "expected the {backend} binary to deny a path outside the grant"
-        );
-        let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(
-            stderr.contains("is outside the fs capability granted to module 'util'"),
-            "the {backend} binary did not deny the path:\n{stderr}"
-        );
-    }
+    let build = build(&dir, "c", "c.bin");
+    assert!(
+        build.status.success(),
+        "expected a function literal over 'fs.read' to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(dir.join("c.bin"))
+        .output()
+        .expect("failed to run the compiled binary");
+    assert!(
+        !run.status.success(),
+        "expected the binary to deny a path outside the grant"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("is outside the fs capability granted to module 'util'"),
+        "the binary did not deny the path:\n{stderr}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -235,27 +220,24 @@ fn an_ungated_function_is_still_a_value_in_a_local_a_field_and_a_parameter() {
     let dir = scratch("ungated");
     fs::write(dir.join("main.kp"), UNGATED).expect("write main.kp");
 
-    for backend in ["c", "asm"] {
-        let bin_name = format!("{backend}.bin");
-        let build = build(&dir, backend, &bin_name);
-        assert!(
-            build.status.success(),
-            "expected the {backend} backend to build an ungated function value:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let run = Command::new(dir.join(&bin_name))
-            .output()
-            .expect("failed to run the compiled binary");
-        assert!(
-            run.status.success(),
-            "expected the {backend} binary to exit successfully, got:\n{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&run.stdout),
-            "42\n6\n8\n",
-            "unexpected stdout from the {backend} binary"
-        );
-    }
+    let build = build(&dir, "c", "c.bin");
+    assert!(
+        build.status.success(),
+        "expected an ungated function value to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(dir.join("c.bin"))
+        .output()
+        .expect("failed to run the compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the binary to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "42\n6\n8\n",
+        "unexpected stdout from the binary"
+    );
     let _ = fs::remove_dir_all(&dir);
 }

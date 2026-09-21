@@ -161,7 +161,8 @@ alongside `clang 21.1.8`.
   - A flip with no way back is how a second backend becomes unmaintained.
 - **The backend seam.** `backend.rs` keeps its shape: the selector, the names, the
   `--backend=`/`KELPC_BACKEND` resolution, `Backend::DEFAULT`. The new name is
-  `llvm`. `asm` leaves `Backend::IMPLEMENTED` when its source is removed.
+  `llvm`. `asm` was removed from `Backend::IMPLEMENTED` on 2026-09-21, with its
+  source and its rows in the tests.
 - **The fixture suite stays backend-agnostic** (compile, run, compare stdout), so it
   validates the new backend by being pointed at it.
 - **The language does not change.** The surface, the capability model, the move and
@@ -177,8 +178,8 @@ alongside `clang 21.1.8`.
 
 `codegen_llvm.rs` walks `tir` and builds an `LLVMModuleRef`. `tir` is already the
 surface both existing backends consume, and the retired track proved it is
-backend-complete: `codegen_asm.rs` lowers the whole language except the rows its
-refusal ranking names. So the front half of the compiler is unchanged and the new
+backend-complete: `codegen_asm.rs` lowered the whole language except the rows its
+refusal ranking named. So the front half of the compiler is unchanged and the new
 module is a peer of `codegen_c.rs`, not a new pipeline.
 
 | Kelp | LLVM IR |
@@ -349,12 +350,12 @@ is required to believe the flip, and saying so is part of the flip's notes.
 
 | Gate | What happens to it |
 | --- | --- |
-| `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions go with the asm backend: the `.s`-level SysV classifier test (`the_classifier_puts_each_aggregate_eightbyte_in_its_own_register_file`) and the assembly-text assertions. |
-| `kelpc/tests/backend_coverage.rs` | **Repurpose.** This is exactly the right instrument and it was written for this: the differential sweep, the refusal ranking, and the "a refusal must begin with the documented prefix" rule. `ASM_BUILT_BASELINE` becomes `LLVM_BUILT_BASELINE` and the ratchet tracks the new backend. The ranking's target becomes zero rather than "monotone". |
-| `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired; until then the file's header says valgrind-only for this backend, as it does for `asm` today. |
-| `kelpc/tests/run-all-backends.sh` | **Repurpose.** `BACKENDS` gains `llvm`; `asm` leaves when the source leaves. |
-| `codegen_asm.rs` and the `asm` rows of the tests | **Retire**, in one commit, once the LLVM backend passes the corpus. That commit deletes the module, the `asm` baseline, the `.s`-level tests and the `Backend::Asm` variant, and it is the only deletion in this plan. Until that commit the `asm` rows stay green, because a backend that is still selectable must still work. |
-| `ISSUES.md` entries about the `asm` backend | Close when that commit lands, not before. The entries against the archived plan text become moot when the plan is archived and can be wiped in the same session. |
+| `kelpc/tests/compile_and_run.rs` | **Unchanged in kind.** It is backend-agnostic by construction, so the LLVM backend is added by putting `llvm` in `Backend::IMPLEMENTED`. The `asm`-specific assertions left with the backend on 2026-09-21: the `.s`-level SysV classifier test, the assembly-text capability-check assertions and the two-backend differential test are gone. |
+| `kelpc/tests/backend_coverage.rs` | **Deleted, to be rebuilt for LLVM.** The differential sweep and the refusal ratchet were `asm`-shaped throughout (`ASM_BUILT_BASELINE`, `REFUSAL_PREFIX`) and nothing survived the removal. The instrument is rebuilt against `LLVM_BUILT_BASELINE` when the new backend lands, with the ranking's target at zero rather than "monotone". |
+| `kelpc/tests/memory_gate.rs` | **Repurpose and extend.** The valgrind half covers LLVM binaries unchanged; it was reduced to the C sweep on 2026-09-21 when the `asm` rows left. The ASAN half, which today can only instrument the C backend, comes back for LLVM (§4.1) once the ASAN pass and runtime are wired. |
+| `kelpc/tests/run-all-backends.sh` | **Repurpose.** `BACKENDS` gains `llvm`; `asm` left with the source on 2026-09-21. |
+| `codegen_asm.rs` and the `asm` rows of the tests | **Done early, on 2026-09-21.** The module, the `asm` baseline, the `.s`-level tests, the `Backend::Asm` variant and the fixture that existed only for its assertion are gone, and the C-only suite is green. The deletion moved ahead of LLVM parity by decision: the retired track's second-backend differential was already partial, and keeping it cost a hotspot test file plus permanently refused fixtures. |
+| `ISSUES.md` entries about the `asm` backend | **Closed on 2026-09-21**, with the removal, in the same session. The entries against the archived plan text were wiped with them. |
 
 ## 7. What would make the flip unsafe
 
