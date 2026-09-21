@@ -2,6 +2,8 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::opt::OptLevel;
+
 /// The C runtime object, compiled from `runtime/kelp_rt.c` by `build.rs` and
 /// embedded in the compiler binary. The driver writes it to a temporary file at
 /// link time, so `kelpc` needs nothing beside its own binary and does not depend
@@ -19,21 +21,30 @@ pub struct CompileError {
 
 /// Writes `c_source` to `<out_path>.c` (kept alongside the binary, not
 /// deleted, so a generated-C debugging session is a simple `gdb ./foo`
-/// against a file that's actually there) and shells out to `cc -O2` to
+/// against a file that's actually there) and shells out to `cc -O<n>` to
 /// produce the native binary at `out_path`.
+///
+/// `opt` is the selected optimization level, and it is the same `-O` the LLVM
+/// backend and the final link get: one level means one level for both backends
+/// (MK7 S6, `plan/mk7-llvm-backend.md` §4.3), so the differential sweep compares
+/// them at one level rather than two.
 ///
 /// This is the C backend's *finishing* step, and the only place in the
 /// compiler that invokes an external tool. A later backend does not call it: it
 /// writes its own object and links it, and this file's whole dependency on a
 /// system C compiler ends at this function.
-pub fn compile_c(c_source: &str, out_path: &Path) -> Result<(), CompileError> {
+pub fn compile_c(
+    c_source: &str,
+    out_path: &Path,
+    opt: OptLevel,
+) -> Result<(), CompileError> {
     let c_path = out_path.with_extension("c");
     std::fs::write(&c_path, c_source).map_err(|e| CompileError {
         message: format!("could not write generated C to '{}': {e}", c_path.display()),
     })?;
 
     let output = Command::new("cc")
-        .arg("-O2")
+        .arg(opt.cc_flag())
         .arg("-o")
         .arg(out_path)
         .arg(&c_path)
@@ -65,9 +76,9 @@ pub fn compile_c(c_source: &str, out_path: &Path) -> Result<(), CompileError> {
 /// emitted per program: see `codegen_llvm::externs_c_source` for why a fixed
 /// object cannot carry them.
 ///
-/// The flags are the ones the runtime object `build.rs` compiles under
-/// (`-O2 -fwrapv`), so a body that does arithmetic at the edge of a signed range
-/// wraps the way the C backend's `-O2 -fwrapv` compiled copy of it does.
+/// The flags are the ones the C backend compiles under at the same level
+/// (`-O<n> -fwrapv`), so a body that does arithmetic at the edge of a signed
+/// range wraps the way the C backend's `-O<n> -fwrapv` compiled copy of it does.
 /// `-Werror=implicit-function-declaration` is the one extra: the bodies call the
 /// runtime helpers through prototypes written out beside them, and C99 makes an
 /// undeclared call a warning, so a helper whose prototype went missing would be
@@ -76,13 +87,14 @@ pub fn compile_c_object(
     c_source: &str,
     c_path: &Path,
     obj_path: &Path,
+    opt: OptLevel,
 ) -> Result<(), CompileError> {
     std::fs::write(c_path, c_source).map_err(|e| CompileError {
         message: format!("could not write generated C to '{}': {e}", c_path.display()),
     })?;
     let output = Command::new("cc")
         .arg("-c")
-        .arg("-O2")
+        .arg(opt.cc_flag())
         .arg("-fwrapv")
         .arg("-Werror=implicit-function-declaration")
         .arg("-o")
@@ -121,10 +133,15 @@ pub fn compile_c_object(
 /// an ordinary object on the link line, after the IR object and before `-lm`, so
 /// a body that calls a runtime helper resolves against the runtime object above
 /// it and one that calls `sqrt` resolves against the library below.
+///
+/// `opt` is the selected level's `-O` flag on the link line. At link time it is
+/// inert without LTO, but it is the same flag `compile_c` passes, so the two
+/// backends' finishing steps stay one vocabulary (MK7 S6).
 pub fn link_llvm_object(
     object_path: &Path,
     externs_object: Option<&Path>,
     out_path: &Path,
+    opt: OptLevel,
 ) -> Result<(), CompileError> {
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
@@ -139,7 +156,7 @@ pub fn link_llvm_object(
     })?;
     let mut command = Command::new("cc");
     command
-        .arg("-O2")
+        .arg(opt.cc_flag())
         .arg("-o")
         .arg(out_path)
         .arg(object_path)

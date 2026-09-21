@@ -12,6 +12,7 @@ mod infer;
 mod lexer;
 mod lint;
 mod llvm_ffi;
+mod opt;
 mod parser;
 mod preprocess;
 mod pretty;
@@ -23,6 +24,7 @@ mod types;
 use backend::Backend;
 use diag::{Diagnostic, Severity, SourceMap};
 use fmt::RefusalKind;
+use opt::OptLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -71,8 +73,8 @@ const BUILD_DIR: &str = "build";
 
 fn usage() {
     eprintln!(
-        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>] [--deny-outdated]\n       \
-         {BIN_NAME} run <file.{EXT}> [--deny-outdated]\n       \
+        "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [--backend=<name>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
+         {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
          {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
@@ -81,6 +83,13 @@ fn usage() {
          {BIN_NAME} version\n\n\
          The backend may also be chosen with the KELPC_BACKEND environment\n\
          variable; an explicit --backend wins over it. The default is 'c'.\n\n\
+         The optimization level is -O0, -O1, -O2, -O3 or -Os, and -O2 is the\n\
+         default, the level the C backend has always used. One level is one\n\
+         level for both backends: it selects the LLVM pass pipeline and the\n\
+         target machine's codegen level, and it is the -O flag the C backend's\n\
+         cc and the final link are given. -Oz is not offered: it is a clang-only\n\
+         spelling and the C backend's cc may be gcc, so the vocabulary has to\n\
+         be one both accept; -Os is for size.\n\n\
          A spelling in the register of outdated syntax still compiles, and\n\
          build and run print it as an 'outdated:' warning naming what to write\n\
          instead and saying it is removed in the next development cycle.\n\
@@ -238,10 +247,20 @@ fn check_command(args: &[String]) -> ExitCode {
 /// `deny_outdated` is `--deny-outdated`: a load that uses outdated syntax
 /// reports those findings as errors and stops, before anything is generated.
 ///
+/// `opt` is the `-O` level (MK7 S6, `plan/mk7-llvm-backend.md` §4.3). It is
+/// passed to whichever backend runs below, and to the `cc` calls each one makes,
+/// so one level is one level for both backends.
+///
 /// Everything before `backend` is backend-independent, which is why the suite
 /// that exercises it does not care which backend is selected; the seam is the
 /// one `match` below, and it is the only place a code generator is named.
-fn build(path: &str, out_path: &Path, backend: Backend, deny_outdated: bool) -> bool {
+fn build(
+    path: &str,
+    out_path: &Path,
+    backend: Backend,
+    deny_outdated: bool,
+    opt: OptLevel,
+) -> bool {
     let mut sources = SourceMap::new();
 
     let loaded = match resolve::load(Path::new(path), &mut sources) {
@@ -278,7 +297,7 @@ fn build(path: &str, out_path: &Path, backend: Backend, deny_outdated: bool) -> 
     match backend {
         Backend::C => {
             let c_source = codegen_c::generate(&typed, &drops, &sources);
-            if let Err(e) = driver::compile_c(&c_source, out_path) {
+            if let Err(e) = driver::compile_c(&c_source, out_path, opt) {
                 eprintln!("error: {}", e.message);
                 return false;
             }
@@ -287,7 +306,7 @@ fn build(path: &str, out_path: &Path, backend: Backend, deny_outdated: bool) -> 
             // The LLVM backend builds its own module, writes the textual IR
             // beside the binary, and links the object itself; the C source
             // string the arm above writes has no counterpart here.
-            if let Err(message) = codegen_llvm::compile(&typed, &drops, &sources, out_path) {
+            if let Err(message) = codegen_llvm::compile(&typed, &drops, &sources, out_path, opt) {
                 eprintln!("error: {message}");
                 return false;
             }
@@ -974,6 +993,7 @@ fn main() -> ExitCode {
     let mut out: Option<PathBuf> = None;
     let mut backend_flag: Option<String> = None;
     let mut deny_outdated = false;
+    let mut opt = OptLevel::DEFAULT;
     let mut i = 2;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -1004,6 +1024,18 @@ fn main() -> ExitCode {
             i += 1;
         } else if arg == "--deny-outdated" {
             deny_outdated = true;
+            i += 1;
+        } else if arg.starts_with("-O") {
+            // One `-O<n>` argument, not `-O <n>`: the level is a single
+            // spelling, so an out-of-range or unparseable one is a diagnostic
+            // rather than a value read from the next argument.
+            match OptLevel::parse(arg) {
+                Ok(level) => opt = level,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return ExitCode::FAILURE;
+                }
+            }
             i += 1;
         } else if path.is_none() {
             path = Some(arg.to_string());
@@ -1048,7 +1080,7 @@ fn main() -> ExitCode {
         }
     }
 
-    if !build(&path, &out_path, backend, deny_outdated) {
+    if !build(&path, &out_path, backend, deny_outdated, opt) {
         return ExitCode::FAILURE;
     }
 

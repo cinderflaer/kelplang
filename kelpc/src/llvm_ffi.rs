@@ -81,15 +81,19 @@ use llvm_sys::debuginfo::{
     LLVMDIBuilderFinalize, LLVMDebugMetadataVersion, LLVMDisposeDIBuilder,
     LLVMDWARFEmissionKind, LLVMDWARFSourceLanguage, LLVMDIFlagPrototyped, LLVMSetSubprogram,
 };
+use llvm_sys::error::{LLVMDisposeErrorMessage, LLVMErrorRef, LLVMGetErrorMessage};
 use llvm_sys::LLVMLinkage;
+use llvm_sys::transforms::pass_builder::{
+    LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMRunPasses,
+};
 use llvm_sys::{LLVMIntPredicate, LLVMModuleFlagBehavior, LLVMRealPredicate};
 use llvm_sys::prelude::{
     LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef,
     LLVMMetadataRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
 };
 use llvm_sys::target::{
-    LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMDisposeTargetData, LLVMTargetDataRef,
-    LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
+    LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMDisposeTargetData, LLVMSetModuleDataLayout,
+    LLVMTargetDataRef, LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
 };
 use llvm_sys::target_machine::{
     LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMCreateTargetDataLayout,
@@ -147,6 +151,32 @@ unsafe fn take_message(ptr: *mut c_char) -> String {
     let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
     // SAFETY: the same pointer, now released exactly once, as its contract says.
     unsafe { LLVMDisposeMessage(ptr) };
+    text
+}
+
+/// Take the message out of an `LLVMErrorRef` and consume the error.
+///
+/// `LLVMRunPasses` reports a failed pipeline as an error object rather than a
+/// status code, and `LLVMGetErrorMessage` is the consuming read: the error is
+/// not usable after it, and the string it returns is freed with
+/// `LLVMDisposeErrorMessage` rather than `LLVMDisposeMessage`.
+///
+/// # Safety
+///
+/// `err` must be a non-null error an LLVM function returned and not yet
+/// consumed.
+unsafe fn take_error(err: LLVMErrorRef) -> String {
+    // SAFETY: the caller guarantees an unconsumed error; this read consumes it.
+    let ptr = unsafe { LLVMGetErrorMessage(err) };
+    if ptr.is_null() {
+        return String::new();
+    }
+    // SAFETY: the pointer is the NUL-terminated string LLVM allocated; the copy
+    // happens before it is freed.
+    let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    // SAFETY: the same pointer, released exactly once, by the disposer that
+    // pairs with LLVMGetErrorMessage.
+    unsafe { LLVMDisposeErrorMessage(ptr) };
     text
 }
 
@@ -671,6 +701,24 @@ impl<'ctx> Module<'ctx> {
         unsafe { copy_str(LLVMGetTarget(self.raw)) }
     }
 
+    /// Give the module `layout`, the target's data layout
+    /// (`LLVMSetModuleDataLayout`), so its `target datalayout` string matches
+    /// the machine that emits the object.
+    ///
+    /// This is not cosmetic. A data-layout string is what a pass uses to size
+    /// a type and to place a struct field, and a module without one gets LLVM's
+    /// built-in default, which is not the host's (the default aligns an `i64` to
+    /// 4, the `x86-64` layout to 8). A pass that folds a struct GEP to a byte
+    /// offset under the wrong layout then computes an offset codegen believes,
+    /// which is a silent wrong-answer miscompile (MK7 S6 found it at `-O1` and
+    /// above). Taking the layout from the same `TargetMachine` that will write
+    /// the object is what makes the passes and codegen agree.
+    pub fn set_data_layout(&self, layout: &DataLayout) {
+        // SAFETY: the module and the layout are live, and LLVM copies the
+        // layout out of the target-data handle.
+        unsafe { LLVMSetModuleDataLayout(self.raw, layout.raw) };
+    }
+
     /// Declare a function named `name` of type `ty` in this module
     /// (`LLVMAddFunction`).
     ///
@@ -762,6 +810,46 @@ impl<'ctx> Module<'ctx> {
         } else {
             Err(text)
         }
+    }
+
+    /// Run the pass pipeline `pipeline` over the module (`LLVMRunPasses`, the
+    /// new pass manager's textual entry point).
+    ///
+    /// `pipeline` is a spelling like `default<O2>`; `machine` supplies the
+    /// target and the data layout the target-specific passes (the vectorizer,
+    /// the unroller) need, and LLVM reads it rather than taking it, so it stays
+    /// owned by the caller.
+    ///
+    /// The pass manager reports a failure as an `LLVMErrorRef` rather than a
+    /// status code, which is why [`take_error`] exists; an unparseable pipeline
+    /// and a pass that reports an error both arrive here. A pipeline that runs
+    /// is not proof the module is still well formed, so the caller verifies
+    /// again before emitting (see `codegen_llvm::compile`).
+    pub fn run_passes(&self, pipeline: &str, machine: &TargetMachine) -> Result<(), String> {
+        let pipeline = cstring(pipeline);
+        // SAFETY: the options are freshly created and released once below, and
+        // LLVM copies no pointer out of them.
+        let options = unsafe { LLVMCreatePassBuilderOptions() };
+        // SAFETY: the module and machine are live, the pipeline string is
+        // NUL-terminated and outlives the call, and the options came from the
+        // create above.
+        let error = unsafe {
+            LLVMRunPasses(self.raw, pipeline.as_ptr(), machine.as_raw(), options)
+        };
+        // SAFETY: the options are released exactly once, by the disposer that
+        // pairs with the create.
+        unsafe { LLVMDisposePassBuilderOptions(options) };
+        if error.is_null() {
+            return Ok(());
+        }
+        // SAFETY: the error is non-null and not yet consumed; this read is the
+        // consuming one.
+        let text = unsafe { take_error(error) };
+        Err(if text.is_empty() {
+            format!("LLVM could not run the pass pipeline '{}'", pipeline.to_string_lossy())
+        } else {
+            text
+        })
     }
 
     /// Record `cu` as this module's compile unit, in the `llvm.dbg.cu` named
@@ -1624,15 +1712,29 @@ pub struct TargetMachine {
 
 impl TargetMachine {
     /// A target machine for the host triple, at
-    /// [`LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault`].
+    /// [`LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault`] (the `-O2` codegen
+    /// level).
     ///
-    /// The shortcut for the one triple `kelpc` currently emits for. See
-    /// [`for_triple`] for the parameters and the errors.
+    /// The shortcut for the one triple `kelpc` currently emits for at the
+    /// default level. [`for_host_at`] is the shaped-for-a-level entry point
+    /// `codegen_llvm::compile` uses; see [`for_triple`] for the parameters and
+    /// the errors.
     ///
+    /// [`for_host_at`]: TargetMachine::for_host_at
     /// [`for_triple`]: TargetMachine::for_triple
     pub fn for_host() -> Result<Self, String> {
+        TargetMachine::for_host_at(LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault)
+    }
+
+    /// A target machine for the host triple at `level`, the codegen half of an
+    /// optimization level (`opt::OptLevel::codegen_level`).
+    ///
+    /// The level chooses instruction selection, scheduling and register
+    /// allocation; the module passes are the other half and `run_passes` runs
+    /// them over the module this machine writes.
+    pub fn for_host_at(level: LLVMCodeGenOptLevel) -> Result<Self, String> {
         let triple = default_target_triple();
-        TargetMachine::for_triple(&triple, LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault)
+        TargetMachine::for_triple(&triple, level)
     }
 
     /// A target machine for `triple` (`LLVMGetTargetFromTriple` and
@@ -1828,6 +1930,11 @@ pub struct DebugBuilder<'ctx> {
     // module has been written is too late, so the flag is what keeps the drop
     // path from being the second caller.
     finalized: Cell<bool>,
+    // Whether a pass pipeline runs over the module. DWARF carries it as the
+    // compile unit's and each subprogram's `isOptimized` flag, which is what a
+    // debugger reads to know an instruction may have moved. It is `opt::OptLevel::is_optimized`,
+    // false only at `-O0`.
+    optimized: bool,
     context_marker: PhantomData<&'ctx Context>,
 }
 
@@ -1835,15 +1942,19 @@ impl<'ctx> DebugBuilder<'ctx> {
     /// A debug builder for `module` (`LLVMCreateDIBuilder`), finalized and
     /// disposed on drop.
     ///
-    /// The unresolved-node variant is not used: everything here is created
+    /// `optimized` is the compile unit's `isOptimized` flag and the same flag
+    /// on each subprogram: true when a pass pipeline will run over the module,
+    /// so a debugger is told the lines it reads are the optimized ones. The
+    /// unresolved-node variant is not used: everything here is created
     /// explicitly, in order, and nothing is left for a later pass to tie up.
-    pub fn new(module: &Module<'ctx>) -> Self {
+    pub fn new(module: &Module<'ctx>, optimized: bool) -> Self {
         DebugBuilder {
             // SAFETY: the module is live for 'ctx, and the builder is owned and
             // disposed on drop.
             raw: unsafe { LLVMCreateDIBuilder(module.as_raw()) },
             context: module.context,
             finalized: Cell::new(false),
+            optimized,
             context_marker: PhantomData,
         }
     }
@@ -1880,11 +1991,10 @@ impl<'ctx> DebugBuilder<'ctx> {
     /// subprogram and a source location per statement), never a type or a
     /// variable, so nothing downstream reads the language out of the unit.
     ///
-    /// `isOptimized` is false because no optimization pass pipeline runs over
-    /// this module: the IR the lowering wrote is the IR the target machine
-    /// lowers. The flag says exactly that, and a debugger that believed
-    /// otherwise would under-report what it can read (MK7 §4.3 has not chosen a
-    /// pipeline yet).
+    /// `isOptimized` is `true` when a pass pipeline runs over this module
+    /// (`opt::OptLevel::is_optimized`): the flag tells a debugger the line it
+    /// reads may be an instruction that moved, and it is false at `-O0`, where
+    /// the IR the lowering wrote is the IR the target machine lowers.
     pub fn compile_unit(&self, file: Metadata<'ctx>, producer: &str) -> Metadata<'ctx> {
         let producer = cstring(producer);
         let empty = cstring("");
@@ -1901,7 +2011,7 @@ impl<'ctx> DebugBuilder<'ctx> {
                     file.raw,
                     producer.as_ptr(),
                     producer.as_bytes().len(),
-                    0,
+                    self.optimized as LLVMBool,
                     empty.as_ptr(),
                     0,
                     0,
@@ -1959,7 +2069,8 @@ impl<'ctx> DebugBuilder<'ctx> {
     /// the `.kp` name (a mangled function keeps its mangled symbol).
     /// `scope_line` is the line the body opens on and is given the same value as
     /// `line`, which is what a one-line declaration wants; `is_local_to_unit`
-    /// and `is_optimized` are false for the reasons `compile_unit` gives.
+    /// is false and `is_optimized` is the builder's own flag, for the reason
+    /// `compile_unit` gives.
     #[allow(clippy::too_many_arguments)]
     pub fn subprogram(
         &self,
@@ -1990,7 +2101,7 @@ impl<'ctx> DebugBuilder<'ctx> {
                     1,
                     line,
                     LLVMDIFlagPrototyped,
-                    0,
+                    self.optimized as LLVMBool,
                 )
             },
             context_marker: PhantomData,

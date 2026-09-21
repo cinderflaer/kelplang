@@ -50,14 +50,26 @@ fn out_path(name: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// Build the faulting fixture with the `llvm` backend. The backend is pinned by
-/// flag rather than by `KELPC_BACKEND`, so a `KELPC_BACKEND=c` run of the suite
-/// cannot quietly check the C backend's `#line` behavior instead of DWARF.
-fn build_fault() -> PathBuf {
+/// The levels the S6 debug-info gate checks (MK7 §4.3): the unoptimized dev
+/// build and the default release build. A pass pipeline runs at `-O2` and none
+/// runs at `-O0`, so the two together are the claim "the line table still
+/// resolves a fault" at both ends. Optimizations may move the faulting
+/// instruction off its line under `-O2`; if that happens the test fails with the
+/// backtrace and the finding is reported rather than papered over.
+const LEVELS: &[&str] = &["-O0", "-O2"];
+
+/// Build the faulting fixture with the `llvm` backend at `level`. The backend
+/// and the level are pinned by flag rather than by `KELPC_BACKEND`, so a
+/// `KELPC_BACKEND=c` run of the suite cannot quietly check the C backend's
+/// `#line` behavior instead of DWARF, and one level cannot stand in for another.
+/// `tag` names the calling test, and it and the level both go into the artifact
+/// path: libtest runs these tests in parallel threads, and two builds of one
+/// fixture that shared a path would race for its object file.
+fn build_fault(level: &str, tag: &str) -> PathBuf {
     let source = fixture("fault.kp");
-    let bin = out_path("fault");
+    let bin = out_path(&format!("fault{level}_{tag}"));
     let build = Command::new(env!("CARGO_BIN_EXE_kelpc"))
-        .args(["build", "--backend=llvm"])
+        .args(["build", "--backend=llvm", level])
         .arg(&source)
         .arg("-o")
         .arg(&bin)
@@ -65,7 +77,7 @@ fn build_fault() -> PathBuf {
         .expect("failed to spawn kelpc");
     assert!(
         build.status.success(),
-        "expected '{}' to build with --backend=llvm, but it failed:\n{}",
+        "expected '{}' to build with --backend=llvm {level}, but it failed:\n{}",
         source.display(),
         String::from_utf8_lossy(&build.stderr)
     );
@@ -93,29 +105,32 @@ fn tool(program: &str, args: &[&str]) -> String {
 /// dump it did print.
 #[test]
 fn the_line_table_names_the_kp_file_and_its_statement_lines() {
-    let bin = build_fault();
-    let bin_text = bin.to_string_lossy().to_string();
-    let dump = tool("readelf", &["--debug-dump=decodedline", bin_text.as_str()]);
+    for level in LEVELS {
+        let bin = build_fault(level, "table");
+        let bin_text = bin.to_string_lossy().to_string();
+        let dump = tool("readelf", &["--debug-dump=decodedline", bin_text.as_str()]);
 
-    assert!(
-        dump.contains("fault.kp"),
-        "the decoded line table names no `.kp` file:\n{dump}"
-    );
-    // The lines this fixture must put in the table: the declarations of
-    // `divide` (15) and `main` (19), which are the lines their subprograms and
-    // their entry blocks start under, and the two statements the fault walks
-    // through, `return dividend / divisor` (16) and `print(divide(10, zero))`
-    // (21). Those two are the spans `codegen_c.rs::write_stmt` writes a `#line`
-    // from, so the two backends name the same line for the same statement.
-    for line in ["15", "16", "19", "21"] {
-        let named = dump.lines().any(|row| {
-            let mut fields = row.split_whitespace();
-            fields.next() == Some("fault.kp") && fields.next() == Some(line)
-        });
         assert!(
-            named,
-            "no line-table row for 'fault.kp' at line {line}:\n{dump}"
+            dump.contains("fault.kp"),
+            "at {level}, the decoded line table names no `.kp` file:\n{dump}"
         );
+        // The lines this fixture must put in the table: the declarations of
+        // `divide` (15) and `main` (19), which are the lines their subprograms
+        // and their entry blocks start under, and the two statements the fault
+        // walks through, `return dividend / divisor` (16) and
+        // `print(divide(10, zero))` (21). Those two are the spans
+        // `codegen_c.rs::write_stmt` writes a `#line` from, so the two backends
+        // name the same line for the same statement.
+        for line in ["15", "16", "19", "21"] {
+            let named = dump.lines().any(|row| {
+                let mut fields = row.split_whitespace();
+                fields.next() == Some("fault.kp") && fields.next() == Some(line)
+            });
+            assert!(
+                named,
+                "at {level}, no line-table row for 'fault.kp' at line {line}:\n{dump}"
+            );
+        }
     }
 }
 
@@ -129,44 +144,48 @@ fn the_line_table_names_the_kp_file_and_its_statement_lines() {
 /// the call chain rather than one instruction.
 #[test]
 fn a_fault_resolves_to_a_kp_file_and_line() {
-    let bin = build_fault();
+    for level in LEVELS {
+        let bin = build_fault(level, "bt");
 
-    let run = Command::new(&bin)
-        .current_dir(out_path(""))
-        .output()
-        .expect("failed to run the faulting binary");
-    assert_eq!(
-        run.status.code(),
-        None,
-        "the fixture was expected to die from a signal, but it exited cleanly"
-    );
-    assert_eq!(
-        run.status.signal(),
-        Some(libc_sigfpe()),
-        "the fixture was expected to die from SIGFPE, got {:?}",
-        run.status
-    );
+        let run = Command::new(&bin)
+            .current_dir(out_path(""))
+            .output()
+            .expect("failed to run the faulting binary");
+        assert_eq!(
+            run.status.code(),
+            None,
+            "at {level}, the fixture was expected to die from a signal, \
+             but it exited cleanly"
+        );
+        assert_eq!(
+            run.status.signal(),
+            Some(libc_sigfpe()),
+            "at {level}, the fixture was expected to die from SIGFPE, got {:?}",
+            run.status
+        );
 
-    let bin_text = bin.to_string_lossy().to_string();
-    let backtrace = tool(
-        "gdb",
-        &["-batch", "-nx", "-ex", "run", "-ex", "bt", bin_text.as_str()],
-    );
-    assert!(
-        backtrace.contains("Program received signal SIGFPE"),
-        "gdb did not reach the trap:\n{backtrace}"
-    );
-    // `divide`'s `return dividend / divisor`, which is the instruction that
-    // faults.
-    assert!(
-        backtrace.contains("fault.kp:16"),
-        "the faulting frame names no `.kp` line:\n{backtrace}"
-    );
-    // `main`'s `print(divide(10, zero))`, which is the call site.
-    assert!(
-        backtrace.contains("fault.kp:21"),
-        "the caller's frame names no `.kp` line:\n{backtrace}"
-    );
+        let bin_text = bin.to_string_lossy().to_string();
+        let backtrace = tool(
+            "gdb",
+            &["-batch", "-nx", "-ex", "run", "-ex", "bt", bin_text.as_str()],
+        );
+        assert!(
+            backtrace.contains("Program received signal SIGFPE"),
+            "at {level}, gdb did not reach the trap:\n{backtrace}"
+        );
+        // `divide`'s `return dividend / divisor`, which is the instruction that
+        // faults. At `-O2` an optimization is allowed to move it; if it does,
+        // this assertion is the finding rather than a test to relax.
+        assert!(
+            backtrace.contains("fault.kp:16"),
+            "at {level}, the faulting frame names no `.kp` line:\n{backtrace}"
+        );
+        // `main`'s `print(divide(10, zero))`, which is the call site.
+        assert!(
+            backtrace.contains("fault.kp:21"),
+            "at {level}, the caller's frame names no `.kp` line:\n{backtrace}"
+        );
+    }
 }
 
 /// SIGFPE is 8 on every Linux architecture this compiler targets; it is spelled

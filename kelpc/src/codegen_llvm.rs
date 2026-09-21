@@ -320,8 +320,9 @@
 //!
 //! Nothing here describes a variable or a type. The unit is a line table: what a
 //! reader gets is the file and the line, which is what the exit criterion asks
-//! for, and a debugger is told so through `isOptimized: false` and a subroutine
-//! type with no parameters.
+//! for, and a debugger is told so through the compile unit's `isOptimized` flag
+//! (true when a pass pipeline runs, false at `-O0`) and a subroutine type with
+//! no parameters.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -335,6 +336,7 @@ use crate::llvm_ffi::{
 };
 use crate::diag::SourceMap;
 use crate::lexer::Span;
+use crate::opt::OptLevel;
 use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
@@ -343,17 +345,25 @@ use crate::types::{
 };
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
-/// emit the object and link it with `cc`.
+/// run the level's pass pipeline, emit the object and link it with `cc`.
 ///
 /// The artifact contract mirrors the C path's `<out>.c`: this writes `<out>.ll`
 /// (MK7 §4.4) so the IR is inspectable next to the binary, and keeps the object
 /// it hands `cc` as `<out>.o`. Linking itself is `driver::link_llvm_object`, the
 /// sibling of `driver::compile_c`.
+///
+/// `opt` is the S6 optimization level (MK7 §4.3). It is one level for two
+/// things: the `default<O<n>>` pass pipeline `run_passes` runs over the module,
+/// and the codegen level the `TargetMachine` is created with. The textual IR is
+/// written **before** the pipeline so the artifact beside the binary is the
+/// lowering at every level, which is what the MK7 stage gates assert on; the
+/// object is what the pipeline and the codegen level produced.
 pub fn compile(
     program: &Program,
     drops: &DropPlan,
     sources: &SourceMap,
     out_path: &Path,
+    opt: OptLevel,
 ) -> Result<(), String> {
     llvm_ffi::initialize_native_target()?;
     let triple = llvm_ffi::default_target_triple();
@@ -367,13 +377,28 @@ pub fn compile(
 
     // The target machine is created here, before any type is built, because the
     // tagged union's size and alignment are read back from its data layout
-    // (`declare_aggregates`). It is the same machine the object is written with,
-    // so the layout the types were built for and the layout codegen assumes
-    // cannot be two different ones.
-    let machine = TargetMachine::for_host()?;
+    // (`declare_aggregates`). It is the same machine the object is written with
+    // and the one the pass pipeline reads its target from, so the layout the
+    // types were built for and the layout codegen assumes cannot be two
+    // different ones. It carries the level's codegen half; the pipeline below
+    // carries the module half.
+    let machine = TargetMachine::for_host_at(opt.codegen_level())?;
     let layout = machine.data_layout();
+    // The module has to carry the same data layout the machine lays the object
+    // out with before any pass runs: a pass that folds a struct field to a byte
+    // offset uses the module's layout, and LLVM's default is not the host's (it
+    // aligns an `i64` to 4). See `Module::set_data_layout`.
+    module.set_data_layout(&layout);
 
-    let mut lowering = Gen::new(&ctx, &module, program, drops, sources, &layout)?;
+    let mut lowering = Gen::new(
+        &ctx,
+        &module,
+        program,
+        drops,
+        sources,
+        &layout,
+        opt.is_optimized(),
+    )?;
     lowering.declare()?;
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
@@ -401,10 +426,25 @@ pub fn compile(
     // verified module and can crash on an unverified one rather than fail.
     module.verify()?;
 
+    // The lowering is written before the pipeline runs, so the artifact beside
+    // the binary is the IR this backend emitted at every level. The stage gates
+    // read this text and assert an instruction's shape; an optimized module
+    // would answer a different question.
     let ir_path = out_path.with_extension("ll");
     std::fs::write(&ir_path, module.to_ir_string()).map_err(|e| {
         format!("could not write generated IR to '{}': {e}", ir_path.display())
     })?;
+
+    // The level's module half: LLVM's own `default<O<n>>` pipeline. It is run
+    // over the module the machine below will write, with the machine for the
+    // target-specific passes. At `-O0` it is `default<O0>`, which adds no pass,
+    // so the IR the lowering wrote is the IR the target machine lowers.
+    module.run_passes(opt.pipeline(), &machine)?;
+
+    // A pass can leave a module LLVM's own verifier rejects, and the object
+    // writer assumes a verified module, so the check runs again after the
+    // pipeline rather than only before it.
+    module.verify()?;
 
     let object_path = out_path.with_extension("o");
     machine.emit_object(&module, &object_path)?;
@@ -417,14 +457,14 @@ pub fn compile(
         Some(source) => {
             let c_path = out_path.with_extension("externs.c");
             let obj_path = out_path.with_extension("externs.o");
-            crate::driver::compile_c_object(&source, &c_path, &obj_path)
+            crate::driver::compile_c_object(&source, &c_path, &obj_path, opt)
                 .map_err(|e| e.message)?;
             Some(obj_path)
         }
         None => None,
     };
 
-    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path)
+    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path, opt)
         .map_err(|e| e.message)
 }
 
@@ -667,6 +707,7 @@ impl<'a> Gen<'a> {
         drops: &'a DropPlan,
         sources: &'a SourceMap,
         layout: &'a DataLayout,
+        optimized: bool,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -739,7 +780,7 @@ impl<'a> Gen<'a> {
             sources,
             cap_arrays: HashMap::new(),
             cap_fns: declare_cap_fns(ctx, module),
-            debug: DebugBuilder::new(module),
+            debug: DebugBuilder::new(module, optimized),
             debug_scopes: HashMap::new(),
             pd_init_scope: None,
         })
@@ -8343,6 +8384,7 @@ mod layout_tests {
             &source,
             &dir.join("all.externs.c"),
             &dir.join("all.externs.o"),
+            crate::opt::OptLevel::DEFAULT,
         ) {
             panic!(
                 "a shipped extern body does not compile against the prelude: {}",

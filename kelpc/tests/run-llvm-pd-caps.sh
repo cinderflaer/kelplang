@@ -311,10 +311,17 @@ done
 # `codegen_c.rs::staged_field_value`. This is the shape that has to be dropped
 # once per expression rather than once per statement, which is what the loop
 # condition in this fixture exercises.
+#
+# The `align 8` is the target's ABI alignment for an `i64`, which the store now
+# carries because the module states the data layout it is emitted under
+# (`llvm_ffi::Module::set_data_layout`). Before S6 the module had none, so an
+# `i64` inherited the default layout's 4-byte alignment; MK7 S6 made the module
+# carry the machine's layout, which the vectorizer and any struct-offset folder
+# needs to agree with codegen.
 for want in \
     'store %tag_Named %call, ptr %field.root, align 8' \
     'call void @kelp_drop_Named(ptr %field.root)' \
-    'store i64 %r1, ptr %field.value, align 4'
+    'store i64 %r1, ptr %field.value, align 8'
 do
     if ! grep -qF "$want" "$HFV_IR"; then
         echo "the staged value read in '$HFV_IR' is missing: $want" >&2
