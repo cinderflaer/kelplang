@@ -99,34 +99,35 @@ cargo build --release -p kelpc
 ```
 
 With no `-o`, the binary and the backend's intermediate land in `build/` beside
-the working directory: the default `llvm` backend leaves `<stem>.ll` and
-`<stem>.o`, and `--backend=c` leaves the generated `<stem>.c`. A directory with a
+the working directory: the `llvm` backend leaves `<stem>.ll` and `<stem>.o`. A
+directory with a
 [`coral.toml`](https://homelabone.xenoo.dev/gittea/Juniper/coral) in it — `name`,
 `version`, `entry` — builds the same way: `kelpc build myproject`.
 
-Two code generators are selectable, with `--backend=` or `KELPC_BACKEND`:
+`kelpc` builds every program with one backend, **`llvm`**: it lowers the typed IR
+to LLVM IR, runs LLVM's own pass pipeline over the module, emits an object and
+hands it to `cc -lm`. There is no backend to choose.
 
-- **`llvm`** (the default since MK7 S7) lowers the typed IR to LLVM IR, runs
-  LLVM's own pass pipeline over the module, emits an object and hands it to
-  `cc -lm`. It builds every program the `c` backend builds, with stdout and exit
-  status identical on the whole fixture corpus, at every optimization level.
-- **`c`** transpiles to C and hands the file to `cc -O2 -fwrapv -lm`. It is the
-  reference backend: the fixture suite is written against it, and it stays
-  selectable permanently as the oracle the `llvm` backend is compared with and
-  as the escape hatch when `llvm` refuses a construct.
+The **`c` backend** is kept, maintained and run in CI as the project's own
+oracle. It transpiles to C and hands the file to `cc -O2 -fwrapv -lm`, and the
+fixture suite, the differential sweep and the fuzzer compare every `llvm` build
+against it. It is the reference backend rather than a second opinion, and it is
+not a user surface: no flag and no environment variable selects it, and the
+project's own test suite reaches it through an internal switch.
 
 `build` and `run` take an optimization level: `-O0`, `-O1`, `-O2`, `-O3` or `-Os`,
-with `-O2` the default. One level is one level for both backends: it selects the
+with `-O2` the default. One level is one level for the whole build: it selects the
 LLVM pass pipeline and the target machine's codegen level, and it is the `-O` flag
-the `c` backend's `cc`, the per-program `extern` object and the final link are
-given. `-Oz` is refused because it is a clang-only spelling and the `c` backend's
-`cc` may be gcc; `-Os` is the size level. `-O0` runs no module pipeline and is the
-cheap dev build.
+the per-program C object and the final link are given. `-Oz` is refused because it
+is a clang-only spelling and the linking `cc` may be gcc; `-Os` is the size level.
+`-O0` runs no module pipeline and is the cheap dev build.
 
 The hand-written `asm` backend was removed on 2026-09-21; its tracked plan lives
 under `plan/asm-backend/`. `plan/mk7-llvm-backend.md` is the plan of record. The
-S7 flip landed in code on 2026-09-21: `llvm` is the default and both backends
-stay in the suite. The release that announces the flip is still to be cut.
+S7 flip landed in code on 2026-09-21, and the user-facing backend selector was
+removed with it: `llvm` is the only backend a person building a program can use,
+and both backends stay in the suite. The release that announces the flip is still
+to be cut.
 
 `kelpc check` runs everything a build runs except code generation: the same
 modules, the same type check, the same borrow check. It answers whether a
@@ -175,30 +176,30 @@ directory is not followed.
 ## Requirements
 
 - Rust, 2024 edition (rustc 1.85 or newer), and the LLVM 21 development output,
-  to build the compiler: `llvm-sys` is a dependency of every build, not only of
-  `--backend=llvm`. `nix-shell shell.nix` provides it (`llvm-config`,
-  `include/llvm-c`) and sets `LLVM_SYS_211_PREFIX`;
-  `plan/mk7-llvm-backend.md` §1 is the decision and its trade-offs.
+  to build the compiler: `llvm-sys` is a dependency of every build. `nix-shell
+  shell.nix` provides it (`llvm-config`, `include/llvm-c`) and sets
+  `LLVM_SYS_211_PREFIX`; `plan/mk7-llvm-backend.md` §1 is the decision and its
+  trade-offs.
 - A `kelpc` built this way links `libLLVM-21.so` dynamically and needs it at
-  runtime, whichever backend it runs.
-- The `c` backend: a C compiler and glibc.
+  runtime.
+- A C compiler and glibc: `cc` is still the linker, and it builds the runtime
+  object and the per-program `extern` bodies.
 - Optional: `valgrind`, for the memory gate.
 
 ## Tests
 
 ```sh
-cargo test                                   # unit tests + the fixture suite, on the default backend
-KELPC_BACKEND=c cargo test                   # the same suite against the `c` oracle
+cargo test                                   # unit tests + the fixture suite, on the default `llvm` backend
 cargo test --test fmt                        # the formatter's corpus and properties
-./kelpc/tests/run-all-backends.sh            # the suite once per implemented backend (c and llvm)
+./kelpc/tests/run-all-backends.sh            # the suite once per backend, `llvm` and the `c` oracle
 ```
 
 The fixture suite is backend-agnostic by construction: it compiles a fixture, runs
-the result, and compares stdout, so pointing `KELPC_BACKEND` at a backend
-validates it with no test edits. It follows the compiler's default when the
-variable is unset, so `cargo test` exercises `llvm` and `KELPC_BACKEND=c`
-exercises the oracle. Two heavier checks exist and are `#[ignore]`d so
-the default run stays fast:
+the result, and compares stdout, so it exercises any backend by being pointed at
+it. It runs `llvm` by default and the `c` oracle through an internal switch the
+project's own suite sets, which is not a user surface;
+`./kelpc/tests/run-all-backends.sh` runs both on every change. Two heavier checks
+exist and are `#[ignore]`d so the default run stays fast:
 
 ```sh
 cargo test --test memory_gate    -- --ignored                 # valgrind over the built binaries
