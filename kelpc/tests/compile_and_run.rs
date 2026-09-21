@@ -52,7 +52,14 @@ fn out_path(name: &str) -> PathBuf {
     // different binary from the same fixture. Without it, two backends running
     // concurrently (or one leaving an artifact behind) would race for the same
     // file, and the loser's binary would be executed in the winner's place.
-    p.push(format!("kelpc_test_{}_{name}", backend()));
+    //
+    // The name of the test is part of it for the same reason inside one
+    // backend: two tests may build one fixture, and a second test's `exec` of a
+    // file the first is still writing fails with `Text file busy`
+    // (BUG-r4Nc8). libtest names each test's thread after the test, so the
+    // thread name is the test name.
+    let test = std::thread::current().name().unwrap_or("main").to_string();
+    p.push(format!("kelpc_test_{}_{test}_{name}", backend()));
     p
 }
 
