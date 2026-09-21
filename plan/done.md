@@ -1,6 +1,6 @@
 # The "Kelp" language milestone record (shipped)
 
-The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type), and **MK8-S1-M2 phases A-F, which close A-4**: `move T`, function values, `fun` literals, **captures and the closure type**, and the stdlib callbacks taking closures, and **MK8-S1-M3**, the `for` loop, which closes A-5's cheap half.
+The record of what actually happened, milestone by milestone. It overrides any plan elsewhere that said a feature would land earlier. Shipped: **MK1** (the core language), **MK2** (modules and compile-time), **MK3** (heap and containers), **MK4-S1-M1** (capabilities), the standard library program **MK5-S1 through MK5-S5**, **MK5-S6-M1** (`Option`/`Result`, `if let`, `?`, and the migration of the error-`datac` natives), **MK7** (the LLVM backend, S0 through S7, which flips the compiler to LLVM IR), and **MK8-S1-M1 parts 1 and 2** (tagged unions, then generics through a generic `Map` key type), and **MK8-S1-M2 phases A-F, which close A-4**: `move T`, function values, `fun` literals, **captures and the closure type**, and the stdlib callbacks taking closures, and **MK8-S1-M3**, the `for` loop, which closes A-5's cheap half.
 
 Entries are append-only history, so an older entry can describe a state a later one changed; each such entry names the one that superseded it.
 
@@ -1663,3 +1663,274 @@ the suite never reads that file.
 
 Suite at this record: 308 end-to-end (the fixture suite plus this test), unchanged otherwise from the entry
 above.
+
+## MK7 the LLVM backend: the seam, the lowering, the flip (DONE, `930f31b`)
+
+*The plan of record is `plan/mk7-llvm-backend.md`. The hand-written x86-64 track MK7 first named was
+retired on 2026-09-20 and its source removed on 2026-09-21, so `--backend=asm` is no longer accepted,
+`codegen_asm.rs` and the `Backend::Asm` variant are gone, and the retired track's plans and
+measurements are archived under `plan/asm-backend/`. Only the emission layer is new: the front half
+(lexer, preprocessor, parser, `infer.rs`, `borrowck.rs`, typed IR) is reused unchanged, and LLVM
+supplies the optimizer, the encoder, the ELF writer and the debug-info format. The language did not
+change: the surface, the capability model and the move and borrow rules are one source text for both
+backends. Rewriting `kelpc` in Kelp is out of scope permanently, and MK8's rewrite stages S4 to S6 are
+cancelled with it.*
+
+### MK7-S0 the seam
+
+The seam was the retired track's stage 0 and it carried over whole. `kelpc/src/backend.rs` names the
+backends, holds `Backend::DEFAULT`, and holds the one `match` that calls a generator over `tir`, so a
+second backend could be validated at all, and the fixture suite is backend-agnostic by construction
+(compile, run, compare stdout), so pointing it at a backend is the whole of adding one. S0 added the
+`llvm` name beside `c`. S7 removed the rest of the surface: `Backend::IMPLEMENTED` and the reserved
+name list existed only so a user could choose, and the internal switch `KELPC_ORACLE` accepts only
+`c`, is absent from `usage()` and the README, and appears in no diagnostic.
+
+### MK7 §1 the crate and the linking decision (`df63e1f`)
+
+**`llvm-sys` plus a wrapper module of our own** (`kelpc/src/llvm_ffi.rs`), below `codegen_llvm.rs`
+proper. `inkwell` was rejected because an LLVM major bump would force a wrapper bump in lockstep, and
+because the moment the wrapper does not expose an enum or a builder call the answer is to drop to
+`llvm-sys` anyway, which puts the wrapper in the tree either way. Hand-written `extern "C"` bindings
+were rejected as one more thing to maintain at LLVM's pace. **Linking is dynamic against the host's
+`libLLVM`**, found through `llvm-config` or `LLVM_SYS_211_PREFIX` (LLVM 21.1.8, `/nix/store/...-llvm-21.1.8-lib/lib/libLLVM-21.so`,
+alongside clang 21.1.8, on this machine). Static linking was rejected as hundreds of megabytes and
+minutes of link time on every `cargo build`, a worse cost than the one the retired track was trying to
+remove. The LLVM major is part of the build contract: `llvm-sys`'s version pins it, so bumping it is a
+deliberate commit with a test run and never a side effect. **`cc` still links**: `LLVMTargetMachineEmitToFile`
+writes an object and the driver invokes `cc` on it exactly as it invokes `cc` on the generated C today,
+so `glibc_lib_dir()` and the `crt1.o` lookup are unchanged.
+
+The compile-time expectation in §0 was "at or above today's", and the S6 measurement corrected it in
+the one direction that is a pleasant surprise: at `-O2` the `llvm` path builds in 272.7 ms against the
+C path's 297.2 ms, because the C backend compiles the runtime text into every program while the `llvm`
+path links the runtime object the compiler already carries. What does rise is the price of the
+pipeline: 143.9 ms at `-O0` against the C path's 130.7 ms.
+
+### MK7-S1 the scalar subset (`ed00b99`)
+
+The wrapper was proven with hello world first, then the scalar subset was lowered: base types,
+arithmetic, comparisons, `if`/`while`, calls, and `print` of the scalars, with `llvm` selectable and
+byte-identical stdout on the fixtures that use only those (`kelpc/tests/run-llvm-scalar-subset.sh`).
+One bug this found: the `tir` walk emitted past a block terminator (`85826df`).
+
+### MK7-S2A records (`760803e`)
+
+A `datac` becomes an identified LLVM struct type with the C backend's field order and natural
+alignment, so construction, field read and write, by-value parameters and returns, and whole-record
+assignment agree byte for byte, nested records included. The one shape that needed a rule: **an
+aggregate over 16 bytes crosses to C with the pointer spelled out, never by value** (measured
+2026-09-21, BUG-vN4tR). Clang lowers a 24-byte struct argument and return to SysV itself, and LLVM
+21.1.8's x86-64 backend does not derive that lowering for an IR call that passes the aggregate by
+value: against clang's object the `sret`-shaped call dies with SIGSEGV and the `byval` one returns a
+wrong value, while both sides of an IR-to-IR call agree, so the verifier and the fixture suite are
+blind to it. The slice also named the one justified `inbounds` gep and the `datac` borrow shape.
+
+### MK7-S2B the heap and the drop plan (`0275f99`)
+
+The C runtime text moved into `kelpc/runtime/kelp_rt.c` (`dceb5f5`) and `build.rs` compiles it once
+with `cc` into an object that ships beside `kelpc`, instead of the C backend's habit of writing the
+preamble into every generated program. That carries `str`, `String`, `Bytes`, an owned field, the drop
+plan and `panic`/`assert`. The runtime deliberately stays C: the capability matcher's text is
+security-relevant and is pinned by tests, re-deriving it in IR buys nothing and risks a divergence in
+exactly the code that decides whether a path is inside a grant, `cc` is already required to build
+`kelpc`, and the crossing surface stays pointers and integers, so IR and C never have to agree on an
+aggregate layout. The exception is the monomorphized container code, which cannot live in a fixed C
+file and is generated into the module as one function set per instantiation. The gate is
+`kelpc/tests/run-llvm-strings-drops.sh`.
+
+### MK7-S2C tagged unions (`4ba20fc`)
+
+`enum` is lowered at the C backend's `{ tag, union }` layout, with `when`, `if let` and `?`, and one
+`switch` per drop so only the live variant is dropped. Gate `run-llvm-enum-subset.sh`.
+
+### MK7-S2D containers (`8b5531e`)
+
+`List`, `Map`, `Box` and `[T; N]` lowered as one monomorphized IR function set per instantiation at
+the C backend's header layouts. Where the header has to match, the layout is declared once in
+`runtime/kelp_rt.c` and mirrored in `codegen_llvm.rs`, with a `static_assert` on the C side and a
+size/offset check on the IR side (`the_builtin_heap_layouts_match_the_c_runtime`). Gate
+`run-llvm-containers.sh`.
+
+### MK7-S2F references and the panic tail (`6023fda`)
+
+A `&T` to a scalar with a read and a write through one, a borrow of a field, the dereference, a `&T`
+parameter and a `&T` return, and the last borrow S2E named, the one of a function value or a closure.
+The same slice fixed the `llvm` backend's `panic` in the tail position of a function that returns a
+value, which reported an internal error instead of ending the block at `unreachable` the way the C
+backend's does (BUG-b2Ldp). Gate `run-llvm-references.sh`. The stale `S2B` label on the borrow of a
+non-`datac` is gone with it.
+
+### MK7-S2E closures and function values (`f865dae`)
+
+A function named as a value, a capturing closure with its environment and its drop, and a call through
+a value. Gate `run-llvm-closures.sh`.
+
+### MK7-S3A the extern fun bodies (`836c2c3`)
+
+The `extern fun` bodies are the C text the C backend already emits, compiled per program as an object
+and linked, so `std/mem`, `std/math`, `std/time` and `std/path` reach the `llvm` backend. Gate
+`run-llvm-externs.sh`.
+
+### MK7-S3 `pd`, the capability check, and the empty refusal ranking (`294f994`)
+
+`pd` globals with their `atexit` drops and the capability check land: the same allowlist arrays, the
+same matcher and the same denial text the C backend prints. Only two shapes once refused are lowered
+rather than named: `String#into_bytes` crosses through the runtime object's pointer-spelled adapter,
+and an owned temporary reached outside a call argument is staged and dropped at the expression that
+read through it. A raw NUL byte in a string literal stays refused, because the C backend does not
+carry it either (`printf("%s", "a\0b")` prints `a`), so the truncation was a C-backend defect and
+not an LLVM gap; it is refused at the lexer (`6b1842b`, BUG-f5Kvq). With S3 landed **the refusal
+ranking is empty**: every program the C backend builds, the `llvm` backend builds too and agrees with
+byte for byte, which the differential sweep measures over the whole corpus. Gate
+`run-llvm-pd-caps.sh`. The memory gate's LLVM sweeps gained the passdown and capability binaries, whose
+`atexit` drop and check glue are generated code the C sweep cannot see.
+
+### MK7-S4 debug locations (`094a552`)
+
+One compile unit named in `llvm.dbg.cu` and marked by the `Debug Info Version` module flag, one
+`DIFile` per `.kp` source, one `DISubprogram` per `.kp`-declared function with its declaration's own
+line, and one `DILocation` per statement, from the same spans the C backend feeds to
+`diag::SourceMap::line_directive`. It is a line table, not a full debug build: the generated helpers
+carry no subprogram, and nothing describes a variable, a type or a lexical block. The exit criterion is
+proved end to end by `kelpc/tests/llvm_debug_info.rs`, whose fixture is `tests/llvm-debug/fault.kp`,
+outside `tests/fixtures/` on purpose because the coverage sweep treats a run that dies from a signal as
+a failure. The test decodes the line table with `readelf` and resolves the fault through `gdb`:
+`kelp_divide () at fault.kp:16`, its caller at `fault.kp:21`. The stage gates that read the generated IR
+back strip the `!dbg` attachment before comparing, because they assert an instruction's shape and where
+the line came from is a separate claim.
+
+### MK7-S5 the fuzzer and the conformance corpus (`5c1d174`)
+
+`kelpc/tests/differential_fuzz.rs` is a deterministic generator (SplitMix64, no new dependency) that
+turns a seed into a valid program over the landed surface, writes it to a file before it is built,
+builds it with both backends and compares stdout byte for byte and the exit status. The S5 gate run was
+512 seeds: 512 built by both backends and agreed, 0 refused by the frontend or the C backend, and 0
+mismatches. The generator is biased toward the shapes the plan names as previously blind (a float
+`List` element, an enum slice, an owned element read out of a container, a `datac` that owns a `String`
+inside another `datac`, a closure over an owned capture, a `pd` read inside an initializer), and it
+found two defects the curated corpus could not see, each now a fixture in the same commit as its fix: a
+plain `List<f64>` whose `contains` the backend emitted an integer compare for, which is invalid IR
+(`list_float_element.kp`), and an owned `pd` no expression reads, whose container function set
+`collect_instantiations` omitted, so the backend reported an internal error where the C backend built
+it (`pd_owned_container.kp`). A conformance corpus of 24 generated programs is checked in under
+`kelpc/tests/fuzz-corpus/`, run differentially by the same file and kept equal to the generator, so the
+sweep is a permanent suite rather than a one-off run. The heavy fuzz run and the corpus run are both
+`#[ignore]`d with the seed list as a knob, the way the memory gate is.
+
+### MK7-S6 the optimization-level decision (`cb612c3`, `f211fbc`, `321182c`)
+
+**The level is a flag and `-O2` is the default.** `kelpc build` takes `-O0`, `-O1`, `-O2`, `-O3` or
+`-Os`, and `-O2` is the default so an absent flag cannot change what a default build produces (the C
+backend has always run `cc -O2`). `-Os` is accepted because both `cc` and LLVM accept it; `-Oz` is
+refused, because it is a clang-only spelling and the C oracle's `cc` may be gcc, so a level has to be
+one both accept. An out-of-range or unparseable level is a diagnostic that lists the vocabulary, never
+a silent default. **One level is one level for both backends**: the three spellings are built in one
+place (`kelpc/src/opt.rs`) so they cannot drift.
+
+| level | LLVM module pipeline | codegen level | `cc` flag |
+| --- | --- | --- | --- |
+| `-O0` | `default<O0>` (adds no pass) | `None` | `-O0` |
+| `-O1` | `default<O1>` | `Less` | `-O1` |
+| `-O2` | `default<O2>` | `Default` | `-O2` |
+| `-O3` | `default<O3>` | `Aggressive` | `-O3` |
+| `-Os` | `default<Os>` | `Default` | `-Os` |
+
+The pipeline runs over the module before the object is written, and the same `-O` reaches the C
+backend's `cc`, the per-program `extern` C object and the final link, so the differential sweep compares
+the two backends at one level rather than two. The textual IR is written **before** the pipeline runs,
+so `<out>.ll` is the lowering at every level: that is what the MK7 stage gates read, and an optimized
+module would answer a different question. The artifact contract changes with it: the C path writes
+`<out>.c`, the `llvm` path writes `<out>.ll` and `<out>.o`, and anything that read the generated C
+breaks at the flip. `kelpc/tests/backend_coverage.rs::every_level_agrees_with_the_c_backend` rebuilds
+the whole corpus with both backends at each level and compares stdout and the exit status.
+
+**The pipeline found one defect, and this stage fixed it.** The module carried no `target datalayout`,
+so a pass and codegen worked from two different layouts: LLVM's default aligns an `i64` to 4 and x86-64
+aligns it to 8, so a pass that folded a struct field to a byte offset put `{ i8, i64 }`'s second field
+at offset 4 where codegen read offset 8. It reproduced at `-O1` and above, and only where the two
+layouts disagree: `heap_narrow_fields.kp` read 42 as `42 << 32`, and `list_datac_clone_sort.kp` lost the
+elements of a clone. `-O0` runs no pass, which is why the corpus stayed green until the pipeline
+existed. The fix is `llvm_ffi::Module::set_data_layout`, which takes the string from the same
+`TargetMachine` that writes the object and runs before the pipeline.
+
+The measurement is `bench/speed/optlevels.sh` (`bench/speed/results-optlevels.txt`), medians of nine
+interleaved rounds, one build and one run per round and cell, rounds the outer loop, checksums equal in
+every cell:
+
+| level | backend | build ms | collatz ms | float ms | mix ms | fib ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| `-O0` | `c` | 130.7 | 447.2 | 255.0 | 200.9 | 26.9 |
+| `-O0` | `llvm` | 143.9 | 452.6 | 255.4 | 243.6 | 20.9 |
+| `-O1` | `c` | 257.2 | 81.5 | 104.7 | 168.1 | 13.2 |
+| `-O1` | `llvm` | 263.7 | 80.7 | 106.3 | 168.0 | 13.1 |
+| `-O2` | `c` | 297.2 | 81.1 | 109.2 | 164.8 | 23.1 |
+| `-O2` | `llvm` | 272.7 | 81.7 | 104.0 | 167.2 | 23.0 |
+| `-O3` | `c` | 305.6 | 80.9 | 95.3 | 164.0 | 23.1 |
+| `-O3` | `llvm` | 284.0 | 82.7 | 105.7 | 167.0 | 23.0 |
+| `-Os` | `c` | 239.5 | 83.1 | 107.6 | 168.2 | 23.2 |
+| `-Os` | `llvm` | 255.3 | 81.1 | 106.4 | 168.3 | 22.9 |
+
+At the default `-O2` the two backends are level within a few percent on every workload, and the C
+column reproduces the earlier `-O2` column on three of four workloads, so the default does not regress.
+`-O0` is the cheap dev column, `-O1` is within noise of `-O2` on these workloads, `-O3` buys nothing
+here and `-Os` is for size. The corpus gate records **223 of 380 targets built by `c`, 223 by `llvm`, 0
+refused, 0 mismatches, 0 crashes at each of `-O0`, `-O1`, `-O2`, `-O3` and `-Os`**, and the whole
+fixture suite also runs under `llvm` at the default `-O2` (357 fixtures at this stage; 359 at the
+release). The debug line table is resolved at `-O0` and at `-O2`, and the fixture's divisor is an
+`extern`-backed `str.parse_i64("0")` so the pipeline cannot fold the division away as undefined
+behavior.
+
+### MK7-S7 the flip (`3396771`, `4a1dce5`)
+
+**`Backend::DEFAULT` is `Llvm`.** `usage()` says so and offers no backend, and `--backend` and
+`KELPC_BACKEND` are refused by name, because a user who could still choose would be choosing a backend.
+The suite moved with the compiler: the harness's own default follows `Backend::DEFAULT`, so a plain
+`cargo test` runs the fixtures against `llvm` and a run pointed at `KELPC_ORACLE=c` runs them against
+the oracle, and `run-all-backends.sh` defaults to `BACKENDS="c llvm"` so both are always run. **The C
+backend is the project's oracle, permanently, and is not a user surface**: `codegen_c.rs` is never
+deleted, it stays in the suite and in every stage gate, and it is what makes "correct" a measurement
+over the corpus rather than the author's intent. Two spellings were removed with the flip, each with a
+one-line fix: **`impl "path" as name` is gone** (a module's namespace is its own name, so drop the
+clause and rename the call sites where the name differed) and **`impl "..." with caps(...)` is gone**
+(`impl` already means what the clause restated, so drop the `with` and leave the grant as it is). With
+both gone the deprecation register is empty, so no program produces an `outdated:` finding any more;
+the mechanism and `--deny-outdated` stay in place for the next spelling.
+
+**What the flip rests on, checked item by item before it landed.** The corpus differential gate is green
+and the refusal ranking is empty; differential fuzzing and a checked-in conformance corpus exist; a
+memory gate runs over both backends; debug locations are emitted; and every fixture the C backend
+builds is built by `llvm` too, with the standing rule that every defect the corpus could not see adds a
+fixture in the same commit that fixes it. What the flip does **not** claim: LLVM gives a defined
+semantics for the IR we emit, not a formal operational semantics for Kelp or an aliasing model for
+`&mut`, so the one new way to miscompile a correct Kelp program is an attribute the checker does not
+justify (`nsw`, `nuw`, `inbounds`, or a `noalias` wider than a `&mut` parameter), and the rule is to
+emit none of them without a licence from the frontend. Threads, `unsafe` and atomics stay unscheduled
+with the race gate they are owed.
+
+**The release notes carry what the plan required**: the minimum `kelpc` version with the flip, that
+`kelpc` builds every program with `llvm` and keeps the C backend as its oracle rather than a user
+choice, that a `kelpc` built this way needs `libLLVM-21.so` at runtime, and that `cc` is still the
+linker, so a C compiler and glibc are still required.
+
+### Also in this release, and not MK7
+
+The same release carried work from other milestones: `[T; N]`, a fixed-size array held inline with its
+length in the type, and general `const` (MK8-S2-M2); documentation comments (`//!`, `///` and a
+`[docs(<kind>: <name>)]` head) and the `//!` must start a line rule; a `List` element's derived deep
+copy and derived order from its fields; a method call's receiver borrowed after its own arguments; an
+empty container taking its element type from the first operation that has to know it; `kelpc check`
+and its `--json` diagnostics; `fs.cwd`, `path.absolute`, `fs.is_symlink`/`read_link`, `io.IoErr` and the
+fallible `fs` read/open, `fmt.commas_u64`/`commas_i64` and `fmt.human_size`; and the runtime
+moving into Kelp piece by piece (`std/rt.kp`'s capability matcher and path normalizer, each proven
+against the C it replaced by a differential corpus, plus the stub resolver's DNS message parser and
+resolver-config parser against their own corpora).
+
+**Suite at this record**: 179 unit tests and 359 end-to-end fixtures, green under the default `llvm`
+backend and under the C oracle; the differential sweep at 223 of 380 corpus targets with 0 refusals, 0
+mismatches and 0 crashes at each of the five optimization levels; the fuzzer at 256 generated programs
+agreed with 0 mismatches plus the 24-program conformance corpus with 0 failures; and valgrind reporting
+0 findings over the C sweep's 211 binaries and the four `llvm` sweeps (closures, containers, externs,
+passdown and capability). The differential sweep, the level sweep, the fuzz run and the memory gate are
+all `#[ignore]`d so a plain `cargo test` stays cheap: run them with `-- --ignored --nocapture`. The
+release is 130 commits since the `v26.09.0` tag.
