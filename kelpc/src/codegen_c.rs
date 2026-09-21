@@ -2595,7 +2595,19 @@ impl<'a> Gen<'a> {
                     )
                 }
             }
-            ExprKind::FieldAccess { base, field } => self.field_access(base, field),
+            // A field read in *value* position when the chain hangs off a
+            // temporary (`take(mkName().r)`, `print(mkName().r)`): nothing
+            // borrows the temporary, so nothing else owns it and nothing else
+            // frees it. It is staged and dropped here, at the whole temporary
+            // and not at the field. A read out of a place is left alone.
+            ExprKind::FieldAccess { base, field } => {
+                if let Some(root) = temporary_root(expr) {
+                    if let Some(staged) = self.staged_field_value(root, expr) {
+                        return staged;
+                    }
+                }
+                self.field_access(base, field)
+            }
             // A variant construction is a compound literal in one expression:
             // the tag is the variant's index, and the payload goes into that
             // variant's union member by designator. A payload-less variant
@@ -2640,6 +2652,13 @@ impl<'a> Gen<'a> {
                 variant,
                 field,
             } => {
+                // Same as a `FieldAccess`: a payload read by value out of an
+                // enum temporary stages and drops the temporary.
+                if let Some(root) = temporary_root(expr) {
+                    if let Some(staged) = self.staged_field_value(root, expr) {
+                        return staged;
+                    }
+                }
                 // The base's own type names the enum, so nothing has to be
                 // threaded through the TIR node beyond the two indices.
                 let ename =
@@ -3367,6 +3386,35 @@ impl<'a> Gen<'a> {
             String::new()
         };
         Some((hold, text, drop))
+    }
+
+    /// A field read in *value* position when the chain hangs off a
+    /// temporary: `take(mkName().r)` or `print(mkName().r)`. Nothing borrows
+    /// the temporary, so nothing else owns it and nothing else frees it, and
+    /// the C rvalue the field is read out of has no storage to hang a drop on.
+    /// The root is staged, the field read out of it, the staged root dropped,
+    /// and the value handed on, so the temporary and every field it owns die
+    /// at the end of the statement that read through it. The value is copied
+    /// out before the drop because a drop frees memory. `infer.rs` refuses to
+    /// read an *owned* field by value, so the value copied out is never the
+    /// buffer the drop frees.
+    ///
+    /// `None` when the temporary owns nothing: it has no drop to record, so
+    /// reading the field straight out of the rvalue is already correct and
+    /// staging it would only add a local that is never freed from.
+    fn staged_field_value(&self, root: &Expr, chain: &Expr) -> Option<String> {
+        if !needs_drop(&root.ty, self.owned) {
+            return None;
+        }
+        let tmp = fresh_temp();
+        let value = fresh_temp();
+        let hold = format!("{} = {}; ", root.ty.c_decl(&tmp), self.expr_value(root));
+        let text = self.chain_off(&tmp, chain);
+        Some(format!(
+            "({{ {hold}{} = {text}; {}(&{tmp}); {value}; }})",
+            chain.ty.c_decl(&value),
+            drop_fn_name(&root.ty)
+        ))
     }
 
     /// One call as a statement expression: the staged temporaries are built

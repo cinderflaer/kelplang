@@ -1,22 +1,21 @@
 // MK7 §5: reading a *field* of an owned call temporary. `mkName()` returns a
-// `datac` that owns a `String`, and every read below borrows a field of the
-// temporary rather than the temporary itself, so nothing else owns it and it
-// has to be freed once the statement that read through it is done. The backend
-// stages the temporary into a scratch slot so the field has an address, and the
-// staging is what leaked: the slot was built and the borrow taken, but no drop
-// site was recorded for it, so the `Named` the call returned outlived the
-// statement and its `String` was never freed.
+// `datac` that owns a `String`, and a statement that reads only a field of the
+// temporary leaves the temporary itself owned by nobody else, so it has to be
+// freed once the statement that read through it is done. The backend stages the
+// temporary into a scratch slot, reads the field out of it, and records the
+// drop for the slot: without that drop site the `Named` the call returned
+// outlived the statement and its `String` was never freed.
 //
 // The field read here is the `i64` one, which is what makes this fixture a
 // *C-buildable* shape: the C backend emits a valid `printf` for a scalar field
 // of an rvalue (it does not for an owned field; taking the address of one is
 // invalid C, `heap_field_of_owned_temporary.kp`), so the fixture is in the
-// valgrind gate. The leak it pins is real in a backend that stages the
-// temporary itself, and in the C backend as well: valgrind reports two 3-byte
-// losses at `kelp_String__from_str`, one for `print(mkName().r)` and one for
-// `take(mkName().r)`, because a `datac` a call returns and the program reads
-// only through a field is never dropped. That is BUG-t8Jqr, and this fixture is
-// the failing case filed with it rather than a passing one.
+// valgrind gate. What it now pins is that the field of a call temporary is
+// freed at the end of the statement that read it, once per statement, so
+// `print(mkName().r)` and `take(mkName().r)` each free the `String` the call
+// allocated. The last statement is the control: a field read of a *named*
+// local is a place whose owner is the scope, not the statement, so it must
+// still free nothing there.
 datac Named(val r: i64, val name: String)
 
 fun mkName().R: Named = Named(r = 7, name = String.from_str("hi"))
