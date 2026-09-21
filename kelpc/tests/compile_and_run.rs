@@ -4963,11 +4963,15 @@ fn a_build_with_no_output_path_lands_in_build() {
             mode.mode()
         );
     }
-    // The generated C follows the artifact, so it is inside `build/` too
-    // rather than beside it in the working directory.
+    // The backend's own intermediate follows the artifact, so it is inside
+    // `build/` too rather than beside it in the working directory: the C backend
+    // keeps its `.c`, and the LLVM backend its textual IR. Asserting `.c` alone
+    // made this the one test `BACKENDS=llvm ./kelpc/tests/run-all-backends.sh`
+    // could not pass, so the suite could not be pointed at both backends.
+    let intermediate = if backend() == "llvm" { "ll" } else { "c" };
     assert!(
-        built.with_extension("c").is_file(),
-        "expected the generated C beside the artifact"
+        built.with_extension(intermediate).is_file(),
+        "expected the generated .{intermediate} beside the artifact"
     );
     assert!(
         !cwd.join("while_accumulator").exists(),
