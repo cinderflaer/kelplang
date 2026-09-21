@@ -18,7 +18,8 @@
 //! Four things live here, and a fifth was added at MK7 S6:
 //!
 //! 1. The differential sweep. Every target the C backend builds is built with
-//!    `--backend=llvm` too. For every target both backends build, both binaries
+//!    the default backend too (`llvm`; the oracle side is reached through the
+//!    project's `KELPC_ORACLE` switch, not a user flag). For every target both backends build, both binaries
 //!    are run and their stdout and exit status must be byte-identical, and a
 //!    mismatch fails with the target named and both outputs shown. A target the
 //!    `llvm` backend refuses is recorded with its message rather than failed: a
