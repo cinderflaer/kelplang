@@ -153,19 +153,26 @@ alongside `clang 21.1.8`.
 
 ## 2. What stays exactly the same
 
-- **`Backend::C` is the oracle and the escape hatch, permanently.** Carried over
-  whole from `asm-backend/default-switch.md` §1.5:
-  - `--backend=c` and `KELPC_BACKEND=c` stay documented and stay selectable forever.
+- **`Backend::C` is the project's oracle, permanently, and is not a user
+  surface.** Carried over from `asm-backend/default-switch.md` §1.5 and amended by
+  the owner's decision of 2026-09-21: the C backend is kept to measure the `llvm`
+  backend against, and the choice is taken away from everyone building a program.
   - `codegen_c.rs` is never deleted and never stops being maintained.
+  - The C backend stays in the suite, in the stage gates and in CI, reached through
+    the project's one internal switch (`KELPC_ORACLE`, `backend.rs`), which accepts
+    only `c`. It is deliberately absent from `usage()`, the README and every
+    diagnostic.
+  - There is no `--backend=` flag and no `KELPC_BACKEND`: each is refused by name,
+    because a user who could still choose would be choosing a backend.
   - The suite keeps running both backends after the flip. That is the whole reason
     the C backend survives: with one backend, "correct" means "matches the author's
-    intent"; with two, it is a measurement over the corpus.
-  - A flip with no way back is how a second backend becomes unmaintained.
-- **The backend seam.** `backend.rs` keeps its shape: the selector, the names, the
-  `--backend=`/`KELPC_BACKEND` resolution, `Backend::DEFAULT`. `llvm` is the name
-  the seam carries, and since MK7 S7 it is what `Backend::DEFAULT` names.
-  `asm` was removed from `Backend::IMPLEMENTED` on 2026-09-21, with its source
-  and its rows in the tests; `c` and `llvm` both stay in it.
+    intent"; with two, it is a measurement over the corpus. A backend that is never
+    run is how a second backend becomes unmaintained, so the oracle is run.
+- **The backend seam.** `backend.rs` keeps its shape: the names, `Backend::DEFAULT`,
+  and the one `match` that calls a generator. `llvm` is the name the seam carries,
+  and since MK7 S7 it is what `Backend::DEFAULT` names. The user-facing selector
+  was removed on 2026-09-21, and with it `Backend::IMPLEMENTED` and the reserved
+  name list; only a choice needed either, and both enum variants stay.
 - **The fixture suite stays backend-agnostic** (compile, run, compare stdout), so it
   validates the new backend by being pointed at it.
 - **The language does not change.** The surface, the capability model, the move and
@@ -405,32 +412,33 @@ corrected by the measurement, in the one direction that is a pleasant surprise.
 
 ### 4.5 Process
 
-- `--backend=c` and `KELPC_BACKEND=c` stay forever, documented as the escape hatch
-  and the oracle switch.
+- The C backend is the project's oracle, reached only through the internal switch
+  `KELPC_ORACLE` (`backend.rs`), which accepts only `c`. It is not documented in
+  `usage()` or the README and it is not a user surface.
 - The suite keeps running both backends after the flip.
 - **A release that wants both backends in one binary cannot statically link LLVM**;
   the asset carries the `libLLVM` requirement, and the release notes name it.
-- Rollout: the flip lands in a release that announces it, names the minimum version,
-  names the `libLLVM` requirement, and states the one flag that goes back.
+- Rollout: the flip lands in a release that announces it and names the minimum
+  version and the `libLLVM` requirement. There is no flag back, because the choice
+  is removed rather than defaulted.
 
-**S7's code half landed on 2026-09-21.** `Backend::DEFAULT` is `Llvm`,
-`usage()` says so, `Backend::parse` still accepts and lists both names, and
-`--backend=c`/`KELPC_BACKEND=c` are unchanged. The suite moved with it: the
-harness's own default follows the compiler's, so a plain `cargo test` runs the
-fixtures against `llvm` and `KELPC_BACKEND=c cargo test` runs them against the
+**S7's code half landed on 2026-09-21, and the user-facing selector was removed
+with it.** `Backend::DEFAULT` is `Llvm`, `usage()` says so and offers no backend,
+and `--backend` and `KELPC_BACKEND` are refused by name. The suite moved with it:
+the harness's own default follows the compiler's, so a plain `cargo test` runs the
+fixtures against `llvm` and a run pointed at `KELPC_ORACLE=c` runs them against the
 oracle, and `run-all-backends.sh` defaults to `BACKENDS="c llvm"` so both are
-always run. A plain run therefore exercises the new default, which is the point
-of the flip; the oracle is one environment variable away.
+always run. A plain run therefore exercises the default, which is the point of the
+flip; the oracle is one internal switch away, and stays run by the project.
 
 **The release is still to be cut, and this stage is not it.** That release's
-notes must carry four facts, in the plan's own words:
+notes must carry these facts, in the plan's own words:
 
 - the minimum `kelpc` version that has the flip;
-- that a `kelpc` built this way needs `libLLVM-21.so` at runtime, whichever
-  backend it runs (MK7 §1.3 and §4.4);
-- that `cc` is still the linker, so a C compiler and glibc are still required;
-- the one flag that goes back: `--backend=c` (and its environment spelling
-  `KELPC_BACKEND=c`).
+- that `kelpc` builds every program with `llvm`, and that the C backend is kept as
+  the project's oracle rather than a user choice;
+- that a `kelpc` built this way needs `libLLVM-21.so` at runtime (MK7 §1.3 and §4.4);
+- that `cc` is still the linker, so a C compiler and glibc are still required.
 
 ## 5. Stages
 
@@ -446,7 +454,7 @@ green at every stage.
 | **S4** | debug locations to DWARF | done 2026-09-21 | a fixture that crashes on purpose names a `.kp` line |
 | **S5** | fuzzing and conformance (D-4) | done 2026-09-21 | generated programs over the whole landed surface, every one built by both backends with byte-identical stdout and exit status and zero mismatches (`kelpc/tests/differential_fuzz.rs`), plus a checked-in conformance corpus |
 | **S6** | the optimization-level decision | done 2026-09-21 | the `-O0` to `-O3` and `-Os` knob on `kelpc build` with `-O2` the default, one level for both backends, the corpus swept with both backends at every level (0 mismatches), the debug line table resolved at `-O0` and `-O2`, and an idle-machine `bench/speed` table written into §4.3 |
-| **S7** | the flip | a release | **code half done 2026-09-21** (§4.5): `Backend::DEFAULT` is `Llvm`, a plain `cargo test` exercises it and `KELPC_BACKEND=c` exercises the oracle, `run-all-backends.sh` defaults to `BACKENDS="c llvm"`; the release that announces the flip is still to be cut, and its notes must carry the minimum version, the `libLLVM-21.so` runtime requirement, that `cc` still links, and `--backend=c` as the way back |
+| **S7** | the flip | a release | **code half done 2026-09-21** (§4.5): `Backend::DEFAULT` is `Llvm`, `usage()` offers no backend, a plain `cargo test` exercises `llvm` and the internal `KELPC_ORACLE=c` exercises the oracle, `run-all-backends.sh` defaults to `BACKENDS="c llvm"`; the release that announces the flip is still to be cut, and its notes must carry the minimum version, the `libLLVM-21.so` runtime requirement, that `cc` still links, and that the C backend stays as the project's oracle rather than a user choice |
 
 Stage 2 is one stage in the plan and was landed in slices, and the backend's
 refusals name those slices, so the mapping belongs here. `S2D` to `S2F` are the
