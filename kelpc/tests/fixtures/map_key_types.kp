@@ -33,6 +33,15 @@ fun main() {
     sizes.insert(key = 7.to_u64(), v = 70)
     print(sizes.get(key = 7.to_u64()))
 
+    // A `char` key (A-6): a code point, hashed and compared as its value.
+    var chars: Map<char, i32> = Map.new()
+    chars.insert(key = 'a', v = 1)
+    chars.insert(key = 'b', v = 2)
+    chars.insert(key = 'a', v = 9)
+    print(chars.len())
+    print(chars.get(key = 'a'))
+    print(chars.has(key = 'c'))
+
     // The one-argument spelling is still a `String` key.
     var legacy: Map<i32> = Map.new()
     legacy.insert(key = "a", v = 5)

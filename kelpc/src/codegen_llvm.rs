@@ -341,8 +341,8 @@ use crate::opt::OptLevel;
 use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
-    drop_fn_name, list_c_type, list_clonable_elem, map_c_type, needs_drop, owned_types, struct_tag,
-    ty_mangle, Ty,
+    drop_fn_name, eq_fn_name, hash_fn_name, list_c_type, list_clonable_elem, map_c_type,
+    needs_drop, owned_types, struct_tag, ty_mangle, Ty,
 };
 
 /// Build the whole program, verify it, write the textual IR beside the binary,
@@ -617,6 +617,11 @@ struct Gen<'a> {
     coerce_env_ty: Type<'a>,
     /// The generated `kelp_cmp_<name>` functions of an orderable `datac`/`enum`.
     cmp_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The generated `kelp_hash_<name>` and `kelp_eq_<name>` functions of a
+    /// keyable `datac`/`enum`, the mirror of the pair `write_struct`/
+    /// `write_enum` emit for the same types.
+    hash_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
+    eq_fns: HashMap<String, (LlvmFunction<'a>, FnType<'a>)>,
     /// The libc primitives the container function sets call: the standard
     /// headers' allocation, copy and scan functions, declared and never
     /// re-implemented, exactly as the C backend reaches them.
@@ -629,6 +634,10 @@ struct Gen<'a> {
     clonable: HashSet<String>,
     /// The user types whose value has a derived order, for `List.sort`.
     sortable: HashSet<String>,
+    /// The user types whose value is a key, for `Map<K, V>` with a user key
+    /// (A-6): the same fixpoint `codegen_c.rs` computes for `kelp_hash_<T>`
+    /// and `kelp_eq_<T>`.
+    keyable: HashSet<String>,
     /// One module-scope global per `pd` (MK7 §3.1 and §5), keyed by the
     /// internal `pd#<name>` identifier `tir` names it with, plus that
     /// passdown's own type. The C backend's `static <type> <name>;` is the
@@ -766,6 +775,8 @@ impl<'a> Gen<'a> {
             container_fns: HashMap::new(),
             clone_fns: HashMap::new(),
             cmp_fns: HashMap::new(),
+            hash_fns: HashMap::new(),
+            eq_fns: HashMap::new(),
             closure_fns: HashMap::new(),
             env_types: HashMap::new(),
             coerce_env_ty,
@@ -773,6 +784,7 @@ impl<'a> Gen<'a> {
             instantiations: collect_instantiations(program),
             clonable: crate::types::clonable_types(&type_decls),
             sortable: crate::types::sortable_types(&type_decls),
+            keyable: crate::types::keyable_types(&type_decls),
             pd_globals: HashMap::new(),
             init_pds_fn: None,
             drop_pds_fn: None,
@@ -805,6 +817,10 @@ impl<'a> Gen<'a> {
         // reported by its own construct rather than behind an unrelated std
         // declaration.
         self.declare_aggregates()?;
+        // A map entry whose key is a `datac` holds that key by value, so its
+        // body is only settable once the `datac` types exist. The C backend
+        // splits the same typedef for the same reason.
+        self.set_struct_key_map_entry_bodies()?;
         // The environment struct of each capturing literal (S2E), after every
         // aggregate type exists and before any signature names the `ptr` that
         // carries it.
@@ -4724,9 +4740,35 @@ impl<'a> Gen<'a> {
         }
         for (map, entry_ty) in &self.map_entries {
             if let Ty::Map(key, _) = map {
+                // A `datac` key is held by value, and no `datac` type exists
+                // yet, so that entry's body waits for
+                // `set_struct_key_map_entry_bodies`.
+                if matches!(**key, Ty::Struct(_)) {
+                    continue;
+                }
                 let key_ty = llvm_type(self.ctx, &self.structs, &self.containers, key)?;
                 self.ctx.struct_set_body(*entry_ty, &[key_ty, ptr, i8t]);
             }
+        }
+        Ok(())
+    }
+
+    /// Set the body of every map entry whose key is a `datac`. Runs after
+    /// `declare_aggregates`, because the key sits in the entry by value and its
+    /// laid-out type is what names it; the container-body pass above runs
+    /// before any `datac` type exists.
+    fn set_struct_key_map_entry_bodies(&self) -> Result<(), String> {
+        let ptr = self.pty();
+        let i8t = self.ctx.i8();
+        for (map, entry_ty) in &self.map_entries {
+            let Ty::Map(key, _) = map else {
+                continue;
+            };
+            if !matches!(**key, Ty::Struct(_)) {
+                continue;
+            }
+            let key_ty = self.lty2(key)?;
+            self.ctx.struct_set_body(*entry_ty, &[key_ty, ptr, i8t]);
         }
         Ok(())
     }
@@ -5274,11 +5316,14 @@ impl<'a> Gen<'a> {
             .build_int_cast(is_signed(key), true, v, self.ctx.i64(), "kw"))
     }
 
-    /// The generated clone/cmp function handles, then the container sets.
+    /// The generated clone/cmp/hash/eq function handles, then the container
+    /// sets.
     fn declare_clone_cmp_fns(&mut self) {
         let ptr = self.pty();
         let void = self.ctx.void();
+        let i1t = self.ctx.i1();
         let i32t = self.ctx.i32();
+        let i64t = self.ctx.i64();
         let mut clonable: Vec<String> = self.clonable.iter().cloned().collect();
         clonable.sort();
         for name in clonable {
@@ -5296,6 +5341,20 @@ impl<'a> Gen<'a> {
                 .module
                 .add_function(&cmp_fn_name(&Ty::Struct(name.clone())), ty);
             self.cmp_fns.insert(name, (func, ty));
+        }
+        let mut keyable: Vec<String> = self.keyable.iter().cloned().collect();
+        keyable.sort();
+        for name in keyable {
+            let hty = self.ctx.fn_type(i64t, &[ptr], false);
+            let hfunc = self
+                .module
+                .add_function(&hash_fn_name(&Ty::Struct(name.clone())), hty);
+            self.hash_fns.insert(name.clone(), (hfunc, hty));
+            let ety = self.ctx.fn_type(i1t, &[ptr, ptr], false);
+            let efunc = self
+                .module
+                .add_function(&eq_fn_name(&Ty::Struct(name.clone())), ety);
+            self.eq_fns.insert(name, (efunc, ety));
         }
     }
 
@@ -5486,10 +5545,14 @@ impl<'a> Gen<'a> {
                 s.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
             self.emit_record_clone(&s.name, &fields)?;
             self.emit_record_cmp(&s.name, &fields)?;
+            self.emit_record_hash(&s.name, &fields)?;
+            self.emit_record_eq(&s.name, &fields)?;
         }
         for e in &self.program.enums {
             self.emit_enum_clone(e)?;
             self.emit_enum_cmp(e)?;
+            self.emit_enum_hash(e)?;
+            self.emit_enum_eq(e)?;
         }
         Ok(())
     }
@@ -5764,6 +5827,247 @@ impl<'a> Gen<'a> {
         }
         self.builder.position_at_end(cont);
         self.builder.build_ret(self.v_i32(0));
+        Ok(())
+    }
+
+    // ---- the derived hash and key equality of a datac/enum (A-6) -------
+
+    /// Fold one already-hashed field or tag into a hash in progress through
+    /// the runtime's shared combine, so this backend and the C one produce
+    /// the same value for the same key.
+    fn hash_combine(&self, h: Value<'a>, x: Value<'a>) -> Result<Value<'a>, String> {
+        let rt = self.rt("kelp_map_combine")?;
+        Ok(self.call(rt.func, rt.ty, &[h, x], "h"))
+    }
+
+    /// One field's own hash before it is folded in: a `String` field's byte
+    /// hash, a scalar's mix, and a nested keyable `datac`/`enum`'s own hash.
+    /// The mirror of `codegen_c::write_field_hash`.
+    fn emit_field_hash(&self, ty: &Ty, ptr: Value<'a>) -> Result<Value<'a>, String> {
+        match ty {
+            Ty::String => {
+                let ret_ty = self.lty2(ty)?;
+                let data = self.ld(self.pty(), self.fld(ret_ty, ptr, 0, "d"), "d");
+                let len = self.ld(self.ctx.i64(), self.fld(ret_ty, ptr, 1, "n"), "n");
+                let rt = self.rt("kelp_map_hash")?;
+                Ok(self.call(rt.func, rt.ty, &[data, len], "hash"))
+            }
+            Ty::Struct(name) => {
+                let (func, hty) = self
+                    .hash_fns
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| no_value(&format!("the hash of '{name}'")))?;
+                Ok(self.call(func, hty, &[ptr], "hash"))
+            }
+            _ => {
+                let v = self.ld(self.lty2(ty)?, ptr, "v");
+                let wide = self.key_to_u64(ty, v)?;
+                let rt = self.rt("kelp_map_mix")?;
+                Ok(self.call(rt.func, rt.ty, &[wide], "mix"))
+            }
+        }
+    }
+
+    /// One field's equality in a derived key equality. A `String` field reuses
+    /// the runtime's stored-key comparison, so the byte-length-aware rule is
+    /// the one the `String` key path already uses. The mirror of
+    /// `codegen_c::write_field_eq`.
+    fn emit_field_eq(
+        &self,
+        ty: &Ty,
+        ap: Value<'a>,
+        bp: Value<'a>,
+    ) -> Result<Value<'a>, String> {
+        match ty {
+            Ty::String => {
+                let ret_ty = self.lty2(ty)?;
+                let data = self.ld(self.pty(), self.fld(ret_ty, bp, 0, "d"), "d");
+                let len = self.ld(self.ctx.i64(), self.fld(ret_ty, bp, 1, "n"), "n");
+                let rt = self.rt("kelp_map_key_eq")?;
+                Ok(self.call(rt.func, rt.ty, &[ap, data, len], "eq"))
+            }
+            Ty::Struct(name) => {
+                let (func, ety) = self
+                    .eq_fns
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| no_value(&format!("the equality of '{name}'")))?;
+                Ok(self.call(func, ety, &[ap, bp], "eq"))
+            }
+            _ => {
+                let ret_ty = self.lty2(ty)?;
+                let av = self.ld(ret_ty, ap, "av");
+                let bv = self.ld(ret_ty, bp, "bv");
+                Ok(self.builder.build_icmp(IntCmp::Eq, av, bv, "eq"))
+            }
+        }
+    }
+
+    fn emit_record_hash(&self, name: &str, fields: &[(String, Ty)]) -> Result<(), String> {
+        let Some((func, _)) = self.hash_fns.get(name).copied() else {
+            return Ok(());
+        };
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let struct_ty = *self
+            .structs
+            .get(name)
+            .ok_or_else(|| no_value(&format!("the datac '{name}'")))?;
+        let v = func.get_param(0);
+        let h_slot = self.builder.build_alloca(self.ctx.i64(), "h");
+        self.st(self.v_i64(0), h_slot);
+        for (i, (_, ty)) in fields.iter().enumerate() {
+            let fp = self.fld(struct_ty, v, i as u32, "f");
+            let field_hash = self.emit_field_hash(ty, fp)?;
+            let h = self.ld(self.ctx.i64(), h_slot, "h");
+            let folded = self.hash_combine(h, field_hash)?;
+            self.st(folded, h_slot);
+        }
+        let h = self.ld(self.ctx.i64(), h_slot, "h");
+        self.builder.build_ret(h);
+        Ok(())
+    }
+
+    fn emit_record_eq(&self, name: &str, fields: &[(String, Ty)]) -> Result<(), String> {
+        let Some((func, _)) = self.eq_fns.get(name).copied() else {
+            return Ok(());
+        };
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let struct_ty = *self
+            .structs
+            .get(name)
+            .ok_or_else(|| no_value(&format!("the datac '{name}'")))?;
+        let a = func.get_param(0);
+        let b = func.get_param(1);
+        let mut acc = self.ctx.const_bool(true);
+        for (i, (_, ty)) in fields.iter().enumerate() {
+            let ap = self.fld(struct_ty, a, i as u32, "a");
+            let bp = self.fld(struct_ty, b, i as u32, "b");
+            let eq = self.emit_field_eq(ty, ap, bp)?;
+            acc = self.builder.build_int_binop(IntBinOp::And, acc, eq, "acc");
+        }
+        self.builder.build_ret(acc);
+        Ok(())
+    }
+
+    fn emit_enum_hash(&self, e: &crate::types::EnumDef) -> Result<(), String> {
+        let Some((func, _)) = self.hash_fns.get(&e.name).copied() else {
+            return Ok(());
+        };
+        let info = self
+            .enums
+            .get(&e.name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let v = func.get_param(0);
+        let tag = self.ld(
+            self.ctx.i32(),
+            self.fld(info.llvm_ty, v, ENUM_TAG_FIELD, "tag"),
+            "tag",
+        );
+        let h_slot = self.builder.build_alloca(self.ctx.i64(), "h");
+        // The tag folds first, so two variants never share a hash of the same
+        // payload shape; the C backend writes the same fold from its tag.
+        let wide = self
+            .builder
+            .build_int_cast(false, true, tag, self.ctx.i64(), "tagw");
+        let rt = self.rt("kelp_map_mix")?;
+        let tag_hash = self.call(rt.func, rt.ty, &[wide], "taghash");
+        let h0 = self.hash_combine(self.v_i64(0), tag_hash)?;
+        self.st(h0, h_slot);
+        let mut cont = entry;
+        for (i, variant) in e.variants.iter().enumerate() {
+            if variant.fields.is_empty() {
+                continue;
+            }
+            self.builder.position_at_end(cont);
+            let is_i = self
+                .builder
+                .build_icmp(IntCmp::Eq, tag, self.v_i32(i as u64), "isvar");
+            let then_bb = func.append_block("hash.v");
+            let next = func.append_block("hash.next");
+            self.builder.build_cond_br(is_i, then_bb, next);
+            self.builder.position_at_end(then_bb);
+            let union = self.fld(info.llvm_ty, v, ENUM_UNION_FIELD, "kelp_v");
+            for (fi, field) in variant.fields.iter().enumerate() {
+                let fp = self.fld(info.variants[i].payload_ty, union, fi as u32, "f");
+                let field_hash = self.emit_field_hash(&field.ty, fp)?;
+                let h = self.ld(self.ctx.i64(), h_slot, "h");
+                let folded = self.hash_combine(h, field_hash)?;
+                self.st(folded, h_slot);
+            }
+            self.builder.build_br(next);
+            cont = next;
+        }
+        self.builder.position_at_end(cont);
+        let h = self.ld(self.ctx.i64(), h_slot, "h");
+        self.builder.build_ret(h);
+        Ok(())
+    }
+
+    fn emit_enum_eq(&self, e: &crate::types::EnumDef) -> Result<(), String> {
+        let Some((func, _)) = self.eq_fns.get(&e.name).copied() else {
+            return Ok(());
+        };
+        let info = self
+            .enums
+            .get(&e.name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let false_bb = func.append_block("eq.false");
+        let a = func.get_param(0);
+        let b = func.get_param(1);
+        let ta = self.ld(
+            self.ctx.i32(),
+            self.fld(info.llvm_ty, a, ENUM_TAG_FIELD, "tag"),
+            "ta",
+        );
+        let tb = self.ld(
+            self.ctx.i32(),
+            self.fld(info.llvm_ty, b, ENUM_TAG_FIELD, "tag"),
+            "tb",
+        );
+        // A different tag is unequal at once, the same rule the C backend's
+        // `a->kelp_tag != b->kelp_tag` writes.
+        let same_tag = self.builder.build_icmp(IntCmp::Eq, ta, tb, "sametag");
+        let cont0 = func.append_block("eq.variants");
+        self.builder.build_cond_br(same_tag, cont0, false_bb);
+        let mut cont = cont0;
+        for (i, variant) in e.variants.iter().enumerate() {
+            if variant.fields.is_empty() {
+                continue;
+            }
+            self.builder.position_at_end(cont);
+            let is_i = self
+                .builder
+                .build_icmp(IntCmp::Eq, ta, self.v_i32(i as u64), "isvar");
+            let then_bb = func.append_block("eq.v");
+            let next = func.append_block("eq.next");
+            self.builder.build_cond_br(is_i, then_bb, next);
+            self.builder.position_at_end(then_bb);
+            let a_union = self.fld(info.llvm_ty, a, ENUM_UNION_FIELD, "kelp_v");
+            let b_union = self.fld(info.llvm_ty, b, ENUM_UNION_FIELD, "kelp_v");
+            let mut acc = self.ctx.const_bool(true);
+            for (fi, field) in variant.fields.iter().enumerate() {
+                let ap = self.fld(info.variants[i].payload_ty, a_union, fi as u32, "f");
+                let bp = self.fld(info.variants[i].payload_ty, b_union, fi as u32, "f");
+                let eq = self.emit_field_eq(&field.ty, ap, bp)?;
+                acc = self.builder.build_int_binop(IntBinOp::And, acc, eq, "acc");
+            }
+            let failed = self.builder.build_icmp(IntCmp::Eq, acc, self.ctx.const_bool(false), "ne");
+            self.builder.build_cond_br(failed, false_bb, next);
+            cont = next;
+        }
+        self.builder.position_at_end(cont);
+        self.builder.build_ret(self.ctx.const_bool(true));
+        self.builder.position_at_end(false_bb);
+        self.builder.build_ret(self.ctx.const_bool(false));
         Ok(())
     }
 
@@ -6666,6 +6970,11 @@ impl<'a> Gen<'a> {
     fn map_key_arg(&self, key: &Ty) -> Result<Type<'a>, String> {
         if key == &Ty::String {
             Ok(self.pty())
+        } else if matches!(key, Ty::Struct(_)) {
+            // A user key travels as a shared borrow: the map clones its own
+            // copy in, and passing an owned `datac` (or one with an owned
+            // field) by value would move or alias it.
+            Ok(self.pty())
         } else {
             self.lty2(key)
         }
@@ -6717,15 +7026,22 @@ impl<'a> Gen<'a> {
         Ok(out)
     }
 
-    /// `kelp_map_hash`/`kelp_map_mix` over a key *argument* (a `str` view for a
-    /// `String` key, the value itself for a scalar), the mirror of
-    /// `write_map`'s `hash_arg`.
+    /// `kelp_map_hash`/`kelp_map_mix`/`kelp_hash_<T>` over a key *argument* (a
+    /// `str` view for a `String` key, the value itself for a scalar, a borrow
+    /// for a user key), the mirror of `write_map`'s `hash_arg`.
     fn map_key_hash_arg(&self, key: &Ty, k: Value<'a>) -> Result<Value<'a>, String> {
         if key == &Ty::String {
             let (strlen, sty) = self.libc_fn("strlen")?;
             let n = self.call(strlen, sty, &[k], "len");
             let rt = self.rt("kelp_map_hash")?;
             Ok(self.call(rt.func, rt.ty, &[k, n], "hash"))
+        } else if let Ty::Struct(name) = key {
+            let (func, hty) = self
+                .hash_fns
+                .get(name)
+                .copied()
+                .ok_or_else(|| no_value(&format!("the hash of '{name}'")))?;
+            Ok(self.call(func, hty, &[k], "hash"))
         } else {
             let wide = self.key_to_u64(key, k)?;
             let rt = self.rt("kelp_map_mix")?;
@@ -6734,7 +7050,7 @@ impl<'a> Gen<'a> {
     }
 
     /// The same hash over a *stored* key (a `kelp_String` inline in the entry,
-    /// or a scalar).
+    /// a scalar, or a user key inline in the entry).
     fn map_key_hash_stored(
         &self,
         key: &Ty,
@@ -6747,6 +7063,14 @@ impl<'a> Gen<'a> {
             let len = self.ld(self.ctx.i64(), self.fld(self.lty2(key)?, key_addr, 1, "n"), "n");
             let rt = self.rt("kelp_map_hash")?;
             Ok(self.call(rt.func, rt.ty, &[data, len], "hash"))
+        } else if let Ty::Struct(name) = key {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            let (func, hty) = self
+                .hash_fns
+                .get(name)
+                .copied()
+                .ok_or_else(|| no_value(&format!("the hash of '{name}'")))?;
+            Ok(self.call(func, hty, &[key_addr], "hash"))
         } else {
             let key_ty = self.lty2(key)?;
             let kv = self.ld(key_ty, self.fld(entry_ty, entry, 0, "key"), "key");
@@ -6770,6 +7094,14 @@ impl<'a> Gen<'a> {
             let n = self.call(strlen, sty, &[k], "len");
             let rt = self.rt("kelp_map_key_eq")?;
             Ok(self.call(rt.func, rt.ty, &[key_addr, k, n], "eq"))
+        } else if let Ty::Struct(name) = key {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            let (func, ety) = self
+                .eq_fns
+                .get(name)
+                .copied()
+                .ok_or_else(|| no_value(&format!("the equality of '{name}'")))?;
+            Ok(self.call(func, ety, &[key_addr, k], "eq"))
         } else {
             let key_ty = self.lty2(key)?;
             let kv = self.ld(key_ty, self.fld(entry_ty, entry, 0, "key"), "key");
@@ -6778,18 +7110,23 @@ impl<'a> Gen<'a> {
     }
 
     /// The key value an `insert` stores: a `String` key is copied in from the
-    /// `str` view, a scalar key is stored as it arrived.
+    /// `str` view, a user key is cloned in from the borrow, a scalar key is
+    /// stored as it arrived.
     fn map_key_value(&self, key: &Ty, k: Value<'a>, slot: Value<'a>) -> Result<Value<'a>, String> {
         if key == &Ty::String {
             self.sret_call("kelp_String__from_str", slot, &[k])?;
             Ok(self.ld(self.lty2(key)?, slot, "key"))
+        } else if matches!(key, Ty::Struct(_)) {
+            let key_ty = self.lty2(key)?;
+            self.clone_into(k, slot, key)?;
+            Ok(self.ld(key_ty, slot, "key"))
         } else {
             Ok(k)
         }
     }
 
-    /// A copy of the entry's stored key, for `keys()`: a `String` is cloned, a
-    /// scalar is loaded.
+    /// A copy of the entry's stored key, for `keys()`: a `String` or a user key
+    /// is cloned, a scalar is loaded.
     fn map_key_clone(
         &self,
         key: &Ty,
@@ -6801,14 +7138,19 @@ impl<'a> Gen<'a> {
             let key_addr = self.fld(entry_ty, entry, 0, "key");
             self.sret_call("kelp_String__clone", slot, &[key_addr])?;
             Ok(self.ld(self.lty2(key)?, slot, "key"))
+        } else if matches!(key, Ty::Struct(_)) {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            let key_ty = self.lty2(key)?;
+            self.clone_into(key_addr, slot, key)?;
+            Ok(self.ld(key_ty, slot, "key"))
         } else {
             let key_ty = self.lty2(key)?;
             Ok(self.ld(key_ty, self.fld(entry_ty, entry, 0, "key"), "key"))
         }
     }
 
-    /// Free the entry's stored key: a `String` buffer is freed, a scalar owns
-    /// nothing.
+    /// Free the entry's stored key: a `String` buffer is freed, a user key is
+    /// dropped through its generated drop, a scalar owns nothing.
     fn map_key_drop(
         &self,
         key: &Ty,
@@ -6819,6 +7161,9 @@ impl<'a> Gen<'a> {
             let key_addr = self.fld(entry_ty, entry, 0, "key");
             let rt = self.rt("kelp_string_drop")?;
             self.call(rt.func, rt.ty, &[key_addr], "");
+        } else if matches!(key, Ty::Struct(_)) {
+            let key_addr = self.fld(entry_ty, entry, 0, "key");
+            self.call_drop(key_addr, key)?;
         }
         Ok(())
     }
@@ -7880,10 +8225,13 @@ fn declare_runtime<'a>(
     // re-deriving the hash and the equality (MK7 §3.2, §3.3). `kelp_map_hash`
     // is FNV-1a over the key's bytes; `kelp_map_mix` is the 64-bit finalizer a
     // scalar key goes through; `kelp_map_key_eq` compares a stored `String`
-    // against a `str` view length-aware.
+    // against a `str` view length-aware; `kelp_map_combine` folds one hashed
+    // field or tag into a derived key's hash, the one constant that has to be
+    // the same in both backends (A-6).
     decl(&mut out, "kelp_map_hash", i64, &[ptr, i64], true, false);
     decl(&mut out, "kelp_map_mix", i64, &[i64], true, false);
     decl(&mut out, "kelp_map_key_eq", i1, &[ptr, ptr, i64], true, false);
+    decl(&mut out, "kelp_map_combine", i64, &[i64, i64], true, false);
     // `String#from_bytes`'s C entry point takes a 24-byte `kelp_Bytes` by value,
     // which an IR call cannot cross (BUG-vN4tR, above). The runtime object's
     // adapter spells that argument as a pointer, and it returns the `String`

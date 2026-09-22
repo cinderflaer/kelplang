@@ -611,6 +611,12 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "map_missing_key",
     "map_remove_missing",
     "map_tombstones_and_reuse",
+    // A-6: the derived `datac`/`enum` map key, including the `keys()` clone
+    // path and the entry's own copy of an owned key field.
+    "map_datac_key",
+    "map_datac_key_ok",
+    "map_nested_datac_key",
+    "map_enum_key",
     "nested_literal_staging",
     "recursive_datac",
     "stdlib_sort",

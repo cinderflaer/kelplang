@@ -151,7 +151,12 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// two owned-temporary shapes all lower. The gate for this slice is
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
-const LLVM_BUILT_BASELINE: usize = 235;
+///
+/// Raised from 235 by MK8-S2 item A-6: the derived structural hash and
+/// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
+/// builds instead of being rejected and three of the four new positive key
+/// fixtures build too.
+const LLVM_BUILT_BASELINE: usize = 239;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

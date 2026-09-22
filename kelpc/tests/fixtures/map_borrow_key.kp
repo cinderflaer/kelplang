@@ -1,0 +1,7 @@
+// A-6: a borrow is not a map key. The compiler has no equality for a borrow,
+// and an inserted borrow would outlive the value it points at.
+fun main() {
+    val n: i32 = 1
+    var m: Map<&i32, i32> = Map.new()
+    m.insert(key = &n, v = 1)
+}

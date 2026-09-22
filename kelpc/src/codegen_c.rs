@@ -19,7 +19,7 @@ use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::tir::*;
-use crate::types::{clone_fn_name, cmp_fn_name, drop_fn_name, needs_drop, owned_types, EnumDef, StructDef, Ty};
+use crate::types::{clone_fn_name, cmp_fn_name, drop_fn_name, eq_fn_name, hash_fn_name, needs_drop, owned_types, EnumDef, StructDef, Ty};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -108,6 +108,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let type_decls = type_decls(&program.structs, &program.enums);
     let clonable = crate::types::clonable_types(&type_decls);
     let sortable = crate::types::sortable_types(&type_decls);
+    let keyable = crate::types::keyable_types(&type_decls);
     let caps = CapTable {
         gated: program.gated.clone(),
         patterns: program
@@ -298,12 +299,24 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             emit_arrays_for(&mut out, ty, &mut emitted_arrays, &owned);
         }
         match decl {
-            Decl::Record(s) => write_struct(&mut out, s, &owned, &clonable, &sortable),
-            Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable),
+            Decl::Record(s) => write_struct(&mut out, s, &owned, &clonable, &sortable, &keyable),
+            Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable, &keyable),
         }
     }
     if !decls.is_empty() {
         out.push('\n');
+    }
+
+    // A map whose key is a `datac` gets its entry body here, after every
+    // `datac` typedef, because the entry holds the key type by value and that
+    // typedef is what makes the key a complete C type. Everything that reads
+    // the entry is a map function set, and those all come later.
+    for ty in &containers {
+        if let Ty::Map(key, value) = ty {
+            if matches!(**key, Ty::Struct(_)) {
+                write_map_entry_body(&mut out, key, value);
+            }
+        }
     }
 
     // Every array the program uses that no `datac` field pulled in earlier: a
@@ -579,6 +592,52 @@ fn write_field_cmp(out: &mut String, ty: &Ty, a: &str, b: &str) {
     }
 }
 
+/// One field's contribution to a derived hash: the byte hash of a `String`,
+/// the mix of a scalar, and a nested keyable `datac`/`enum`'s own hash. Every
+/// fold goes through the shared `kelp_map_combine`, so this backend and the
+/// LLVM one cannot produce a different hash for the same key.
+fn write_field_hash(out: &mut String, ty: &Ty, at: &str) {
+    match ty {
+        Ty::String => writeln!(
+            out,
+            "    h = kelp_map_combine(h, kelp_map_hash((const char*){at}.data, {at}.len));"
+        )
+        .unwrap(),
+        Ty::Struct(_) => writeln!(
+            out,
+            "    h = kelp_map_combine(h, {}(&{at}));",
+            hash_fn_name(ty)
+        )
+        .unwrap(),
+        _ => writeln!(
+            out,
+            "    h = kelp_map_combine(h, kelp_map_mix((uint64_t)({at})));"
+        )
+        .unwrap(),
+    }
+}
+
+/// One field's equality in a derived key equality, the same field set
+/// `write_field_hash` folds. A `String` field reuses the runtime's stored-key
+/// comparison, so its byte-length-aware rule is the one the `String` key path
+/// already uses.
+fn write_field_eq(out: &mut String, ty: &Ty, a: &str, b: &str) {
+    match ty {
+        Ty::String => writeln!(
+            out,
+            "    if (!kelp_map_key_eq(&{a}, (const char*){b}.data, {b}.len)) {{ return false; }}"
+        )
+        .unwrap(),
+        Ty::Struct(_) => writeln!(
+            out,
+            "    if (!{}(&{a}, &{b})) {{ return false; }}",
+            eq_fn_name(ty)
+        )
+        .unwrap(),
+        _ => writeln!(out, "    if ({a} != {b}) {{ return false; }}").unwrap(),
+    }
+}
+
 /// (M6.2). Emitted in declaration order, and a `datac` may only name earlier
 /// `datac`s, so a struct's drop function is always defined before the struct
 /// that calls it — no forward declarations needed.
@@ -588,6 +647,7 @@ fn write_struct(
     owned: &HashSet<String>,
     clonable: &HashSet<String>,
     sortable: &HashSet<String>,
+    keyable: &HashSet<String>,
 ) {
     // Tagged (M8), because a container typedef emitted *earlier* may hold a
     // pointer to this struct (`Box<Node>` inside `Node` itself), and a
@@ -662,6 +722,41 @@ fn write_struct(
         }
         out.push_str("    return 0;\n}\n");
     }
+    // A derived hash and key equality (A-6): a `datac` key whose every field
+    // is keyable gets both, so it can be a `Map` key. Emitted beside the
+    // typedef, like the clone and the order, so a field of an earlier keyable
+    // type already has its own pair to call.
+    if keyable.contains(&s.name) {
+        writeln!(
+            out,
+            "static uint64_t kelp_hash_{}(const {}* v) {{",
+            crate::types::c_ident(&s.name),
+            ty.c_type()
+        )
+        .unwrap();
+        out.push_str("    uint64_t h = 0;\n");
+        for f in &s.fields {
+            write_field_hash(out, &f.ty, &format!("v->{}", field_name(&f.name)));
+        }
+        out.push_str("    return h;\n}\n");
+        writeln!(
+            out,
+            "static bool kelp_eq_{}(const {}* a, const {}* b) {{",
+            crate::types::c_ident(&s.name),
+            ty.c_type(),
+            ty.c_type()
+        )
+        .unwrap();
+        for f in &s.fields {
+            write_field_eq(
+                out,
+                &f.ty,
+                &format!("a->{}", field_name(&f.name)),
+                &format!("b->{}", field_name(&f.name)),
+            );
+        }
+        out.push_str("    return true;\n}\n");
+    }
 }
 
 /// The generated C member name of one variant's payload struct inside an
@@ -685,6 +780,7 @@ fn write_enum(
     owned: &HashSet<String>,
     clonable: &HashSet<String>,
     sortable: &HashSet<String>,
+    keyable: &HashSet<String>,
 ) {
     write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&e.name)).unwrap();
     out.push_str("    int32_t kelp_tag;\n");
@@ -790,6 +886,71 @@ fn write_enum(
         }
         out.push_str("    }\n    return 0;\n}\n");
     }
+
+    // A derived hash and key equality (A-6): the tag folds first, so a value
+    // of one variant is never confusable with another, then the live variant's
+    // payload, the same shape the order below uses.
+    if keyable.contains(&e.name) {
+        writeln!(
+            out,
+            "static uint64_t kelp_hash_{}(const {}* v) {{",
+            crate::types::c_ident(&e.name),
+            ty.c_type()
+        )
+        .unwrap();
+        out.push_str("    uint64_t h = 0;\n");
+        out.push_str("    h = kelp_map_combine(h, kelp_map_mix((uint64_t)(v->kelp_tag)));\n");
+        out.push_str("    switch (v->kelp_tag) {\n");
+        for (i, v) in e.variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            writeln!(out, "    case {i}: {{").unwrap();
+            for f in &v.fields {
+                let at = format!("v->kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
+                write_field_hash(out, &f.ty, &at);
+            }
+            out.push_str("        break;\n    }\n");
+        }
+        out.push_str("    }\n    return h;\n}\n");
+
+        writeln!(
+            out,
+            "static bool kelp_eq_{}(const {}* a, const {}* b) {{",
+            crate::types::c_ident(&e.name),
+            ty.c_type(),
+            ty.c_type()
+        )
+        .unwrap();
+        out.push_str("    if (a->kelp_tag != b->kelp_tag) {\n        return false;\n    }\n    switch (a->kelp_tag) {\n");
+        for (i, v) in e.variants.iter().enumerate() {
+            if v.fields.is_empty() {
+                continue;
+            }
+            writeln!(out, "    case {i}: {{").unwrap();
+            for f in &v.fields {
+                let at = format!("kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
+                write_field_eq(out, &f.ty, &format!("a->{at}"), &format!("b->{at}"));
+            }
+            out.push_str("        break;\n    }\n");
+        }
+        out.push_str("    }\n    return true;\n}\n");
+    }
+}
+
+/// The body of one map entry whose key is a `datac`. Split from
+/// `write_container_typedef` because the key is held by value and its typedef
+/// is only complete after the `datac` declarations.
+fn write_map_entry_body(out: &mut String, key: &Ty, value: &Ty) {
+    let name = crate::types::map_c_type(key, value);
+    let entry = format!("{name}_entry");
+    writeln!(
+        out,
+        "struct {entry} {{\n    {} key;\n    {}* value;\n    uint8_t live;\n}};",
+        key.c_type(),
+        crate::types::container_elem_c_type(value)
+    )
+    .unwrap();
 }
 
 /// A container's C typedef, emitted before every `datac`: both containers
@@ -828,16 +989,26 @@ pub(crate) fn write_container_typedef(out: &mut String, ty: &Ty) {
         // the value sits behind a pointer, so this typedef can still be
         // emitted before every `datac` — a `datac` value is named by its
         // forward-declared struct tag.
+        //
+        // A `datac` *key* is the one case that cannot sit inline here: its C
+        // typedef comes after every container typedef, so the entry is only
+        // forward-declared now and its body is written once the `datac`s are
+        // complete (`write_map_entry_bodies`). The map itself holds a pointer
+        // to the entry either way, so it stays complete here.
         Ty::Map(key, value) => {
             let name = crate::types::map_c_type(key, value);
             let entry = format!("{name}_entry");
-            writeln!(
-                out,
-                "typedef struct {{\n    {} key;\n    {}* value;\n    uint8_t live;\n}} {entry};",
-                key.c_type(),
-                crate::types::container_elem_c_type(value)
-            )
-            .unwrap();
+            if !matches!(&**key, Ty::Struct(_)) {
+                writeln!(
+                    out,
+                    "typedef struct {{\n    {} key;\n    {}* value;\n    uint8_t live;\n}} {entry};",
+                    key.c_type(),
+                    crate::types::container_elem_c_type(value)
+                )
+                .unwrap();
+            } else {
+                writeln!(out, "typedef struct {entry} {entry};").unwrap();
+            }
             writeln!(
                 out,
                 "typedef struct {{\n    {entry}* entries;\n    size_t entry_count;\n    size_t entry_cap;\n    size_t len;\n    size_t* index;\n    size_t index_cap;\n    size_t index_used;\n}} {name};"
@@ -1250,7 +1421,10 @@ fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
 /// changes the generated code from instantiation to instantiation: a `String`
 /// key is hashed over its bytes, copied in from the `str` view the caller
 /// passes, and compared with a length-aware `memcmp`; a scalar key is hashed
-/// by mixing its bits, passed by value, and compared with `==` (A-2).
+/// by mixing its bits, passed by value, and compared with `==` (A-2); a
+/// `datac`/`enum` key (A-6) is passed as a shared borrow, hashed and compared
+/// by its generated `kelp_hash_<T>`/`kelp_eq_<T>`, and cloned in with its
+/// generated `kelp_clone_<T>` so the entry owns its own copy.
 fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
     let map = crate::types::map_c_type(key, value);
     let map_ty = Ty::Map(Box::new(key.clone()), Box::new(value.clone()));
@@ -1270,18 +1444,26 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
         _ => format!("*{ptr}"),
     };
     // A `String` key reaches the map as a `str` view (the map copies it in);
-    // a scalar key is already the value the map stores.
+    // a scalar key is already the value the map stores; a user key reaches it
+    // as a shared borrow (the map clones its own copy in).
     let key_is_string = key == &Ty::String;
+    let key_is_struct = matches!(key, Ty::Struct(_));
+    let key_drops = key_is_struct && needs_drop(key, owned);
     let key_arg_c = if key_is_string {
         "const char*".to_string()
+    } else if key_is_struct {
+        format!("const {}*", key.c_type())
     } else {
         key.c_type()
     };
-    // Hashing a key *argument* (a `str` view) and hashing a *stored* key
-    // (`kelp_String`) read the bytes differently, so they are two helpers.
+    // Hashing a key *argument* (a `str` view or a borrowed `datac`) and
+    // hashing a *stored* key (`kelp_String` or an inline `datac`) read the
+    // bytes differently, so they are two helpers.
     let hash_arg = |a: &str| {
         if key_is_string {
             format!("kelp_map_hash({a}, strlen({a}))")
+        } else if key_is_struct {
+            format!("{}({a})", hash_fn_name(key))
         } else {
             format!("kelp_map_mix((uint64_t)({a}))")
         }
@@ -1289,38 +1471,31 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
     let hash_stored = |s: &str| {
         if key_is_string {
             format!("kelp_map_hash((const char*){s}.data, {s}.len)")
+        } else if key_is_struct {
+            format!("{}(&{s})", hash_fn_name(key))
         } else {
             format!("kelp_map_mix((uint64_t)({s}))")
         }
     };
     // Each of these takes a stored key as an *lvalue*, and adds the `&` a
-    // `kelp_String` needs itself — a scalar key is compared and dropped by
-    // value, and taking its address would be a different expression.
+    // `kelp_String` or a user key needs itself; a scalar key is compared and
+    // dropped by value, and taking its address would be a different
+    // expression.
     let eq_stored = |stored: &str, a: &str| {
         if key_is_string {
             format!("kelp_map_key_eq(&{stored}, {a}, strlen({a}))")
+        } else if key_is_struct {
+            format!("{}(&{stored}, {a})", eq_fn_name(key))
         } else {
             format!("({stored} == {a})")
-        }
-    };
-    let store_key = |a: &str| {
-        if key_is_string {
-            format!("kelp_String__from_str({a})")
-        } else {
-            a.to_string()
-        }
-    };
-    let clone_key = |s: &str| {
-        if key_is_string {
-            format!("kelp_String__clone(&{s})")
-        } else {
-            s.to_string()
         }
     };
     // A statement, terminator included: every caller writes it as one.
     let drop_key = |s: &str| {
         if key_is_string {
             format!("kelp_string_drop(&{s});")
+        } else if key_drops {
+            format!("{}(&{s});", drop_fn_name(key))
         } else {
             format!("(void)({s});")
         }
@@ -1373,7 +1548,14 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
     writeln!(out, "        self->entries = ({entry}*)realloc(self->entries, cap * sizeof({entry}));").unwrap();
     out.push_str("        if (self->entries == NULL) {\n            kelp_panic(\"out of memory\");\n        }\n        self->entry_cap = cap;\n    }\n");
     out.push_str("    size_t e = self->entry_count++;\n");
-    writeln!(out, "    self->entries[e].key = {};", store_key("k")).unwrap();
+    if key_is_struct {
+        // The entry owns its own copy of the key, like a `String` key's.
+        writeln!(out, "    {}(k, &self->entries[e].key);", clone_fn_name(key)).unwrap();
+    } else if key_is_string {
+        writeln!(out, "    self->entries[e].key = kelp_String__from_str(k);").unwrap();
+    } else {
+        writeln!(out, "    self->entries[e].key = k;").unwrap();
+    }
     writeln!(out, "    self->entries[e].value = ({value_c}*)malloc(sizeof({value_c}));").unwrap();
     out.push_str("    if (self->entries[e].value == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n");
     out.push_str("    *self->entries[e].value = v;\n    self->entries[e].live = 1;\n");
@@ -1419,10 +1601,19 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
 
     writeln!(out, "static {list_key} {map}__keys(const {map}* self) {{").unwrap();
     writeln!(out, "    {list_key} out = {list_key}__empty();\n    {list_key}__reserve(&out, self->len);").unwrap();
+    let append = if key_is_struct {
+        format!(
+            "{}(&self->entries[e].key, &out.data[out.len]);\n            out.len++;",
+            clone_fn_name(key)
+        )
+    } else if key_is_string {
+        "out.data[out.len++] = kelp_String__clone(&self->entries[e].key);".to_string()
+    } else {
+        "out.data[out.len++] = self->entries[e].key;".to_string()
+    };
     writeln!(
         out,
-        "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            out.data[out.len++] = {};\n        }}\n    }}\n    return out;\n}}\n",
-        clone_key("self->entries[e].key")
+        "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            {append}\n        }}\n    }}\n    return out;\n}}\n"
     )
     .unwrap();
 

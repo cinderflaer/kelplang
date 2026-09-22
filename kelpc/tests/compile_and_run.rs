@@ -2468,6 +2468,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "map_basic",
         "map_owned",
         "map_datac",
+        // A-6: a `datac` key with an owned `String` field and an `enum` key
+        // with an owned `String` payload. The entry owns a deep copy of the
+        // key, so a drop that missed it is a leak and a double drop is a
+        // use-after-free.
+        "map_nested_datac_key",
+        "map_enum_key",
         "io_stdio",
         "io_streams",
         "process_spawn",
@@ -3281,7 +3287,7 @@ fn a_map_cannot_hold_a_container_or_be_created_without_a_value_type() {
 fn a_map_key_can_be_a_scalar_and_the_shorthand_still_means_string() {
     assert_compiles_and_runs(
         "tests/fixtures/map_key_types.kp",
-        "2\n99\ntrue\nfalse\n0\n2\n1\n1\n10\n2\nyes\nno\n70\n2\n6\nbb\n",
+        "2\n99\ntrue\nfalse\n0\n2\n1\n1\n10\n2\nyes\nno\n70\n2\n9\nfalse\n2\n6\nbb\n",
     );
 }
 
@@ -3290,13 +3296,55 @@ fn a_key_type_the_compiler_cannot_hash_or_compare_is_rejected() {
     for name in [
         // `nan != nan` would make an inserted key unfindable.
         "map_float_key",
-        // A `datac` has no equality in v1.
-        "map_datac_key",
+        // A `datac` with one field that is not keyable is not a key either:
+        // the keyability fixpoint over the declaration graph leaves it out.
+        "map_unkeyable_datac_key",
+        // A borrow and a container have no derived hash and equality.
+        "map_borrow_key",
+        "map_list_key",
         // One argument (`Map<V>`) or two (`Map<K, V>`), never three.
         "map_arity",
     ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));
     }
+}
+
+#[test]
+fn a_datac_whose_fields_are_keyable_is_a_map_key() {
+    // A-6: the compiler derives the key's hash and equality for a `datac` the
+    // same way it derives its order and its deep copy, so no comparator and no
+    // trait is involved.
+    assert_compiles_and_runs(
+        "tests/fixtures/map_datac_key.kp",
+        "1\n10\nfalse\nfalse\n",
+    );
+}
+
+#[test]
+fn a_datac_map_key_is_cloned_in_overwritten_and_removed() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_datac_key_ok.kp",
+        "2\n99\n20\nfalse\ntrue\n2\n1\n2\n99\n1\nfalse\n31\n7\n29\nfalse\n",
+    );
+}
+
+#[test]
+fn a_datac_map_key_may_own_a_string_field() {
+    // The `String` field is hashed byte-wise and compared length-aware, and the
+    // entry owns a deep copy of the key, so ASAN re-runs this fixture (see
+    // `heap_fixtures_are_double_free_and_leak_clean`).
+    assert_compiles_and_runs(
+        "tests/fixtures/map_nested_datac_key.kp",
+        "2\n10\nfalse\n20\n10\n1\ntrue\n",
+    );
+}
+
+#[test]
+fn an_enum_whose_variant_payloads_are_keyable_is_a_map_key() {
+    assert_compiles_and_runs(
+        "tests/fixtures/map_enum_key.kp",
+        "2\n10\n20\nfalse\nfalse\n2\n10\n1\n",
+    );
 }
 
 #[test]

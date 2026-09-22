@@ -572,6 +572,7 @@ impl Ctx {
     fn type_scope(&self) -> TypeScope<'_> {
         TypeScope {
             structs: &self.structs,
+            enums: &self.enums,
             env: self.env.clone(),
             params: &self.type_args,
             prefix: &self.prefix,
@@ -678,42 +679,9 @@ impl Ctx {
 
     /// Every `datac`/`enum` declaration the checker knows, generic instances
     /// included, as `(name, each field's type)` — what the derived
-    /// clone/order fixpoints (`types::clonable_types`) run over.
+    /// clone/order/key fixpoints (`types::clonable_types`) run over.
     fn type_decls(&self) -> Vec<(String, Vec<Ty>)> {
-        let mut out: Vec<(String, Vec<Ty>)> = Vec::new();
-        let mut push = |name: &str, fields: Vec<Ty>| out.push((name.to_string(), fields));
-        // A name that is an `enum` also sits in `structs` as an empty record
-        // (one name-resolution path covers both kinds), so the enum table's
-        // entry is the one to keep.
-        for (name, s) in &self.structs {
-            if self.enums.contains_key(name) {
-                continue;
-            }
-            push(name, s.fields.iter().map(|f| f.ty.clone()).collect());
-        }
-        for (name, e) in &self.enums {
-            push(
-                name,
-                e.variants
-                    .iter()
-                    .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
-                    .collect(),
-            );
-        }
-        let st = self.env.instances.borrow();
-        for (name, s) in &st.records {
-            push(name, s.fields.iter().map(|f| f.ty.clone()).collect());
-        }
-        for (name, e) in &st.sums {
-            push(
-                name,
-                e.variants
-                    .iter()
-                    .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
-                    .collect(),
-            );
-        }
-        out
+        type_decls_of(&self.structs, &self.enums, &self.env.instances.borrow())
     }
 
     /// Whether `List<T>.clone`/`.slice` can be offered for a value of `ty`:
@@ -729,6 +697,12 @@ impl Ctx {
     fn value_sortable(&self, ty: &Ty) -> bool {
         let set = crate::types::sortable_types(&self.type_decls());
         crate::types::value_is_sortable(ty, &set)
+    }
+
+    /// The user types that are `Map` keys, by the same declaration-graph rule:
+    /// a `datac`/`enum` is keyable once every field or payload it holds is.
+    fn keyable_set(&self) -> std::collections::HashSet<String> {
+        crate::types::keyable_types(&self.type_decls())
     }
 
     /// Instantiates a generic template for one use site (A-2). Idempotent: a
@@ -749,6 +723,42 @@ impl Ctx {
     }
 }
 
+/// Every `datac`/`enum` declaration as `(name, each field's type)`, generic
+/// instances included: what the derived clone, order and map-key fixpoints run
+/// over. A name that is an `enum` also sits in `structs` as an empty record
+/// (one name-resolution path covers both kinds), so the enum table's entry is
+/// the one to keep.
+fn type_decls_of(
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    instances: &InstanceState,
+) -> Vec<(String, Vec<Ty>)> {
+    let mut out: Vec<(String, Vec<Ty>)> = Vec::new();
+    let mut push = |name: &str, fields: Vec<Ty>| out.push((name.to_string(), fields));
+    for (name, s) in structs {
+        if enums.contains_key(name) {
+            continue;
+        }
+        push(name, s.fields.iter().map(|f| f.ty.clone()).collect());
+    }
+    let payloads = |e: &EnumDef| -> Vec<Ty> {
+        e.variants
+            .iter()
+            .flat_map(|v| v.fields.iter().map(|f| f.ty.clone()))
+            .collect()
+    };
+    for (name, e) in enums {
+        push(name, payloads(e));
+    }
+    for (name, s) in &instances.records {
+        push(name, s.fields.iter().map(|f| f.ty.clone()).collect());
+    }
+    for (name, e) in &instances.sums {
+        push(name, payloads(e));
+    }
+    out
+}
+
 /// Everything needed to turn a *written* type name into a `Ty`, with M5's
 /// module qualification rules:
 /// - a builtin (`i32`, `f64`, `str`, ...) is itself;
@@ -758,6 +768,10 @@ impl Ctx {
 ///   module-qualified namespace, per the plan).
 struct TypeScope<'a> {
     structs: &'a HashMap<String, StructDef>,
+    /// The declared `enum`s, which share one declaration order with the
+    /// `datac`s above: a `Map` key's keyability recurses through an enum's
+    /// variant payloads, and an enum is not in `structs` with them.
+    enums: &'a HashMap<String, EnumDef>,
     /// Generic templates and the instances built so far (A-2). Shared, and
     /// mutable through a `RefCell`, because resolving `Pair<i32, String>`
     /// *creates* the instantiation it names — including from inside another
@@ -794,6 +808,16 @@ struct TypeScope<'a> {
 }
 
 impl TypeScope<'_> {
+    /// The user types that are `Map` keys, from the declarations this view of
+    /// the program can see (A-6). A `Map` key is resolved before the whole
+    /// program is known, so this runs the same fixpoint `Ctx` runs, over the
+    /// declarations gathered so far: a type a field could legally name is
+    /// always an earlier declaration, and an earlier declaration is present.
+    fn keyable_set(&self) -> std::collections::HashSet<String> {
+        let decls = type_decls_of(self.structs, self.enums, &self.env.instances.borrow());
+        crate::types::keyable_types(&decls)
+    }
+
     /// A written type name, or a container over one. `indirect` is true
     /// when the type is being resolved *inside* a `Box`/`List` argument,
     /// where referring to the `datac` currently being declared (or to a
@@ -869,8 +893,7 @@ impl TypeScope<'_> {
                     1 => (Ty::String, &ty.args[0], ty.args[0].span),
                     2 => {
                         let key = self.resolve_element(&ty.args[0])?;
-                        if !crate::types::is_map_key(&key) {
-                            return Err(TypeError {
+                        if !crate::types::is_map_key_with(&key, &self.keyable_set()) {                            return Err(TypeError {
                                 message: map_key_error(&key),
                                 span: ty.args[0].span,
                             });
@@ -1043,7 +1066,7 @@ impl TypeScope<'_> {
                 span: expr.span(),
             });
         };
-        ConstEvaluator::new(const_fns, self.structs, &self.env, consts).array_len(
+        ConstEvaluator::new(const_fns, self.structs, &self.enums, &self.env, consts).array_len(
             expr,
             self.prefix,
             self.aliases,
@@ -1097,6 +1120,7 @@ impl TypeScope<'_> {
             .collect();
         let scope = TypeScope {
             structs: self.structs,
+            enums: self.enums,
             env: self.env.clone(),
             params: &params,
             prefix: &tmpl.prefix,
@@ -2313,9 +2337,10 @@ fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> Option<FnSi
     })
 }
 
-/// The `Map<V>` builtins (MK5-S5), instantiated for one value type. Keys are
-/// always `String` (so every key parameter is a `str`), and the value type
-/// decides the same things the `List` element type does:
+/// The `Map<V>` builtins (MK5-S5), instantiated for one key and value type.
+/// A `String` key is passed as a `str` view, a scalar by value and a user key
+/// by shared borrow; the value type decides the same things the `List` element
+/// type does:
 ///
 /// - `get` returns a *copy* for a `Copy` value and a shared borrow for an
 ///   owned one, rooted at the receiver by the elision rule (`Map#get` is in
@@ -2370,23 +2395,26 @@ fn map_sig(key: &str, map_key: &Ty, value: &Ty) -> Option<FnSig> {
     })
 }
 
-/// Why a type cannot be a `Map` key (A-2). The set is closed because the
-/// compiler generates the key's hash and its equality for whatever the key
-/// type is; a key that needs a user-supplied comparison would be a trait or a
-/// comparator function, and v1 has neither.
+/// Why a type cannot be a `Map` key (A-2, A-6). The compiler generates the
+/// key's hash and its equality for whatever the key type is, so a key that
+/// needs a user-supplied comparison would be a trait or a comparator function,
+/// and v1 has neither.
 fn map_key_error(ty: &Ty) -> String {
     format!(
-        "'{}' cannot be a Map key — the key has to be 'String', an integer or 'bool', because the compiler generates the key's hash and its equality",
+        "'{}' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler generates the key's hash and its equality",
         ty.display()
     )
 }
 
 /// How a `Map`'s key is passed to its own methods: a `String` key is a `str`
-/// view (the map copies it in, and a view is what a `str` caller already
-/// has), and a scalar key is passed by value.
+/// view (the map copies it in, and a view is what a `str` caller already has),
+/// a scalar key is passed by value, and a user key is a shared borrow the map
+/// clones from (passing it by value would move the caller's key, or copy an
+/// owned field it does not own twice).
 fn map_key_param(key: &Ty) -> Ty {
     match key {
         Ty::String => Ty::Str,
+        Ty::Struct(_) => Ty::Ref { mutable: false, inner: Box::new(key.clone()) },
         other => other.clone(),
     }
 }
@@ -2779,6 +2807,7 @@ fn collect_consts(
     program: &ast::Program,
     project: &Project,
     structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
     env: &TypeEnv,
     const_fns: &ConstFns,
 ) -> std::result::Result<HashMap<String, ConstInfo>, Diagnostic> {
@@ -2789,6 +2818,7 @@ fn collect_consts(
         let bare = bare_name(&decl.name, prefix).to_string();
         let declared = TypeScope {
             structs,
+            enums,
             env: env.clone(),
             params: &EMPTY_PARAMS,
             prefix,
@@ -2824,7 +2854,7 @@ fn collect_consts(
             ));
         }
         let literal = {
-            let evaluator = ConstEvaluator::new(const_fns, structs, env, &out);
+            let evaluator = ConstEvaluator::new(const_fns, structs, enums, env, &out);
             evaluator
                 .fold_const(&bare, &decl.init, &declared, prefix, &aliases)
                 .map_err(|e| e.in_module(&decl.module))?
@@ -2998,6 +3028,7 @@ fn wrap_int(v: i128, ty: &Ty) -> i128 {
 struct ConstEvaluator<'a> {
     const_fns: &'a ConstFns,
     structs: &'a HashMap<String, StructDef>,
+    enums: &'a HashMap<String, EnumDef>,
     env: &'a TypeEnv,
     consts: &'a HashMap<String, ConstInfo>,
     steps: std::cell::Cell<u64>,
@@ -3008,12 +3039,14 @@ impl<'a> ConstEvaluator<'a> {
     fn new(
         const_fns: &'a ConstFns,
         structs: &'a HashMap<String, StructDef>,
+        enums: &'a HashMap<String, EnumDef>,
         env: &'a TypeEnv,
         consts: &'a HashMap<String, ConstInfo>,
     ) -> ConstEvaluator<'a> {
         ConstEvaluator {
             const_fns,
             structs,
+            enums,
             env,
             consts,
             steps: std::cell::Cell::new(0),
@@ -3030,6 +3063,7 @@ impl<'a> ConstEvaluator<'a> {
     ) -> TypeScope<'s> {
         TypeScope {
             structs: self.structs,
+            enums: self.enums,
             env: self.env.clone(),
             params: &EMPTY_PARAMS,
             prefix,
@@ -4214,7 +4248,7 @@ fn check_program_pass(
     // signature exists, so a `const` and a `fun` may reference each other in
     // either order.
     let const_fns = std::rc::Rc::new(collect_const_fns(program, project));
-    let consts = collect_consts(program, project, &HashMap::new(), &env, &const_fns)?;
+    let consts = collect_consts(program, project, &HashMap::new(), &HashMap::new(), &env, &const_fns)?;
 
     let mut enums: HashMap<String, EnumDef> = HashMap::new();
     let mut enum_order: Vec<String> = Vec::new();
@@ -4312,6 +4346,7 @@ fn check_program_pass(
                     }
                     let ty = TypeScope {
                         structs: &structs,
+                        enums: &enums,
                         env: env.clone(),
                         params: &EMPTY_PARAMS,
                         prefix,
@@ -4414,6 +4449,7 @@ fn check_program_pass(
             }
             let ty = TypeScope {
                 structs: &structs,
+                enums: &enums,
                 env: env.clone(),
                 params: &EMPTY_PARAMS,
                 prefix,
@@ -4488,6 +4524,7 @@ fn check_program_pass(
         let aliases = project.alias_prefixes_of(&f.module);
         let scope = TypeScope {
             structs: &structs,
+            enums: &enums,
             env: env.clone(),
             params: &EMPTY_PARAMS,
             prefix,
@@ -4903,6 +4940,7 @@ fn collect_pds(
         let value_ty = match &decl.ty {
             Some(t) => TypeScope {
                 structs,
+                enums,
                 env: env.clone(),
                 params: &EMPTY_PARAMS,
                 prefix,
@@ -6338,7 +6376,10 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 // to match).
                 let ty = if crate::types::is_open_container(&info.ty) {
                     let open = info.ty.clone();
-                    match expected.and_then(|exp| crate::types::fill_open_container(&open, exp)) {
+                    let keyable = ctx.keyable_set();
+                    match expected
+                        .and_then(|exp| crate::types::fill_open_container(&open, exp, &keyable))
+                    {
                         Some(filled) => {
                             ctx.set_binding_ty(name, filled.clone());
                             filled
@@ -7295,6 +7336,7 @@ fn field_hint(
 ) -> Option<Ty> {
     let scope = TypeScope {
         structs: &ctx.structs,
+        enums: &ctx.enums,
         env: ctx.env.clone(),
         params: bindings,
         prefix,
@@ -8966,6 +9008,7 @@ fn instantiate_function(
         .collect();
     let scope = TypeScope {
         structs: &ctx.structs,
+        enums: &ctx.enums,
         env: ctx.env.clone(),
         params: &resolved,
         prefix: &tmpl.prefix,
@@ -9246,6 +9289,7 @@ fn open_container_from_call(
             Ok(crate::types::fill_open_container(
                 open,
                 &Ty::List(Box::new(value.ty)),
+                &ctx.keyable_set(),
             ))
         }
         Ty::Box(_) => {
@@ -9263,6 +9307,7 @@ fn open_container_from_call(
             Ok(crate::types::fill_open_container(
                 open,
                 &Ty::Box(Box::new(value.ty)),
+                &ctx.keyable_set(),
             ))
         }
         Ty::Map(..) => {
@@ -9285,7 +9330,7 @@ fn open_container_from_call(
             let key = check_expr(&key_arg.value, ctx, None)?;
             let key_ty = if is_str_like(&key.ty) {
                 Ty::String
-            } else if crate::types::is_map_key(&key.ty) {
+            } else if crate::types::is_map_key_with(&key.ty, &ctx.keyable_set()) {
                 key.ty.clone()
             } else {
                 return Err(TypeError {
@@ -9296,6 +9341,7 @@ fn open_container_from_call(
             Ok(crate::types::fill_open_container(
                 open,
                 &Ty::Map(Box::new(key_ty), Box::new(value.ty)),
+                &ctx.keyable_set(),
             ))
         }
         _ => Ok(None),

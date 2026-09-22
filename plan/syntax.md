@@ -1373,7 +1373,7 @@ print(runs.get(key = 7))
 ```
 
 - **`Map<V>` written with one argument means `Map<String, V>`.** That is the shorthand every program written before keys were generic uses, and the two spellings are the same type.
-- **A key must be `String`, an integer, or `bool`.** The compiler generates the key's hash and its equality from whatever `K` is, so the set is closed: a float is refused because `nan != nan` would make an inserted key unfindable, and a `datac`, container or borrow is refused because v1 has no equality for them — a key that needs a user-supplied comparison is a trait or a comparator function, and v1 has neither (17).
+- **A key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` whose every field (or variant payload) is itself one of those.** The compiler derives the key's hash and its equality from the type, the same way it derives a `datac`'s order and its deep copy, so nothing here is a trait or a comparator. A float is refused because `nan != nan` would make an inserted key unfindable, and a `List`, `Map`, `Box`, view or borrow is refused because there is no derived equality for it (17).
 - `Map<K, V>` is neither a list element nor a map value, so `Map<String, Map<i32>>` stays impossible, like `List<List<i32>>`.
 
 | Method | Takes | Returns |
@@ -1973,7 +1973,7 @@ These are deliberate, and each one has a workaround in this document:
 - No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
-- A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
+- A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` whose every field or variant payload is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
 - No references -- and no `View` -- in fields, `List` elements, `Map` values or `Box` contents. `str` and `View` are borrows, so text that must be stored is a `String`; a view is taken at the point of use (11.5).
@@ -2086,7 +2086,7 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `receiver 'Pair' must write the type's own type parameters, in order` | a method on a generic type is `fun Pair<A, B>.first()`; the receiver cannot omit or rename the parameters |
 | `'Option' is an enum — an enum carries no methods in v1` | write a free function over the instantiation instead (9.3) |
 | `'Point' does not take type arguments` | only a generic type, a generic function, or a generic `enum`'s variant takes one (9.3) |
-| `'f64' cannot be a Map key` | a key must be `String`, an integer or `bool` — the compiler generates its hash and equality (12.2) |
+| `'f64' cannot be a Map key` | a key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` of those; the compiler derives its hash and equality (12.2) |
 | `'?' cannot convert a failure` | the operand's failure payload type and the enclosing function's have to be the same (5.2) |
 | `'?' propagates a failure out of the enclosing function, so that function has to return an enum shaped 'Ok'/'Err' or 'Some'/'None'` | `?` in a function returning `Unit` (including `main`), or in one returning something that is not that shape |
 | `'?' needs a value shaped 'Ok'/'Err' or 'Some'/'None' held by value` | the operand is not an enum of that shape, or it is a borrow — match it with `when`/`if let` |

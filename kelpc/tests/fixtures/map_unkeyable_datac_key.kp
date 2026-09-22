@@ -1,0 +1,10 @@
+// A-6: a `datac` with one field that is not keyable is not a key either. The
+// keyability fixpoint over the declaration graph leaves it out, and a float
+// field is not keyable because `nan != nan` would make an inserted key
+// unfindable.
+datac Bad(val x: f64, val tag: i32)
+
+fun main() {
+    var m: Map<Bad, i32> = Map.new()
+    m.insert(key = Bad(x = 1.5, tag = 1), v = 1)
+}

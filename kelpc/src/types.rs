@@ -516,6 +516,21 @@ pub fn value_is_sortable(ty: &Ty, sortable: &std::collections::HashSet<String>) 
         || matches!(ty, Ty::Struct(n) if sortable.contains(n))
 }
 
+/// Whether one field, payload or `datac`/`enum` value of type `ty` can be a
+/// `Map` key once its user types can. This is the derived key set: the same
+/// scalars `is_map_key` names, plus a `datac`/`enum` every one of whose fields
+/// or variant payloads is itself keyable.
+pub fn value_is_keyable(ty: &Ty, keyable: &std::collections::HashSet<String>) -> bool {
+    is_map_key(ty) || matches!(ty, Ty::Struct(n) if keyable.contains(n))
+}
+
+/// The user types whose value is a key: the least fixpoint in which a
+/// `datac`/`enum` is keyable once every field or payload it holds is. The same
+/// shape as `clonable_types`/`sortable_types`, over the same declaration graph.
+pub fn keyable_types(decls: &[(String, Vec<Ty>)]) -> std::collections::HashSet<String> {
+    fixpoint(decls, value_is_keyable)
+}
+
 /// The user types whose value can be deep-copied: the least fixpoint in which a
 /// `datac`/`enum` is clonable once every field or payload it holds is. `decls`
 /// is one `(name, each field's type)` per declaration, including generic
@@ -574,6 +589,24 @@ pub fn cmp_fn_name(ty: &Ty) -> String {
     match ty {
         Ty::Struct(name) => format!("kelp_cmp_{}", c_ident(name)),
         other => unreachable!("no order rule for type '{}'", other.display()),
+    }
+}
+
+/// The generated function that hashes a keyable `datac`/`enum` key: the
+/// combine helper folded over the tag (an `enum`) and then each field.
+pub fn hash_fn_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(name) => format!("kelp_hash_{}", c_ident(name)),
+        other => unreachable!("no hash rule for type '{}'", other.display()),
+    }
+}
+
+/// The generated function that tests two keyable `datac`/`enum` keys for
+/// equality, the authority the map's probe consults.
+pub fn eq_fn_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(name) => format!("kelp_eq_{}", c_ident(name)),
+        other => unreachable!("no equality rule for type '{}'", other.display()),
     }
 }
 
@@ -651,15 +684,28 @@ pub fn is_array_element(ty: &Ty) -> bool {
     }
 }
 
-/// Whether `ty` may be a `Map<K, V>` key. The compiler generates the key's
-/// hash and its equality, so the set is closed: `String` (byte-wise, with a
-/// length so an embedded NUL is safe), the integers, and `bool`. A float is
-/// refused because `nan != nan` would make a key unfindable, and a `datac`,
-/// a container or a borrow is refused because v1 has no equality for them —
-/// a generic key would need a trait or a comparator function, neither of
-/// which exists (A-12, A-4).
+/// Whether `ty` names a key the compiler itself can hash and compare, with no
+/// declaration graph consulted: `String` (byte-wise, with a length so an
+/// embedded NUL is safe), the integers, `bool`, and `char`. A float is refused
+/// because `nan != nan` would make an inserted key unfindable, and a container
+/// or a borrow is refused because neither has a hash and an equality the
+/// compiler can derive.
+///
+/// A `datac`/`enum` key is not answered here: whether one is keyable depends on
+/// its fields, so a caller that has the declaration graph uses
+/// `is_map_key_with` instead. This is the builtin half, and `is_map_key_with`
+/// is the two of them together.
 pub fn is_map_key(ty: &Ty) -> bool {
-    matches!(ty, Ty::String | Ty::Bool) || ty.is_integer()
+    matches!(ty, Ty::String | Ty::Bool | Ty::Char) || ty.is_integer()
+}
+
+/// Whether `ty` may be a `Map<K, V>` key, given the user types that are
+/// keyable (`keyable_types`): the builtin key set, or a `datac`/`enum` whose
+/// every field or variant payload is itself keyable. The compiler generates
+/// the key's hash and its equality from the type, so nothing here needs a
+/// trait or a comparator; a type outside the set is refused.
+pub fn is_map_key_with(ty: &Ty, keyable: &std::collections::HashSet<String>) -> bool {
+    value_is_keyable(ty, keyable)
 }
 
 /// Whether `ty` may be a `Box<T>` element. A box holds a *pointer*, so the
@@ -805,7 +851,11 @@ pub fn is_open_container(ty: &Ty) -> bool {
 /// A slot that is already decided keeps its type: an open container only ever
 /// has one, and a `Map` whose key came from the binding's written type keeps
 /// that key.
-pub fn fill_open_container(open: &Ty, from: &Ty) -> Option<Ty> {
+pub fn fill_open_container(
+    open: &Ty,
+    from: &Ty,
+    keyable: &std::collections::HashSet<String>,
+) -> Option<Ty> {
     let (open, from) = match (open, from) {
         (Ty::Ref { inner, .. }, _) => (inner.as_ref(), from),
         (_, Ty::Ref { inner, .. }) => (open, inner.as_ref()),
@@ -815,7 +865,7 @@ pub fn fill_open_container(open: &Ty, from: &Ty) -> Option<Ty> {
         (Ty::List(_), Ty::List(elem)) if is_list_element(elem) => Some(Ty::List(elem.clone())),
         (Ty::Box(_), Ty::Box(elem)) if is_box_element(elem) => Some(Ty::Box(elem.clone())),
         (Ty::Map(open_key, open_value), Ty::Map(from_key, from_value)) => {
-            if !is_map_key(from_key) || !is_map_element(from_value) {
+            if !is_map_key_with(from_key, keyable) || !is_map_element(from_value) {
                 return None;
             }
             if **open_key != Ty::Unit && open_key != from_key {

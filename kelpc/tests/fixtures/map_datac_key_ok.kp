@@ -1,0 +1,39 @@
+// A-6: the whole `Map` surface over a derived `datac` key. `insert` clones the
+// key in, an equal key overwrites without growing, `keys()` clones each key
+// back out in insertion order, and `remove` frees the entry's own copy.
+datac Point(val x: i32, val y: i32)
+
+fun main() {
+    var m: Map<Point, i32> = Map.new()
+    m.insert(key = Point(x = 1, y = 1), v = 10)
+    m.insert(key = Point(x = 2, y = 2), v = 20)
+    m.insert(key = Point(x = 1, y = 1), v = 99)
+    print(m.len())
+    print(m.get(key = Point(x = 1, y = 1)))
+    print(m.get(key = Point(x = 2, y = 2)))
+    print(m.has(key = Point(x = 3, y = 3)))
+    print(m.has(key = Point(x = 2, y = 2)))
+
+    val ks: List<Point> = m.keys()
+    print(ks.len())
+    print(ks.get(i = 0).x)
+    print(ks.get(i = 1).x)
+
+    print(m.remove(key = Point(x = 1, y = 1)))
+    print(m.len())
+    print(m.has(key = Point(x = 1, y = 1)))
+
+    // Enough distinct keys to cross two index rehashes, then every key is
+    // looked up again. The hash that placed an entry has to equal the one that
+    // finds it, stored copy included, or a rehash loses the keys; and the two
+    // backends have to compute that same hash (see `kelp_map_combine`).
+    var i: i32 = 0
+    while i < 30 {
+        m.insert(key = Point(x = i, y = i * 2), v = i)
+        i += 1
+    }
+    print(m.len())
+    print(m.get(key = Point(x = 7, y = 14)))
+    print(m.get(key = Point(x = 29, y = 58)))
+    print(m.has(key = Point(x = 40, y = 80)))
+}

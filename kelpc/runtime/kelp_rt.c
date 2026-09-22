@@ -502,6 +502,16 @@ static uint64_t kelp_map_mix(uint64_t x) {
     return x;
 }
 
+/* Fold one already-hashed field or tag into a `datac`/`enum` key's hash. Both
+   backends emit a call to this helper rather than writing the combine step
+   themselves, so the derived hash of one key type is byte-for-byte the same
+   whichever backend built the program. */
+static uint64_t kelp_map_combine(uint64_t h, uint64_t x) {
+    h ^= kelp_map_mix(x);
+    h *= 1099511628211ULL;
+    return h;
+}
+
 /* The allocation primitive `std/mem` wraps (M6.2): an owned, zero-filled,
    NUL-terminated buffer of `n` bytes. */
 static kelp_Bytes kelp_bytes_alloc_raw(size_t n) {

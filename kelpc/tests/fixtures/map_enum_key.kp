@@ -1,0 +1,24 @@
+// A-6: an `enum` key whose two payload variants are both keyable. The derived
+// equality compares the tag first, so a `Num` never equals a `Text`, and the
+// derived hash folds the tag before the live variant's payload.
+impl "std/str"
+
+enum Key {
+    Num(val n: i32)
+    Text(val s: String)
+}
+
+fun main() {
+    var m: Map<Key, i32> = Map.new()
+    m.insert(key = Key.Num(n = 1), v = 10)
+    m.insert(key = Key.Text(s = String.from_str(s = "a")), v = 20)
+    print(m.len())
+    print(m.get(key = Key.Num(n = 1)))
+    print(m.get(key = Key.Text(s = String.from_str(s = "a"))))
+    print(m.has(key = Key.Num(n = 2)))
+    print(m.has(key = Key.Text(s = String.from_str(s = "b"))))
+    val ks: List<Key> = m.keys()
+    print(ks.len())
+    print(m.remove(key = Key.Num(n = 1)))
+    print(m.len())
+}
