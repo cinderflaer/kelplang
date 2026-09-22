@@ -1248,7 +1248,7 @@ impl<'a> Gen<'a> {
             Some(llvm_type(ctx, &self.structs, &self.containers, &f.ret)?)
         };
         let sret = ret_llvm
-            .map(|ty| is_aggregate_ty(&f.ret) && self.layout.abi_size_of(ty) > 16)
+            .map(|ty| crosses_c_boundary_by_value(&f.ret, ty, self.layout))
             .unwrap_or(false);
         let mut params: Vec<Type<'a>> = Vec::new();
         if sret {
@@ -1256,7 +1256,7 @@ impl<'a> Gen<'a> {
         }
         for (pname, pty) in &f.params {
             let llvm_pty = llvm_type(ctx, &self.structs, &self.containers, pty)?;
-            if is_aggregate_ty(pty) && self.layout.abi_size_of(llvm_pty) > 16 {
+            if crosses_c_boundary_by_value(pty, llvm_pty, self.layout) {
                 return Err(refuse(
                     &format!("the extern '{}' taking '{}' by value", f.name, pname),
                     "S3",
@@ -3046,7 +3046,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     ) -> Result<Value<'a>, String> {
         if is_aggregate_ty(&a.ty) {
             let lty = self.lty(&a.ty)?;
-            if self.g.layout.abi_size_of(lty) > 16 {
+            if crosses_c_boundary_by_value(&a.ty, lty, self.g.layout) {
                 let slot = self.temp_alloca(lty, "arg.byref");
                 let value = self.value_of(a)?;
                 self.g.builder.build_store(value, slot);
@@ -7619,6 +7619,25 @@ fn is_aggregate_ty(ty: &Ty) -> bool {
     )
 }
 
+/// Whether a value of type `ty`, lowered to `llvm_ty`, is an aggregate over two
+/// eightbytes: too large for the SysV ABI to pass in a register pair, so it can
+/// cross a C boundary only through a pointer (BUG-vN4tR, MK7 §3.3).
+///
+/// This is the one name for that rule, and the two places the backend spells a
+/// type across a C boundary both ask it, so they cannot drift:
+///
+/// * `declare_extern`: a parameter that is one is refused by name, a return that
+///   is one is declared `void` with the destination as argument 0 (`sret`).
+/// * `rt_arg_value`: a call argument that is one is staged into a slot and the
+///   slot's address is what crosses.
+///
+/// `declare_runtime` spells its own 24-byte returns the same way with the `sret`
+/// flag, and the `kelp_String__from_bytes_ptr`/`kelp_String__into_bytes_ptr`
+/// adapters exist so no 24-byte argument needs the by-value form at all.
+fn crosses_c_boundary_by_value(ty: &Ty, llvm_ty: Type<'_>, layout: &DataLayout) -> bool {
+    is_aggregate_ty(ty) && layout.abi_size_of(llvm_ty) > 16
+}
+
 /// Declare every runtime helper this slice calls, with the signature
 /// `kelp_rt.c` defines and the ABI shape it is compiled under (MK7 §3.3). The
 /// object `build.rs` produces is compiled from that same text, so a signature
@@ -8441,5 +8460,39 @@ mod layout_tests {
         ] {
             assert!(ir.contains(want), "missing '{want}':\n{ir}");
         }
+    }
+
+    /// The C-boundary rule (BUG-vN4tR, MK7 3.3): an aggregate over two
+    /// eightbytes crosses a C boundary only through a pointer. The threshold is
+    /// the target's own data layout, so exactly sixteen bytes is not over it and
+    /// a three-field `datac` is. `declare_extern` and `rt_arg_value` both ask
+    /// this one function, so this is the rule the two sites share.
+    #[test]
+    fn an_aggregate_over_two_eightbytes_crosses_a_c_boundary_by_pointer() {
+        use super::crosses_c_boundary_by_value;
+        use crate::llvm_ffi::{initialize_native_target, TargetMachine};
+
+        initialize_native_target().expect("the native target");
+        let machine = TargetMachine::for_host().expect("a target machine for the host");
+        let layout = machine.data_layout();
+        let ctx = Context::new();
+        let view = ctx.struct_type("kelp_View_crossing_test");
+        ctx.struct_set_body(view, &[ctx.opaque_ptr(), ctx.i64()]);
+        let pair = ctx.struct_type("kelp_Pair_crossing_test");
+        ctx.struct_set_body(pair, &[ctx.i64(), ctx.i64()]);
+        let wide = ctx.struct_type("kelp_Wide_crossing_test");
+        ctx.struct_set_body(wide, &[ctx.i64(), ctx.i64(), ctx.i64()]);
+
+        assert!(!crosses_c_boundary_by_value(&Ty::View, view, &layout));
+        assert!(!crosses_c_boundary_by_value(
+            &Ty::Struct("Pair".to_string()),
+            pair,
+            &layout
+        ));
+        assert!(crosses_c_boundary_by_value(
+            &Ty::Struct("Wide".to_string()),
+            wide,
+            &layout
+        ));
     }
 }
