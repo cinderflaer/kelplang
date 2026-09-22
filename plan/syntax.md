@@ -2318,7 +2318,7 @@ fun use_line(l: Line) {
 }
 ```
 
-To *take* an owned field, hold it in a `Box` and `take()` it, or make the parameter `move Line` and read the field out of the value you now own.
+To *take* an owned field, hold it in a `Box` and `take()` it. A `move` parameter does not lift this rule: it owns the whole value, but reading a field out of it by value is still the partial move the rule refuses.
 
 ### 22.3 Scanning text: `View` plus a cursor
 
