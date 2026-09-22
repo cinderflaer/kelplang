@@ -192,7 +192,8 @@ pub enum ExprKind {
     /// One payload field of one variant, read out of a value whose tag is
     /// known to be `variant`. A *place* (like `FieldAccess`), which is what
     /// lets an owned payload be bound as a shared borrow rather than moved
-    /// out — v1 has no partial moves.
+    /// out: a partial move is planned for a `datac` field of an owned local,
+    /// and a payload reached through a `when` arm is neither.
     EnumField {
         base: Box<Expr>,
         variant: usize,

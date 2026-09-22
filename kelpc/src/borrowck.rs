@@ -117,7 +117,7 @@ pub struct DropTarget {
 /// owned, so the binding is still freed as a whole and exactly the projection
 /// the move emptied has to be cleared first. Anything reached through a borrow
 /// is not a `Projection`: the frame does not own it, so it cannot give it away.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Projection {
     /// One field of a `datac`, by name (each backend resolves the name to the
     /// field's index from the owning struct).
@@ -325,7 +325,9 @@ struct OwnedVar {
     /// The projections moved *out of* this binding while it stays live. The
     /// binding is still freed as a whole, so each of these has to be cleared
     /// at its move; until then the projection is a use of a moved value.
-    moved: std::collections::HashSet<Projection>,
+    /// Ordered, not hashed: a diagnostic that names one of these has to name
+    /// the same one on every run.
+    moved: std::collections::BTreeSet<Projection>,
 }
 
 #[derive(Clone, Default)]
@@ -562,7 +564,7 @@ impl Ctx {
             name: name.to_string(),
             ty: ty.clone(),
             state: MoveState::Live,
-            moved: std::collections::HashSet::new(),
+            moved: std::collections::BTreeSet::new(),
         });
     }
 
@@ -588,7 +590,8 @@ impl Ctx {
     }
 
     /// The projection the whole-value read of `name` refuses, if any: a field
-    /// that was moved out and never put back.
+    /// that was moved out and never put back. The set is ordered, so a binding
+    /// with two fields gone always names the same one here.
     fn partial_move_of(&self, name: &str) -> Option<&Projection> {
         for scope in self.scopes.iter().rev() {
             if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
@@ -1545,13 +1548,15 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         // exactly like a closure literal.
         tir::ExprKind::FnToClosure { func } => check_value(func, ctx),
         // A read of one field of the enclosing closure's environment (A-4
-        // phase E). The environment owns the value, so reading it out whole
-        // would be a partial move — the same rule an owned `datac` field and
-        // an owned enum payload already follow.
+        // phase E). The environment owns the value, but it is reached through
+        // the closure value rather than held in a local of this frame, and a
+        // partial move is only planned for a local the frame owns, so reading
+        // it out whole would give two owners of the same buffer. An owned
+        // enum payload is refused the same way, and for the same reason.
         tir::ExprKind::Capture { .. } => {
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
                 return Err(BorrowError {
-                    message: "cannot read a captured value out of the closure's environment by value: v1 has no partial moves, so this would give two owners of the same buffer — use it through a borrow (read a field of it, call a method on it, pass it to a parameter), or capture a `Copy` value instead".to_string(),
+                    message: "cannot read a captured value out of the closure's environment by value: the environment is not a local this frame owns, so the read would give two owners of the same buffer; use it through a borrow (read a field of it, call a method on it, pass it to a parameter), or capture a `Copy` value instead".to_string(),
                     span: expr.span,
                 });
             }

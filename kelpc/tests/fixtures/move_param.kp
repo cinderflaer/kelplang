@@ -19,9 +19,9 @@ fun pass_on(s: move String).R: usize = consume(s)
 // ...or handed straight back out, which moves it to the caller.
 fun give_back(s: move String).R: String = s
 
-// A `datac` is moved like anything else owned. Reading its field is a borrow
-// (v1 has no partial moves), so the value as a whole is freed at the end of
-// this frame — payloads included.
+// A `datac` is moved like anything else owned. Reading its field as a method
+// receiver is a borrow, not a partial move, so the value as a whole is freed
+// at the end of this frame, payloads included.
 fun bag_size(b: move Bag).R: usize = b.name.len() + b.items.len()
 
 // A container moves too, and its elements are freed with it.

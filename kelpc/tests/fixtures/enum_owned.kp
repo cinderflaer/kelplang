@@ -1,6 +1,7 @@
-// A-1: an owned payload binds as a shared borrow (`&String`), never as a move —
-// v1 has no partial moves, so a `when` can read a payload but cannot take it
-// out of the value that owns it.
+// A-1: an owned payload binds as a shared borrow (`&String`), never as a move.
+// A partial move is planned for a `datac` field of an owned local, and an enum
+// payload is neither, so a `when` can read a payload but cannot take it out of
+// the value that owns it.
 enum Token {
     Word(val text: String)
     Digits(val n: i64)

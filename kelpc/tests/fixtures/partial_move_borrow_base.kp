@@ -1,0 +1,16 @@
+// A borrow of the base reads the place as a whole, so it is refused once a
+// field was moved out: the slot that field held is empty and the borrow would
+// hand on the hole. The refusal names one field, and both fields are moved here
+// so the name it picks is pinned: the moved set is ordered, so it is the same
+// one on every run.
+datac Bag(val xs: List<i32>, val name: String)
+
+fun main() {
+    val bag = Bag(xs = List.of(1), name = String.from_str("kept"))
+    val xs = bag.xs
+    val name = bag.name
+    print(xs.get(0))
+    print(name.len())
+    val borrowed = &bag
+    print(borrowed.xs.len())
+}

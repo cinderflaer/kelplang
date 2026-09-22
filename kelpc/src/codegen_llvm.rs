@@ -2364,9 +2364,22 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // exit as it always was, so without this the free would reach the
         // buffer the moved value now owns, the same clear a whole-binding
         // move does in `load_ident`, one level down.
-        if matches!(self.g.drops.clear_at(&self.fn_name, e), Some(Projection::Field(moved)) if moved == field)
-        {
-            self.g.builder.build_store(self.g.ctx.const_null(lty), field_ptr);
+        match self.g.drops.clear_at(&self.fn_name, e) {
+            // Not a partial move: the read copies nothing out, so the slot
+            // keeps its value and the binding's own drop frees it.
+            None => {}
+            // The field this read copied out: zero the slot, so the binding's
+            // drop does not free the value a second time.
+            Some(Projection::Field(moved)) if moved == field => {
+                self.g.builder.build_store(self.g.ctx.const_null(lty), field_ptr);
+            }
+            // A projection the backend has no clear for. Zeroing a slot that
+            // still holds its value, or skipping the zero of one that does
+            // not, frees the same buffer twice, so an arm per variant is what
+            // has to be filled in rather than passed over.
+            Some(Projection::Field(moved)) => panic!(
+                "codegen_llvm: a move of field '{moved}' was recorded at a read of '{field}'"
+            ),
         }
         Ok(read)
     }

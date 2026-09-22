@@ -1,9 +1,8 @@
-// A partial move takes the field out, and the second statement then reaches
-// through the field that is gone: `bag.xs` is a use of a moved value. The rule
-// this fixture was written for is the same one, one step later: a shallow copy
-// would leave the binding as a second owner of the buffer the copy holds, so
-// the field has to be borrowed or held in a `Box` and taken, and a read that
-// does take it clears the source.
+// A partial move takes the field out, so what is left of the binding is a
+// moved value: the second statement reaches through the field that is gone and
+// `bag.xs` is a use of a moved value. The read that took the field cleared the
+// source, so the binding is not a second owner of the buffer the moved value
+// now holds; the moved field is only reachable as a moved value again.
 datac Bag(val xs: List<i32>)
 
 fun main() {

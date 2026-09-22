@@ -2686,7 +2686,7 @@ impl<'a> Gen<'a> {
                     }
                 }
                 let read = self.field_access(base, field);
-                self.clear_moved_field(expr, read)
+                self.clear_moved_field(expr, field, read)
             }
             // A variant construction is a compound literal in one expression:
             // the tag is the variant's index, and the payload goes into that
@@ -3339,10 +3339,22 @@ impl<'a> Gen<'a> {
     /// the C lvalue the field resolves to, so the zeroing and the read are the
     /// same expression; the value has to go through a temporary because the
     /// zeroing is a second statement (`codegen_llvm.rs::emit_field_read`
-    /// stores a null there instead).
-    fn clear_moved_field(&self, expr: &Expr, place: String) -> String {
-        if !matches!(self.drops.clear_at(&self.function, expr), Some(Projection::Field(_))) {
-            return place;
+    /// stores a null there instead). `field` is the field this read copies
+    /// out, which the recorded projection has to name.
+    fn clear_moved_field(&self, expr: &Expr, field: &str, place: String) -> String {
+        match self.drops.clear_at(&self.function, expr) {
+            // Not a partial move: the read copies nothing out, so the slot
+            // keeps its value and the binding's own drop frees it.
+            None => return place,
+            // The field this read copied out: zero the slot below.
+            Some(Projection::Field(moved)) if moved == field => {}
+            // A projection the backend has no clear for. Zeroing a slot that
+            // still holds its value, or skipping the zero of one that does
+            // not, frees the same buffer twice, so an arm per variant is what
+            // has to be filled in rather than passed over.
+            Some(Projection::Field(moved)) => panic!(
+                "codegen_c: a move of field '{moved}' was recorded at a read of '{field}'"
+            ),
         }
         let tmp = fresh_temp();
         format!(

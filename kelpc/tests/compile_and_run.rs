@@ -3026,8 +3026,8 @@ fn a_datac_can_be_recursive_through_a_list_and_mutually_recursive_through_boxes(
 }
 
 #[test]
-fn an_owned_field_cannot_be_read_by_value() {
-    // The partial move now takes the field, so the second statement reaches
+fn using_a_field_after_it_was_moved_out_is_refused() {
+    // The partial move takes the field, so the second statement reaches
     // through a field that is gone. The refusal is pinned so the fixture
     // cannot pass for the old "no partial moves" reason.
     assert_rejected_with(
@@ -3085,6 +3085,18 @@ fn a_partially_moved_binding_cannot_be_used_as_a_whole() {
     assert_rejected_with(
         "tests/fixtures/partial_move_use_base.kp",
         "cannot use 'bag' as a whole value: its field 'xs' was moved out",
+    );
+}
+
+#[test]
+fn a_partially_moved_binding_cannot_be_borrowed_as_a_whole() {
+    // `&bag` is a whole-value read too, so the borrow is refused where the
+    // binding is no longer whole. Two fields are gone and the refusal names
+    // one, which pins the moved set as ordered: read out of a hash set, the
+    // field named here would change from run to run.
+    assert_rejected_with(
+        "tests/fixtures/partial_move_borrow_base.kp",
+        "cannot use 'bag' as a whole value: its field 'name' was moved out",
     );
 }
 
