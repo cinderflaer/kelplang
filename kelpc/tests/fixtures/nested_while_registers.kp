@@ -1,5 +1,6 @@
 // A local live across an outer loop *and* read/written inside an inner loop
-// nested within it (plan/asm-backend/plan.md §5 item 3): `total` must keep the
+// nested within it (the loop-widening correction the retired backend's stage 1
+// recorded): `total` must keep the
 // same physical location across every outer iteration, and the inner loop's
 // own locals must not be assigned that location while it is still live.
 fun grid_sum(rows: i32, cols: i32).R: i32 {

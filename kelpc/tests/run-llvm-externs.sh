@@ -3,7 +3,7 @@
 # backend now declares and links.
 #
 # S3 is "the runtime, the externs and the capability check"
-# (plan/mk7-llvm-backend.md §5), and **S3A is its `extern fun` slice**: the C
+# (the MK7 record in plan/done.md), and **S3A is its `extern fun` slice**: the C
 # text in `kelpc/src/externs.rs` that backs the raw stdlib primitives (`malloc`,
 # `strlen`, `sqrt`, `clock_gettime`, a raw `read`). Every `extern fun` the
 # program carries is declared with the exact C signature its body has (a

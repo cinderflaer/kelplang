@@ -82,8 +82,10 @@
 //! not *definitely* moved: in the cleared case the free is of the zero value.
 //!
 //! Without this, an owned local bound inside a loop body leaked whenever one
-//! path through the body moved it and another abandoned it — see §5 of
-//! `plan/asm-backend/plan.md` for the measurement, and
+//! path through the body moved it and another abandoned it: valgrind reported
+//! `3 bytes in 1 blocks` lost on the loop-shape repro before this fix (the C
+//! backend's `-O2` build read clean because clang deletes the allocation nothing
+//! reads, which is why the gate is valgrind). See
 //! `tests/fixtures/owned_conditional_move.kp` for the regression.
 //!
 //! Known, deliberately out-of-scope gap: `p = &c` *reassigning* an

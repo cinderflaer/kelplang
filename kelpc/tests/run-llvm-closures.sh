@@ -3,7 +3,7 @@
 # `fun` as a value, a `fun` literal with and without captures, a call through a
 # value, a closure's environment and its drop) against the `llvm` backend.
 #
-# S2 is "aggregates, containers and drops" (plan/mk7-llvm-backend.md §5), and
+# S2 is "aggregates, containers and drops" (the MK7 record in plan/done.md), and
 # **S2E is its closure slice**. A `Ty::Fn` is a bare `ptr` (`Copy`, owning
 # nothing), a `Ty::Closure` is the C backend's fat pointer `{ fn, env, drop }`
 # on one identified struct per signature, a capture is a `getelementptr` into

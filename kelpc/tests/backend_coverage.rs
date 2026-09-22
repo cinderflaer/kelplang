@@ -1,5 +1,5 @@
 //! Coverage, refusal ranking and the differential sweep for the `llvm` backend
-//! (MK7 §4.1 and §6, `plan/mk7-llvm-backend.md`).
+//! (the MK7 record in `plan/done.md`).
 //!
 //! `kelpc/tests/compile_and_run.rs` is backend-agnostic by construction: it
 //! compiles a fixture with whichever backend its run is pointed at and compares
@@ -517,7 +517,7 @@ fn the_llvm_backend_builds_at_least_the_recorded_baseline() {
 }
 
 // ---------------------------------------------------------------------------
-// The optimization-level sweep (MK7 S6, `plan/mk7-llvm-backend.md` §4.3).
+// The optimization-level sweep (MK7 S6, the record in `plan/done.md`).
 // ---------------------------------------------------------------------------
 
 /// Every level `-O` accepts, both backends, swept over the whole corpus.

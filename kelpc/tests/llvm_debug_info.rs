@@ -1,5 +1,5 @@
 //! MK7 S4: the DWARF debug locations of the `llvm` backend
-//! (`plan/mk7-llvm-backend.md` §4.4 and the S4 row of §5).
+//! (the MK7 record in `plan/done.md`).
 //!
 //! The C backend maps a generated statement back to a `.kp` line with one
 //! `#line` directive (`codegen_c.rs::write_line_marker`), which is what makes a

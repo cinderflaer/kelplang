@@ -3,7 +3,7 @@
 # check, and the last three refusals.
 #
 # S3 is "the runtime, the externs and the capability check"
-# (plan/mk7-llvm-backend.md §5). S3A landed the `extern fun` bodies; this half
+# (the MK7 record in plan/done.md). S3A landed the `extern fun` bodies; this half
 # lands what was left and empties the refusal ranking, which is §4.1's
 # "the refusal ranking empty":
 #

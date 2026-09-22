@@ -3,7 +3,7 @@
    An aggregate over two eightbytes does not cross a C boundary by value: clang
    lowers such an argument to `byval(%struct)` on the stack and such a return to
    `sret(%struct)`, and LLVM's backend does not derive either from an IR call
-   that passes the aggregate by value (BUG-vN4tR, plan/mk7-llvm-backend.md 3.3).
+   that passes the aggregate by value (BUG-vN4tR, the MK7 record in plan/done.md).
    Both sides of an IR-to-IR call agree with each other, so only a real object
    compiled by `cc` can witness the mismatch. This file is that object.
 

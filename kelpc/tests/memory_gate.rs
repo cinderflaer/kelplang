@@ -32,7 +32,7 @@
 //!   allocated. AddressSanitizer could not see it — `_exit` bypasses
 //!   LeakSanitizer — and this gate did; it is fixed in `dbaabc2`.
 //!
-//! **Ground rule 1.5** (`plan/asm-backend/plan.md`): nothing may make the
+//! **Ground rule 1.5**: nothing may make the
 //! default `cargo test` slower or needier. A sweep builds ~130 fixtures and
 //! runs each under valgrind, which is about a minute, and valgrind is not a
 //! declared dependency of this repository. Every test that runs the sweep is

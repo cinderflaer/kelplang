@@ -244,7 +244,7 @@ fn check_command(args: &[String]) -> ExitCode {
 /// `deny_outdated` is `--deny-outdated`: a load that uses outdated syntax
 /// reports those findings as errors and stops, before anything is generated.
 ///
-/// `opt` is the `-O` level (MK7 S6, `plan/mk7-llvm-backend.md` §4.3). It is
+/// `opt` is the `-O` level (MK7 S6, the record in `plan/done.md`). It is
 /// passed to whichever backend runs below, and to the `cc` calls each one makes,
 /// so one level is one level for both backends.
 ///

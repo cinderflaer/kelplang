@@ -21,7 +21,7 @@ fn kelpc_bin() -> PathBuf {
 /// the result, and compares stdout, so it never names a code generator. Which
 /// one runs is therefore a property of the *invocation*, not of the test, and
 /// the project's oracle switch (`KELPC_ORACLE`) is the only input that varies
-/// it (`plan/mk7-llvm-backend.md`). The switch names only the C backend, and
+/// it (the MK7 record in `plan/done.md`). The switch names only the C backend, and
 /// unset means the compiler's own default (`Backend::DEFAULT`), which since MK7
 /// S7 is `llvm`, so an unqualified run exercises what an unqualified
 /// `kelpc build` does and `KELPC_ORACLE=c` points the whole suite at the oracle
@@ -4910,8 +4910,8 @@ fn an_unknown_command_prints_the_usage_and_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// The backend seam. The user-facing selector is gone (`plan/mk7-llvm-backend.md`
-// §2), so what is asserted end-to-end here is the shape that replaced it: every
+// The backend seam. The user-facing selector is gone (the MK7 record in
+// `plan/done.md`), so what is asserted end-to-end here is the shape that replaced it: every
 // build gets `llvm`, the retired flag and the retired environment variable are
 // refused by name, and the project's one remaining switch points at the C
 // oracle. These are end-to-end rather than only `backend.rs` unit tests because

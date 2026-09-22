@@ -26,7 +26,7 @@ pub struct CompileError {
 ///
 /// `opt` is the selected optimization level, and it is the same `-O` the LLVM
 /// backend and the final link get: one level means one level for both backends
-/// (MK7 S6, `plan/mk7-llvm-backend.md` §4.3), so the differential sweep compares
+/// (MK7 S6, the record in `plan/done.md`), so the differential sweep compares
 /// them at one level rather than two.
 ///
 /// This is the C backend's *finishing* step, and the only place in the

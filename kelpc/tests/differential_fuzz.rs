@@ -1,5 +1,5 @@
-//! Differential fuzzing and the conformance corpus (MK7 S5, `plan/mk7-llvm-backend.md`
-//! §4.1, §4.2, §5 and §7).
+//! Differential fuzzing and the conformance corpus (MK7 S5, the MK7 record in
+//! `plan/done.md`).
 //!
 //! The corpus in `tests/fixtures/` is a curated set a person wrote, and the
 //! plan records that it has been blind three times inside one session: a float

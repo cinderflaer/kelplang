@@ -122,8 +122,8 @@ the per-program C object and the final link are given. `-Oz` is refused because 
 is a clang-only spelling and the linking `cc` may be gcc; `-Os` is the size level.
 `-O0` runs no module pipeline and is the cheap dev build.
 
-The hand-written `asm` backend was removed on 2026-09-21; its tracked plan lives
-under `plan/asm-backend/`. `plan/mk7-llvm-backend.md` is the plan of record. The
+The hand-written `asm` backend was removed on 2026-09-21, and the LLVM backend's plan of record is
+retired with it: the whole MK7 record is in `plan/done.md`. The
 S7 flip landed in code on 2026-09-21, and the user-facing backend selector was
 removed with it: `llvm` is the only backend a person building a program can use,
 and both backends stay in the suite. The release that announces the flip is still
@@ -178,7 +178,7 @@ directory is not followed.
 - Rust, 2024 edition (rustc 1.85 or newer), and the LLVM 21 development output,
   to build the compiler: `llvm-sys` is a dependency of every build. `nix-shell
   shell.nix` provides it (`llvm-config`, `include/llvm-c`) and sets
-  `LLVM_SYS_211_PREFIX`; `plan/mk7-llvm-backend.md` §1 is the decision and its
+  `LLVM_SYS_211_PREFIX`; `plan/done.md`'s MK7 record is the decision and its
   trade-offs.
 - A `kelpc` built this way links `libLLVM-21.so` dynamically and needs it at
   runtime.
@@ -225,7 +225,5 @@ the compiler; these two are the tooling around it.
 | `plan/syntax.md` | the syntax and style authority |
 | `plan/architecture.md` | the design: compiler layout, the capability model, the v1 surface, and the standard library's decisions |
 | `plan/roadmap.md` | the plan: the marks, the open items, and the backlog in its last part |
-| `plan/done.md` | the milestone record of what has shipped |
-| `plan/mk7-llvm-backend.md` | the plan of record for the compiler's next backend, LLVM IR |
-| `plan/asm-backend/` | the removed hand-written backend track: its plans, its call-overhead and call-cost measurements, and the encoder/ELF inventory |
+| `plan/done.md` | the milestone record of what has shipped, including the whole MK7 LLVM backend record |
 | `bench/speed/README.md` | what the benchmark measures and how |

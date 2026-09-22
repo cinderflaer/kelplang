@@ -1,7 +1,7 @@
 #!/bin/sh
 # The MK7 S1 gate: runs the scalar-subset fixtures against the `llvm` backend.
 #
-# S1 (plan/mk7-llvm-backend.md §5) is "IR for the scalar subset, `llvm`
+# S1 (the MK7 record in plan/done.md) is "IR for the scalar subset, `llvm`
 # selectable", and its exit criterion is byte-identical stdout on the fixtures
 # that use only arithmetic, comparisons, `if`/`while`, calls and `print` of the
 # scalars. This script names exactly that set.

@@ -1457,7 +1457,7 @@ which the heap fixtures are also re-run under AddressSanitizer).
 ## The formatter, the 2024 edition, and the own backend's `Map` slice
 
 Three things shipped in one session. Two are not MK7 work and are recorded here; the third is recorded in
-detail in `plan/asm-backend/plan.md` §0 and §5.
+detail in the MK7 record below.
 
 **`kelpc fmt`** (roadmap open item 13) is the enforcement story the style rules never had. It is a
 *token-level* formatter: `lexer.rs` gained an additive trivia mode (`TokenKind::Comment`, a `keep_comments`
@@ -1493,7 +1493,7 @@ allocations and 7008 bytes for the growth fixture), which pins the rehash count 
 numbers.
 
 **Suite at this record**: 107 unit, 266 end-to-end, 52 formatter, 2 capability-matcher, 1 path-normalizer and
-1 memory gate. `plan/asm-backend/plan.md` §0 is current as of this date.
+1 memory gate. The MK7 record below is current as of this date.
 
 ## A `pd var` borrow is shared unless it is written: roadmap item 17 (DONE)
 
@@ -1666,15 +1666,85 @@ above.
 
 ## MK7 the LLVM backend: the seam, the lowering, the flip (DONE, `930f31b`)
 
-*The plan of record is `plan/mk7-llvm-backend.md`. The hand-written x86-64 track MK7 first named was
+*This section is the whole MK7 record. The plan documents it replaces are retired and deleted, so every
+fact below is restated here rather than pointed at. The hand-written x86-64 track MK7 first named was
 retired on 2026-09-20 and its source removed on 2026-09-21, so `--backend=asm` is no longer accepted,
-`codegen_asm.rs` and the `Backend::Asm` variant are gone, and the retired track's plans and
-measurements are archived under `plan/asm-backend/`. Only the emission layer is new: the front half
+`codegen_asm.rs` and the `Backend::Asm` variant are gone, and the retired track's plans are deleted with
+its stages. Only the emission layer is new: the front half
 (lexer, preprocessor, parser, `infer.rs`, `borrowck.rs`, typed IR) is reused unchanged, and LLVM
 supplies the optimizer, the encoder, the ELF writer and the debug-info format. The language did not
 change: the surface, the capability model and the move and borrow rules are one source text for both
 backends. Rewriting `kelpc` in Kelp is out of scope permanently, and MK8's rewrite stages S4 to S6 are
 cancelled with it.*
+
+### Why LLVM, and the measurement the decision rests on
+
+The retired hand-written track was gated at "no worse than the `-O0` column", and closing the rest of
+that gap meant writing inlining, CSE, LICM and strength reduction by hand, which is the multi-year part
+(LLVM is millions of lines; Cranelift is six figures and lands around `-O1`). LLVM supplies that
+optimizer, plus register allocation, the encoder, the ELF writer, the debug-info format and a whole
+target list, so on this path only the emission layer is new and the work is weeks rather than years.
+The gap the optimizer closes is measured on the generated C for `bench/speed`, `-O0` against `-O2`:
+`collatz` 446 to 83 ms, `float` 265 to 101 ms, `mix` 204 to 168 ms, `fib` 28.4 to 24.0 ms, a 1.2x to
+5.4x per-workload penalty that a hand-written backend with a register allocator and no optimizer would
+have had to close by hand. The compile-time argument that motivated the retired track is the other half
+of the case: about 76 to 102 ms of every `kelpc build` is the C toolchain's fixed cost (cc1 startup
+plus system-header preprocessing about 38 ms, optimizer about 25 ms, link about 46 ms), against 3 to
+4 ms for Kelp's own lexer to codegen pipeline, so the retired track's headline was a ~10x compile-time
+win from replacing `cc` with `as` and `ld`. LLVM *is* that toolchain's backend, so that win is given up
+with the track; the S6 measurement then found the `llvm` path builds at the C path (272.7 ms against
+297.2 ms at `-O2`) because it links the runtime object the compiler already carries instead of
+compiling the runtime into every program.
+
+### The crate and the linking decision, and what it costs at runtime
+
+**`llvm-sys` plus a thin wrapper of our own** (`kelpc/src/llvm_ffi.rs`), under `codegen_llvm.rs`
+proper. `inkwell` was rejected because an LLVM major bump would force a wrapper bump in lockstep and
+because the moment the wrapper does not expose an enum or a builder call the answer is to drop to
+`llvm-sys` anyway, which puts the wrapper in the tree either way; hand-written `extern "C"` bindings
+were rejected as one more thing to maintain at LLVM's pace. Linking is **dynamic against the host's
+`libLLVM`**, found through `llvm-config` or `LLVM_SYS_211_PREFIX`; on this machine it is
+`/nix/store/...-llvm-21.1.8-lib/lib/libLLVM-21.so`, alongside clang 21.1.8. Static linking was rejected
+as hundreds of megabytes and minutes of link time on every `cargo build`. The consequence is
+unconditional and user-facing: **`llvm-sys` is a dependency of every `kelpc` build, so every `kelpc`
+links `libLLVM-21.so` dynamically and needs it at runtime**, while `cc` still links the object the
+driver writes, so a C compiler and glibc stay required.
+
+### The attribute rule
+
+LLVM gives a defined semantics for the IR *we* emit, not a formal operational semantics for Kelp or an
+aliasing model for `&mut`. That leaves exactly one new way to miscompile a correct Kelp program:
+**emitting `nsw`, `nuw`, `inbounds`, or a `noalias` wider than a `&mut` parameter without a licence from
+the frontend** tells LLVM that a program has behaviour Kelp does not guarantee, and the optimizer will
+use the claim. The rule is to emit none of them without that licence: signed overflow is a plain
+`add`/`sub`/`mul` with no flags, so the result wraps by definition as `-fwrapv` had it, `inbounds`
+needs proven bounds, and `noalias` is emitted only on a `&mut` parameter the borrow checker already
+proved unique for the call's duration.
+
+### The stages, one line each
+
+- **S0, the seam**: `backend.rs` names the backends, holds `Backend::DEFAULT` and the one `match` over
+  `tir`; done.
+- **S1, IR for the scalar subset**: arithmetic, comparisons, `if`/`while`, calls and `print` of the
+  scalars lowered, `llvm` selectable, byte-identical stdout on the scalar fixtures; done 2026-09-21.
+- **S2, aggregates, containers and drops**: `datac`/`enum` layout, the monomorphized container function
+  sets and the drop plan, landed in the slices S2A to S2F; done 2026-09-21.
+- **S3, the runtime, the externs and the capability check**: the `extern fun` bodies (S3A), `pd`
+  globals with their `atexit` drops, the matcher and the denial text, and an empty refusal ranking;
+  done 2026-09-21.
+- **S4, debug locations to DWARF**: one `DILocation` per statement, proved end to end by
+  `kelpc/tests/llvm_debug_info.rs`; done 2026-09-21.
+- **S5, fuzzing and conformance**: `kelpc/tests/differential_fuzz.rs` over 512 seeds plus a checked-in
+  24-program corpus; done 2026-09-21.
+- **S6, the optimization-level decision**: `-O0` to `-O3` and `-Os` on `kelpc build` with `-O2` the
+  default, one level for both backends; done 2026-09-21.
+- **S7, the flip**: `Backend::DEFAULT` is `Llvm`, `usage()` offers no backend, the user-facing selector
+  is removed and the C backend stays as the oracle; code half done 2026-09-21, the release that
+  announces the flip is still to be cut.
+
+**`codegen_c.rs` is the project's permanent oracle and is never deleted.** It is reached only by the
+suite's internal switch `KELPC_ORACLE`, which accepts only `c`; there is no backend flag and no
+`KELPC_BACKEND`, and it is absent from `usage()`, the README and every diagnostic.
 
 ### MK7-S0 the seam
 
