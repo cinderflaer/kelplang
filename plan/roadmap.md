@@ -166,7 +166,7 @@ A second, parallel line, added after MK3-S2-M2. Everything below is `.kp` source
 | MK5-S5 | Maps, fs/OS breadth, real `env` bodies | MK5-S1 (join/sort), MK5-S2-M1 (`File`) | Config, headers, directories, metadata, temp files **done**, in three parts (Map; fs breadth + path polish; `env` bodies) |
 | MK5-S6-M1 | `Option`/`Result` (language-gated) | nothing **done** | Branchable failures instead of panicking natives: `if let`, `?`, `std/option`, `std/result`, and every error `datac` migrated |
 | MK5-S7-M1 | Concurrency analysis | language features that do not exist | Nothing yet an analysis plus `poll` |
-| MK6-S1-M1 | **Process threads** (language milestone) | MK5-S6-M1, function references, a move-taking parameter, a per-thread panic/cleanup story, atomics (MK9-S3-M1) | Real parallelism and isolation in one process, instead of one process per worker |
+| MK6-S1-M1 | **Process threads** (language milestone) | MK5-S6-M1, function references, a move-taking parameter, a per-thread panic/cleanup story, atomics (MK9-S3-M1). It also owes a part in the getting-started docs on how to use threads | Real parallelism and isolation in one process, instead of one process per worker |
 | MK6-S2-M1 | **Multithreaded downloading** | MK6-S1-M1 | N URLs in flight, one process, one pool per worker |
 
 Ordering note: the owner's decision is that threads (MK6-S1-M1) come **before** concurrent downloading (MK6-S2-M1), and that MK5-S4 must be built so neither is closed off. MK6-S1-M1 is a language milestone it is not stdlib work, and MK5-S7-M1 explains why.
