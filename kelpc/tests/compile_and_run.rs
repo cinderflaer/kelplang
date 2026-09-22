@@ -2562,6 +2562,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // build that frees the newest binding twice, or frees only one of
         // them, fails here as well as under valgrind.
         "owned_rebind",
+        // BUG-tV9qH: a `move` parameter and the body's own owned local are
+        // dropped at one block end, including when the local shadows the
+        // parameter. One list written over the other leaked a buffer on both
+        // backends.
+        "move_param_and_body_local",
+        "move_param_shadowed_by_a_local",
         // A-11: a partial move zeroes the field's slot, so the binding's own
         // drop frees the field that stayed and nothing where the moved value
         // now lives. A double free of the moved buffer fails here.
@@ -4616,6 +4622,32 @@ fn a_moved_parameter_is_dropped_on_every_path_out() {
     assert_compiles_and_runs(
         "tests/fixtures/move_param_return.kp",
         "4\ntrue\n3\nlong\n5\n",
+    );
+}
+
+#[test]
+fn a_move_parameter_and_the_body_local_beside_it_are_both_freed() {
+    // BUG-tV9qH: the frame's owned parameter and the owned local the body
+    // declared share one block end in the drop plan, and the parameter's list
+    // was written over the block's own, so the body local stayed in no drop
+    // set at all. valgrind reported its buffer as definitely lost, on both
+    // backends; both buffers are freed now.
+    assert_compiles_and_runs(
+        "tests/fixtures/move_param_and_body_local.kp",
+        "param\nbody\n",
+    );
+}
+
+#[test]
+fn a_body_local_shadowing_a_move_parameter_leaves_no_buffer_behind() {
+    // The same one block end, with both bindings of one spelling: the
+    // parameter's drop resolved by name to the newest binding and freed the
+    // local's buffer while the local's own drop had been overwritten, so
+    // exactly one of the two leaked whichever way it went. The parameter's drop
+    // names the parameter and the local's names the local, so both are freed.
+    assert_compiles_and_runs(
+        "tests/fixtures/move_param_shadowed_by_a_local.kp",
+        "body\n",
     );
 }
 

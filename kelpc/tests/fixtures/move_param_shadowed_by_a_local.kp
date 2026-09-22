@@ -1,0 +1,16 @@
+// M6: the body shadows its `move` parameter with an owned local of the same
+// name, so the frame holds two owned buffers of one spelling and frees both:
+// the parameter by its own binding, the local by the declaration it came from.
+//
+// A drop plan keyed by spelling resolved the parameter's drop to the newest
+// binding of the name and freed the local's buffer instead, and the write of
+// the parameter's drop over the body block's entry left the local with none at
+// all, so exactly one of the two buffers leaked (BUG-tV9qH).
+fun take(a: move String) {
+    var a = String.from_str("body")
+    print(a)
+}
+
+fun main() {
+    take(String.from_str("param"))
+}

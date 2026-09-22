@@ -1410,10 +1410,20 @@ fn check_function(
     }
 
     // Anything still owned in the frame at the end belongs to the function
-    // body's own block (parameters live as long as the body does).
+    // body's own block (parameters live as long as the body does). The block
+    // already has an entry when the body declared an owned local of its own,
+    // because `pop_scope` wrote that local's drop at the same identity, so
+    // this is a merge: the body's own locals are dropped first, innermost
+    // scope first the way `live_drops_in_frame` walks, and the parameters
+    // follow them. Replacing the entry instead dropped the body's local
+    // nowhere and leaked it (BUG-tV9qH).
     let leftover = ctx.live_drops_in_frame();
     if !leftover.is_empty() {
-        ctx.plan.at_block_end.insert(block_id(&f.body), leftover);
+        ctx.plan
+            .at_block_end
+            .entry(block_id(&f.body))
+            .or_default()
+            .extend(leftover);
     }
 
     // The move sites whose binding some path leaves live. Each of them has to

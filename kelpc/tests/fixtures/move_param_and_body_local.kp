@@ -1,0 +1,17 @@
+// M6: a `move` parameter is owned by the callee, so the frame frees it at the
+// end of the body, beside whatever owned local the body declared itself. Both
+// buffers are freed once.
+//
+// The parameter's drops and the body block's own drops are recorded under one
+// block identity, so writing the parameters *over* that entry instead of
+// extending it left the body local out of every drop set and leaked its buffer:
+// valgrind reported that buffer as definitely lost (BUG-tV9qH).
+fun take(a: move String) {
+    var b = String.from_str("body")
+    print(a)
+    print(b)
+}
+
+fun main() {
+    take(String.from_str("param"))
+}
