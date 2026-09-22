@@ -10,10 +10,10 @@ fun sh(script: &str).R: List<String> {
     return args
 }
 
-// The whole `RunResult` comes back rather than just its `out`: v1 has no
-// partial moves, so `r.out` cannot be taken out of a local `RunResult` — the
-// value moves as a whole. The type is spelled `process.RunResult` because an
-// imported type is always module-qualified.
+// The whole `RunResult` comes back rather than just its `out`, so a caller that
+// wants the exit code, the captured stderr and the output reads them off one
+// owned value (`val text = r.out` moves the field out). The type is spelled
+// `process.RunResult` because an imported type is always module-qualified.
 fun run_echo().R: process.RunResult = process.run("/bin/sh", sh("printf hi"))
 
 fun run_exit().R: process.RunResult = process.run("/bin/sh", sh("exit 3"))

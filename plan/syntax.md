@@ -2044,8 +2044,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `a function type cannot return another function type` | C cannot write that declarator; return a `datac` holding the function value |
 | `'fun(i32).R: i32' cannot be a 'List' element yet` | a container's generated C type names its element type as a prefix; hold it in a one-field `datac` |
 | `a 'fun' literal cannot capture 's': it is a borrow ('str')` | the environment outlives the frame the borrow points into; capture an owned value, or pass the borrow as a parameter of the literal |
-| `a 'fun' literal cannot capture 'n': it is a field of 'Counter'` | reading a field out of a borrowed receiver by value is a partial move (A-11); bind a `Copy` field to a local first, or take the receiver as a `move` parameter |
-| `cannot capture 'text' into this literal: it belongs to the enclosing closure's environment` | moving an owned value out of an environment is a partial move; capture it from the frame that owns it, or copy a `Copy` one |
+| `a 'fun' literal cannot capture 'n': it is a field of 'Counter'` | a receiver is a borrow, and a field cannot be moved out of a borrow; bind a `Copy` field to a local first, or take the receiver as a `move` parameter |
+| `cannot capture 'text' into this literal: it belongs to the enclosing closure's environment` | an environment is read through a borrow, so an owned capture cannot be moved out of it; capture it from the frame that owns it, or copy a `Copy` one |
 | `cannot read a captured value out of the closure's environment by value` | a capture is read through a borrow; use it in place, or capture a `Copy` value |
 | `this is a closure: its body captured a binding from the enclosing scope` | the parameter's type has to say `closure(...)`; a `fun(...)` value has no room for an environment |
 | `this is a plain function value, not a closure` | the literal captured nothing, so it has no environment; write the expected type as `fun(...)`, or name a binding to capture |

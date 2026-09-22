@@ -1,6 +1,6 @@
 // A-4 phase E: a literal inside a receiver-form method cannot capture the
-// receiver's field. The receiver is borrowed, and reading a field out of it by
-// value is a partial move (A-11) — the message names the two ways round it.
+// receiver's field. The receiver is borrowed, and a field cannot be moved out of
+// a borrow, so the read is refused; the message names the two ways round it.
 datac Counter(val n: i32)
 
 fun Counter.bump().R: i32 {
