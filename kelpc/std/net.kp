@@ -130,9 +130,10 @@ fun send_text(s: Socket, text: &str) {
 }
 
 // One `recv(2)`: up to `max` bytes, whatever is available. Empty means the peer
-// closed — there is no `Option` in v1 to say it another way. Use `recv_into`
-// when the length is known: a fresh fixed-size buffer cannot express "read
-// exactly `Content-Length`" without growth.
+// closed, or that `max` was zero: a zero length returns empty at once rather
+// than blocking, the way `recv_into` with an empty buffer returns 0. Use
+// `recv_into` when the length is known: a fresh fixed-size buffer cannot
+// express "read exactly `Content-Length`" without growth.
 //
 // Panics: if the receive fails.
 fun recv(s: Socket, max: usize).R: Bytes = recv_raw(s.fd, max)
