@@ -1915,7 +1915,7 @@ val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
 val shout = option.map(o = text, f = fun(s: &String).R = str.to_upper(s.as_str()))
 ```
 
-What hands the payload *out by value* takes the option with **`move`**: `unwrap`, `expect` and `unwrap_or` read the payload of the owned option, which is a partial move of the local the caller gave up, so `Option<String>.unwrap()` works. The move form is the caller's contract too: the option is consumed, so a caller that wants it afterwards passes a fresh expression, or matches it with `when`/`if let` (which borrows). `or_else` rebuilds `Some` from a payload it was handed through a borrow, so it stays `Copy`-only.
+What hands the payload *out by value* takes the option with **`move`**: `unwrap`, `expect` and `unwrap_or` read the payload of the owned option, which is a partial move of the local the caller gave up, so `Option<String>.unwrap()` works. The move form is the caller's contract too: the option is consumed, so a caller that wants it afterwards passes a fresh expression, or matches it for a tag test only (a pattern that binds an owned payload takes it out just as `unwrap` does, while a `Copy` payload is copied). `or_else` rebuilds `Some` from a payload it was handed through a borrow, so it stays `Copy`-only.
 
 ### 16.14 `std/result`
 

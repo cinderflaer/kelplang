@@ -4331,7 +4331,7 @@ fn enum_misuse_is_rejected() {
         // Declaration rules, shared with `datac`.
         "enum_datac_clash",
         "enum_self_by_value",
-        // An owned enum payload binds by borrow, never by move.
+        // A payload reached through a borrow binds as a shared borrow.
         "enum_payload_move",
     ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));

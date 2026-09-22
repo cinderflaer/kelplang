@@ -7,9 +7,10 @@
 
    The combinators take a callback (A-4) and read the payload through a
    *borrow*: `map`'s callback is `closure(&T).R: U`, not `closure(T).R: U`,
-   because a `when` arm binds an owned payload as a shared borrow. That is also
-   why they work at every instantiation — a `Copy` payload is copied into the
-   arm and auto-borrowed at the call, an owned one is already a borrow.
+   because a `when` arm over a borrow binds the payload as a shared borrow,
+   never by value. That is also why they work at every instantiation: a `Copy`
+   payload is copied into the arm and auto-borrowed at the call, an owned one is
+   already a borrow.
 
    The callback is a *closure* (A-4 phase E), so it may capture a binding from
    the frame that passes it. A plain function value is widened into one at the
@@ -21,8 +22,8 @@
    option, which is a partial move of the local the caller gave up, and that is
    what makes `Option<String>.unwrap()` work. The move form is the caller's
    contract too: the option is consumed, so a caller that wants to keep it
-   passes a fresh expression or matches it with `when`/`if let` (which still
-   borrows).
+   passes a fresh expression or matches it for a tag test only (a pattern that
+   binds an owned payload takes it out just as `unwrap` does).
 
    What is deliberately absent, and why:
 
