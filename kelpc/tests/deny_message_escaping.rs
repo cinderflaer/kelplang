@@ -1,14 +1,19 @@
 //! A capability denial bakes its source location, its module name and its
 //! domain into the generated C as a string literal, and a `.kp` path may hold
-//! a backslash or a double quote. Passed through raw, the backslash is eaten as
-//! a C escape (the denial prints the path with the byte dropped) and the quote
-//! closes the literal (the generated C does not compile at all). The C backend
-//! must escape the bytes it interns, and the denial must still print the path
-//! as it is on disk.
+//! a backslash or a double quote, or a control byte such as a newline. Passed
+//! through raw, the backslash is eaten as a C escape (the denial prints the path
+//! with the byte dropped), the quote closes the literal (the generated C does
+//! not compile at all), and the newline breaks the `#line` directive that points
+//! `cc` at the `.kp` file, so the C backend fails to build the project. The C
+//! backend must escape the bytes it interns, and the denial must still print the
+//! path as it is on disk.
 //!
 //! The shape comes from the source *directory* name rather than the file name,
 //! because that is how the fuzzing lane measured it and because a directory is
-//! the untrusted part of the path the compiler is handed.
+//! the untrusted part of the path the compiler is handed. A build with the C
+//! backend succeeding is itself the `#line` case: without the escape, `cc`
+//! refuses the broken directive. The denial the binary prints is the `at`
+//! location case.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,11 +55,20 @@ fun main() {
 /// Builds `dir/main.kp` with one backend, asserts the build succeeds, runs the
 /// binary and returns the denial it printed on stderr. `c` is pinned through the
 /// project's oracle switch; any other name is the default `llvm` backend.
+///
+/// `NIX_CC_USE_RESPONSE_FILE=0` is set because the Nix `cc` wrapper hands its
+/// arguments to clang through a response file it quotes with bash `%q`, and
+/// clang mis-parses that `$'...'` form when a control byte is in the path: it
+/// fails to find the generated C before the `#line` this test is about is even
+/// read. The variable makes the wrapper `exec` clang with the arguments
+/// directly, so the test measures kelp's escaper rather than the wrapper's
+/// quoting. A `cc` that is not the wrapper ignores it.
 fn denial(dir: &Path, backend: &str, bin_name: &str) -> Vec<u8> {
     let bin = dir.join(bin_name);
     let mut cmd = kelpc();
     cmd.arg("build");
     cmd.env_remove("KELPC_BACKEND");
+    cmd.env("NIX_CC_USE_RESPONSE_FILE", "0");
     if backend == "c" {
         cmd.env("KELPC_ORACLE", "c");
     } else {
@@ -117,4 +131,19 @@ fn denial_message_survives_a_backslash_in_the_source_path() {
 #[test]
 fn denial_message_survives_a_quote_in_the_source_path() {
     the_denial_names_the_source_directory("esc\"qt");
+}
+
+#[test]
+fn denial_message_survives_a_newline_in_the_source_path() {
+    the_denial_names_the_source_directory("esc\nnl");
+}
+
+#[test]
+fn denial_message_survives_a_tab_in_the_source_path() {
+    the_denial_names_the_source_directory("esc\ttb");
+}
+
+#[test]
+fn denial_message_survives_a_carriage_return_in_the_source_path() {
+    the_denial_names_the_source_directory("esc\rcr");
 }

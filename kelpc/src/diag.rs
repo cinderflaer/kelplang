@@ -311,14 +311,35 @@ fn json_string(s: &str) -> String {
     out
 }
 
-/// A path as the contents of a C string literal: the two bytes that would end
-/// the literal or open an escape are escaped, and nothing else is. A `.kp` path
-/// holding a quote or a backslash is unusual but has to be right anyway, since
-/// the text of a `#line` directive is the same string literal a `printf` would
-/// take. `codegen_c.rs` reaches for it too, for the `at` location, the module
-/// name and the domain a capability denial bakes into the generated C.
+/// A path as the contents of a C string literal: the quote and the backslash
+/// are escaped, every control byte is escaped (the three with a short escape
+/// spelled that way, the rest as fixed-width `\NNN` octal), and any other byte
+/// is written through. A `.kp` path holding a quote, a backslash or a control
+/// byte is unusual but has to be right anyway: the text of a `#line` directive
+/// is the same string literal a `printf` would take, and `cc` rejects a `#line`
+/// whose file name holds a newline. `codegen_c.rs` reaches for it too, for the
+/// `at` location, the module name and the domain a capability denial bakes into
+/// the generated C.
+///
+/// The octal escape is fixed at three digits because a shorter one would run on
+/// into a following octal digit, the same failure `\xNN` has with a following
+/// hex digit.
 pub(crate) fn c_string_body(path: &str) -> String {
-    path.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7F => {
+                out.push_str(&format!("\\{:03o}", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn line_col(src: &str, offset: usize) -> (usize, usize) {
