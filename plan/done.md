@@ -1667,7 +1667,9 @@ above.
 ## MK7 the LLVM backend: the seam, the lowering, the flip (DONE, `930f31b`)
 
 *This section is the whole MK7 record. The MK7 plan of record is archived in full below, its section
-numbering intact, so every `MK7 §N` reference in the compiler sources resolves. The hand-written x86-64
+numbering intact, so every section-level `MK7 §N` reference in the compiler sources resolves. The
+item-level references (`MK7 §5 item N` and `MK7 §7 item 6`) name the retired track's own plan rather
+than the archived one; the archive preamble below maps them. The hand-written x86-64
 track MK7 first named was retired on 2026-09-20 and its source removed on 2026-09-21, so `--backend=asm`
 is no longer accepted, `codegen_asm.rs` and the `Backend::Asm` variant are gone, and the retired track's
 plans are deleted with its stages. Only the emission layer is new: the front half (lexer, preprocessor,
@@ -1938,7 +1940,14 @@ release is 130 commits since the `v26.09.0` tag.
 
 ## The MK7 plan of record, archived
 
-*The files this text names under `asm-backend/` were deleted with the retired track on 2026-09-22, so those mentions are recorded history rather than live paths.*
+*This section is an archived copy of the MK7 plan of record, kept as it stood before the hand-written track was retired. The files it names under `asm-backend/` were deleted on 2026-09-22, and its "this file replaces" and "still the brief" statements describe that plan's own state at the time rather than live guidance: six of the ten retired files now exist only in git history.*
+
+*The compiler sources also cite the retired track's own work list, which belongs to the deleted `asm-backend/plan.md` and not to this archive:*
+
+- *`MK7 §5 item N` is stage 1 of that plan, the `asm` backend's work list: 1 scalars, 2 `f32`/`f64`, 3 the register allocator, 4 aggregates by value, 5 drop and ownership, 6 closures and indirect calls, 7 capabilities, 8 `print`/`print!`, 9 passdowns, 10 `extern fun`, 11 an owned passdown and its drop handler. A reference written `item 6 trap N` names a trap inside item 6.*
+- *`MK7 §7 item 6` is that plan's DNS resolver, the item it called the one most likely to be deferred.*
+
+*The full text of both sections is recoverable from `plan/asm-backend/plan.md` at revision `55419cc`, the last commit that carried it.*
 
 *The plan of record for the compiler's next backend.* `kelpc` will lower its typed
 IR (`tir`) to **LLVM IR** and let LLVM optimize and generate the object, the way
