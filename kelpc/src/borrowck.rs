@@ -93,10 +93,15 @@
 //! existing binding to a fresh borrow is checked at the moment of
 //! assignment (conflicts with anything currently active are still caught)
 //! but doesn't persist scope-durable tracking the way a `val`/`var`
-//! *declaration* does — only declaration-time borrows are exercised by any
+//! *declaration* does: only declaration-time borrows are exercised by any
 //! fixture here. Also out of scope: receiver-form methods, and `&str`
 //! return-lifetime elision (moot for now since `&str` isn't routed through
 //! `Ty::Ref` at all).
+//!
+//! The `EnumField` arm of `check_place` has no `use_field_place` analogue, so
+//! a *place* read of an already-moved payload is not refused. That is
+//! unreachable while surface syntax cannot name an enum's payload as a place,
+//! and it becomes a real hole the day payloads gain field syntax.
 
 use std::collections::HashMap;
 
