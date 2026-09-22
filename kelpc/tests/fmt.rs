@@ -1195,6 +1195,42 @@ fn symlink(target: impl AsRef<Path>, link: &Path) {
     std::os::unix::fs::symlink(target, link).expect("creating a symbolic link");
 }
 
+/// A short base that reaches a directory whose own path may be long.
+///
+/// `UnixListener::bind` refuses a path longer than `sun_path` (107 bytes with the
+/// terminating NUL), and a scratch directory under `CARGO_TARGET_TMPDIR` is as
+/// long as the caller's target directory. The socket is bound through this link,
+/// so the node lands at the target's own entry: its path, and every diagnostic
+/// that names it, does not depend on how deep the checkout is. The directory is
+/// removed when the guard drops.
+struct ShortAlias {
+    dir: PathBuf,
+}
+
+impl ShortAlias {
+    fn new(target: &Path) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is after 1970")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("kelpc-fmt-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&dir).expect("creating a short alias directory");
+        symlink(target, &dir.join("d"));
+        Self { dir }
+    }
+
+    /// The short path that reaches `target`'s entry `name`.
+    fn entry(&self, name: &str) -> PathBuf {
+        self.dir.join("d").join(name)
+    }
+}
+
+impl Drop for ShortAlias {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
 /// Runs `command` with a wall-clock limit. `kelpc fmt` on a FIFO with no writer
 /// blocks in `open`, where no observation from inside the child is possible, so
 /// a test of the refusal has to be able to walk away from the process: `None`
@@ -1606,8 +1642,14 @@ fn a_non_regular_file_is_refused_before_it_is_read() {
 
     // A socket needs nothing but std; a character device is `/dev/null`; the
     // FIFO needs `mkfifo`, and only its cases are skipped without it.
+    //
+    // The socket is bound through a short alias of `dir` so the fixture's own
+    // path stays `dir/socket.kp`; binding `dir/socket.kp` itself would be refused
+    // as longer than `sun_path` on a deep enough checkout.
+    let alias = ShortAlias::new(&dir);
     let socket = dir.join("socket.kp");
-    let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("binding a socket");
+    let _listener = std::os::unix::net::UnixListener::bind(alias.entry("socket.kp"))
+        .expect("binding a socket");
     let device = PathBuf::from("/dev/null");
     let fifo = dir.join("fifo.kp");
     let fifo_ready = mkfifo(&fifo);
