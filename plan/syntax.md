@@ -2441,7 +2441,7 @@ if counts.has("a") { print(counts.get("a")) }
 ```
 
 - `List.empty()` and `Map.new()` need the element type from somewhere. Write it on the binding, or let the first `push`/`insert`/`set` decide it: `var xs = List.empty()` followed by `xs.push(1)` is a `List<i32>`.
-- `Map` keys are `String`, an integer or `bool`, and only those.
+- `Map` keys are `String`, an integer, `bool`, a `char`, or a `datac`/`enum` whose every field (or every variant payload) is itself keyable. The compiler derives the hash and the equality, so a float, a `Bytes`, a container, a view, a borrow, and a `datac`/`enum` with a field outside that set are all refused.
 - Both keep insertion order; `Map` has no `Map<String, Map<i32>>` or `List<List<i32>>` — elements are inline, so wrap a nested container in a `Box`.
 - `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index.
 

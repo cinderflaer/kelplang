@@ -993,7 +993,7 @@ pub(crate) fn write_container_typedef(out: &mut String, ty: &Ty) {
         // A `datac` *key* is the one case that cannot sit inline here: its C
         // typedef comes after every container typedef, so the entry is only
         // forward-declared now and its body is written once the `datac`s are
-        // complete (`write_map_entry_bodies`). The map itself holds a pointer
+        // complete (`write_map_entry_body`). The map itself holds a pointer
         // to the entry either way, so it stays complete here.
         Ty::Map(key, value) => {
             let name = crate::types::map_c_type(key, value);

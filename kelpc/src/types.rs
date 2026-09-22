@@ -70,7 +70,9 @@ pub enum Ty {
     /// and a value type, both monomorphized. `Map<V>` is the shorthand for a
     /// `String` key, which is what every pre-A-2 use site writes, and the two
     /// spellings are the same `Ty`. A key must be hashable and comparable by
-    /// the compiler (`is_map_key`): `String` or a scalar. Non-`Copy`; a map
+    /// the compiler: a `String`, an integer, `bool`, a `char`, or a `datac` or
+    /// `enum` whose every field is itself keyable (`is_map_key` for the builtin
+    /// set, `is_map_key_with` for the derived one). Non-`Copy`; a map
     /// owns its keys and its values, and drops both at the end of the owning
     /// scope. The value type is part of the type, so `Map<String, i64>` and
     /// `Map<i32, i64>` are different C types with different functions.

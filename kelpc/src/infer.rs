@@ -893,7 +893,8 @@ impl TypeScope<'_> {
                     1 => (Ty::String, &ty.args[0], ty.args[0].span),
                     2 => {
                         let key = self.resolve_element(&ty.args[0])?;
-                        if !crate::types::is_map_key_with(&key, &self.keyable_set()) {                            return Err(TypeError {
+                        if !crate::types::is_map_key_with(&key, &self.keyable_set()) {
+                            return Err(TypeError {
                                 message: map_key_error(&key),
                                 span: ty.args[0].span,
                             });
