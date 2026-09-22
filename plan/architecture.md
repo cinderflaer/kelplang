@@ -11,6 +11,7 @@ The other documents:
 - `roadmap.md` the plan: the critical path, current state, the MK/S/M naming scheme, the open items, and its Backlog part for what is named but unscheduled.
 - `done.md` the milestone record of what has shipped, milestone by milestone.
 - `done.md`'s MK7 section the record of the compiler's backend (LLVM IR): why LLVM over a hand-written one, the measurement the decision rests on, the crate and linking decision, what stays the same, what is our work, the flip criteria, the stages and their effort estimates, and the retired hand-written track with its measurements.
+- `mk9-memory-model.md` the plan of record for the memory model and threads: race prevention as a compile-time `Send`/`Sync`-shaped rule, the per-thread panic policy, the `SeqCst`-only atomics surface with the ordering slot reserved, the stages, the gates, and the questions deliberately left open.
 - `../README.md` what the project is, and how to build, run and test it.
 
 **Precedence rule: `syntax.md` wins on syntax and style.** Where any file here and `syntax.md` disagree about syntax or style including where another file restates that syntax `syntax.md` is correct and the other file is wrong. Syntax restated outside `syntax.md` is a copy kept for reading convenience, not a second authority. The rest of the plan is the authority for everything else: the language's non-syntax decisions, the milestone record, capabilities, and the standard library.
