@@ -3957,6 +3957,19 @@ impl<'g, 'a> FnGen<'g, 'a> {
             return self.emit_atomic_call(op, args, ret);
         }
 
+        // `thread.fence` (MK9-S3-M1 stage A2): one `fence seq_cst` instruction,
+        // the same shape the atomic operations above take. `codegen_c.rs`
+        // spells the same operation as its one-line C builtin at the call site,
+        // and this side emits the LLVM instruction, because a fence is a
+        // memory-model operation each backend states in its own terms. The
+        // ordering argument is not evaluated, for the reason `emit_atomic_call`
+        // gives: v1 has one ordering and the instruction's own `seq_cst` is the
+        // whole of what the argument says.
+        if callee == crate::stdlib::FENCE_FN {
+            self.g.builder.build_fence();
+            return Ok(None);
+        }
+
         if let Some(info) = self.g.funcs.get(callee).cloned() {
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());

@@ -32,6 +32,15 @@ pub const OPTION_MODULE: &str = "std/option";
 /// `key_prefix`, exactly as `try_to_<T>` names `Option` through `OPTION_MODULE`.
 pub const ATOMIC_MODULE: &str = "std/atomic";
 
+/// The call key of `thread.fence`, the one function the shipped `std/thread`
+/// module holds (MK9-S3-M1 stage A2): the module id with `/` replaced by `.`
+/// plus the function's bare name, which is what `resolve.rs` builds for a
+/// shipped module's item. Both backends compare a call's key against it and
+/// lower the call as the one instruction a fence is (`__atomic_thread_fence`
+/// and `fence seq_cst`), so the key is named here rather than spelled at those
+/// two comparisons.
+pub const FENCE_FN: &str = "std.thread.fence";
+
 /// The module that declares `Result<T, E>`. A builtin whose result *is* a
 /// `Result` names the instance through `key_prefix` of this id, for the same
 /// reason `OPTION_MODULE` exists: `Atomic.compare_exchange` hands back
@@ -101,6 +110,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/encoding" => include_str!("../std/encoding.kp"),
         "std/list" => include_str!("../std/list.kp"),
         "std/atomic" => include_str!("../std/atomic.kp"),
+        "std/thread" => include_str!("../std/thread.kp"),
         "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
         _ => return None,
@@ -119,7 +129,7 @@ pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/encoding", "std/list",
-        "std/option", "std/result", "std/atomic",
+        "std/option", "std/result", "std/atomic", "std/thread",
     ]
 }
 

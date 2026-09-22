@@ -1978,6 +1978,22 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         add("panic", vec![("msg".to_string(), Ty::Str)], Ty::Unit, false);
         add("assert", vec![("cond".to_string(), Ty::Bool)], Ty::Unit, false);
 
+        // `thread.fence` (MK9-S3-M1 stage A2). Its key is module-qualified
+        // rather than bare, because the function is reached through an import
+        // (`thread.fence`) and not as a prelude name, and the shipped
+        // `std/thread` module declares nothing: a fence cannot be written in
+        // Kelp, and its ordering parameter is `std/atomic`'s enum, which an
+        // `extern fun` declaration would have to name across the C boundary the
+        // extern prelude repeats no Kelp `enum` across. The module's source
+        // documents the surface instead, exactly as `std/atomic` documents the
+        // atomic methods it does not declare.
+        add(
+            crate::stdlib::FENCE_FN,
+            vec![("order".to_string(), atomic_order_ty())],
+            Ty::Unit,
+            false,
+        );
+
         // Integer conversions (S1). Every integer type has a `to_<T>` for
         // every integer type, because nothing else in the language converts
         // one width to another: operands must match exactly, so a `u64 % 10`
@@ -10349,6 +10365,14 @@ fn check_module_item(
             ),
             span,
         });
+    }
+    // A builtin free function a shipped module *documents* rather than
+    // declares (`thread.fence`, MK9-S3-M1 stage A2): its signature is in the
+    // same builtin table `panic`'s is, for the reason the module carries no
+    // declaration (see the entry in `BUILTINS`). Checked last, so a real
+    // declaration of the same key always wins.
+    if builtin_sig(&qualified).is_some() {
+        return check_call(&qualified, type_args, args, span, ctx, expected);
     }
     Err(TypeError {
         message: format!("module '{alias}' has no item '{item}'"),

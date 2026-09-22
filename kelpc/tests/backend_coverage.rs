@@ -76,8 +76,16 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **242 of the 242 targets the C backend builds**. The refusal ranking is
+/// **244 of the 244 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
+///
+/// Recorded at MK9-S3-M1 stage A2 on 2026-09-22, raised from the 243 the A1
+/// review tip built. One fixture landed with it (`thread_fence.kp`, the
+/// standalone fence: `thread.fence` compiles, runs and changes no stdout, and
+/// the artifact each backend writes carries the instruction, so the C backend's
+/// text has `__atomic_thread_fence(__ATOMIC_SEQ_CST)` and the emitted IR has
+/// `fence seq_cst`), which both backends build and the differential sweep
+/// compares.
 ///
 /// Recorded at MK9-S3-M1 stage A1 on 2026-09-22, raised from the 239 the
 /// MK8-S2 A-6 tip built. Three fixtures landed with it, each of which both
@@ -166,7 +174,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 243;
+const LLVM_BUILT_BASELINE: usize = 244;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

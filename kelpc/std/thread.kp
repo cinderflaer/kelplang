@@ -1,0 +1,33 @@
+/* std/thread: the thread surface (MK9-S3-M1 stage A2. Stage C1 of the same
+   milestone adds `spawn` and `join` to this module).
+
+       fun fence(order: Ordering)
+
+   The fence, and the module's surface is documented here rather than declared,
+   exactly as `std/atomic` documents the atomic methods it declares nowhere: a
+   fence cannot be written in Kelp, so the compiler lowers it, and the parameter
+   type is `std/atomic`'s `Ordering`, which a declaration would have to name
+   across a C boundary that repeats no Kelp `enum`.
+
+   The fence has no cell and no receiver. `SeqCst` means one total order over
+   every sequentially consistent operation, and a fence is the one operation
+   that joins that order while naming no location, which is why it is a free
+   function rather than an `Atomic<T>.fence` (MK9 open question 9.2, resolved
+   this way by A2). It lives in `std/thread` rather than beside the atomic
+   builtin because that is where the thread surface goes, so C1 adds `spawn` and
+   `join` to a module instead of inventing one.
+
+   A program pays the same `impl "std/atomic"` line every atomic call site pays,
+   plus the module qualifier, because that is where `Ordering` is declared:
+   `thread.fence(order = atomic.Ordering.SeqCst)`. The qualifier is the enum's,
+   not this module's, so nothing here imports it.
+
+   v1 has exactly one ordering, `SeqCst` (MK9 section 3), so `order` has exactly
+   one legal value. The argument is the slot that reserves the position for
+   `Relaxed`/`Acquire`/`Release`: naming one of those is the ordinary
+   unknown-variant error until the variant exists, and adding it widens the enum
+   instead of changing this signature.
+
+   A fence is one instruction and changes nothing a single-threaded program can
+   observe: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` on the C side and
+   `fence seq_cst` on the LLVM side. */

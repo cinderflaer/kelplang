@@ -60,7 +60,8 @@ use llvm_sys::core::{
     LLVMBuildAtomicRMW, LLVMBuildBr, LLVMBuildCall2,
     LLVMBuildCondBr, LLVMBuildExtractValue, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt,
     LLVMBuildFPToSI,
-    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGEP2, LLVMBuildGlobalString, LLVMBuildICmp,
+    LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildFence, LLVMBuildGEP2, LLVMBuildGlobalString,
+    LLVMBuildICmp,
     LLVMBuildInsertValue, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
     LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
@@ -1472,6 +1473,19 @@ impl<'ctx> Builder<'ctx> {
             },
             context: PhantomData,
         }
+    }
+
+    /// Emit `fence seq_cst` (`LLVMBuildFence`), the one instruction
+    /// `thread.fence` lowers to (MK9-S3-M1 stage A2).
+    ///
+    /// The scope is the default one rather than `syncscope("singlethread")`: the
+    /// ordering v1 states is the whole-system total order C11 and LLVM `seq_cst`
+    /// mean, so `singleThread` is false. A fence has no value, so the name is
+    /// empty and nothing is returned.
+    pub fn build_fence(&self) {
+        // SAFETY: the builder is positioned and there is nothing else to be
+        // live; the instruction is inserted where the builder points.
+        unsafe { LLVMBuildFence(self.raw, SEQ_CST, 0, cstring("").as_ptr()) };
     }
 
     /// Emit `extractvalue agg, index` (`LLVMBuildExtractValue`): one field of

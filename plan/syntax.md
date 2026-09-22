@@ -1493,6 +1493,27 @@ Every operation takes the ordering last even though v1 has exactly one value for
 
 `Ordering` is an ordinary `enum` in `std/atomic`, so a program writes `atomic.Ordering.SeqCst` behind an `impl "std/atomic"` line, and the exhaustiveness check applies to a `when` over it.
 
+### 12.6 Fences and the memory model
+
+A fence orders no location: it joins the total order without naming an atomic, so it is a free function in `std/thread` rather than an operation on an `Atomic<T>`.
+
+```kelp
+impl "std/thread"
+impl "std/atomic"
+
+thread.fence(order = atomic.Ordering.SeqCst)
+```
+
+| Call | Takes | Returns |
+| --- | --- | --- |
+| `thread.fence(order)` | the ordering | `Unit` |
+
+**`SeqCst` means what C11, C++11 and LLVM `seq_cst` mean:** one total order over every sequentially consistent operation, with each operation ordered consistently with that total order and with program order, and with no data race among the atomic operations themselves. Every operation of 12.5 and the fence take the ordering as an argument, and v1 has exactly one ordering, `SeqCst` (16.16). The argument is what reserves the position for the others: a second ordering is a widening of that enum and a change to no signature.
+
+Until MK9-S3-M2 states it as the language's own, the definition of the model this section states is the one `plan/mk9-memory-model.md` section 3 records; MK9-S3-M2 is the stage that publishes it rather than borrowing it by reference.
+
+A fence changes nothing a single-threaded program can observe, and it is one instruction: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` on the C side and `fence seq_cst` on the LLVM side.
+
 ## 13. Modules and imports
 
 ### 13.1 `impl`
@@ -1660,7 +1681,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Eighteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+Nineteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -1682,6 +1703,7 @@ Eighteen modules ship inside the compiler binary. Import them with `impl "std/<n
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |
 | `std/atomic` | none | `Ordering`, the ordering argument of the `Atomic<T>` builtins (12.5) |
+| `std/thread` | none | `fence`, the standalone fence (12.6) |
 
 ### 16.1 `std/str`
 
@@ -2025,6 +2047,22 @@ enum Ordering {
 `SeqCst` is the only variant in v1, and every atomic operation takes an ordering argument anyway, so the slot is in the API rather than merely planned: adding `Relaxed`/`Acquire`/`Release` later is a new variant of this enum and no signature changes, and naming a variant that does not exist yet is the ordinary unknown-variant error.
 
 `Ordering` is a plain `enum` in a shipped module rather than a name the compiler knows, so naming one costs an `impl "std/atomic"` line and the module qualifier: `atomic.Ordering.SeqCst`. That is the same cost `std/option`'s `Option` and `std/result`'s `Result` carry, and it buys the ordinary exhaustiveness check: a `when` over an ordering is re-checked the day a second variant exists, and the compiler names the missing arms rather than falling into a default.
+
+### 16.17 `std/thread`
+
+```kelp
+fun fence(order: Ordering)
+```
+
+The fence, in the module MK6-S1-M1 stage C1 extends with `spawn` and `join`. `fence` is a free function rather than an `Atomic<T>` method because a standalone fence orders no location (12.6), and it lives here rather than beside the atomic cell so that the thread surface is one module: C1 adds names to this module instead of inventing one.
+
+`fence` takes the ordering of 16.16 and returns `Unit`. It has no `.kp` body: a fence cannot be written in Kelp, so the compiler lowers it to one instruction per backend (`__atomic_thread_fence(__ATOMIC_SEQ_CST)`, `fence seq_cst`), and this module's source documents the surface rather than declaring it, the way `std/atomic` documents the atomic methods it declares nowhere.
+
+Reaching the ordering costs what every atomic call site pays, one `impl "std/atomic"` line and the `atomic.` qualifier:
+
+```kelp
+thread.fence(order = atomic.Ordering.SeqCst)
+```
 
 ## 17. Limits in v1
 

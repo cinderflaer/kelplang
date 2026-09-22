@@ -1,0 +1,23 @@
+// MK9-S3-M1 stage A2: `thread.fence`. A fence orders no location, so a
+// single-threaded program cannot observe it: what this fixture proves is that
+// the call compiles and runs and changes no stdout, and the instruction it
+// lowers to is the shape evidence (the emitted C's
+// `__atomic_thread_fence(__ATOMIC_SEQ_CST)` and the emitted IR's
+// `fence seq_cst`). Stage C1's N-thread stress program is the gate that the
+// ordering means something once a second thread can observe it.
+impl "std/thread"
+impl "std/atomic"
+
+fun main() {
+    val counter: Atomic<i64> = Atomic.new(0)
+    print(counter.load(order = atomic.Ordering.SeqCst))
+    // A fence between two operations on one location changes neither of them,
+    // and the ordering is written the way every atomic call site writes it: the
+    // one legal value, in the argument position reserved for the others.
+    thread.fence(order = atomic.Ordering.SeqCst)
+    print(counter.load(order = atomic.Ordering.SeqCst))
+    counter.store(value = 7, order = atomic.Ordering.SeqCst)
+    thread.fence(atomic.Ordering.SeqCst)
+    print(counter.swap(value = 0, order = atomic.Ordering.SeqCst))
+    print(counter.load(order = atomic.Ordering.SeqCst))
+}

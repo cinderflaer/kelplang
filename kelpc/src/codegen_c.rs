@@ -3464,6 +3464,15 @@ impl<'a> Gen<'a> {
         if let Some(op) = callee.strip_prefix("Atomic#") {
             return self.atomic_call(op, args, ret);
         }
+        // `thread.fence` (MK9-S3-M1 stage A2): the standalone fence is one
+        // `__atomic_thread_fence` builtin, so it needs no place, no cell and no
+        // generated function. The ordering argument is deliberately not
+        // rendered, for the reason the atomic operations above give: v1 states
+        // exactly one ordering, so `__ATOMIC_SEQ_CST` is the whole of what the
+        // argument says.
+        if callee == crate::stdlib::FENCE_FN {
+            return "__atomic_thread_fence(__ATOMIC_SEQ_CST)".to_string();
+        }
         // `n.to_u8()` and friends (S1): a numeric conversion, emitted inline
         // as a cast — with a range check when the target is an integer that
         // can lose the value — rather than a C function per pair.

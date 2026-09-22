@@ -5493,3 +5493,59 @@ fn an_ordering_variant_that_does_not_exist_is_the_ordinary_unknown_variant_error
 fn a_float_atomic_element_is_refused() {
     assert_rejected("tests/fixtures/atomic_element_refused.kp");
 }
+
+// ---------------------------------------------------------------------------
+// MK9-S3-M1 stage A2: `thread.fence`, the standalone fence.
+// ---------------------------------------------------------------------------
+
+/// `thread.fence(order)` compiles, runs, and changes no stdout: a fence orders
+/// no location, so a single-threaded program has nothing for it to order. The
+/// value is that the *call* is exercised at all, since a fence that lowered to
+/// nothing would run exactly the same way; the shape test below is what pins the
+/// instruction.
+#[test]
+fn a_thread_fence_compiles_runs_and_changes_no_stdout() {
+    assert_compiles_and_runs("tests/fixtures/thread_fence.kp", "0\n0\n7\n0\n");
+}
+
+/// The instruction `thread.fence` lowers to, in the artifact the backend under
+/// test wrote: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` in the generated C and
+/// `fence seq_cst` in the emitted IR (MK9 section 6, stage A2). Both files sit
+/// beside the binary, which is the one place either backend's own output is
+/// readable, so a program that merely printed the same stdout cannot pass this.
+#[test]
+fn a_thread_fence_lowers_to_the_fence_instruction_of_its_backend() {
+    let source = fixture("tests/fixtures/thread_fence.kp");
+    let bin = out_path("thread_fence");
+    let build = kelpc()
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'thread_fence.kp' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // The C backend spells the fence as the C builtin at the call site; the
+    // LLVM backend emits the instruction.
+    let (artifact, want) = match backend().as_str() {
+        "c" => (bin.with_extension("c"), "__atomic_thread_fence(__ATOMIC_SEQ_CST)"),
+        _ => (bin.with_extension("ll"), "fence seq_cst"),
+    };
+    let generated = std::fs::read_to_string(&artifact).unwrap_or_else(|e| {
+        panic!(
+            "the {} backend writes no '{}': {e}",
+            backend(),
+            artifact.display()
+        )
+    });
+    assert!(
+        generated.contains(want),
+        "the {} backend's artifact has no '{want}':\n{generated}",
+        backend()
+    );
+}
