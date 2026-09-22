@@ -1,0 +1,35 @@
+// BUG-v6Qe0: a second binding of a name already bound in a block is a shadow.
+// The C backend turns each local into one C variable named after the binding,
+// so the second `var a` used to be refused by `cc` as a redefinition of
+// `kelp_a`; a read after it has to see the newest binding, not the first.
+datac Point(val x: i32, val y: i32)
+
+fun main() {
+    var a = 1
+    var a = 2
+    print("a=${a}")
+
+    val s = "one"
+    val s = "two"
+    print("s=${s}")
+
+    var p = Point(x = 1, y = 2)
+    var p = Point(x = 3, y = 4)
+    print("p=${p.x},${p.y}")
+
+    // The first binding stays empty, so the shadowed container owns nothing
+    // and the C backend's one-drop-per-name plan leaks nothing.
+    var cards: List<i32> = List.empty()
+    var cards: List<i32> = List.empty()
+    cards.push(7)
+    print("cards=${cards.len()} ${cards.get(0)}")
+
+    // An initializer that names the binding it shadows reads the one already
+    // in scope, and the inner binding dies at its own `}`.
+    var n = 1
+    if n > 0 {
+        var n = n + 1
+        print("inner=${n}")
+    }
+    print("outer=${n}")
+}

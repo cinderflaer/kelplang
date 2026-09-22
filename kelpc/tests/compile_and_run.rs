@@ -5138,3 +5138,20 @@ fn an_empty_oracle_value_is_reported_rather_than_defaulted() {
     assert!(stderr.contains("KELPC_ORACLE is set but empty"), "{stderr}");
 }
 
+// ---------------------------------------------------------------------------
+// A local binding: a second `val`/`var` of one name in a block is a shadow.
+// ---------------------------------------------------------------------------
+
+/// BUG-v6Qe0: the C backend turns each local into a C variable named after the
+/// binding, so a rebinding in one block reached `cc` as a redefinition of
+/// `kelp_a`. Every shape the report named is in the fixture: a scalar, a `str`,
+/// a `datac` and a container, and each read after the shadow has to see the
+/// newest binding. It also pins the read `val n = n + 1` makes: the initializer
+/// names the binding the new one shadows, so it reads the one already in scope.
+#[test]
+fn a_local_rebinding_shadows_the_earlier_binding() {
+    assert_compiles_and_runs(
+        "tests/fixtures/shadowed_local_in_one_block.kp",
+        "a=2\ns=two\np=3,4\ncards=1 7\ninner=2\nouter=1\n",
+    );
+}

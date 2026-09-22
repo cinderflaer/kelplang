@@ -1987,6 +1987,13 @@ struct Gen<'a> {
     /// The loaded sources, used only to turn a capability denial's span into
     /// the `file:line:col` the runtime panic names (M7).
     sources: &'a SourceMap,
+    /// The `.kp` local bindings the C written so far has in scope, innermost
+    /// scope last: a spelling maps to the C name its newest binding declared.
+    /// A read or a drop resolves through here rather than by spelling the name
+    /// again, because a second binding of one name in a scope is a shadow and
+    /// C has one namespace per block, so it cannot repeat the declaration
+    /// (BUG-v6Qe0).
+    locals: Vec<HashMap<String, String>>,
 }
 
 impl<'a> Gen<'a> {
@@ -2012,13 +2019,14 @@ impl<'a> Gen<'a> {
             module,
             caps,
             sources,
+            locals: Vec::new(),
         }
     }
 
     /// A nested emitter for a block a value-renderer has to produce: same
     /// plan, same function, same module, its own buffer.
     fn sub(&self) -> Gen<'a> {
-        Gen::new(
+        let mut g = Gen::new(
             self.drops,
             self.owned,
             self.enums,
@@ -2026,7 +2034,54 @@ impl<'a> Gen<'a> {
             self.module.clone(),
             self.caps,
             self.sources,
-        )
+        );
+        // A sub renders a block the enclosing C still nests inside, so the
+        // bindings around it are visible in the text it writes.
+        g.locals = self.locals.clone();
+        g
+    }
+
+    /// Opens the scope of one C block, which every emitter writing a `{` the
+    /// C nests inside does, so a rebinding in that block shadows rather than
+    /// redeclares.
+    fn push_locals(&mut self) {
+        self.locals.push(HashMap::new());
+    }
+
+    fn pop_locals(&mut self) {
+        self.locals.pop();
+    }
+
+    /// Declares `name` in the innermost scope and returns the C name to write
+    /// for it.
+    ///
+    /// A name any open scope already binds gets a generated name of its own,
+    /// and not only a name the innermost scope binds: C puts a block-scope
+    /// declaration in scope inside its *own initializer*, so a nested `val a`
+    /// written `kelp_a` would make `val a = a + 1` read the uninitialized new
+    /// variable instead of the `a` the `.kp` initializer names. Called *after*
+    /// the initializer has been rendered, for the same reason.
+    fn declare_local(&mut self, name: &str) -> String {
+        let rebinds = self.locals.iter().any(|scope| scope.contains_key(name));
+        let c = if rebinds { shadow_name(name) } else { c_name(name) };
+        self.locals
+            .last_mut()
+            .expect("a local is declared inside a scope")
+            .insert(name.to_string(), c.clone());
+        c
+    }
+
+    /// The C name a read, a write or a drop of `name` resolves to: the newest
+    /// binding of that spelling whose block is still open, or the plain
+    /// spelling when the name is not a local at all: a function, a passdown's
+    /// storage, the hidden parameter of one.
+    fn local_c_name(&self, name: &str) -> String {
+        for scope in self.locals.iter().rev() {
+            if let Some(c) = scope.get(name) {
+                return c.clone();
+            }
+        }
+        c_name(name)
     }
 
     fn drops_at_block_end(&self, block: &Block) -> Vec<DropTarget> {
@@ -2063,8 +2118,9 @@ impl<'a> Gen<'a> {
     /// may have taken its value from).
     fn write_drops(&mut self, targets: &[DropTarget], depth: usize) {
         for t in targets {
+            let target = self.local_c_name(&t.name);
             indent(&mut self.out, depth);
-            writeln!(self.out, "{}", drop_call(t)).unwrap();
+            writeln!(self.out, "{}", drop_call(t, &target)).unwrap();
         }
     }
 
@@ -2095,6 +2151,17 @@ impl<'a> Gen<'a> {
     // ---- functions, blocks, statements ---------------------------------
 
     fn write_function(&mut self, f: &Function, init_pds: bool) {
+        // Parameters are locals of the body's own block, and C declares both
+        // in one scope, so a body binding of a parameter's name is a shadow
+        // that needs a name of its own (see `declare_local`).
+        self.push_locals();
+        for (name, _) in &f.params {
+            let c = c_name(name);
+            self.locals
+                .last_mut()
+                .expect("the function scope is open")
+                .insert(name.clone(), c);
+        }
         if f.name == "main" {
             // The C runtime requires `main` to return `int`; falling off the
             // end is defined by the C standard as `return 0`, so an `.kp`
@@ -2118,6 +2185,7 @@ impl<'a> Gen<'a> {
             self.out.push_str("    kelp_argc = argc;\n    kelp_argv = argv;\n");
             self.out.push_str(&rendered);
             self.out.push_str("}\n");
+            self.pop_locals();
             return;
         }
         write_signature(&mut self.out, f);
@@ -2135,6 +2203,7 @@ impl<'a> Gen<'a> {
         }
         self.write_function_body(&f.body, 1, &f.ret);
         self.out.push_str("}\n");
+        self.pop_locals();
     }
 
     /// Writes a function body's statements. Unlike a nested block used as a
@@ -2184,6 +2253,10 @@ impl<'a> Gen<'a> {
     /// C statements, then its end-of-scope drops. Used for a block in
     /// statement position (`if`/`while` bodies, nested `{ }` blocks).
     fn write_block_body(&mut self, block: &Block, depth: usize) {
+        // The block's own `{` is what the caller has already written, so this
+        // is one C scope. Drops are written before the scope closes: they name
+        // the bindings it declared (see `local_c_name`).
+        self.push_locals();
         for stmt in &block.stmts {
             self.write_stmt(stmt, depth);
         }
@@ -2193,6 +2266,7 @@ impl<'a> Gen<'a> {
         }
         let drops = self.drops_at_block_end(block);
         self.write_drops(&drops, depth);
+        self.pop_locals();
     }
 
     fn write_stmt(&mut self, stmt: &Stmt, depth: usize) {
@@ -2208,8 +2282,9 @@ impl<'a> Gen<'a> {
         match stmt {
             Stmt::Let { name, ty, init } => {
                 let value = self.expr_value(init);
+                let decl = self.declare_local(name);
                 indent(&mut self.out, depth);
-                writeln!(self.out, "{} = {value};", ty.c_decl(&c_name(name))).unwrap();
+                writeln!(self.out, "{} = {value};", ty.c_decl(&decl)).unwrap();
             }
             Stmt::Return { value, span } => {
                 let drops = self.drops_at_return(*span);
@@ -2363,16 +2438,17 @@ impl<'a> Gen<'a> {
             ExprKind::Ident(name) => {
                 if self.drops.moves_at(&self.function, expr) {
                     let tmp = fresh_temp();
+                    let read = self.local_c_name(name);
                     format!(
                         "({{ {} = {}; {} = ({}){{0}}; {}; }})",
                         expr.ty.c_decl(&tmp),
-                        c_name(name),
-                        c_name(name),
+                        read,
+                        read,
                         expr.ty.c_type(),
                         tmp
                     )
                 } else {
-                    c_name(name)
+                    self.local_c_name(name)
                 }
             }
             ExprKind::Unary { op, expr: sub } => {
@@ -2739,7 +2815,8 @@ impl<'a> Gen<'a> {
                 // on every propagated failure.
                 let drops = self.drops_at_try(expr.span);
                 for t in &drops {
-                    writeln!(out, "    {}", drop_call(t)).unwrap();
+                    let target = self.local_c_name(&t.name);
+                    writeln!(out, "    {}", drop_call(t, &target)).unwrap();
                 }
                 writeln!(out, "    return {};", ret).unwrap();
                 writeln!(out, "}}").unwrap();
@@ -2802,7 +2879,8 @@ impl<'a> Gen<'a> {
                 let mut out = String::new();
                 writeln!(out, "{} = {value_text};", target_ty.c_decl(&tmp)).unwrap();
                 for d in &drops {
-                    writeln!(out, "{}", drop_call(d)).unwrap();
+                    let old = self.local_c_name(&d.name);
+                    writeln!(out, "{}", drop_call(d, &old)).unwrap();
                 }
                 writeln!(out, "{target_text} = {tmp};").unwrap();
                 format!("({{\n{out}}})")
@@ -2852,6 +2930,7 @@ impl<'a> Gen<'a> {
     /// into a temporary first: the value of a GNU statement expression comes
     /// from its *last* statement, and a drop call is void.
     fn write_block_value(&mut self, block: &Block, depth: usize) {
+        self.push_locals();
         for stmt in &block.stmts {
             self.write_stmt(stmt, depth);
         }
@@ -2869,12 +2948,14 @@ impl<'a> Gen<'a> {
             }
             (None, _) => self.write_drops(&drops, depth),
         }
+        self.pop_locals();
     }
 
     /// Writes a block whose tail expression (if any) is assigned into `tmp`
     /// instead of being yielded as a statement-expression value — used for
     /// the branches of an `if` that's itself being lowered via a temporary.
     fn write_block_assign(&mut self, block: &Block, tmp: &str, depth: usize) {
+        self.push_locals();
         for stmt in &block.stmts {
             self.write_stmt(stmt, depth);
         }
@@ -2885,6 +2966,7 @@ impl<'a> Gen<'a> {
         }
         let drops = self.drops_at_block_end(block);
         self.write_drops(&drops, depth);
+        self.pop_locals();
     }
 
     fn write_else_assign(&mut self, else_block: Option<&Block>, tmp: &str, depth: usize) {
@@ -3473,7 +3555,7 @@ impl<'a> Gen<'a> {
     /// see `infer::is_tir_place`.
     fn lvalue(&self, expr: &Expr) -> String {
         match &expr.kind {
-            ExprKind::Ident(name) => c_name(name),
+            ExprKind::Ident(name) => self.local_c_name(name),
             ExprKind::FieldAccess { base, field } => self.field_access(base, field),
             ExprKind::Deref { expr: sub } => {
                 let inner = self.expr_value(sub);
@@ -3692,12 +3774,31 @@ fn fresh_temp() -> String {
     format!("_xtmp{}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
+/// The C name of a local that shadows an earlier binding of the same `.kp`
+/// name in its own block (BUG-v6Qe0). The spelling carries the shadowed name
+/// so the generated C stays readable. A user's local is always `kelp_<name>`
+/// (`c_name` below), so the `_kshadow_` prefix cannot collide with one, and
+/// the counter is process-wide the way `fresh_temp`'s is, so two of them
+/// cannot collide with each other.
+fn shadow_name(name: &str) -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "_kshadow_{}_{}",
+        crate::types::c_ident(name),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// One drop call, as a C statement. The function names come from
 /// `types::drop_fn_name`: the two builtin owned types have bodies in the
 /// runtime preamble, and a `datac` that owns memory gets a generated one
 /// (see `write_struct`).
-fn drop_call(target: &DropTarget) -> String {
-    format!("{}(&{});", drop_fn_name(&target.ty), c_name(&target.name))
+/// `name` is the C name the target's binding resolved to at the point of the
+/// drop (`Gen::local_c_name`), which for a shadowed spelling is not the name
+/// the plan recorded.
+fn drop_call(target: &DropTarget, name: &str) -> String {
+    format!("{}(&{});", drop_fn_name(&target.ty), name)
 }
 
 /// Escapes literal template text for embedding in a generated `printf`
