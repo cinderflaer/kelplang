@@ -447,16 +447,20 @@ backend_env ./target/release/kelpc build \
     kelpc/tests/fixtures/path_normalize.kp -o "$REF_OUT/pathnorm" >/dev/null
 EXTERN_IR="$(strip_dbg "$REF_OUT/externs.ll")"
 PATH_IR="$(strip_dbg "$REF_OUT/pathnorm.ll")"
+# The C ABI's sub-word extension (BUG-rK2mW): a `uint8_t` or `bool`
+# parameter or return carries the `zeroext` clang gives the same prototype,
+# which is what makes the C body's widening read the value rather than the
+# argument register's upper bits.
 for want in \
     'declare void @kelp_std__mem__alloc_raw(ptr, i64)' \
     'declare void @kelp_std__fmt__hex_raw(ptr, i64)' \
     'declare void @kelp_std__str__from_f64_raw(ptr, double, i32)' \
     'declare double @kelp_std__math__sqrt_raw(double)' \
-    'declare i1 @kelp_std__math__is_nan_raw(double)' \
+    'declare zeroext i1 @kelp_std__math__is_nan_raw(double)' \
     'declare i64 @kelp_std__str__byte_len_raw(ptr)' \
-    'declare i8 @kelp_std__str__byte_at_raw(ptr, i64)' \
+    'declare zeroext i8 @kelp_std__str__byte_at_raw(ptr, i64)' \
     'declare ptr @kelp_std__str__slice_from_raw(ptr, i64)' \
-    'declare i1 @kelp_std__str__parse_i64_raw(ptr, ptr)' \
+    'declare zeroext i1 @kelp_std__str__parse_i64_raw(ptr, ptr)' \
     'declare void @kelp_std__path__normalize_raw(ptr, ptr)' \
     'declare void @kelp_String__from_bytes_ptr(ptr, ptr)'
 do

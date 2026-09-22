@@ -235,13 +235,15 @@ done
 # with the C signatures, and one call per resource argument carrying the domain,
 # the resource, the module's compiled-in array, its pattern count, the calling
 # module and the `.kp` call site. The IR names the symbols the per-program object
-# defines.
+# defines. The two `uint16_t` ports carry the C ABI's `zeroext` (BUG-rK2mW): the
+# port comes from a `u16` field whose padding is in the same argument register,
+# and the C glue's widening to `int` reads the whole register.
 for want in \
     'declare void @kelp_cap_check_path(ptr, ptr, ptr, i64, ptr, ptr)' \
     'declare void @kelp_cap_check_name(ptr, ptr, ptr, i64, ptr, ptr)' \
     'declare void @kelp_cap_check_host(ptr, ptr, ptr, i64, ptr, ptr)' \
-    'declare void @kelp_cap_check_hostport(ptr, ptr, i16, ptr, i64, ptr, ptr)' \
-    'declare void @kelp_cap_check_port(ptr, i16, ptr, i64, ptr, ptr)'
+    'declare void @kelp_cap_check_hostport(ptr, ptr, i16 zeroext, ptr, i64, ptr, ptr)' \
+    'declare void @kelp_cap_check_port(ptr, i16 zeroext, ptr, i64, ptr, ptr)'
 do
     if ! grep -qxF "$want" "$FS_IR"; then
         echo "the capability check declaration in '$FS_IR' is missing: $want" >&2

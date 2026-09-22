@@ -215,7 +215,7 @@ for want in \
     '%kelp_Map__i64__V2_entry = type { i64, ptr, i8 }' \
     'declare i64 @kelp_map_hash(ptr, i64)' \
     'declare i64 @kelp_map_mix(i64)' \
-    'declare i1 @kelp_map_key_eq(ptr, ptr, i64)'
+    'declare zeroext i1 @kelp_map_key_eq(ptr, ptr, i64)'
 do
     if ! grep -qxF "$want" "$FLOAT_IR"; then
         echo "the container layout in '$FLOAT_IR' is missing: $want" >&2

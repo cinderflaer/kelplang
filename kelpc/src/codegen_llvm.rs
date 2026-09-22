@@ -332,8 +332,8 @@ use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
     self, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
-    Function as LlvmFunction, IntBinOp, IntCmp, Metadata, Module, RealCmp, TargetMachine, Type,
-    Value,
+    Function as LlvmFunction, IntBinOp, IntCmp, IntExtension, Metadata, Module, RealCmp,
+    TargetMachine, Type, Value,
 };
 use crate::diag::SourceMap;
 use crate::lexer::Span;
@@ -1276,6 +1276,7 @@ impl<'a> Gen<'a> {
         let ty = ctx.fn_type(ret, &params, false);
         let symbol = symbol_name(&f.name);
         let func = self.module.add_function(&symbol, ty);
+        extend_narrow_c_abi(func, ret, &params);
         // The declarations live in the same table as the runtime helpers, and a
         // call reaches either through the same lookup (`emit_call`): a body and
         // a `kelp_rt.c` helper differ in where their text is compiled, not in how
@@ -4506,6 +4507,7 @@ fn declare_cap_fns<'a>(
     let mut decl = |name: &'static str, params: &[Type<'a>]| {
         let ty = ctx.fn_type(void, params, false);
         let func = module.add_function(name, ty);
+        extend_narrow_c_abi(func, void, params);
         out.insert(name, (func, ty));
     };
     let text = [ptr, ptr, ptr, i64t, ptr, ptr];
@@ -7725,6 +7727,52 @@ fn crosses_c_boundary_by_value(ty: &Ty, llvm_ty: Type<'_>, layout: &DataLayout) 
     is_aggregate_ty(ty) && layout.abi_size_of(llvm_ty) > 16
 }
 
+/// The C ABI's extension attribute for a parameter or a return declared with
+/// the LLVM type `llvm_ty`, if it is a sub-word integer (BUG-rK2mW).
+///
+/// Thirty-two bits is the width a register argument travels in, so a narrower
+/// integer leaves the register's upper bits to whatever held them, and the C
+/// body's widening to `int` reads them as part of the value. clang annotates
+/// every sub-word parameter and return of the body it compiles; this is the
+/// same rule on the declaration this backend writes.
+///
+/// The signedness the variant carries is the C prototype's, and every narrow
+/// prototype this backend declares is unsigned: `Ty::c_type` spells `u8` and
+/// `u16` as `uint8_t` and `uint16_t` and `bool` as `bool`, and a Kelp `char` is
+/// `uint32_t`. So the variant is always `ZeroExt` here; a signed narrow C type
+/// would take `SignExt`, and the language has no type that reaches one.
+fn c_int_extension(llvm_ty: Type<'_>) -> Option<IntExtension> {
+    match llvm_ty.int_width()? {
+        1 | 8 | 16 => Some(IntExtension::ZeroExt),
+        _ => None,
+    }
+}
+
+/// Give a C-boundary declaration the sub-word extension attributes clang would
+/// give the same prototype (BUG-rK2mW).
+///
+/// Every declaration site that spells a prototype of a body compiled as C asks
+/// this one function, so the three cannot drift: `declare_extern` for a
+/// program's own `extern fun` bodies, `declare_runtime` for the `kelp_rt.c`
+/// helpers and `declare_cap_fns` for the capability checks of
+/// `runtime/cap_glue.c`. One call per declaration, with the same LLVM return
+/// and parameter list the declaration was made from, and no call-site
+/// attribute: LLVM's call lowering reads a direct callee's parameter
+/// attributes, so the declaration is what an argument is extended to.
+fn extend_narrow_c_abi(func: LlvmFunction<'_>, ret: Type<'_>, params: &[Type<'_>]) {
+    if let Some(ext) = c_int_extension(ret) {
+        func.add_return_extension(ext);
+    }
+    // The attribute index is the 1-based position in this same `params` slice,
+    // so a leading `sret` pointer only shifts the indices after it and needs no
+    // handling of its own.
+    for (index, ty) in params.iter().enumerate() {
+        if let Some(ext) = c_int_extension(*ty) {
+            func.add_parameter_extension(index + 1, ext);
+        }
+    }
+}
+
 /// Declare every runtime helper this slice calls, with the signature
 /// `kelp_rt.c` defines and the ABI shape it is compiled under (MK7 §3.3). The
 /// object `build.rs` produces is compiled from that same text, so a signature
@@ -7772,6 +7820,7 @@ fn declare_runtime<'a>(
         all.extend_from_slice(params);
         let ty = ctx.fn_type(llvm_ret, &all, false);
         let func = module.add_function(name, ty);
+        extend_narrow_c_abi(func, llvm_ret, &all);
         out.insert(
             name.to_string(),
             RtFn {
@@ -8581,5 +8630,72 @@ mod layout_tests {
             wide,
             &layout
         ));
+    }
+
+    /// The sub-word C ABI (BUG-rK2mW): every declaration this backend makes for
+    /// a body compiled as C carries the `zeroext` clang gives the same narrow
+    /// parameter or return. Without it the argument register's upper bits reach
+    /// the body untruncated, which is how a port gets read out of the padding
+    /// beside the `u16` field of a `datac`.
+    ///
+    /// The two real tables are asked rather than a re-spelled prototype, so the
+    /// test fails when a new narrow helper is added there without the
+    /// attribute: `declare_runtime` is where `kelp_Bytes__set`'s byte parameter
+    /// and its narrow returns come from, and `declare_cap_fns` where the two
+    /// `uint16_t` ports do. `extend_narrow_c_abi` is the shared seam
+    /// `declare_extern` calls for a program's own `extern fun`, and the return
+    /// half is covered with it because the runtime's own `i8`/`i1` returns are.
+    #[test]
+    fn a_sub_word_c_parameter_or_return_carries_its_extension() {
+        use super::{declare_cap_fns, declare_runtime, extend_narrow_c_abi};
+
+        let ctx = Context::new();
+        let module = Module::new(&ctx, "narrow_c_abi");
+        let ptr = ctx.opaque_ptr();
+        let bytes = ctx.struct_type("kelp_Bytes");
+        ctx.struct_set_body(bytes, &[ptr, ctx.i64(), ctx.i64()]);
+        let string = ctx.struct_type("kelp_String");
+        ctx.struct_set_body(string, &[ptr, ctx.i64(), ctx.i64()]);
+        let view = ctx.struct_type("kelp_View");
+        ctx.struct_set_body(view, &[ptr, ctx.i64()]);
+        declare_runtime(&ctx, &module, bytes, string, view);
+        declare_cap_fns(&ctx, &module);
+
+        // `declare_extern`'s half of the rule, with the two narrow shapes a
+        // program's own `extern fun` can spell: a sub-word return and a
+        // sub-word parameter. The `sret` form is not spelled here because a
+        // return that needs it is an aggregate, and an aggregate is exactly
+        // what takes no extension.
+        let narrow_ret = ctx.i16();
+        let narrow_params = [ptr, ctx.i8(), ctx.i1()];
+        let probe = module.add_function(
+            "probe_narrow_extern",
+            ctx.fn_type(narrow_ret, &narrow_params, false),
+        );
+        extend_narrow_c_abi(probe, narrow_ret, &narrow_params);
+
+        let ir = module.to_ir_string();
+        for want in [
+            // The return half: a body returning a `bool`, a byte or a `u16`
+            // extends it before it returns, and a caller without the attribute
+            // reads the register's upper bits as part of the value.
+            "declare zeroext i1 @kelp_Bytes__is_empty(ptr)",
+            "declare zeroext i8 @kelp_Bytes__get(ptr, i64)",
+            // `declare_runtime`'s parameters.
+            "declare void @kelp_Bytes__set(ptr, i64, i8 zeroext)",
+            "declare void @kelp_Bytes__push(ptr, i8 zeroext)",
+            // `declare_cap_fns`'s two `uint16_t` ports, the parameter the port
+            // in `datac Url` reaches through `net.connect`.
+            "declare void @kelp_cap_check_hostport(ptr, ptr, i16 zeroext, ptr, i64, ptr, ptr)",
+            "declare void @kelp_cap_check_port(ptr, i16 zeroext, ptr, i64, ptr, ptr)",
+            // `declare_extern`'s seam: the return and each sub-word parameter.
+            "declare zeroext i16 @probe_narrow_extern(ptr, i8 zeroext, i1 zeroext)",
+        ] {
+            assert!(ir.contains(want), "missing '{want}':\n{ir}");
+        }
+        // The attribute is the sub-word rule, not "every parameter": a wider
+        // integer and a pointer take none.
+        assert!(!ir.contains("i64 zeroext"), "an i64 took zeroext:\n{ir}");
+        assert!(!ir.contains("ptr zeroext"), "a pointer took zeroext:\n{ir}");
     }
 }

@@ -52,7 +52,8 @@ use std::ptr::null_mut;
 
 use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyModule};
 use llvm_sys::core::{
-    LLVMAddCase, LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming, LLVMAddModuleFlag,
+    LLVMAddAttributeAtIndex, LLVMAddCase, LLVMAddFunction, LLVMAddGlobal, LLVMAddIncoming,
+    LLVMAddModuleFlag,
     LLVMAddNamedMetadataOperand, LLVMAppendBasicBlockInContext,
     LLVMArrayType2,
     LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
@@ -63,9 +64,11 @@ use llvm_sys::core::{
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
     LLVMBuildSub, LLVMBuildSwitch, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
     LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstNull, LLVMConstReal,
-    LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMDisposeBuilder,
+    LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
+    LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
-    LLVMFunctionType, LLVMGetFirstInstruction, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget,
+    LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstInstruction,
+    LLVMGetIntTypeWidth, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget, LLVMGetTypeKind,
     LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
     LLVMInt64TypeInContext,
     LLVMInt8TypeInContext, LLVMMetadataAsValue, LLVMModuleCreateWithNameInContext,
@@ -86,7 +89,10 @@ use llvm_sys::LLVMLinkage;
 use llvm_sys::transforms::pass_builder::{
     LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMRunPasses,
 };
-use llvm_sys::{LLVMIntPredicate, LLVMModuleFlagBehavior, LLVMRealPredicate};
+use llvm_sys::{
+    LLVMAttributeIndex, LLVMAttributeReturnIndex, LLVMIntPredicate, LLVMModuleFlagBehavior,
+    LLVMRealPredicate, LLVMTypeKind,
+};
 use llvm_sys::prelude::{
     LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef,
     LLVMMetadataRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
@@ -515,6 +521,28 @@ impl<'ctx> Type<'ctx> {
     pub fn as_raw(self) -> LLVMTypeRef {
         self.raw
     }
+
+    /// The width of this integer type in bits (`LLVMGetIntTypeWidth`), or
+    /// `None` when the type is not an integer.
+    ///
+    /// The C ABI needs the width to decide whether a parameter or a return is
+    /// a *sub-word* integer, which is the question the `zeroext`/`signext`
+    /// attribute answers, so this is what [`Function::add_parameter_extension`]
+    /// and [`Function::add_return_extension`] are keyed on rather than the
+    /// Kelp type: a declaration site that has only the LLVM type (the runtime
+    /// and capability tables) has to ask the same question the ones with a
+    /// `Ty` do.
+    pub fn int_width(self) -> Option<c_uint> {
+        // SAFETY: the handle is live in the context that created it, and LLVM
+        // reads it only for the duration of each call.
+        match unsafe { LLVMGetTypeKind(self.raw) } {
+            LLVMTypeKind::LLVMIntegerTypeKind => {
+                // SAFETY: the kind just read says this is an integer type.
+                Some(unsafe { LLVMGetIntTypeWidth(self.raw) })
+            }
+            _ => None,
+        }
+    }
 }
 
 /// A function type handle: the `ret (args...)` of a [`Function`].
@@ -569,6 +597,25 @@ impl<'ctx> Value<'ctx> {
     }
 }
 
+/// The sign of a sub-word integer that crosses to a C body, as LLVM's
+/// `zeroext` and `signext` parameter and return attributes.
+///
+/// A register argument is at least thirty-two bits wide and a C body reads the
+/// whole register for a parameter narrower than that, so clang extends every
+/// sub-word parameter at the call and every sub-word return inside the body.
+/// Without the attribute, LLVM passes whatever the upper bits of the register
+/// happen to hold, and the body's widening reads them as part of the value
+/// (BUG-rK2mW). The C prototype's signedness picks the variant: an unsigned
+/// type (`uint8_t`, `uint16_t`, `bool`) is zero-extended and a signed one
+/// (`int8_t`, `int16_t`, `char`) sign-extended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IntExtension {
+    /// The C type is unsigned, so the upper bits are zero (`zeroext`).
+    ZeroExt,
+    /// The C type is signed, so the upper bits repeat the sign bit (`signext`).
+    SignExt,
+}
+
 /// A function: a declaration or a definition in a [`Module`].
 #[derive(Clone, Copy)]
 pub struct Function<'ctx> {
@@ -609,6 +656,56 @@ impl<'ctx> Function<'ctx> {
             raw: unsafe { LLVMGetParam(self.raw, index as c_uint) },
             context: PhantomData,
         }
+    }
+
+    /// Attach `ext` to the `index`-th parameter of this function
+    /// (`LLVMAddAttributeAtIndex`). The index is 1-based, as the C API and the
+    /// textual IR both number parameters; a return attribute is
+    /// [`Function::add_return_extension`].
+    ///
+    /// The attribute goes on the declaration, and that is where LLVM's call
+    /// lowering reads it: a direct call to this callee carries the callee's
+    /// parameter attributes without the call site restating them, so the
+    /// declaration is the one place a C-boundary prototype has to agree with
+    /// the C header (BUG-rK2mW).
+    pub fn add_parameter_extension(&self, index: usize, ext: IntExtension) {
+        assert!(index >= 1, "parameter attribute indices are 1-based");
+        self.add_enum_attribute(index as LLVMAttributeIndex, ext);
+    }
+
+    /// Attach `ext` to this function's return value
+    /// (`LLVMAddAttributeAtIndex` at `LLVMAttributeReturnIndex`), the other half
+    /// of the sub-word C ABI: a body returning a narrow integer extends it
+    /// before it returns, and a declaration that does not say so lets a caller
+    /// read the register's upper bits as part of the value (BUG-rK2mW).
+    pub fn add_return_extension(&self, ext: IntExtension) {
+        self.add_enum_attribute(LLVMAttributeReturnIndex, ext);
+    }
+
+    /// Attach one integer-extension enum attribute at `index`, looking the
+    /// attribute's kind up by name because `llvm-sys` exports no constant for
+    /// it (the C API's kind ids are deliberately unstable).
+    fn add_enum_attribute(&self, index: LLVMAttributeIndex, ext: IntExtension) {
+        let name = match ext {
+            IntExtension::ZeroExt => "zeroext",
+            IntExtension::SignExt => "signext",
+        };
+        // SAFETY: the name is a NUL-free static string and the length is its
+        // own byte count; the kind is looked up in this context's table.
+        let kind = unsafe {
+            LLVMGetEnumAttributeKindForName(name.as_ptr() as *const c_char, name.len())
+        };
+        assert!(
+            kind != 0,
+            "this LLVM has no enum attribute named '{name}'"
+        );
+        // SAFETY: the kind is a real enum attribute kind in this context and
+        // the value is unused for a flag attribute; the created attribute is
+        // owned by the context and borrowed by the call below.
+        let attr = unsafe { LLVMCreateEnumAttribute(self.context, kind, 0) };
+        // SAFETY: the function is live and `index` is the return index or a
+        // parameter index of its own signature.
+        unsafe { LLVMAddAttributeAtIndex(self.raw, index, attr) };
     }
 
     /// Append an empty basic block named `name` (`LLVMAppendBasicBlockInContext`).
