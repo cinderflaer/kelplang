@@ -370,7 +370,7 @@ static kelp_String kelp_String__clone(const kelp_String* self) {
 /* One byte, unchecked: `String.push` is a byte append, matching
    `String.len`'s byte length (a multi-byte codepoint goes through
    `str`/`utf8` helpers, not here). */
-static void kelp_String__push(kelp_String* self, char ch) {
+static void kelp_String__push(kelp_String* self, unsigned char ch) {
     kelp_buf_reserve(&self->data, self->len, &self->cap, 1);
     self->data[self->len++] = (unsigned char)ch;
     self->data[self->len] = 0;
