@@ -60,7 +60,7 @@ val n = counter.load(order = Ordering.SeqCst)          // v1: the only legal val
 val m = counter.load(order = Ordering.Acquire)         // later: a new variant, the same call
 ```
 
-rather than a hard-coded `load()` with nowhere to put an ordering. Adding a variant to a builtin `enum Ordering` is a widening, not a signature change: no v1 program breaks, and a program that wrote `SeqCst` keeps exactly the meaning it had. It also means a caller cannot be *wrong* about ordering in v1, because there is nothing to be wrong about, and the migration to a weaker ordering is always an explicit opt-in at a call site rather than a change of default.
+rather than a hard-coded `load()` with nowhere to put an ordering. Adding a variant to `enum Ordering` is a widening, not a signature change: no v1 program breaks, and a program that wrote `SeqCst` keeps exactly the meaning it had. In v1 the enum has **exactly one variant, `SeqCst`**; what is reserved is the argument position, so naming an ordering that does not exist yet is the ordinary unknown-variant error rather than a special refusal. It also means a caller cannot be *wrong* about ordering in v1, because there is nothing to be wrong about, and the migration to a weaker ordering is always an explicit opt-in at a call site rather than a change of default.
 
 `Ordering` is a **builtin `enum`**, not a constant, so the language's exhaustiveness check applies: the day a second variant exists, every `when` over an ordering is re-checked and the compiler names the missing arms instead of silently falling into a default.
 
@@ -98,6 +98,7 @@ Notes on the shape, each with its reason:
 - **`compare_exchange` returns `Result<T, T>`** (`Ok` the previous value, `Err` the actual one) rather than a `bool` plus a second load. That matches the `Option`/`Result` vocabulary every fallible stdlib call now uses, and it removes the window a bool-then-load would have.
 - **No `AtomicPtr`.** Raw pointers do not exist until MK9-S2-M1 (`unsafe`, B-3), so a pointer atomic would be a type with no way to make a value.
 - **No float atomics.** There is no atomic hardware operation for them and no lock-free path worth the pretence.
+- **Where `Ordering` lives is A1's choice, not part of this surface.** Two routes work: a type the compiler knows by name, or a plain Kelp `enum` in the new atomic module whose type the builtin signatures name by lookup. The surface above is fixed either way. Stage A1's report must say which route it took and what it cost, and if the cheaper route changes what a program has to write to name an ordering, say so rather than bending the surface quietly.
 - **An atomic is both sendable and shareable**, which is what makes it the whole of v1's inter-thread communication for scalars. It is also the first type for which the `Sync`-shaped half of §1 has to hold, so it is the test case for that rule rather than an afterthought.
 - **A `pd val` atomic is how a program shares a counter**, since a `pd` is the process-lifetime place a shared borrow may cross from (§1). It needs no drop, so the `atexit` story for owned passdowns does not apply.
 
@@ -132,7 +133,7 @@ Not in this sequence: MK9-S3-M3 (thread-local and per-CPU storage, `B-11`), whic
 - **A race gate is a rejection fixture.** Every rule in §5 gets one probe that must be refused *by name*, so the rule cannot rot silently.
 - **A panic gate** spawns a thread that panics, joins it, asserts `Err`, and asserts the process exits 0 with the other thread's work intact.
 - **Two-backend agreement.** The C backend (the oracle) and the LLVM backend must produce the same total for the same stress program at every optimization level, the same way the existing corpus does. An atomic instruction sequence differs enough between the two emitters that this is the differential gate that matters here.
-- **The ordering slot is a compile-time gate.** A probe writing `Ordering.Acquire` must be refused in v1 with a message that says the ordering exists but is not yet accepted, not a bare "unknown name", so the reserved slot is visible rather than merely planned.
+- **The ordering slot is visible in every signature.** Every atomic operation takes an ordering argument, and a probe passing `Ordering.SeqCst` compiles and runs, so the reserved slot is in the API rather than merely planned. Because v1 has one variant, naming another is the ordinary unknown-variant error; the second variant is added later as a widening, and this gate is what makes that true.
 
 ## 8. Non-goals
 
