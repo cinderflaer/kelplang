@@ -6,7 +6,11 @@
 // binding of the name and freed the local's buffer instead, and the write of
 // the parameter's drop over the body block's entry left the local with none at
 // all, so exactly one of the two buffers leaked (BUG-tV9qH).
+//
+// The parameter is read before it is shadowed, so both buffers are live and a
+// missing drop for either one is visible at every optimization level.
 fun take(a: move String) {
+    print(a)
     var a = String.from_str("body")
     print(a)
 }

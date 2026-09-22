@@ -3,12 +3,18 @@
 // drop frees the buffer that declaration owns; the same name declared again in
 // a nested block is a second binding of a second scope, dropped the same way.
 //
-// While the owned set was keyed by name, the second declaration replaced the
-// first entry, so the value the first binding owned had no drop left that
-// reached it: valgrind reported that buffer as definitely lost (BUG-n7Wq3,
-// `memory_gate.rs`'s sweep).
+// The first buffer is read before it is rebound, so its own drop is the only
+// thing that frees it and a missing drop leaks at every optimization level,
+// including the one where the optimizer can still see that nothing reads the
+// allocation. While the owned set was keyed by name, the second declaration
+// replaced the first entry, so the value the first binding owned had no drop
+// left that reached it: valgrind reported that buffer as definitely lost
+// (BUG-n7Wq3, `memory_gate.rs`'s sweep).
+datac Pair(val text: String, val n: i32)
+
 fun main() {
     var a = String.from_str("first")
+    print(a)
     var a = String.from_str("second")
     print(a)
 
@@ -18,4 +24,12 @@ fun main() {
         print(b)
     }
     print(b)
+
+    // A partial move after a rebound declaration: the clear has to name the
+    // binding that owns the value it empties, not the newest spelling.
+    var p = Pair(text = String.from_str("old"), n = 1)
+    var p = Pair(text = String.from_str("new"), n = 2)
+    val taken = p.text
+    print(taken)
+    print(p.n)
 }

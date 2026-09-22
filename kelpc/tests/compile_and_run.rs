@@ -1026,11 +1026,12 @@ fn a_rebound_or_shadowed_owned_local_is_dropped_for_its_own_value() {
     // `var a` in one block replaced the first entry and the buffer the first
     // binding owned had no drop left that reached it, while the C backend
     // resolved the one remaining drop to the newer binding. Both buffers are
-    // freed now, and the nested block, where one spelling is two bindings of
-    // two scopes, stays pinned beside them.
+    // freed now, the nested block where one spelling is two bindings of two
+    // scopes stays pinned beside them, and a partial move after the rebind pins
+    // that the clear names the binding that owns the value it empties.
     assert_compiles_and_runs(
         "tests/fixtures/owned_rebind.kp",
-        "second\ninner\nouter\n",
+        "first\nsecond\ninner\nouter\nnew\n2\n",
     );
 }
 
@@ -2560,7 +2561,10 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // BUG-n7Wq3: one spelling as two owned bindings, in one block and in a
         // nested one. Both drops name the binding that owns the buffer, so a
         // build that frees the newest binding twice, or frees only one of
-        // them, fails here as well as under valgrind.
+        // them, fails here. Both fixtures read the earlier buffer before the
+        // rebind or the shadow, so a missing drop also leaks at the level the
+        // valgrind sweep runs, not only below -O2 where an optimizer can still
+        // see that nothing reads the allocation.
         "owned_rebind",
         // BUG-tV9qH: a `move` parameter and the body's own owned local are
         // dropped at one block end, including when the local shadows the
@@ -4647,7 +4651,7 @@ fn a_body_local_shadowing_a_move_parameter_leaves_no_buffer_behind() {
     // names the parameter and the local's names the local, so both are freed.
     assert_compiles_and_runs(
         "tests/fixtures/move_param_shadowed_by_a_local.kp",
-        "body\n",
+        "param\nbody\n",
     );
 }
 
