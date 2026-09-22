@@ -76,7 +76,7 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **244 of the 244 targets the C backend builds**. The refusal ranking is
+/// **246 of the 246 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
 ///
 /// Recorded at MK9-S3-M1 stage A2 on 2026-09-22, raised from the 243 the A1

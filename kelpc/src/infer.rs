@@ -2680,13 +2680,13 @@ fn map_sig(key: &str, map_key: &Ty, value: &Ty) -> Option<FnSig> {
     })
 }
 
-/// Why a type cannot be a `Map` key (A-2, A-6). The compiler generates the
-/// key's hash and its equality for whatever the key type is, so a key that
-/// needs a user-supplied comparison would be a trait or a comparator function,
-/// and v1 has neither.
+/// Why a type cannot be a `Map` key (A-2, A-6, A-12). The compiler derives the
+/// key's hash and its equality from the fields, and the only way past a field
+/// the derivation refuses is the declared pair, so the message names it: this
+/// is the one refusal a caller's next edit can answer.
 fn map_key_error(ty: &Ty) -> String {
     format!(
-        "'{}' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler generates the key's hash and its equality",
+        "'{}' cannot be a Map key: the key has to be 'String', an integer, 'bool' or 'char', or a 'datac'/'enum' whose every field is one of those, because the compiler derives the key's hash and its equality from the fields; a 'datac' or 'enum' outside that set becomes a key by declaring 'fun T.hash().R: u64' and 'fun T.eq(other: &T).R: bool'",
         ty.display()
     )
 }
