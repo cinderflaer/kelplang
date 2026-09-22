@@ -1,0 +1,21 @@
+// M6: the drop plan keeps one owned entry per *binding*, not per spelling. Two
+// `var a` declarations in one block own two buffers, and each declaration's own
+// drop frees the buffer that declaration owns; the same name declared again in
+// a nested block is a second binding of a second scope, dropped the same way.
+//
+// While the owned set was keyed by name, the second declaration replaced the
+// first entry, so the value the first binding owned had no drop left that
+// reached it: valgrind reported that buffer as definitely lost (BUG-n7Wq3,
+// `memory_gate.rs`'s sweep).
+fun main() {
+    var a = String.from_str("first")
+    var a = String.from_str("second")
+    print(a)
+
+    var b = String.from_str("outer")
+    {
+        var b = String.from_str("inner")
+        print(b)
+    }
+    print(b)
+}

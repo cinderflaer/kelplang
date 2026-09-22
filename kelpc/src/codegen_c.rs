@@ -15,7 +15,7 @@
 //! it writes each one — no second walk, and no lockstep between two passes.
 
 use crate::ast::{BinOp, UnOp};
-use crate::borrowck::{DropPlan, DropTarget, Projection};
+use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::tir::*;
@@ -1989,11 +1989,16 @@ struct Gen<'a> {
     sources: &'a SourceMap,
     /// The `.kp` local bindings the C written so far has in scope, innermost
     /// scope last: a spelling maps to the C name its newest binding declared.
-    /// A read or a drop resolves through here rather than by spelling the name
-    /// again, because a second binding of one name in a scope is a shadow and
-    /// C has one namespace per block, so it cannot repeat the declaration
+    /// A read resolves through here rather than by spelling the name again,
+    /// because a second binding of one name in a scope is a shadow and C has
+    /// one namespace per block, so it cannot repeat the declaration
     /// (BUG-v6Qe0).
     locals: Vec<HashMap<String, String>>,
+    /// The C name each owned binding's declaration gave it, keyed by the
+    /// binding the drop plan recorded. A drop resolves through here rather
+    /// than through `locals`, because one spelling can name several bindings
+    /// and the drop belongs to the binding that owns the value (BUG-n7Wq3).
+    bindings: HashMap<BindingId, String>,
 }
 
 impl<'a> Gen<'a> {
@@ -2020,6 +2025,7 @@ impl<'a> Gen<'a> {
             caps,
             sources,
             locals: Vec::new(),
+            bindings: HashMap::new(),
         }
     }
 
@@ -2036,8 +2042,10 @@ impl<'a> Gen<'a> {
             self.sources,
         );
         // A sub renders a block the enclosing C still nests inside, so the
-        // bindings around it are visible in the text it writes.
+        // bindings around it are visible in the text it writes, and the drops
+        // it writes name them.
         g.locals = self.locals.clone();
+        g.bindings = self.bindings.clone();
         g
     }
 
@@ -2061,13 +2069,14 @@ impl<'a> Gen<'a> {
     /// written `kelp_a` would make `val a = a + 1` read the uninitialized new
     /// variable instead of the `a` the `.kp` initializer names. Called *after*
     /// the initializer has been rendered, for the same reason.
-    fn declare_local(&mut self, name: &str) -> String {
+    fn declare_local(&mut self, name: &str, binding: BindingId) -> String {
         let rebinds = self.locals.iter().any(|scope| scope.contains_key(name));
         let c = if rebinds { shadow_name(name) } else { c_name(name) };
         self.locals
             .last_mut()
             .expect("a local is declared inside a scope")
             .insert(name.to_string(), c.clone());
+        self.bindings.insert(binding, c.clone());
         c
     }
 
@@ -2082,6 +2091,20 @@ impl<'a> Gen<'a> {
             }
         }
         c_name(name)
+    }
+
+    /// The C name a drop of `target` frees: the C variable the binding's own
+    /// declaration made, so a rebound or shadowed spelling frees the value the
+    /// declaration owns and not whichever binding of that spelling is newest
+    /// (BUG-n7Wq3). A target the plan recorded no binding for (an assignment
+    /// to a `pd`'s storage) and one this walk did not declare fall back to the
+    /// resolution a read of the name uses.
+    fn drop_name(&self, target: &DropTarget) -> String {
+        target
+            .binding
+            .and_then(|binding| self.bindings.get(&binding))
+            .cloned()
+            .unwrap_or_else(|| self.local_c_name(&target.name))
     }
 
     fn drops_at_block_end(&self, block: &Block) -> Vec<DropTarget> {
@@ -2118,7 +2141,7 @@ impl<'a> Gen<'a> {
     /// may have taken its value from).
     fn write_drops(&mut self, targets: &[DropTarget], depth: usize) {
         for t in targets {
-            let target = self.local_c_name(&t.name);
+            let target = self.drop_name(t);
             indent(&mut self.out, depth);
             writeln!(self.out, "{}", drop_call(t, &target)).unwrap();
         }
@@ -2155,12 +2178,13 @@ impl<'a> Gen<'a> {
         // in one scope, so a body binding of a parameter's name is a shadow
         // that needs a name of its own (see `declare_local`).
         self.push_locals();
-        for (name, _) in &f.params {
+        for (index, (name, _)) in f.params.iter().enumerate() {
             let c = c_name(name);
             self.locals
                 .last_mut()
                 .expect("the function scope is open")
-                .insert(name.clone(), c);
+                .insert(name.clone(), c.clone());
+            self.bindings.insert(BindingId::Param(index), c);
         }
         if f.name == "main" {
             // The C runtime requires `main` to return `int`; falling off the
@@ -2282,7 +2306,7 @@ impl<'a> Gen<'a> {
         match stmt {
             Stmt::Let { name, ty, init } => {
                 let value = self.expr_value(init);
-                let decl = self.declare_local(name);
+                let decl = self.declare_local(name, BindingId::Local(stmt_id(stmt)));
                 indent(&mut self.out, depth);
                 writeln!(self.out, "{} = {value};", ty.c_decl(&decl)).unwrap();
             }
@@ -2815,7 +2839,7 @@ impl<'a> Gen<'a> {
                 // on every propagated failure.
                 let drops = self.drops_at_try(expr.span);
                 for t in &drops {
-                    let target = self.local_c_name(&t.name);
+                    let target = self.drop_name(t);
                     writeln!(out, "    {}", drop_call(t, &target)).unwrap();
                 }
                 writeln!(out, "    return {};", ret).unwrap();
@@ -2879,7 +2903,7 @@ impl<'a> Gen<'a> {
                 let mut out = String::new();
                 writeln!(out, "{} = {value_text};", target_ty.c_decl(&tmp)).unwrap();
                 for d in &drops {
-                    let old = self.local_c_name(&d.name);
+                    let old = self.drop_name(d);
                     writeln!(out, "{}", drop_call(d, &old)).unwrap();
                 }
                 writeln!(out, "{target_text} = {tmp};").unwrap();

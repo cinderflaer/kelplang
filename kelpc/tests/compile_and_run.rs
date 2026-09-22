@@ -1021,6 +1021,20 @@ fn an_owned_local_bound_in_a_loop_body_is_dropped_on_both_paths() {
 }
 
 #[test]
+fn a_rebound_or_shadowed_owned_local_is_dropped_for_its_own_value() {
+    // BUG-n7Wq3: the owned set kept one entry per *name* per scope, so a second
+    // `var a` in one block replaced the first entry and the buffer the first
+    // binding owned had no drop left that reached it, while the C backend
+    // resolved the one remaining drop to the newer binding. Both buffers are
+    // freed now, and the nested block, where one spelling is two bindings of
+    // two scopes, stays pinned beside them.
+    assert_compiles_and_runs(
+        "tests/fixtures/owned_rebind.kp",
+        "second\ninner\nouter\n",
+    );
+}
+
+#[test]
 fn a_bytes_parameter_is_a_borrow_not_a_move() {
     assert_compiles_and_runs(
         "tests/fixtures/heap_param_borrow.kp",
@@ -2543,6 +2557,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // gate that saw it.
         "owned_conditional_move",
         "owned_move_in_loop",
+        // BUG-n7Wq3: one spelling as two owned bindings, in one block and in a
+        // nested one. Both drops name the binding that owns the buffer, so a
+        // build that frees the newest binding twice, or frees only one of
+        // them, fails here as well as under valgrind.
+        "owned_rebind",
         // A-11: a partial move zeroes the field's slot, so the binding's own
         // drop frees the field that stayed and nothing where the moved value
         // now lives. A double free of the moved buffer fails here.

@@ -69,6 +69,17 @@
 //! has no user-defined destructors, so nothing can observe the difference
 //! except memory use.
 //!
+//! One owned entry is kept per *binding*, not per spelling: two `var a`
+//! declarations in one block own two values, so each declaration keeps its own
+//! entry and its own drop. The identity is the declaration's own node (a
+//! `move T` parameter, which is no statement, is keyed by its position in the
+//! parameter list). A read, a move or a partial move still resolves a name to
+//! the innermost binding of that spelling, which is what the language's own
+//! scoping and both backends' name resolution pick. Keyed by spelling, a
+//! second declaration took the first binding's entry away, and the value the
+//! first one owned had no drop left that reached it: valgrind reported its
+//! buffer as definitely lost (see `tests/fixtures/owned_rebind.kp`).
+//!
 //! **A move clears its source**, and that is what makes a *conditional* move
 //! leak-free. A local moved on one path through a branch or loop body and not
 //! on another is neither "live" nor "moved": dropping it would free a value
@@ -113,6 +124,13 @@ use crate::types::{EnumDef, Ty};
 /// One owned local that has to be freed at a particular point.
 #[derive(Debug, Clone)]
 pub struct DropTarget {
+    /// The binding whose value this frees. It is what codegen resolves the
+    /// drop to, so a spelling that names several bindings (a rebound `var`, or
+    /// a local shadowing a `move` parameter) frees the value the plan decided
+    /// about rather than the newest binding of that spelling (BUG-n7Wq3).
+    /// `None` only for a target with no tracked binding at all: an assignment
+    /// to a `pd`'s storage, which name resolution reaches like any global.
+    pub binding: Option<BindingId>,
     pub name: String,
     pub ty: Ty,
 }
@@ -192,6 +210,29 @@ type NodeId = usize;
 
 fn block_id(block: &tir::Block) -> NodeId {
     block as *const tir::Block as NodeId
+}
+
+/// The identity of one `tir::Stmt` node, for the binding a declaration
+/// introduces: the same address argument as `block_id`, and for the same
+/// reason.
+pub fn stmt_id(stmt: &tir::Stmt) -> NodeId {
+    stmt as *const tir::Stmt as NodeId
+}
+
+/// What identifies one owned binding, so a drop reaches the value that binding
+/// owns rather than whichever binding of the same spelling is newest.
+///
+/// The identity is not the name: one block may declare `var a` twice, and each
+/// declaration owns a value of its own (BUG-n7Wq3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BindingId {
+    /// A `val`/`var` declaration, by the identity of the `Stmt::Let` that
+    /// declared it (`stmt_id`), which codegen computes for the same node.
+    Local(NodeId),
+    /// A `move T` parameter, by its index in the function's parameter list: a
+    /// parameter is not a statement, so there is no node to key it to, and the
+    /// index is the identity both backends already walk that list by.
+    Param(usize),
 }
 
 /// The identity of one `tir::Expr` node, for the move-site key — the same
@@ -333,6 +374,10 @@ struct VarState {
 /// An owned local declared in some scope, tracked for the drop plan.
 #[derive(Clone)]
 struct OwnedVar {
+    /// Which binding this is: one entry per binding, never one per spelling,
+    /// so a second declaration of a name does not take the first binding's
+    /// drop away from it (see `define_owned`).
+    binding: BindingId,
     name: String,
     ty: Ty,
     /// Whether this binding's value is still here; a definitely moved-out
@@ -390,7 +435,11 @@ impl Scope {
         // drop correct on both paths. `MoveState::merge` has the reasoning.
         let mut owned = a.owned;
         for entry in owned.iter_mut() {
-            if let Some(other) = b.owned.iter().find(|o| o.name == entry.name) {
+            // The same *binding*, not a matching spelling: two `var a`
+            // declarations in one scope are two bindings with two states, and
+            // pairing them by name would merge the state of one into the
+            // other.
+            if let Some(other) = b.owned.iter().find(|o| o.binding == entry.binding) {
                 entry.state = entry.state.merge(other.state);
                 // A field one path moved out is gone from the merged place:
                 // whichever path ran, the read of it is a use of a moved
@@ -426,10 +475,11 @@ struct Ctx {
     /// The declared return type, for the wording of that diagnostic.
     ret_ty: Ty,
     /// The expressions that move an owned binding's value out of it, keyed by
-    /// the binding's name, innermost-last (a shadowing binding's name is the
-    /// same key, and codegen's own C scoping resolves the same way — see
-    /// `check_function`, which is where these become `FnDrops::at_move`).
-    move_sites: HashMap<String, Vec<NodeId>>,
+    /// the binding they move it out of, and in the order they were seen. The
+    /// binding is the key, not a spelling: a block may hold two `var a`
+    /// declarations, each with its own slot to clear (BUG-n7Wq3). These become
+    /// `FnDrops::at_move` in `check_function`.
+    move_sites: HashMap<BindingId, Vec<NodeId>>,
     /// The expressions that move one field or payload of an owned binding out,
     /// and the projection each one emptied. Unlike `move_sites` this needs no
     /// filter when it becomes the plan's `at_clear`: the binding is dropped on
@@ -440,10 +490,10 @@ struct Ctx {
     /// which the diagnostic and the plan's projection both carry while the
     /// `tir` node carries only the two indices.
     enums: HashMap<String, EnumDef>,
-    /// The names of owned bindings that some merge left `MaybeMoved`. Only
-    /// those have a drop site a move could double up with, so only their move
-    /// sites are recorded as clears.
-    maybe_moved_names: std::collections::HashSet<String>,
+    /// The bindings that some merge left `MaybeMoved`. Only those have a drop
+    /// site a move could double up with, so only their move sites are recorded
+    /// as clears.
+    maybe_moved: std::collections::HashSet<BindingId>,
 }
 
 impl Ctx {
@@ -479,26 +529,26 @@ impl Ctx {
         out
     }
 
-    /// Marks the innermost owned binding named `name` as moved out. Returns
-    /// whether such a binding exists: only an owned local can need its slot
-    /// cleared on the way out (see `mark_move_site`).
-    fn mark_moved(&mut self, name: &str) -> bool {
+    /// Marks the innermost owned binding named `name` as moved out, and says
+    /// which binding that was: only an owned local can need its slot cleared on
+    /// the way out (see `mark_move_site`).
+    fn mark_moved(&mut self, name: &str) -> Option<BindingId> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
                 owned.state = MoveState::Moved;
-                return true;
+                return Some(owned.binding);
             }
         }
-        false
+        None
     }
 
-    /// Records that the value read at `expr` is a move out of the owned
-    /// binding `name`: codegen clears that binding's slot there, which is what
-    /// lets the binding still be dropped on the path that did not move it.
-    /// A name that is not an owned local (a `pd` global's storage, a `str`, a
-    /// borrow) is not recorded — nothing frees it, so nothing can double-free.
-    fn mark_move_site(&mut self, name: &str, expr: &tir::Expr) {
-        let entry = self.move_sites.entry(name.to_string()).or_default();
+    /// Records that the value read at `expr` is a move out of the owned binding
+    /// `binding`: codegen clears that binding's slot there, which is what lets
+    /// the binding still be dropped on the path that did not move it. A value
+    /// that is not an owned local (a `pd` global's storage, a `str`, a borrow)
+    /// is not recorded — nothing frees it, so nothing can double-free.
+    fn mark_move_site(&mut self, binding: BindingId, expr: &tir::Expr) {
+        let entry = self.move_sites.entry(binding).or_default();
         let id = expr_id(expr);
         if !entry.contains(&id) {
             entry.push(id);
@@ -579,15 +629,35 @@ impl Ctx {
     }
 
     /// Registers an owned local so its drop point can be planned.
-    fn define_owned(&mut self, name: &str, ty: &Ty) {
+    ///
+    /// One entry per *binding*, not per spelling: a block that declares `var a`
+    /// twice owns two values, and the entry the first declaration left is what
+    /// keeps that value's drop reachable (BUG-n7Wq3). `retain` therefore
+    /// matches on the binding, which for the walk of a `while` body that
+    /// reaches one declaration twice re-arms the entry it already has rather
+    /// than plan the same free twice.
+    fn define_owned(&mut self, binding: BindingId, name: &str, ty: &Ty) {
         let scope = self.scopes.last_mut().unwrap();
-        scope.owned.retain(|o| o.name != name);
+        scope.owned.retain(|o| o.binding != binding);
         scope.owned.push(OwnedVar {
+            binding,
             name: name.to_string(),
             ty: ty.clone(),
             state: MoveState::Live,
             moved: std::collections::BTreeSet::new(),
         });
+    }
+
+    /// The binding `name` resolves to here: the innermost owned binding of that
+    /// spelling, which is the one a read, a write or a move of the name reaches
+    /// (and so the one `mark_moved` marks).
+    fn owned_binding_of(&self, name: &str) -> Option<BindingId> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
+                return Some(owned.binding);
+            }
+        }
+        None
     }
 
     /// Whether `name` is an owned local this frame may give a field away from.
@@ -801,8 +871,10 @@ impl Ctx {
             .map(|v| v.ty.is_copy())
             .unwrap_or(true);
         self.use_value(name, expr.span)?;
-        if !was_copy && self.mark_moved(name) {
-            self.mark_move_site(name, expr);
+        if !was_copy {
+            if let Some(binding) = self.mark_moved(name) {
+                self.mark_move_site(binding, expr);
+            }
         }
         Ok(())
     }
@@ -1068,7 +1140,7 @@ impl Ctx {
         for scope in &merged {
             for owned in &scope.owned {
                 if owned.state == MoveState::MaybeMoved {
-                    self.maybe_moved_names.insert(owned.name.clone());
+                    self.maybe_moved.insert(owned.binding);
                 }
             }
         }
@@ -1128,6 +1200,7 @@ fn live_drops<'a>(owned: impl DoubleEndedIterator<Item = &'a OwnedVar>) -> Vec<D
         .rev()
         .filter(|o| o.state != MoveState::Moved)
         .map(|o| DropTarget {
+            binding: Some(o.binding),
             name: o.name.clone(),
             ty: o.ty.clone(),
         })
@@ -1300,9 +1373,9 @@ fn check_function(
         move_sites: HashMap::new(),
         field_move_sites: HashMap::new(),
         enums: enums.clone(),
-        maybe_moved_names: std::collections::HashSet::new(),
+        maybe_moved: std::collections::HashSet::new(),
     };
-    for (name, ty) in &f.params {
+    for (index, (name, ty)) in f.params.iter().enumerate() {
         ctx.define(name, ty);
         // A parameter owns its value only when it was declared `move T`
         // (A-4): the resolved type is then the bare owned type, not a
@@ -1310,7 +1383,7 @@ fn check_function(
         // frame (or on the `return` path), and it is the only thing the
         // callee's side of a move needs.
         if crate::types::needs_drop(ty, &ctx.owned_structs) {
-            ctx.define_owned(name, ty);
+            ctx.define_owned(BindingId::Param(index), name, ty);
         }
     }
     // A passdown the function does not receive as a hidden parameter is
@@ -1354,7 +1427,7 @@ fn check_function(
     let clears: Vec<NodeId> = ctx
         .move_sites
         .iter()
-        .filter(|(name, _)| ctx.maybe_moved_names.contains(*name))
+        .filter(|(binding, _)| ctx.maybe_moved.contains(binding))
         .flat_map(|(_, sites)| sites.iter().copied())
         .collect();
     ctx.plan.at_move.extend(clears);
@@ -1416,7 +1489,7 @@ fn check_stmt(stmt: &tir::Stmt, ctx: &mut Ctx) -> Result<()> {
                 ctx.release_borrows_since(at);
             }
             if crate::types::needs_drop(ty, &ctx.owned_structs) {
-                ctx.define_owned(name, ty);
+                ctx.define_owned(BindingId::Local(stmt_id(stmt)), name, ty);
             }
             Ok(())
         }
@@ -1759,6 +1832,10 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     ctx.plan.at_assign.insert(
                         expr.span,
                         vec![DropTarget {
+                            // The binding the assignment overwrites is the one
+                            // the name reaches here, the same resolution
+                            // `codegen` uses for the target of the store.
+                            binding: ctx.owned_binding_of(name),
                             name: name.clone(),
                             ty: target.ty.clone(),
                         }],

@@ -329,7 +329,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::ast::{BinOp, UnOp};
-use crate::borrowck::{DropPlan, DropTarget, Projection};
+use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
     self, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
     Function as LlvmFunction, IntBinOp, IntCmp, Metadata, Module, RealCmp, TargetMachine, Type,
@@ -1699,6 +1699,11 @@ struct FnGen<'g, 'a> {
     /// One map per lexical scope, innermost last, name to alloca slot. A slot is
     /// created in the entry block so `mem2reg` can promote it.
     scopes: Vec<HashMap<String, Value<'a>>>,
+    /// The slot each owned binding's declaration made, keyed by the binding the
+    /// drop plan recorded. A drop resolves through here rather than through
+    /// `scopes`, because one spelling can name several bindings and the drop
+    /// belongs to the binding that owns the value (BUG-n7Wq3).
+    bindings: HashMap<BindingId, Value<'a>>,
     fn_name: String,
     /// Canonical id of the module the function was declared in. The capability
     /// gate is per module, so a gated call site has to know whose grant it is
@@ -1759,6 +1764,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             cur: entry,
             terminated: false,
             scopes: Vec::new(),
+            bindings: HashMap::new(),
             fn_name: f.name.clone(),
             module: f.module.clone(),
             ret_ty: f.ret.clone(),
@@ -1796,6 +1802,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             cur: entry,
             terminated: false,
             scopes: Vec::new(),
+            bindings: HashMap::new(),
             fn_name: String::new(),
             module: pd.module.clone(),
             ret_ty: pd.value_ty.clone(),
@@ -1916,6 +1923,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .last_mut()
                     .expect("the function scope is open")
                     .insert(name.clone(), slot);
+                self.bindings.insert(BindingId::Param(i), slot);
             }
         }
 
@@ -2051,6 +2059,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .last_mut()
                     .expect("a scope is always open")
                     .insert(name.clone(), slot);
+                self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
                 match value {
                     Some(v) => {
                         self.g.builder.build_store(v, slot);
@@ -2111,11 +2120,24 @@ impl<'g, 'a> FnGen<'g, 'a> {
     fn emit_drops(&mut self, targets: &[DropTarget]) -> Result<(), String> {
         for t in targets {
             let slot = self
-                .lookup(&t.name)
+                .drop_slot(t)
                 .ok_or_else(|| no_value(&format!("the owned local '{}'", t.name)))?;
             self.g.call_drop(slot, &t.ty)?;
         }
         Ok(())
+    }
+
+    /// The slot a drop of `target` frees: the alloca the binding's own
+    /// declaration made, so a rebound or shadowed spelling frees the value the
+    /// declaration owns and not whichever binding of that spelling is newest
+    /// (BUG-n7Wq3). A target the plan recorded no binding for (an assignment to
+    /// a `pd`'s storage) and one this walk did not declare fall back to the
+    /// resolution a read of the name uses.
+    fn drop_slot(&self, target: &DropTarget) -> Option<Value<'a>> {
+        target
+            .binding
+            .and_then(|binding| self.bindings.get(&binding).copied())
+            .or_else(|| self.lookup(&target.name))
     }
 
     /// Evaluate `e`, store it in a temporary, then run `drops`. A returned or
