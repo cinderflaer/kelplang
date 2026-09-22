@@ -1,5 +1,6 @@
-/* std/thread: the thread surface (MK9-S3-M1 stage A2. Stage C1 of the same
-   milestone adds `spawn` and `join` to this module).
+/* std/thread: the thread surface. Stage A2 of MK9-S3-M1 added the fence, and the
+   threads milestone MK6-S1-M1 adds `spawn` and `join` to this module (its stage
+   C1 in plan/mk9-memory-model.md).
 
        fun fence(order: Ordering)
 
