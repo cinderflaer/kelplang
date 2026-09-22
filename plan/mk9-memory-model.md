@@ -1,6 +1,6 @@
 # The memory model and threads: plan of record
 
-*Status: **decided 2026-09-22, not implemented.** This is the spec step. No code for MK9-S3-M1 or MK6-S1-M1 starts until this document is signed off and the stages in §6 are opened one at a time.*
+*Status: **decided 2026-09-22, not implemented.** This is the spec step. The shared-borrow crossover in §1 is signed off by the owner (2026-09-22), so the document is unblocked; the four questions in §9 are deliberately left open, each decided when it comes up. No code starts until stage A1 is opened, and the stages in §6 are opened one at a time.*
 
 *Scope: MK9-S3-M1 (atomics, fences, ordering annotations, a `Send`/`Sync`-shaped discipline, published race semantics) and the parts of MK6-S1-M1 that depend on it (threads, the per-thread panic policy, join).*
 
@@ -28,7 +28,7 @@ A race needs four things at once: one location, two threads, at least one write,
 - **Everything else crosses by being moved.** A value moved to a thread is owned by that thread for as long as it holds it, which is the same rule that already governs a `move T` parameter.
 - **A moved value may not contain a borrow**, and that clause is already enforced rather than newly written: `types::is_borrowed_field_ty` refuses a `&T`, `str` or `View` in a `datac` field, an enum payload, a `List` element or a `Map` value, so no such value can be constructed in the first place.
 
-**Proposed, and the one part of this section that needs sign-off** (§9): a *shared* borrow crosses a thread boundary only when the place it borrows has **process lifetime**, which in v1 means a `pd`, and only when the borrowed type has **no reachable `&mut` path**. The first clause is checkable lexically, because a `pd` global's lifetime is the process and a frame local's is not. The second is the `Sync`-shaped rule: an `Atomic*` has no `&mut` path by construction, so a `&AtomicI64` may be shared across threads; a `datac` with a `var` field reachable from it may not, because two threads could otherwise write it through the same shared borrow.
+**Decided 2026-09-22, by owner sign-off:** a *shared* borrow crosses a thread boundary only when the place it borrows has **process lifetime**, which in v1 means a `pd`, and only when the borrowed type has **no reachable `&mut` path**. The first clause is checkable lexically, because a `pd` global's lifetime is the process and a frame local's is not. The second is the `Sync`-shaped rule: an `Atomic*` has no `&mut` path by construction, so a `&AtomicI64` may be shared across threads; a `datac` with a `var` field reachable from it may not, because two threads could otherwise write it through the same shared borrow. The reasoning is the one `Sync` uses: no unsynchronized mutation reachable from the shared borrow means the sharing is safe by construction. Without a crossover the atomics of §4 would have no second thread able to reach them, which defeats shipping them first.
 
 **Rejected, with the reason recorded.**
 
@@ -144,15 +144,14 @@ Not in this sequence: MK9-S3-M3 (thread-local and per-CPU storage, `B-11`), whic
 - **Per-CPU and thread-local storage.** MK9-S3-M3.
 - **A user-facing `Send`/`Sync` trait.** A-12 first; the rule is structural until then (§5).
 
-## 9. Open questions this document does not decide
+## 9. Questions left open deliberately
 
-Each is a real fork, and the implementation of the stage it blocks should not start before it is answered.
+Four forks the owner chose on 2026-09-22 to leave open, each to be decided when it actually comes up rather than speculatively. None of them blocks stage A1. The crossover question that used to head this list is now a decision, recorded in §1.
 
-1. **Does a shared borrow cross a thread boundary at all in v1?** §1 proposes yes, for a `pd` place whose type has no reachable `&mut` path, because otherwise a shared counter is inexpressible and the atomics have no way to be reached by two threads. The alternative is no crossover at all, which pushes every shared counter into a `Mutex` or a channel and delays C1 until one exists.
-2. **`compare_exchange` strong only, or weak as well?** v1 in §4 has the strong form; the weak form is only useful inside a loop that retries anyway, and it is worth one signature (`compare_exchange_weak`) or not worth having.
-3. **Is `fence` a free `thread.fence` or an `Atomic<T>.fence`?** §4 puts it on `thread` because a standalone fence belongs to no location, but that is a naming choice rather than a semantic one.
-4. **May an atomic be a `datac` field, a `List` element, a `Map` value?** §4 does not say. Allowing it in a `List` is convenient and interacts with the container element rules (A-10), so it should be decided with that item rather than by accident.
-5. **What does the checker do with a `pd` atomic inside a capability-gated module?** A shared-mutable global is a capability question as well as a memory-model one, and MK10-S1 is where the vocabulary lives.
+1. **`compare_exchange` strong only, or weak as well?** §4 has the strong form. The weak form only helps inside a loop that retries anyway, so it is either one more signature (`compare_exchange_weak`) or not worth having.
+2. **Is `fence` a free `thread.fence` or an `Atomic<T>.fence`?** §4 puts it on `thread`, because a standalone fence belongs to no location, but that is a naming choice rather than a semantic one.
+3. **May an atomic be a `datac` field, a `List` element, a `Map` value?** §4 does not say. Allowing it in a `List` is convenient and interacts with the container element rules (A-10), so it should be decided with that item rather than by accident.
+4. **What does the checker do with a `pd` atomic inside a capability-gated module?** A shared-mutable global is a capability question as well as a memory-model one. This one is scoped to MK10-S1, where the vocabulary lives.
 
 ## 10. References
 
