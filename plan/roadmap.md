@@ -605,6 +605,8 @@ LLVM (the MK7 record in `done.md`) does not reopen the question.
 
 **One far-future proposal, with a document of its own.** **Polyp** is a native UI framework for Kelp: declarative views over the platform's own widgets, GTK first on Linux, with the language's borrowing and its exhaustive `when` doing work a UI framework usually does at run time. It is a proposal, not a commitment and not a Mark; nothing is scheduled and no work has started. `plan/polyp-ui.md` owns the case, the three things it would do that Tkinter and Compose Multiplatform do not, and its own prerequisites. Its one hard dependency is trailing-closure syntax, which the language does not have yet (open item 75).
 
+**Two more far-future language ideas, recorded and not scoped.** **Panic provenance** (`plan/panic-provenance.md`) would print the chain a value took to a panic rather than only the line it happened on, and it waits on A-11's provenance work (open item 33). **Differential testing as a language feature** (`plan/differential-testing.md`) would let a writer declare two functions equivalent and have the compiler generate cases and compare them, which is the mechanism the suite already gates the default backend on, turned outward; it needs a design pass before anyone writes code, and how a compiler-generated call site composes with `caps(...)` is the hard part. Neither is a Mark, nothing is scheduled, and no work has started.
+
 Everything else in the backlog is an extension rather than a reversal, and lives in the Backlog part below.
 
 ## Backlog: named, not scheduled
