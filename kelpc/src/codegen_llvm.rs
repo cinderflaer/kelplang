@@ -9452,9 +9452,9 @@ mod layout_tests {
     fn an_extern_return_that_names_a_kelp_type_gets_its_typedef() {
         use crate::types::{FieldDef, StructDef, VariantDef};
 
-        // Declared the other way round on purpose: `Shape` is declared after
-        // `Point`, so its typedef can only be emitted after the walk reached
-        // it through the field `Point` holds.
+        // `Shape` is declared before `Point` and `Point` holds it by value, so
+        // the enum's typedef has to come out before the datac's even though the
+        // datac is the type the return position names.
         let point = StructDef {
             name: "Point".to_string(),
             fields: vec![FieldDef {
@@ -9512,7 +9512,7 @@ mod layout_tests {
         let point_at = source.find("} struct_Point;").expect("the datac typedef");
         assert!(
             shape_at < point_at,
-            "the `enum` a `datac` field names by value was declared after it:\n{source}"
+            "the `enum` a `datac` field names by value was not declared before it:\n{source}"
         );
     }
 }
