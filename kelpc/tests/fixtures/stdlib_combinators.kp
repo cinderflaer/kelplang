@@ -4,10 +4,12 @@
 //
 // Every callback takes a *borrow* of the payload (`fun(&T).R: U`), which is
 // what makes `map` work at any instantiation, owned payload included, and what
-// keeps the callback from taking ownership. What a function *cannot* do is
-// rebuild the variant it was handed without a copy — those are the `Copy`
-// instantiations the two modules document, and the reason the error type here
-// is an `i32` rather than a `datac`.
+// keeps the callback from taking ownership. What a helper *cannot* do is hand
+// the variant it was given back out through a borrow: `result.map` and
+// `map_err` rebuild the other side, so they take the result with `move` (A-11)
+// and work for an owned payload too. `option.map` builds a fresh `Some` and
+// needs no move, and the helpers whose receiver stays a borrow (`and_then`,
+// `or_else`, `each`) are `Copy`-only on the side they rebuild.
 //
 // In the AddressSanitizer list: `map` builds owned `String`s and frees them.
 impl "std/option"
@@ -30,8 +32,8 @@ fun parse_positive(n: i32).R: result.Result<i32, i32> {
 
 fun main() {
     // `map` over an owned payload: the callback borrows the `String`, and the
-    // result is a fresh owned value. Reading it back out goes through the
-    // borrow, because `option.expect` is offered for a `Copy` payload.
+    // result is a fresh owned value. Reading it back out goes through
+    // `option.expect`, which takes the option with `move` (A-11).
     val text = option.Option.Some(value = String.from_str("hello"))
     val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
     print(option.expect(o = len, message = "none"))
@@ -51,12 +53,18 @@ fun main() {
         o = empty,
         f = fun().R: option.Option<i32> = option.Option.Some(value = 7)
     )
-    print(option.unwrap_or(o = seven, fallback = 0))
-
     // `each` is the `Unit` case of `map`.
     option.each(o = seven, f = fun(v: &i32) { print(v) })
 
-    // Result: `map` needs a `Copy` error, `map_err` a `Copy` success.
+    // `unwrap_or` takes the option with `move` (A-11), so it is the last use
+    // of `seven`; `or_else` above stays a borrow, which is why the binding is
+    // still here to observe.
+    print(option.unwrap_or(o = seven, fallback = 0))
+
+    // Result: `map`/`map_err` take the result with `move`, so the side they
+    // rebuild may be owned; the call hands over a fresh result. `and_then` and
+    // `or_else` below keep the borrow receiver, so their rebuilt side is
+    // `Copy`.
     val ok = result.map(r = parse_positive(21), f = fun(n: &i32).R: i32 = n * 2)
     print(result.expect(r = ok, message = "err"))
     val failed = result.map_err(r = parse_positive(-5), f = fun(e: &i32).R: i32 = e + 100)

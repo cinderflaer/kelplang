@@ -575,9 +575,9 @@ if let Circle(r) = shape {
 }
 ```
 
-- It is exactly the pattern form of `when` (6.3) with a single arm and an `else`, which is why the arm rules are the same: the variant must exist, the number of bindings must match the payload, `_` ignores one, and a payload binds as a copy when it is `Copy` and as a shared borrow otherwise.
-- The scrutinee may be **any expression**, temporary or place. A *place* (a name, a `.field` chain, `*expr`) is matched directly, with nothing moved, the same rule a bare `when` follows (6.3). A *temporary* (a call's result, a literal) is bound to a local first, since `when`'s pattern form needs a place to borrow a payload through; that local is a fresh binding no other code can see, so it never collides with anything and there is nothing to reuse it across links of a chain. A chain over a temporary stages its **root**: `if let Circle(r) = mk().shape` binds `mk()` and matches its `shape`, so the field is projected out of a place and the whole temporary, not the field alone, is freed when the block ends.
-- `elif let` and `else if let` chains are both allowed, and a plain `else if`/`elif` link may sit in the same chain; without any `else` the whole expression is `Unit`, the same as an `if` without one. Chaining on the *same place* (`if let A = x { .. } else if let B = x { .. }`) is legal for the reason above: neither link moves `x`, so the second link's own read of it is not a use of a moved value.
+- It is exactly the pattern form of `when` (6.3) with a single arm and an `else`, which is why the arm rules are the same: the variant must exist, the number of bindings must match the payload, `_` ignores one, and a payload binds as a copy when it is `Copy`, by value when it is owned and the scrutinee is an owned place, and as a shared borrow otherwise (9.2).
+- The scrutinee may be **any expression**, temporary or place. A *place* (a name, a `.field` chain, `*expr`) is matched directly, so the place itself is not consumed: only the payload that was read out by value is gone from it (9.2). A *temporary* (a call's result, a literal) is bound to a local first, since `when`'s pattern form needs a place to read the payload out of; that local is a fresh binding no other code can see, so it never collides with anything and there is nothing to reuse it across links of a chain. A chain over a temporary stages its **root**: `if let Circle(r) = mk().shape` binds `mk()` and matches its `shape`, so the field is projected out of a place and the whole temporary, not the field alone, is freed when the block ends.
+- `elif let` and `else if let` chains are both allowed, and a plain `else if`/`elif` link may sit in the same chain; without any `else` the whole expression is `Unit`, the same as an `if` without one. Chaining on the *same place* (`if let A = x { .. } else if let B = x { .. }`) is legal for the reason above: a link that binds nothing reads only the tag, so `x` is not consumed and the next link's own read of it is not a use of a moved value. A link that binds an owned payload by value does take it out, so that payload cannot be bound a second time (9.2).
 - `let` is an ordinary identifier everywhere else in the language. It is read as the pattern form only directly after `if`, so a binding named `let` cannot be the condition of an `if` without parentheses.
 
 ### 6.2 `for` and `while`
@@ -633,7 +633,7 @@ fun area(s: &Shape).R: f64 = when s {
 }
 ```
 
-- The scrutinee is a **place** when it is one (a name, a `.field` chain, `*expr`): it is matched directly, with nothing moved, and only the matched field is ever copied or borrowed. A **temporary** (a call's result, a literal) is staged into a local of its own first, because a payload borrow has to outlive the arm it is bound in and there is nothing to outlive if the scrutinee does not survive the match; the staged local is freed at the end of the match. `if let` (6.1) stages its one scrutinee the same way. A chain over a temporary stages its **root**: `when mk().t { ... }` binds `mk()` and matches its `t`, never the field alone, so the whole temporary is freed exactly once.
+- The scrutinee is a **place** when it is one (a name, a `.field` chain, `*expr`): it is matched directly, with nothing moved out of it as a whole, and only the matched projection is ever copied, borrowed or (for an owned payload of an owned place) moved. A **temporary** (a call's result, a literal) is staged into a local of its own first, because a payload borrow has to outlive the arm it is bound in and there is nothing to outlive if the scrutinee does not survive the match, and that staged local is an owned place like any other; the staged local is freed at the end of the match. `if let` (6.1) stages its one scrutinee the same way. A chain over a temporary stages its **root**: `when mk().t { ... }` binds `mk()` and matches its `t`, never the field alone, so the whole temporary is freed exactly once.
 - The scrutinee's type is an `enum`, and every arm head is one of its variants (9.2). An `else ->` arm matches every variant not named above it.
 - Matching must be exhaustive: either every variant has an arm, or an `else` arm is present. A missing variant is a compile error that names it.
 - There are no guards, no literal patterns and no nested patterns in v1; an arm head is a variant name with one binding per payload field, and `_` ignores a payload.
@@ -899,7 +899,7 @@ var c = Counter(id = 1, count = 0)
 c.count = 5              // ok: field is var and c is a var binding
 ```
 
-Reading an owned field *by value* out of an owned place **moves the field out**: `val s = node.text` takes the field's value and clears the slot it held, so `node` still owns the fields that stayed, and its end-of-scope drop frees those and nothing where the moved value now lives. The owned place is a `val`/`var` binding or a `move` parameter, with the field read directly off it. Reading the moved field again, moving the same field twice, and using `node` as a whole are each an error; reading the field by value out of a *borrow* is refused too, because the borrowed value still owns it. Take it through a borrow (pass it to a parameter, call a method on it), or hold it in a `Box` and `take()` it out.
+Reading an owned field *by value* out of an owned place **moves the field out**: `val s = node.text` takes the field's value and clears the slot it held, so `node` still owns the fields that stayed, and its end-of-scope drop frees those and nothing where the moved value now lives. The owned place is a `val`/`var` binding or a `move` parameter, with the field read directly off it. Reading the moved field again, moving the same field twice, and using `node` as a whole are each an error; reading the field by value out of a *borrow* is refused too, because the borrowed value still owns it. Take it through a borrow (pass it to a parameter, call a method on it), or hold it in a `Box` and `take()` it out. An owned `enum` payload read by value obeys the same rule, which is what a `when` arm binds by value (9.2).
 
 `datac` values are dropped at the end of the owning scope, fields recursively, in the order that frees what each field points at.
 
@@ -935,8 +935,8 @@ fun label(s: &Shape).R: &str = when s {
 }
 ```
 
-- A payload binds as a copy when it is `Copy` and as a shared borrow otherwise, so matching never partially moves the scrutinee: `r` above is an `f64`, and a `Word(val text: String)` payload would bind as `&String`.
-- The scrutinee is matched where it is when it is a place (a binding, a field path, or a dereference): `when s { ... }` reads through `s` and moves nothing. A temporary scrutinee (a call's result, a field of one, a literal) is staged into a local first, because a payload that is not `Copy` binds as a borrow of it and that borrow has to outlive the arm's body. A chain over a temporary stages its root, so `when mk().t { ... }` frees the whole `mk()` result once.
+- A payload binds as a copy when it is `Copy`, and **by value** when it is owned and the scrutinee is an owned place (a `val`/`var` binding or a `move` parameter): the binding then owns it and the read is the partial move 9.1 states, so the enum's own drop frees the payloads the move left behind. A payload still binds as a shared borrow when the scrutinee is a borrow, so matching one moves nothing. `r` above is an `f64`; a `Word(val text: String)` payload binds as an owned `String` out of an owned `Word`, and as `&String` out of a `&Word`.
+- The scrutinee is matched where it is when it is a place (a binding, a field path, or a dereference): `when s { ... }` reads through `s` and moves nothing out of it, and a temporary scrutinee (a call's result, a field of one, a literal) is staged into a local first, because the arm reads the payload out of that local, and a borrow of a temporary would not outlive the arm's body. A chain over a temporary stages its root, so `when mk().t { ... }` frees the whole `mk()` result once.
 - The number of bindings must equal the number of payload fields, and `_` ignores one.
 - Matching is exhaustive over the variants, or covered by an `else` arm (6.3).
 
@@ -1895,8 +1895,9 @@ enum Option<T> {
 
 fun is_some<T>(o: &Option<T>).R: bool
 fun is_none<T>(o: &Option<T>).R: bool
-fun unwrap_or<T>(o: &Option<T>, fallback: T).R: T   // `T` must be Copy
-fun unwrap<T>(o: &Option<T>).R: T                   // `T` must be Copy; panics on None
+fun unwrap_or<T>(o: move Option<T>, fallback: move T).R: T
+fun unwrap<T>(o: move Option<T>).R: T               // panics on None
+fun expect<T>(o: move Option<T>, message: &str).R: T   // panics with `message`
 
 fun map<T, U>(o: &Option<T>, f: closure(&T).R: U).R: Option<U>
 fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U>
@@ -1906,7 +1907,7 @@ fun each<T>(o: &Option<T>, f: closure(&T))
 
 The enum is the point: `Some`/`None` is one of the two shapes `?` (5) and `if let` (6.1) understand, so a function that can fail one way returns `Option<T>` and its caller writes `val x = f(...)?`. Nothing in the compiler knows this module exists — the *shape* is the contract, so a program's own `Option` works identically.
 
-The **callbacks borrow the payload** (`closure(&T).R: U`, so a plain function value is widened into one), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is already a borrow, so `map` needs no `Copy` and hands nothing on:
+The **callbacks borrow the payload** (`closure(&T).R: U`, so a plain function value is widened into one), which is what makes the combinators work at every instantiation: a `when` arm copies a `Copy` payload and auto-borrows it at the call, and an owned one is auto-borrowed out of the owned option the helper took with `move`, so the callback still never takes ownership:
 
 ```kelp
 val text = option.Option.Some(value = String.from_str("hello"))
@@ -1914,7 +1915,7 @@ val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
 val shout = option.map(o = text, f = fun(s: &String).R = str.to_upper(s.as_str()))
 ```
 
-What is still offered for a **`Copy` payload only** is anything that hands the payload *out by value*: `unwrap_or`, `unwrap`, and `or_else` (which rebuilds `Some` from the payload it was handed). That is not a missing function but a missing *rule*: the payload is read out of a borrow, and a partial move covers one field of an owned local, not a payload of a borrowed enum (see 17). A `move` parameter does not lift it either, because the payload would still have to move out of the enum. A program with an owned payload reads it with `if let`/`when`, which borrows it.
+What hands the payload *out by value* takes the option with **`move`**: `unwrap`, `expect` and `unwrap_or` read the payload of the owned option, which is a partial move of the local the caller gave up, so `Option<String>.unwrap()` works. The move form is the caller's contract too: the option is consumed, so a caller that wants it afterwards passes a fresh expression, or matches it with `when`/`if let` (which borrows). `or_else` rebuilds `Some` from a payload it was handed through a borrow, so it stays `Copy`-only.
 
 ### 16.14 `std/result`
 
@@ -1930,8 +1931,8 @@ fun unwrap_or<T, E>(r: &Result<T, E>, fallback: T).R: T   // `T` must be Copy
 fun unwrap<T, E>(r: &Result<T, E>).R: T                   // `T` must be Copy; panics on Err
 fun unwrap_err<T, E>(r: &Result<T, E>).R: E               // `E` must be Copy; panics on Ok
 
-fun map<T, U, E>(r: &Result<T, E>, f: closure(&T).R: U).R: Result<U, E>      // `E` must be Copy
-fun map_err<T, E, F>(r: &Result<T, E>, f: closure(&E).R: F).R: Result<T, F>  // `T` must be Copy
+fun map<T, U, E>(r: move Result<T, E>, f: closure(&T).R: U).R: Result<U, E>
+fun map_err<T, E, F>(r: move Result<T, E>, f: closure(&E).R: F).R: Result<T, F>
 fun and_then<T, U, E>(r: &Result<T, E>, f: closure(&T).R: Result<U, E>).R: Result<U, E>
 fun or_else<T, E, F>(r: &Result<T, E>, f: closure(&E).R: Result<T, F>).R: Result<T, F>
 fun each<T, E>(r: &Result<T, E>, f: closure(&T))
@@ -1939,7 +1940,7 @@ fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 
 `Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
 
-The `Copy` requirements here are on the *other* side of the result: the arm that has to **rebuild** a variant takes a copy (so `map` needs a `Copy` error and `map_err` a `Copy` success). That is the consequential one in practice, because a `datac` is never `Copy`: `result.map` over a `Result<T, MyErr>` needs to move the error payload out of a borrow, which 17 records as still refused, and until then the error type has to be an integer or another scalar. When an instantiation fails there, the diagnostic points inside `std/result.kp` and says that the helper is written for a `Copy` payload.
+The `Copy` requirements left here are on the side a helper has to **rebuild** through a borrow: `unwrap_or`/`unwrap`/`unwrap_err` hand a payload out of a borrowed result, and `and_then`/`or_else` rebuild the other variant out of one. `map` and `map_err` take the result with **`move`** instead, so the side they rebuild may be owned: `result.map` over a `Result<T, MyErr>` moves the error payload into the fresh `Err` (17's partial moves).
 
 ### 16.15 `std/list`
 
@@ -1974,7 +1975,7 @@ These are deliberate, and each one has a workaround in this document:
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
-- Partial moves cover one field of an owned local: reading an owned field by value out of a `val`/`var` binding or a `move` parameter moves it out (9), but a field read out of a borrowed structure or out of a nested place is still refused, and an owned `enum` payload cannot be read out of the enum either, so move it with `Box.take` or pass a borrow. This is what keeps the helpers in 16.13/16.14/16.15 `Copy`-only: `option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, and `list.filter` over a `List<String>` each read a value out of a borrow, which is refused.
+- Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
 - No references -- and no `View` -- in fields, `List` elements, `Map` values or `Box` contents. `str` and `View` are borrows, so text that must be stored is a `String`; a view is taken at the point of use (11.5).
 - A `View` never becomes a `str`: a slice has no NUL after it, so `str.len`/`str.eq`/`%s` on one would read past the slice. Take `v.to_string()` when you need owned text, and keep `str` and `View` apart otherwise.
 - No `str.eq`/`==` on a `View`; `str.eq` takes a `str`, so compare two views with `view.eq(other)`.
@@ -2015,6 +2016,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot move the field 'name' out of 'l': the value is borrowed` | a partial move needs an owned place, a `val`/`var` binding or a `move` parameter; use the field through the borrow, or hold it in a `Box` and `take()` it (9, 22.2) |
 | `cannot read the owned field 'name' by value: the base is not a local this frame owns` | the field is read through a nested place or another base that is not an owned local; only a field read directly off an owned local moves out (9, 22.2) |
 | `cannot use 'bag' as a whole value: its field 'xs' was moved out` | a field was read out by value; put a fresh value back in the field, or use only the fields that stayed (9, 22.2) |
+| `use of moved value 'h.text'` | that `enum` payload was read out by value already; a payload of an owned place is taken once, exactly as a field is (9, 22.2) |
+| `cannot use 'h' as a whole value: its payload 'text' was moved out` | a payload was read out by value; match only the payloads that stayed, or match a borrow of the enum instead (9, 22.2) |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding; a field of a returned `datac` (`mkName().name.as_str()`) is the same case one projection deeper (§10.2) |
 | `argument 'b' has type 'String', expected 'str'` | the parameter is `str` and the value is owned: `str.eq(a, b)`, `fs.write_text`, `path.join` and every other `str` parameter need a view — add `.as_str()` |
 | `argument 'c' has type 'char', expected 'u8'` (with the note about writing the type) | a character literal with nothing asking for a type is a `char`, and a `char` is not an integer; write the type (`val c: u8 = '"'`) or use the byte literal, which is a `u8` by construction (`b'"'`, §2.4) |
@@ -2310,6 +2313,8 @@ Three ways out, in the order to try them:
 
 The related rule is **partial moves**: reading an owned field *by value* out of an owned place moves the field out and clears the slot it held. The owned place is a `val`/`var` binding or a `move` parameter, and the field is read directly off it. Reading the same field again, moving it twice, reading a field out of a *borrow*, and using the base as a whole are each refused.
 
+An owned `enum` payload obeys the same rule: a `when`/`if let` over an owned place binds the payload **by value** and takes it out of the enum, so matching the same payload twice, and using the enum as a whole afterwards, are refused. Over a borrow the payload binds as a borrow and nothing moves, which is why an owned value cannot be read out of one.
+
 ```kelp
 datac Line(val text: String, val n: usize)
 
@@ -2321,6 +2326,25 @@ fun use_line(l: Line) {
 
 fun take_line(l: move Line).R: String {
     return l.text             // fine: `l` is an owned local, so the field moves out
+}
+
+enum Held {
+    Word(val text: String)
+    Blank
+}
+
+fun take_word(h: move Held).R: String {
+    return when h {
+        Word(text) -> text    // fine: the payload moves out of the owned `h`
+        Blank -> String.from_str("")
+    }
+}
+
+fun peek_word(h: &Held).R: usize {
+    return when h {
+        Word(text) -> text.len()   // fine: `text` is a `&String` here, and nothing moved
+        Blank -> 0
+    }
 }
 ```
 
@@ -2399,7 +2423,7 @@ fun area(s: &Shape).R: f64 = when s {
 ```
 
 - `when` is exhaustive: leave a variant out and the message names it. `else ->` is the catch-all and must come last.
-- A payload is bound **by copy for a `Copy` type and by shared borrow otherwise**, so an owned payload is a `&T` in the arm — that is why the stdlib helpers take `closure(&T)`. Do not try to move a payload out of an arm; wrap the value where it is built instead.
+- A payload binds as a copy when it is `Copy`, as an **owned value** when it is owned and the scrutinee is an owned place (a `val`/`var` binding or a `move` parameter), and as a shared borrow otherwise — that is why the stdlib callbacks take `closure(&T)`. Reading an owned payload out of an owned place moves it (9.2, 22.2); reading one out of a borrow does not, and stays a borrow.
 - `if let Some(x) = opt { }` is the one-arm form, and `?` is the propagate form. Both need the enum to be `Ok`/`Err`- or `Some`/`None`-shaped, and `?` needs the enclosing function to return the *same* shape with the *same* failure type.
 - A function that can fail more than one way returns your own error `datac`; a `datac` with a `message: String` and a position is the convention (see `str.ParseErr`).
 
@@ -2518,7 +2542,7 @@ fun main() {
 }
 ```
 
-It prints `count`, `=`, `_a`, `1`, `+`, `42`, one per line. Worth noticing: `tokenize` passes `pos` (a local `var`) with no `*` while the helpers take `*pos`; `scan_word` returns an owned `String` even though it only ever sliced a view; `is_alpha(c)` receives the `u8` from `text.get` and compares it to character literals; and `if let Ok(tokens) = r` binds the payload as a borrow, so `t` in the loop is a `&String` and `t.as_str()` is what `print` needs.
+It prints `count`, `=`, `_a`, `1`, `+`, `42`, one per line. Worth noticing: `tokenize` passes `pos` (a local `var`) with no `*` while the helpers take `*pos`; `scan_word` returns an owned `String` even though it only ever sliced a view; `is_alpha(c)` receives the `u8` from `text.get` and compares it to character literals; and `if let Ok(tokens) = r` moves the owned `List<String>` out of `r`, because an owned payload of an owned place binds by value (9.2), so the loop walks a list the arm owns and `t.as_str()` is what `print` needs.
 
 ## 23. Deprecated syntax
 

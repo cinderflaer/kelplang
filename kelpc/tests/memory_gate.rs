@@ -614,15 +614,19 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "nested_literal_staging",
     "recursive_datac",
     "stdlib_sort",
-    // A-11: a partial move clears the field's slot in generated IR, so the
-    // binding's own generated drop frees the field that stayed and nothing
-    // where the moved value now lives. The C sweep covers the oracle; these
-    // four are here because the clear and the drop are IR this backend emits,
-    // and the fourth moves the field out of a `move` parameter.
+    // A-11: a partial move clears the field's or payload's slot in generated
+    // IR, so the binding's own generated drop frees the projection that stayed
+    // and nothing where the moved value now lives. The C sweep covers the
+    // oracle; these are here because the clear and the drop are IR this backend
+    // emits, and the last three carry the enum-payload half out through the
+    // stdlib helpers that take their receiver with `move`.
     "partial_move_field",
     "partial_move_conditional",
     "partial_move_reassign",
     "partial_move_move_param",
+    "partial_move_enum_payload_owned",
+    "option_unwrap_owned",
+    "result_map_owned",
 ];
 
 /// The S3A extern fixtures: the ones whose heap an `extern fun` body allocates,

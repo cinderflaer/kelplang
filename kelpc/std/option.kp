@@ -16,16 +16,22 @@
    call, through a generated shim, so passing a declared `fun` still allocates
    nothing.
 
+   A helper that hands the payload *out* by value takes the option with `move`
+   (A-11): `unwrap`, `expect` and `unwrap_or` read the payload of an owned
+   option, which is a partial move of the local the caller gave up, and that is
+   what makes `Option<String>.unwrap()` work. The move form is the caller's
+   contract too: the option is consumed, so a caller that wants to keep it
+   passes a fresh expression or matches it with `when`/`if let` (which still
+   borrows).
+
    What is deliberately absent, and why:
 
-   - Anything that hands the payload *out* by value needs a move out of the
-     enum, and v1's `when` binds a payload as a borrow: so `unwrap_or`/`unwrap`
-     are offered for a `Copy` payload and are a compile error at any other
-     instantiation — the same rule `List.get` follows, and the reason there is
-     no `Option<String>.unwrap()`. `or_else` is in the same group: rebuilding
-     `Some` from the payload it was handed needs a copy.
    - `ok_or` (turning an `Option` into a `Result`) would have to move its
-     payload into `Ok`, which is that same missing piece. */
+     payload into `Ok`, and its receiver is a borrow (`?` and `if let` cover
+     the same ground without giving the option up).
+   - `or_else` rebuilds `Some` from the payload it was handed, and its receiver
+     is a borrow, so it stays `Copy`-only: an owned payload has to come out of
+     an owned option, which is `unwrap_or`. */
 
 enum Option<T> {
     Some(val value: T)
@@ -44,17 +50,17 @@ fun is_none<T>(o: &Option<T>).R: bool = when o {
     None -> true
 }
 
-// The payload, or `fallback`. `T` must be `Copy`: the payload is borrowed, so
-// an owned one cannot be handed out (use `if let`/`when` and read it through
-// the borrow instead).
-fun unwrap_or<T>(o: &Option<T>, fallback: T).R: T = when o {
+// The payload, or `fallback`. The option is taken with `move`, because either
+// answer is the caller's value: an owned payload is moved out and `fallback` is
+// handed on as it was given.
+fun unwrap_or<T>(o: move Option<T>, fallback: move T).R: T = when o {
     Some(v) -> v
     None -> fallback
 }
 
-// The payload, or a panic naming the call. `T` must be `Copy`, for the same
-// reason `unwrap_or`'s must be.
-fun unwrap<T>(o: &Option<T>).R: T {
+// The payload, or a panic naming the call. The option is taken with `move`,
+// for the same reason `unwrap_or`'s is.
+fun unwrap<T>(o: move Option<T>).R: T {
     if let Some(v) = o {
         return v
     }
@@ -62,9 +68,9 @@ fun unwrap<T>(o: &Option<T>).R: T {
 }
 
 // The payload, or a panic carrying `message` — the form the stdlib uses, where
-// the message names the operation that failed rather than the accessor.
-// `T` must be `Copy`.
-fun expect<T>(o: &Option<T>, message: &str).R: T {
+// the message names the operation that failed rather than the accessor. The
+// option is taken with `move`, for the same reason `unwrap_or`'s is.
+fun expect<T>(o: move Option<T>, message: &str).R: T {
     if let Some(v) = o {
         return v
     }
@@ -86,8 +92,10 @@ fun and_then<T, U>(o: &Option<T>, f: closure(&T).R: Option<U>).R: Option<U> = wh
     None -> Option.None
 }
 
-// The option, or `f()` when it is empty. `T` must be `Copy`: the `Some` arm
-// rebuilds the payload out of the borrow it was handed, which is a copy.
+// The option, or `f()` when it is empty. `T` must be `Copy`: the receiver is a
+// borrow and the `Some` arm rebuilds the payload out of it, which is a copy;
+// an owned payload comes out with `unwrap_or`, which takes the option with
+// `move`.
 fun or_else<T>(o: &Option<T>, f: closure().R: Option<T>).R: Option<T> = when o {
     Some(v) -> Option.Some(value = v)
     None -> f()

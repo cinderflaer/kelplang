@@ -103,7 +103,7 @@ use std::collections::HashMap;
 use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::tir;
-use crate::types::Ty;
+use crate::types::{EnumDef, Ty};
 
 /// One owned local that has to be freed at a particular point.
 #[derive(Debug, Clone)]
@@ -123,6 +123,16 @@ pub enum Projection {
     /// One field of a `datac`, by name (each backend resolves the name to the
     /// field's index from the owning struct).
     Field(String),
+    /// One payload field of one variant of an `enum`, by the two indices the
+    /// `tir` node carries. The variant is part of the identity because two
+    /// variants may name a payload field the same; `name` is the payload
+    /// field's own name, and is there only so a diagnostic reads the way a
+    /// person wrote the place.
+    EnumPayload {
+        variant: usize,
+        field: usize,
+        name: String,
+    },
 }
 
 /// How an owned local's value stands at the point being checked.
@@ -198,12 +208,13 @@ pub struct FnDrops {
     /// entry: a binding moved on every path is dropped nowhere, so its slot's
     /// contents are never read again and clearing it would be dead code.
     at_move: std::collections::HashSet<NodeId>,
-    /// The expressions that move one *field* of an owned binding out, and the
-    /// projection each one emptied. A binding a field was taken from stays
-    /// live, so it is still in a drop set wherever it was before, and the
-    /// field's slot has to be zeroed at the move or that drop frees the value
-    /// a second time. Unlike `at_move` this needs no filter: the binding is
-    /// dropped on every path, not only on some.
+    /// The expressions that move one *projection* of an owned binding out (a
+    /// `datac` field or an `enum` payload), and the projection each one
+    /// emptied. A binding a projection was taken from stays live, so it is
+    /// still in a drop set wherever it was before, and the projection's slot
+    /// has to be zeroed at the move or that drop frees the value a second
+    /// time. Unlike `at_move` this needs no filter: the binding is dropped on
+    /// every path, not only on some.
     at_clear: HashMap<NodeId, Projection>,
 }
 
@@ -414,11 +425,16 @@ struct Ctx {
     /// same key, and codegen's own C scoping resolves the same way — see
     /// `check_function`, which is where these become `FnDrops::at_move`).
     move_sites: HashMap<String, Vec<NodeId>>,
-    /// The expressions that move one field of an owned binding out, and the
-    /// projection each one emptied. Unlike `move_sites` this needs no filter
-    /// when it becomes the plan's `at_clear`: the binding is dropped on every
-    /// path, so every one of these clears a slot a drop will reach.
+    /// The expressions that move one field or payload of an owned binding out,
+    /// and the projection each one emptied. Unlike `move_sites` this needs no
+    /// filter when it becomes the plan's `at_clear`: the binding is dropped on
+    /// every path, so every one of these clears a slot a drop will reach.
     field_move_sites: HashMap<NodeId, Projection>,
+    /// Every `enum` declaration and instantiation by name, for the one thing a
+    /// partial move of a payload needs from it: the payload field's own name,
+    /// which the diagnostic and the plan's projection both carry while the
+    /// `tir` node carries only the two indices.
+    enums: HashMap<String, EnumDef>,
     /// The names of owned bindings that some merge left `MaybeMoved`. Only
     /// those have a drop site a move could double up with, so only their move
     /// sites are recorded as clears.
@@ -591,8 +607,8 @@ impl Ctx {
     }
 
     /// The projection the whole-value read of `name` refuses, if any: a field
-    /// that was moved out and never put back. The set is ordered, so a binding
-    /// with two fields gone always names the same one here.
+    /// or payload that was moved out and never put back. The set is ordered, so
+    /// a binding with two projections gone always names the same one here.
     fn partial_move_of(&self, name: &str) -> Option<&Projection> {
         for scope in self.scopes.iter().rev() {
             if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
@@ -602,13 +618,16 @@ impl Ctx {
         None
     }
 
-    /// The refusal a whole read of `name` owes when a field of it was moved
-    /// out: the slot that field used to hold is empty, so the value as a whole
-    /// is not here any more.
+    /// The refusal a whole read of `name` owes when a projection of it was
+    /// moved out: the slot that projection used to hold is empty, so the value
+    /// as a whole is not here any more.
     fn whole_move_error(&self, name: &str, span: Span) -> Option<BorrowError> {
         let proj = self.partial_move_of(name)?;
         let what = match proj {
-            Projection::Field(f) => format!("its field '{f}' was moved out"),
+            Projection::Field(field) => format!("its field '{field}' was moved out"),
+            Projection::EnumPayload { name, .. } => {
+                format!("its payload '{name}' was moved out")
+            }
         };
         Some(BorrowError {
             message: format!("cannot use {} as a whole value: {what}", display_root(name)),
@@ -626,9 +645,9 @@ impl Ctx {
         }
     }
 
-    /// Records that the value read at `expr` moves the field `proj` out of the
-    /// owned binding `name`: codegen clears that field's slot there, and until
-    /// the field is written again the read is a use of a moved value.
+    /// Records that the value read at `expr` moves the projection `proj` out of
+    /// the owned binding `name`: codegen clears that slot there, and until the
+    /// slot is written again the read is a use of a moved value.
     fn move_field_out(&mut self, name: &str, proj: Projection, expr: &tir::Expr) -> Result<()> {
         if self.moved_out_of(name, &proj) {
             return Err(BorrowError {
@@ -659,6 +678,19 @@ impl Ctx {
             });
         }
         Ok(())
+    }
+
+    /// The name of payload field `field` of variant `variant` of the enum
+    /// `ty` names, for a diagnostic and for the plan's projection. `None` when
+    /// the type is not an enum this program declares, which no payload read
+    /// `infer.rs` produces is.
+    fn enum_payload_name(&self, ty: &Ty, variant: usize, field: usize) -> Option<String> {
+        let Ty::Struct(ename) = ty else {
+            return None;
+        };
+        let def = self.enums.get(ename)?;
+        let variant = def.variants.get(variant)?;
+        Some(variant.fields.get(field)?.name.clone())
     }
 
     /// Marks the field `field` of an owned binding as owning again, after an
@@ -1053,10 +1085,12 @@ fn display_root(name: &str) -> String {
     }
 }
 
-/// One projection written the way a person reads it: `bag.xs`.
+/// One projection written the way a person reads it: `bag.xs`, or `o.text`
+/// for a payload field of the enum `o` holds.
 fn field_display(name: &str, proj: &Projection) -> String {
     match proj {
         Projection::Field(field) => format!("{name}.{field}"),
+        Projection::EnumPayload { name: field, .. } => format!("{name}.{field}"),
     }
 }
 
@@ -1065,6 +1099,8 @@ fn field_display(name: &str, proj: &Projection) -> String {
 /// `pd` global's storage, and a nested place all fail here: the frame has
 /// nothing to give away from any of them. A nested place is left out because a
 /// projection path, not a single field name, is what tracking one would need.
+/// An `enum` payload read takes the same base: `infer.rs` reads a payload by
+/// value only when the scrutinee is an owned local, which this is.
 fn partial_move_base<'a>(base: &'a tir::Expr, ctx: &Ctx) -> Option<&'a str> {
     let tir::ExprKind::Ident(name) = &base.kind else {
         return None;
@@ -1198,6 +1234,15 @@ fn merge_roots(left: &str, right: &str) -> Option<String> {
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
     let mut plan = DropPlan::default();
     let owned = crate::types::owned_types(&program.structs, &program.enums);
+    // Every `enum` by name, so a payload move can name the field it moved out
+    // (`Ty::Struct` carries only the name; the two indices are what the `tir`
+    // node has). Instantiations are in here beside the templates, under the
+    // name the field expression's own type spells.
+    let enums: HashMap<String, EnumDef> = program
+        .enums
+        .iter()
+        .map(|e| (e.name.clone(), e.clone()))
+        .collect();
     // Every callee whose result is a borrow, with the parameter its elided
     // lifetime binds to. Builtins (`String.as_str`) join the same table, so
     // `check_call` has one rule for both.
@@ -1217,7 +1262,7 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
         .map(|p| (p.name.clone(), p.value_ty.clone()))
         .collect();
     for f in &program.functions {
-        let function = check_function(f, &owned, &fn_borrow_root, &globals).map_err(|e| {
+        let function = check_function(f, &owned, &fn_borrow_root, &globals, &enums).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -1230,6 +1275,7 @@ fn check_function(
     owned_structs: &std::collections::HashSet<String>,
     fn_borrow_root: &HashMap<String, Option<usize>>,
     globals: &[(String, Ty)],
+    enums: &HashMap<String, EnumDef>,
 ) -> Result<FnDrops> {
     let mut ctx = Ctx {
         scopes: vec![Scope::default()],
@@ -1248,6 +1294,7 @@ fn check_function(
         ret_ty: f.ret.clone(),
         move_sites: HashMap::new(),
         field_move_sites: HashMap::new(),
+        enums: enums.clone(),
         maybe_moved_names: std::collections::HashSet::new(),
     };
     for (name, ty) in &f.params {
@@ -1631,18 +1678,39 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         }
         // Reading the tag is a read of the place, not a move of the value.
         tir::ExprKind::EnumTag { expr: base, .. } => check_place_through(base, ctx),
-        // A payload read is a *place* read, and moving an owned payload out is
-        // not a partial move the checker plans: one covers a field read
-        // directly off an owned local, and a payload is reached through a
-        // `when` arm instead. So an owned payload cannot be read by value, only
-        // borrowed (which is what the `when` lowering does).
-        tir::ExprKind::EnumField { base, .. } => {
+        // A payload read is a *place* read, and an *owned* payload read by
+        // value is the same partial move an owned `datac` field read is: the
+        // value is copied out and the slot it came from is zeroed, so the
+        // enum's own drop frees the payloads the move left behind and nothing
+        // where the value now lives. `infer.rs` reads a payload by value only
+        // for an owned local, which is the base this accepts; a payload read
+        // out of a borrow binds as a borrow and never reaches here, which is
+        // why the two refusals below guard the invariant rather than a shape a
+        // program can write.
+        tir::ExprKind::EnumField { base, variant, field } => {
             check_place_through(base, ctx)?;
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
-                return Err(BorrowError {
-                    message: "cannot read an owned payload by value: a payload binds as a borrow, so reading it out would give two owners of the same buffer; match it and use the binding, which borrows it".to_string(),
-                    span: expr.span,
-                });
+                let name = ctx
+                    .enum_payload_name(&base.ty, *variant, *field)
+                    .expect("an enum field's base names a declared enum");
+                let Some(root) = partial_move_base(base, ctx) else {
+                    let message = match base.ty {
+                        Ty::Ref { .. } => format!(
+                            "cannot move the payload '{name}' out of '{}': the value is borrowed, so it is not this frame's to give away",
+                            tir_root_ident(base).unwrap_or("a borrow")
+                        ),
+                        _ => format!(
+                            "cannot read the owned payload '{name}' by value: the base is not a local this frame owns, so a partial move cannot take the payload out; match the enum where it is, which borrows the payload"
+                        ),
+                    };
+                    return Err(BorrowError { message, span: expr.span });
+                };
+                let proj = Projection::EnumPayload {
+                    variant: *variant,
+                    field: *field,
+                    name,
+                };
+                ctx.move_field_out(root, proj, expr)?;
             }
             Ok(())
         }

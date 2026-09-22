@@ -7740,7 +7740,8 @@ fn check_enum_construction(
 ///
 /// `scrutinee` is always a place by the time this runs: `check_when_scrutinee`
 /// stages a temporary into a local of its own first. That is what makes the
-/// payload borrows below outlive their arms.
+/// payload borrows below outlive their arms, and what makes an owned payload of
+/// a temporary scrutinee bind by value out of that staged local.
 fn check_when(
     scrutinee: &ast::Expr,
     arms: &[ast::WhenArm],
@@ -7767,6 +7768,15 @@ fn check_when(
         });
     };
 
+    // An owned payload binds by value only when the scrutinee is a place this
+    // frame owns outright: a `val`/`var` local or a `move` parameter, which is
+    // the base `borrowck.rs` plans a partial move from. A borrow scrutinee, a
+    // field path and a dereference all bind it as a shared borrow instead, so
+    // the value stays where it is; the staged `#when0` a temporary scrutinee
+    // becomes is an owned local like any other, which is what lets the payload
+    // of `when f() { ... }` be handed out.
+    let owns_scrutinee =
+        matches!(scrut.kind, tir::ExprKind::Ident(_)) && !matches!(scrut.ty, Ty::Ref { .. });
     let mut covered: Vec<Option<usize>> = vec![None; edef.variants.len()];
     let mut else_seen = false;
     let mut checked: Vec<(Option<usize>, tir::Block)> = Vec::new();
@@ -7847,13 +7857,15 @@ fn check_when(
                     ty: f.ty.clone(),
                     span: p.span,
                 };
-                let (ty, init) = if f.ty.is_copy() {
+                let (ty, init) = if f.ty.is_copy() || owns_scrutinee {
                     (f.ty.clone(), field)
                 } else {
-                    // An owned payload binds as a shared borrow: moving it out
-                    // by value would be a partial move of the scrutinee, and the
-                    // partial-move rule covers one field read directly off an
-                    // owned local, not a payload reached through a `when` arm.
+                    // An owned payload of a scrutinee that is not a local this
+                    // frame owns directly binds as a shared borrow: a move out
+                    // by value is a partial move, and one only takes a
+                    // projection out of a `val`/`var`/`move` local
+                    // (`borrowck.rs::partial_move_base`), so a borrow scrutinee,
+                    // a field path and a dereference keep the value where it is.
                     let ty = Ty::Ref {
                         mutable: false,
                         inner: Box::new(f.ty.clone()),

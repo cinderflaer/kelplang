@@ -3,9 +3,9 @@
 // the scrutinee (`val #iflet0 = x`), so the first link looked like it moved
 // `x` into a temporary and the second link's own re-evaluation of `x` then
 // read an already-moved place — "use of moved value 'x'" even though nothing
-// in the chain actually moves `x` (matching only ever borrows a field of it,
-// or copies one). 6.1's own worked example is exactly this shape and did not
-// compile before the fix.
+// in the chain actually moves `x` (matching never moves the place it tests).
+// 6.1's own worked example is exactly this shape and did not compile before
+// the fix.
 enum Shape {
     Rect(val w: f64, val h: f64)
     Circle(val r: f64)
@@ -39,11 +39,16 @@ fun main() {
     }
 
     // `shape`/`tok` are still live after the chain — the whole point is that
-    // reading a place to test its tag does not consume it.
+    // reading a place to test its tag does not consume it. An owned *payload*
+    // is the one thing a match does take, and by design (A-11): reading one out
+    // of an owned place moves it, so `tok`'s payload was handed out at line 37
+    // and the read below needs a second value. `shape`'s payloads are `f64`, so
+    // they are copied and `shape` matches as often as the chain wants.
     if let Circle(r) = shape {
         print(r)
     }
-    if let Word(text) = tok {
+    val tok2 = Token.Word(text = String.from_str(s = "ho"))
+    if let Word(text) = tok2 {
         print(text.len())
     }
 }

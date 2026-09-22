@@ -1,0 +1,22 @@
+// A-11: the same payload cannot be moved out twice. The first `when` took the
+// value and cleared the slot it held, so the second read of that payload is a
+// use of the moved value, rooted at the projection.
+impl "std/str"
+
+enum Held {
+    Two(val text: String, val n: i32)
+}
+
+fun take(h: move Held).R: String {
+    val a = when h {
+        Two(text, _) -> text
+    }
+    val b = when h {
+        Two(text, _) -> text
+    }
+    return str.concat(a.as_str(), b.as_str())
+}
+
+fun main() {
+    print(take(Held.Two(text = String.from_str(s = "moved"), n = 1)))
+}

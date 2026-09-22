@@ -2550,6 +2550,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "partial_move_conditional",
         "partial_move_reassign",
         "partial_move_move_param",
+        // The enum-payload half of A-11, and the stdlib helpers that had to
+        // take their receiver with `move` for it: each read moves an owned
+        // payload out and clears the slot it came from.
+        "partial_move_enum_payload_owned",
+        "option_unwrap_owned",
+        "result_map_owned",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -3110,6 +3116,65 @@ fn a_partially_moved_binding_cannot_be_borrowed_as_a_whole() {
     assert_rejected_with(
         "tests/fixtures/partial_move_borrow_base.kp",
         "cannot use 'bag' as a whole value: its field 'name' was moved out",
+    );
+}
+
+#[test]
+fn a_partial_move_takes_an_owned_enum_payload_and_leaves_the_rest() {
+    // The enum-payload half of A-11. The moved payload's slot is zeroed at the
+    // move and the enum's own drop frees the payloads the move left behind, so
+    // this fixture is in the AddressSanitizer and valgrind gates: a double free
+    // or a leak fails there. A payload that stayed is still readable, and the
+    // first case moves it out of a `move` parameter.
+    assert_compiles_and_runs(
+        "tests/fixtures/partial_move_enum_payload_owned.kp",
+        "moved\nkept\n2\n",
+    );
+}
+
+#[test]
+fn an_enum_payload_cannot_be_moved_out_twice() {
+    // The first `when` took the value and cleared its slot, so the second read
+    // of the same payload is a use of the moved value, named through the
+    // projection.
+    assert_rejected_with(
+        "tests/fixtures/partial_move_enum_payload_double.kp",
+        "use of moved value 'h.text'",
+    );
+}
+
+#[test]
+fn an_enum_payload_cannot_be_moved_out_of_a_borrow() {
+    // A payload binds as a shared borrow when the scrutinee is one, so an
+    // `if let` over a borrowed enum hands the arm a `&String` and cannot
+    // produce the owned one. `enum_payload_move.kp` is the same refusal
+    // through a `when`.
+    assert_rejected_with(
+        "tests/fixtures/partial_move_enum_payload_from_borrow.kp",
+        "return type mismatch: expected 'String', found '&String'",
+    );
+}
+
+#[test]
+fn the_owned_option_payload_comes_out_with_unwrap() {
+    // A-11 unblocks the accessors that hand a payload out by value: `unwrap`,
+    // `expect` and `unwrap_or` take the option with `move`, so an owned payload
+    // is read out of the enum by value. The payload's slot is cleared at that
+    // read, so this is in the AddressSanitizer and valgrind gates.
+    assert_compiles_and_runs(
+        "tests/fixtures/option_unwrap_owned.kp",
+        "hello\nnone\nexpected\nheld\nstaged\n",
+    );
+}
+
+#[test]
+fn a_result_combinator_hands_an_owned_payload_back() {
+    // `result.map`/`map_err` take the result with `move`, so the side they
+    // rebuild may be owned: `map` moves a `datac` error into the fresh `Err`
+    // and `map_err` moves an owned `String` into the fresh `Ok`.
+    assert_compiles_and_runs(
+        "tests/fixtures/result_map_owned.kp",
+        "5\ntrue\ntrue\ntrue\n",
     );
 }
 
@@ -4789,18 +4854,11 @@ fn list_callbacks_work_over_copy_and_owned_elements() {
 
 #[test]
 fn a_combinator_needing_a_copy_payload_says_so() {
-    // `result.map` rebuilds `Err`, `option.unwrap` hands the payload out, and
-    // `list.filter` reads an accepted element out — each needs a `Copy`
-    // payload or element, and each fails inside the module, so the message
-    // names the module and says why.
-    assert_rejected_with(
-        "tests/fixtures/stdlib_combinators_owned_error.kp",
-        "this is inside the shipped standard library ('std/result')",
-    );
-    assert_rejected_with(
-        "tests/fixtures/stdlib_option_unwrap_owned.kp",
-        "this is inside the shipped standard library ('std/option')",
-    );
+    // `list.filter` reads an accepted element out of a *borrowed* list, so its
+    // element type must be `Copy`; the failure is inside the module, so the
+    // message names the module and says why. The two helpers that only needed a
+    // partial move now take their receiver with `move` instead (A-11): those
+    // rejections moved to `option_unwrap_owned.kp` and `result_map_owned.kp`.
     assert_rejected_with(
         "tests/fixtures/stdlib_list_filter_owned.kp",
         "this is inside the shipped standard library ('std/list')",

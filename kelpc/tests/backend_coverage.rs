@@ -76,8 +76,17 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **229 of the 229 targets the C backend builds**. The refusal ranking is
+/// **232 of the 232 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
+///
+/// Recorded at the A-11 enum-payload slice on 2026-09-22, raised from the 229
+/// the datac-field half of slice 1 built. Three fixtures landed with it
+/// (`partial_move_enum_payload_owned.kp`, `option_unwrap_owned.kp`,
+/// `result_map_owned.kp`), each of which both backends build and the
+/// differential sweep runs; the slice also turned the pinned rejection
+/// `stdlib_option_unwrap_owned.kp` into the passing `option_unwrap_owned.kp`
+/// and dropped `stdlib_combinators_owned_error.kp`, whose `Copy`-only
+/// `result.map` now takes a `move` receiver.
 ///
 /// Recorded at the A-11 slice 1 documentation commit on 2026-09-22, raised from
 /// the 228 the slice tip built. One fixture landed with the move-parameter
@@ -130,7 +139,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// two owned-temporary shapes all lower. The gate for this slice is
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
-const LLVM_BUILT_BASELINE: usize = 229;
+const LLVM_BUILT_BASELINE: usize = 232;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

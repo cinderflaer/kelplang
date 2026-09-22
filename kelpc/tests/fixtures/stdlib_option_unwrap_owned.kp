@@ -1,9 +1,0 @@
-// A-4 phase D limit: an accessor that hands the payload *out* by value needs a
-// move out of the enum, which is the same missing partial-move rule. The
-// borrow-shaped helpers (`map`, `and_then`) work at any instantiation.
-impl "std/option"
-
-fun main() {
-    val text = option.Option.Some(value = String.from_str("hello"))
-    print(option.unwrap(o = text))
-}

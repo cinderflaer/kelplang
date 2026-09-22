@@ -1,0 +1,29 @@
+// A-11: `option.unwrap` takes the option with `move`, so an owned payload is
+// read out of the enum by value: the read moves it and clears the slot it came
+// from, so the option's own drop frees the payloads the move left behind. The
+// accessors used to be `Copy`-only, and this fixture was the pinned rejection
+// of the owned instantiation.
+impl "std/option"
+
+fun main() {
+    val text = option.Option.Some(value = String.from_str(s = "hello"))
+    print(option.unwrap(o = text))
+
+    // The fallback is the caller's value too, so `unwrap_or` takes the option
+    // with `move`: an empty one answers with the fallback, an occupied one with
+    // the payload it was given.
+    val empty: option.Option<String> = option.Option.None
+    print(option.unwrap_or(o = empty, fallback = String.from_str(s = "none")))
+    print(option.expect(o = option.Option.Some(value = String.from_str(s = "expected")), message = "none"))
+
+    // The same read through `if let`: `held` is an owned local, so the payload
+    // moves into the binding, and `word` is a temporary that the `if let` staged
+    // into a local of its own, so its payload moves out of that.
+    val held: option.Option<String> = option.Option.Some(value = String.from_str(s = "held"))
+    if let Some(s) = held {
+        print(s)
+    }
+    if let Some(s) = option.Option.Some(value = String.from_str(s = "staged")) {
+        print(s)
+    }
+}

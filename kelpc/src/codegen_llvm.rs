@@ -2214,12 +2214,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
             }
             // One payload field of one variant, read out of a value whose tag is
             // already known to be `variant`. It is a *place*, which is what lets
-            // an owned payload be bound as a borrow rather than moved out.
+            // an owned payload be bound as a borrow rather than moved out, and
+            // what lets the move out by value clear the slot it came from.
             ExprKind::EnumField {
                 base,
                 variant,
                 field,
-            } => Ok(Some(self.emit_enum_field(base, *variant, *field, &e.ty)?)),
+            } => Ok(Some(self.emit_enum_field(e, base, *variant, *field, &e.ty)?)),
             // `expr?`: the operand once, then a branch on its failure tag. The
             // failure arm rebuilds the failure in the enclosing function's
             // return type, frees the frame (`DropPlan::at_try`) and returns; the
@@ -2379,6 +2380,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // has to be filled in rather than passed over.
             Some(Projection::Field(moved)) => panic!(
                 "codegen_llvm: a move of field '{moved}' was recorded at a read of '{field}'"
+            ),
+            Some(Projection::EnumPayload { name, .. }) => panic!(
+                "codegen_llvm: a move of payload '{name}' was recorded at a read of field '{field}'"
             ),
         }
         Ok(read)
@@ -2688,8 +2692,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// Read one payload field of one variant as a value.
+    ///
+    /// An owned payload read by value is a partial move (A-11), exactly as an
+    /// owned `datac` field read is: the value is copied out and the slot it came
+    /// from is zeroed, so the enum's own drop frees the payloads the move left
+    /// behind and nothing where the value now lives. `e` is the node being
+    /// rendered, which is the identity the plan's clear is keyed on.
     fn emit_enum_field(
         &mut self,
+        e: &Expr,
         base: &Expr,
         variant: usize,
         field: usize,
@@ -2697,7 +2708,37 @@ impl<'g, 'a> FnGen<'g, 'a> {
     ) -> Result<Value<'a>, String> {
         let ptr = self.enum_field_place(base, variant, field)?;
         let lty = self.lty(ty)?;
-        Ok(self.g.builder.build_load(lty, ptr, "payload"))
+        let read = self.g.builder.build_load(lty, ptr, "payload");
+        match self.g.drops.clear_at(&self.fn_name, e) {
+            // Not a partial move: the read copies nothing out, so the slot
+            // keeps its value and the binding's own drop frees it.
+            None => {}
+            // The payload this read copied out: zero the slot.
+            Some(Projection::EnumPayload {
+                variant: moved_variant,
+                field: moved_field,
+                ..
+            }) if *moved_variant == variant && *moved_field == field => {
+                self.g
+                    .builder
+                    .build_store(self.g.ctx.const_null(lty), ptr);
+            }
+            // A projection the backend has no clear for. Zeroing a slot that
+            // still holds its value, or skipping the zero of one that does not,
+            // frees the same buffer twice, so an arm per variant is what has to
+            // be filled in rather than passed over.
+            Some(Projection::Field(moved)) => panic!(
+                "codegen_llvm: a move of field '{moved}' was recorded at a read of payload {variant}.{field}"
+            ),
+            Some(Projection::EnumPayload {
+                variant: moved_variant,
+                field: moved_field,
+                ..
+            }) => panic!(
+                "codegen_llvm: a move of payload {moved_variant}.{moved_field} was recorded at a read of payload {variant}.{field}"
+            ),
+        }
+        Ok(read)
     }
 
     /// Build one `enum` value: a zeroinitializer, the tag, then each payload

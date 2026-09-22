@@ -53,9 +53,12 @@ fun main() {
     xs.push(String.from_str(s = "a"))
     xs.push(String.from_str(s = "b"))
 
+    // `unwrap` and `unwrap_or` take the option with `move` (A-11: the payload
+    // is handed out by value), so each of them consumes the binding it is
+    // given. `is_some` borrows, and the second read gets a fresh result.
     val hit = find(xs = xs, needle = "b")
     print(option.is_some(o = hit))
-    print(option.unwrap_or(o = hit, fallback = -1))
+    print(option.unwrap_or(o = find(xs = xs, needle = "b"), fallback = -1))
     print(option.unwrap(o = hit))
 
     val miss = find(xs = xs, needle = "z")

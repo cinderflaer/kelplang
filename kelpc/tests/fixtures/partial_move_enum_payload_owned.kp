@@ -1,0 +1,38 @@
+// A partial move of an owned `enum` payload (A-11): reading a payload by value
+// out of an owned place takes it out and clears the slot it held, exactly as a
+// `datac` field read does. `when` on an owned local binds the payload by value;
+// the enum's own drop frees the payloads the move left behind and nothing where
+// the moved value now lives. Both halves are gated: AddressSanitizer and
+// valgrind flag a double free of the buffer the moved value owns.
+enum Held {
+    Two(val text: String, val n: i32)
+    Empty
+}
+
+fun take(h: move Held).R: String {
+    val s = when h {
+        Two(text, _) -> text
+        Empty -> String.from_str(s = "none")
+    }
+    return s
+}
+
+fun main() {
+    // A `move` parameter is an owned local in the callee, so its payload comes
+    // out the same way a `val` binding's does.
+    print(take(Held.Two(text = String.from_str(s = "moved"), n = 1)))
+
+    // The payload that stayed is still readable: only the projection that was
+    // moved out is gone.
+    val h = Held.Two(text = String.from_str(s = "kept"), n = 2)
+    val text = when h {
+        Two(t, _) -> t
+        Empty -> String.from_str(s = "")
+    }
+    val n = when h {
+        Two(_, m) -> m
+        Empty -> 0
+    }
+    print(text)
+    print(n)
+}

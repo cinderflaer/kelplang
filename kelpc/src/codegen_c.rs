@@ -2748,7 +2748,8 @@ impl<'a> Gen<'a> {
                     .expect("an enum field's base names a declared enum");
                 let member = variant_member(&edef.variants[*variant].name);
                 let fname = field_name(&edef.variants[*variant].fields[*field].name);
-                self.enum_member_access(base, &format!("{member}.{fname}"))
+                let read = self.enum_member_access(base, &format!("{member}.{fname}"));
+                self.clear_moved_payload(expr, *variant, *field, read)
             }
             // `expr?` (MK5-S6-M1): evaluate the operand once; if it carries
             // the failure tag, rebuild the failure in the enclosing function's
@@ -3333,14 +3334,14 @@ impl<'a> Gen<'a> {
         member_access(&self.expr_value(base), &base.ty, &field_name(field))
     }
 
-    /// A partial move copies the field out of `place` and then zeroes the
-    /// slot it came from, so the binding's own drop frees the fields the move
-    /// left behind and nothing where the value now lives elsewhere. `place` is
-    /// the C lvalue the field resolves to, so the zeroing and the read are the
+    /// A partial move copies the projection out of `place` and then zeroes the
+    /// slot it came from, so the binding's own drop frees the projections the
+    /// move left behind and nothing where the value now lives. `place` is the
+    /// C lvalue the projection resolves to, so the zeroing and the read are the
     /// same expression; the value has to go through a temporary because the
-    /// zeroing is a second statement (`codegen_llvm.rs::emit_field_read`
-    /// stores a null there instead). `field` is the field this read copies
-    /// out, which the recorded projection has to name.
+    /// zeroing is a second statement (`codegen_llvm.rs::emit_field_read` stores
+    /// a null there instead). `field` is the field this read copies out, which
+    /// the recorded projection has to name.
     fn clear_moved_field(&self, expr: &Expr, field: &str, place: String) -> String {
         match self.drops.clear_at(&self.function, expr) {
             // Not a partial move: the read copies nothing out, so the slot
@@ -3355,16 +3356,45 @@ impl<'a> Gen<'a> {
             Some(Projection::Field(moved)) => panic!(
                 "codegen_c: a move of field '{moved}' was recorded at a read of '{field}'"
             ),
+            Some(Projection::EnumPayload { name, .. }) => panic!(
+                "codegen_c: a move of payload '{name}' was recorded at a read of field '{field}'"
+            ),
         }
-        let tmp = fresh_temp();
-        format!(
-            "({{ {} = {}; {} = ({}){{0}}; {}; }})",
-            expr.ty.c_decl(&tmp),
-            place,
-            place,
-            expr.ty.c_type(),
-            tmp
-        )
+        zeroed_read(place, &expr.ty)
+    }
+
+    /// The same clear for one payload of one variant, read out by value (A-11):
+    /// `variant` and `field` are the indices of the `tir` node being rendered,
+    /// which are the identity the recorded projection has to match.
+    fn clear_moved_payload(
+        &self,
+        expr: &Expr,
+        variant: usize,
+        field: usize,
+        place: String,
+    ) -> String {
+        match self.drops.clear_at(&self.function, expr) {
+            None => return place,
+            Some(Projection::EnumPayload {
+                variant: moved_variant,
+                field: moved_field,
+                ..
+            }) if *moved_variant == variant && *moved_field == field => {}
+            // A projection the backend has no clear for: an arm per variant is
+            // what has to be filled in rather than passed over (see
+            // `clear_moved_field`).
+            Some(Projection::Field(moved)) => panic!(
+                "codegen_c: a move of field '{moved}' was recorded at a read of payload {variant}.{field}"
+            ),
+            Some(Projection::EnumPayload {
+                variant: moved_variant,
+                field: moved_field,
+                ..
+            }) => panic!(
+                "codegen_c: a move of payload {moved_variant}.{moved_field} was recorded at a read of payload {variant}.{field}"
+            ),
+        }
+        zeroed_read(place, &expr.ty)
     }
 
     /// The C text of the field chain `expr` read out of the temporary its root
@@ -3805,6 +3835,23 @@ fn fresh_temp() -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     format!("_xtmp{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+}
+
+/// The C text of `place` read out through the slot zeroed in place: the value
+/// is copied into a temporary, the slot is set to the zero value, and the
+/// temporary is the expression's value. `place` has to be an lvalue, and the
+/// zero is what makes the base's own drop free nothing where the value now
+/// lives (the partial-move rule, A-11).
+fn zeroed_read(place: String, ty: &Ty) -> String {
+    let tmp = fresh_temp();
+    format!(
+        "({{ {} = {}; {} = ({}){{0}}; {}; }})",
+        ty.c_decl(&tmp),
+        place,
+        place,
+        ty.c_type(),
+        tmp
+    )
 }
 
 /// The C name of a local that shadows an earlier binding of the same `.kp`

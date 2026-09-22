@@ -1,0 +1,19 @@
+// A payload read out of a *borrow* stays refused: `when`/`if let` binds an
+// owned payload as a shared borrow when the scrutinee is one, so the value the
+// arm has is `&String` and the frame cannot hand an owned `String` on. A
+// partial move needs an owned place, which is what the borrow is not.
+enum Held {
+    Held(val text: String)
+}
+
+fun take(h: &Held).R: String {
+    if let Held(text) = h {
+        return text
+    }
+    return String.from_str(s = "")
+}
+
+fun main() {
+    val h = Held.Held(text = String.from_str(s = "x"))
+    print(take(&h))
+}
