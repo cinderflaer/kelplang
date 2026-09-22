@@ -76,7 +76,7 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **223 of the 223 targets the C backend builds**. The refusal ranking is
+/// **225 of the 225 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
 ///
 /// Recorded at MK7 S5 on 2026-09-21, raised from the 221 the S3 tip built. Two
@@ -119,7 +119,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// two owned-temporary shapes all lower. The gate for this slice is
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
-const LLVM_BUILT_BASELINE: usize = 223;
+const LLVM_BUILT_BASELINE: usize = 225;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
