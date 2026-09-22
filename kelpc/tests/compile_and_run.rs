@@ -5469,6 +5469,16 @@ fn an_atomic_bool_has_no_arithmetic_and_a_test_and_set_wins_once() {
     );
 }
 
+/// The `Err` half of `compare_exchange` carries the value that was actually
+/// there, and a failed exchange leaves the cell alone.
+#[test]
+fn a_failed_compare_exchange_reports_the_value_that_was_there() {
+    assert_compiles_and_runs(
+        "tests/fixtures/atomic_cas_err.kp",
+        "5\n5\n5\n8\n",
+    );
+}
+
 /// The ordering slot is a real argument of a real enum, so naming an ordering
 /// that does not exist yet is the ordinary unknown-variant error rather than a
 /// special refusal: a second variant is a widening of `Ordering`.

@@ -7,10 +7,12 @@
 impl "std/atomic"
 impl "std/result"
 
-// A `pd val` and not a `pd var`: a passdown declared `val` hands a function a
-// *shared* borrow, which is exactly what an atomic mutates through, while a
-// `pd var`'s borrow is exclusive for the whole function, so a store followed by
-// a load in one function would conflict with itself.
+// A `pd val` because a passdown declared `val` hands a function a *shared*
+// borrow, which is exactly what an atomic mutates through and the borrow a
+// thread argument will need. A `pd var` counter works too, a store followed by a
+// load in one function included; `val` is the declaration that says the cell is
+// shared, and `var` costs the exclusive borrow a function takes when it assigns
+// to the passdown itself.
 pd val counter: AtomicI64 = AtomicI64.new(0)
 
 // The oracle: a plain integer incremented the same number of times.

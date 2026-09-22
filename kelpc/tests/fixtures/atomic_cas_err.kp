@@ -1,0 +1,25 @@
+// MK9-S3-M1 stage A1: the `Err` half of `compare_exchange`. A failed exchange
+// hands back the value that was actually there, which is what lets a caller
+// retry from what it saw rather than reloading, and it leaves the cell alone.
+// The `Ok` half reports the value it replaced. A fixture that reads only `Ok`
+// leaves half of the return contract unpinned.
+impl "std/atomic"
+impl "std/result"
+
+fun main() {
+    val c = AtomicI64.new(5)
+
+    val failed = c.compare_exchange(current = 1, new = 2, order = atomic.Ordering.SeqCst)
+    when failed {
+        Ok(seen) -> print(seen)
+        Err(actual) -> print(actual)
+    }
+    print(c.load(order = atomic.Ordering.SeqCst))
+
+    val succeeded = c.compare_exchange(current = 5, new = 8, order = atomic.Ordering.SeqCst)
+    when succeeded {
+        Ok(seen) -> print(seen)
+        Err(actual) -> print(actual)
+    }
+    print(c.load(order = atomic.Ordering.SeqCst))
+}

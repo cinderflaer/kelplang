@@ -1483,7 +1483,7 @@ when r {
 | `compare_exchange(current, new, order)` | shared | `Result<T, T>`: `Ok` the value that was there, `Err` the value that turned out to be there |
 | `fetch_add(value, order)` and `fetch_sub`/`fetch_and`/`fetch_or`/`fetch_xor` | shared | the value that was there; the integer instantiations only |
 
-- **Every receiver is shared, `store`'s included.** An atomic mutates *through* a shared borrow, which is the whole point of the type: it is left with no `&mut` path at all, so a `&Atomic<T>` is something that can be shared rather than moved. It is also why a `pd val` counter works: a passdown declared `val` hands a function a shared borrow, while a `pd var`'s borrow is exclusive for the whole function, so a store followed by a load in one function would conflict with itself.
+- **Every receiver is shared, `store`'s included.** An atomic mutates *through* a shared borrow, which is the whole point of the type: it is left with no `&mut` path at all, so a `&Atomic<T>` is something that can be shared rather than moved. It is also why a `pd val` counter is the declaration a shared counter wants: a `val` passdown hands a function a shared borrow, which is the borrow stage C1's thread argument needs, since §5's second rule refuses an *exclusive* one. A `pd var` counter works as well, including a store followed by a load in one function, because an atomic's operations are shared borrows reborrowed from the passdown's hidden reference; what `var` costs is that a function which assigns to the passdown itself holds it exclusively, and that is the borrow a thread argument may not take.
 - **Not `Copy`, and needs no drop.** A copy would be a second handle to one location; there is nothing to free. A `pd val Atomic<i64>` therefore needs neither a `mut` binding nor the `atexit` story an owned passdown has.
 - **The named instantiations** are `AtomicBool`, `AtomicU8`, `AtomicU16`, `AtomicU32`, `AtomicU64`, `AtomicUsize`, `AtomicI32`, `AtomicI64` and `AtomicIsize`; each is the same type as the `Atomic<T>` spelling. There is no `AtomicI8`/`AtomicI16` (v1 has no `i8`/`i16`).
 - **What is not here.** No `Atomic<f64>`: there is no atomic float arithmetic, and a compare-and-swap loop would pretend there is one. No `AtomicPtr`: raw pointers need `unsafe`, which is not in v1. No `Relaxed`/`Acquire`/`Release`: `Ordering` has exactly one variant, `SeqCst` (16.16).
@@ -1660,7 +1660,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Seventeen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+Eighteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -1677,6 +1677,7 @@ Seventeen modules ship inside the compiler binary. Import them with `impl "std/<
 | `std/process` | `process` | argv, spawn, wait, kill, exit |
 | `std/net` | `net` | TCP sockets, listener, readiness, DNS |
 | `std/http` | none (holds `net`) | HTTP client, request and response types, connection pool |
+| `std/encoding` | none | base64, base32, base58, hex and percent encoding |
 | `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |

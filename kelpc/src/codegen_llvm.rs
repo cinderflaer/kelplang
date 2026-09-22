@@ -3720,8 +3720,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     /// The storage type read back as a value of the element type: a truncation
-    /// for `bool` (any nonzero byte is true in LLVM's `trunc`, and no other byte
-    /// can be stored), and the value itself for every integer.
+    /// for `bool`, which keeps the low bit. That is the whole byte only because
+    /// the atomic store is the one thing that writes it and it writes 0 or 1;
+    /// any other byte would read back as its low bit rather than as true.
     fn atomic_from_mem(&self, elem: &Ty, raw: Value<'a>) -> Result<Value<'a>, String> {
         if !matches!(elem, Ty::Bool) {
             return Ok(raw);

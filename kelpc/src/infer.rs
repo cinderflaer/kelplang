@@ -2360,11 +2360,14 @@ pub fn atomic_order_ty() -> Ty {
 /// stage B1's `Sync`-shaped rule is built on. A `mut` receiver would give the
 /// type a `&mut` path and make that rule unsound.
 ///
-/// This is also what makes a `pd val` atomic usable: a passdown declared `val`
-/// hands a function a *shared* borrow, while a `pd var`'s borrow is exclusive
-/// for the whole function, so a `pd var` counter could be stored to or read but
-/// not both, in one function. The sharing route for a counter is therefore
-/// `pd val` and never `pd var`.
+/// This is also what makes a `pd val` atomic the shape a shared counter wants:
+/// a passdown declared `val` hands a function a *shared* borrow, which is the
+/// borrow stage B1's rule lets cross to a thread. A `pd var` counter works too,
+/// including a store followed by a load in one function, because the atomic
+/// operations are shared borrows reborrowed from the passdown's hidden
+/// reference; what `var` adds is the exclusive borrow a function takes when it
+/// assigns to the passdown itself, and that is the borrow a thread argument may
+/// not take.
 fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<Option<FnSig>> {
     let cell = Ty::Atomic(Box::new(elem.clone()));
     let shared = Ty::Ref { mutable: false, inner: Box::new(cell.clone()) };

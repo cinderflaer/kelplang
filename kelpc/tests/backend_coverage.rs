@@ -166,7 +166,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 242;
+const LLVM_BUILT_BASELINE: usize = 243;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
