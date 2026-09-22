@@ -789,7 +789,7 @@ impl<'a> Gen<'a> {
             instantiations: collect_instantiations(program),
             clonable: crate::types::clonable_types(&type_decls),
             sortable: crate::types::sortable_types(&type_decls),
-            keyable: crate::types::keyable_types(&type_decls),
+            keyable: crate::types::keyable_types(&type_decls, &program.declared_keys),
             pd_globals: HashMap::new(),
             init_pds_fn: None,
             drop_pds_fn: None,
@@ -7256,6 +7256,41 @@ impl<'a> Gen<'a> {
         Ok(out)
     }
 
+    /// The LLVM function that hashes a key of a user type: the type's own
+    /// declared `hash` method when it declares a key pair (A-12), else the
+    /// derived `kelp_hash_<T>`. Exactly one of the two is emitted for a key
+    /// type, because a declared pair is used *instead of* the derived one.
+    fn key_hash_fn(&self, name: &str) -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+        if self.program.declared_keys.contains(name) {
+            let key = crate::types::key_pair_method_key(name, crate::types::KEY_PAIR_HASH_METHOD);
+            let info = self
+                .funcs
+                .get(&key)
+                .ok_or_else(|| no_value(&format!("the hash of '{name}'")))?;
+            return Ok((info.func, info.ty));
+        }
+        self.hash_fns
+            .get(name)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the hash of '{name}'")))
+    }
+
+    /// As `key_hash_fn`, for the key's equality.
+    fn key_eq_fn(&self, name: &str) -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+        if self.program.declared_keys.contains(name) {
+            let key = crate::types::key_pair_method_key(name, crate::types::KEY_PAIR_EQ_METHOD);
+            let info = self
+                .funcs
+                .get(&key)
+                .ok_or_else(|| no_value(&format!("the equality of '{name}'")))?;
+            return Ok((info.func, info.ty));
+        }
+        self.eq_fns
+            .get(name)
+            .copied()
+            .ok_or_else(|| no_value(&format!("the equality of '{name}'")))
+    }
+
     /// `kelp_map_hash`/`kelp_map_mix`/`kelp_hash_<T>` over a key *argument* (a
     /// `str` view for a `String` key, the value itself for a scalar, a borrow
     /// for a user key), the mirror of `write_map`'s `hash_arg`.
@@ -7266,11 +7301,7 @@ impl<'a> Gen<'a> {
             let rt = self.rt("kelp_map_hash")?;
             Ok(self.call(rt.func, rt.ty, &[k, n], "hash"))
         } else if let Ty::Struct(name) = key {
-            let (func, hty) = self
-                .hash_fns
-                .get(name)
-                .copied()
-                .ok_or_else(|| no_value(&format!("the hash of '{name}'")))?;
+            let (func, hty) = self.key_hash_fn(name)?;
             Ok(self.call(func, hty, &[k], "hash"))
         } else {
             let wide = self.key_to_u64(key, k)?;
@@ -7295,11 +7326,7 @@ impl<'a> Gen<'a> {
             Ok(self.call(rt.func, rt.ty, &[data, len], "hash"))
         } else if let Ty::Struct(name) = key {
             let key_addr = self.fld(entry_ty, entry, 0, "key");
-            let (func, hty) = self
-                .hash_fns
-                .get(name)
-                .copied()
-                .ok_or_else(|| no_value(&format!("the hash of '{name}'")))?;
+            let (func, hty) = self.key_hash_fn(name)?;
             Ok(self.call(func, hty, &[key_addr], "hash"))
         } else {
             let key_ty = self.lty2(key)?;
@@ -7326,11 +7353,7 @@ impl<'a> Gen<'a> {
             Ok(self.call(rt.func, rt.ty, &[key_addr, k, n], "eq"))
         } else if let Ty::Struct(name) = key {
             let key_addr = self.fld(entry_ty, entry, 0, "key");
-            let (func, ety) = self
-                .eq_fns
-                .get(name)
-                .copied()
-                .ok_or_else(|| no_value(&format!("the equality of '{name}'")))?;
+            let (func, ety) = self.key_eq_fn(name)?;
             Ok(self.call(func, ety, &[key_addr, k], "eq"))
         } else {
             let key_ty = self.lty2(key)?;
@@ -8936,6 +8959,7 @@ mod layout_tests {
             }],
             caps: Vec::new(),
             gated: Default::default(),
+            declared_keys: Default::default(),
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 
@@ -9373,6 +9397,7 @@ mod layout_tests {
             ],
             caps: Vec::new(),
             gated: Default::default(),
+            declared_keys: Default::default(),
         };
         let source = program_c_source(&program).expect("two extern funs are two bodies");
 
@@ -9491,6 +9516,7 @@ mod layout_tests {
             }],
             caps: Vec::new(),
             gated: Default::default(),
+            declared_keys: Default::default(),
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 

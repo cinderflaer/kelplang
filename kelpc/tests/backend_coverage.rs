@@ -170,11 +170,19 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
 ///
+/// Raised from 244 by MK8-S2 item A-12 slice 1: a `datac` or `enum` that
+/// declares both `fun T.hash().R: u64` and `fun T.eq(other: &T).R: bool` is a
+/// `Map` key whatever its fields are, so `map_declared_key` (a `f64` field,
+/// which the derived key set refuses, beside an owned `String`) and
+/// `map_declared_key_enum` (an `enum` with a `f64` payload and a declared pair
+/// that folds only the tag) build with both backends and the differential
+/// sweep compares them.
+///
 /// Raised from 235 by MK8-S2 item A-6: the derived structural hash and
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 244;
+const LLVM_BUILT_BASELINE: usize = 246;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

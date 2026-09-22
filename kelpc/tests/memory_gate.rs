@@ -617,6 +617,12 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "map_datac_key_ok",
     "map_nested_datac_key",
     "map_enum_key",
+    // A-12: a declared key pair, where the map reaches the type's own `hash`
+    // and `eq` instead of a generated pair. The `datac` half owns a `String`
+    // the pair walks, so the entry's clone and drop are checked; the `enum`
+    // half owns nothing and checks the call path.
+    "map_declared_key",
+    "map_declared_key_enum",
     "nested_literal_staging",
     "recursive_datac",
     "stdlib_sort",

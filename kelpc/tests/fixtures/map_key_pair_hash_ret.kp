@@ -1,0 +1,12 @@
+// A-12: a key's `hash` folds into the map's own `u64` probe, so a hash that
+// returns anything else cannot be called by the generated map code.
+datac Key(val x: i32)
+
+fun Key.hash().R: i32 = self.x
+
+fun Key.eq(other: &Key).R: bool = self.x == other.x
+
+fun main() {
+    var m: Map<Key, i32> = Map.new()
+    m.insert(key = Key(x = 1), v = 1)
+}

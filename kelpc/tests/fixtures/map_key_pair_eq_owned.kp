@@ -1,0 +1,13 @@
+// A-12: `eq` is called with the entry's own key and the caller's, so its
+// parameter is a shared borrow. An owned `other: Key` reads as an ownership
+// transfer and is refused.
+datac Key(val x: i32)
+
+fun Key.hash().R: u64 = self.x.to_u64()
+
+fun Key.eq(other: Key).R: bool = self.x == other.x
+
+fun main() {
+    var m: Map<Key, i32> = Map.new()
+    m.insert(key = Key(x = 1), v = 1)
+}

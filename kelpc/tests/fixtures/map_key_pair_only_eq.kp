@@ -1,0 +1,9 @@
+// A-12: the mirror of `map_key_pair_only_hash.kp`: `eq` alone is half a key
+// pair, and the message names the `hash` that is missing.
+datac Half(val x: i32)
+
+fun Half.eq(other: &Half).R: bool = self.x == other.x
+
+fun main() {
+    print(Half(x = 1).eq(other = Half(x = 1)))
+}

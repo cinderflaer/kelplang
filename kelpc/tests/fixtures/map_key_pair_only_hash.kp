@@ -1,0 +1,11 @@
+// A-12: a declared `Map` key is a pair. `hash` alone states that the type is a
+// key and leaves nothing to probe an entry with, so the declaration is refused
+// rather than ignored; the message names the half that is missing.
+datac Half(val x: i32)
+
+fun Half.hash().R: u64 = self.x.to_u64()
+
+fun main() {
+    val h: u64 = Half(x = 1).hash()
+    print(h)
+}

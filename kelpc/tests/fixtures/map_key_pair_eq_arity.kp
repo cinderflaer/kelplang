@@ -1,0 +1,12 @@
+// A-12: `eq` compares one stored key against one argument, so two parameters
+// or none is not a pair the map can call.
+datac Key(val x: i32)
+
+fun Key.hash().R: u64 = self.x.to_u64()
+
+fun Key.eq(a: &Key, b: &Key).R: bool = a.x == b.x
+
+fun main() {
+    var m: Map<Key, i32> = Map.new()
+    m.insert(key = Key(x = 1), v = 1)
+}

@@ -1,0 +1,41 @@
+// A-12: the rule is stated for a `datac` or an `enum`, and an `enum` declares
+// the pair the same way. The `f64` payload is outside the derived key set, so
+// the fixpoint refuses `Kind` and the map reaches the two declared methods
+// instead; `hash` folds only the tag here, so `eq` is what separates two
+// `Ratio` keys, and the probe has to call it on every colliding entry.
+enum Kind {
+    Ratio(val r: f64)
+    Nothing
+}
+
+fun Kind.hash().R: u64 = when self {
+    Ratio(r) -> 1
+    Nothing -> 0
+}
+
+fun Kind.eq(other: &Kind).R: bool = when self {
+    Ratio(a) -> when other {
+        Ratio(b) -> a == b
+        Nothing -> false
+    }
+    Nothing -> when other {
+        Ratio(b) -> false
+        Nothing -> true
+    }
+}
+
+fun main() {
+    var m: Map<Kind, i32> = Map.new()
+    m.insert(key = Kind.Ratio(r = 1.5), v = 10)
+    m.insert(key = Kind.Ratio(r = 2.5), v = 20)
+    m.insert(key = Kind.Nothing, v = 30)
+    print(m.len())
+    print(m.get(key = Kind.Ratio(r = 2.5)))
+    print(m.has(key = Kind.Ratio(r = 3.5)))
+    m.insert(key = Kind.Ratio(r = 1.5), v = 99)
+    print(m.len())
+    print(m.get(key = Kind.Ratio(r = 1.5)))
+    print(m.remove(key = Kind.Nothing))
+    print(m.len())
+    print(m.has(key = Kind.Ratio(r = 2.5)))
+}

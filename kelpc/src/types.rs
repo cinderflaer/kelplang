@@ -573,11 +573,39 @@ pub fn value_is_keyable(ty: &Ty, keyable: &std::collections::HashSet<String>) ->
     is_map_key(ty) || matches!(ty, Ty::Struct(n) if keyable.contains(n))
 }
 
-/// The user types whose value is a key: the least fixpoint in which a
-/// `datac`/`enum` is keyable once every field or payload it holds is. The same
-/// shape as `clonable_types`/`sortable_types`, over the same declaration graph.
-pub fn keyable_types(decls: &[(String, Vec<Ty>)]) -> std::collections::HashSet<String> {
-    fixpoint(decls, value_is_keyable)
+/// The user types whose value is a key *by derivation* (A-6): the least
+/// fixpoint in which a `datac`/`enum` is keyable once every field or payload it
+/// holds is. The same shape as `clonable_types`/`sortable_types`, over the same
+/// declaration graph, minus the types in `declared`.
+///
+/// `declared` names the types that declare their own `hash`/`eq` pair (A-12).
+/// A declared pair is used *instead of* a derived hash and equality, so such a
+/// type is never in this set, exactly as if it were not keyable at all: the
+/// derived pair the backends emit is decided by this set alone, and a field
+/// that names one of these types is therefore not keyable by derivation either.
+pub fn keyable_types(
+    decls: &[(String, Vec<Ty>)],
+    declared: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let plain: Vec<(String, Vec<Ty>)> = decls
+        .iter()
+        .filter(|(name, _)| !declared.contains(name))
+        .cloned()
+        .collect();
+    fixpoint(&plain, value_is_keyable)
+}
+
+/// The names a `Map` key may be, as `is_map_key_with` asks the question: the
+/// derived key set plus the types that declare their own pair (A-12). A `Map`
+/// takes a derived key and a declaring one, so this set is the union of the
+/// two.
+pub fn map_key_types(
+    decls: &[(String, Vec<Ty>)],
+    declared: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let mut set = keyable_types(decls, declared);
+    set.extend(declared.iter().cloned());
+    set
 }
 
 /// The user types whose value can be deep-copied: the least fixpoint in which a
@@ -657,6 +685,21 @@ pub fn eq_fn_name(ty: &Ty) -> String {
         Ty::Struct(name) => format!("kelp_eq_{}", c_ident(name)),
         other => unreachable!("no equality rule for type '{}'", other.display()),
     }
+}
+
+/// The two method names a `datac`/`enum` declares to be its own `Map` key pair
+/// (A-12): `fun T.hash().R: u64` and `fun T.eq(other: &T).R: bool`. The names
+/// belong to the pair rather than to the type, which is why declaring either
+/// one is read as a statement about the type's key.
+pub const KEY_PAIR_HASH_METHOD: &str = "hash";
+pub const KEY_PAIR_EQ_METHOD: &str = "eq";
+
+/// One half of a declared key pair as `sigs`/`tir` spell it: the `Type#name`
+/// key `infer.rs`'s `sig_key` gives every receiver method. The `Map`'s call
+/// target is this key mangled by `c_ident`, so it names the method's own
+/// declaration and the two cannot drift.
+pub fn key_pair_method_key(type_name: &str, method: &str) -> String {
+    format!("{}#{}", type_name, method)
 }
 
 /// Whether a value of `ty` has to be freed — the builtin owned types, or a
@@ -748,11 +791,11 @@ pub fn is_map_key(ty: &Ty) -> bool {
     matches!(ty, Ty::String | Ty::Bool | Ty::Char) || ty.is_integer()
 }
 
-/// Whether `ty` may be a `Map<K, V>` key, given the user types that are
-/// keyable (`keyable_types`): the builtin key set, or a `datac`/`enum` whose
-/// every field or variant payload is itself keyable. The compiler generates
-/// the key's hash and its equality from the type, so nothing here needs a
-/// trait or a comparator; a type outside the set is refused.
+/// Whether `ty` may be a `Map<K, V>` key, given the user types a key may be
+/// (`map_key_types`): the builtin key set, or a `datac`/`enum` that is keyable
+/// by derivation or that declares its own `hash`/`eq` pair (A-12). The key's
+/// hash and its equality are whichever pair the type has, so nothing here
+/// needs a trait or a comparator; a type outside the set is refused.
 pub fn is_map_key_with(ty: &Ty, keyable: &std::collections::HashSet<String>) -> bool {
     value_is_keyable(ty, keyable)
 }

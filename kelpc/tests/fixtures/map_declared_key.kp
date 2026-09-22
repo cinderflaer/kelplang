@@ -1,0 +1,49 @@
+// A-12: a `datac` that declares its own `hash` and `eq` is a `Map` key even
+// when its fields are outside the derived key set. A float is never keyable
+// (`nan != nan` would make an inserted key unfindable), so `Sample` is a type
+// the derived fixpoint refuses; the declared pair is ordinary Kelp code, and
+// the map uses it instead of a derived hash and equality. The key is still
+// cloned in and freed once, so ASAN re-runs this fixture (see
+// `heap_fixtures_are_double_free_and_leak_clean`).
+impl "std/str"
+
+datac Sample(val ratio: f64, val tag: i32, val label: String)
+
+fun Sample.hash().R: u64 = self.tag.to_u64() + self.label.len().to_u64()
+
+fun Sample.eq(other: &Sample).R: bool {
+    if self.tag != other.tag {
+        return false
+    }
+    if !str.eq(self.label.as_str(), other.label.as_str()) {
+        return false
+    }
+    return self.ratio == other.ratio
+}
+
+fun main() {
+    var m: Map<Sample, i32> = Map.new()
+    m.insert(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha")), v = 10)
+    m.insert(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha")), v = 20)
+    print(m.len())
+    // The same tag and label under two floats: the hash may collide, and `eq`
+    // is what tells the entries apart, so both lookups have to find their own.
+    print(m.get(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.get(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.has(key = Sample(ratio = 3.5, tag = 1, label = String.from_str(s = "alpha"))))
+    // An equal key overwrites without growing: the map owns a clone of the key
+    // it was given, and the probe reaches the entry through the declared pair.
+    m.insert(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha")), v = 99)
+    print(m.len())
+    print(m.get(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
+
+    val ks: List<Sample> = m.keys()
+    print(ks.len())
+    print(ks.get(i = 0).label.as_str())
+    print(ks.get(i = 0).ratio)
+
+    print(m.remove(key = Sample(ratio = 2.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.len())
+    print(m.has(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "alpha"))))
+    print(m.has(key = Sample(ratio = 1.5, tag = 1, label = String.from_str(s = "beta"))))
+}

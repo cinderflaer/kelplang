@@ -90,6 +90,12 @@ struct InstanceState {
 struct TypeEnv {
     generics: std::rc::Rc<HashMap<String, GenericTemplate>>,
     instances: std::rc::Rc<std::cell::RefCell<InstanceState>>,
+    /// The user types that declare their own `Map` key pair (A-12). Decided
+    /// once, from the whole function list, because a `Map<T, V>` in a
+    /// *declaration* is resolved before the signatures are: the field of a
+    /// `datac` that names such a type has to see the same key set a body
+    /// does.
+    declared_keys: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -699,10 +705,10 @@ impl Ctx {
         crate::types::value_is_sortable(ty, &set)
     }
 
-    /// The user types that are `Map` keys, by the same declaration-graph rule:
-    /// a `datac`/`enum` is keyable once every field or payload it holds is.
+    /// The user types that are `Map` keys, by the same declaration-graph rule
+    /// (A-6), plus the types that declare their own pair (A-12).
     fn keyable_set(&self) -> std::collections::HashSet<String> {
-        crate::types::keyable_types(&self.type_decls())
+        crate::types::map_key_types(&self.type_decls(), &self.env.declared_keys)
     }
 
     /// Instantiates a generic template for one use site (A-2). Idempotent: a
@@ -809,13 +815,13 @@ struct TypeScope<'a> {
 
 impl TypeScope<'_> {
     /// The user types that are `Map` keys, from the declarations this view of
-    /// the program can see (A-6). A `Map` key is resolved before the whole
-    /// program is known, so this runs the same fixpoint `Ctx` runs, over the
-    /// declarations gathered so far: a type a field could legally name is
+    /// the program can see (A-6, A-12). A `Map` key is resolved before the
+    /// whole program is known, so this runs the same fixpoint `Ctx` runs, over
+    /// the declarations gathered so far: a type a field could legally name is
     /// always an earlier declaration, and an earlier declaration is present.
     fn keyable_set(&self) -> std::collections::HashSet<String> {
         let decls = type_decls_of(self.structs, self.enums, &self.env.instances.borrow());
-        crate::types::keyable_types(&decls)
+        crate::types::map_key_types(&decls, &self.env.declared_keys)
     }
 
     /// A written type name, or a container over one. `indirect` is true
@@ -1466,6 +1472,102 @@ impl TypeScope<'_> {
     }
 }
 
+
+/// The user types that declare their own `Map` key pair (A-12): the receiver
+/// name of every `fun T.hash()` and `fun T.eq(...)` declaration in the program.
+///
+/// Either name is read as a statement about the type's key, which is what makes
+/// a declared key possible with no trait and no new syntax: the pair is the two
+/// method names. The signature loop in `check_program_pass` then insists the
+/// declaration is one the map can actually call, so a half pair or a malformed
+/// one is an error at the declaration rather than a `Map` use site that can
+/// only say the type is not a key.
+fn declared_key_names(program: &ast::Program) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for f in &program.functions {
+        if let Some(r) = &f.receiver {
+            if f.name == crate::types::KEY_PAIR_HASH_METHOD
+                || f.name == crate::types::KEY_PAIR_EQ_METHOD
+            {
+                out.insert(r.type_name.clone());
+            }
+        }
+    }
+    out
+}
+
+/// One user-declared key-pair half, kept while the signatures are built so a
+/// type that declares only one of the two can be named with the span of the
+/// half it did declare.
+struct KeyPairHalf {
+    method: &'static str,
+    span: Span,
+    module: String,
+}
+
+/// Whether one half of a declared `Map` key pair is a shape the map can call
+/// (A-12), with `params` the resolved parameter list (the receiver first) and
+/// `ret` the resolved return type.
+///
+/// The borrow is checked as *written* as well as resolved: an owned `other: T`
+/// and a `other: &T` resolve to the same `Ty::Ref` (a `datac` parameter is
+/// borrowed either way), and the map passes the caller's key by reference, so a
+/// parameter that reads as an ownership transfer is refused rather than
+/// silently accepted.
+fn check_key_pair_method(
+    f: &ast::FunctionDecl,
+    params: &[(String, Ty)],
+    ret: &Ty,
+) -> std::result::Result<(), Diagnostic> {
+    let receiver = f
+        .receiver
+        .as_ref()
+        .expect("only a receiver method is a key-pair half");
+    let owner = &receiver.type_name;
+    let err = |message: String| Diagnostic::new(message, f.span, f.module.clone());
+    if f.name == crate::types::KEY_PAIR_HASH_METHOD {
+        if !f.params.is_empty() {
+            return Err(err(format!(
+                "'{owner}.hash' takes no parameters: a key's hash is computed from the key alone, so write 'fun {owner}.hash().R: u64'"
+            )));
+        }
+        if *ret != Ty::U64 {
+            return Err(err(format!(
+                "'{owner}.hash' must return 'u64', found '{}': the `Map` probe folds the hash of every key through 'kelp_map_combine'",
+                ret.display()
+            )));
+        }
+        return Ok(());
+    }
+    if f.params.len() != 1 {
+        return Err(err(format!(
+            "'{owner}.eq' takes exactly one parameter, a shared borrow of '{owner}', so write 'fun {owner}.eq(other: &{owner}).R: bool'"
+        )));
+    }
+    let written = &f.params[0];
+    if !written.ty.amp || written.mode != ast::ParamMode::Borrow {
+        return Err(err(format!(
+            "'{owner}.eq' must take 'other: &{owner}': a lookup compares the caller's key against an entry the caller does not own, so the argument cannot be moved"
+        )));
+    }
+    let same = matches!(
+        params.get(1).map(|(_, ty)| ty),
+        Some(Ty::Ref { mutable: false, inner }) if **inner == Ty::Struct(owner.clone())
+    );
+    if !same {
+        return Err(err(format!(
+            "'{owner}.eq' takes a shared borrow of '{owner}', found '{}'",
+            params[1].1.display()
+        )));
+    }
+    if *ret != Ty::Bool {
+        return Err(err(format!(
+            "'{owner}.eq' must return 'bool', found '{}'",
+            ret.display()
+        )));
+    }
+    Ok(())
+}
 
 /// The `Ty::Fn` a declared signature has (A-4): its parameter types, in order,
 /// and its return type. A function *type* spells exactly this, so a written
@@ -4373,9 +4475,15 @@ fn check_program_pass(
     // (`val p: Pair<i32, String>`) and the resolution of that field is what
     // creates it.
     let generics = collect_templates(program, project)?;
+    // A-12: which user types declare their own `Map` key pair, decided from the
+    // whole function list: a `datac` field may name `Map<T, V>` before any
+    // signature has been resolved, so the key set has to be known that early.
+    // The signature loop below then refuses a half or a malformed pair.
+    let declared_keys = std::rc::Rc::new(declared_key_names(program));
     let env = TypeEnv {
         generics: std::rc::Rc::new(generics),
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
+        declared_keys: declared_keys.clone(),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -4685,6 +4793,11 @@ fn check_program_pass(
     // the passdown scan and the body checker need the same spelling the call
     // sites will use.
     let mut decl_keys: Vec<String> = Vec::with_capacity(program.functions.len());
+    // A-12: one entry per declared half of a key pair, and one per type that
+    // declared one, so a type with only half can be named with the span of the
+    // half it did declare.
+    let mut key_pair_halves: HashMap<String, KeyPairHalf> = HashMap::new();
+    let mut key_pair_types: Vec<String> = Vec::new();
     for f in &program.functions {
         // A receiver method's key already can't collide with a struct name
         // (it always contains `#`), so this check only applies to plain
@@ -4695,6 +4808,35 @@ fn check_program_pass(
                 f.span,
                 f.module.clone(),
             ));
+        }
+        // A declared key pair is a declaration on the concrete type, and it is
+        // a shape the map calls directly rather than instantiating, so both of
+        // these are refused before the generic-template skip below, which
+        // would otherwise drop the declaration without a word. The rest of the
+        // signature is checked once its types are resolved.
+        if let Some(r) = &f.receiver {
+            let half = f.name == crate::types::KEY_PAIR_HASH_METHOD
+                || f.name == crate::types::KEY_PAIR_EQ_METHOD;
+            if half && !r.type_args.is_empty() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}.{}' cannot have type parameters: a key pair is declared on the type itself, so write it on '{}' rather than on the generic template",
+                        r.type_name, f.name, r.type_name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
+            if half && r.mutable {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}.{}' cannot take 'mut': a key pair's receiver is a shared borrow, so write 'fun {}.{}()' without 'mut'",
+                        r.type_name, f.name, r.type_name, f.name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
         }
         // A-2: a generic function has no signature until a call site
         // instantiates it; it is a template, so it gets a declaration key
@@ -4746,6 +4888,33 @@ fn check_program_pass(
             Some(t) => scope.resolve_return(t).map_err(|e| e.in_module(&f.module))?,
             None => Ty::Unit,
         };
+        // A-12: `fun T.hash()` and `fun T.eq(other: &T)` on a user type are
+        // that type's declared `Map` key pair, so the shape is checked here,
+        // where the receiver, the parameters and the return type are already
+        // resolved, and the type is recorded so the two halves can be matched
+        // up once every declaration has been seen.
+        if let Some(r) = &f.receiver {
+            if f.name == crate::types::KEY_PAIR_HASH_METHOD
+                || f.name == crate::types::KEY_PAIR_EQ_METHOD
+            {
+                check_key_pair_method(f, &params, &ret)?;
+                if !key_pair_halves.contains_key(&r.type_name) {
+                    key_pair_types.push(r.type_name.clone());
+                }
+                key_pair_halves.insert(
+                    r.type_name.clone(),
+                    KeyPairHalf {
+                        method: if f.name == crate::types::KEY_PAIR_HASH_METHOD {
+                            crate::types::KEY_PAIR_HASH_METHOD
+                        } else {
+                            crate::types::KEY_PAIR_EQ_METHOD
+                        },
+                        span: f.span,
+                        module: f.module.clone(),
+                    },
+                );
+            }
+        }
         // A returned borrow has to have something to borrow from, which the
         // borrow checker enforces per return site (M6.3): either the first
         // reference parameter, or a `str` literal (whose storage is static,
@@ -4774,6 +4943,61 @@ fn check_program_pass(
         }
         decl_keys.push(key.clone());
         sigs.insert(key, FnSig { params, ret });
+    }
+
+    // A-12: a key pair is both halves or neither. A type that declares only one
+    // is not a key and never could be, so it is refused here and the message
+    // names the half that is missing; a half whose own signature was wrong was
+    // already refused above.
+    for name in &key_pair_types {
+        let has = |method: &str| {
+            sigs.contains_key(&crate::types::key_pair_method_key(name, method))
+        };
+        let (hash, eq) = (
+            has(crate::types::KEY_PAIR_HASH_METHOD),
+            has(crate::types::KEY_PAIR_EQ_METHOD),
+        );
+        if hash == eq {
+            continue;
+        }
+        let half = &key_pair_halves[name];
+        let missing = if hash {
+            crate::types::KEY_PAIR_EQ_METHOD
+        } else {
+            crate::types::KEY_PAIR_HASH_METHOD
+        };
+        return Err(Diagnostic::new(
+            format!(
+                "'{name}' declares '{}' but not '{missing}': a declared `Map` key needs both halves, 'fun {name}.hash().R: u64' and 'fun {name}.eq(other: &{name}).R: bool'",
+                half.method
+            ),
+            half.span,
+            half.module.clone(),
+        ));
+    }
+
+    // A-12: the map keeps its own copy of every key it stores, so a key's type
+    // has to be deep-copyable, which a derived key always is
+    // (`value_is_keyable` names nothing `value_is_clonable` does not). A
+    // declared pair is the escape hatch from the *key* fixpoint and not from
+    // this one, so the same requirement is checked here rather than leaving a
+    // backend to fail on a clone that was never emitted.
+    {
+        let instances = env.instances.borrow();
+        let clonable = crate::types::clonable_types(&type_decls_of(&structs, &enums, &instances));
+        for name in &key_pair_types {
+            if clonable.contains(name) {
+                continue;
+            }
+            let half = &key_pair_halves[name];
+            return Err(Diagnostic::new(
+                format!(
+                    "'{name}' declares its own key pair, but the map clones a key in and '{name}' has no deep copy: a key may not hold a field that cannot be copied, so a `List`, `Map` or `Box` field (or a `datac`/`enum` that holds one) is refused"
+                ),
+                half.span,
+                half.module.clone(),
+            ));
+        }
     }
 
     // ---- M5.2: passdowns -------------------------------------------------
@@ -4972,6 +5196,7 @@ fn check_program_pass(
         functions,
         caps,
         gated: project.gated().clone(),
+        declared_keys: (*declared_keys).clone(),
     })
 }
 

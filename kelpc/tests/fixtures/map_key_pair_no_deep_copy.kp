@@ -1,0 +1,14 @@
+// A-12: the escape hatch is from the key set, not from the copy the map needs.
+// A `Map` keeps its own copy of every key it stores, and a `datac` holding a
+// `List` has no deep copy, so this pair cannot be used even though both halves
+// are well formed.
+datac WithList(val xs: List<i32>)
+
+fun WithList.hash().R: u64 = self.xs.len().to_u64()
+
+fun WithList.eq(other: &WithList).R: bool = self.xs.len() == other.xs.len()
+
+fun main() {
+    var m: Map<WithList, i32> = Map.new()
+    m.insert(key = WithList(xs = List.of(v = 1)), v = 1)
+}

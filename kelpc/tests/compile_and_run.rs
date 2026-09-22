@@ -2474,6 +2474,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // use-after-free.
         "map_nested_datac_key",
         "map_enum_key",
+        // A-12: a declared key pair, whose type holds a `f64` (outside the
+        // derived set) and an owned `String` the declared `hash` and `eq`
+        // walk. The entry owns a deep copy of the key, so a drop that missed
+        // it is a leak and a double drop is a use-after-free.
+        "map_declared_key",
+        "map_declared_key_enum",
         "io_stdio",
         "io_streams",
         "process_spawn",
@@ -3343,6 +3349,71 @@ fn a_datac_map_key_may_own_a_string_field() {
     assert_compiles_and_runs(
         "tests/fixtures/map_nested_datac_key.kp",
         "2\n10\nfalse\n20\n10\n1\ntrue\n",
+    );
+}
+
+#[test]
+fn a_datac_that_declares_hash_and_eq_is_a_map_key() {
+    // A-12: the declared pair is the escape hatch from the derived key set. A
+    // float is never keyable (`nan != nan`), so `Sample` is a type the
+    // keyability fixpoint refuses and the map reaches the two declared methods
+    // instead of a derived hash and equality.
+    assert_compiles_and_runs(
+        "tests/fixtures/map_declared_key.kp",
+        "2\n10\n20\nfalse\n2\n99\n2\nalpha\n1.500000\n20\n1\ntrue\nfalse\n",
+    );
+}
+
+#[test]
+fn an_enum_that_declares_hash_and_eq_is_a_map_key() {
+    // A-12: the same rule for an `enum`. The declared `hash` folds only the
+    // tag, so the two `Ratio` keys collide and `eq` is what the probe has to
+    // call to tell them apart.
+    assert_compiles_and_runs(
+        "tests/fixtures/map_declared_key_enum.kp",
+        "3\n20\nfalse\n3\n99\n30\n2\ntrue\n",
+    );
+}
+
+#[test]
+fn a_declared_key_pair_that_is_half_or_misshaped_is_rejected() {
+    // A-12: either method name states that the type is a key, so half a pair,
+    // or a signature the generated map code cannot call, is refused at the
+    // declaration with the reason named rather than as a vague "not a key" at
+    // a `Map` use site.
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_only_hash.kp",
+        "'Half' declares 'hash' but not 'eq'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_only_eq.kp",
+        "'Half' declares 'eq' but not 'hash'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_hash_ret.kp",
+        "'Key.hash' must return 'u64', found 'i32'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_eq_owned.kp",
+        "'Key.eq' must take 'other: &Key'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_eq_arity.kp",
+        "'Key.eq' takes exactly one parameter",
+    );
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_mut.kp",
+        "'Key.hash' cannot take 'mut'",
+    );
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_generic.kp",
+        "'Pair.hash' cannot have type parameters",
+    );
+    // The pair is the escape hatch from the derived *key* set, not from the
+    // deep copy the map's own entry needs.
+    assert_rejected_with(
+        "tests/fixtures/map_key_pair_no_deep_copy.kp",
+        "'WithList' has no deep copy",
     );
 }
 

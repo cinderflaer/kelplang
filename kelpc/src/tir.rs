@@ -28,6 +28,14 @@ pub struct Program {
     /// Only gated modules appear, so this is also the set of calls that need
     /// a runtime allowlist check.
     pub gated: std::collections::HashMap<String, String>,
+    /// The user types that declare their own `Map` key pair (A-12): a `datac`
+    /// carrying both `fun T.hash().R: u64` and `fun T.eq(other: &T).R: bool`.
+    /// `infer.rs` is the only place that decides it, so the two backends
+    /// cannot disagree about which key spells its own hash: each reads this
+    /// set to point the `Map`'s hash and equality at those two methods instead
+    /// of the derived `kelp_hash_<T>`/`kelp_eq_<T>` pair it does not emit for
+    /// them.
+    pub declared_keys: std::collections::HashSet<String>,
 }
 
 /// One module's patterns for one capability domain.

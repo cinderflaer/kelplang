@@ -133,7 +133,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let type_decls = type_decls(&program.structs, &program.enums);
     let clonable = crate::types::clonable_types(&type_decls);
     let sortable = crate::types::sortable_types(&type_decls);
-    let keyable = crate::types::keyable_types(&type_decls);
+    let keyable = crate::types::keyable_types(&type_decls, &program.declared_keys);
     let caps = CapTable {
         gated: program.gated.clone(),
         patterns: program
@@ -335,6 +335,30 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable, &keyable),
         }
     }
+    // A key type that declares its own pair (A-12) is reached from the `Map`
+    // function sets below, and those are written before the program's own
+    // functions: prototype the pair beside the typedefs, which is exactly
+    // where a derived pair's definition sits for a key that has one.
+    let mut key_pairs: Vec<&Function> = program
+        .functions
+        .iter()
+        .filter(|f| {
+            let Some((owner, method)) = f.name.split_once('#') else {
+                return false;
+            };
+            program.declared_keys.contains(owner)
+                && (method == crate::types::KEY_PAIR_HASH_METHOD
+                    || method == crate::types::KEY_PAIR_EQ_METHOD)
+        })
+        .collect();
+    key_pairs.sort_by(|a, b| a.name.cmp(&b.name));
+    if !key_pairs.is_empty() {
+        for f in key_pairs {
+            write_signature(&mut out, f);
+            out.push_str(";\n");
+        }
+        out.push('\n');
+    }
     if !decls.is_empty() {
         out.push('\n');
     }
@@ -366,7 +390,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         match ty {
             Ty::List(elem) => write_list(&mut out, elem, &owned, &clonable, &sortable),
             Ty::Box(elem) => write_box(&mut out, elem, &owned),
-            Ty::Map(key, value) => write_map(&mut out, key, value, &owned),
+            Ty::Map(key, value) => write_map(&mut out, key, value, &owned, &program.declared_keys),
             // A closure's shared function set is one drop: the `fn` member is
             // whatever generated (or converted) function the value holds, and
             // the environment is dropped through the pointer stored beside
@@ -1675,6 +1699,29 @@ fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
     out.push_str("        free(self->value);\n        self->value = NULL;\n    }\n}\n\n");
 }
 
+/// The C function that hashes a `datac`/`enum` key: the key type's own declared
+/// `hash` method when it declares a key pair (A-12), else the derived
+/// `kelp_hash_<T>`. Exactly one of the two is emitted for a key type, because a
+/// declared pair is used *instead of* the derived one.
+fn key_hash_target(key: &Ty, declared_keys: &HashSet<String>) -> String {
+    match key {
+        Ty::Struct(name) if declared_keys.contains(name) => c_name(
+            &crate::types::key_pair_method_key(name, crate::types::KEY_PAIR_HASH_METHOD),
+        ),
+        _ => hash_fn_name(key),
+    }
+}
+
+/// As `key_hash_target`, for the key's equality.
+fn key_eq_target(key: &Ty, declared_keys: &HashSet<String>) -> String {
+    match key {
+        Ty::Struct(name) if declared_keys.contains(name) => c_name(
+            &crate::types::key_pair_method_key(name, crate::types::KEY_PAIR_EQ_METHOD),
+        ),
+        _ => eq_fn_name(key),
+    }
+}
+
 /// One `Map<K, V>` instantiation's function set (MK5-S5). Entries live in
 /// insertion order in a dense array, so `keys()` returns insertion order
 /// rather than hash order; a separate open-addressed index of `entry index +
@@ -1692,8 +1739,16 @@ fn write_box(out: &mut String, elem: &Ty, owned: &HashSet<String>) {
 /// by mixing its bits, passed by value, and compared with `==` (A-2); a
 /// `datac`/`enum` key (A-6) is passed as a shared borrow, hashed and compared
 /// by its generated `kelp_hash_<T>`/`kelp_eq_<T>`, and cloned in with its
-/// generated `kelp_clone_<T>` so the entry owns its own copy.
-fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
+/// generated `kelp_clone_<T>` so the entry owns its own copy. A key type that
+/// declares its own pair (A-12) instead reaches its own two methods, which the
+/// query and insert paths name through `key_hash_target`/`key_eq_target`.
+fn write_map(
+    out: &mut String,
+    key: &Ty,
+    value: &Ty,
+    owned: &HashSet<String>,
+    declared_keys: &HashSet<String>,
+) {
     let map = crate::types::map_c_type(key, value);
     let map_ty = Ty::Map(Box::new(key.clone()), Box::new(value.clone()));
     let entry = format!("{map}_entry");
@@ -1731,7 +1786,7 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
         if key_is_string {
             format!("kelp_map_hash({a}, strlen({a}))")
         } else if key_is_struct {
-            format!("{}({a})", hash_fn_name(key))
+            format!("{}({a})", key_hash_target(key, declared_keys))
         } else {
             format!("kelp_map_mix((uint64_t)({a}))")
         }
@@ -1740,7 +1795,7 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
         if key_is_string {
             format!("kelp_map_hash((const char*){s}.data, {s}.len)")
         } else if key_is_struct {
-            format!("{}(&{s})", hash_fn_name(key))
+            format!("{}(&{s})", key_hash_target(key, declared_keys))
         } else {
             format!("kelp_map_mix((uint64_t)({s}))")
         }
@@ -1753,7 +1808,7 @@ fn write_map(out: &mut String, key: &Ty, value: &Ty, owned: &HashSet<String>) {
         if key_is_string {
             format!("kelp_map_key_eq(&{stored}, {a}, strlen({a}))")
         } else if key_is_struct {
-            format!("{}(&{stored}, {a})", eq_fn_name(key))
+            format!("{}(&{stored}, {a})", key_eq_target(key, declared_keys))
         } else {
             format!("({stored} == {a})")
         }
