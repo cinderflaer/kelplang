@@ -98,6 +98,31 @@ impl CapTable {
     }
 }
 
+/// One declaration in the program's merged `datac`/`enum` order (A-1), so the
+/// two kinds can be emitted interleaved. `order` is a topological order across
+/// both kinds, which is what makes every typedef complete at the point it is
+/// used.
+enum Decl<'a> {
+    Record(&'a StructDef),
+    Sum(&'a EnumDef),
+}
+
+impl Decl<'_> {
+    /// Every type this declaration holds, by value or behind a pointer: what
+    /// `emit_arrays_for` scans for the array bodies a declaration needs first.
+    fn field_tys(&self) -> Vec<&Ty> {
+        match self {
+            Decl::Record(s) => s.fields.iter().map(|f| &f.ty).collect(),
+            Decl::Sum(e) => e
+                .variants
+                .iter()
+                .flat_map(|v| v.fields.iter())
+                .map(|f| &f.ty)
+                .collect(),
+        }
+    }
+}
+
 pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> String {
     let owned = owned_types(&program.structs, &program.enums);
     // The user types with a derived deep copy and a derived order
@@ -279,16 +304,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         let mut atomics: Vec<&Ty> = atomic_tys.iter().collect();
         atomics.sort_by_key(|t| crate::types::ty_mangle(t));
         for ty in &atomics {
-            let Ty::Atomic(elem) = ty else {
-                unreachable!("only an atomic instantiation is in this set")
-            };
-            writeln!(
-                out,
-                "typedef struct {{ {} v; }} {};",
-                elem.c_type(),
-                ty.c_type()
-            )
-            .unwrap();
+            write_atomic_typedef(&mut out, ty);
         }
         out.push('\n');
     }
@@ -297,10 +313,6 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // because a field or payload may only name an earlier type by value — so
     // this order is what makes every typedef complete at the point it is
     // used, exactly as the single-kind declaration order did before.
-    enum Decl<'a> {
-        Record(&'a StructDef),
-        Sum(&'a EnumDef),
-    }
     let mut decls: Vec<(usize, Decl)> = program
         .structs
         .iter()
@@ -315,11 +327,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         // written. Emitting it here (rather than with the pointer containers
         // above) is what keeps `val entries: [Entry; 512]` a field a `datac`
         // can actually have.
-        let field_tys: Vec<&Ty> = match decl {
-            Decl::Record(s) => s.fields.iter().map(|f| &f.ty).collect(),
-            Decl::Sum(e) => e.variants.iter().flat_map(|v| v.fields.iter()).map(|f| &f.ty).collect(),
-        };
-        for ty in field_tys {
+        for ty in decl.field_tys() {
             emit_arrays_for(&mut out, ty, &mut emitted_arrays, &owned);
         }
         match decl {
@@ -979,11 +987,15 @@ fn write_map_entry_body(out: &mut String, key: &Ty, value: &Ty) {
 
 /// A container's C typedef, emitted before every `datac`: both containers
 /// hold their contents through a pointer, so a container can be named by the
-/// `datac`s that use it — including the `datac` whose *own* body has not been
+/// `datac`s that use it (including the `datac` whose *own* body has not been
 /// emitted yet (`List<Tree>` inside `Tree`) and a mutually recursive pair
 /// (M8). A `datac` element is therefore spelled by its struct tag here
 /// (`container_elem_c_type`), which is forward-declared by `write_tags`.
-pub(crate) fn write_container_typedef(out: &mut String, ty: &Ty) {
+///
+/// Both `generate`'s whole-program declaration pass and
+/// [`write_referenced_type_layouts`] call it, so a container has one C typedef
+/// in both backends.
+fn write_container_typedef(out: &mut String, ty: &Ty) {
     match ty {
         Ty::Closure { params, ret } => {
             write_closure_typedef(out, params, ret);
@@ -1259,7 +1271,16 @@ fn write_closure(out: &mut String, ty: &Ty) {
 
 /// `struct tag_Foo;` for every `datac`, so a container typedef can hold a
 /// pointer to a struct whose body comes later.
-fn write_tags(out: &mut String, structs: &[StructDef], enums: &[EnumDef]) {
+///
+/// The two callers pass different sets: `generate` every declaration the
+/// program has, and [`write_referenced_type_layouts`] the subset an `extern fun`
+/// signature reaches. The iterator parameters are what let both share this one
+/// pass rather than filter two cloned `Vec`s.
+fn write_tags<'a, S, E>(out: &mut String, structs: S, enums: E)
+where
+    S: IntoIterator<Item = &'a StructDef>,
+    E: IntoIterator<Item = &'a EnumDef>,
+{
     // Both kinds are typedef'd through a tagged struct, so both need their tag
     // forward-declared: a container typedef emitted before them may hold a
     // pointer to either (`Box<Node>`, `List<Shape>`).
@@ -1268,6 +1289,229 @@ fn write_tags(out: &mut String, structs: &[StructDef], enums: &[EnumDef]) {
     }
     for e in enums {
         writeln!(out, "struct {};", crate::types::struct_tag(&e.name)).unwrap();
+    }
+}
+
+/// One `Atomic<T>` instantiation's C typedef (MK9-S3-M1 stage A1): one member
+/// of the element's scalar type, which is why an atomic names no `datac` and
+/// needs no forward declaration before it.
+fn write_atomic_typedef(out: &mut String, ty: &Ty) {
+    let Ty::Atomic(elem) = ty else {
+        unreachable!("only an atomic instantiation is in this set")
+    };
+    writeln!(
+        out,
+        "typedef struct {{ {} v; }} {};",
+        elem.c_type(),
+        ty.c_type()
+    )
+    .unwrap();
+}
+
+/// The C declarations every type in `roots` needs, in the order the layouts
+/// require: the `datac` and `enum` tags reached, forward-declared; the
+/// container, array and atomic instantiations their fields hold; and then the
+/// `datac` and `enum` typedefs themselves, in the program's merged declaration
+/// order.
+///
+/// The LLVM backend's extern prelude is the caller
+/// (`codegen_llvm.rs::program_c_source`): an `extern fun` body is C text whose
+/// signature names the Kelp types its declaration names, and C needs those
+/// types to exist in the same translation unit. This is deliberate reuse of the
+/// C backend's own emitters (`write_tags`, `write_container_typedef`,
+/// `write_array`, `write_atomic_typedef`, `write_struct`, `write_enum`), so a
+/// `datac` or an `enum` has one C layout in both backends;
+/// `layout_tests::an_extern_signature_that_names_a_kelp_type_gets_its_typedef`
+/// is what holds the two ends together.
+///
+/// The derive sets are empty here on purpose: an extern body only ever *names*
+/// these types, so it never calls a drop, a clone, a derived order or a hash.
+///
+/// `roots` is what the caller's own text names, one entry per parameter and one
+/// for the return. What those reach is walked too, because a `datac` field and
+/// an `enum` payload are places C requires a typedef to already be complete.
+pub(crate) fn write_referenced_type_layouts(
+    out: &mut String,
+    structs: &[StructDef],
+    enums: &[EnumDef],
+    roots: &[Ty],
+) {
+    let mut named: HashSet<String> = HashSet::new();
+    let mut containers: Vec<Ty> = Vec::new();
+    let mut arrays: Vec<Ty> = Vec::new();
+    let mut atomics: Vec<Ty> = Vec::new();
+    for ty in roots {
+        collect_layout_tys(
+            ty,
+            structs,
+            enums,
+            &mut named,
+            &mut containers,
+            &mut arrays,
+            &mut atomics,
+        );
+    }
+    if named.is_empty() && containers.is_empty() && arrays.is_empty() && atomics.is_empty() {
+        return;
+    }
+    out.push('\n');
+    write_tags(
+        out,
+        structs.iter().filter(|s| named.contains(&s.name)),
+        enums.iter().filter(|e| named.contains(&e.name)),
+    );
+
+    // The sort is `generate`'s own: a container is emitted after the containers
+    // it contains, and every array gets its forward typedef first because a
+    // container may hold it behind a pointer.
+    containers.sort_by_key(|t| (container_depth(t), container_name(t)));
+    arrays.sort_by_key(|t| (container_depth(t), container_name(t)));
+    atomics.sort_by_key(|t| crate::types::ty_mangle(t));
+    if !containers.is_empty() || !arrays.is_empty() {
+        for ty in &arrays {
+            let name = container_name(ty);
+            writeln!(out, "typedef struct {name} {name};").unwrap();
+        }
+        out.push('\n');
+        for ty in &containers {
+            write_container_typedef(out, ty);
+        }
+        out.push('\n');
+    }
+    for ty in &atomics {
+        write_atomic_typedef(out, ty);
+    }
+    if !atomics.is_empty() {
+        out.push('\n');
+    }
+
+    let mut decls: Vec<(usize, Decl)> = structs
+        .iter()
+        .filter(|s| named.contains(&s.name))
+        .map(|s| (s.order, Decl::Record(s)))
+        .chain(
+            enums
+                .iter()
+                .filter(|e| named.contains(&e.name))
+                .map(|e| (e.order, Decl::Sum(e))),
+        )
+        .collect();
+    decls.sort_by_key(|(order, _)| *order);
+    // An empty derive set is what makes `write_struct`/`write_enum` write the
+    // typedef alone, which is the same call `generate` makes with its own sets.
+    let no_derives: HashSet<String> = HashSet::new();
+    let mut emitted_arrays: HashSet<Ty> = HashSet::new();
+    for (_, decl) in &decls {
+        for ty in decl.field_tys() {
+            emit_arrays_for(out, ty, &mut emitted_arrays, &no_derives);
+        }
+        match decl {
+            Decl::Record(s) => {
+                write_struct(out, s, &no_derives, &no_derives, &no_derives, &no_derives)
+            }
+            Decl::Sum(e) => write_enum(out, e, &no_derives, &no_derives, &no_derives, &no_derives),
+        }
+    }
+    if !decls.is_empty() {
+        out.push('\n');
+    }
+
+    // A map whose key is one of those `datac`s gets its entry body here, after
+    // the typedef that makes the key a complete C type, exactly where
+    // `generate` writes it.
+    for ty in &containers {
+        if let Ty::Map(key, value) = ty {
+            if matches!(**key, Ty::Struct(_)) {
+                write_map_entry_body(out, key, value);
+            }
+        }
+    }
+
+    // Every array the roots reach that no declaration pulled in earlier.
+    for ty in &arrays {
+        emit_arrays_for(out, ty, &mut emitted_arrays, &no_derives);
+    }
+}
+
+/// Every `datac` and `enum` name `ty` reaches, and every container, array and
+/// atomic instantiation on the way, for [`write_referenced_type_layouts`].
+///
+/// A `datac`'s fields and an `enum`'s payloads are walked because those are the
+/// positions a typedef has to be complete in, and the `named` set is what stops
+/// a type that reaches itself through a `Box` from being walked twice.
+fn collect_layout_tys(
+    ty: &Ty,
+    structs: &[StructDef],
+    enums: &[EnumDef],
+    named: &mut HashSet<String>,
+    containers: &mut Vec<Ty>,
+    arrays: &mut Vec<Ty>,
+    atomics: &mut Vec<Ty>,
+) {
+    match ty {
+        Ty::Struct(name) => {
+            if !named.insert(name.clone()) {
+                return;
+            }
+            if let Some(s) = structs.iter().find(|s| &s.name == name) {
+                for f in &s.fields {
+                    collect_layout_tys(&f.ty, structs, enums, named, containers, arrays, atomics);
+                }
+            }
+            if let Some(e) = enums.iter().find(|e| &e.name == name) {
+                for v in &e.variants {
+                    for f in &v.fields {
+                        collect_layout_tys(
+                            &f.ty, structs, enums, named, containers, arrays, atomics,
+                        );
+                    }
+                }
+            }
+        }
+        Ty::List(elem) | Ty::Box(elem) => {
+            if !containers.contains(ty) {
+                containers.push(ty.clone());
+            }
+            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics);
+        }
+        Ty::Map(key, value) => {
+            if !containers.contains(ty) {
+                containers.push(ty.clone());
+            }
+            collect_layout_tys(key, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(value, structs, enums, named, containers, arrays, atomics);
+        }
+        Ty::Closure { params, ret } => {
+            if !containers.contains(ty) {
+                containers.push(ty.clone());
+            }
+            for p in params {
+                collect_layout_tys(p, structs, enums, named, containers, arrays, atomics);
+            }
+            collect_layout_tys(ret, structs, enums, named, containers, arrays, atomics);
+        }
+        Ty::Array(elem, _) => {
+            if !arrays.contains(ty) {
+                arrays.push(ty.clone());
+            }
+            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics);
+        }
+        Ty::Atomic(elem) => {
+            if !atomics.contains(ty) {
+                atomics.push(ty.clone());
+            }
+            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics);
+        }
+        Ty::Ref { inner, .. } => {
+            collect_layout_tys(inner, structs, enums, named, containers, arrays, atomics)
+        }
+        Ty::Fn { params, ret } => {
+            for p in params {
+                collect_layout_tys(p, structs, enums, named, containers, arrays, atomics);
+            }
+            collect_layout_tys(ret, structs, enums, named, containers, arrays, atomics);
+        }
+        _ => {}
     }
 }
 

@@ -1981,12 +1981,15 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         // `thread.fence` (MK9-S3-M1 stage A2). Its key is module-qualified
         // rather than bare, because the function is reached through an import
         // (`thread.fence`) and not as a prelude name, and the shipped
-        // `std/thread` module declares nothing: a fence cannot be written in
-        // Kelp, and its ordering parameter is `std/atomic`'s enum, which an
-        // `extern fun` declaration would have to name across the C boundary the
-        // extern prelude repeats no Kelp `enum` across. The module's source
-        // documents the surface instead, exactly as `std/atomic` documents the
-        // atomic methods it does not declare.
+        // `std/thread` module declares nothing: a fence is one instruction on
+        // either side (`__atomic_thread_fence` in C, `fence seq_cst` in IR)
+        // with no C body to write, so the compiler lowers it and the module's
+        // source documents the surface instead, exactly as `std/atomic`
+        // documents the atomic methods it does not declare. (Stage A2 first
+        // tried this as an `extern fun fence(order: atomic.Ordering)` and
+        // BUG-kQ7Rv was the extern prelude having no typedef for the enum;
+        // that prelude now writes one, and this stays a builtin for the
+        // instruction reason above.)
         add(
             crate::stdlib::FENCE_FN,
             vec![("order".to_string(), atomic_order_ty())],

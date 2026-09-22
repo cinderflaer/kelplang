@@ -8144,24 +8144,28 @@ fn program_c_source(program: &Program) -> Option<String> {
          typedef struct { const char* ptr; size_t len; } kelp_View;\n",
     );
 
-    // A body whose signature names a monomorphized container needs that
-    // typedef (`process.spawn_raw`'s `List<String>`), and the C backend writes
-    // it with the same function. The set is collected from the signatures
-    // rather than from the whole program: a container the externs never name is
-    // not this file's business.
-    let mut containers: Vec<Ty> = Vec::new();
+    // A body whose signature names a Kelp type needs that type to exist in this
+    // file: the monomorphized containers and arrays it already repeated
+    // (`process.spawn_raw`'s `List<String>`), and now the `datac`s and `enum`s
+    // too (BUG-kQ7Rv: an `extern fun` naming `atomic.Ordering` had no typedef
+    // here, so `cc` refused the `struct_std__atomic__Ordering` the signature
+    // spelled). The C backend's own emitters write all of it, so the same body
+    // sees one layout here and in a generated program. The set is collected
+    // from the signatures rather than from the whole program: a type the externs
+    // never name is not this file's business.
+    let mut signature_tys: Vec<Ty> = Vec::new();
     for f in &externs {
-        collect_container_tys(&f.ret, &mut containers);
+        signature_tys.push(f.ret.clone());
         for (_, ty) in &f.params {
-            collect_container_tys(ty, &mut containers);
+            signature_tys.push(ty.clone());
         }
     }
-    if !containers.is_empty() {
-        out.push('\n');
-        for ty in &containers {
-            crate::codegen_c::write_container_typedef(&mut out, ty);
-        }
-    }
+    crate::codegen_c::write_referenced_type_layouts(
+        &mut out,
+        &program.structs,
+        &program.enums,
+        &signature_tys,
+    );
 
     // The runtime helpers and globals the bodies call and read, declared and
     // never defined here: the definitions are in the object `build.rs` compiles
@@ -8231,38 +8235,6 @@ fn program_c_source(program: &Program) -> Option<String> {
         out.push_str("\n#undef static\n");
     }
     Some(out)
-}
-
-/// Every container type a `tir` type names, outermost first.
-///
-/// Used by [`program_c_source`] to emit the container typedefs an extern
-/// signature names. It walks the type's own subterms because a `Box<List<T>>`
-/// names both typedefs, and it does not walk into a `datac` (an extern takes
-/// one by borrow, and the C body sees its forward-declared tag at most).
-fn collect_container_tys(ty: &Ty, out: &mut Vec<Ty>) {
-    match ty {
-        Ty::List(elem) | Ty::Box(elem) => {
-            if !out.contains(ty) {
-                out.push(ty.clone());
-            }
-            collect_container_tys(elem, out);
-        }
-        Ty::Map(key, value) => {
-            if !out.contains(ty) {
-                out.push(ty.clone());
-            }
-            collect_container_tys(key, out);
-            collect_container_tys(value, out);
-        }
-        Ty::Array(elem, _) => {
-            if !out.contains(ty) {
-                out.push(ty.clone());
-            }
-            collect_container_tys(elem, out);
-        }
-        Ty::Ref { inner, .. } => collect_container_tys(inner, out),
-        _ => {}
-    }
 }
 
 /// Whether a `tir` type is lowered to an LLVM aggregate rather than a scalar or
@@ -9286,5 +9258,261 @@ mod layout_tests {
         // integer and a pointer take none.
         assert!(!ir.contains("i64 zeroext"), "an i64 took zeroext:\n{ir}");
         assert!(!ir.contains("ptr zeroext"), "a pointer took zeroext:\n{ir}");
+    }
+
+    /// An `extern fun` body is C text compiled in its own file against the
+    /// prelude `program_c_source` emits (MK7 §3.2), so a signature that names a
+    /// Kelp `enum` or `datac` needs that type's typedef in the prelude: `cc`
+    /// refuses the declaration's own type otherwise (BUG-kQ7Rv, whose message
+    /// named `struct_std__atomic__Ordering`).
+    ///
+    /// The types are the one the bug was found with (`std.atomic.Ordering`)
+    /// plus the shapes that make the emission order matter: a `datac` in a
+    /// parameter, a payload-carrying `enum` whose payload is that `datac`, and
+    /// a `datac` that holds both an earlier `datac` and a container. The bodies
+    /// are shipped ones (`externs.rs`) whose statements never read a parameter,
+    /// so the signatures here are this test's own and the bodies still compile
+    /// beside them unchanged. `cc` is the judge: without the typedefs this text
+    /// does not compile.
+    #[test]
+    fn an_extern_signature_that_names_a_kelp_type_gets_its_typedef() {
+        use crate::types::{FieldDef, StructDef, VariantDef};
+
+        let field = |name: &str, ty: Ty| FieldDef {
+            name: name.to_string(),
+            ty,
+            mutable: false,
+        };
+        let order = crate::types::EnumDef {
+            name: "std.atomic.Ordering".to_string(),
+            variants: vec![VariantDef {
+                name: "SeqCst".to_string(),
+                fields: Vec::new(),
+            }],
+            order: 2,
+        };
+        // A payload-carrying variant whose payload is a `datac` declared
+        // before it, which is the order the merged declaration sequence has to
+        // keep.
+        let shape = crate::types::EnumDef {
+            name: "Shape".to_string(),
+            variants: vec![
+                VariantDef {
+                    name: "Dot".to_string(),
+                    fields: Vec::new(),
+                },
+                VariantDef {
+                    name: "Circle".to_string(),
+                    fields: vec![field("center", Ty::Struct("Point".to_string()))],
+                },
+            ],
+            order: 3,
+        };
+        let point = StructDef {
+            name: "Point".to_string(),
+            fields: vec![field("x", Ty::I32), field("y", Ty::I32)],
+            order: 0,
+        };
+        // A `datac` field names an earlier `datac` by value and a container by
+        // value, so the container typedef has to come before it.
+        let segment = StructDef {
+            name: "Segment".to_string(),
+            fields: vec![
+                field("head", Ty::Struct("Point".to_string())),
+                field("tags", Ty::List(Box::new(Ty::String))),
+            ],
+            order: 1,
+        };
+
+        let extern_fn = |name: &str, module: &str, params: Vec<(String, Ty)>, ret: Ty| Function {
+            name: name.to_string(),
+            params,
+            ret,
+            body: Block {
+                stmts: Vec::new(),
+                tail: None,
+            },
+            span: Span::new(0, 0),
+            module: module.to_string(),
+            extern_: true,
+            env: None,
+        };
+        let program = Program {
+            structs: vec![point, segment],
+            enums: vec![order, shape],
+            pds: Vec::new(),
+            functions: vec![
+                // The bug's own shape: an `enum` in the parameter list.
+                extern_fn(
+                    "std.time.now_unix_raw",
+                    "std/time",
+                    vec![(
+                        "order".to_string(),
+                        Ty::Struct("std.atomic.Ordering".to_string()),
+                    )],
+                    Ty::I64,
+                ),
+                // A `datac` by value, a payload-carrying `enum` by value, and
+                // a `datac` behind a borrow.
+                extern_fn(
+                    "std.rand.u64_raw",
+                    "std/rand",
+                    vec![
+                        ("point".to_string(), Ty::Struct("Point".to_string())),
+                        ("shape".to_string(), Ty::Struct("Shape".to_string())),
+                        (
+                            "segment".to_string(),
+                            Ty::Ref {
+                                mutable: false,
+                                inner: Box::new(Ty::Struct("Segment".to_string())),
+                            },
+                        ),
+                    ],
+                    Ty::U64,
+                ),
+            ],
+            caps: Vec::new(),
+            gated: Default::default(),
+        };
+        let source = program_c_source(&program).expect("two extern funs are two bodies");
+
+        // Every typedef the declaration's own C text needs, by the name the
+        // bug's message spelled.
+        for want in [
+            "typedef struct tag_std__atomic__Ordering {",
+            "} kelp_v_SeqCst;",
+            "} struct_std__atomic__Ordering;",
+            "typedef struct tag_Shape {",
+            "} kelp_v_Circle;",
+            "struct_Point kelp_center;",
+            "} struct_Shape;",
+            "typedef struct tag_Point {",
+            "int32_t kelp_x;",
+            "} struct_Point;",
+            "typedef struct tag_Segment {",
+            "struct_Point kelp_head;",
+            "kelp_List__String kelp_tags;",
+            "} struct_Segment;",
+            // The container the `datac` field holds by value, emitted with the
+            // C backend's own `write_container_typedef`.
+            "} kelp_List__String;",
+            // The tags, so a container typedef emitted before a `datac` can
+            // hold a pointer to it.
+            "struct tag_Point;",
+            "struct tag_Segment;",
+            "struct tag_Shape;",
+            "struct tag_std__atomic__Ordering;",
+            // The declaration whose type had no name before the fix.
+            "int64_t kelp_std__time__now_unix_raw(struct_std__atomic__Ordering kelp_order) {",
+        ] {
+            assert!(
+                source.contains(want),
+                "the extern prelude does not declare '{want}':\n{source}"
+            );
+        }
+        // The declaration order is the topological one: the payload of
+        // `Shape`'s `Circle` is a `Point` held by value, so `Point`'s typedef
+        // has to be complete first.
+        let point_at = source.find("} struct_Point;").expect("the datac typedef");
+        let shape_at = source.find("} struct_Shape;").expect("the enum typedef");
+        assert!(
+            point_at < shape_at,
+            "the `enum` was declared before the `datac` its payload holds:\n{source}"
+        );
+
+        let dir = std::env::temp_dir().join(format!(
+            "kelp_extern_types_{}_{}",
+            std::process::id(),
+            program.structs.len() + program.enums.len()
+        ));
+        std::fs::create_dir_all(&dir).expect("a scratch directory for the prelude");
+        if let Err(e) = crate::driver::compile_c_object(
+            &source,
+            &dir.join("types.externs.c"),
+            &dir.join("types.externs.o"),
+            crate::opt::OptLevel::DEFAULT,
+        ) {
+            panic!(
+                "the extern prelude a signature naming these types needs does not \
+                 compile: {}",
+                e.message
+            );
+        }
+    }
+
+    /// The return position of an `extern fun` signature names a Kelp type the
+    /// same way a parameter does, and `program_c_source` collects `f.ret`
+    /// beside the parameters, so the type's typedef has to come out for a
+    /// return that no parameter names (BUG-kQ7Rv covered the parameter half).
+    ///
+    /// The body is not built here, which is why this half asserts the emitted
+    /// text rather than compiling it: an `extern fun` body is C text written
+    /// for its own declaration, and no shipped body returns a `datac`.
+    #[test]
+    fn an_extern_return_that_names_a_kelp_type_gets_its_typedef() {
+        use crate::types::{FieldDef, StructDef, VariantDef};
+
+        // Declared the other way round on purpose: `Shape` is declared after
+        // `Point`, so its typedef can only be emitted after the walk reached
+        // it through the field `Point` holds.
+        let point = StructDef {
+            name: "Point".to_string(),
+            fields: vec![FieldDef {
+                name: "shape".to_string(),
+                ty: Ty::Struct("Shape".to_string()),
+                mutable: false,
+            }],
+            order: 1,
+        };
+        let shape = crate::types::EnumDef {
+            name: "Shape".to_string(),
+            variants: vec![VariantDef {
+                name: "Dot".to_string(),
+                fields: Vec::new(),
+            }],
+            order: 0,
+        };
+        let program = Program {
+            structs: vec![point],
+            enums: vec![shape],
+            pds: Vec::new(),
+            functions: vec![Function {
+                name: "std.time.now_mono_ns_raw".to_string(),
+                params: Vec::new(),
+                ret: Ty::Struct("Point".to_string()),
+                body: Block {
+                    stmts: Vec::new(),
+                    tail: None,
+                },
+                span: Span::new(0, 0),
+                module: "std/time".to_string(),
+                extern_: true,
+                env: None,
+            }],
+            caps: Vec::new(),
+            gated: Default::default(),
+        };
+        let source = program_c_source(&program).expect("one extern fun is one body");
+
+        for want in [
+            // The type the return position spells.
+            "} struct_Point;",
+            // Reached only through that type's field, so the walk into a
+            // `datac`'s fields is what puts it there.
+            "} struct_Shape;",
+            // The declaration that had no type to name before the fix.
+            "struct_Point kelp_std__time__now_mono_ns_raw(void) {",
+        ] {
+            assert!(
+                source.contains(want),
+                "the extern prelude does not declare '{want}':\n{source}"
+            );
+        }
+        let shape_at = source.find("} struct_Shape;").expect("the enum typedef");
+        let point_at = source.find("} struct_Point;").expect("the datac typedef");
+        assert!(
+            shape_at < point_at,
+            "the `enum` a `datac` field names by value was declared after it:\n{source}"
+        );
     }
 }

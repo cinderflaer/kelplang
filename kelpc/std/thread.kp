@@ -6,9 +6,10 @@
 
    The fence, and the module's surface is documented here rather than declared,
    exactly as `std/atomic` documents the atomic methods it declares nowhere: a
-   fence cannot be written in Kelp, so the compiler lowers it, and the parameter
-   type is `std/atomic`'s `Ordering`, which a declaration would have to name
-   across a C boundary that repeats no Kelp `enum`.
+   fence is one instruction on either side (`__atomic_thread_fence` in C,
+   `fence seq_cst` in IR), so it needs no C body and the compiler lowers it. Its
+   parameter type is `std/atomic`'s `Ordering`, named the way any other enum is
+   (`BUG-kQ7Rv` was the backend prelude having no typedef for it; it does now).
 
    The fence has no cell and no receiver. `SeqCst` means one total order over
    every sequentially consistent operation, and a fence is the one operation
