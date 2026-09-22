@@ -6101,7 +6101,7 @@ fn check_fn_literal(
             if !ty.is_copy() {
                 return Err(TypeError {
                     message: format!(
-                        "cannot capture '{name}' into this literal: it belongs to the enclosing closure's environment, and moving it out of there is a partial move (v1 has no partial-move rule) — capture an owned value from the frame that owns it, or copy a `Copy` one"
+                        "cannot capture '{name}' into this literal: it belongs to the enclosing closure's environment, which is not a local this frame owns, so there is no owned place to move it out of; capture an owned value from the frame that owns it, or copy a `Copy` one"
                     ),
                     span,
                 });
@@ -6452,7 +6452,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     if ctx.field_of(owner, name).is_some() {
                         return Err(TypeError {
                             message: format!(
-                                "a 'fun' literal cannot capture '{name}': it is a field of '{owner}', and reading a field out of a borrowed receiver by value is a partial move (v1 has no partial-move rule) — bind a `Copy` field to a local first (`val {name}0 = {name}`) and capture that, or take the whole receiver as a 'move' parameter"
+                                "a 'fun' literal cannot capture '{name}': it is a field of '{owner}', and the receiver is a borrow, so its field is not this frame's to move out; bind a `Copy` field to a local first (`val {name}0 = {name}`) and capture that, or take the whole receiver as a 'move' parameter"
                             ),
                             span: *span,
                         });
@@ -7850,10 +7850,10 @@ fn check_when(
                 let (ty, init) = if f.ty.is_copy() {
                     (f.ty.clone(), field)
                 } else {
-                    // An owned payload binds as a shared borrow: v1 has no
-                    // partial moves, so a payload can never be moved out of
-                    // the scrutinee — the same rule `List.get` follows for an
-                    // owned element.
+                    // An owned payload binds as a shared borrow: moving it out
+                    // by value would be a partial move of the scrutinee, and the
+                    // partial-move rule covers one field read directly off an
+                    // owned local, not a payload reached through a `when` arm.
                     let ty = Ty::Ref {
                         mutable: false,
                         inner: Box::new(f.ty.clone()),

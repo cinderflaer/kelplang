@@ -5,8 +5,9 @@
 //! Rule: primitives (and `&str`, which has no owned-string type to move —
 //! it's just a borrowed pointer) are `Copy`; `datac` values are not. A bare
 //! `Ident` read of a non-Copy value moves it out of its binding; a `.field`
-//! read walks through a place chain without consuming anything, since
-//! there's no way to move a single field out in v1's grammar.
+//! read walks through a place chain without consuming anything, except the one
+//! case A-11 added: a field read directly off an owned local is a partial move,
+//! which takes that field out and clears the slot it held.
 //!
 //! ## Borrowing (M4)
 //!
@@ -1501,7 +1502,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                             tir_root_ident(base).unwrap_or("a borrow")
                         ),
                         _ => format!(
-                            "cannot read the owned field '{field}' by value: the base is not a local this frame owns, so there is no partial move to take here; use it through a borrow (pass it to a parameter, call a method on it) or hold it in a 'Box' and 'take()' it"
+                            "cannot read the owned field '{field}' by value: the base is not a local this frame owns, so a partial move cannot take the field out; use it through a borrow (pass it to a parameter, call a method on it) or hold it in a 'Box' and 'take()' it"
                         ),
                     };
                     return Err(BorrowError { message, span: expr.span });
@@ -1630,10 +1631,11 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
         }
         // Reading the tag is a read of the place, not a move of the value.
         tir::ExprKind::EnumTag { expr: base, .. } => check_place_through(base, ctx),
-        // A payload read is a *place* read, and it obeys the same
-        // no-partial-moves rule as an owned datac field: an owned payload
-        // cannot be read by value, only borrowed (which is what the `when`
-        // lowering does).
+        // A payload read is a *place* read, and moving an owned payload out is
+        // not a partial move the checker plans: one covers a field read
+        // directly off an owned local, and a payload is reached through a
+        // `when` arm instead. So an owned payload cannot be read by value, only
+        // borrowed (which is what the `when` lowering does).
         tir::ExprKind::EnumField { base, .. } => {
             check_place_through(base, ctx)?;
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {

@@ -235,7 +235,7 @@ fun Response.is_ok().R: bool = status >= 200 && status < 300
 
 // The body as owned text. Panics: if the bytes are not valid utf-8
 // (`String.from_bytes` validates). The body is cloned first because the
-// response is borrowed here, and v1 has no partial moves to take a field out.
+// response is borrowed here, and a field of a borrow cannot be moved out.
 fun Response.text().R: String = String.from_bytes(body.clone())
 
 // ----- request text -----
@@ -601,11 +601,11 @@ fun wants_close(hs: List<Header>).R: bool {
 
 // One whole response off one socket: header block, framing decision, body.
 //
-// Everything is a local because v1 has no partial moves — a helper that
-// returned `(status, headers, cursor)` would have to be destructured to be
-// used, and there is no destructuring. So the framing lives in `Cursor`'s
-// methods and the parsing lives in the helpers above, while the assembly of
-// the `Response` happens here, where every piece is still a plain binding.
+// Everything is a local because there is no destructuring: a helper that
+// returned `(status, headers, cursor)` would have to be taken apart to be
+// used, and no syntax does that. So the framing lives in `Cursor`'s methods
+// and the parsing lives in the helpers above, while the assembly of the
+// `Response` happens here, where every piece is still a plain binding.
 //
 // Panics: on a peer that closes early, a malformed status line, a
 // non-numeric `Content-Length`, a malformed chunk, or a read failure.
@@ -708,11 +708,9 @@ fun absolute_url(base: Url, loc: &str).R: String {
 // no `Result` to report it with.
 // Where a redirect chain goes next, or an empty string for "do not follow".
 //
-// The URL is *returned by a call* (`absolute_url`) rather than read out of a
-// `datac` field, and that is deliberate: v1 has no partial moves, so a field of
-// a local struct cannot be moved out — `Next(url = target.url)` and
-// `return target.url` are both errors. A helper that returns a freshly built
-// value sidesteps the question entirely.
+// The next URL is *returned by a call* (`absolute_url`) rather than carried in
+// a `datac`, so the join rule lives in one place and every caller gets a
+// freshly built value.
 //
 // Panics: if the chain is longer than the client allows.
 fun follow_url(client: Client, base: Url, resp: Response, hops: i32).R: String {

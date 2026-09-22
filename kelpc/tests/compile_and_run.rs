@@ -2549,6 +2549,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "partial_move_field",
         "partial_move_conditional",
         "partial_move_reassign",
+        "partial_move_move_param",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -3061,6 +3062,18 @@ fn a_field_is_owned_again_after_a_fresh_value_is_assigned_to_it() {
     assert_compiles_and_runs(
         "tests/fixtures/partial_move_reassign.kp",
         "1\n2\n",
+    );
+}
+
+#[test]
+fn a_move_parameter_is_an_owned_local_for_a_partial_move() {
+    // A `move` parameter owns what it was handed, so reading an owned field
+    // out of it by value takes the field out the same way a `val` binding
+    // does. The callee frees the fields that stayed, so a double free of the
+    // moved buffer fails here and under valgrind.
+    assert_compiles_and_runs(
+        "tests/fixtures/partial_move_move_param.kp",
+        "taken\n1\n",
     );
 }
 

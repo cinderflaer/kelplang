@@ -1,0 +1,21 @@
+// A-11: a `move` parameter is an ordinary owned local in the callee, so
+// reading one of its owned fields by value takes that field out exactly as it
+// does from a `val` binding. The frame frees the fields that stayed and
+// nothing where the moved value now lives, so a double free of the moved
+// buffer fails AddressSanitizer and valgrind.
+datac Bag(val name: String, val xs: List<i32>)
+
+fun take_name(b: move Bag).R: String = b.name
+
+fun take_count(b: move Bag).R: usize {
+    val xs = b.xs
+    return xs.len()
+}
+
+fun main() {
+    val b = Bag(name = String.from_str("taken"), xs = List.of(1))
+    print(take_name(b))
+
+    val c = Bag(name = String.from_str("kept"), xs = List.of(4))
+    print(take_count(c))
+}

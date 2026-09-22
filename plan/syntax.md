@@ -805,7 +805,7 @@ A capture is **move-only**, and `Copy` is what decides what that means:
 - An owned binding (`String`, `Bytes`, `List`, `Box`, `Map`, a `datac`/`enum`, another closure) is *moved* into the environment; the enclosing binding is gone from that point on, exactly as after `val b = a`.
 - A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead.
 
-Inside the body a capture is read *through a borrow of the environment*, so an owned capture can be used in place — a method called on it, a field read, passed to a parameter — but cannot be handed out by value. That is 9's no-partial-moves rule, and the message says so.
+Inside the body a capture is read *through a borrow of the environment*, so an owned capture can be used in place — a method called on it, a field read, passed to a parameter — but cannot be handed out by value. That is a move out of a place this frame does not own, which 9 refuses, and the message says so.
 
 A closure **owns** its environment and frees it where the closure dies: the end of the block that holds it, an early `return`, one per loop iteration. So a closure may outlive the frame that made it (that is the point), and nothing it captured may be a borrow.
 
@@ -824,11 +824,11 @@ What a literal still cannot do:
 
 - **Read a passdown.** A passdown is a hidden argument of the function that names it, and a closure's generated function has no room for one. Pass the value as a parameter, or capture it.
 - **Return a borrow.** The elision rule that says which argument a borrow comes from has nowhere to be written for a value called through a pointer.
-- **Capture a field of the receiver it was written in.** Reading a field out of a borrowed receiver by value is a partial move (9): bind a `Copy` field to a local first, or take the whole receiver as a `move` parameter.
+- **Capture a field of the receiver it was written in.** Reading a field out of a borrowed receiver by value is a move out of a borrow, refused (9): bind a `Copy` field to a local first, or take the whole receiver as a `move` parameter.
 - **Be a `List` or `Map` element.** A closure owns its environment and those elements are held inline; a `Box<closure(...)>` (the optional-callback shape) or a one-field `datac` holds it instead.
 - **Be borrowed with `&`.** A closure is an owned value, so a parameter of its type already borrows it and `move closure(...)` takes it over.
 
-A literal nested in another literal can copy a `Copy` capture out of the enclosing closure's environment. An owned one cannot be *moved* out of it — that is the same partial move.
+A literal nested in another literal can copy a `Copy` capture out of the enclosing closure's environment. An owned one cannot be *moved* out of it: the environment is not a local of this frame, and a partial move needs a local the frame owns.
 
 Rules and limits of this phase:
 
@@ -899,7 +899,7 @@ var c = Counter(id = 1, count = 0)
 c.count = 5              // ok: field is var and c is a var binding
 ```
 
-Reading an owned field *by value* is refused, because the language has no partial moves: `let s = node.text` would produce two owners of the same buffer. Borrow it instead (pass it to a parameter, call a method on it), or store it in a `Box` and `take()` it out.
+Reading an owned field *by value* out of an owned place **moves the field out**: `val s = node.text` takes the field's value and clears the slot it held, so `node` still owns the fields that stayed, and its end-of-scope drop frees those and nothing where the moved value now lives. The owned place is a `val`/`var` binding or a `move` parameter, with the field read directly off it. Reading the moved field again, moving the same field twice, and using `node` as a whole are each an error; reading the field by value out of a *borrow* is refused too, because the borrowed value still owns it. Take it through a borrow (pass it to a parameter, call a method on it), or hold it in a `Box` and `take()` it out.
 
 `datac` values are dropped at the end of the owning scope, fields recursively, in the order that frees what each field points at.
 
@@ -1914,7 +1914,7 @@ val len = option.map(o = text, f = fun(s: &String).R: usize = s.len())
 val shout = option.map(o = text, f = fun(s: &String).R = str.to_upper(s.as_str()))
 ```
 
-What is still offered for a **`Copy` payload only** is anything that hands the payload *out by value*: `unwrap_or`, `unwrap`, and `or_else` (which rebuilds `Some` from the payload it was handed). That is not a missing function but a missing *rule*: reading an owned payload out of an enum is a partial move, which v1 does not have (see 17), and a `move` parameter does not lift it — the payload would still have to move out of the enum. A program with an owned payload reads it with `if let`/`when`, which borrows it.
+What is still offered for a **`Copy` payload only** is anything that hands the payload *out by value*: `unwrap_or`, `unwrap`, and `or_else` (which rebuilds `Some` from the payload it was handed). That is not a missing function but a missing *rule*: the payload is read out of a borrow, and a partial move covers one field of an owned local, not a payload of a borrowed enum (see 17). A `move` parameter does not lift it either, because the payload would still have to move out of the enum. A program with an owned payload reads it with `if let`/`when`, which borrows it.
 
 ### 16.14 `std/result`
 
@@ -1939,7 +1939,7 @@ fun each<T, E>(r: &Result<T, E>, f: closure(&T))
 
 `Ok`/`Err` is the shape that carries a reason, and `?` requires the operand's failure payload type and the enclosing function's to be *identical* — there is no error conversion, which is where a trait (or a `From`-shaped builtin) would go.
 
-The `Copy` requirements here are on the *other* side of the result: the arm that has to **rebuild** a variant takes a copy (so `map` needs a `Copy` error and `map_err` a `Copy` success). That is the consequential one in practice, because a `datac` is never `Copy`: `result.map` over a `Result<T, MyErr>` needs the partial-move rule 17 lists, and until then the error type has to be an integer or another scalar. When an instantiation fails there, the diagnostic points inside `std/result.kp` and says that the helper is written for a `Copy` payload.
+The `Copy` requirements here are on the *other* side of the result: the arm that has to **rebuild** a variant takes a copy (so `map` needs a `Copy` error and `map_err` a `Copy` success). That is the consequential one in practice, because a `datac` is never `Copy`: `result.map` over a `Result<T, MyErr>` needs to move the error payload out of a borrow, which 17 records as still refused, and until then the error type has to be an integer or another scalar. When an instantiation fails there, the diagnostic points inside `std/result.kp` and says that the helper is written for a `Copy` payload.
 
 ### 16.15 `std/list`
 
@@ -1963,7 +1963,7 @@ val lens = list.map(xs = names, f = fun(s: &String).R: usize = s.len())
 print(names.len())                       // still owned here
 ```
 
-`filter` is the exception, and for the same reason `or_else` is: an accepted element is read *out* of the list by value, which is the partial move v1 does not have. `list.filter` over `List<String>` is a compile error saying so; `find_index`/`any`/`all` cover the predicates that only need to know *which* one, and a `Copy` element type filters directly.
+`filter` is the exception, and for the same reason `or_else` is: an accepted element is read *out* of the borrowed list by value, which is a move out of a borrow, refused (17). `list.filter` over `List<String>` is a compile error saying so; `find_index`/`any`/`all` cover the predicates that only need to know *which* one, and a `Copy` element type filters directly.
 
 ## 17. Limits in v1
 
@@ -1974,7 +1974,7 @@ These are deliberate, and each one has a workaround in this document:
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
 - A `Map` key must be `String`, an integer or `bool` (12.2): the compiler generates the key's hash and its equality, and a key type of your own would need a trait or a comparator function, neither of which exists.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
-- No partial moves: an owned field cannot be read out of a borrowed structure (9), and an owned `enum` payload cannot be read out of an owned one either, so move it with `Box.take` or pass a borrow. This is what makes the `Copy`-only helpers in 16.13/16.14/16.15 `Copy`-only: `option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, and `list.filter` over a `List<String>` each need a move out that does not exist yet.
+- Partial moves cover one field of an owned local: reading an owned field by value out of a `val`/`var` binding or a `move` parameter moves it out (9), but a field read out of a borrowed structure or out of a nested place is still refused, and an owned `enum` payload cannot be read out of the enum either, so move it with `Box.take` or pass a borrow. This is what keeps the helpers in 16.13/16.14/16.15 `Copy`-only: `option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`, and `list.filter` over a `List<String>` each read a value out of a borrow, which is refused.
 - No references -- and no `View` -- in fields, `List` elements, `Map` values or `Box` contents. `str` and `View` are borrows, so text that must be stored is a `String`; a view is taken at the point of use (11.5).
 - A `View` never becomes a `str`: a slice has no NUL after it, so `str.len`/`str.eq`/`%s` on one would read past the slice. Take `v.to_string()` when you need owned text, and keep `str` and `View` apart otherwise.
 - No `str.eq`/`==` on a `View`; `str.eq` takes a `str`, so compare two views with `view.eq(other)`.
@@ -1987,7 +1987,7 @@ These are deliberate, and each one has a workaround in this document:
 - Compile-time evaluation is the language's own operators plus calls to plain `fun`s. There is no `comptime` block, no compile-time `List`/`Map`, no `size_of`/`align_of`, and a `const` cannot read a `pd` or call anything `extern`-backed.
 - Function values (7.4) are declared functions, `fun` literals, and closures: a literal becomes a closure when it names a binding from the enclosing scope, captures are **move-only** (a `Copy` binding is copied, an owned one is moved), and a borrow cannot be captured at all. A function value cannot be called as the result of another call (`f()(x)`) — bind it first.
 - A function value cannot be a container element or the return type of a function *type*, a function that reads a passdown is not a value, and a closure cannot be a `List`/`Map` element (a `Box` or a one-field `datac` holds it).
-- A closure's captures are read out of its environment through a borrow, so an owned capture cannot be handed out by value (9's no-partial-moves rule). Its environment is dropped where the closure dies, so a closure cannot outlive anything it captured — which is why a borrow can never be a capture.
+- A closure's captures are read out of its environment through a borrow, so an owned capture cannot be handed out by value (9's partial-move rule: the environment is not a local this frame owns). Its environment is dropped where the closure dies, so a closure cannot outlive anything it captured — which is why a borrow can never be a capture.
 - A nested literal can copy a `Copy` capture out of the enclosing closure's environment, but not move an owned one out of it.
 - `kelpc run` cannot pass arguments to the program, so a program that reads `argv` is tested through `coral run -- <args>` or the built binary.
 - Capability patterns are static text: they cannot be computed, narrowed or revoked at runtime.
@@ -2012,7 +2012,9 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `this is a borrow of a borrow` (with the operand named) | a parameter is already a borrow (§10.2), so `&o` on one makes two: pass the parameter itself, `o` |
 | `cannot borrow a temporary value` | `&expr` needs a place, and a call's result is not one, nor is a field of one (`&mkName().name`); bind the call to a `val` and borrow the field of that (§10.2). A chain that *steps through* a borrow is a place and needs neither: `&headers.get(i).name` is durable |
 | `operator requires matching numeric operands, found 'mut i64' and 'i32'` with the `write '*sink'` note | a `mut T` parameter is a borrow: read and write it through `*`, the same rule as §10's `*pos` |
-| `cannot read the owned field 'name' by value: v1 has no partial moves` | pass a borrow, or hold the field in a `Box` and `take()` it |
+| `cannot move the field 'name' out of 'l': the value is borrowed` | a partial move needs an owned place, a `val`/`var` binding or a `move` parameter; use the field through the borrow, or hold it in a `Box` and `take()` it (9, 22.2) |
+| `cannot read the owned field 'name' by value: the base is not a local this frame owns` | the field is read through a nested place or another base that is not an owned local; only a field read directly off an owned local moves out (9, 22.2) |
+| `cannot use 'bag' as a whole value: its field 'xs' was moved out` | a field was read out by value; put a fresh value back in the field, or use only the fields that stayed (9, 22.2) |
 | `this call returns a borrow of its parameter 'self', so that argument has to be a variable or a field` | bind the receiver first, then borrow from the binding; a field of a returned `datac` (`mkName().name.as_str()`) is the same case one projection deeper (§10.2) |
 | `argument 'b' has type 'String', expected 'str'` | the parameter is `str` and the value is owned: `str.eq(a, b)`, `fs.write_text`, `path.join` and every other `str` parameter need a view — add `.as_str()` |
 | `argument 'c' has type 'char', expected 'u8'` (with the note about writing the type) | a character literal with nothing asking for a type is a `char`, and a `char` is not an integer; write the type (`val c: u8 = '"'`) or use the byte literal, which is a `u8` by construction (`b'"'`, §2.4) |
@@ -2306,19 +2308,23 @@ Three ways out, in the order to try them:
 2. **Copy the text.** `val b = a.clone()` copies the buffer, so both `a` and `b` own one.
 3. **Reorder.** Do the last use last.
 
-The related rule is **no partial moves**: you cannot read an owned field out of a borrowed structure, because that would hand out a second owner of the same buffer.
+The related rule is **partial moves**: reading an owned field *by value* out of an owned place moves the field out and clears the slot it held. The owned place is a `val`/`var` binding or a `move` parameter, and the field is read directly off it. Reading the same field again, moving it twice, reading a field out of a *borrow*, and using the base as a whole are each refused.
 
 ```kelp
 datac Line(val text: String, val n: usize)
 
 fun use_line(l: Line) {
-    print(l.text)             // error: cannot read the owned field 'text' by value
+    val s = l.text            // error: cannot move the field 'text' out of 'l': the value is borrowed
     print(l.text.as_str())    // fine: a view of the field
     print(l.n)                // fine: `usize` is Copy
 }
+
+fun take_line(l: move Line).R: String {
+    return l.text             // fine: `l` is an owned local, so the field moves out
+}
 ```
 
-To *take* an owned field, hold it in a `Box` and `take()` it. A `move` parameter does not lift this rule: it owns the whole value, but reading a field out of it by value is still the partial move the rule refuses.
+To *take* an owned field out of a value the frame does not own, hold it in a `Box` and `take()` it. A `move` parameter is an ordinary owned local in the callee, so reading a field out of it by value is the same partial move a `val` binding allows, while the borrowed `Line` above is refused because the field is not this frame's to give away.
 
 ### 22.3 Scanning text: `View` plus a cursor
 
