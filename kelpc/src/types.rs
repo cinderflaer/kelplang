@@ -925,8 +925,17 @@ pub fn struct_tag(name: &str) -> String {
 /// collision-proof against a hand-written `shapes__circle__Circle` (nothing
 /// can be, short of a real mangling scheme), but low-risk and simple, same
 /// tradeoff as the pre-M5 `#`-only version.
+///
+/// BUG-zR8Wm: a module's id is its file stem, so a file named `we"ird.kp`
+/// reaches here with the quote in it, and the capability array symbol the
+/// backends spell from that name (`kelp_caps_we"ird_fs`) was not a C
+/// identifier, so `cc` refused the whole build. Every byte the mappings above
+/// leave alone is therefore outside `[A-Za-z0-9_]`, and the final sweep
+/// spells each one as `__x` and its two hex digits: legal, fixed width, and
+/// distinct per byte.
 pub fn c_ident(name: &str) -> String {
-    name.replace('.', "__")
+    let mapped = name
+        .replace('.', "__")
         .replace('#', "__")
         .replace('@', "__ov_")
         .replace(',', "_")
@@ -939,7 +948,24 @@ pub fn c_ident(name: &str) -> String {
         .replace('(', "__lp__")
         .replace(')', "__rp__")
         .replace(':', "__c__")
-        .replace(' ', "")
+        .replace(' ', "");
+    if mapped.bytes().all(is_ident_byte) {
+        return mapped;
+    }
+    let mut out = String::with_capacity(mapped.len() + 4);
+    for b in mapped.bytes() {
+        if is_ident_byte(b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("__x{b:02x}"));
+        }
+    }
+    out
+}
+
+/// Whether one byte may stand in a C identifier as itself.
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 /// Whether `ty` is a *borrowed* type in the sense that matters for a `datac`
@@ -1016,5 +1042,42 @@ impl EnumDef {
 impl StructDef {
     pub fn field(&self, name: &str) -> Option<&FieldDef> {
         self.fields.iter().find(|f| f.name == name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every mangling the backends already depend on survives, because the
+    /// symbols of a released build are spelled with them.
+    #[test]
+    fn the_existing_mappings_are_unchanged() {
+        assert_eq!(c_ident("shapes.circle.Circle"), "shapes__circle__Circle");
+        assert_eq!(c_ident("Type#name"), "Type__name");
+        assert_eq!(c_ident("len@i32"), "len__ov_i32");
+        assert_eq!(c_ident("Pair<i32, String>"), "Pair__l__i32_String__g__");
+        assert_eq!(
+            c_ident("Holder<fun(i32).R: i32>"),
+            "Holder__l__fun__lp__i32__rp____R__c__i32__g__"
+        );
+    }
+
+    /// BUG-zR8Wm: a module name is a file stem, and a file stem may hold any
+    /// byte but `/` and NUL, so the result has to be a C identifier for a name
+    /// no mapping above names. A byte outside `[A-Za-z0-9_]` gets its own
+    /// spelling, and two different bytes never share one.
+    #[test]
+    fn a_name_outside_the_mappings_comes_out_a_c_identifier() {
+        assert_eq!(c_ident("we\"ird"), "we__x22ird");
+        assert_eq!(c_ident("we\\ird"), "we__x5cird");
+        assert_ne!(c_ident("we\"ird"), c_ident("we\\ird"));
+        for name in ["we\"ird", "we\\ird", "wéird", "a!b", "semi;colon", "[x]"] {
+            assert!(
+                c_ident(name).bytes().all(is_ident_byte),
+                "{name:?} mangled to {:?}",
+                c_ident(name)
+            );
+        }
     }
 }
