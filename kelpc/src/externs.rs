@@ -254,6 +254,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/fs",
+        "metadata_raw",
+        "    struct stat st;\n    if (stat(kelp_path, &st) != 0) {\n        kelp_panic_errno(\"fs.metadata: cannot stat file\");\n    }\n    *kelp_size = (uint64_t)st.st_size;\n    *kelp_mtime = (int64_t)st.st_mtime;\n    *kelp_mode = (uint32_t)(st.st_mode & 07777);\n    *kelp_is_dir = S_ISDIR(st.st_mode);\n    *kelp_is_file = S_ISREG(st.st_mode);\n",
+    ),
+    (
+        "std/fs",
         "is_symlink_raw",
         "    struct stat st;\n    return lstat(kelp_path, &st) == 0 && S_ISLNK(st.st_mode);\n",
     ),

@@ -47,6 +47,9 @@ extern fun touch_raw(path: &str)
 extern fun temp_path_raw(prefix: &str).R: String
 extern fun mtime_raw(path: &str).R: i64
 extern fun mode_raw(path: &str).R: u32
+// `stat` once, into out-parameters: an `extern` returns one value and a
+// `datac`-returning body would have to name the generated C struct.
+extern fun metadata_raw(path: &str, size: mut u64, mtime: mut i64, mode: mut u32, is_dir: mut bool, is_file: mut bool)
 extern fun is_symlink_raw(path: &str).R: bool
 extern fun read_link_raw(path: &str).R: String
 extern fun cwd_raw().R: String
@@ -366,15 +369,16 @@ fun read_lines(path: &str).R: List<String> {
 // Panics: if the file cannot be created.
 fun temp_path(prefix: &str).R: String = temp_path_raw(prefix)
 
-// Each field of `Metadata` is its own `stat`, because v1's `extern` returns
-// one value and a `datac`-returning body would have to name the generated
-// struct; five `stat` calls for one `metadata` is the accepted cost.
+// The whole of `Metadata` from one `stat`, so a walk that measures every entry
+// pays one syscall per entry rather than the five this used to charge.
 //
 // Panics: if the path cannot be stat-ed.
-fun metadata(path: &str).R: Metadata = Metadata(
-    size = size_raw(path),
-    mtime = mtime_raw(path),
-    mode = mode_raw(path),
-    is_dir = is_dir_raw(path),
-    is_file = is_file_raw(path),
-)
+fun metadata(path: &str).R: Metadata {
+    var size: u64 = 0
+    var mtime: i64 = 0
+    var mode: u32 = 0
+    var is_dir: bool = false
+    var is_file: bool = false
+    metadata_raw(path, &mut size, &mut mtime, &mut mode, &mut is_dir, &mut is_file)
+    return Metadata(size = size, mtime = mtime, mode = mode, is_dir = is_dir, is_file = is_file)
+}
