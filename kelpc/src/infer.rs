@@ -2592,6 +2592,65 @@ fn char_fits(cp: u32, ty: &Ty) -> bool {
     }
 }
 
+/// The type an integer literal takes, and whether that is the `i32` a literal
+/// falls back to when nothing determines one (syntax.md 2.4) rather than a
+/// type its context supplied. `check_expr_inner` and the constant evaluator
+/// have to answer this the same way, because both refuse an out-of-range
+/// literal and the refusal says which of the two applied.
+fn int_lit_ty(expected: Option<&Ty>) -> (Ty, bool) {
+    match expected {
+        Some(t) if t.is_integer() => (t.clone(), false),
+        _ => (Ty::I32, true),
+    }
+}
+
+/// The narrowest integer type that holds `value`, for the repair line of a
+/// literal that does not fit the type it landed on. Every value the lexer
+/// yields is within `i64`'s range, and a sign only adds the minimum, so this
+/// always names a type that holds the value.
+fn int_lit_repair(value: i128) -> &'static str {
+    if value < 0 {
+        if value >= i32::MIN as i128 {
+            "i32"
+        } else {
+            "i64"
+        }
+    } else if value <= u8::MAX as i128 {
+        "u8"
+    } else if value <= u16::MAX as i128 {
+        "u16"
+    } else if value <= u32::MAX as i128 {
+        "u32"
+    } else {
+        "u64"
+    }
+}
+
+/// Refuse an integer literal whose value does not fit the type it landed on
+/// (BUG-t6Mz2). The type is fixed by this point, and past it the value is cut
+/// to that type: a literal that does not fit leaves a different number behind,
+/// at a line that is not the one that is wrong, so the refusal stands here.
+fn check_int_literal(value: i128, ty: &Ty, defaulted: bool, span: Span) -> Result<()> {
+    let Some((min, max)) = Ty::int_bounds(ty) else {
+        return Ok(());
+    };
+    if value >= min && value <= max as i128 {
+        return Ok(());
+    }
+    let repair = int_lit_repair(value);
+    let message = if defaulted {
+        format!(
+            "'{value}' does not fit 'i32', the type a literal takes when nothing determines one: write the type it needs, as in 'val big: {repair} = {value}'"
+        )
+    } else {
+        format!(
+            "'{value}' does not fit '{}': write a type that holds it, as in 'val big: {repair} = {value}'",
+            ty.display()
+        )
+    };
+    Err(TypeError { message, span })
+}
+
 /// A code point as a diagnostic can show it: the character itself when it is
 /// printable, `U+XXXX` otherwise (a control character has nothing to show).
 fn printable_codepoint(cp: u32) -> String {
@@ -3060,11 +3119,17 @@ impl<'a> ConstEvaluator<'a> {
             return Ok((ConstValue::Unit, Ty::Unit));
         }
         match expr {
-            ast::Expr::IntLit(v, _) => Ok(match expected {
+            ast::Expr::IntLit(v, span) => Ok(match expected {
                 Some(t) if t.is_float() => (ConstValue::Float(*v as f64), t.clone()),
-                Some(t) if t.is_integer() => (ConstValue::Int(*v as i128), t.clone()),
+                Some(t) if t.is_integer() => {
+                    check_int_literal(*v as i128, t, false, *span)?;
+                    (ConstValue::Int(*v as i128), t.clone())
+                }
                 Some(Ty::Char) => (ConstValue::Int(*v as i128), Ty::Char),
-                _ => (ConstValue::Int(*v as i128), Ty::I32),
+                _ => {
+                    check_int_literal(*v as i128, &Ty::I32, true, *span)?;
+                    (ConstValue::Int(*v as i128), Ty::I32)
+                }
             }),
             ast::Expr::CharLit(v, span) => Ok(match expected {
                 Some(t) if t.is_integer() => {
@@ -3151,6 +3216,19 @@ impl<'a> ConstEvaluator<'a> {
                 }
             }
             ast::Expr::Unary { op, expr: sub, span } => {
+                // The sign-and-literal pair `check_expr_inner` handles the same
+                // way: under `-`, the value is the negated literal, not the
+                // literal the lexer read.
+                if *op == ast::UnOp::Neg {
+                    if let ast::Expr::IntLit(v, lit_span) = &**sub {
+                        if expected.map_or(true, |t| t.is_integer()) {
+                            self.tick(*lit_span)?;
+                            let (ty, defaulted) = int_lit_ty(expected);
+                            check_int_literal(-(*v as i128), &ty, defaulted, *lit_span)?;
+                            return self.fold_unary(*op, ConstValue::Int(*v as i128), &ty, *span);
+                        }
+                    }
+                }
                 let (v, ty) = self.eval(sub, expected, scope)?;
                 if scope.halted() {
                     return Ok((ConstValue::Unit, Ty::Unit));
@@ -6166,10 +6244,8 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             span,
         } => check_fn_literal(params, return_type, body, *span, ctx),
         ast::Expr::IntLit(v, span) => {
-            let ty = match expected {
-                Some(t) if t.is_integer() => t.clone(),
-                _ => Ty::I32,
-            };
+            let (ty, defaulted) = int_lit_ty(expected);
+            check_int_literal(*v as i128, &ty, defaulted, *span)?;
             Ok(tir::Expr {
                 kind: tir::ExprKind::IntLit(*v as i128),
                 ty,
@@ -6400,6 +6476,29 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             })
         }
         ast::Expr::Unary { op, expr: sub, span } => {
+            // `-2147483648` is an `i32`, but the literal under the sign is
+            // 2147483648, which no `i32` holds on its own. The sign is part of
+            // the value when the range is judged, so the pair is checked here
+            // and the literal's own check, which cannot see the sign, is
+            // skipped. Every other operand is checked below as it always was.
+            if *op == UnOp::Neg {
+                if let ast::Expr::IntLit(v, lit_span) = &**sub {
+                    let (ty, defaulted) = int_lit_ty(expected);
+                    check_int_literal(-(*v as i128), &ty, defaulted, *lit_span)?;
+                    return Ok(tir::Expr {
+                        kind: tir::ExprKind::Unary {
+                            op: *op,
+                            expr: Box::new(tir::Expr {
+                                kind: tir::ExprKind::IntLit(*v as i128),
+                                ty: ty.clone(),
+                                span: *lit_span,
+                            }),
+                        },
+                        ty,
+                        span: *span,
+                    });
+                }
+            }
             let sub_expected = if *op == UnOp::Not {
                 Some(&Ty::Bool)
             } else if *op == UnOp::BitNot {

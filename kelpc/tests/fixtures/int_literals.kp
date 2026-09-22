@@ -28,13 +28,17 @@ fun main() {
     val empty: u8 = 0b0
     print(empty)
 
-    // The same value in two spellings, and the width coming from the context.
+    // The same value in two spellings, and the width coming from the context,
+    // which has to hold the literal (BUG-t6Mz2): an `i32` context reaches
+    // `0x7fffffff`, and `0xffffffff` needs the `i64` or `u32` that holds it.
     val byte: u8 = 0b11111111
     print(byte)
     val wide: i64 = 0xffffffff
     print(wide)
-    val narrow: i32 = 0xffffffff
+    val narrow: i32 = 0x7fffffff
     print(narrow)
+    val top: u32 = 0xffffffff
+    print(top)
     val a: u8 = 'A'
     print(a == 0x41)
 }

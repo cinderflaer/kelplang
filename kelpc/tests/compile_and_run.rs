@@ -1188,17 +1188,38 @@ fn a_string_with_zero_capacity_is_a_valid_empty_string() {
     );
 }
 
-/// A literal that does not fit the type its context gave it is narrowed to that
-/// type in the front end, before any backend sees it.
+/// A literal that does not fit the type it lands on is refused at its own line
+/// rather than narrowed to that type (BUG-t6Mz2), on every path that decides a
+/// literal's type: the `i32` default when nothing determines one, a type the
+/// context supplies, and the declared type a `const` folds into. The one
+/// literal wider than its type that survives is the one a sign covers, and
+/// `int_literal_width.kp` pins what both backends do with it.
 ///
-/// This is the fixture that would have caught the C backend emitting such a
-/// literal at its full width and letting C's arithmetic conversions decide the
-/// remainder: no existing fixture had a literal wider than its own type in it.
+/// Before the refusal, the fixture that stood here asserted the narrowing this
+/// now rejects: `print(1000000000007)` printed `-727379961`, by the same rule
+/// that applied to `val x: i32 = 1000000000007`, and the two backends had once
+/// disagreed about it because each narrowed the literal itself.
 #[test]
-fn an_out_of_range_literal_narrows_to_its_inferred_type() {
+fn an_out_of_range_literal_is_refused_at_its_own_line() {
+    assert_rejected_with(
+        "tests/fixtures/int_literal_out_of_range.kp",
+        "'4294967295' does not fit 'i32', the type a literal takes when nothing determines one",
+    );
+    assert_rejected_with(
+        "tests/fixtures/int_literal_method_receiver.kp",
+        "'4294967295' does not fit 'i32', the type a literal takes when nothing determines one",
+    );
+    assert_rejected_with(
+        "tests/fixtures/int_literal_const_out_of_range.kp",
+        "'4294967295' does not fit 'i32': write a type that holds it",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/int_literal_typed.kp",
+        "4294967295\n4294967295\n-2147483648\n",
+    );
     assert_compiles_and_runs(
         "tests/fixtures/int_literal_width.kp",
-        "-727379961\n727379961\n-727379961\n-727379960\n-1454759922\n-242459987\n-727379968\n-727379961\n-727379961\ntrue\n1\n0\n255\n65535\n999993014\n",
+        "-2147483648\n-147483634\n-2147483647\n2147483648\n147483634\n147483633\n-2147483648\n255\n65535\n999993014\n",
     );
 }
 
@@ -2012,7 +2033,7 @@ fn bitwise_operators_on_bool_are_rejected() {
 fn hexadecimal_and_binary_literals_are_ordinary_integers() {
     assert_compiles_and_runs(
         "tests/fixtures/int_literals.kp",
-        "255\n10\n511\ntrue\n196\n184\n173\n1\n0\n255\n4294967295\n-1\ntrue\n",
+        "255\n10\n511\ntrue\n196\n184\n173\n1\n0\n255\n4294967295\n2147483647\n4294967295\ntrue\n",
     );
 }
 

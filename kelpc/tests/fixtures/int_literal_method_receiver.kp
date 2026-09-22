@@ -1,0 +1,6 @@
+// A method call gives its receiver no expected type, so a literal written as one
+// lands on the same `i32` default and is refused the same way (BUG-t6Mz2). The
+// repair is the same too: give the value a binding whose type holds it.
+fun main() {
+    print(4294967295.to_u64())
+}

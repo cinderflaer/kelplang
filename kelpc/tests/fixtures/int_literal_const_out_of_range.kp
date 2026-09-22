@@ -1,0 +1,6 @@
+// A `const` has a declared type, so a literal folded into one is judged against
+// that type and refused when it does not fit (BUG-t6Mz2).
+const BIG: i32 = 4294967295
+fun main() {
+    print(BIG)
+}

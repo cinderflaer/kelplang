@@ -1,0 +1,11 @@
+// A literal that does not fit the `i32` it falls back to compiles once a type
+// that holds it is written on the binding (BUG-t6Mz2). The sign is the other way
+// to make a wider-than-`i32` literal legal: `-2147483648` is an `i32`.
+const TOP: u64 = 4294967295
+fun main() {
+    val big: u64 = 4294967295
+    print(big)
+    print(TOP)
+    val edge: i32 = -2147483648
+    print(edge)
+}

@@ -2404,17 +2404,15 @@ impl<'a> Gen<'a> {
         match &expr.kind {
             ExprKind::IntLit(v) => {
                 // Cast to the literal's own type, which is the type `infer.rs`
-                // resolved for it from its context. Without the cast a literal
-                // wider than that type was emitted at its full 64-bit value and
-                // the operation was then performed at that width by C's usual
-                // arithmetic conversions, so `print(1000000000007 %
-                // 1000000007)`, whose expression type is `i32`, printed the
-                // 64-bit remainder (999993014) instead of the 32-bit one
-                // (-727379961). The mistake was unobservable until a fixture was
-                // written for it, because a literal that fits its type is
-                // unaffected either way. This is the same narrowing the
-                // declaration path (`val x: i32 = 1000000000007`) already
-                // performed.
+                // resolved for it from its context. Resolving it is a refusal
+                // now when the literal does not fit (BUG-t6Mz2), so a literal
+                // wider than its own type reaches this point only under a sign,
+                // which is what makes the magnitude representable: `-2147483648`
+                // is an `i32` whose inner literal is 2147483648. Without the
+                // cast that magnitude would go out at its full 64-bit value and
+                // C's usual arithmetic conversions would perform the operation
+                // at that width, which is the disagreement with the LLVM
+                // backend's `int_const` this cast removes.
                 format!("(({})({}))", expr.ty.c_type(), v)
             }
             // A character literal is an integer constant with the code point

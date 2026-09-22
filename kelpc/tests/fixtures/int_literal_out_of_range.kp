@@ -1,0 +1,7 @@
+// A literal that does not fit the `i32` it falls back to is refused by name
+// (BUG-t6Mz2): four billion read as -1 is a wrong answer at a line that is not
+// the one that is wrong.
+fun main() {
+    val big = 4294967295
+    print(big)
+}
