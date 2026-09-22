@@ -26,6 +26,11 @@
 //! the buffer bound — where "either side" is the interesting part, since the C
 //! version refuses a result that does not leave room for the NUL and the Kelp
 //! version has to refuse exactly the same ones.
+//!
+//! The last test here is not a corpus: it builds a program and runs it, because
+//! the step after the normalizer (the symlink resolution in
+//! `kelpc/runtime/cap_glue.c`) is C text only a program holding a grant carries,
+//! so no driver in this file can call it. See the test for what it pins.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -365,4 +370,82 @@ fn the_kelp_normalizer_agrees_with_the_c_reference_on_the_whole_corpus() {
     }
     assert!(accepted > 20 && rejected > 20, "{accepted} accepted / {rejected} rejected");
     assert!(changed > 10, "only {changed} cases were normalized to something else");
+}
+
+/// The depth bound of `kelp_resolve_path`, the step `kelp_cap_check_path` runs
+/// between the normalizer this file's corpus covers and the matcher
+/// `cap_matcher.rs` covers.
+///
+/// It walks a path down to its deepest existing ancestor, one segment per cut.
+/// It used to *recurse* once per cut, and each frame held three `PATH_MAX`
+/// buffers, so a path of about a thousand one-character segments overran an
+/// 8 MiB stack and the process died with SIGSEGV instead of denying. Both
+/// backends emit the same glue text, so both inherited it, and the depth is the
+/// caller's: a program can name any path.
+///
+/// The assertion is the exit **code**. A stack overflow leaves no code at all
+/// (`status.code()` is `None`) and an ordinary denial in this runtime is
+/// `exit(1)`, so `Some(1)` says the run denied rather than died. Both backends
+/// are built, since the glue is one text they both emit.
+#[test]
+fn a_deep_path_is_denied_instead_of_overrunning_the_stack() {
+    const SEGMENTS: usize = 1000;
+    // The grant covers the long prefix; the call names one segment below it, so
+    // the verdict is a denial whether or not the resolver succeeds.
+    let granted = "/a".repeat(SEGMENTS);
+    let outside = format!("{granted}/b");
+
+    let dir = tmp("path_normalize_deep_path");
+    std::fs::create_dir_all(&dir).expect("create the deep-path project directory");
+    std::fs::write(
+        dir.join("main.kp"),
+        format!(
+            "impl \"u\" caps(fs = [{}])\n\nfun main() {{\n    print(u.probe())\n}}\n",
+            literal(&granted)
+        ),
+    )
+    .expect("writing main.kp");
+    std::fs::write(
+        dir.join("u.kp"),
+        format!(
+            "impl \"std/fs\"\n\nfun probe().R: String = fs.read_text({})\n",
+            literal(&outside)
+        ),
+    )
+    .expect("writing u.kp");
+
+    for (backend, oracle) in [("llvm", false), ("c", true)] {
+        let bin = dir.join(format!("deep_path_{backend}"));
+        let mut cmd = Command::new(kelpc_bin());
+        cmd.arg("build").env_remove("KELPC_BACKEND");
+        if oracle {
+            cmd.env("KELPC_ORACLE", "c");
+        } else {
+            cmd.env_remove("KELPC_ORACLE");
+        }
+        let build = cmd
+            .arg(dir.join("main.kp"))
+            .arg("-o")
+            .arg(&bin)
+            .output()
+            .expect("failed to spawn kelpc");
+        assert!(
+            build.status.success(),
+            "the {backend} backend did not build the deep-path project:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let run = Command::new(&bin).output().expect("failed to run the build");
+        assert_eq!(
+            run.status.code(),
+            Some(1),
+            "the {backend} backend's deep-path run ended as {:?}: a code of `None` is a signal, not a denial",
+            run.status
+        );
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            stderr.contains("outside the fs capability granted to module 'u'"),
+            "the {backend} backend's deep path was not denied by the grant:\n{stderr}"
+        );
+    }
 }

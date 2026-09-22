@@ -39,19 +39,28 @@ static bool kelp_resolve_path(const char* path, char* out, size_t cap) {
         snprintf(out, cap, "%s", real);
         return true;
     }
+    /* One loop rather than one recursive call per cut. The call this replaces
+       went a frame deep per path segment, so a path of about a thousand
+       segments overran an 8 MiB stack and died with SIGSEGV instead of failing
+       to resolve and letting the match deny. The depth is the caller's, and a
+       caller can name any path.
+
+       `tail` is an offset into `path`, not a pointer into `buf`: cutting an
+       earlier slash writes a NUL over a later one, and `buf` is a truncated
+       copy of `path` whose first `sizeof buf - 1` bytes are `path`'s. */
     char buf[PATH_MAX];
     snprintf(buf, sizeof buf, "%s", path);
     char* slash = strrchr(buf, '/');
-    if (slash == NULL || slash == buf) {
-        return false;
+    while (slash != NULL && slash != buf) {
+        size_t tail = (size_t)(slash - buf);
+        *slash = 0;
+        if (realpath(buf, real) != NULL) {
+            snprintf(out, cap, "%s%s", real, path + tail);
+            return true;
+        }
+        slash = strrchr(buf, '/');
     }
-    *slash = 0;
-    char parent[PATH_MAX];
-    if (!kelp_resolve_path(buf, parent, sizeof parent)) {
-        return false;
-    }
-    snprintf(out, cap, "%s/%s", parent, slash + 1);
-    return true;
+    return false;
 }
 
 static void kelp_cap_deny(const char* domain, const char* path, const char* const* patterns,
