@@ -481,7 +481,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/net",
         "recv_raw",
-        "    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, b.data, kelp_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            kelp_panic(\"net.recv: timed out\");\n        }\n        kelp_panic_errno(\"net.recv: receive failed\");\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+        "    /* `recv(2)` with a length of 0 on a blocking socket waits for a peer\n       event instead of returning, so a request for 0 bytes short-circuits to\n       the empty `Bytes` that `recv_into` answers with 0. */\n    if (kelp_max == 0) {\n        return kelp_bytes_alloc_raw(0);\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, b.data, kelp_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            kelp_panic(\"net.recv: timed out\");\n        }\n        kelp_panic_errno(\"net.recv: receive failed\");\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
     ),
     (
         "std/net",
@@ -534,4 +534,84 @@ pub fn has_body(module: &str, bare_name: &str) -> bool {
     EXTERNS
         .iter()
         .any(|(m, n, _)| *m == module && *n == bare_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::{Command, Stdio};
+
+    /// `net.recv(s, 0)` returns an empty `Bytes` at once, the same answer
+    /// `recv_into` gives for a zero length. Linux `recv(2)` with a length of 0
+    /// on a blocking socket waits for a peer event instead, so a body without
+    /// the short-circuit hangs until the peer sends or closes. The body is C,
+    /// so the test compiles it against stubs and runs it on a socket pair whose
+    /// reading end carries a short receive timeout: a waited call spends that
+    /// timeout and then takes the body's own timed-out panic, while the
+    /// short-circuited call returns in microseconds. The measured call time,
+    /// not the wall clock of the whole process, is what separates returned from
+    /// gave up, so a loaded machine cannot flake it.
+    #[test]
+    fn recv_raw_with_zero_length_returns_an_empty_bytes() {
+        let body = super::body("std/net", "recv_raw").expect("a shipped recv_raw body");
+
+        // The struct is the layout `runtime/kelp_rt.c` defines and
+        // `codegen_llvm::program_c_source` repeats in the extern prelude; the
+        // three functions are the stubs the body calls (`kelp_bytes_alloc_raw`
+        // copied from the runtime).
+        let source = format!(
+            "{headers}\
+             #include <sys/time.h>\n\
+             typedef struct {{ unsigned char* data; size_t len; size_t cap; }} kelp_Bytes;\n\
+             static void kelp_panic(const char* msg) {{\n    fprintf(stderr, \"%s\\n\", msg);\n    exit(2);\n}}\n\
+             static void kelp_panic_errno(const char* msg) {{\n    fprintf(stderr, \"%s: %s\\n\", msg, strerror(errno));\n    exit(2);\n}}\n\
+             static kelp_Bytes kelp_bytes_alloc_raw(size_t n) {{\n    unsigned char* p = (unsigned char*)malloc(n + 1);\n    if (p == NULL) {{\n        kelp_panic(\"out of memory\");\n    }}\n    memset(p, 0, n + 1);\n    kelp_Bytes b;\n    b.data = p;\n    b.len = n;\n    b.cap = n;\n    return b;\n}}\n\
+             static kelp_Bytes recv_raw(int kelp_fd, size_t kelp_max) {{\n{body}}}\n\
+             int main(void) {{\n    int sv[2];\n    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {{\n        perror(\"socketpair\");\n        return 1;\n    }}\n    struct timeval tv;\n    tv.tv_sec = 0;\n    tv.tv_usec = 250000;\n    setsockopt(sv[0], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);\n    struct timespec t0, t1;\n    clock_gettime(CLOCK_MONOTONIC, &t0);\n    kelp_Bytes b = recv_raw(sv[0], 0);\n    clock_gettime(CLOCK_MONOTONIC, &t1);\n    long us = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_nsec - t0.tv_nsec) / 1000L;\n    printf(\"%zu %ld\\n\", b.len, us);\n    return 0;\n}}\n",
+            headers = crate::codegen_c::C_HEADERS,
+        );
+
+        let dir = std::env::temp_dir().join(format!("kelp_recv_zero_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory for the harness");
+        let bin = dir.join("recv_zero");
+        crate::driver::compile_c(&source, &bin, crate::opt::OptLevel::DEFAULT)
+            .unwrap_or_else(|e| panic!("the recv_raw harness did not compile: {}", e.message));
+
+        let out = Command::new(&bin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("failed to run the recv_raw harness");
+        assert!(
+            out.status.success(),
+            "the recv_raw harness exited with {:?}; a zero length receive blocked \
+             rather than returning:\nstdout: {}\nstderr: {}\n",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut parts = text.split_whitespace();
+        let len: usize = parts
+            .next()
+            .expect("a length on stdout")
+            .parse()
+            .expect("the length is a number");
+        let us: i64 = parts
+            .next()
+            .expect("an elapsed time on stdout")
+            .parse()
+            .expect("the elapsed time is a number");
+        assert_eq!(
+            len, 0,
+            "recv_raw(fd, 0) returned {len} bytes, not the empty Bytes recv_into reports"
+        );
+        // The call is microseconds when it returns. The 250 ms receive timeout
+        // is what the blocking behaviour would have spent and then reported as
+        // `net.recv: timed out`; 50 ms leaves room for a loaded machine and
+        // still names the timeout as the thing that did not happen.
+        assert!(
+            us < 50_000,
+            "recv_raw(fd, 0) waited {us}us, so it blocked instead of returning"
+        );
+    }
 }
