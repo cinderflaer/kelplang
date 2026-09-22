@@ -1,0 +1,24 @@
+// A partial move on one branch only. The `if` arms merge, so the binding is
+// still dropped on both paths: the arm that moved the field cleared its slot
+// and the arm that did not left the value there. The value is not readable as
+// a whole after the merge, which is why the surviving field is read by name.
+// Both paths run, and AddressSanitizer and valgrind check each one frees its
+// buffer exactly once.
+datac Bag(val xs: List<i32>, val name: String)
+
+fun take_it(bag: move Bag, take: bool).R: i32 {
+    var out = 0
+    if take {
+        val xs = bag.xs
+        out = xs.get(0)
+    } else {
+        out = bag.xs.get(0)
+    }
+    print(bag.name)
+    return out
+}
+
+fun main() {
+    print(take_it(bag = Bag(xs = List.of(1), name = String.from_str("a")), take = true))
+    print(take_it(bag = Bag(xs = List.of(2), name = String.from_str("b")), take = false))
+}

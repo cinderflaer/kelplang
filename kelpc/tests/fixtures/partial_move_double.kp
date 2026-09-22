@@ -1,0 +1,11 @@
+// The same field cannot be moved out twice: the first read took the value, so
+// the binding no longer holds it. The refusal is a use of the moved value,
+// rooted at the field.
+datac Bag(val xs: List<i32>)
+
+fun main() {
+    val bag = Bag(xs = List.of(1))
+    val a = bag.xs
+    val b = bag.xs
+    print(a.get(0) + b.get(0))
+}

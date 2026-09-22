@@ -329,7 +329,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::ast::{BinOp, UnOp};
-use crate::borrowck::{DropPlan, DropTarget};
+use crate::borrowck::{DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
     self, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
     Function as LlvmFunction, IntBinOp, IntCmp, Metadata, Module, RealCmp, TargetMachine, Type,
@@ -2196,7 +2196,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             } => self.emit_if(cond, then_block, else_block.as_ref(), &e.ty),
             ExprKind::Block(block) => self.emit_block_value(block),
             ExprKind::FieldAccess { base, field } => {
-                Ok(Some(self.emit_field_read(base, field, &e.ty)?))
+                Ok(Some(self.emit_field_read(e, base, field, &e.ty)?))
             }
             ExprKind::StructLit { name, fields } => Ok(Some(self.emit_struct_lit(name, fields)?)),
             // `Enum.Variant(payload = ...)`: the tag, then each payload field
@@ -2313,6 +2313,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// load needs and does not have to be recovered from the struct table.
     fn emit_field_read(
         &mut self,
+        e: &Expr,
         base: &Expr,
         field: &str,
         ty: &Ty,
@@ -2357,7 +2358,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .builder
             .build_struct_gep(struct_ty, ptr, index, field);
         let lty = self.lty(ty)?;
-        Ok(self.g.builder.build_load(lty, field_ptr, field))
+        let read = self.g.builder.build_load(lty, field_ptr, field);
+        // A partial move copies the field out and zeroes the slot it came
+        // from. The binding keeps its value as a whole and is freed at scope
+        // exit as it always was, so without this the free would reach the
+        // buffer the moved value now owns, the same clear a whole-binding
+        // move does in `load_ident`, one level down.
+        if matches!(self.g.drops.clear_at(&self.fn_name, e), Some(Projection::Field(moved)) if moved == field)
+        {
+            self.g.builder.build_store(self.g.ctx.const_null(lty), field_ptr);
+        }
+        Ok(read)
     }
 
     /// Build a `datac` value: one `insertvalue` per field, in declaration order.

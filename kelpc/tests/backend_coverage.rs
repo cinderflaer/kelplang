@@ -76,8 +76,14 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **225 of the 225 targets the C backend builds**. The refusal ranking is
+/// **228 of the 228 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
+///
+/// Recorded at A-11 slice 1 on 2026-09-22, raised from the 225 the MK7 S5 tip
+/// built. Three fixtures landed with the partial-move slice
+/// (`partial_move_field.kp`, `partial_move_conditional.kp`,
+/// `partial_move_reassign.kp`), each of which both backends build and the
+/// differential sweep runs.
 ///
 /// Recorded at MK7 S5 on 2026-09-21, raised from the 221 the S3 tip built. Two
 /// fixtures landed with S5, each the regression fixture for a defect the
@@ -119,7 +125,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// two owned-temporary shapes all lower. The gate for this slice is
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
-const LLVM_BUILT_BASELINE: usize = 225;
+const LLVM_BUILT_BASELINE: usize = 228;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

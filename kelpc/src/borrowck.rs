@@ -111,6 +111,19 @@ pub struct DropTarget {
     pub ty: Ty,
 }
 
+/// One place reached from an owned binding without going through a borrow.
+///
+/// A partial move gives one of these away and leaves the rest of the binding
+/// owned, so the binding is still freed as a whole and exactly the projection
+/// the move emptied has to be cleared first. Anything reached through a borrow
+/// is not a `Projection`: the frame does not own it, so it cannot give it away.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Projection {
+    /// One field of a `datac`, by name (each backend resolves the name to the
+    /// field's index from the owning struct).
+    Field(String),
+}
+
 /// How an owned local's value stands at the point being checked.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum MoveState {
@@ -184,6 +197,13 @@ pub struct FnDrops {
     /// entry: a binding moved on every path is dropped nowhere, so its slot's
     /// contents are never read again and clearing it would be dead code.
     at_move: std::collections::HashSet<NodeId>,
+    /// The expressions that move one *field* of an owned binding out, and the
+    /// projection each one emptied. A binding a field was taken from stays
+    /// live, so it is still in a drop set wherever it was before, and the
+    /// field's slot has to be zeroed at the move or that drop frees the value
+    /// a second time. Unlike `at_move` this needs no filter: the binding is
+    /// dropped on every path, not only on some.
+    at_clear: HashMap<NodeId, Projection>,
 }
 
 impl DropPlan {
@@ -245,6 +265,16 @@ impl DropPlan {
             .map(|f| f.at_move.contains(&expr_id(expr)))
             .unwrap_or(false)
     }
+
+    /// The projection the value read at `expr` moved out of its base, when
+    /// that read is a partial move. Codegen copies the value out and then
+    /// zeroes this slot, so the base's own drop frees nothing where the value
+    /// used to be (see the module doc's "a move clears its source").
+    pub fn clear_at(&self, function: &str, expr: &tir::Expr) -> Option<&Projection> {
+        self.functions
+            .get(function)
+            .and_then(|f| f.at_clear.get(&expr_id(expr)))
+    }
 }
 
 #[derive(Debug)]
@@ -292,6 +322,10 @@ struct OwnedVar {
     /// local is never dropped by the scope that declared it (see
     /// `MoveState`).
     state: MoveState,
+    /// The projections moved *out of* this binding while it stays live. The
+    /// binding is still freed as a whole, so each of these has to be cleared
+    /// at its move; until then the projection is a use of a moved value.
+    moved: std::collections::HashSet<Projection>,
 }
 
 #[derive(Clone, Default)]
@@ -339,6 +373,13 @@ impl Scope {
         for entry in owned.iter_mut() {
             if let Some(other) = b.owned.iter().find(|o| o.name == entry.name) {
                 entry.state = entry.state.merge(other.state);
+                // A field one path moved out is gone from the merged place:
+                // whichever path ran, the read of it is a use of a moved
+                // value, and the drop still runs on both (the moving path
+                // cleared the slot). Same conservatism as `MoveState`.
+                for proj in &other.moved {
+                    entry.moved.insert(proj.clone());
+                }
             }
         }
         Scope { vars, scope_borrows: Vec::new(), owned }
@@ -370,6 +411,11 @@ struct Ctx {
     /// same key, and codegen's own C scoping resolves the same way — see
     /// `check_function`, which is where these become `FnDrops::at_move`).
     move_sites: HashMap<String, Vec<NodeId>>,
+    /// The expressions that move one field of an owned binding out, and the
+    /// projection each one emptied. Unlike `move_sites` this needs no filter
+    /// when it becomes the plan's `at_clear`: the binding is dropped on every
+    /// path, so every one of these clears a slot a drop will reach.
+    field_move_sites: HashMap<NodeId, Projection>,
     /// The names of owned bindings that some merge left `MaybeMoved`. Only
     /// those have a drop site a move could double up with, so only their move
     /// sites are recorded as clears.
@@ -441,6 +487,9 @@ impl Ctx {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
                 owned.state = MoveState::Live;
+                // A fresh value into the binding replaces whatever projection
+                // was moved out of the old one.
+                owned.moved.clear();
                 return;
             }
         }
@@ -513,7 +562,114 @@ impl Ctx {
             name: name.to_string(),
             ty: ty.clone(),
             state: MoveState::Live,
+            moved: std::collections::HashSet::new(),
         });
+    }
+
+    /// Whether `name` is an owned local this frame may give a field away from.
+    /// A borrow, a pointer, a `pd` global's storage and a name `infer.rs`
+    /// invented are all absent here, which is what makes this the same
+    /// predicate the drop plan uses.
+    fn is_owned_binding(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .rev()
+            .any(|s| s.owned.iter().any(|o| o.name == name))
+    }
+
+    /// Whether the projection `proj` was already moved out of `name`.
+    fn moved_out_of(&self, name: &str, proj: &Projection) -> bool {
+        for scope in self.scopes.iter().rev() {
+            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
+                return owned.moved.contains(proj);
+            }
+        }
+        false
+    }
+
+    /// The projection the whole-value read of `name` refuses, if any: a field
+    /// that was moved out and never put back.
+    fn partial_move_of(&self, name: &str) -> Option<&Projection> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(owned) = scope.owned.iter().rev().find(|o| o.name == name) {
+                return owned.moved.iter().next();
+            }
+        }
+        None
+    }
+
+    /// The refusal a whole read of `name` owes when a field of it was moved
+    /// out: the slot that field used to hold is empty, so the value as a whole
+    /// is not here any more.
+    fn whole_move_error(&self, name: &str, span: Span) -> Option<BorrowError> {
+        let proj = self.partial_move_of(name)?;
+        let what = match proj {
+            Projection::Field(f) => format!("its field '{f}' was moved out"),
+        };
+        Some(BorrowError {
+            message: format!("cannot use {} as a whole value: {what}", display_root(name)),
+            span,
+        })
+    }
+
+    /// Reads a place as a whole (a borrow, a method receiver, a field's base),
+    /// refusing one a field was moved out of. The projections of the place are
+    /// still there; the place itself is not.
+    fn use_whole_place(&self, name: &str, span: Span) -> Result<()> {
+        match self.whole_move_error(name, span) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Records that the value read at `expr` moves the field `proj` out of the
+    /// owned binding `name`: codegen clears that field's slot there, and until
+    /// the field is written again the read is a use of a moved value.
+    fn move_field_out(&mut self, name: &str, proj: Projection, expr: &tir::Expr) -> Result<()> {
+        if self.moved_out_of(name, &proj) {
+            return Err(BorrowError {
+                message: format!("use of moved value '{}'", field_display(name, &proj)),
+                span: expr.span,
+            });
+        }
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
+                owned.moved.insert(proj.clone());
+                break;
+            }
+        }
+        self.field_move_sites.insert(expr_id(expr), proj);
+        Ok(())
+    }
+
+    /// Whether a place read reaches through the field `field` of an owned
+    /// binding that a partial move already emptied.
+    fn use_field_place(&self, inner: &tir::Expr, field: &str, span: Span) -> Result<()> {
+        let Some(name) = partial_move_base(inner, self) else {
+            return Ok(());
+        };
+        if self.moved_out_of(name, &Projection::Field(field.to_string())) {
+            return Err(BorrowError {
+                message: format!("use of moved value '{name}.{field}'"),
+                span,
+            });
+        }
+        Ok(())
+    }
+
+    /// Marks the field `field` of an owned binding as owning again, after an
+    /// assignment of a fresh value into it.
+    fn reinit_field(&mut self, inner: &tir::Expr, field: &str) {
+        let Some(name) = partial_move_base(inner, self) else {
+            return;
+        };
+        let proj = Projection::Field(field.to_string());
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(owned) = scope.owned.iter_mut().rev().find(|o| o.name == name) {
+                owned.moved.remove(&proj);
+                return;
+            }
+        }
     }
 
     /// Whether the innermost owned binding named `name` has *definitely* been
@@ -549,6 +705,13 @@ impl Ctx {
     /// Errors if `name` was already moved or is currently borrowed;
     /// otherwise, if it's non-Copy, this whole-value read moves it.
     fn use_value(&mut self, name: &str, span: Span) -> Result<()> {
+        // A binding a field was taken out of still owns the rest, but the
+        // value as a whole is no longer here: the slot one of its fields used
+        // to hold is empty, so handing the whole thing on would hand on that
+        // hole. Same conservatism as a field read, and the same reason.
+        if let Some(e) = self.whole_move_error(name, span) {
+            return Err(e);
+        }
         let Some(v) = self.lookup_mut(name) else {
             return Ok(()); // infer.rs already validated every identifier
         };
@@ -886,6 +1049,28 @@ fn display_root(name: &str) -> String {
     }
 }
 
+/// One projection written the way a person reads it: `bag.xs`.
+fn field_display(name: &str, proj: &Projection) -> String {
+    match proj {
+        Projection::Field(field) => format!("{name}.{field}"),
+    }
+}
+
+/// The owned binding a value read of `base.<field>` takes the field out of,
+/// when `base` is a binding this frame owns *directly*. A borrow, a pointer, a
+/// `pd` global's storage, and a nested place all fail here: the frame has
+/// nothing to give away from any of them. A nested place is left out because a
+/// projection path, not a single field name, is what tracking one would need.
+fn partial_move_base<'a>(base: &'a tir::Expr, ctx: &Ctx) -> Option<&'a str> {
+    let tir::ExprKind::Ident(name) = &base.kind else {
+        return None;
+    };
+    if matches!(base.ty, Ty::Ref { .. }) {
+        return None;
+    }
+    ctx.is_owned_binding(name).then_some(name.as_str())
+}
+
 /// The drops for a set of owned locals: reverse declaration order, live ones
 /// only. Reverse order matches the lexical nesting of the bindings — a value
 /// moved out of an earlier binding into a later one is freed exactly once,
@@ -1058,6 +1243,7 @@ fn check_function(
         ret_is_borrow: crate::infer::is_borrowed_value(&f.ret),
         ret_ty: f.ret.clone(),
         move_sites: HashMap::new(),
+        field_move_sites: HashMap::new(),
         maybe_moved_names: std::collections::HashSet::new(),
     };
     for (name, ty) in &f.params {
@@ -1116,6 +1302,9 @@ fn check_function(
         .flat_map(|(_, sites)| sites.iter().copied())
         .collect();
     ctx.plan.at_move.extend(clears);
+    // A partial move always clears: the binding it came out of stays in every
+    // drop set it was already in, so each of these clears a slot a drop reaches.
+    ctx.plan.at_clear = ctx.field_move_sites.clone();
     Ok(ctx.plan)
 }
 
@@ -1292,21 +1481,30 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &expr.kind {
         tir::ExprKind::Ident(name) => ctx.use_value_moving(name, expr),
         tir::ExprKind::FieldAccess { base, field } => {
-            check_place(base, ctx)?;
-            // A field read is a *place*, and v1 has no partial moves: reading
-            // an owned field as a whole value would hand out a second owner of
-            // the same buffer (M6/C1 allowed it; the copy is shallow, so
-            // mutating the field afterwards left the copy dangling — a real
-            // heap-use-after-free, pinned by `owned_field_read.kp`). Borrow it
-            // instead, which covers passing it to a parameter and calling a
-            // method on it, or hold it in a `Box` and `take()` it.
+            check_place_through(base, ctx)?;
+            // A field read is a *place*, and a partial move is the one way a
+            // read of it gives the frame's value away. It is allowed only out
+            // of an owned binding this frame holds directly: the move copies
+            // the field out and codegen zeroes the slot it came from, so the
+            // binding's own end-of-scope drop frees the rest and nothing
+            // twice. Reading through a borrow would hand out a second owner of
+            // a buffer the borrowed value still owns, the heap-use-after-free
+            // `owned_field_read.kp` pinned, so it stays refused.
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
-                return Err(BorrowError {
-                    message: format!(
-                        "cannot read the owned field '{field}' by value: v1 has no partial moves, so this would give two owners of the same buffer — use it through a borrow (pass it to a parameter, call a method on it) or hold it in a 'Box' and 'take()' it"
-                    ),
-                    span: expr.span,
-                });
+                let Some(root) = partial_move_base(base, ctx) else {
+                    let message = match base.ty {
+                        Ty::Ref { .. } => format!(
+                            "cannot move the field '{field}' out of '{}': the value is borrowed, so it is not this frame's to give away",
+                            tir_root_ident(base).unwrap_or("a borrow")
+                        ),
+                        _ => format!(
+                            "cannot read the owned field '{field}' by value: the base is not a local this frame owns, so there is no partial move to take here; use it through a borrow (pass it to a parameter, call a method on it) or hold it in a 'Box' and 'take()' it"
+                        ),
+                    };
+                    return Err(BorrowError { message, span: expr.span });
+                };
+                let proj = Projection::Field(field.clone());
+                ctx.move_field_out(root, proj, expr)?;
             }
             Ok(())
         }
@@ -1426,16 +1624,16 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             Ok(())
         }
         // Reading the tag is a read of the place, not a move of the value.
-        tir::ExprKind::EnumTag { expr: base, .. } => check_place(base, ctx),
+        tir::ExprKind::EnumTag { expr: base, .. } => check_place_through(base, ctx),
         // A payload read is a *place* read, and it obeys the same
         // no-partial-moves rule as an owned datac field: an owned payload
         // cannot be read by value, only borrowed (which is what the `when`
         // lowering does).
         tir::ExprKind::EnumField { base, .. } => {
-            check_place(base, ctx)?;
+            check_place_through(base, ctx)?;
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
                 return Err(BorrowError {
-                    message: "cannot read an owned payload by value: v1 has no partial moves, so this would give two owners of the same buffer — match it and use the binding, which borrows it".to_string(),
+                    message: "cannot read an owned payload by value: a payload binds as a borrow, so reading it out would give two owners of the same buffer; match it and use the binding, which borrows it".to_string(),
                     span: expr.span,
                 });
             }
@@ -1524,12 +1722,20 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 
 /// Checks an expression read *through*, as the base of a place chain (`p`
 /// in `p.x`, or the pointer operand of `*p`): errors if already moved, but
-/// never itself moves or borrows anything.
+/// never itself moves or borrows anything. A place a field was moved out of is
+/// refused as a whole, so a projection of it is checked by `check_place_through`
+/// instead.
 fn check_place(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &base.kind {
-        tir::ExprKind::Ident(name) => ctx.use_place(name, base.span),
-        tir::ExprKind::FieldAccess { base: inner, .. } => check_place(inner, ctx),
-        tir::ExprKind::EnumField { base: inner, .. } => check_place(inner, ctx),
+        tir::ExprKind::Ident(name) => {
+            ctx.use_place(name, base.span)?;
+            ctx.use_whole_place(name, base.span)
+        }
+        tir::ExprKind::FieldAccess { base: inner, field } => {
+            check_place_through(inner, ctx)?;
+            ctx.use_field_place(inner, field, base.span)
+        }
+        tir::ExprKind::EnumField { base: inner, .. } => check_place_through(inner, ctx),
         // A capture is a place too (A-4 phase E): reading it through a
         // borrow or calling a method on it is exactly what an owned capture
         // is for.
@@ -1539,10 +1745,25 @@ fn check_place(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     }
 }
 
+/// Checks a place read *through* to one of its projections: the place as a
+/// whole may be partially moved, because only the projection that is read has
+/// to be there, and `check_place`'s caller is the arm that checks the
+/// projection itself.
+fn check_place_through(base: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
+    match &base.kind {
+        tir::ExprKind::Ident(name) => ctx.use_place(name, base.span),
+        _ => check_place(base, ctx),
+    }
+}
+
 fn check_assign_target(target: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &target.kind {
         tir::ExprKind::Ident(name) => ctx.reinit_moving(name, target.span),
-        tir::ExprKind::FieldAccess { base, .. } => check_place(base, ctx),
+        tir::ExprKind::FieldAccess { base, field } => {
+            check_place_through(base, ctx)?;
+            ctx.reinit_field(base, field);
+            Ok(())
+        }
         tir::ExprKind::Deref { expr: inner } => check_place(inner, ctx),
         _ => Ok(()), // infer.rs already restricts assignment targets to places
     }

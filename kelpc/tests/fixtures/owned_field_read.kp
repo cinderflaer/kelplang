@@ -1,7 +1,9 @@
-// Reading an owned field *by value* is refused: v1 has no partial moves, and
-// the read would be a shallow copy, so the binding and the field would both
-// own one buffer. Mutating the field afterwards then left the copy dangling —
-// a genuine heap-use-after-free, which is why the rule exists (M8).
+// A partial move takes the field out, and the second statement then reaches
+// through the field that is gone: `bag.xs` is a use of a moved value. The rule
+// this fixture was written for is the same one, one step later: a shallow copy
+// would leave the binding as a second owner of the buffer the copy holds, so
+// the field has to be borrowed or held in a `Box` and taken, and a read that
+// does take it clears the source.
 datac Bag(val xs: List<i32>)
 
 fun main() {

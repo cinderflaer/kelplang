@@ -1,0 +1,14 @@
+// A partial move (A-11): reading an owned field of a local binding by value
+// takes that field out and leaves the rest of the binding owned. The binding
+// is freed at scope exit exactly as before, and the moved field's slot was
+// zeroed at the move, so that free finds nothing where the value used to be
+// and frees the field that stayed. Both halves are gated: AddressSanitizer and
+// valgrind flag a double free of the buffer the moved value owns.
+datac Bag(val xs: List<i32>, val name: String)
+
+fun main() {
+    val bag = Bag(xs = List.of(1), name = String.from_str("kept"))
+    val xs = bag.xs
+    print(bag.name)
+    print(xs.get(0))
+}

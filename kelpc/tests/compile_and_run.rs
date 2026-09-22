@@ -2543,6 +2543,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // gate that saw it.
         "owned_conditional_move",
         "owned_move_in_loop",
+        // A-11: a partial move zeroes the field's slot, so the binding's own
+        // drop frees the field that stayed and nothing where the moved value
+        // now lives. A double free of the moved buffer fails here.
+        "partial_move_field",
+        "partial_move_conditional",
+        "partial_move_reassign",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -3021,9 +3027,65 @@ fn a_datac_can_be_recursive_through_a_list_and_mutually_recursive_through_boxes(
 
 #[test]
 fn an_owned_field_cannot_be_read_by_value() {
-    // The copy would be a second owner of the same buffer; the field has to
-    // be borrowed, or held in a `Box` and taken.
-    assert_rejected("tests/fixtures/owned_field_read.kp");
+    // The partial move now takes the field, so the second statement reaches
+    // through a field that is gone. The refusal is pinned so the fixture
+    // cannot pass for the old "no partial moves" reason.
+    assert_rejected_with(
+        "tests/fixtures/owned_field_read.kp",
+        "use of moved value 'bag.xs'",
+    );
+}
+
+#[test]
+fn a_partial_move_takes_an_owned_field_and_leaves_the_rest() {
+    // The moved field's slot is zeroed at the move and the binding's own drop
+    // frees the field that stayed, so both this fixture and
+    // `partial_move_conditional` are in the AddressSanitizer and valgrind
+    // gates: a double free or a leak fails there.
+    assert_compiles_and_runs(
+        "tests/fixtures/partial_move_field.kp",
+        "kept\n1\n",
+    );
+}
+
+#[test]
+fn a_partial_move_on_one_branch_still_frees_once_on_both() {
+    assert_compiles_and_runs(
+        "tests/fixtures/partial_move_conditional.kp",
+        "a\n1\nb\n2\n",
+    );
+}
+
+#[test]
+fn a_field_is_owned_again_after_a_fresh_value_is_assigned_to_it() {
+    assert_compiles_and_runs(
+        "tests/fixtures/partial_move_reassign.kp",
+        "1\n2\n",
+    );
+}
+
+#[test]
+fn a_partial_move_out_of_a_borrow_stays_refused() {
+    assert_rejected_with(
+        "tests/fixtures/partial_move_from_borrow.kp",
+        "cannot move the field 'xs' out of 'b': the value is borrowed",
+    );
+}
+
+#[test]
+fn a_field_cannot_be_moved_out_twice() {
+    assert_rejected_with(
+        "tests/fixtures/partial_move_double.kp",
+        "use of moved value 'bag.xs'",
+    );
+}
+
+#[test]
+fn a_partially_moved_binding_cannot_be_used_as_a_whole() {
+    assert_rejected_with(
+        "tests/fixtures/partial_move_use_base.kp",
+        "cannot use 'bag' as a whole value: its field 'xs' was moved out",
+    );
 }
 
 #[test]

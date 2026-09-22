@@ -15,7 +15,7 @@
 //! it writes each one — no second walk, and no lockstep between two passes.
 
 use crate::ast::{BinOp, UnOp};
-use crate::borrowck::{DropPlan, DropTarget};
+use crate::borrowck::{DropPlan, DropTarget, Projection};
 use crate::diag::SourceMap;
 use crate::lexer::Span;
 use crate::tir::*;
@@ -2685,7 +2685,8 @@ impl<'a> Gen<'a> {
                         return staged;
                     }
                 }
-                self.field_access(base, field)
+                let read = self.field_access(base, field);
+                self.clear_moved_field(expr, read)
             }
             // A variant construction is a compound literal in one expression:
             // the tag is the variant's index, and the payload goes into that
@@ -3330,6 +3331,28 @@ impl<'a> Gen<'a> {
 
     fn field_access(&self, base: &Expr, field: &str) -> String {
         member_access(&self.expr_value(base), &base.ty, &field_name(field))
+    }
+
+    /// A partial move copies the field out of `place` and then zeroes the
+    /// slot it came from, so the binding's own drop frees the fields the move
+    /// left behind and nothing where the value now lives elsewhere. `place` is
+    /// the C lvalue the field resolves to, so the zeroing and the read are the
+    /// same expression; the value has to go through a temporary because the
+    /// zeroing is a second statement (`codegen_llvm.rs::emit_field_read`
+    /// stores a null there instead).
+    fn clear_moved_field(&self, expr: &Expr, place: String) -> String {
+        if !matches!(self.drops.clear_at(&self.function, expr), Some(Projection::Field(_))) {
+            return place;
+        }
+        let tmp = fresh_temp();
+        format!(
+            "({{ {} = {}; {} = ({}){{0}}; {}; }})",
+            expr.ty.c_decl(&tmp),
+            place,
+            place,
+            expr.ty.c_type(),
+            tmp
+        )
     }
 
     /// The C text of the field chain `expr` read out of the temporary its root

@@ -1,0 +1,12 @@
+// After a field is moved out the value is no longer whole: the slot that field
+// held is empty, so handing the binding on as a whole would hand on that hole.
+// The refusal names the field that was moved.
+datac Bag(val xs: List<i32>)
+
+fun main() {
+    val bag = Bag(xs = List.of(1))
+    val xs = bag.xs
+    print(xs.get(0))
+    val whole = bag
+    print(whole.xs.len())
+}

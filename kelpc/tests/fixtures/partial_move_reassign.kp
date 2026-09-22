@@ -1,0 +1,13 @@
+// A field that was moved out is owned again once a fresh value is assigned to
+// it, so the read after the assignment is legal. The value the move left is
+// gone and the zeroed slot holds nothing to free, so the assignment leaks
+// nothing; the binding still frees the fresh value at scope exit.
+datac Bag(var xs: List<i32>)
+
+fun main() {
+    var bag = Bag(xs = List.of(1))
+    val xs = bag.xs
+    print(xs.get(0))
+    bag.xs = List.of(2)
+    print(bag.xs.get(0))
+}

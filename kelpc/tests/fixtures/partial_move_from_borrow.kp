@@ -1,0 +1,11 @@
+// An owned field cannot be moved out of a borrowed value: the frame does not
+// own what the borrow points at, so it has nothing to give away. This is the
+// shape `take(b: &Bag)` has, and the refusal names the borrow.
+datac Bag(val xs: List<i32>)
+
+fun take(b: &Bag).R: List<i32> = b.xs
+
+fun main() {
+    val bag = Bag(xs = List.of(1))
+    print(take(&bag).len())
+}
