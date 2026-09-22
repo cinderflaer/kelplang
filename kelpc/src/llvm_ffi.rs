@@ -56,8 +56,10 @@ use llvm_sys::core::{
     LLVMAddModuleFlag,
     LLVMAddNamedMetadataOperand, LLVMAppendBasicBlockInContext,
     LLVMArrayType2,
-    LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2,
-    LLVMBuildCondBr, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt, LLVMBuildFPToSI,
+    LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildAtomicCmpXchg,
+    LLVMBuildAtomicRMW, LLVMBuildBr, LLVMBuildCall2,
+    LLVMBuildCondBr, LLVMBuildExtractValue, LLVMBuildFCmp, LLVMBuildFNeg, LLVMBuildFPExt,
+    LLVMBuildFPToSI,
     LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildGEP2, LLVMBuildGlobalString, LLVMBuildICmp,
     LLVMBuildInsertValue, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
     LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
@@ -75,7 +77,7 @@ use llvm_sys::core::{
     LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage,
-    LLVMSetTarget,
+    LLVMSetOrdering, LLVMSetTarget,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVoidTypeInContext,
 };
 use llvm_sys::debuginfo::{
@@ -1058,6 +1060,40 @@ pub enum FloatBinOp {
     Div,
 }
 
+/// The one ordering every atomic instruction is emitted at (MK9-S3-M1 stage
+/// A1). The surface states exactly one (`Ordering.SeqCst`), so the lowering has
+/// nothing to choose between and the C API's enum is named once, here, rather
+/// than at each of the four instructions that carry it.
+pub const SEQ_CST: llvm_sys::LLVMAtomicOrdering =
+    llvm_sys::LLVMAtomicOrdering::LLVMAtomicOrderingSequentiallyConsistent;
+
+/// One atomic read-modify-write (`atomicrmw`). Named in our own terms so
+/// `codegen_llvm.rs` never has to name an `llvm-sys` type: this module is the
+/// only client of that crate.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AtomicRmw {
+    Xchg,
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+}
+
+impl AtomicRmw {
+    fn as_raw(self) -> llvm_sys::LLVMAtomicRMWBinOp {
+        use llvm_sys::LLVMAtomicRMWBinOp as Op;
+        match self {
+            AtomicRmw::Xchg => Op::LLVMAtomicRMWBinOpXchg,
+            AtomicRmw::Add => Op::LLVMAtomicRMWBinOpAdd,
+            AtomicRmw::Sub => Op::LLVMAtomicRMWBinOpSub,
+            AtomicRmw::And => Op::LLVMAtomicRMWBinOpAnd,
+            AtomicRmw::Or => Op::LLVMAtomicRMWBinOpOr,
+            AtomicRmw::Xor => Op::LLVMAtomicRMWBinOpXor,
+        }
+    }
+}
+
 /// An integer comparison. The signed and unsigned spellings are separate because
 /// LLVM makes them a different instruction (`icmp slt` vs `icmp ult`), while the
 /// language decides by the operand's type.
@@ -1354,6 +1390,99 @@ impl<'ctx> Builder<'ctx> {
         Value {
             // SAFETY: the builder is positioned and both arguments are live.
             raw: unsafe { LLVMBuildLoad2(self.raw, ty.as_raw(), ptr.as_raw(), name.as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `load atomic ty, ptr value seq_cst` (MK9-S3-M1 stage A1).
+    ///
+    /// The C API has no builder call that takes an ordering, so the load is
+    /// emitted and then marked atomic with `LLVMSetOrdering`. That is the same
+    /// instruction the IR reader produces from the `atomic` keyword: the
+    /// ordering is a property of the memory access, not of a separate
+    /// instruction.
+    pub fn build_load_atomic(&self, ty: Type<'ctx>, ptr: Value<'ctx>, name: &str) -> Value<'ctx> {
+        let value = self.build_load(ty, ptr, name);
+        // SAFETY: `value` is a load this builder just emitted, which is the one
+        // kind of instruction `LLVMSetOrdering` accepts.
+        unsafe { LLVMSetOrdering(value.as_raw(), SEQ_CST) };
+        value
+    }
+
+    /// Emit `store atomic value, ptr place seq_cst` (MK9-S3-M1 stage A1), the
+    /// same emit-then-mark shape as [`Self::build_load_atomic`].
+    pub fn build_store_atomic(&self, value: Value<'ctx>, place: Value<'ctx>) {
+        let store = self.build_store(value, place);
+        // SAFETY: `store` is a store this builder just emitted.
+        unsafe { LLVMSetOrdering(store.as_raw(), SEQ_CST) };
+    }
+
+    /// Emit one `atomicrmw <op> ptr place, value seq_cst` instruction, whose
+    /// value is the operand that was in memory.
+    pub fn build_atomicrmw(
+        &self,
+        op: AtomicRmw,
+        place: Value<'ctx>,
+        value: Value<'ctx>,
+    ) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and every argument is live. The
+            // result is always a value (the old contents), so it needs no name
+            // and no ordering fix-up: `LLVMBuildAtomicRMW` takes the ordering.
+            raw: unsafe {
+                LLVMBuildAtomicRMW(
+                    self.raw,
+                    op.as_raw(),
+                    place.as_raw(),
+                    value.as_raw(),
+                    SEQ_CST,
+                    0,
+                )
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `cmpxchg ptr place, cmp, new seq_cst seq_cst`, whose value is the
+    /// `{ T, i1 }` pair LLVM defines: field 0 is the value read from memory
+    /// (the value that was there on success, the value actually found on
+    /// failure) and field 1 says whether it matched.
+    pub fn build_cmpxchg(
+        &self,
+        place: Value<'ctx>,
+        cmp: Value<'ctx>,
+        new: Value<'ctx>,
+    ) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and every argument is live. The
+            // compare is not weak: `Atomic.compare_exchange` retries in a loop
+            // the caller writes, so a spurious failure would become a real one
+            // the user did not ask for (MK9 9 leaves the weak form open, and
+            // this is the strong half of that question).
+            raw: unsafe {
+                LLVMBuildAtomicCmpXchg(
+                    self.raw,
+                    place.as_raw(),
+                    cmp.as_raw(),
+                    new.as_raw(),
+                    SEQ_CST,
+                    SEQ_CST,
+                    0,
+                )
+            },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `extractvalue agg, index` (`LLVMBuildExtractValue`): one field of
+    /// an aggregate value, which is how the `cmpxchg` pair's halves are read.
+    pub fn build_extract_value(&self, agg: Value<'ctx>, index: u32, name: &str) -> Value<'ctx> {
+        let name = cstring(name);
+        Value {
+            // SAFETY: the builder is positioned and the aggregate is live.
+            raw: unsafe {
+                LLVMBuildExtractValue(self.raw, agg.as_raw(), index as c_uint, name.as_ptr())
+            },
             context: PhantomData,
         }
     }

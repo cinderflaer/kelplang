@@ -1,0 +1,10 @@
+// MK9-S3-M1 stage A1: the element set is closed, and `f64` is outside it. There
+// is no atomic add for a float on the hardware this targets, so `Atomic<f64>`
+// would be a compare-and-swap loop pretending to be one instruction; the
+// element set is `bool` and the integer types.
+impl "std/atomic"
+
+fun main() {
+    val f: Atomic<f64> = Atomic.new(1.0)
+    print(f.load(order = atomic.Ordering.SeqCst))
+}

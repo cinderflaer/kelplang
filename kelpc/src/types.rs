@@ -137,6 +137,45 @@ pub enum Ty {
     /// copy, while an array of `String` owns those strings and moves, which
     /// is the rule `plan/syntax.md` 3 states for the type.
     Array(Box<Ty>, u64),
+    /// The builtin atomic cell (MK9-S3-M1 stage A1): `Atomic<T>`, one location
+    /// every access to which is a single atomic operation.
+    ///
+    /// Monomorphized per element type exactly as `List<T>` is, and the element
+    /// set is closed: `bool` and the integer types (`is_atomic_element`). The
+    /// representation is one machine word, so every operation goes through the
+    /// `__atomic_*` builtins in C and through `load atomic`, `store atomic`,
+    /// `atomicrmw` and `cmpxchg` in LLVM.
+    ///
+    /// **Not `Copy`, and needing no drop.** Not `Copy` because a copy would be
+    /// a second handle to one location, and every rule about an atomic is about
+    /// the location rather than the handle; no drop because it owns nothing,
+    /// which is what lets a `pd val Atomic<i64>` be the process-lifetime shared
+    /// counter of MK9 1 without the `atexit` machinery an owned passdown needs.
+    Atomic(Box<Ty>),
+}
+
+/// The element type one of the `Atomic*` names stands for, or `None` when
+/// `name` is not one: `AtomicBool` is `Atomic<bool>`, `AtomicU8` is
+/// `Atomic<u8>`, and so on. MK9 4 spells the instantiations out rather than
+/// making every program write `Atomic<i64>`, and a name is also the only thing
+/// an associated constructor can be written on (`AtomicI64.new(0)`), so both
+/// spellings exist and both resolve to the same `Ty`.
+///
+/// There is no `AtomicI8`/`AtomicI16`: the element set is `bool` and v1's
+/// integer types, and v1 has no `i8`/`i16` for those two names to mean.
+pub fn atomic_alias_elem(name: &str) -> Option<Ty> {
+    Some(match name {
+        "AtomicBool" => Ty::Bool,
+        "AtomicU8" => Ty::U8,
+        "AtomicU16" => Ty::U16,
+        "AtomicU32" => Ty::U32,
+        "AtomicU64" => Ty::U64,
+        "AtomicUsize" => Ty::Usize,
+        "AtomicI32" => Ty::I32,
+        "AtomicI64" => Ty::I64,
+        "AtomicIsize" => Ty::Isize,
+        _ => return None,
+    })
 }
 
 impl Ty {
@@ -159,7 +198,12 @@ impl Ty {
             "Bytes" => Ty::Bytes,
             "String" => Ty::String,
             "View" => Ty::View,
-            _ => return None,
+            // `AtomicI64` and its siblings name one instantiation of the
+            // builtin `Atomic<T>`, so the name stands for the whole cell rather
+            // than for the element it holds.
+            _ => {
+                return atomic_alias_elem(name).map(|elem| Ty::Atomic(Box::new(elem)));
+            }
         })
     }
 
@@ -174,6 +218,7 @@ impl Ty {
             _ => !matches!(
                 self,
                 Ty::Struct(_)
+                    | Ty::Atomic(_)
                     | Ty::Bytes
                     | Ty::String
                     | Ty::List(_)
@@ -279,6 +324,7 @@ impl Ty {
             Ty::Box(elem) => box_c_type(elem),
             Ty::Map(key, value) => map_c_type(key, value),
             Ty::Array(elem, len) => array_c_type(elem, *len),
+            Ty::Atomic(elem) => atomic_c_type(elem),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -330,6 +376,7 @@ impl Ty {
             Ty::Struct(name) => name.clone(),
             Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
+            Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
@@ -757,6 +804,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Box(elem) => format!("Box__{}", ty_mangle(elem)),
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
+        Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
         // A function type never reaches a container or a type argument (both
         // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
         // unreachable arm and by diagnostics, so it gets an identifier-shaped
@@ -810,6 +858,43 @@ pub fn map_c_type(key: &Ty, value: &Ty) -> String {
 /// to a pointer behind the type system's back.
 pub fn array_c_type(elem: &Ty, len: u64) -> String {
     format!("kelp_Array__{}__{}", ty_mangle(elem), len)
+}
+
+/// The generated C struct tag for `Atomic<T>`.
+///
+/// The storage is one plain machine word: `typedef struct { T v; } kelp_Atomic__T;`. Nothing marks the member `_Atomic` because every access is
+/// written as an `__atomic_*` builtin (or, for the load, the same builtin)
+/// rather than as a plain read or write, which is the property this type
+/// exists to have. A plain member would not force anyone writing code by hand
+/// to reach for an atomic operation, but nothing by hand writes this type:
+/// every access is a call the two backends lower to one instruction.
+pub fn atomic_c_type(elem: &Ty) -> String {
+    format!("kelp_Atomic__{}", ty_mangle(elem))
+}
+
+/// Whether `ty` may be an `Atomic<T>`'s element: the integer types and `bool`,
+/// and nothing else.
+///
+/// A float has no atomic hardware operation worth claiming (`Atomic<f32>` would
+/// be a compare-and-swap loop, not an atomic add); `String`, `Bytes`, a `datac`
+/// and a container each own memory or carry a tag, so a single-word atomic
+/// cannot hold one; a borrow and a `View` are somebody else's data. The set is
+/// closed rather than open-ended because the C and LLVM lowerings both have to
+/// name the element's width, and a closed set is what makes that a total
+/// function instead of a diagnostic at codegen time.
+pub fn is_atomic_element(ty: &Ty) -> bool {
+    matches!(ty, Ty::Bool) || ty.is_integer()
+}
+
+/// The element type of an `Atomic<T>`, looking through a borrow: `c.load(...)`
+/// arrives with the receiver typed `&Atomic<T>` (a method receiver is
+/// auto-borrowed, and a `pd` atomic is reached through its address).
+pub fn atomic_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Atomic(elem) => Some(elem),
+        Ty::Ref { inner, .. } => atomic_elem_of(inner),
+        _ => None,
+    }
 }
 
 /// The `List<T>` or `Box<T>` behind an expression's type, looking through a

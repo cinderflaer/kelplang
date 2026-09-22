@@ -76,8 +76,18 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **235 of the 235 targets the C backend builds**. The refusal ranking is
+/// **242 of the 242 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
+///
+/// Recorded at MK9-S3-M1 stage A1 on 2026-09-22, raised from the 239 the
+/// MK8-S2 A-6 tip built. Three fixtures landed with it, each of which both
+/// backends build and the differential sweep compares (`atomic_counter.kp`, a
+/// `pd val` counter against a plain integer and a `compare_exchange` retry loop;
+/// `atomic_int_fetch.kp`, the five `fetch_*` over the widths where a size can be
+/// got wrong; and `atomic_bool.kp`, `AtomicBool`'s arithmetic-free surface and a
+/// test-and-set). The two refusal fixtures that landed with the same slice
+/// (`atomic_ordering_reserved.kp`, `atomic_element_refused.kp`) are not targets
+/// here, because the C backend rejects them by design.
 ///
 /// Recorded at the BUG-tV9qH slice on 2026-09-22, raised from the 233 the
 /// BUG-n7Wq3 tip built. Two fixtures landed with it
@@ -156,7 +166,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 239;
+const LLVM_BUILT_BASELINE: usize = 242;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

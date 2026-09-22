@@ -1,6 +1,6 @@
 # The memory model and threads: plan of record
 
-*Status: **decided 2026-09-22, not implemented.** This is the spec step. The shared-borrow crossover in §1 is signed off by the owner (2026-09-22), so the document is unblocked; the four questions in §9 are deliberately left open, each decided when it comes up. No code starts until stage A1 is opened, and the stages in §6 are opened one at a time.*
+*Status: **decided 2026-09-22; stage A1 implemented 2026-09-22, and the rest not implemented.** This is the spec step. The shared-borrow crossover in §1 is signed off by the owner (2026-09-22), so the document is unblocked; the four questions in §9 are deliberately left open, each decided when it comes up. A1 is done (§6); every other stage in §6 is still to be opened, one at a time.*
 
 *Scope: MK9-S3-M1 (atomics, fences, ordering annotations, a `Send`/`Sync`-shaped discipline, published race semantics) and the parts of MK6-S1-M1 that depend on it (threads, the per-thread panic policy, join).*
 
@@ -73,32 +73,36 @@ A builtin generic over a closed element set, in the shape the other builtins alr
 ```kelp
 enum Ordering { SeqCst }
 
-datac AtomicBool
-datac AtomicU8  / AtomicU16 / AtomicU32 / AtomicU64 / AtomicUsize
-datac AtomicI8  / AtomicI16 / AtomicI32 / AtomicI64 / AtomicIsize
+AtomicBool
+AtomicU8  / AtomicU16 / AtomicU32 / AtomicU64 / AtomicUsize
+AtomicI32 / AtomicI64 / AtomicIsize
 
 fun Atomic<T>.new(value: T).R: Atomic<T>
 fun Atomic<T>.load(order: Ordering).R: T
-fun mut Atomic<T>.store(value: T, order: Ordering)
-fun mut Atomic<T>.swap(value: T, order: Ordering).R: T
-fun mut Atomic<T>.compare_exchange(current: T, new: T, order: Ordering).R: Result<T, T>
+fun Atomic<T>.store(value: T, order: Ordering)
+fun Atomic<T>.swap(value: T, order: Ordering).R: T
+fun Atomic<T>.compare_exchange(current: T, new: T, order: Ordering).R: Result<T, T>
 
 // the integer instantiations only; AtomicBool has no arithmetic
-fun mut Atomic<T>.fetch_add(value: T, order: Ordering).R: T
-fun mut Atomic<T>.fetch_sub(value: T, order: Ordering).R: T
-fun mut Atomic<T>.fetch_and(value: T, order: Ordering).R: T
-fun mut Atomic<T>.fetch_or(value: T, order: Ordering).R: T
-fun mut Atomic<T>.fetch_xor(value: T, order: Ordering).R: T
+fun Atomic<T>.fetch_add(value: T, order: Ordering).R: T
+fun Atomic<T>.fetch_sub(value: T, order: Ordering).R: T
+fun Atomic<T>.fetch_and(value: T, order: Ordering).R: T
+fun Atomic<T>.fetch_or(value: T, order: Ordering).R: T
+fun Atomic<T>.fetch_xor(value: T, order: Ordering).R: T
 
 fun thread.fence(order: Ordering)
 ```
+
+**Every receiver is shared, and that is the line §1 requires.** The `mut` spelling this section used to carry was wrong: an atomic mutates *through* a shared borrow, which is what leaves it **no `&mut` path by construction**, the property §1's `Sync`-shaped rule and B1 are built on, and the reason a `&Atomic<T>` rather than a `&mut Atomic<T>` is the thing that may cross a thread boundary. It is also what makes a `pd val` counter work: a passdown declared `val` hands a function a shared borrow, while a `pd var`'s borrow is exclusive for the whole **function**, so a store followed by a load in one function would conflict with itself. The sharing route is therefore a `pd val` and never a `pd var`.
+
+**The `Atomic*` names are the element set, not a list of `datac`s.** `Atomic<T>` is a compiler builtin generic in the shape `List<T>`/`Box<T>`/`Map<K, V>`/`[T; N]` have, monomorphized per element type, not `Copy`, needing no drop; the names above are the instantiations it is spelled with (`AtomicI64` is `Atomic<i64>`). The element set is `bool` and v1's integer types, so there is no `AtomicI8`/`AtomicI16`; this table used to name them, and v1 has no `i8`/`i16` for them to mean.
 
 Notes on the shape, each with its reason:
 
 - **`compare_exchange` returns `Result<T, T>`** (`Ok` the previous value, `Err` the actual one) rather than a `bool` plus a second load. That matches the `Option`/`Result` vocabulary every fallible stdlib call now uses, and it removes the window a bool-then-load would have.
 - **No `AtomicPtr`.** Raw pointers do not exist until MK9-S2-M1 (`unsafe`, B-3), so a pointer atomic would be a type with no way to make a value.
 - **No float atomics.** There is no atomic hardware operation for them and no lock-free path worth the pretence.
-- **Where `Ordering` lives is A1's choice, not part of this surface.** Two routes work: a type the compiler knows by name, or a plain Kelp `enum` in the new atomic module whose type the builtin signatures name by lookup. The surface above is fixed either way. Stage A1's report must say which route it took and what it cost, and if the cheaper route changes what a program has to write to name an ordering, say so rather than bending the surface quietly.
+- **Where `Ordering` lives: decided by A1, and A1 took the plain `enum`.** `Ordering` is declared in the shipped `std/atomic` module as `enum Ordering { SeqCst }`, and the builtin signatures name that type by lookup of its module key (the same way `try_to_<T>` names `std/option`'s `Option`). The cost is one `impl "std/atomic"` line and the module qualifier: a program writes `atomic.Ordering.SeqCst`, not `Ordering.SeqCst`. The other route would be a type the compiler knows by name, the way it knows `Bytes` and `View`: it needs no import, but it would also have to carry its own literal syntax, its own exhaustiveness support and its own codegen, which is a second copy of what `enum` already is. **The surface above is unchanged either way**, and the exhaustiveness check comes free with the enum route: a `when` over an ordering is re-checked the day a second variant exists.
 - **An atomic is both sendable and shareable**, which is what makes it the whole of v1's inter-thread communication for scalars. It is also the first type for which the `Sync`-shaped half of §1 has to hold, so it is the test case for that rule rather than an afterthought.
 - **A `pd val` atomic is how a program shares a counter**, since a `pd` is the process-lifetime place a shared borrow may cross from (§1). It needs no drop, so the `atexit` story for owned passdowns does not apply.
 
@@ -118,8 +122,8 @@ Ordered by dependency. Each stage is one lane and lands with the suite green.
 
 | stage | what | proves it |
 | --- | --- | --- |
-| **A1** | `enum Ordering { SeqCst }` and the `Atomic*` builtins, both backends, single-threaded | a counter incremented and read through an atomic matches a plain integer's result, and `compare_exchange` retries in a loop |
-| **A2** | `thread.fence` and the memory-model statement in `plan/syntax.md` | a fence compiles and emits the right LLVM atomic fence and C `__atomic_thread_fence` |
+| **A1** | **done 2026-09-22.** `enum Ordering { SeqCst }` and the `Atomic<T>` builtins, both backends, single-threaded. The representation: `Atomic<T>` is a compiler builtin `Ty` in the shape `List<T>` has, monomorphized per element type, emitting `__atomic_*` builtins in C and `load atomic`/`store atomic`/`atomicrmw`/`cmpxchg` at `seq_cst` in LLVM; `Ordering` is a plain `enum` in the new `std/atomic` module (§4) | a counter incremented and read through an atomic matches a plain integer's result, and `compare_exchange` retries in a loop (`kelpc/tests/fixtures/atomic_counter.kp`, `atomic_int_fetch.kp`, `atomic_bool.kp`, run by both backends with identical stdout) |
+| **A2** | `thread.fence` and the memory-model statement in `plan/syntax.md` (12.5 and 16.16 landed with A1; the fence is what is left) | a fence compiles and emits the right LLVM atomic fence and C `__atomic_thread_fence` |
 | **B1** | the checker rules of §5 | a probe per rule is refused by name: `&mut` argument, local `&T` argument, `datac` with a reachable `var` sharing |
 | **C1** | `thread.spawn` / `thread.join` with the panic policy of §2 | N threads incrementing one `pd val` atomic produce the exact total; a panicking thread is seen as `Err` by its joiner with the process still alive |
 | **C2** | `thread.sleep_ms`, `thread.current_id`, and whatever MK6-S2-M1 needs | the worker pool in MK6-S2-M1 is expressible |
@@ -151,7 +155,7 @@ Four forks the owner chose on 2026-09-22 to leave open, each to be decided when 
 
 1. **`compare_exchange` strong only, or weak as well?** §4 has the strong form. The weak form only helps inside a loop that retries anyway, so it is either one more signature (`compare_exchange_weak`) or not worth having.
 2. **Is `fence` a free `thread.fence` or an `Atomic<T>.fence`?** §4 puts it on `thread`, because a standalone fence belongs to no location, but that is a naming choice rather than a semantic one.
-3. **May an atomic be a `datac` field, a `List` element, a `Map` value?** §4 does not say. Allowing it in a `List` is convenient and interacts with the container element rules (A-10), so it should be decided with that item rather than by accident.
+3. **May an atomic be a `datac` field, a `List` element, a `Map` value?** §4 does not say. Allowing it in a `List` is convenient and interacts with the container element rules (A-10), so it should be decided with that item rather than by accident. **A1 landed with the question still open, and did not decide it:** the element sets are exactly as they were, so an atomic is refused as a `List`/`Map`/`Box`/array element by the checks those types already had (a container's own routines read and write an element as a plain location, which an atomic cannot allow), while a `datac` field of atomic type is accepted, because no field rule refuses it. The field half is what is left to decide with A-10.
 4. **What does the checker do with a `pd` atomic inside a capability-gated module?** A shared-mutable global is a capability question as well as a memory-model one. This one is scoped to MK10-S1, where the vocabulary lives.
 
 ## 10. References

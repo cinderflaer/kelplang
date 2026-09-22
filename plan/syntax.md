@@ -348,6 +348,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `Map<K, V>` | owned | keyed container, insertion order; `Map<V>` is a `String` key (12.2) |
 | `Box<T>` | owned | one heap cell that holds a `T` or nothing |
 | `[T; N]` | Copy / owned | fixed-size array: `N` elements held **inline**, with nothing allocated. `Copy` when `T` is, and an owner that drops each element when it is not (12.4) |
+| `Atomic<T>` | owned | one location every access to which is a single atomic operation; element set `bool` and the integers, not `Copy`, no drop (12.5) |
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
 | `fun(T, U).R: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
@@ -365,6 +366,7 @@ Rules that follow from the table:
 - `Unit` is not a value and cannot be stored.
 - A function type is Copy and owns nothing: a function value is a plain function pointer, so copying one is copying a pointer. It cannot be borrowed (`&`/`mut`), stored in a container, or used as a type argument's *element* — the placements 7.4 lists.
 - A closure type is **not** Copy: it owns the environment its captures were moved into, and dropping it frees that environment. A parameter of the closure type borrows it (as an owned type's parameter does), and `move closure(...)` takes it over. It cannot be borrowed with `&`, cannot be a `List`/`Map` element, and *may* be a `Box` element (`Box<closure(...)>`, the optional-callback shape) or a `datac`/`enum` field.
+- `Atomic<T>` is not Copy either, but for the opposite reason to every other owned type: it owns nothing (so it needs no drop), and a copy would be a second handle to one location. Every one of its operations takes a **shared** borrow, `store` included, which is what leaves the type no `&mut` path at all and lets a `&Atomic<T>` be shared rather than moved (12.5). Its element set is closed: `bool` and the integer types.
 
 ## 4. Bindings and assignment
 
@@ -1449,6 +1451,48 @@ fun main() {
 
 A parameter follows the rule every other type follows (22.1): an array whose element owns something is an owner, so a plain parameter **borrows** it and the caller keeps its array, exactly as a `String` parameter does. A `Copy` array (`[i32; 3]`) is passed by value like a scalar, `mut [T; N]` is the writable form, and `move [T; N]` takes the value over. An array returned from a function is copied out by value.
 
+### 12.5 `Atomic<T>`
+
+One location every access to which is a **single atomic operation**. It is a compiler builtin, monomorphized per element type exactly as `List<T>` is, and its element set is closed: `bool` and the integer types, because one atomic operation is one machine-word operation.
+
+```kelp
+impl "std/atomic"                       // the `Ordering` enum
+impl "std/result"                       // `compare_exchange` hands back `Result<T, T>`
+
+val counter: Atomic<i64> = Atomic.new(0)
+val named: AtomicI64 = AtomicI64.new(0) // the same type, spelled by instantiation
+
+print(counter.load(order = atomic.Ordering.SeqCst))
+counter.store(value = 10, order = atomic.Ordering.SeqCst)
+print(counter.fetch_add(value = 5, order = atomic.Ordering.SeqCst))  // the value that was there
+print(counter.swap(value = 0, order = atomic.Ordering.SeqCst))       // ditto
+
+val r = counter.compare_exchange(current = 0, new = 1, order = atomic.Ordering.SeqCst)
+when r {
+    Ok(previous) -> print(previous)     // the value that was there
+    Err(actual) -> print(actual)        // the value that turned out to be there
+}
+```
+
+| Method | Takes | Returns |
+| --- | --- | --- |
+| `Atomic.new(value)` | one value | a cell holding it; the element type comes from the value, the annotation, or the instantiation's name |
+| `load(order)` | shared | the value |
+| `store(value, order)` | shared | `Unit` |
+| `swap(value, order)` | shared | the value that was there |
+| `compare_exchange(current, new, order)` | shared | `Result<T, T>`: `Ok` the value that was there, `Err` the value that turned out to be there |
+| `fetch_add(value, order)` and `fetch_sub`/`fetch_and`/`fetch_or`/`fetch_xor` | shared | the value that was there; the integer instantiations only |
+
+- **Every receiver is shared, `store`'s included.** An atomic mutates *through* a shared borrow, which is the whole point of the type: it is left with no `&mut` path at all, so a `&Atomic<T>` is something that can be shared rather than moved. It is also why a `pd val` counter works: a passdown declared `val` hands a function a shared borrow, while a `pd var`'s borrow is exclusive for the whole function, so a store followed by a load in one function would conflict with itself.
+- **Not `Copy`, and needs no drop.** A copy would be a second handle to one location; there is nothing to free. A `pd val Atomic<i64>` therefore needs neither a `mut` binding nor the `atexit` story an owned passdown has.
+- **The named instantiations** are `AtomicBool`, `AtomicU8`, `AtomicU16`, `AtomicU32`, `AtomicU64`, `AtomicUsize`, `AtomicI32`, `AtomicI64` and `AtomicIsize`; each is the same type as the `Atomic<T>` spelling. There is no `AtomicI8`/`AtomicI16` (v1 has no `i8`/`i16`).
+- **What is not here.** No `Atomic<f64>`: there is no atomic float arithmetic, and a compare-and-swap loop would pretend there is one. No `AtomicPtr`: raw pointers need `unsafe`, which is not in v1. No `Relaxed`/`Acquire`/`Release`: `Ordering` has exactly one variant, `SeqCst` (16.16).
+- **An atomic is not a container element.** It cannot be a `List`/`Map` element, a `Box` element or an array element: an element is read and written as a plain location by the container's own routines, and every access to an atomic has to be one atomic operation. Keep it in a place of its own (`val c = AtomicI64.new(0)`, or a `pd`).
+
+Every operation takes the ordering last even though v1 has exactly one value for it, so the argument position is reserved in the API: adding `Relaxed`/`Acquire`/`Release` later is a new variant of `Ordering` and a change to no signature, and naming one that does not exist yet is the ordinary unknown-variant error (16.16).
+
+`Ordering` is an ordinary `enum` in `std/atomic`, so a program writes `atomic.Ordering.SeqCst` behind an `impl "std/atomic"` line, and the exhaustiveness check applies to a `when` over it.
+
 ## 13. Modules and imports
 
 ### 13.1 `impl`
@@ -1616,7 +1660,7 @@ A relative path is not covered by a path pattern, because patterns are absolute:
 
 ## 16. Standard library
 
-Sixteen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
+Seventeen modules ship inside the compiler binary. Import them with `impl "std/<name>"`; the namespace is the module name.
 
 | Module | Domain | Contents |
 | --- | --- | --- |
@@ -1636,6 +1680,7 @@ Sixteen modules ship inside the compiler binary. Import them with `impl "std/<na
 | `std/list` | none | the callback-shaped operations on `List<T>` (`map`, `filter`, `each`, …) |
 | `std/option` | none | `Option<T>` and its helpers |
 | `std/result` | none | `Result<T, E>` and its helpers |
+| `std/atomic` | none | `Ordering`, the ordering argument of the `Atomic<T>` builtins (12.5) |
 
 ### 16.1 `std/str`
 
@@ -1965,6 +2010,20 @@ print(names.len())                       // still owned here
 ```
 
 `filter` is the exception, and for the same reason `or_else` is: an accepted element is read *out* of the borrowed list by value, which is a move out of a borrow, refused (17). `list.filter` over `List<String>` is a compile error saying so; `find_index`/`any`/`all` cover the predicates that only need to know *which* one, and a `Copy` element type filters directly.
+
+### 16.16 `std/atomic`
+
+The atomic cell itself is a compiler builtin (12.5); what this module carries is the **ordering annotation** its operations take.
+
+```kelp
+enum Ordering {
+    SeqCst
+}
+```
+
+`SeqCst` is the only variant in v1, and every atomic operation takes an ordering argument anyway, so the slot is in the API rather than merely planned: adding `Relaxed`/`Acquire`/`Release` later is a new variant of this enum and no signature changes, and naming a variant that does not exist yet is the ordinary unknown-variant error.
+
+`Ordering` is a plain `enum` in a shipped module rather than a name the compiler knows, so naming one costs an `impl "std/atomic"` line and the module qualifier: `atomic.Ordering.SeqCst`. That is the same cost `std/option`'s `Option` and `std/result`'s `Result` carry, and it buys the ordinary exhaustiveness check: a `when` over an ordering is re-checked the day a second variant exists, and the compiler names the missing arms rather than falling into a default.
 
 ## 17. Limits in v1
 

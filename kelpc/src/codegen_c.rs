@@ -213,6 +213,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         coerced: coerced_tys,
         shims: shim_tys,
         arrays: array_tys,
+        atomics: atomic_tys,
     } = collection;
     // An array is emitted after the types it holds by value, so it is sorted
     // innermost-first like a container, and the ones a `datac` field needs are
@@ -263,6 +264,29 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
                 "static void {}({}* v);",
                 drop_fn_name(ty),
                 container_name(ty)
+            )
+            .unwrap();
+        }
+        out.push('\n');
+    }
+
+    // An `Atomic<T>` is one member of a scalar type (MK9-S3-M1 stage A1), so it
+    // names no `datac` and needs no forward declaration, and it is emitted here
+    // before the `datac` declarations, in case one names an atomic by value.
+    // A `HashSet` has no order, so the sort is only so two runs emit the same
+    // text.
+    if !atomic_tys.is_empty() {
+        let mut atomics: Vec<&Ty> = atomic_tys.iter().collect();
+        atomics.sort_by_key(|t| crate::types::ty_mangle(t));
+        for ty in &atomics {
+            let Ty::Atomic(elem) = ty else {
+                unreachable!("only an atomic instantiation is in this set")
+            };
+            writeln!(
+                out,
+                "typedef struct {{ {} v; }} {};",
+                elem.c_type(),
+                ty.c_type()
             )
             .unwrap();
         }
@@ -1857,6 +1881,11 @@ struct Instantiations {
     /// elements *inline*: it has to be emitted after the types it contains,
     /// not before them.
     arrays: HashSet<Ty>,
+    /// `Atomic<T>` instantiations (MK9-S3-M1 stage A1): one one-member struct
+    /// per element type, which is the whole C representation. There is no
+    /// function set beside it, because every operation is a single
+    /// `__atomic_*` builtin written at the call site rather than a routine.
+    atomics: HashSet<Ty>,
 }
 
 fn collect_containers(program: &Program, out: &mut Instantiations) {
@@ -1891,6 +1920,10 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
             }
             Ty::Array(elem, _) => {
                 out.arrays.insert(ty.clone());
+                note_ty(elem, out);
+            }
+            Ty::Atomic(elem) => {
+                out.atomics.insert(ty.clone());
                 note_ty(elem, out);
             }
             Ty::Ref { inner, .. } => note_ty(inner, out),
@@ -3334,7 +3367,103 @@ impl<'a> Gen<'a> {
         format!("({{ {checks}{call}; }})")
     }
 
+    /// One atomic operation on an `Atomic<T>` (MK9-S3-M1 stage A1), as the
+    /// `__atomic_*` builtin that *is* the operation: `__atomic_load_n`,
+    /// `__atomic_store_n`, `__atomic_exchange_n`, `__atomic_fetch_*` and
+    /// `__atomic_compare_exchange_n`, every one of them at
+    /// `__ATOMIC_SEQ_CST`, the only ordering v1 states.
+    ///
+    /// The member is a plain `T`, so atomicity lives entirely in these
+    /// builtins: nothing here reads or writes `->v` outside one, which is why
+    /// a plain load is not a thing this emitter can produce for this type.
+    /// `compare_exchange` is one `__atomic_compare_exchange_n` plus the
+    /// `Result<T, T>` MK9 4 asks for: `__prev` starts as the compared value, and
+    /// the builtin leaves it alone on success (so it is the value that was
+    /// there) and overwrites it with the value actually found on failure, so
+    /// neither arm needs a second load and no window is lost between them.
+    fn atomic_call(&self, op: &str, args: &[Expr], ret: &Ty) -> String {
+        // `Atomic.new(v)` is the one operation with no place: it builds the
+        // cell, and its only argument is the value.
+        if op == "new" {
+            let elem = crate::types::atomic_elem_of(ret)
+                .expect("Atomic.new's own type names its element");
+            return format!(
+                "({}){{ .v = ({}) ({}) }}",
+                ret.c_type(),
+                elem.c_type(),
+                self.expr_value(&args[0])
+            );
+        }
+        // The element type decides two spellings: the pointer the `__atomic_*`
+        // builtins take, and the cast on each value argument, so a `u8`
+        // operation is a `u8` operation and not the `int` a C integer literal
+        // would otherwise make of it.
+        let elem = crate::types::atomic_elem_of(&args[0].ty)
+            .expect("an atomic operation's receiver names its element")
+            .c_type();
+        // `->v` on the receiver's own address, cast to a plain `T*`. The cast is
+        // the type system read back: a shared borrow of an `Atomic<T>` says
+        // nothing about immutability, because an atomic mutates *through* a
+        // shared borrow (that is what leaves it no `&mut` path), while a `pd
+        // val`'s hidden borrow really is `const T*` in C. Without the cast every
+        // writing builtin refuses the const pointer, which is exactly the seam
+        // where C's qualifier and Kelp's borrow mode mean different things.
+        let store = format!("(({elem}*)&({})->v)", self.expr_value(&args[0]));
+        let operand = |i: usize| format!("({elem})({})", self.expr_value(&args[i]));
+        match op {
+            "load" => format!("__atomic_load_n({store}, __ATOMIC_SEQ_CST)"),
+            "store" => format!("__atomic_store_n({store}, {}, __ATOMIC_SEQ_CST)", operand(1)),
+            "swap" => format!(
+                "__atomic_exchange_n({store}, {}, __ATOMIC_SEQ_CST)",
+                operand(1)
+            ),
+            "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor" => format!(
+                "__atomic_{op}({store}, {}, __ATOMIC_SEQ_CST)",
+                operand(1)
+            ),
+            "compare_exchange" => {
+                let name =
+                    struct_name_of_ty(ret).expect("a compare_exchange's result is the Result enum");
+                let edef = self
+                    .enum_def(name)
+                    .expect("a compare_exchange's Result instance is declared");
+                // Recognized by variant name, never by the enum's own name:
+                // the same rule `?` uses, so a `std/result` replaced by any
+                // two-variant `Ok`/`Err` shape still lowers.
+                let arm = |variant: &str| {
+                    let index = edef
+                        .variants
+                        .iter()
+                        .position(|v| v.name == variant)
+                        .expect("the Result shape has one arm per variant");
+                    let v = &edef.variants[index];
+                    let member = variant_member(&v.name);
+                    let field = field_name(&v.fields[0].name);
+                    format!(
+                        "({}){{ .kelp_tag = {index}, .kelp_v = {{ .{member} = {{ .{field} = __prev }} }} }}",
+                        ret.c_type()
+                    )
+                };
+                format!(
+                    "({{ {elem} __prev = {}; __atomic_compare_exchange_n({store}, &__prev, {}, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? {} : {}; }})",
+                    operand(1),
+                    operand(2),
+                    arm("Ok"),
+                    arm("Err")
+                )
+            }
+            other => unreachable!("no C spelling for the atomic operation '{other}'"),
+        }
+    }
+
     fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
+        // An atomic operation (MK9-S3-M1 stage A1): one `__atomic_*` builtin,
+        // never a plain read or write. The ordering argument is deliberately
+        // not rendered: v1 states exactly one ordering, so the builtin's order
+        // is spelled `__ATOMIC_SEQ_CST` here rather than threaded through.
+        if let Some(op) = callee.strip_prefix("Atomic#") {
+            return self.atomic_call(op, args, ret);
+        }
         // `n.to_u8()` and friends (S1): a numeric conversion, emitted inline
         // as a cast — with a range check when the target is an integer that
         // can lose the value — rather than a C function per pair.
@@ -3905,8 +4034,11 @@ impl<'a> Gen<'a> {
             | Ty::Box(_)
             | Ty::Map(..)
             | Ty::Array(..)
+            | Ty::Atomic(_)
             | Ty::Ref { .. } => {
-                unreachable!("type checker rejects printing unit/struct/container/reference values")
+                unreachable!(
+                    "type checker rejects printing unit/struct/container/atomic/reference values"
+                )
             }
         }
     }

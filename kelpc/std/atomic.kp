@@ -1,0 +1,44 @@
+/* std/atomic: the ordering annotation for the compiler's `Atomic<T>`
+   builtins (MK9-S3-M1 stage A1).
+
+   `Atomic<T>` itself is a compiler builtin, in the shape `List<T>`/`Box<T>`/
+   `Map<K, V>`/`[T; N]` have: a monomorphized per-element-type representation,
+   not `Copy`, needing no drop, with its method set lowered to one atomic
+   instruction per backend rather than written in Kelp (there is no way to write
+   `atomically` in the language, which is the whole reason the type is a
+   builtin). Its element set is `bool` and the integer types, and the surface is
+
+       fun Atomic<T>.new(value: T).R: Atomic<T>
+       fun Atomic<T>.load(order: Ordering).R: T
+       fun mut Atomic<T>.store(value: T, order: Ordering)
+       fun mut Atomic<T>.swap(value: T, order: Ordering).R: T
+       fun mut Atomic<T>.compare_exchange(current: T, new: T, order: Ordering).R: Result<T, T>
+       fun mut Atomic<T>.fetch_add(value: T, order: Ordering).R: T   // and sub/and/or/xor
+
+   This module carries the one thing that is a plain Kelp type rather than a
+   builtin: `Ordering`. It is an ordinary `enum`, so the language's
+   exhaustiveness check applies to it (a `when` over an ordering is re-checked
+   the day a second variant exists, and the compiler names the missing arms
+   rather than falling into a default), and it is reached the way any other
+   imported type is.
+
+   **The cost of that choice is one `impl` line and one qualifier.** A program
+   that touches an atomic writes `impl "std/atomic"` and passes
+   `atomic.Ordering.SeqCst`; because `Ordering` is a declaration in a shipped
+   module rather than a name the compiler knows, reaching it takes the same
+   module alias `std/result`'s `Result` takes. The alternative, a type the
+   compiler knows by name the way it knows `Bytes` and `View`, would need no
+   import, but it would also have to carry its own literal syntax, its own
+   exhaustiveness support and its own codegen, which is a second copy of what
+   `enum` already is.
+
+   v1 has **exactly one variant**, `SeqCst`, and MK9 3 is explicit about why
+   every operation still takes the ordering as an argument: the slot is reserved
+   in the API, so adding `Relaxed`/`Acquire`/`Release` later is a widening of
+   this enum and not a change of any signature. Naming an ordering that does not
+   exist yet (`atomic.Ordering.Acquire`) is therefore the ordinary
+   unknown-variant error, not a special refusal. */
+
+enum Ordering {
+    SeqCst
+}

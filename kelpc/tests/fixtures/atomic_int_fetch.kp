@@ -1,0 +1,45 @@
+// MK9-S3-M1 stage A1: the integer half of the atomic surface, over the widths
+// where an emitter can get the size wrong. Every `fetch_*` returns the value
+// that was there before the operation and leaves the new one behind, so the
+// pairs below read back what each operation stored. `u8` and `u16` are the
+// interesting ones: they are narrower than the register the operation runs in,
+// and the LLVM side stores a `bool` as a byte for the same reason.
+impl "std/atomic"
+
+fun main() {
+    val narrow: AtomicU8 = Atomic.new(200)
+    print(narrow.load(order = atomic.Ordering.SeqCst))
+    print(narrow.fetch_add(value = 10, order = atomic.Ordering.SeqCst))
+    print(narrow.fetch_sub(value = 5, order = atomic.Ordering.SeqCst))
+    print(narrow.fetch_and(value = 240, order = atomic.Ordering.SeqCst))
+    print(narrow.fetch_or(value = 3, order = atomic.Ordering.SeqCst))
+    print(narrow.fetch_xor(value = 1, order = atomic.Ordering.SeqCst))
+    print(narrow.load(order = atomic.Ordering.SeqCst))
+
+    val mid: AtomicU16 = Atomic.new(1)
+    print(mid.fetch_add(value = 40000, order = atomic.Ordering.SeqCst))
+    print(mid.load(order = atomic.Ordering.SeqCst))
+
+    val signed: AtomicI32 = Atomic.new(-3)
+    print(signed.load(order = atomic.Ordering.SeqCst))
+    print(signed.fetch_or(value = 4, order = atomic.Ordering.SeqCst))
+    print(signed.fetch_xor(value = 3, order = atomic.Ordering.SeqCst))
+    print(signed.load(order = atomic.Ordering.SeqCst))
+
+    val wide: AtomicI64 = Atomic.new(9000000000)
+    print(wide.fetch_sub(value = 1, order = atomic.Ordering.SeqCst))
+    print(wide.load(order = atomic.Ordering.SeqCst))
+
+    val counted: AtomicUsize = Atomic.new(0)
+    print(counted.fetch_add(value = 1000000, order = atomic.Ordering.SeqCst))
+    print(counted.fetch_add(value = 1, order = atomic.Ordering.SeqCst))
+    print(counted.load(order = atomic.Ordering.SeqCst))
+
+    val offsets: AtomicIsize = Atomic.new(0)
+    print(offsets.fetch_sub(value = 8, order = atomic.Ordering.SeqCst))
+    print(offsets.load(order = atomic.Ordering.SeqCst))
+
+    val plain: AtomicU32 = Atomic.new(1)
+    print(plain.fetch_or(value = 4294967294, order = atomic.Ordering.SeqCst))
+    print(plain.load(order = atomic.Ordering.SeqCst))
+}

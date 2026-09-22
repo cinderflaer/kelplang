@@ -1,0 +1,57 @@
+// MK9-S3-M1 stage A1: an atomic counter against a plain integer oracle, and a
+// `compare_exchange` retry loop. Single-threaded, which is what A1 is: what it
+// proves is that the atomic operations are atomic instructions at all (a plain
+// load or store would still give the right answer here, and the shape evidence
+// is the emitted C and IR), and that the surface is usable from a `pd val`,
+// which is how a counter is shared once stage C1's threads exist.
+impl "std/atomic"
+impl "std/result"
+
+// A `pd val` and not a `pd var`: a passdown declared `val` hands a function a
+// *shared* borrow, which is exactly what an atomic mutates through, while a
+// `pd var`'s borrow is exclusive for the whole function, so a store followed by
+// a load in one function would conflict with itself.
+pd val counter: AtomicI64 = AtomicI64.new(0)
+
+// The oracle: a plain integer incremented the same number of times.
+fun plain_total(n: i64).R: i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        total = total + 1
+        i = i + 1
+    }
+    total
+}
+
+// One compare_exchange retry loop. A lost exchange retries rather than dropping
+// the update, so the loop converges on exactly `times` increments, and `Ok`
+// carries the value that was there (which is what makes the retry possible
+// without a second load).
+fun bump_by_cas(times: i64) {
+    var done: i64 = 0
+    while done < times {
+        val seen = counter.load(order = atomic.Ordering.SeqCst)
+        val r = counter.compare_exchange(current = seen, new = seen + 1, order = atomic.Ordering.SeqCst)
+        when r {
+            Ok(_) -> { done = done + 1 }
+            Err(_) -> {}
+        }
+    }
+}
+
+fun main() {
+    val n: i64 = 100
+    print(plain_total(n))
+    print(counter.load(order = atomic.Ordering.SeqCst))
+    var i: i64 = 0
+    while i < n {
+        counter.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+        i = i + 1
+    }
+    print(counter.load(order = atomic.Ordering.SeqCst))
+    bump_by_cas(n)
+    print(counter.load(order = atomic.Ordering.SeqCst))
+    print(counter.swap(value = 0, order = atomic.Ordering.SeqCst))
+    print(counter.load(order = atomic.Ordering.SeqCst))
+}

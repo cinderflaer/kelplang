@@ -2591,6 +2591,13 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "partial_move_enum_payload_owned",
         "option_unwrap_owned",
         "result_map_owned",
+        // MK9-S3-M1 stage A1: an `Atomic<T>` needs no drop, so this is the
+        // "must free *nothing*" half of the list, like `array_basic`. Its cell
+        // is a `pd val`, so a spurious drop would be a free of a global, and
+        // the `compare_exchange` result is a `Result` an owned-value drop plan
+        // could get wrong. ASAN is what sees either.
+        "atomic_counter",
+        "atomic_bool",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -5423,4 +5430,56 @@ fn a_local_rebinding_shadows_the_earlier_binding() {
         "tests/fixtures/shadowed_local_in_one_block.kp",
         "a=2\ns=two\np=3,4\ncards=1 7\ninner=2\nouter=1\n",
     );
+}
+
+// ---------------------------------------------------------------------------
+// MK9-S3-M1 stage A1: the atomic cell `Atomic<T>`, and the one ordering v1 has.
+// ---------------------------------------------------------------------------
+
+/// A counter incremented and read through an atomic matches a plain integer's
+/// result, and a `compare_exchange` retry loop converges on the same total. The
+/// atomic is a `pd val`, which is how a counter is shared once threads exist:
+/// a passdown declared `val` hands a function a shared borrow, which is what an
+/// atomic mutates through.
+#[test]
+fn an_atomic_counter_matches_a_plain_integer_and_a_compare_exchange_loop_converges() {
+    assert_compiles_and_runs(
+        "tests/fixtures/atomic_counter.kp",
+        "100\n0\n100\n200\n200\n0\n",
+    );
+}
+
+/// Every `fetch_*` over the widths an emitter can get wrong, each returning the
+/// value that was there and leaving the new one behind.
+#[test]
+fn the_atomic_fetch_operations_report_the_value_that_was_there() {
+    assert_compiles_and_runs(
+        "tests/fixtures/atomic_int_fetch.kp",
+        "200\n200\n210\n205\n192\n195\n194\n1\n40001\n-3\n-3\n-3\n-2\n9000000000\n8999999999\n0\n1000000\n1000001\n0\n-8\n1\n4294967295\n",
+    );
+}
+
+/// `AtomicBool` has new/load/store/swap/compare_exchange and no arithmetic, and
+/// a test-and-set through a `pd val` flag lets exactly one attempt see `false`.
+#[test]
+fn an_atomic_bool_has_no_arithmetic_and_a_test_and_set_wins_once() {
+    assert_compiles_and_runs(
+        "tests/fixtures/atomic_bool.kp",
+        "true\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\n",
+    );
+}
+
+/// The ordering slot is a real argument of a real enum, so naming an ordering
+/// that does not exist yet is the ordinary unknown-variant error rather than a
+/// special refusal: a second variant is a widening of `Ordering`.
+#[test]
+fn an_ordering_variant_that_does_not_exist_is_the_ordinary_unknown_variant_error() {
+    assert_rejected("tests/fixtures/atomic_ordering_reserved.kp");
+}
+
+/// The element set is closed: `bool` and the integer types, so a float (which
+/// has no atomic arithmetic to lower to) is refused by name.
+#[test]
+fn a_float_atomic_element_is_refused() {
+    assert_rejected("tests/fixtures/atomic_element_refused.kp");
 }

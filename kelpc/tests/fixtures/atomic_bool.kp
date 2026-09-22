@@ -1,0 +1,34 @@
+// MK9-S3-M1 stage A1: `AtomicBool`, which has new/load/store/swap/compare_exchange
+// and no arithmetic at all (there is no atomic add for a flag, and a `fetch_or`
+// on one would be a way to write `true` without saying so). The flag is a `pd
+// val` because a test-and-set is a store through a shared borrow, and the second
+// attempt has to see the first one's write: exactly one call wins.
+impl "std/atomic"
+impl "std/result"
+
+pd val flag: AtomicBool = AtomicBool.new(false)
+
+fun try_set().R: bool {
+    val r = flag.compare_exchange(current = false, new = true, order = atomic.Ordering.SeqCst)
+    when r {
+        Ok(_) -> true
+        Err(_) -> false
+    }
+}
+
+fun main() {
+    val b: AtomicBool = Atomic.new(false)
+    b.store(value = true, order = atomic.Ordering.SeqCst)
+    print(b.load(order = atomic.Ordering.SeqCst))
+    print(b.swap(value = false, order = atomic.Ordering.SeqCst))
+    print(b.load(order = atomic.Ordering.SeqCst))
+    val r = b.compare_exchange(current = false, new = true, order = atomic.Ordering.SeqCst)
+    when r {
+        Ok(previous) -> print(previous)
+        Err(actual) -> print(actual)
+    }
+    print(b.load(order = atomic.Ordering.SeqCst))
+    print(try_set())
+    print(try_set())
+    print(flag.load(order = atomic.Ordering.SeqCst))
+}

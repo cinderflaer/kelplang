@@ -331,7 +331,7 @@ use std::path::Path;
 use crate::ast::{BinOp, UnOp};
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
-    self, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
+    self, AtomicRmw, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
     Function as LlvmFunction, IntBinOp, IntCmp, IntExtension, Metadata, Module, RealCmp,
     TargetMachine, Type, Value,
 };
@@ -703,6 +703,11 @@ struct Instantiations {
     /// Closure signatures a plain function value is widened into somewhere, so
     /// each needs the thunk and the one-field environment that do the widening.
     coerced: HashSet<Ty>,
+    /// `Atomic<T>` instantiations (MK9-S3-M1 stage A1): one identified struct of
+    /// one field per element type, which is the whole representation. There is
+    /// no function set beside it, because each operation is one instruction
+    /// emitted at the call site.
+    atomics: HashSet<Ty>,
     /// Widened values whose function is *known* (a declared `fun` named as a
     /// value, or a literal that captured nothing, whose value is a `FnRef`
     /// too). Each gets a shim instead of the heap environment and the thunk.
@@ -3705,6 +3710,174 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(())
     }
 
+    /// A value of the element type as the storage type: a zero extension for
+    /// `bool`, and the value itself for every integer.
+    fn atomic_to_mem(&self, elem: &Ty, value: Value<'a>) -> Result<Value<'a>, String> {
+        if !matches!(elem, Ty::Bool) {
+            return Ok(value);
+        }
+        Ok(self.g.builder.build_int_cast(false, true, value, self.g.ctx.i8(), "atomic.wide"))
+    }
+
+    /// The storage type read back as a value of the element type: a truncation
+    /// for `bool` (any nonzero byte is true in LLVM's `trunc`, and no other byte
+    /// can be stored), and the value itself for every integer.
+    fn atomic_from_mem(&self, elem: &Ty, raw: Value<'a>) -> Result<Value<'a>, String> {
+        if !matches!(elem, Ty::Bool) {
+            return Ok(raw);
+        }
+        Ok(self.g.builder.build_int_cast(false, false, raw, self.g.ctx.i1(), "atomic.narrow"))
+    }
+
+    /// One atomic operation on an `Atomic<T>` (MK9-S3-M1 stage A1), as the one
+    /// LLVM instruction that is the operation: `load atomic`, `store atomic`,
+    /// `atomicrmw` and `cmpxchg`, every one of them `seq_cst`, the only ordering
+    /// v1 states.
+    ///
+    /// The ordering argument is never evaluated: with one ordering in the
+    /// surface there is nothing for the backend to choose, and the instruction's
+    /// own `seq_cst` is the whole of what the argument says.
+    ///
+    /// `compare_exchange` is one `cmpxchg` plus the `Result<T, T>` MK9 4 asks
+    /// for. The `cmpxchg` pair's field 0 is the value the instruction read from
+    /// memory: the compared value on success (so, the value that was there) and
+    /// the value actually found on failure. One `cmpxchg` therefore supplies
+    /// both halves of both variants with no second access, which is the point of
+    /// `Result` over a `bool` plus a reload.
+    fn emit_atomic_call(
+        &mut self,
+        op: &str,
+        args: &[Expr],
+        ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        // `Atomic.new(v)` is the one operation with no place: it builds the
+        // cell, and it takes the value as its only argument.
+        if op == "new" {
+            let elem = crate::types::atomic_elem_of(ret)
+                .cloned()
+                .ok_or_else(|| no_value("the element type of Atomic.new"))?;
+            let value = self.value_of(&args[0])?;
+            let field = self.atomic_to_mem(&elem, value)?;
+            let lty = self.g.cty(ret)?;
+            let agg = self.g.ctx.undef(lty);
+            return Ok(Some(
+                self.g.builder.build_insert_value(agg, field, 0, "atomic.new"),
+            ));
+        }
+        let elem = crate::types::atomic_elem_of(&args[0].ty)
+            .cloned()
+            .ok_or_else(|| no_value("the element type of an atomic operation"))?;
+        // The receiver is a borrow, so its value *is* the address of the cell.
+        let place = self.value_of(&args[0])?;
+        let mem = self.g.atomic_mem_lty(&elem)?;
+        let rmw = |op: &str| -> Result<AtomicRmw, String> {
+            Ok(match op {
+                "swap" => AtomicRmw::Xchg,
+                "fetch_add" => AtomicRmw::Add,
+                "fetch_sub" => AtomicRmw::Sub,
+                "fetch_and" => AtomicRmw::And,
+                "fetch_or" => AtomicRmw::Or,
+                "fetch_xor" => AtomicRmw::Xor,
+                other => return Err(no_value(&format!("the atomic operation '{other}'"))),
+            })
+        };
+        match op {
+            "load" => {
+                let raw = self.g.builder.build_load_atomic(mem, place, "atomic.load");
+                Ok(Some(self.atomic_from_mem(&elem, raw)?))
+            }
+            "store" => {
+                let value = self.value_of(&args[1])?;
+                let value = self.atomic_to_mem(&elem, value)?;
+                self.g.builder.build_store_atomic(value, place);
+                Ok(None)
+            }
+            "swap" | "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_or" | "fetch_xor" => {
+                let value = self.value_of(&args[1])?;
+                let value = self.atomic_to_mem(&elem, value)?;
+                let raw = self.g.builder.build_atomicrmw(rmw(op)?, place, value);
+                Ok(Some(self.atomic_from_mem(&elem, raw)?))
+            }
+            "compare_exchange" => {
+                let current = self.value_of(&args[1])?;
+                let current = self.atomic_to_mem(&elem, current)?;
+                let new = self.value_of(&args[2])?;
+                let new = self.atomic_to_mem(&elem, new)?;
+                let pair = self.g.builder.build_cmpxchg(place, current, new);
+                let prev = self.g.builder.build_extract_value(pair, 0, "atomic.prev");
+                let ok = self.g.builder.build_extract_value(pair, 1, "atomic.ok");
+                let prev = self.atomic_from_mem(&elem, prev)?;
+                Ok(Some(self.emit_cmpxchg_result(ret, ok, prev)?))
+            }
+            other => Err(no_value(&format!("the atomic operation '{other}'"))),
+        }
+    }
+
+    /// The `Result<T, T>` a `cmpxchg` becomes: `Ok(prev)` when the compare
+    /// matched, `Err(prev)` when it did not, where `prev` is the one value the
+    /// `cmpxchg` read and `ok` is its `i1` half.
+    ///
+    /// Written in `emit_enum_lit`'s layout and by the same two field indices,
+    /// with one difference: the tag is a `select` of the two variant indices
+    /// rather than a constant, because which arm is live is the compare's
+    /// outcome. The variants are found by name (`Ok`/`Err`, the same recognition
+    /// `?` uses) so this lowers against any two-variant `Ok`/`Err` shape, not
+    /// against one particular declaration.
+    fn emit_cmpxchg_result(
+        &mut self,
+        ret: &Ty,
+        ok: Value<'a>,
+        prev: Value<'a>,
+    ) -> Result<Value<'a>, String> {
+        let name = struct_name_of_ty(ret).ok_or_else(|| no_value("the Result type"))?;
+        let variant_of = |variant: &str| -> Result<usize, String> {
+            self.g
+                .program
+                .enums
+                .iter()
+                .find(|e| e.name == name)
+                .and_then(|e| e.variant(variant))
+                .map(|(index, _)| index)
+                .ok_or_else(|| no_value(&format!("the '{variant}' variant of '{name}'")))
+        };
+        let ok_index = variant_of("Ok")?;
+        let err_index = variant_of("Err")?;
+        let info = self
+            .g
+            .enums
+            .get(name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{name}'")))?;
+        let slot = self.temp_alloca(info.llvm_ty, "atomic.cx");
+        self.g
+            .builder
+            .build_store(self.g.ctx.const_null(info.llvm_ty), slot);
+        let tag_ptr = self
+            .g
+            .builder
+            .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
+        let i32t = self.g.ctx.i32();
+        let ok_tag = self.g.ctx.const_int(i32t, ok_index as u64, false);
+        let err_tag = self.g.ctx.const_int(i32t, err_index as u64, false);
+        let tag = self.g.builder.build_select(ok, ok_tag, err_tag, "atomic.tag");
+        self.g.builder.build_store(tag, tag_ptr);
+        let payload_ty = info
+            .variants
+            .get(ok_index)
+            .ok_or_else(|| no_value("the 'Ok' payload"))?
+            .payload_ty;
+        let union_ptr = self
+            .g
+            .builder
+            .build_struct_gep(info.llvm_ty, slot, ENUM_UNION_FIELD, "kelp_v");
+        let field_ptr = self
+            .g
+            .builder
+            .build_struct_gep(payload_ty, union_ptr, 0, "payload");
+        self.g.builder.build_store(prev, field_ptr);
+        Ok(self.g.builder.build_load(info.llvm_ty, slot, "atomic.cx.val"))
+    }
+
     fn emit_call(
         &mut self,
         callee: &str,
@@ -3774,6 +3947,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     return Ok(Some(v));
                 }
             }
+        }
+
+        // An atomic operation (MK9-S3-M1 stage A1): one instruction, emitted
+        // here rather than as a call into a monomorphized function set, because
+        // the instruction *is* the operation.
+        if let Some(op) = callee.strip_prefix("Atomic#") {
+            return self.emit_atomic_call(op, args, ret);
         }
 
         if let Some(info) = self.g.funcs.get(callee).cloned() {
@@ -4322,6 +4502,13 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 out.arrays.insert(ty.clone());
                 note_ty(elem, out);
             }
+            // An atomic is one field of a scalar type: one instantiation per
+            // element type the program mentions, with nothing to note below it
+            // that is not a scalar.
+            Ty::Atomic(elem) => {
+                out.atomics.insert(ty.clone());
+                note_ty(elem, out);
+            }
             // A closure is emitted once per signature, and its parameters and
             // return type may name another closure or a container.
             Ty::Closure { params, ret } => {
@@ -4710,6 +4897,19 @@ impl<'a> Gen<'a> {
                 let ty = self.ctx.struct_type(&crate::types::array_c_type(elem, *len));
                 self.containers.insert(arr.clone(), ty);
             }
+        }
+        // An `Atomic<T>` is one field of a scalar type, so its body can be set
+        // here, before any `datac` exists, exactly as a pointer container's can.
+        let mut atomics: Vec<Ty> = inst.atomics.iter().cloned().collect();
+        atomics.sort_by_key(container_sort_name);
+        for atomic in &atomics {
+            let Ty::Atomic(elem) = atomic else {
+                continue;
+            };
+            let ty = self.ctx.struct_type(&crate::types::atomic_c_type(elem));
+            let field = self.atomic_mem_lty(elem)?;
+            self.ctx.struct_set_body(ty, &[field]);
+            self.containers.insert(atomic.clone(), ty);
         }
         // The pointer containers have no by-value dependency on a user type, so
         // their bodies are settable now, before any `datac` type exists.
@@ -5221,6 +5421,22 @@ struct CfnSpec<'a> {
 impl<'a> Gen<'a> {
     fn lty2(&self, ty: &Ty) -> Result<Type<'a>, String> {
         llvm_type(self.ctx, &self.structs, &self.containers, ty)
+    }
+
+    /// The LLVM type an `Atomic<T>`'s single field holds, which is the type its
+    /// atomic instructions are emitted at.
+    ///
+    /// The element type for every element but `bool`, and `i8` for `bool`: an
+    /// LLVM atomic access has to be byte-sized, and an `i1` (which is what a
+    /// `bool` value is) is not, so `Atomic<bool>` stores a byte and the two
+    /// crossings (`FnGen::atomic_to_mem` and `FnGen::atomic_from_mem`) are where
+    /// a value becomes one and back. The C side has no such seam: a C `bool`
+    /// *is* one byte.
+    fn atomic_mem_lty(&self, elem: &Ty) -> Result<Type<'a>, String> {
+        if matches!(elem, Ty::Bool) {
+            return Ok(self.ctx.i8());
+        }
+        self.lty2(elem)
     }
 
     /// The named LLVM type of one container instantiation.
@@ -8323,11 +8539,14 @@ fn llvm_type<'a>(
         Ty::Ref { inner, .. } if matches!(**inner, Ty::Struct(_)) => ctx.opaque_ptr(),
         // A container is a named struct here; a borrow of one is its address,
         // which is what every method's `self` and every container parameter is.
-        Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => *containers
+        Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) | Ty::Atomic(_) => *containers
             .get(ty)
             .ok_or_else(|| no_value(&format!("the container '{}'", ty.display())))?,
         Ty::Ref { inner, .. }
-            if matches!(**inner, Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..)) =>
+            if matches!(
+                **inner,
+                Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) | Ty::Atomic(_)
+            ) =>
         {
             ctx.opaque_ptr()
         }
@@ -8598,6 +8817,14 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // contents through a pointer, an array inline, and both are complete
         // types by the time the `datac` that names one is given a body.
         Ty::List(_) | Ty::Box(_) | Ty::Map(..) | Ty::Array(..) => Ok(()),
+        // An `Atomic<T>` field is a one-word struct holding a scalar (MK9-S3-M1
+        // stage A1), so it is as nameable as the container beside it. MK9 9.3
+        // leaves "may an atomic be a `datac` field" open, and neither backend
+        // decides it: the frontend has no rule that refuses one, so both lay it
+        // out, and what is refused is an atomic as a *container element* (the
+        // element sets are unchanged), where the container's own routines would
+        // read and write it as a plain location.
+        Ty::Atomic(_) => Ok(()),
         // A borrowed field never reaches codegen at all: the frontend refuses
         // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
         // and a reference). These three rows are therefore unreachable, and are

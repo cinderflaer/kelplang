@@ -1,0 +1,11 @@
+// MK9-S3-M1 stage A1: the ordering slot is reserved in every signature, and v1
+// has exactly one value for it. Naming an ordering that does not exist yet is
+// the ordinary unknown-variant error, not a special refusal: the slot is a real
+// argument of a real enum, so a second variant is a widening of `Ordering` and
+// a change to no signature (MK9 section 3).
+impl "std/atomic"
+
+fun main() {
+    val c = AtomicI64.new(0)
+    print(c.load(order = atomic.Ordering.Acquire))
+}

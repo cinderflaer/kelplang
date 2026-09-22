@@ -880,11 +880,11 @@ impl TypeScope<'_> {
                 return Ok(bound.clone());
             }
         }
-        // The three generic names v1 knows (`List<T>` from C1, `Box<T>` from
-        // M8, `Map<V>` from MK5-S5). All are compiler builtins, not
-        // user-definable types; each checks its element against what its C
-        // representation can hold.
-        if ty.name == "List" || ty.name == "Box" || ty.name == "Map" {
+        // The generic names v1 knows (`List<T>` from C1, `Box<T>` from M8,
+        // `Map<V>` from MK5-S5, `Atomic<T>` from MK9-S3-M1 stage A1). All are
+        // compiler builtins, not user-definable types; each checks its element
+        // against what its representation can hold.
+        if ty.name == "List" || ty.name == "Box" || ty.name == "Map" || ty.name == "Atomic" {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
             // for a `String` key — which is what every use site written before
             // A-2 says, and the two spellings are the same `Ty`.
@@ -928,6 +928,8 @@ impl TypeScope<'_> {
                 (crate::types::is_list_element(&elem), list_element_error(&elem))
             } else if ty.name == "Map" {
                 (crate::types::is_map_element(&elem), map_element_error(&elem))
+            } else if ty.name == "Atomic" {
+                (crate::types::is_atomic_element(&elem), atomic_element_error(&elem))
             } else {
                 (crate::types::is_box_element(&elem), box_element_error(&elem))
             };
@@ -941,6 +943,8 @@ impl TypeScope<'_> {
                 Ty::List(Box::new(elem))
             } else if ty.name == "Map" {
                 Ty::Map(Box::new(key), Box::new(elem))
+            } else if ty.name == "Atomic" {
+                Ty::Atomic(Box::new(elem))
             } else {
                 Ty::Box(Box::new(elem))
             });
@@ -970,7 +974,7 @@ impl TypeScope<'_> {
             }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments — the compiler's generic types are 'List<T>', 'Box<T>' and 'Map<V>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>' and 'Atomic<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
                     name = ty.name
                 ),
@@ -2035,6 +2039,10 @@ fn builtin_type_name(ty: &Ty) -> Option<&'static str> {
         Ty::Box(_) => Some("Box"),
         Ty::Array(..) => Some("Array"),
         Ty::Map(..) => Some("Map"),
+        // An `Atomic<T>` answers to one name whatever its element, so
+        // `c.load(...)` keys on `Atomic#load` and the element type comes from
+        // the receiver (`atomic_sig`).
+        Ty::Atomic(_) => Some("Atomic"),
         // The integer types answer to their written names so that the
         // conversion methods below (`n.to_u8()`) have a receiver to sit on.
         Ty::I32 => Some("i32"),
@@ -2099,10 +2107,28 @@ fn fn_element_reason(ty: &Ty, container: &str) -> Option<String> {
     }
 }
 
+/// Why an `Atomic<T>` cannot be a container element. MK9 9.3 leaves "may an
+/// atomic be a `List` element, a `Map` value, a `datac` field" open on purpose,
+/// and this stage answers the container half conservatively by leaving the
+/// element sets exactly as they were: an atomic is refused where a container is,
+/// rather than by a new rule nobody decided.
+fn atomic_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    let Ty::Atomic(elem) = ty else {
+        return None;
+    };
+    Some(format!(
+        "'Atomic<{}>' cannot be a '{container}' element: an element is read and written as a plain location by the container's own routines, and every access to an atomic has to be one atomic operation. Keep the atomic in a place of its own ('val c = AtomicI64.new(0)') and put its value in the container",
+        elem.display()
+    ))
+}
+
 /// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
 /// type position and `List.of(x)` give the same explanation.
 fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "List") {
+        return reason;
+    }
+    if let Some(reason) = atomic_element_reason(ty, "List") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {
@@ -2123,6 +2149,9 @@ fn map_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "Map") {
         return reason;
     }
+    if let Some(reason) = atomic_element_reason(ty, "Map") {
+        return reason;
+    }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
             "{reason} — a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
@@ -2139,6 +2168,9 @@ fn map_element_error(ty: &Ty) -> String {
 /// `[[u8; 4]; 8]` is a page table and is as expressible as it is in C, while a
 /// `List`/`Box`/`Map` element is refused for the reason a list refuses it.
 fn array_element_error(ty: &Ty) -> String {
+    if let Some(reason) = atomic_element_reason(ty, "array") {
+        return reason;
+    }
     match ty {
         Ty::Fn { .. } => {
             return format!(
@@ -2171,6 +2203,9 @@ fn box_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "Box") {
         return reason;
     }
+    if let Some(reason) = atomic_element_reason(ty, "Box") {
+        return reason;
+    }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
             "{reason} — a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another 'Box'/'List'"
@@ -2178,6 +2213,22 @@ fn box_element_error(ty: &Ty) -> String {
     }
     format!(
         "'{}' cannot be a 'Box' element — use a scalar, 'String', 'Bytes', a 'datac', a 'List', or another 'Box'",
+        ty.display()
+    )
+}
+
+/// Why a type cannot be an `Atomic<T>`'s element. The set is closed (`bool` and
+/// the integer types) because a single-word atomic cannot hold an owned value,
+/// a float has no atomic arithmetic worth claiming, and a borrow is somebody
+/// else's data.
+fn atomic_element_error(ty: &Ty) -> String {
+    if let Some(reason) = borrowed_element_reason(ty) {
+        return format!(
+            "{reason}. An 'Atomic<T>' is a location, and a borrow in one would be a location holding somebody else's location; use 'bool' or an integer type"
+        );
+    }
+    format!(
+        "'{}' cannot be an 'Atomic' element in v1: the element set is 'bool' and the integer types ('i32', 'i64', 'u32', 'u64', 'u8', 'u16', 'usize', 'isize'), because one atomic operation is one machine-word operation and there is no atomic arithmetic for a float",
         ty.display()
     )
 }
@@ -2269,6 +2320,115 @@ fn box_sig(key: &str, elem: &Ty) -> Option<FnSig> {
         },
         _ => return None,
     })
+}
+
+/// The written type of an atomic operation's ordering argument: the `Ordering`
+/// enum the shipped `std/atomic` module declares, named by that module's key
+/// prefix. A builtin signature has no declaration site whose module prefix the
+/// resolver could have applied, so the key is built here the same way
+/// `lower_try_to` builds `Option`'s, and a program that never imports the
+/// module cannot write a value of this type, so the key always names a
+/// declaration by the time one is passed.
+pub fn atomic_order_ty() -> Ty {
+    Ty::Struct(format!(
+        "{}Ordering",
+        crate::stdlib::key_prefix(crate::stdlib::ATOMIC_MODULE)
+    ))
+}
+
+/// The `Atomic<T>` methods (MK9-S3-M1 stage A1), instantiated for one element
+/// type. Each takes the ordering as its last argument even though v1 has one
+/// legal value: MK9 3 reserves the argument position, so a second variant is a
+/// widening of the enum and a change to no signature.
+///
+/// Two things keep this out of the static table. The element type decides every
+/// signature, exactly as it does for a container; and `compare_exchange` hands
+/// back `Result<T, T>` (MK9 4: `Ok` the value that was there, `Err` the value
+/// that turned out to be there), which is an instance of the stdlib's enum and
+/// so has to be instantiated at the use site. The `Result` is named through its
+/// module id rather than by the enum's own name, and a program that never
+/// imports `std/result` is told to rather than given an internal error, the
+/// same rule `try_to_<T>`'s `Option` follows.
+///
+/// `AtomicBool` gets no `fetch_*` at all: there is no atomic add for a flag, and
+/// a `fetch_or` on one would be a way to write `true` without saying so.
+///
+/// **Every receiver is shared, `store`'s included.** MK9 1 states the reason and
+/// 4's `mut` spelling was wrong: an atomic mutates through a shared borrow,
+/// which is what leaves it with **no `&mut` path by construction**, which is
+/// what makes a `&Atomic<T>` the thing that may cross a thread boundary and what
+/// stage B1's `Sync`-shaped rule is built on. A `mut` receiver would give the
+/// type a `&mut` path and make that rule unsound.
+///
+/// This is also what makes a `pd val` atomic usable: a passdown declared `val`
+/// hands a function a *shared* borrow, while a `pd var`'s borrow is exclusive
+/// for the whole function, so a `pd var` counter could be stored to or read but
+/// not both, in one function. The sharing route for a counter is therefore
+/// `pd val` and never `pd var`.
+fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<Option<FnSig>> {
+    let cell = Ty::Atomic(Box::new(elem.clone()));
+    let shared = Ty::Ref { mutable: false, inner: Box::new(cell.clone()) };
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    let order = atomic_order_ty();
+    Ok(Some(match key {
+        "Atomic#new" => FnSig { params: vec![p("value", elem.clone())], ret: cell },
+        "Atomic#load" => FnSig {
+            params: vec![p("self", shared), p("order", order)],
+            ret: elem.clone(),
+        },
+        "Atomic#store" => FnSig {
+            params: vec![p("self", shared), p("value", elem.clone()), p("order", order)],
+            ret: Ty::Unit,
+        },
+        // `swap` and the five `fetch_*`: one shape, because each is a
+        // read-modify-write that hands back the value that was there. The
+        // ordering comes last, which is the argument position MK9 3 reserves.
+        // The integer guard is what keeps `fetch_add` off `AtomicBool`.
+        "Atomic#swap"
+        | "Atomic#fetch_add"
+        | "Atomic#fetch_sub"
+        | "Atomic#fetch_and"
+        | "Atomic#fetch_or"
+        | "Atomic#fetch_xor"
+            if key == "Atomic#swap" || elem.is_integer() =>
+        {
+            FnSig {
+                params: vec![
+                    p("self", shared),
+                    p("value", elem.clone()),
+                    p("order", order),
+                ],
+                ret: elem.clone(),
+            }
+        }
+        "Atomic#compare_exchange" => {
+            let result_key = format!(
+                "{}Result",
+                crate::stdlib::key_prefix(crate::stdlib::RESULT_MODULE)
+            );
+            if !ctx.env.generics.contains_key(&result_key) {
+                return Err(TypeError {
+                    message: format!(
+                        "'Atomic.compare_exchange' hands back 'Result<T, T>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
+                        result_key,
+                        crate::stdlib::RESULT_MODULE
+                    ),
+                    span,
+                });
+            }
+            let result = ctx.instantiate_type(&result_key, &[elem.clone(), elem.clone()], span)?;
+            FnSig {
+                params: vec![
+                    p("self", shared),
+                    p("current", elem.clone()),
+                    p("new", elem.clone()),
+                    p("order", order),
+                ],
+                ret: result,
+            }
+        }
+        _ => return Ok(None),
+    }))
 }
 
 /// `sortable`/`clonable` are what `types::value_is_sortable` and
@@ -9448,6 +9608,11 @@ fn check_method_call(
             if name == "List" || name == "Box" || name == "Map" {
                 return check_container_associated(name, method, args, span, ctx, expected);
             }
+            // `Atomic.new(x)` and `AtomicI64.new(0)`, the two spellings of the
+            // one constructor of the builtin atomic cell (MK9-S3-M1 stage A1).
+            if name == "Atomic" || crate::types::atomic_alias_elem(name).is_some() {
+                return check_atomic_associated(name, method, args, span, ctx, expected);
+            }
             let key = format!("{name}#{method}");
             if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
                 let params = assoc.params.clone();
@@ -9476,6 +9641,30 @@ fn check_method_call(
             span,
         });
     };
+    // A method on an `Atomic<T>` (MK9-S3-M1 stage A1). Its signature depends on
+    // the element type, and `compare_exchange`'s `Result<T, T>` is an instance
+    // of the stdlib enum rather than a fixed type, so neither can live in the
+    // static builtin table. The receiver is a place, so it goes through the same
+    // `check_call_arg` a declared method's does, which is what makes `store`
+    // and the `fetch_*` require a `mut` binding, since they write the location.
+    if let Some(elem) = crate::types::atomic_elem_of(&probe.ty).cloned() {
+        let key = format!("Atomic#{method}");
+        if let Some(sig) = atomic_sig(&key, &elem, ctx, span)? {
+            let mut checked = vec![check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?];
+            checked.extend(match_args(
+                &format!("method 'Atomic.{method}'"),
+                &sig.params[1..],
+                args,
+                span,
+                ctx,
+            )?);
+            return Ok(tir::Expr {
+                kind: tir::ExprKind::Call { callee: key, args: checked },
+                ty: sig.ret,
+                span,
+            });
+        }
+    }
     // `n.try_to_u8()` (MISSING-RbhdW): the fallible twin of `n.to_u8()`. A
     // builtin has no declaration to resolve its return type at, so the call is
     // lowered here into a shape both backends already lower: the receiver
@@ -9609,6 +9798,25 @@ fn check_method_call(
                     "Box<{}> has no method '{method}' — the Box surface is is_empty, get, set, take",
                     e.display()
                 ),
+                // An `Atomic<T>` with no such method: `bool` has the five
+                // conversions' worth of surface and nothing more, so the
+                // generic "datac 'Atomic'" text would name a datac that does
+                // not exist.
+                (None, "Atomic") => {
+                    let elem = crate::types::atomic_elem_of(&probe.ty)
+                        .expect("an Atomic receiver names its element");
+                    if elem.is_integer() {
+                        format!(
+                            "Atomic<{}> has no method '{method}': the atomic surface is new, load, store, swap, compare_exchange, fetch_add, fetch_sub, fetch_and, fetch_or, fetch_xor",
+                            elem.display()
+                        )
+                    } else {
+                        format!(
+                            "Atomic<{}> has no method '{method}': the atomic surface is new, load, store, swap and compare_exchange, and 'bool' has no atomic arithmetic, so there is no fetch_add/fetch_sub/fetch_and/fetch_or/fetch_xor for it",
+                            elem.display()
+                        )
+                    }
+                }
                 (None, _) if probe.ty.is_integer() => format!(
                     "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64 and to_f32, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
                     probe.ty.display()
@@ -9990,6 +10198,73 @@ fn check_container_associated(
             span,
         }),
     }
+}
+
+/// The one constructor of the builtin atomic cell (MK9-S3-M1 stage A1):
+/// `Atomic.new(x)` and `AtomicI64.new(0)`.
+///
+/// The element type comes from the named instantiation (`AtomicBool`), from the
+/// binding's written type (`val c: Atomic<i64> = Atomic.new(0)`), or from the
+/// argument itself, in that order, the same three sources `List.of(x)` has, so
+/// the ordinary integer literal default answers `val c = Atomic.new(0)` and a
+/// written type overrides it. There is no `empty`: an atomic always holds a
+/// value, and a zero-initialized one is `Atomic.new(0)`.
+fn check_atomic_associated(
+    name: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if method != "new" {
+        return Err(TypeError {
+            message: format!(
+                "'{name}.{method}' is not an 'Atomic' operation: an atomic is made with 'Atomic.new(x)' (or 'AtomicI64.new(0)' for a named instantiation) and read through the value it is bound to ('c.load(order = ...)', 'c.store(value = x, order = ...)')"
+            ),
+            span,
+        });
+    }
+    if args.len() != 1 {
+        return Err(TypeError {
+            message: format!("'Atomic.new' takes exactly 1 argument, found {}", args.len()),
+            span,
+        });
+    }
+    let named = crate::types::atomic_alias_elem(name);
+    let written = expected.and_then(crate::types::atomic_elem_of).cloned();
+    let from_position = named.clone().or_else(|| written.clone());
+    let value = check_expr(&args[0].value, ctx, from_position.as_ref())?;
+    let elem = match from_position {
+        Some(elem) => {
+            if value.ty != elem {
+                return Err(TypeError {
+                    message: format!(
+                        "'Atomic<{}>.new' needs a '{}' value, found '{}'",
+                        elem.display(),
+                        elem.display(),
+                        value.ty.display()
+                    ),
+                    span: args[0].value.span(),
+                });
+            }
+            elem
+        }
+        // Nothing said which element type, so the argument's own type is the
+        // answer: `Atomic.new(true)` is `Atomic<bool>`.
+        None => value.ty.clone(),
+    };
+    if !crate::types::is_atomic_element(&elem) {
+        return Err(TypeError {
+            message: atomic_element_error(&elem),
+            span: args[0].value.span(),
+        });
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: "Atomic#new".to_string(), args: vec![value] },
+        ty: Ty::Atomic(Box::new(elem)),
+        span,
+    })
 }
 
 /// A bare name that only exists as an imported item's *qualified* name is a

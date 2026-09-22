@@ -25,6 +25,19 @@ pub const RT_MODULE: &str = "std/rt";
 /// resolver to qualify the type at.
 pub const OPTION_MODULE: &str = "std/option";
 
+/// The module that declares `Ordering`, the one type in the atomics surface
+/// that is a plain Kelp `enum` rather than a compiler builtin (MK9-S3-M1 stage
+/// A1). A builtin signature has no declaration site for the resolver to qualify
+/// a type at, so the `Atomic<T>` method signatures name `Ordering` by this id's
+/// `key_prefix`, exactly as `try_to_<T>` names `Option` through `OPTION_MODULE`.
+pub const ATOMIC_MODULE: &str = "std/atomic";
+
+/// The module that declares `Result<T, E>`. A builtin whose result *is* a
+/// `Result` names the instance through `key_prefix` of this id, for the same
+/// reason `OPTION_MODULE` exists: `Atomic.compare_exchange` hands back
+/// `Result<T, T>` (MK9 4) and has no declaration site to name it at.
+pub const RESULT_MODULE: &str = "std/result";
+
 /// The function-key prefix of a module id: `std/rt` is `std.rt.`. The two have
 /// to agree everywhere a key is built or recognized, so the rule lives here
 /// rather than being spelled out at each call site.
@@ -87,6 +100,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/http" => include_str!("../std/http.kp"),
         "std/encoding" => include_str!("../std/encoding.kp"),
         "std/list" => include_str!("../std/list.kp"),
+        "std/atomic" => include_str!("../std/atomic.kp"),
         "std/option" => include_str!("../std/option.kp"),
         "std/result" => include_str!("../std/result.kp"),
         _ => return None,
@@ -105,7 +119,7 @@ pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
         "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/encoding", "std/list",
-        "std/option", "std/result",
+        "std/option", "std/result", "std/atomic",
     ]
 }
 
