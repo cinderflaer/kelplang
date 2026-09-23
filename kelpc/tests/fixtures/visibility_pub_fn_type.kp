@@ -1,0 +1,10 @@
+// A-13 private-in-public: a function type names its parameters and its
+// return, so a `pub datac` field of that shape leaks `Hidden` through the
+// return position. A `pub fun` parameter of the same type is the same walk.
+datac Hidden(val n: i32)
+
+pub datac Callbacks(val on_i32: fun(i32).R: Hidden)
+
+fun main() {
+    print(1)
+}

@@ -742,6 +742,16 @@ fn a_public_datac_may_not_name_a_private_field_type() {
 }
 
 #[test]
+fn a_method_on_an_exported_datac_may_not_name_a_private_type() {
+    // A method is reached through a value of its declaring type, so an
+    // exported `datac` makes the method's signature reachable too (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_method_type.kp",
+        "'Boxed.stash' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
 fn a_public_enum_may_not_name_a_private_payload_type() {
     // A payload is matched out of the exported variant (A-13).
     assert_rejected_with(
@@ -806,6 +816,37 @@ fn a_public_function_may_not_name_a_private_borrowed_type() {
     assert_rejected_with(
         "tests/fixtures/visibility_pub_borrow.kp",
         "'peek' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_function_may_not_return_a_private_type_inside_a_box() {
+    // `Box` names its element type, so the walk reaches it like any other
+    // container's argument (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_box_type.kp",
+        "'stash' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_datac_may_not_name_a_private_type_inside_a_function_type() {
+    // A function type names its parameters and its return, so the walk
+    // recurses through both (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_fn_type.kp",
+        "'Callbacks' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn an_exported_signature_may_not_name_a_private_type_declared_after_it() {
+    // The check runs over the merged program with the whole export set in
+    // hand, so the order of two declarations in one file does not decide the
+    // answer (A-13, `plan/syntax.md` 13.4).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_late_type.kp",
+        "'describe' is exported but its signature names 'Hidden'",
     );
 }
 

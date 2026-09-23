@@ -1,10 +1,10 @@
 impl "lib"
 
 // A-13 private-in-public: a `const`'s written type is part of what it
-// states, and `lib` does not export `Hidden`. The same-module spelling of
-// this position is not expressible at all, because the canonical order puts
-// every `const` before every `datac` in a file, so the type is pinned
-// through another module's private type.
+// states, and `lib` does not export `Hidden`. A `const` may name a type
+// from its own module (`pub const LIMIT: Hidden` with `datac Hidden` later
+// in the file parses, and the rule refuses that one too), so this fixture
+// pins the cross-module spelling, which reaches `Hidden` through the alias.
 pub const LIMIT: lib.Hidden = 0
 
 fun main() {

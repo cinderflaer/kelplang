@@ -1,0 +1,12 @@
+// A-13 private-in-public: a method is reached through a value of its
+// declaring type, so an exported `datac` makes the method's signature
+// reachable too, and a private parameter type leaks through it.
+datac Hidden(val n: i32)
+
+pub datac Boxed(val n: i32)
+
+fun Boxed.stash(h: Hidden).R: i32 = h.n
+
+fun main() {
+    print(1)
+}

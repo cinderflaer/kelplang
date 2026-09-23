@@ -1,0 +1,9 @@
+// A-13 private-in-public: `Box` names its element type, so `Box<Hidden>`
+// leaks `Hidden` through the container exactly as `List<Hidden>` does.
+datac Hidden(val n: i32)
+
+pub fun stash(n: i32).R: Box<Hidden> = Box.of(Hidden(n = n))
+
+fun main() {
+    print(1)
+}
