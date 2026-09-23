@@ -1,0 +1,12 @@
+// BUG-mW3tZ: a `Unit` value may be bound. The binding is zero-sized, so the
+// local has no storage and no drop, and the call still runs for what it prints.
+// The message the two backends used to answer this with named a compiler defect
+// (LLVM) and an incomplete C type (`void kelp_x`), neither of which is a
+// language diagnostic.
+fun noise() {
+    print("1")
+}
+
+fun main() {
+    val x = noise()
+}

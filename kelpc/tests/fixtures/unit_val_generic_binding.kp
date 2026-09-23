@@ -1,0 +1,22 @@
+// The reason a `Unit` value may be bound at all: generics have landed, so a
+// generic function whose type parameter resolves to `Unit` at one call site
+// needs the binding to work uniformly. `id` is instantiated at `Unit`, so the
+// instantiation takes the value as an argument and returns it, and the annotated
+// form of the same binding (`val y: unit`) is pinned beside it. `sink` is a plain
+// function with a `Unit` parameter, which the two backends write as no parameter
+// at all.
+fun noise() {
+    print("1")
+}
+
+fun id<T>(v: T).R: T = v
+
+fun sink(u: unit) {
+    print("2")
+}
+
+fun main() {
+    val x = id(v = noise())
+    val y: unit = x
+    sink(u = y)
+}

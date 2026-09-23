@@ -424,12 +424,22 @@ impl Ty {
 
 /// `ret (*)(params)`'s parameter half: `void` for none, the C parameter types
 /// otherwise. Shared with `c_decl`, since a declarator and a bare function
-/// pointer type differ only in where the name goes.
-fn fn_params_c(params: &[Ty]) -> String {
-    if params.is_empty() {
+/// pointer type differ only in where the name goes, and with `codegen_c.rs`,
+/// which writes the same list for a function that returns a function value. A
+/// `unit` parameter is not written, for the same reason a `unit` parameter of
+/// a `fun` declaration is not (`codegen_c.rs::write_params`): no value crosses
+/// for it, so a pointer to such a function takes exactly the parameters the
+/// callee's own definition takes.
+pub(crate) fn fn_params_c(params: &[Ty]) -> String {
+    if params.iter().all(|p| *p == Ty::Unit) {
         "void".to_string()
     } else {
-        params.iter().map(|p| p.c_type()).collect::<Vec<_>>().join(", ")
+        params
+            .iter()
+            .filter(|p| **p != Ty::Unit)
+            .map(|p| p.c_type())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 

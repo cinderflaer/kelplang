@@ -2466,10 +2466,18 @@ fn write_params(out: &mut String, params: &[(String, Ty)], env: bool) {
         out.push_str("void* env_raw");
         first = false;
     }
-    if params.is_empty() && first {
+    // A `unit` parameter has no C type to be declared with (`void kelp_u` is
+    // not a declaration), and no value crosses for it: it is left out of the
+    // signature entirely and a read of it is a no-op expression
+    // (`Gen::expr_value`). No `unit` parameter is written, so a function whose
+    // parameters are all `unit` still gets the `void` a C definition requires.
+    if params.iter().all(|(_, ty)| *ty == Ty::Unit) && first {
         out.push_str("void");
     }
     for (name, ty) in params.iter() {
+        if *ty == Ty::Unit {
+            continue;
+        }
         if !first {
             out.push_str(", ");
         }
@@ -2479,13 +2487,11 @@ fn write_params(out: &mut String, params: &[(String, Ty)], env: bool) {
 }
 
 /// A function type's own parameter list, as C — the same text a declarator
-/// needs after the name, so `types.rs` and this emitter agree on one spelling.
+/// needs after the name, so `types.rs` and this emitter agree on one spelling:
+/// `types::fn_params_c` is that spelling, and a `unit` parameter is left out of
+/// it.
 fn fn_params_of(params: &[Ty]) -> String {
-    if params.is_empty() {
-        "void".to_string()
-    } else {
-        params.iter().map(|p| p.c_type()).collect::<Vec<_>>().join(", ")
-    }
+    crate::types::fn_params_c(params)
 }
 
 /// Writing state that outlives a single expression: the output buffer, the
@@ -2699,9 +2705,15 @@ impl<'a> Gen<'a> {
     fn write_function(&mut self, f: &Function, init_pds: bool) {
         // Parameters are locals of the body's own block, and C declares both
         // in one scope, so a body binding of a parameter's name is a shadow
-        // that needs a name of its own (see `declare_local`).
+        // that needs a name of its own (see `declare_local`). A `unit`
+        // parameter has no C parameter of its own (`write_params` leaves it
+        // out), so it is not bound to a name either: a read of it is a no-op
+        // expression and an assignment to it stores nothing.
         self.push_locals();
-        for (index, (name, _)) in f.params.iter().enumerate() {
+        for (index, (name, ty)) in f.params.iter().enumerate() {
+            if *ty == Ty::Unit {
+                continue;
+            }
             let c = c_name(name);
             self.locals
                 .last_mut()
@@ -2828,6 +2840,15 @@ impl<'a> Gen<'a> {
         }
         match stmt {
             Stmt::Let { name, ty, init } => {
+                // A `unit` binding is zero-sized: it gets no C object to
+                // declare (`void kelp_x` is not a declaration) and no drop, so
+                // the initializer is emitted for whatever it does and the name
+                // is never read as a C variable (`expr_value` answers a `unit`
+                // read with a no-op expression).
+                if *ty == Ty::Unit {
+                    self.write_stmt_like_expr(init, depth);
+                    return;
+                }
                 let value = self.expr_value(init);
                 let decl = self.declare_local(name, BindingId::Local(stmt_id(stmt)));
                 indent(&mut self.out, depth);
@@ -2981,6 +3002,12 @@ impl<'a> Gen<'a> {
             // down). See `borrowck.rs`'s module doc, "a move clears its
             // source".
             ExprKind::Ident(name) => {
+                // A `unit` binding is not a C object (`Stmt::Let` declares
+                // none), so reading one is a no-op expression rather than a
+                // name that does not exist.
+                if expr.ty == Ty::Unit {
+                    return "(void)0".to_string();
+                }
                 if self.drops.moves_at(&self.function, expr) {
                     let tmp = fresh_temp();
                     let read = self.local_c_name(name);
@@ -3412,6 +3439,11 @@ impl<'a> Gen<'a> {
                 s
             }
             ExprKind::Assign { target, value } => {
+                // A `unit` target stores nothing (it has no C object), so the
+                // assignment is the value expression and no store.
+                if target.ty == Ty::Unit {
+                    return format!("({{ {}; (void)0; }})", self.expr_value(value));
+                }
                 let target_ty = target.ty.clone();
                 let target_text = self.lvalue(target);
                 let value_text = self.expr_value(value);
@@ -4150,6 +4182,14 @@ impl<'a> Gen<'a> {
         let mut texts: Vec<String> = Vec::new();
         let mut staged: Vec<(String, Ty)> = Vec::new();
         for (i, a) in args.iter().enumerate() {
+            // A `unit` argument crosses as nothing: the callee's own signature
+            // has no parameter for it (`write_params` leaves it out), so the
+            // argument is evaluated for whatever it does and no C value is
+            // passed.
+            if a.ty == Ty::Unit {
+                prelude.push_str(&format!("{};\n", self.expr_value(a)));
+                continue;
+            }
             let want = hoist.get(i).copied().unwrap_or(false) && checked_arg_needs_temp(a);
             let (decls, text, owned) = self.stage_argument(a, want);
             prelude.push_str(&decls);

@@ -201,7 +201,14 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 251;
+/// Raised again by BUG-mW3tZ: a `Unit` value may be bound, so
+/// `unit_val_binding` (a `unit`-returning call bound to a `val`, which the LLVM
+/// backend used to answer with a compiler-defect message and `cc` with
+/// `variable has incomplete type void`) and `unit_val_generic_binding` (a
+/// generic function instantiated at `unit`, which also passes a bound `unit` on
+/// to a `unit` parameter) both build with both backends and the differential
+/// sweep compares them.
+const LLVM_BUILT_BASELINE: usize = 253;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

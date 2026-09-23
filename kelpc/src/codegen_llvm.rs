@@ -894,9 +894,16 @@ impl<'a> Gen<'a> {
                 if f.env.is_some() {
                     params.push(ctx.opaque_ptr());
                 }
+                // A `unit` parameter has no LLVM type at all (`llvm_type`
+                // refuses it), so it takes no place in the signature and
+                // nothing crosses into the call for it. The parameter list a
+                // caller passes is built by the same filter in
+                // `emit_call`'s argument loop, so the two cannot disagree
+                // about which argument goes where.
                 params.extend(
                     f.params
                         .iter()
+                        .filter(|(_, ty)| *ty != Ty::Unit)
                         .map(|(_, ty)| llvm_type(ctx, &self.structs, &self.containers, ty))
                         .collect::<Result<Vec<_>, _>>()?,
                 );
@@ -1935,10 +1942,18 @@ impl<'g, 'a> FnGen<'g, 'a> {
         };
 
         // Bind each parameter into its own slot, so its name is a load like any
-        // other local.
+        // other local. A `unit` parameter has no slot and no LLVM parameter of
+        // its own: a read of it names a value with no representation, which
+        // `emit_expr` answers with no value, so the index into the LLVM
+        // signature only advances for the parameters that were passed.
         if self.fn_name != "main" {
+            let mut llvm_index = param_offset;
             for (i, (name, ty)) in self.params.clone().iter().enumerate() {
-                let value = self.cur_fn.get_param(i + param_offset);
+                if *ty == Ty::Unit {
+                    continue;
+                }
+                let value = self.cur_fn.get_param(llvm_index);
+                llvm_index += 1;
                 let slot = self.alloca(ty, name)?;
                 self.g.builder.build_store(value, slot);
                 self.scopes
@@ -2074,6 +2089,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 // An initializer that diverged leaves the binding dead: emitting
                 // its store would put an instruction after the block's terminator.
                 if self.terminated {
+                    return Ok(());
+                }
+                // A `unit` binding is zero-sized: it gets no slot and no drop,
+                // and the initializer's own emission is all the statement has.
+                // A read of the name is answered by `emit_expr` with no value,
+                // which is what a uniform binding of `unit` costs.
+                if *ty == Ty::Unit {
                     return Ok(());
                 }
                 let slot = self.alloca(ty, name)?;
@@ -2215,6 +2237,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::FloatLit(v) => Ok(Some(self.float_const(&e.ty, *v)?)),
             ExprKind::BoolLit(b) => Ok(Some(self.g.ctx.const_bool(*b))),
             ExprKind::StringLit(s) => Ok(Some(self.string_global(s)?)),
+            // A `unit` read is no value: the binding has no storage, so there
+            // is nothing to load (`Stmt::Let` allocates none).
+            ExprKind::Ident(_) if e.ty == Ty::Unit => Ok(None),
             ExprKind::Ident(name) => Ok(Some(self.load_ident(e, name)?)),
             ExprKind::Unary { op, expr } => Ok(Some(self.emit_unary(*op, expr, &e.ty)?)),
             ExprKind::Binary { op, lhs, rhs } => {
@@ -2570,6 +2595,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
             all.push(env);
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             for a in args {
+                // A `unit` argument crosses as nothing (see the direct-call
+                // arm); the parameter list above has no slot for it either.
+                if a.ty == Ty::Unit {
+                    self.emit_expr(a)?;
+                    continue;
+                }
                 all.push(self.arg_value(a, &mut held)?);
             }
             let mut call_params = Vec::with_capacity(params.len() + 1);
@@ -2602,6 +2633,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let mut all: Vec<Value<'a>> = Vec::with_capacity(args.len());
         let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
         for a in args {
+            // A `unit` argument crosses as nothing (see the direct-call arm).
+            if a.ty == Ty::Unit {
+                self.emit_expr(a)?;
+                continue;
+            }
             all.push(self.arg_value(a, &mut held)?);
         }
         let call_ty = self.g.ctx.fn_type(ret_lty, &params, false);
@@ -3297,6 +3333,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
     }
 
     fn emit_assign(&mut self, target: &Expr, value: &Expr, span: Span) -> Result<(), String> {
+        // A `unit` target has no slot to write: the value expression is still
+        // emitted, for whatever it does, and there is no store to make.
+        if target.ty == Ty::Unit {
+            self.emit_expr(value)?;
+            return Ok(());
+        }
         let v = self.value_of(value)?;
         if self.terminated {
             return Ok(());
@@ -3974,6 +4016,19 @@ impl<'g, 'a> FnGen<'g, 'a> {
             let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
             let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
             for (index, a) in args.iter().enumerate() {
+                // A `unit` argument crosses as nothing: the callee's own
+                // signature has no parameter for it (`declare_functions`
+                // filters the same way), so the argument is evaluated for
+                // whatever it does and no value is passed.
+                if a.ty == Ty::Unit {
+                    self.emit_expr(a)?;
+                    // A `unit` argument that diverged (`panic`) ends the block,
+                    // so there is no call left to make.
+                    if self.terminated {
+                        return Ok(None);
+                    }
+                    continue;
+                }
                 match prepared.get(&index) {
                     Some(v) => values.push(*v),
                     None => values.push(self.arg_value(a, &mut held)?),
@@ -5094,8 +5149,12 @@ impl<'a> Gen<'a> {
         let Ty::Fn { params, ret } = inner else {
             return Err(no_value("a function value"));
         };
+        // A `unit` parameter is not a machine parameter, exactly as it is not
+        // one in the declaration `declare_functions` writes, so it is filtered
+        // out here too and the call lowerer drops the matching argument.
         let params = params
             .iter()
+            .filter(|p| **p != Ty::Unit)
             .map(|p| self.lty2(p))
             .collect::<Result<Vec<_>, _>>()?;
         let ret = if **ret == Ty::Unit {
