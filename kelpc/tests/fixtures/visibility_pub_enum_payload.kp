@@ -1,0 +1,12 @@
+// A-13 private-in-public: an enum's payload is matched out of the variant,
+// so a private payload type leaks the same way a field does.
+datac Hidden(val n: i32)
+
+pub enum Shape {
+    Wrapped(val h: Hidden)
+    Empty
+}
+
+fun main() {
+    print(1)
+}

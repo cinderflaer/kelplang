@@ -1,0 +1,9 @@
+// A-13 private-in-public: a field of an exported `datac` is reachable
+// through a value of the type, so a private field type leaks with it.
+datac Hidden(val n: i32)
+
+pub datac Boxed(val h: Hidden)
+
+fun main() {
+    print(1)
+}

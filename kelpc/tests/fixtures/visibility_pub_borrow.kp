@@ -1,0 +1,9 @@
+// A-13 private-in-public: a borrow names its pointee, so `&Hidden` leaks
+// `Hidden` exactly as `Hidden` does.
+datac Hidden(val n: i32)
+
+pub fun peek(h: &Hidden).R: i32 = h.n
+
+fun main() {
+    print(1)
+}

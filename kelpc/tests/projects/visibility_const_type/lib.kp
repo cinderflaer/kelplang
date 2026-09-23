@@ -1,0 +1,2 @@
+// `Hidden` carries no `pub`, so module 'lib' does not export it (A-13).
+datac Hidden(val n: i32)

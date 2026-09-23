@@ -1,0 +1,9 @@
+// A-13 private-in-public: both of a `Map`'s arguments are named types, and
+// the key half is not exempt from the rule.
+datac Hidden(val n: i32)
+
+pub fun tally(m: Map<Hidden, i32>).R: i32 = 1
+
+fun main() {
+    print(1)
+}

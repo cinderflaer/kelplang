@@ -1,0 +1,9 @@
+// A-13 private-in-public: a container names the types inside it, so
+// `List<Hidden>` leaks `Hidden` through the element position.
+datac Hidden(val n: i32)
+
+pub fun lookup(xs: List<Hidden>).R: i32 = xs.get(i = 0).n
+
+fun main() {
+    print(1)
+}

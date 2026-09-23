@@ -1,0 +1,17 @@
+// A-13 private-in-public, acceptance half: an exported item may name a type
+// its own module exports, and a private item may name anything.
+pub datac Point(val x: i32, val y: i32)
+
+// A generic's own parameter is not a declared type, so an exported field
+// that is the parameter is never a violation (A-2).
+pub datac Pair<A, B>(val a: A, val b: B)
+
+pub fun origin().R: Point = Point(x = 0, y = 0)
+
+// Private, and it names a private type: nothing outside this module can
+// reach either one, so the rule binds neither.
+datac Secret(val n: i32)
+
+fun hidden_value(n: i32).R: Secret = Secret(n = n)
+
+pub fun reveal(n: i32).R: i32 = hidden_value(n = n).n

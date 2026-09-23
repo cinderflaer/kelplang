@@ -712,6 +712,118 @@ fn a_project_module_under_a_std_path_is_not_a_shipped_module() {
 }
 
 #[test]
+fn a_public_function_may_not_name_a_private_parameter_type() {
+    // A-13 private-in-public: an item another module can reach must not name,
+    // in its signature, a type its own module does not export. The private
+    // type is in the *same* module here, so nothing in the cross-module name
+    // gate ever sees the reference; the signature is what leaks it.
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_fun_param.kp",
+        "'describe' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_function_may_not_name_a_private_return_type() {
+    // The return half of the same signature (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_fun_return.kp",
+        "'make' is exported but its signature names 'Secret'",
+    );
+}
+
+#[test]
+fn a_public_datac_may_not_name_a_private_field_type() {
+    // A field is reachable through a value of the exported type (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_datac_field.kp",
+        "'Boxed' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_enum_may_not_name_a_private_payload_type() {
+    // A payload is matched out of the exported variant (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_enum_payload.kp",
+        "'Shape' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_const_may_not_name_a_private_type() {
+    // `pub const LIMIT: lib.Hidden` names a type module 'lib' does not export
+    // (A-13). The rule is checked before a const's initializer is folded, so a
+    // const whose type is the one that leaks is refused for that reason first.
+    assert_project_rejected(
+        "visibility_const_type",
+        &project("visibility_const_type").join("main.kp"),
+        "'LIMIT' is exported but its signature names 'lib.Hidden'",
+    );
+}
+
+#[test]
+fn a_public_extern_function_may_not_name_a_private_type() {
+    // An `extern fun` has no body, so its parameters and return type are its
+    // whole signature (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_extern_type.kp",
+        "'poke' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_function_may_not_name_a_private_type_inside_a_list() {
+    // A container names the types inside it, so the rule recurses (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_list_type.kp",
+        "'lookup' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_function_may_not_name_a_private_type_inside_a_map() {
+    // Both of a `Map`'s arguments are named types (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_map_type.kp",
+        "'tally' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_function_may_not_name_a_private_type_inside_an_array() {
+    // An array is its element and its length, and an array of arrays recurses
+    // through the element (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_array_type.kp",
+        "'grid' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn a_public_function_may_not_name_a_private_borrowed_type() {
+    // A borrow names its pointee (A-13).
+    assert_rejected_with(
+        "tests/fixtures/visibility_pub_borrow.kp",
+        "'peek' is exported but its signature names 'Hidden'",
+    );
+}
+
+#[test]
+fn an_exported_signature_may_name_every_type_its_module_exports() {
+    // The acceptance half: a `pub` item naming a `pub` type in its own module,
+    // another module's `pub` type through its alias, a generic instantiation
+    // of an exported type, a compiler-shipped `std/...` type (which the
+    // transitional rule exports wholesale), a generic's own parameter, and a
+    // private item naming a private type, all compile and run.
+    assert_project_runs(
+        "visibility_pub_signature",
+        &project("visibility_pub_signature").join("main.kp"),
+        "0\n2\n2\n5\n4\n7\n",
+    );
+}
+
+#[test]
 fn unshipped_stdlib_module_is_rejected() {
     // `std/tls` is the next module in the roadmap (S4b, behind open item 37)
     // and is deliberately absent; the error names what *is* shipped so the

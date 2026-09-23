@@ -1,0 +1,9 @@
+// A-13 private-in-public: an `extern fun`'s parameters and return type are
+// its whole signature, since the body is supplied by the compiler.
+datac Hidden(val n: i32)
+
+pub extern fun poke(h: Hidden).R: i32
+
+fun main() {
+    print(1)
+}

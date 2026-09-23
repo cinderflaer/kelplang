@@ -1,0 +1,9 @@
+// A-13 private-in-public: the return type is the other half of an exported
+// signature, and `Secret` is private to this module.
+datac Secret(val n: i32)
+
+pub fun make(n: i32).R: Secret = Secret(n = n)
+
+fun main() {
+    print(1)
+}
