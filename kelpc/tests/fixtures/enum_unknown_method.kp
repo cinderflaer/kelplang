@@ -1,0 +1,11 @@
+// A value of enum type reaches the method tables like any other receiver, so a
+// method the enum does not declare is refused as an `enum`'s miss.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun main() {
+    val s = Shape.Empty
+    print(s.label())
+}

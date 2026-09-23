@@ -1,4 +1,4 @@
-// A-2: an enum carries no methods in v1 (A-1's rule), generic or not.
+// A-2: a method cannot be declared on a generic `enum`'s template.
 enum Option<T> {
     Some(val value: T)
     None

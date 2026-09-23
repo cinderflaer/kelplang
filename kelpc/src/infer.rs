@@ -4775,7 +4775,7 @@ fn collect_func_templates(
             if matches!(type_tmpl.kind, GenericKind::Sum(_)) {
                 return Err(Diagnostic::new(
                     format!(
-                        "'{}' is an enum — an enum carries no methods in v1; write a free function over the instantiation instead",
+                        "'{}' is a generic enum: a method cannot be declared on the enum template; declare it on a concrete enum, or write a free function over the instantiation instead",
                         r.type_name
                     ),
                     f.span,
@@ -7730,7 +7730,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
-            check_method_call_enum_guard(receiver, method, *span, ctx)?;
+            check_method_call_enum_guard(receiver, *span, ctx)?;
             check_method_call(receiver, method, args, *span, ctx, expected)
         }
         ast::Expr::When {
@@ -10264,6 +10264,25 @@ fn refuse_open_arg(ty: &Ty, arg: &ast::Expr) -> Result<()> {
     Ok(())
 }
 
+/// `E.A.tag()` where `E` is an `enum`: the receiver *builds* a variant, so it
+/// names a type rather than a value, while a method an `enum` declares (`fun
+/// E.tag()`) is called on a value of the enum type. Refused before the
+/// receiver is checked as a value, so the diagnostic is about the spelling
+/// rather than about a variant of the wrong arity; a value of enum type
+/// reached any other way (`val e = E.A` then `e.tag()`) reaches the method
+/// tables like any other receiver.
+fn check_method_call_enum_guard(receiver: &ast::Expr, span: Span, ctx: &Ctx) -> Result<()> {
+    if let ast::Expr::FieldAccess { base, .. } = receiver {
+        if enum_path(base, ctx).is_some() {
+            return Err(TypeError {
+                message: "an 'enum' method is called on a value, not on a variant path; bind the variant first, as in: val e = E.A  then  e.tag()".to_string(),
+                span,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// `receiver.method(args)`: resolves `method` against the receiver
 /// expression's `datac` type, then lowers to a plain `tir::ExprKind::Call`
 /// — the receiver becomes the first argument, auto-borrowed through
@@ -10277,38 +10296,6 @@ fn refuse_open_arg(ty: &Ty, arg: &ast::Expr) -> Result<()> {
 /// `List.empty()` gets it from the binding's written type
 /// (`val xs: List<String> = List.empty()`), and `List.of(x)` from `x` or
 /// from `expected` when both are available.
-/// `s.method(...)` where `s` is an `enum` (A-1): there are no methods on an
-/// enum, and the message says what to write instead. Checked before the
-/// method tables so the diagnostic is about the type, not about a missing
-/// `datac 'Shape'`.
-fn check_method_call_enum_guard(receiver: &ast::Expr, method: &str, span: Span, ctx: &mut Ctx) -> Result<()> {
-    if let Some(ename) = enum_path(receiver, ctx) {
-        return Err(TypeError {
-            message: format!(
-                "enum '{ename}' has no method '{method}' — an enum carries no methods in v1; match it with 'when'"
-            ),
-            span,
-        });
-    }
-    // A value of enum type reached any other way (`val s = Shape.Empty` then
-    // `s.to_text()`).
-    if let ast::Expr::Ident(name, _) = receiver {
-        if let Some(info) = ctx.lookup(name) {
-            if let Some(tname) = struct_name_of(&info.ty) {
-                if ctx.is_enum(tname) {
-                    return Err(TypeError {
-                        message: format!(
-                            "enum '{tname}' has no method '{method}' — an enum carries no methods in v1; match it with 'when'"
-                        ),
-                        span,
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 fn check_method_call(
     receiver: &ast::Expr,
     method: &str,
@@ -10541,6 +10528,12 @@ fn check_method_call(
                     "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64 and to_f32, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
                     probe.ty.display()
                 ),
+                // An `enum` and a `datac` miss the same way, and an enum
+                // binding reaches this arm since its methods are resolved
+                // like any other type's, so the text names the kind it is.
+                (None, _) if ctx.is_enum(&owner) => {
+                    format!("enum '{owner}' has no method '{method}'")
+                }
                 (None, _) => format!("datac '{owner}' has no method '{method}'"),
                         };
                         return Err(TypeError {

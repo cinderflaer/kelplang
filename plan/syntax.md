@@ -921,6 +921,7 @@ enum Shape {
 - A payload field obeys every `datac` field rule: owned data only, and a field of another type is stored inline, so that type is declared earlier in the same file. A self-referencing or forward-referencing payload must be behind a `Box` or a `List`.
 - An `enum` value is owned and not `Copy`, like a `datac`. Assigning or passing one moves it, and dropping it drops the live variant's payloads.
 - Construction names the variant, qualified by the `enum`: `Shape.Circle(r = 1.0)`, `Shape.Rect(w = 2.0, h = 3.0)`, `Shape.Empty`. Arguments may be named or positional, as in a `datac` construction.
+- An `enum` may declare receiver methods (8), and a call on a value of the enum type resolves one: `val s = Shape.Empty`, then `s.tag()`. A receiver that builds the variant names a type rather than a value, so `Shape.Empty.tag()` is refused with `an 'enum' method is called on a value, not on a variant path`; bind the variant first. A generic `enum`'s template declares no method (9.3).
 - Matching reads the live variant (6.3):
 
 ```kelp
@@ -992,7 +993,7 @@ fun mut Pair<A, B>.replace_second(v: B) { second = v }
 
 - The parameters must be exactly the type's, in order — a rename would make the body's `T` mean something the declaration does not say, and is refused with the spelling to write.
 - The type arguments are the receiver's own instantiation, so `p.first_of()` on a `Pair<i32, String>` is instantiated once for `A = i32, B = String`. There is no inference to do, and no way to call a method on the template itself.
-- A method on an `enum` is still refused: an `enum` carries no methods in v1. Write a free function over the instantiation instead (`fun is_some<T>(o: &Option<T>).R: bool`).
+- A method on a generic `enum`'s template is refused: `'Option' is a generic enum: a method cannot be declared on the enum template`. A concrete `enum` may declare one, and a call on a value of it resolves it (9.2); the workaround here is a free function over the instantiation (`fun is_some<T>(o: &Option<T>).R: bool`).
 - A method's declared parameters are its own declared list; a receiver method cannot add type parameters of its own beyond the type's.
 
 #### Generic functions
@@ -2092,7 +2093,7 @@ These are deliberate, and each one has a workaround in this document:
 
 - No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
-- A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. An `enum` carries no methods at all, generic or not.
+- A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
 - A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` whose every field or variant payload is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
@@ -2204,7 +2205,8 @@ Compiler diagnostics print as `file:line:col`, a message, and often a note with 
 | `cannot infer type parameter 'T' of 'Option' here` | neither the arguments nor the expected type determines `T`; annotate the binding (`val x: Option<i32> = ...`, or `val xs: List<String> = empty_of()`) |
 | `'main' cannot take type parameters` | the entry point is not called, so nothing can instantiate it |
 | `receiver 'Pair' must write the type's own type parameters, in order` | a method on a generic type is `fun Pair<A, B>.first()`; the receiver cannot omit or rename the parameters |
-| `'Option' is an enum — an enum carries no methods in v1` | write a free function over the instantiation instead (9.3) |
+| `'Option' is a generic enum: a method cannot be declared on the enum template` | declare it on a concrete `enum`, or write a free function over the instantiation instead (9.3) |
+| `an 'enum' method is called on a value, not on a variant path` | bind the variant first: `val e = E.A`, then `e.tag()` (9.2) |
 | `'Point' does not take type arguments` | only a generic type, a generic function, or a generic `enum`'s variant takes one (9.3) |
 | `'f64' cannot be a Map key` | a key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` of those; the compiler derives its hash and equality, and a `datac`/`enum` outside that set becomes a key by declaring `hash` and `eq` (12.2) |
 | `'?' cannot convert a failure` | the operand's failure payload type and the enclosing function's have to be the same (5.2) |

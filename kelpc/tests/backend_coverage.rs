@@ -76,7 +76,7 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **250 of the 250 targets the C backend builds**. The refusal ranking is
+/// **251 of the 251 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
 ///
 /// Recorded at MK8-S2 item A-10 slice 1 on 2026-09-23, raised from the 246 the
@@ -182,6 +182,13 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// `kelpc/tests/run-llvm-pd-caps.sh`, which also pins the deny path's text
 /// against the C backend's own.
 ///
+/// Raised from 250 by the enum-method receiver fix (BUG-qV6tD): a method
+/// declared on an `enum` resolves on a binding of the enum type, so
+/// `enum_method_binding` builds with both backends. `enum_method` stays a
+/// rejection (its receiver is a variant-construction path, which is the
+/// spelling that is refused now) and `enum_unknown_method` is a new rejection,
+/// so neither moves this count.
+///
 /// Raised from 244 by MK8-S2 item A-12 slice 1: a `datac` or `enum` that
 /// declares both `fun T.hash().R: u64` and `fun T.eq(other: &T).R: bool` is a
 /// `Map` key whatever its fields are, so `map_declared_key` (a `f64` field,
@@ -194,7 +201,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 250;
+const LLVM_BUILT_BASELINE: usize = 251;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

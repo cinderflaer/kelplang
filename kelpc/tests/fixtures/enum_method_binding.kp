@@ -1,0 +1,18 @@
+// A method declared on an `enum` (`fun Shape.label()`) resolves on a binding
+// of the enum type, payload and payload-less variants alike.
+enum Shape {
+    Circle(val r: f64)
+    Empty
+}
+
+fun Shape.label().R: String = when self {
+    Circle(r) -> "circle"
+    Empty -> "empty"
+}
+
+fun main() {
+    val a = Shape.Empty
+    print(a.label())
+    val b = Shape.Circle(r = 2.0)
+    print(b.label())
+}
