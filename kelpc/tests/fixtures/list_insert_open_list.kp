@@ -1,0 +1,8 @@
+// The same push decision through `insert`: the element is the second argument
+// after the index, and an open list is not an element at any depth.
+fun main() {
+    var ys = List.empty()
+    var xs = List.empty()
+    ys.insert(0, xs)
+    print(ys.len())
+}

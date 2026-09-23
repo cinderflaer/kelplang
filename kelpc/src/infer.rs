@@ -2235,31 +2235,55 @@ fn fn_element_reason(ty: &Ty, container: &str) -> Option<String> {
 /// own routines read and write an element as a plain location, and every access
 /// to an atomic has to be one atomic operation; a field is reached by field
 /// access, which is where the atomic's own methods sit.
+///
+/// `container` is the whole phrase the refusal names, with its article, so a
+/// `Map` value reads "a 'Map' value" and an array element reads "an array
+/// element".
 fn atomic_element_reason(ty: &Ty, container: &str) -> Option<String> {
     let Ty::Atomic(elem) = ty else {
         return None;
     };
     Some(format!(
-        "'Atomic<{}>' cannot be a '{container}' element: an element is read and written as a plain location by the container's own routines, and every access to an atomic has to be one atomic operation. Keep the atomic in a place of its own ('val c = AtomicI64.new(0)') and put its value in the container",
+        "'Atomic<{}>' cannot be {container}: the container's own routines read and write it as a plain location, and every access to an atomic has to be one atomic operation. Keep the atomic in a place of its own ('val c = AtomicI64.new(0)') and put its value in the container",
         elem.display()
+    ))
+}
+
+/// Why a container that still carries the open-container marker cannot be a
+/// container element, in one sentence that says the real reason: `ty` is such
+/// a container, or holds one, so the generated typedef, its `push` and its drop
+/// have no element type to name (`is_open_container` and
+/// `contains_open_container` in `types.rs`). The check is at any depth, because
+/// the outer container's own slot would carry the marker in.
+fn open_container_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    if !crate::types::contains_open_container(ty) {
+        return None;
+    }
+    Some(format!(
+        "'{}' cannot be a '{container}' element: a container whose element type is not decided yet has no element type to name, so push a value into it (or write its element type) before using it as an element",
+        ty.display()
     ))
 }
 
 /// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
 /// type position and `List.of(x)` give the same explanation. A borrow, a view,
-/// an atomic, a function value and `unit` each have their own reason; what is
-/// left for the fall-through is a `Map` (a map value is not a container
-/// either) and a fixed-size array (a `List` element is not one).
+/// an atomic, a container nobody decided and a function value each have their
+/// own reason; what is left for the fall-through is a `Map` (a map value is not
+/// a container either), a fixed-size array (a `List` element is not one) and
+/// `unit` (the open-container marker).
 fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "List") {
         return reason;
     }
-    if let Some(reason) = atomic_element_reason(ty, "List") {
+    if let Some(reason) = atomic_element_reason(ty, "a 'List' element") {
+        return reason;
+    }
+    if let Some(reason) = open_container_element_reason(ty, "List") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', another 'List', or a 'Box'"
+            "{reason}: a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', another 'List', or a 'Box'"
         );
     }
     format!(
@@ -2276,12 +2300,12 @@ fn map_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "Map") {
         return reason;
     }
-    if let Some(reason) = atomic_element_reason(ty, "Map") {
+    if let Some(reason) = atomic_element_reason(ty, "a 'Map' value") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason} — a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+            "{reason}: a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
         );
     }
     format!(
@@ -2297,7 +2321,7 @@ fn map_element_error(ty: &Ty) -> String {
 /// so a container element would make it a variable-size thing it is not (A-10
 /// slice 1 left this rule alone even as it widened the `List` element set).
 fn array_element_error(ty: &Ty) -> String {
-    if let Some(reason) = atomic_element_reason(ty, "array") {
+    if let Some(reason) = atomic_element_reason(ty, "an array element") {
         return reason;
     }
     match ty {
@@ -2327,12 +2351,16 @@ fn array_element_error(ty: &Ty) -> String {
 }
 
 /// The same for a `Box<T>` element, which may be a container: a box holds a
-/// pointer, so `Box<List<i32>>` and `Box<Box<i32>>` are both fine.
+/// pointer, so `Box<List<i32>>` and `Box<Box<i32>>` are both fine, provided
+/// the inner container's own element type is decided.
 fn box_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "Box") {
         return reason;
     }
-    if let Some(reason) = atomic_element_reason(ty, "Box") {
+    if let Some(reason) = atomic_element_reason(ty, "a 'Box' element") {
+        return reason;
+    }
+    if let Some(reason) = open_container_element_reason(ty, "Box") {
         return reason;
     }
     if let Some(reason) = borrowed_element_reason(ty) {

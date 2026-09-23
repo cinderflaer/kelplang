@@ -1,0 +1,10 @@
+// The open-decides push path: `ys` is a bare `List.empty()`, so `push` is what
+// would decide its element, and the argument `xs` is itself open. The slot
+// would then hold the marker (`List<List<Unit>>`), so `push` refuses the
+// element: decide `xs` first, or write its type on the binding.
+fun main() {
+    var ys = List.empty()
+    var xs = List.empty()
+    ys.push(xs)
+    print(ys.len())
+}

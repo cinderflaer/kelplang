@@ -1,0 +1,8 @@
+// The `Box.set` half of the open-decides path: the box's element slot would
+// take the marker from the argument, which is a bare `Box.empty()`.
+fun main() {
+    var b = Box.empty()
+    var c = Box.empty()
+    b.set(c)
+    print(b.is_empty())
+}

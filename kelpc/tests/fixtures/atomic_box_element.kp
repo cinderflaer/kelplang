@@ -1,0 +1,8 @@
+// The same rule for a `Box`: the box's own routines read and write the value
+// as a plain location, so an atomic cannot live in the slot.
+impl "std/atomic"
+
+fun main() {
+    var b: Box<Atomic<i32>> = Box.empty()
+    print(b.is_empty())
+}

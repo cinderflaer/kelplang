@@ -84,7 +84,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// both backends build and the differential sweep compares: `list_nested_list`
 /// (a `List<List<i32>>` through `set`/`pop`/`clear`), `list_nested_owned` (the
 /// same with a `String`-owning inner list and a nested drop at scope exit),
-/// `list_box_element` (a `List<Box<i32>>` and a `List<Box<String>>`, an
+/// `list_box_element` (a `List<Box<i32>>` and a `List<Box<String>>`, a
 /// `Box.empty()` element included), and `list_nested_open` (a bare
 /// `List.empty()` settling on a nested element). The slice also turned the
 /// refusal fixture `list_container_element.kp` from a `List<Box<i32>>` into a

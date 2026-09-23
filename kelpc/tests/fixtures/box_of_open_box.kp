@@ -1,0 +1,10 @@
+// The same marker element from `Box.of`: a bare `Box.empty()` is `Box<Unit>`,
+// so the outer box would hold the marker. A box may hold another container
+// (A-10 slice 1), but only one whose own element type is decided.
+fun main() {
+    var b = Box.empty()
+    var c = Box.of(b)
+    b = Box.empty()
+    b.set(1)
+    print(c.is_empty())
+}

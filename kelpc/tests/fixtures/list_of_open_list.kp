@@ -1,0 +1,12 @@
+// A-10 slice 1: `List.of` over a bare `List.empty()`. The argument's type is
+// `List<Unit>`, the open-container marker where an element type goes, so the
+// outer list would have the marker itself as its element. The reassignment
+// below is what made the old shape reach codegen: both backends then had no
+// element type to name. The gate refuses the element instead.
+fun main() {
+    var xs = List.empty()
+    var ys = List.of(xs)
+    xs = List.empty()
+    xs.push(1)
+    print(ys.len())
+}

@@ -741,17 +741,36 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 /// syntax to say otherwise), and neither can `str` (the same borrowed view),
 /// `View`, `unit`, a function value, an atomic, or a `Map`.
 ///
-/// A `List<T>` and a `Box<T>` *are* elements (A-10 slice 1): an element lives
-/// in the list's own buffer, so the element type only has to be a complete,
-/// droppable C type, which both of those are. `container_depth` in
-/// `codegen_c.rs` emits a nested container before the one that contains it, so
-/// every typedef and every function the outer list calls already exists. A
-/// `Map` stays out because a map value is not a container either.
+/// A `List<T>` and a `Box<T>` *are* elements (A-10 slice 1), but only once
+/// the container's own element type is decided: an element lives in the list's
+/// own buffer, so the element type has to be a complete, droppable C type with
+/// a name, and a container that still carries the open-container marker has
+/// neither. `container_depth` in `codegen_c.rs` emits a nested container
+/// before the one that contains it, so every typedef and every function the
+/// outer list calls already exists. A `Map` stays out because a map value is
+/// not a container either.
 pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
-        Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) => true,
+        Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
+        Ty::Bytes | Ty::String | Ty::Struct(_) => true,
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Map(..) => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
+    }
+}
+
+/// Whether `ty` is a container that still carries the open-container marker in
+/// its element slot, or one that holds such a container anywhere inside it.
+///
+/// The marker is `Unit` where an element type goes (see `is_open_container`),
+/// and no program wrote it: the generated typedef, the `push` prototype and the
+/// drop all name the element type, so a container that still carries the marker
+/// cannot be an element. `is_list_element` and `is_box_element` therefore
+/// refuse it at any depth: an outer container naming an inner one would only
+/// carry the marker further in.
+pub fn contains_open_container(ty: &Ty) -> bool {
+    match ty {
+        Ty::List(elem) | Ty::Box(elem) => **elem == Ty::Unit || contains_open_container(elem),
+        _ => false,
     }
 }
 
@@ -820,11 +839,12 @@ pub fn is_map_key_with(ty: &Ty, keyable: &std::collections::HashSet<String>) -> 
 }
 
 /// Whether `ty` may be a `Box<T>` element. A box holds a *pointer*, so the
-/// element may be anything with a size — including another container and,
-/// crucially, the `datac` the box is a field of (that is how a recursive
-/// type is written). A borrow or a `str` view is still refused: a box
-/// outlives the borrow it was made from, and there is nowhere to put that
-/// lifetime.
+/// element may be anything with a size, including another container (as long
+/// as that container's own element type is decided, see
+/// `contains_open_container`) and, crucially, the `datac` the box is a field
+/// of (that is how a recursive type is written). A borrow or a `str` view is
+/// still refused: a box outlives the borrow it was made from, and there is
+/// nowhere to put that lifetime.
 pub fn is_box_element(ty: &Ty) -> bool {
     match ty {
         // A closure is an ordinary C struct, and it is emitted before every
@@ -834,8 +854,6 @@ pub fn is_box_element(ty: &Ty) -> bool {
         Ty::Bytes
         | Ty::String
         | Ty::Struct(_)
-        | Ty::List(_)
-        | Ty::Box(_)
         | Ty::Closure { .. }
         // A fixed-size array is a plain inline struct, so a box can hold one
         // (A-18): `Box<[u8; 4096]>` is a heap allocation of a fixed-size
@@ -843,6 +861,10 @@ pub fn is_box_element(ty: &Ty) -> bool {
         | Ty::Array(..) => {
             true
         }
+        // A `Box` holds a pointer, so its own element slot may hold another
+        // container, but only one whose element type is decided: the marker
+        // would be a `void` element the generated routines cannot name.
+        Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
         // A `View` is a borrow of text that outlives the box, with nowhere to
         // put the lifetime — the same reason `str` is refused (A-8).
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit => false,

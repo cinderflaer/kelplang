@@ -3094,6 +3094,60 @@ fn a_bare_list_settles_on_a_nested_element() {
     assert_compiles_and_runs("tests/fixtures/list_nested_open.kp", "2\n2\n5\n");
 }
 
+/// The open-container marker (`Unit` where an element type goes) is not an
+/// element at any depth. `List.of` over a bare `List.empty()` would give the
+/// outer list the marker as its element, and both backends then have no element
+/// type to name: the C backend emits a `void` element and the `llvm` backend
+/// refuses the instantiation as an internal error, so they disagree. The gate
+/// refuses first, and says what to do about it.
+#[test]
+fn a_container_of_an_undecided_element_cannot_be_a_list_element() {
+    assert_rejected_with(
+        "tests/fixtures/list_of_open_list.kp",
+        "'List<unit>' cannot be a 'List' element: a container whose element type is not decided yet",
+    );
+}
+
+/// The same marker through `push`, where the open receiver is what would decide
+/// the element: the slot would settle on `List<List<Unit>>`, so the element is
+/// refused before the receiver is repaired.
+#[test]
+fn a_push_cannot_settle_an_open_list_on_an_open_element() {
+    assert_rejected_with(
+        "tests/fixtures/list_nested_open_marker.kp",
+        "'List<unit>' cannot be a 'List' element: a container whose element type is not decided yet",
+    );
+}
+
+/// `insert` names its element second, after the index, and the same gate sits
+/// on both paths.
+#[test]
+fn an_insert_cannot_settle_an_open_list_on_an_open_element() {
+    assert_rejected_with(
+        "tests/fixtures/list_insert_open_list.kp",
+        "'List<unit>' cannot be a 'List' element: a container whose element type is not decided yet",
+    );
+}
+
+/// A box may hold another container, but not one whose element type is undecided:
+/// `Box.of` over a bare `Box.empty()` would put the marker in the outer box.
+#[test]
+fn a_container_of_an_undecided_element_cannot_be_a_box_element() {
+    assert_rejected_with(
+        "tests/fixtures/box_of_open_box.kp",
+        "'Box<unit>' cannot be a 'Box' element: a container whose element type is not decided yet",
+    );
+}
+
+/// The `Box.set` half of the open-decides path, refused for the same reason.
+#[test]
+fn a_box_set_cannot_settle_an_open_box_on_an_open_element() {
+    assert_rejected_with(
+        "tests/fixtures/box_set_open_box.kp",
+        "'Box<unit>' cannot be a 'Box' element: a container whose element type is not decided yet",
+    );
+}
+
 #[test]
 fn split_returns_a_list_of_owned_pieces_and_join_consumes_one() {
     assert_compiles_and_runs(
@@ -5629,6 +5683,26 @@ fn an_atomic_cannot_be_a_list_element() {
     assert_rejected_with(
         "tests/fixtures/atomic_list_element.kp",
         "'Atomic<i32>' cannot be a 'List' element",
+    );
+}
+
+/// The same refusal per container, so each phrasing of the one reason is
+/// pinned: a map value is read and written as a plain location by the map's own
+/// routines, a box's own routines read and write its value the same way, and an
+/// array holds its elements inline.
+#[test]
+fn an_atomic_cannot_be_a_map_value_or_a_box_or_array_element() {
+    assert_rejected_with(
+        "tests/fixtures/atomic_map_value.kp",
+        "'Atomic<i32>' cannot be a 'Map' value",
+    );
+    assert_rejected_with(
+        "tests/fixtures/atomic_box_element.kp",
+        "'Atomic<i32>' cannot be a 'Box' element",
+    );
+    assert_rejected_with(
+        "tests/fixtures/atomic_array_element.kp",
+        "'Atomic<i32>' cannot be an array element",
     );
 }
 

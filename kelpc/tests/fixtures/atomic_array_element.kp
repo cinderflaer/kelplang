@@ -1,0 +1,9 @@
+// The same rule for an array element, and the one refusal whose container is
+// written without quotes: an array element is refused as "an array element",
+// not as a named type.
+impl "std/atomic"
+
+fun main() {
+    val a: [Atomic<i32>; 2] = [Atomic.new(1), Atomic.new(2)]
+    print(a.len())
+}

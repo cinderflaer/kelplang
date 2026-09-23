@@ -1,0 +1,10 @@
+// A-10 slice 1: the atomic element rule holds per container. A map value is
+// read and written as a plain location by the map's own routines, and every
+// access to an atomic has to be one atomic operation, so an atomic is refused
+// as a `Map` value by the same rule that refuses it as a `List` element.
+impl "std/atomic"
+
+fun main() {
+    var m: Map<Atomic<i32>> = Map.new()
+    print(m.len())
+}
