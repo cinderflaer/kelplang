@@ -76,8 +76,9 @@ pub enum Ty {
     /// owns its keys and its values, and drops both at the end of the owning
     /// scope. The value type is part of the type, so `Map<String, i64>` and
     /// `Map<i32, i64>` are different C types with different functions.
-    /// `Map<String, Map<i32>>` is as impossible as `List<List<i32>>`, by the
-    /// same element check.
+    /// `Map<String, Map<i32>>` and `Map<String, List<i32>>` stay refused: the
+    /// value set is narrower than the `List` element set, which since A-10
+    /// slice 1 also takes a `List` or a `Box`.
     Map(Box<Ty>, Box<Ty>),
     /// A borrow of a value of type `inner` — shared (`mutable: false`) or
     /// exclusive (`mutable: true`). Never appears as a function's declared
@@ -737,14 +738,39 @@ pub fn drop_fn_name(ty: &Ty) -> String {
 
 /// Whether `ty` may be a `List<T>` element. A borrow cannot be one (an
 /// element outlives the borrow that produced it, and v1 has no lifetime
-/// syntax to say otherwise), and neither can `str` (the same borrowed view)
-/// or `unit`. Everything else — the scalars, `String`, `Bytes`, and a
-/// `datac` — has a plain C representation that a growable array can hold.
-/// A `Box<T>` is *not* one: keeping list elements pointer-free is what lets
-/// the list's C struct be emitted before the `datac`s (see
-/// `codegen_c.rs`), and a `List<Box<T>>` has no use a `Box<List<T>>` or a
-/// plain `List<T>` does not cover.
+/// syntax to say otherwise), and neither can `str` (the same borrowed view),
+/// `View`, `unit`, a function value, an atomic, or a `Map`.
+///
+/// A `List<T>` and a `Box<T>` *are* elements (A-10 slice 1): an element lives
+/// in the list's own buffer, so the element type only has to be a complete,
+/// droppable C type, which both of those are. `container_depth` in
+/// `codegen_c.rs` emits a nested container before the one that contains it, so
+/// every typedef and every function the outer list calls already exists. A
+/// `Map` stays out because a map value is not a container either.
 pub fn is_list_element(ty: &Ty) -> bool {
+    match ty {
+        Ty::Bytes | Ty::String | Ty::Struct(_) | Ty::List(_) | Ty::Box(_) => true,
+        Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Map(..) => false,
+        other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
+    }
+}
+
+/// Whether `ty` may be a `Map<K, V>` value: a scalar, `String`, `Bytes`, or a
+/// `datac`. Narrower than the `List` element set, which also takes a `List` or
+/// a `Box` (A-10 slice 1): a map value sits behind a pointer but is read and
+/// written as a plain location by the map's own routines, so a container value
+/// is left out for now. `Map<String, Map<i32>>` and `Map<String, List<i32>>`
+/// stay impossible.
+pub fn is_map_element(ty: &Ty) -> bool {
+    is_plain_element(ty)
+}
+
+/// The element set a `Map` value and an array element share, and the set the
+/// `List` element check held before A-10 slice 1 widened it: a scalar,
+/// `String`, `Bytes`, or a `datac`. Both stores read and write an element as a
+/// plain location, so a container, a borrow or a view, an atomic, a function
+/// value, and `unit` are all out.
+fn is_plain_element(ty: &Ty) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::List(_) | Ty::Box(_) | Ty::Map(..) => {
@@ -754,25 +780,18 @@ pub fn is_list_element(ty: &Ty) -> bool {
     }
 }
 
-/// Whether `ty` may be a `Map<K, V>` value. The same set `List<T>` accepts: a
-/// scalar, `String`, `Bytes`, or a `datac`. A map is neither a list element
-/// nor a map value, so `Map<String, Map<i32>>` and `Map<String, List<i32>>`
-/// stay impossible.
-pub fn is_map_element(ty: &Ty) -> bool {
-    is_list_element(ty)
-}
-
 /// Whether `ty` may be an array element or an array itself: `[T; N]` holds its
-/// elements inline, so the element set is the `List` element set plus another
-/// array, so a nested `[[u8; 4]; 8]` is a page table, and it is expressible for
-/// the same reason it is in C. A `List`/`Box`/`Map` element is still refused
-/// (the first two are pointers this type does not need and the third is a
-/// container of its own), and a borrow is refused for the reason it always is:
-/// an element outlives the borrow it came from.
+/// elements inline, so the element set is a scalar, `String`, `Bytes`, a
+/// `datac`, or another array, so a nested `[[u8; 4]; 8]` is a page table and is
+/// as expressible as it is in C. A `List`/`Box`/`Map` element stays refused
+/// even now that a `List` element may be one: an array element is held inline,
+/// so `[[u8; 4]; 8]` stays a fixed buffer, while a container element would make
+/// the array a variable-size thing it is not. A borrow is refused for the
+/// reason it always is: an element outlives the borrow it came from.
 pub fn is_array_element(ty: &Ty) -> bool {
     match ty {
         Ty::Array(elem, _) => is_array_element(elem),
-        other => is_list_element(other),
+        other => is_plain_element(other),
     }
 }
 

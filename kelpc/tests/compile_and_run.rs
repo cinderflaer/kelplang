@@ -2334,6 +2334,16 @@ fn a_borrow_cannot_be_an_array_element() {
 }
 
 #[test]
+fn a_container_cannot_be_an_array_element() {
+    // A-10 slice 1 widened the `List` element set, not the array one: an array
+    // is fixed-size, so a `List`/`Box`/`Map` element stays refused there.
+    assert_rejected_with(
+        "tests/fixtures/array_container_element.kp",
+        "'List<i32>' cannot be an array element",
+    );
+}
+
+#[test]
 fn a_const_may_call_a_function_and_the_call_is_evaluated_at_compile_time() {
     // A-19: parameters are bound, a `while` loop runs and a recursive call
     // terminates, all inside the compiler. The result is a literal at every use
@@ -3045,6 +3055,46 @@ fn popping_an_empty_list_panics() {
 }
 
 #[test]
+fn a_list_may_hold_a_list_element() {
+    // A-10 slice 1: an element lives in the outer list's own buffer, so a
+    // `List<List<i32>>` is a list of growable buffers, each dropped once by the
+    // outer `set`/`pop`/`clear`.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_nested_list.kp",
+        "2\n1\n2\n3\n9\n2\n1\n0\n",
+    );
+}
+
+#[test]
+fn a_nested_list_of_owned_elements_moves_borrows_and_drops() {
+    // The `String`-owning nested list through push/get/set/pop/clear, plus a
+    // nested list that drops at scope exit. Valgrind walks the nested drop
+    // path (see `tests/memory_gate.rs`).
+    assert_compiles_and_runs(
+        "tests/fixtures/list_nested_owned.kp",
+        "2\n2\nbeta\ngamma\nbeta\ntrue\n2\ndone\n",
+    );
+}
+
+#[test]
+fn a_list_may_hold_a_box_element() {
+    // A-10 slice 1: an element is the box's own struct, so `Box.empty()` is a
+    // `NULL` slot the list still drops exactly once, and `get` hands back a
+    // borrow of the box.
+    assert_compiles_and_runs(
+        "tests/fixtures/list_box_element.kp",
+        "2\n7\ntrue\n9\n9\nhi\ntrue\nthere\n0\n",
+    );
+}
+
+#[test]
+fn a_bare_list_settles_on_a_nested_element() {
+    // H-6's open container meets A-10 slice 1: `xs.push(List.of(1))` settles
+    // `xs` on `List<List<i32>>`, and a `Box` element settles it the same way.
+    assert_compiles_and_runs("tests/fixtures/list_nested_open.kp", "2\n2\n5\n");
+}
+
+#[test]
 fn split_returns_a_list_of_owned_pieces_and_join_consumes_one() {
     assert_compiles_and_runs(
         "tests/fixtures/stdlib_list.kp",
@@ -3252,8 +3302,13 @@ fn a_datac_cannot_hold_itself_by_value() {
 }
 
 #[test]
-fn a_container_cannot_be_a_list_element() {
-    assert_rejected("tests/fixtures/list_container_element.kp");
+fn a_map_cannot_be_a_list_element() {
+    // A-10 slice 1 made a `List<T>` and a `Box<T>` list elements, but a map
+    // value set is narrower, so a `Map` element stays refused.
+    assert_rejected_with(
+        "tests/fixtures/list_container_element.kp",
+        "'Map<String, i32>' cannot be a 'List' element",
+    );
 }
 
 #[test]
@@ -5563,6 +5618,18 @@ fn an_ordering_variant_that_does_not_exist_is_the_ordinary_unknown_variant_error
 #[test]
 fn a_float_atomic_element_is_refused() {
     assert_rejected("tests/fixtures/atomic_element_refused.kp");
+}
+
+/// A-10 slice 1 closed MK9 9.3's open question: an atomic stays refused as a
+/// container element, because a container's own routines read and write an
+/// element as a plain location and every access to an atomic has to be one
+/// atomic operation.
+#[test]
+fn an_atomic_cannot_be_a_list_element() {
+    assert_rejected_with(
+        "tests/fixtures/atomic_list_element.kp",
+        "'Atomic<i32>' cannot be a 'List' element",
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,11 @@
+// MK9 9.3's question ("may an atomic be a `List`/`Map`/`Box`/array element or a
+// `datac` field") is closed by A-10 slice 1: an atomic stays refused as a
+// container element, because a container's own routines read and write an
+// element as a plain location and every access to an atomic has to be one
+// atomic operation. A `datac` field of atomic type stays accepted.
+impl "std/atomic"
+
+fun main() {
+    var xs: List<Atomic<i32>> = List.empty()
+    print(xs.len())
+}

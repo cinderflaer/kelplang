@@ -1,6 +1,7 @@
-// A list's buffer holds its elements inline, so a container is not a list
-// element; a `Box<List<T>>` (or a plain `List<T>`) covers the same ground.
+// A-10 slice 1 made a `List<T>` and a `Box<T>` list elements, but a `Map` is
+// still refused: the value set a map accepts is narrower than the list element
+// set, and a list has no use for a map element.
 fun main() {
-    var xs: List<Box<i32>> = List.empty()
+    var xs: List<Map<i32>> = List.empty()
     print(xs.len())
 }

@@ -1,0 +1,14 @@
+// A-10 slice 1: a bare `List.empty()` takes a nested element from the first
+// `push`, so `xs.push(List.of(1))` settles `xs` on `List<List<i32>>`, and a
+// `Box` element settles it the same way.
+fun main() {
+    var xs = List.empty()
+    xs.push(List.of(1))
+    xs.push(List.of(2))
+    print(xs.len())
+    print(xs.get(1).get(0))
+
+    var bs = List.empty()
+    bs.push(Box.of(5))
+    print(bs.get(0).get())
+}

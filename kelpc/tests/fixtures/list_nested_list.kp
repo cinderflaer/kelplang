@@ -1,0 +1,21 @@
+// A-10 slice 1: a `List<T>` may be a list element. An element lives in the
+// outer list's own buffer, so a `List<List<i32>>` is a list of growable
+// buffers, each dropped once by the outer `set`/`clear`/scope end.
+fun main() {
+    var rows: List<List<i32>> = List.empty()
+    rows.push(List.of(1))
+    var r: List<i32> = List.empty()
+    r.push(2)
+    r.push(3)
+    rows.push(r)
+    print(rows.len())
+    print(rows.get(0).get(0))
+    print(rows.get(1).len())
+    print(rows.get(1).get(1))
+    rows.set(0, List.of(9))
+    print(rows.get(0).get(0))
+    print(rows.pop().len())
+    print(rows.len())
+    rows.clear()
+    print(rows.len())
+}

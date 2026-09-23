@@ -76,8 +76,20 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **246 of the 246 targets the C backend builds**. The refusal ranking is
+/// **250 of the 250 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
+///
+/// Recorded at MK8-S2 item A-10 slice 1 on 2026-09-23, raised from the 246 the
+/// MK9-S3-M1 stage A2 tip built. Four fixtures landed with it, each of which
+/// both backends build and the differential sweep compares: `list_nested_list`
+/// (a `List<List<i32>>` through `set`/`pop`/`clear`), `list_nested_owned` (the
+/// same with a `String`-owning inner list and a nested drop at scope exit),
+/// `list_box_element` (a `List<Box<i32>>` and a `List<Box<String>>`, an
+/// `Box.empty()` element included), and `list_nested_open` (a bare
+/// `List.empty()` settling on a nested element). The slice also turned the
+/// refusal fixture `list_container_element.kp` from a `List<Box<i32>>` into a
+/// `List<Map<i32>>`, which the C backend still rejects, so it stays out of the
+/// target set.
 ///
 /// Recorded at MK9-S3-M1 stage A2 on 2026-09-22, raised from the 243 the A1
 /// review tip built. One fixture landed with it (`thread_fence.kp`, the
@@ -182,7 +194,7 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// equality make a keyable `datac`/`enum` a `Map` key, so `map_datac_key`
 /// builds instead of being rejected and three of the four new positive key
 /// fixtures build too.
-const LLVM_BUILT_BASELINE: usize = 246;
+const LLVM_BUILT_BASELINE: usize = 250;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

@@ -1,0 +1,7 @@
+// An array is fixed-size, so a container element stays refused there even
+// though A-10 slice 1 made a `List<T>` and a `Box<T>` legal list elements: a
+// container element would make the array a variable-size thing it is not.
+fun main() {
+    val xs: [List<i32>; 2] = [List.of(1), List.of(2)]
+    print(xs.len())
+}

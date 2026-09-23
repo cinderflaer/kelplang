@@ -592,6 +592,7 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "float_datac_containers",
     "generic_recursive",
     "list_basic",
+    "list_box_element",
     "list_datac_element",
     "list_element_widths",
     "list_float_element",
@@ -599,6 +600,12 @@ const LLVM_CONTAINER_FIXTURES: &[&str] = &[
     "list_insert_bounds",
     "list_insert_remove_shifts",
     "list_narrow_element_pop",
+    // A-10 slice 1: a `List`/`Box` element owns its own buffer or cell, so the
+    // nested drop, `set` replacement and scope-exit drop all have to free each
+    // inner container exactly once.
+    "list_nested_list",
+    "list_nested_open",
+    "list_nested_owned",
     "list_owned_replacement",
     "list_pop_empty",
     "list_remove_bounds",

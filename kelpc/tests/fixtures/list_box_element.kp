@@ -1,0 +1,26 @@
+// A-10 slice 1: a `Box<T>` may be a list element. An element is the box's own
+// struct, so `Box.empty()` is a `NULL` slot the list still drops exactly once,
+// and `get` on an owned element hands back a borrow of the box.
+impl "std/str"
+
+fun main() {
+    var ints: List<Box<i32>> = List.empty()
+    ints.push(Box.of(7))
+    ints.push(Box.empty())
+    print(ints.len())
+    print(ints.get(0).get())
+    print(ints.get(1).is_empty())
+    ints.set(1, Box.of(9))
+    print(ints.get(1).get())
+    print(ints.pop().get())
+
+    var texts: List<Box<String>> = List.empty()
+    texts.push(Box.of(String.from_str("hi")))
+    texts.push(Box.empty())
+    print(texts.get(0).get().as_str())
+    print(texts.get(1).is_empty())
+    texts.set(0, Box.of(String.from_str("there")))
+    print(texts.get(0).get().as_str())
+    texts.clear()
+    print(texts.len())
+}

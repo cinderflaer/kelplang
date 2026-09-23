@@ -1,0 +1,43 @@
+// A-10 slice 1: a `List<List<String>>` through every owning path. `get` hands
+// back a borrow of the inner list (a copy would be a second owner), `set`
+// drops the inner list it replaces, `pop` moves one out, and the block at the
+// end drops a nested list at scope exit. All of it is walked by valgrind.
+impl "std/str"
+
+fun words(a: str).R: List<String> {
+    var xs: List<String> = List.empty()
+    xs.push(String.from_str(a))
+    xs
+}
+
+fun total(rows: List<List<String>>).R: usize {
+    var n: usize = 0
+    var i: usize = 0
+    while i < rows.len() {
+        n += rows.get(i).len()
+        i += 1
+    }
+    n
+}
+
+fun main() {
+    var rows: List<List<String>> = List.empty()
+    rows.push(words("alpha"))
+    rows.push(words("beta"))
+    print(rows.len())
+    print(total(rows))
+    print(rows.get(1).get(0).as_str())
+    rows.set(0, words("gamma"))
+    print(rows.get(0).get(0).as_str())
+    val last = rows.pop()
+    print(last.get(0).as_str())
+    rows.clear()
+    print(rows.is_empty())
+    {
+        var inner: List<List<String>> = List.empty()
+        inner.push(words("one"))
+        inner.push(words("two"))
+        print(inner.len())
+    }
+    print("done")
+}

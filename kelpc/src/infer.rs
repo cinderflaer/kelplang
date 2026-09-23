@@ -2228,11 +2228,13 @@ fn fn_element_reason(ty: &Ty, container: &str) -> Option<String> {
     }
 }
 
-/// Why an `Atomic<T>` cannot be a container element. MK9 9.3 leaves "may an
-/// atomic be a `List` element, a `Map` value, a `datac` field" open on purpose,
-/// and this stage answers the container half conservatively by leaving the
-/// element sets exactly as they were: an atomic is refused where a container is,
-/// rather than by a new rule nobody decided.
+/// Why an `Atomic<T>` cannot be a container element. MK9 9.3 left "may an
+/// atomic be a `List` element, a `Map` value, a `datac` field" open, and A-10
+/// slice 1 closed it: an atomic stays refused as a `List`/`Map`/`Box`/array
+/// element, and a `datac` field of atomic type stays accepted. A container's
+/// own routines read and write an element as a plain location, and every access
+/// to an atomic has to be one atomic operation; a field is reached by field
+/// access, which is where the atomic's own methods sit.
 fn atomic_element_reason(ty: &Ty, container: &str) -> Option<String> {
     let Ty::Atomic(elem) = ty else {
         return None;
@@ -2244,7 +2246,10 @@ fn atomic_element_reason(ty: &Ty, container: &str) -> Option<String> {
 }
 
 /// Why a type cannot be a `List<T>` element, in one place so the `List<T>`
-/// type position and `List.of(x)` give the same explanation.
+/// type position and `List.of(x)` give the same explanation. A borrow, a view,
+/// an atomic, a function value and `unit` each have their own reason; what is
+/// left for the fall-through is a `Map` (a map value is not a container
+/// either) and a fixed-size array (a `List` element is not one).
 fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "List") {
         return reason;
@@ -2254,18 +2259,19 @@ fn list_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+            "{reason} — a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', another 'List', or a 'Box'"
         );
     }
     format!(
-        "'{}' cannot be a 'List' element in v1 — a list's buffer holds its elements inline, so a nested container is not expressible; use a scalar, 'String', 'Bytes', or a 'datac' (or put the list in a 'Box')",
+        "'{}' cannot be a 'List' element: a 'Map', an array, a borrow or a view, an atomic, a function value, and 'unit' are refused. A list holds its elements in its own buffer, so a 'List' or a 'Box' element is fine; use a scalar, 'String', 'Bytes', a 'datac', another 'List', or a 'Box'",
         ty.display()
     )
 }
 
 /// Why a type cannot be a `Map<V>` value, in one place so the `Map<V>` type
-/// position and `Map.new()` share the explanation. The value set is the
-/// `List` element set, so only the wording differs.
+/// position and `Map.new()` share the explanation. The value set is narrower
+/// than the `List` element set: a container is refused here, so a `List` or a
+/// `Box` value stays out even though it is a legal list element (A-10 slice 1).
 fn map_element_error(ty: &Ty) -> String {
     if let Some(reason) = fn_element_reason(ty, "Map") {
         return reason;
@@ -2279,15 +2285,17 @@ fn map_element_error(ty: &Ty) -> String {
         );
     }
     format!(
-        "'{}' cannot be a 'Map' value in v1 — a map's value is stored inline, so a nested container is not expressible; use a scalar, 'String', 'Bytes', or a 'datac' (or put the map in a 'Box')",
+        "'{}' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', or a 'datac', which is narrower than a list's (that also takes a 'List' or a 'Box'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused",
         ty.display()
     )
 }
 
-/// Why a type cannot be an array's element (A-18). The set is the `List`
-/// element set plus another array, since an array holds its elements inline, so
-/// `[[u8; 4]; 8]` is a page table and is as expressible as it is in C, while a
-/// `List`/`Box`/`Map` element is refused for the reason a list refuses it.
+/// Why a type cannot be an array's element (A-18). The set is a scalar,
+/// `String`, `Bytes`, a `datac`, or another array, since an array holds its
+/// elements inline, so `[[u8; 4]; 8]` is a page table and is as expressible as
+/// it is in C. A `List`/`Box`/`Map` element is refused: an array is fixed-size,
+/// so a container element would make it a variable-size thing it is not (A-10
+/// slice 1 left this rule alone even as it widened the `List` element set).
 fn array_element_error(ty: &Ty) -> String {
     if let Some(reason) = atomic_element_reason(ty, "array") {
         return reason;
@@ -2313,7 +2321,7 @@ fn array_element_error(ty: &Ty) -> String {
         );
     }
     format!(
-        "'{}' cannot be an array element in v1: an array holds its elements inline, exactly as a list's buffer does, so a nested 'List'/'Box'/'Map' is not expressible; use a scalar, 'String', 'Bytes', a 'datac', or a nested array",
+        "'{}' cannot be an array element: an array holds its elements inline and is fixed-size, so a 'List'/'Box'/'Map' element is refused here (a container finds its home in a 'List' or a 'Box' instead); use a scalar, 'String', 'Bytes', a 'datac', or a nested array",
         ty.display()
     )
 }
