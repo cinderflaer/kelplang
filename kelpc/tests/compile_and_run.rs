@@ -4837,6 +4837,24 @@ fn when_a_field_of_a_temporary_is_staged_at_its_root() {
 }
 
 #[test]
+fn an_enum_method_is_called_on_a_binding() {
+    // A method declared on an `enum` is called on a value of the enum type: a
+    // binding reaches the method tables and resolves `fun Shape.label()`.
+    assert_compiles_and_runs("tests/fixtures/enum_method_binding.kp", "empty\ncircle\n");
+}
+
+#[test]
+fn an_enum_method_is_refused_on_a_variant_path() {
+    // The receiver builds the variant, so it names a type rather than a value;
+    // the method exists and the fix is still to bind the variant first, which
+    // is what the message has to say.
+    assert_rejected_with(
+        "tests/fixtures/enum_method.kp",
+        "an 'enum' method is called on a value, not on a variant path",
+    );
+}
+
+#[test]
 fn enum_misuse_is_rejected() {
     for name in [
         // Exhaustiveness, and arm/pattern shape.
@@ -4849,7 +4867,7 @@ fn enum_misuse_is_rejected() {
         "enum_ctor_name",
         "enum_bare_variant",
         "enum_field_access",
-        "enum_method",
+        "enum_unknown_method",
         // Declaration rules, shared with `datac`.
         "enum_datac_clash",
         "enum_self_by_value",
@@ -5065,7 +5083,7 @@ fn generic_method_misuse_is_rejected() {
         "generic_method_wrong_params",
         // A non-generic type has nothing to parameterize.
         "generic_method_on_plain",
-        // An enum carries no methods in v1, generic or not.
+        // A method cannot be declared on a generic `enum`'s template.
         "generic_enum_method",
     ] {
         assert_rejected(&format!("tests/fixtures/{name}.kp"));

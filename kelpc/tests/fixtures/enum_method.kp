@@ -1,9 +1,16 @@
+// A method declared on an `enum` is called on a value of the enum type, so a
+// receiver that builds a variant is refused even though the method exists:
+// bind the variant first.
 enum Shape {
     Circle(val r: f64)
     Empty
 }
 
+fun Shape.label().R: String = when self {
+    Circle(r) -> "circle"
+    Empty -> "empty"
+}
+
 fun main() {
-    val s = Shape.Empty
-    print(s.to_text())
+    print(Shape.Empty.label())
 }
