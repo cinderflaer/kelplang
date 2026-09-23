@@ -57,8 +57,9 @@
 //! `FUZZ_SEED_START` (default 1) and `FUZZ_SEED_COUNT` (default 256) select the
 //! seed list, so a gate can be repeatable and still be run big enough to mean
 //! something. The generated programs are written under
-//! `CARGO_TARGET_TMPDIR/differential_fuzz/`, named by seed, so a mismatch is a
-//! file someone can read.
+//! `CARGO_TARGET_TMPDIR/differential_fuzz/<test>/`, named by seed, so a mismatch
+//! is a file someone can read. Each test owns its own directory, so the heavy
+//! tests can run beside each other without building over one another's files.
 //!
 //! `FUZZ_EMIT=1 cargo test --release --test differential_fuzz -- --ignored
 //! emit_the_conformance_corpus --nocapture` is the one way the corpus is
@@ -976,14 +977,17 @@ fn kelpc_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kelpc"))
 }
 
-/// Where the generated programs and the two builds of each are written, rooted
-/// in `CARGO_TARGET_TMPDIR` the way the other heavy tests are.
-fn scratch_root() -> PathBuf {
+/// A directory of one test's own, rooted in `CARGO_TARGET_TMPDIR` the way
+/// `fmt.rs::scratch` is. Test binaries run their tests on several threads, and
+/// two heavy tests here build the same seed numbers, so each owns its own
+/// directory rather than sharing one.
+fn scratch(name: &str) -> PathBuf {
     let mut p = PathBuf::from(
         std::env::var("CARGO_TARGET_TMPDIR")
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string()),
     );
     p.push("differential_fuzz");
+    p.push(name);
     p
 }
 
@@ -1180,7 +1184,7 @@ fn the_generator_and_corpus_helpers_agree() {
         "two seeds produced one program, so the seed does not reach the text"
     );
 
-    let dir = scratch_root();
+    let dir = scratch("helpers");
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
     let source = dir.join("pinned_seed_7.kp");
@@ -1237,7 +1241,7 @@ fn the_corpus_files_are_the_generators_own_output() {
 #[test]
 #[ignore = "generates and compiles hundreds of programs with both backends; run with --ignored"]
 fn the_generator_agrees_between_the_two_backends() {
-    let dir = scratch_root();
+    let dir = scratch("generated");
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
 
@@ -1307,7 +1311,7 @@ fn the_generator_agrees_between_the_two_backends() {
 #[test]
 #[ignore = "builds and runs the whole fuzz corpus with both backends; run with --ignored"]
 fn the_conformance_corpus_agrees_between_the_two_backends() {
-    let dir = scratch_root();
+    let dir = scratch("corpus");
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("could not create '{}': {e}", dir.display()));
 
