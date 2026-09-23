@@ -5888,6 +5888,29 @@ fn a_local_rebinding_shadows_the_earlier_binding() {
     );
 }
 
+/// BUG-mW3tZ: a `Unit` value may be bound. The local is zero-sized, so it gets
+/// no storage and no drop, and the initializer's call still runs: the two
+/// backends used to answer this with a compiler-defect message (LLVM) and with
+/// `variable has incomplete type void` from `cc`. The annotated form of the
+/// same binding is `val y: unit` (the language spells the type `unit`), and the
+/// generic case below is the reason the binding is allowed at all.
+#[test]
+fn a_unit_valued_call_can_be_bound_to_a_local() {
+    assert_compiles_and_runs("tests/fixtures/unit_val_binding.kp", "1\n");
+}
+
+/// A generic function instantiated at `unit`: the instantiation takes the value
+/// as an argument and returns it, a plain function declares a `unit` parameter,
+/// and a bound `unit` is passed on to it. None of the three crosses a value in
+/// either backend's machine signature.
+#[test]
+fn a_generic_instantiated_at_unit_can_be_bound_and_passed_on() {
+    assert_compiles_and_runs(
+        "tests/fixtures/unit_val_generic_binding.kp",
+        "1\n2\n",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // MK9-S3-M1 stage A1: the atomic cell `Atomic<T>`, and the one ordering v1 has.
 // ---------------------------------------------------------------------------
