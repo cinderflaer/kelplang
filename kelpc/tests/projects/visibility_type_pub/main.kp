@@ -1,0 +1,40 @@
+impl "lib"
+
+// Every type position a cross-module `pub` type can be written in: a
+// parameter type (borrowed and by value), a return type, a field type, a
+// local annotation, a generic argument, and a `List`, `Box` and array
+// element (A-13).
+datac Holder(val p: lib.Point)
+
+fun shift(p: &lib.Point).R: lib.Point = lib.Point(x = p.x + 1, y = p.y + 1)
+
+fun first(xs: List<lib.Point>).R: i32 = xs.get(0).x
+
+fun height(b: Box<lib.Point>).R: i32 = b.get().y
+
+fun grid(ps: [lib.Point; 2]).R: i32 = ps.get(0).x + ps.get(1).y
+
+fun swapped(p: lib.Pair<lib.Point>).R: lib.Pair<lib.Point> = lib.Pair(a = p.b, b = p.a)
+
+fun score(c: &lib.Colour).R: i32 = 1
+
+// The entry module's own private item, named bare from inside it.
+fun local(n: i32).R: i32 = n + 1
+
+fun main() {
+    val origin: lib.Point = lib.Point(x = 0, y = 0)
+    val moved = shift(p = origin)
+    print(moved.x)
+    val held = Holder(p = lib.Point(x = 2, y = 3))
+    val pair = lib.Pair(a = moved, b = held.p)
+    val xs = List.of(lib.Point(x = 5, y = 6))
+    val boxed = Box.of(lib.Point(x = 7, y = 8))
+    val ps = [lib.Point(x = 9, y = 10), lib.Point(x = 11, y = 12)]
+    print(first(xs = xs))
+    print(height(b = boxed))
+    print(grid(ps = ps))
+    print(swapped(p = pair).a.y)
+    print(score(c = lib.Colour.Red))
+    print(local(n = 41))
+    print(lib.bumped(n = 41))
+}

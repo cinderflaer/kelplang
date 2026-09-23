@@ -1,0 +1,3 @@
+// A bare name is this module's own item, so `std/main`'s private `Hidden` is
+// out of reach here even though that module's id looks shipped (A-13).
+pub fun use(h: Hidden).R: i32 = h.n

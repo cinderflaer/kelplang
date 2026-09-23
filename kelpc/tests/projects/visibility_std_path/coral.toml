@@ -1,0 +1,3 @@
+name = "visibilitystdpath"
+version = "0.1.0"
+entry = "src/std/main.kp"

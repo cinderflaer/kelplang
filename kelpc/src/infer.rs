@@ -889,6 +889,18 @@ impl TypeScope<'_> {
         Ok(resolved)
     }
 
+    /// Whether a canonical key names a declaration of the module this scope
+    /// belongs to. A canonical key carries its declaring module's symbol
+    /// prefix (`shapes.circle.Circle`), which is how a receiver declaration
+    /// arrives here, and a module's own keys are that prefix plus one bare
+    /// identifier. The entry module's prefix is empty and its keys are the
+    /// unprefixed names, so a key that keeps a dot in it is never one of its
+    /// own.
+    fn owns_canonical_key(&self, key: &str) -> bool {
+        key.strip_prefix(self.prefix)
+            .is_some_and(|item| !item.contains('.'))
+    }
+
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
         // A fixed-size array (A-18): `[T; N]`. The length is a compile-time
         // constant expression (A-19) folded here, once, so the type is a
@@ -1042,9 +1054,12 @@ impl TypeScope<'_> {
         // how a receiver declaration (`fun Circle.area()` inside
         // `shapes/circle.kp`) arrives here, since `resolve.rs` rewrites the
         // receiver type to its module-prefixed name when it merges modules.
-        // Everything else is a name as the user wrote it and still needs
-        // qualifying.
-        if self.structs.contains_key(&ty.name) {
+        // Only the declaring module's own keys may take that shortcut. A
+        // canonical key of *another* module is how that module's type is
+        // written through an alias (`util.Tally`), and it has to take the
+        // same qualifying and visibility path every other written name takes
+        // (A-13). Skipping it is what let a private type cross the boundary.
+        if self.structs.contains_key(&ty.name) && self.owns_canonical_key(&ty.name) {
             return Ok(Ty::Struct(ty.name.clone()));
         }
         let qualified = self.qualify(&ty.name, ty.span)?;
@@ -1662,8 +1677,19 @@ fn fn_value_ty(sig: &FnSig) -> Ty {
 /// function pointer).
 fn function_value(name: &str, ctx: &Ctx, span: Span) -> Result<Option<(String, Ty)>> {
     let owned = ctx.qualify_own(name);
-    if ctx.sig_of(&owned).is_some() {
+    // A generic template has no concrete signature yet, so it is never in
+    // `sigs`; its refusal is `function_value_at`'s, and the key it looks under
+    // is still the calling module's own.
+    if ctx.sig_of(&owned).is_some() || ctx.fns.templates.contains_key(&owned) {
         return function_value_at(&owned, name, ctx, span);
+    }
+    // Same rule as the signature lookup in `check_call`: only a name that
+    // already carries its module prefix may fall back to the name as written,
+    // because that is the only spelling of another module's key. A bare name
+    // is the calling module's own, and the entry module is the one whose keys
+    // are bare (A-13).
+    if !name.contains('.') {
+        return Ok(None);
     }
     function_value_at(name, name, ctx, span)
 }
@@ -1900,11 +1926,15 @@ const PRINTABLE_BUILTINS: &[&str] = &["print", "print!"];
 /// number it is given.
 const OVERLOADABLE: &[&str] = &["abs", "min", "max", "clamp"];
 
-/// Whether a module id belongs to the compiler-shipped standard library —
-/// what stdlib decision 4's "available only to compiler-shipped modules"
-/// means in code.
-fn is_std_module(module: &str) -> bool {
-    module == "std" || module.starts_with("std/")
+/// Whether a module id is one the compiler ships (M6.3, stdlib decision 4).
+/// The `std/` prefix is deliberately *not* the test: a project file at
+/// `src/std/x.kp` is loaded from disk and prefixed like any other module, so
+/// an id that only looks shipped would take the exemptions the compiler's own
+/// text earns: the export-everything rule among them, which would silently
+/// switch privacy off there. `stdlib::source` is the table of shipped text,
+/// and `std/rt` (the injected runtime) is in it for the same reason.
+fn is_shipped_module(module: &str) -> bool {
+    crate::stdlib::source(module).is_some()
 }
 
 /// The canonical keys of the items each module exports (A-13, `plan/syntax.md`
@@ -1924,7 +1954,7 @@ fn is_std_module(module: &str) -> bool {
 fn collect_exports(program: &ast::Program) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     let mut export = |module: &str, name: &str, is_pub: bool| {
-        if is_pub || is_std_module(module) {
+        if is_pub || is_shipped_module(module) {
             out.insert(name.to_string());
         }
     };
@@ -2018,7 +2048,7 @@ fn display_callee(key: &str) -> &str {
 fn sig_key_for(f: &ast::FunctionDecl, prefix: &str, params: &[(String, Ty)]) -> String {
     let plain = sig_key(f);
     if f.receiver.is_none()
-        && is_std_module(&f.module)
+        && is_shipped_module(&f.module)
         && OVERLOADABLE.contains(&bare_name(&f.name, prefix))
     {
         let types: Vec<String> = params.iter().map(|(_, t)| t.display()).collect();
@@ -5142,7 +5172,7 @@ fn check_program_pass(
             return Err(Diagnostic::new(message, f.span, f.module.clone()));
         }
         if f.receiver.is_none()
-            && is_std_module(&f.module)
+            && is_shipped_module(&f.module)
             && OVERLOADABLE.contains(&bare_name(&f.name, prefix))
         {
             let types = params.iter().map(|(_, t)| t.clone()).collect();
@@ -8661,7 +8691,7 @@ fn check_when(
 /// helper written for a `Copy` payload or element fails inside the module, and
 /// the span points into a file the caller never opened. Empty everywhere else.
 fn stdlib_instantiation_note(ctx: &Ctx) -> String {
-    if is_std_module(&ctx.module) {
+    if is_shipped_module(&ctx.module) {
         format!(
             " — this is inside the shipped standard library ('{}'), so the instantiation you asked for is one it does not offer: a helper that hands a value out is written for a 'Copy' payload or element, and the module's header says which",
             ctx.module
@@ -9447,11 +9477,20 @@ fn check_call(
     // the entry module the two keys are the same, and a qualified callee
     // (`check_module_item` passes `std.math.abs`) misses the first and hits the
     // second, so neither case changes.
+    //
+    // The lookup on the name as written is for a callee that is *already*
+    // canonical, and a canonical key always carries its module prefix. The
+    // entry module is the only one whose keys are bare, so an ungated fallback
+    // here would let every module call the entry module's item by its bare
+    // name, `pub` or not (A-13).
+    let names_a_module = callee.contains('.');
     let owned_key = ctx.qualify_own(callee);
-    let direct = ctx
-        .sig_of(&owned_key)
-        .map(|s| (owned_key.clone(), s))
-        .or_else(|| ctx.sig_of(callee).map(|s| (callee.to_string(), s)));
+    let direct = ctx.sig_of(&owned_key).map(|s| (owned_key.clone(), s)).or_else(|| {
+        if !names_a_module {
+            return None;
+        }
+        ctx.sig_of(callee).map(|s| (callee.to_string(), s))
+    });
     let (key, sig) = match direct {
         Some(found) => found,
         None => match resolve_overload(callee, &owned_key, args, span, ctx)? {
@@ -9540,15 +9579,15 @@ fn check_call(
 }
 
 /// The key of the generic *function* template `name` or `owned` names, if
-/// either does (A-2).
+/// either does (A-2). The lookup on `name` as written carries the same rule
+/// the signature lookup in `check_call` does: it is the canonical spelling,
+/// so it has to name a module. A bare name is the calling module's own, and
+/// the entry module is the only one whose keys are bare (A-13).
 fn func_template_named(ctx: &Ctx, name: &str, owned: &str) -> Option<String> {
     if ctx.fns.templates.contains_key(owned) {
         return Some(owned.to_string());
     }
-    ctx.fns
-        .templates
-        .contains_key(name)
-        .then(|| name.to_string())
+    (name.contains('.') && ctx.fns.templates.contains_key(name)).then(|| name.to_string())
 }
 
 /// The template key of a method declared on a generic type (A-2): `owner` is
@@ -10910,4 +10949,23 @@ fn check_if(
         ty,
         span,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_shipped_module;
+
+    /// The export-everything rule keys on this predicate, and a project file
+    /// under a `std/` path is a project file: its id must not pass for the
+    /// compiler's own text, or privacy stops applying to it (A-13).
+    #[test]
+    fn only_the_compilers_own_text_is_shipped() {
+        assert!(is_shipped_module("std/mem"));
+        assert!(is_shipped_module("std/list"));
+        // The injected runtime (`stdlib::RT_MODULE`) ships like the rest.
+        assert!(is_shipped_module(crate::stdlib::RT_MODULE));
+        assert!(!is_shipped_module("std/mine"));
+        assert!(!is_shipped_module("std"));
+        assert!(!is_shipped_module("lib"));
+    }
 }

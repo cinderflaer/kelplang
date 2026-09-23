@@ -1,0 +1,16 @@
+// A-13: a `pub` type is nameable in a type position from another module, the
+// same way it is constructible there.
+pub datac Point(val x: i32, val y: i32)
+
+pub enum Colour {
+    Red
+    Blue
+}
+
+pub datac Pair<T>(val a: T, val b: T)
+
+// A bare name is the declaring module's own: `bumped` reaches `add` with no
+// qualifier and no `pub` (A-13).
+pub fun bumped(n: i32).R: i32 = add(n = n, by = 1)
+
+fun add(n: i32, by: i32).R: i32 = n + by

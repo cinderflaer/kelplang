@@ -1,0 +1,6 @@
+// A bare name is this module's own item, so the entry module's private
+// `helper` is out of reach here: the call is undefined rather than private,
+// and this body is the whole point of the fixture (A-13).
+pub fun via_entry(n: i32).R: i32 = helper(n = n)
+
+pub fun double(n: i32).R: i32 = n * 2

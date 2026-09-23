@@ -657,6 +657,61 @@ fn a_private_item_is_not_offered_by_the_did_you_mean_hint() {
 }
 
 #[test]
+fn a_private_type_is_not_nameable_in_a_type_position() {
+    // The name resolver returned early for a canonical key before running the
+    // export check, so a `datac` could cross a module boundary in a type
+    // position (`describe`'s parameter) with no refusal at all.
+    assert_project_rejected(
+        "visibility_type_private",
+        &project("visibility_type_private").join("main.kp"),
+        "'lib.Hidden' is private",
+    );
+}
+
+#[test]
+fn an_exported_type_is_nameable_in_every_type_position() {
+    // The acceptance half of the same gate: `pub` types in a parameter type, a
+    // return type, a field type, a local annotation, a generic argument, and a
+    // `List`, `Box` and array element. It also pins the bare names that must
+    // keep resolving: `local` is the entry module's own private function and
+    // `add` is `lib`'s, and both are called bare from inside their module.
+    assert_project_runs(
+        "visibility_type_pub",
+        &project("visibility_type_pub").join("main.kp"),
+        "1\n5\n8\n21\n3\n1\n42\n42\n",
+    );
+}
+
+#[test]
+fn the_entry_modules_private_items_are_not_reachable_by_their_bare_name() {
+    // The entry module is the only one whose keys carry no prefix, so a lookup
+    // on the name as written reached its private `helper` from any module. A
+    // bare name is the calling module's own, so the call is undefined here, not
+    // private (`visibility_private` pins the private text).
+    assert_project_rejected(
+        "visibility_bare_call",
+        &project("visibility_bare_call").join("main.kp"),
+        "call to undefined function 'helper'",
+    );
+}
+
+#[test]
+fn a_project_module_under_a_std_path_is_not_a_shipped_module() {
+    // The module id `std/main` looks shipped and is not: the file is a project
+    // file, so its items are private by default like any other module's. The
+    // entry module itself still names `Hidden`; another module names it in a
+    // type position, and a bare name there is that module's own, so the
+    // reference is undefined rather than private. The shipped-module predicate
+    // that decides this is pinned directly by the unit test beside it in
+    // `infer.rs`.
+    assert_project_rejected(
+        "visibility_std_path",
+        &project("visibility_std_path").join("src/std/main.kp"),
+        "unknown type 'Hidden'",
+    );
+}
+
+#[test]
 fn unshipped_stdlib_module_is_rejected() {
     // `std/tls` is the next module in the roadmap (S4b, behind open item 37)
     // and is deliberately absent; the error names what *is* shipped so the

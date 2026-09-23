@@ -1,0 +1,3 @@
+// `Hidden` carries no `pub`, so only this module may name it: in a type
+// position exactly as in a call (A-13).
+datac Hidden(val n: i32)

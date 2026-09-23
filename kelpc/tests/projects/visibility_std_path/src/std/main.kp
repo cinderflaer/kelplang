@@ -1,0 +1,11 @@
+impl "other"
+
+// A project file under a `std/` path has a module id (`std/main`) that looks
+// like a compiler-shipped module, and is not one: it is read from disk, so
+// its items are private by default like any other module's (A-13).
+datac Hidden(val n: i32)
+
+fun main() {
+    val h = Hidden(n = 1)
+    print(h.n)
+}
