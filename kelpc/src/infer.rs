@@ -2365,11 +2365,11 @@ fn box_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason} — a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another 'Box'/'List'"
+            "{reason}: a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another 'Box'/'List'"
         );
     }
     format!(
-        "'{}' cannot be a 'Box' element — use a scalar, 'String', 'Bytes', a 'datac', a 'List', or another 'Box'",
+        "'{}' cannot be a 'Box' element: use a scalar, 'String', 'Bytes', a 'datac', a 'List', or another 'Box'",
         ty.display()
     )
 }

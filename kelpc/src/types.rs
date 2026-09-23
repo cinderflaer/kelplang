@@ -759,7 +759,10 @@ pub fn is_list_element(ty: &Ty) -> bool {
 }
 
 /// Whether `ty` is a container that still carries the open-container marker in
-/// its element slot, or one that holds such a container anywhere inside it.
+/// its element slot, or a `List`/`Box` that holds such a container inside it.
+/// This walks `List`/`Box` elements only, because those are the two kinds that
+/// were widened to a container (A-10 slice 1) and a `Map` value is never an
+/// element.
 ///
 /// The marker is `Unit` where an element type goes (see `is_open_container`),
 /// and no program wrote it: the generated typedef, the `push` prototype and the
