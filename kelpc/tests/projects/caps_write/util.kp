@@ -1,6 +1,6 @@
 impl "std/fs"
 
-fun exercise() {
+pub fun exercise() {
     val text = String.from_str("hello")
     fs.write_text("/tmp/kelp_caps_write/a.txt", text)
     print(fs.exists("/tmp/kelp_caps_write/a.txt"))

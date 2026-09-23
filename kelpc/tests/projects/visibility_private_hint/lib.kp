@@ -1,0 +1,3 @@
+// Private, so the "did you mean 'lib.Thing'?" hint must not offer it (A-13):
+// suggesting the qualified spelling would name a line the gate refuses.
+datac Thing(val n: i32)

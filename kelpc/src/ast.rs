@@ -26,6 +26,10 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub name: String,
+    /// `pub const ...` (A-13, `plan/syntax.md` 13.4). Every top-level item is
+    /// private to its module unless this is written, which is what
+    /// `infer.rs`'s visibility gate reads.
+    pub is_pub: bool,
     pub ty: TypeExpr,
     pub init: Expr,
     /// See `DatacDecl::module`.
@@ -79,6 +83,10 @@ pub struct CapGrant {
 #[derive(Debug, Clone)]
 pub struct DatacDecl {
     pub name: String,
+    /// `pub datac ...` (A-13). See `ConstDecl::is_pub`. A `pub` type's
+    /// methods come with it: a method is reached through a value of the type,
+    /// never through a module alias.
+    pub is_pub: bool,
     /// `datac Pair<A, B>` — the declared type parameters, in order (A-2).
     /// Empty for an ordinary `datac`. A parameter is in scope inside every
     /// field type of this declaration and nowhere else; the declaration is a
@@ -106,6 +114,8 @@ pub struct DatacDecl {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
+    /// `pub enum ...` (A-13). See `DatacDecl::is_pub`.
+    pub is_pub: bool,
     /// `enum Option<T>` — the declared type parameters, in order (A-2). See
     /// `DatacDecl::type_params`.
     pub type_params: Vec<String>,
@@ -141,6 +151,10 @@ pub struct FieldDecl {
 #[derive(Debug, Clone)]
 pub struct FunctionDecl {
     pub name: String,
+    /// `pub fun ...` / `pub extern fun ...` (A-13). See `ConstDecl::is_pub`.
+    /// Never true on a receiver method: the parser refuses `pub` there, since
+    /// a method's reachability follows its declaring type.
+    pub is_pub: bool,
     /// `fun f<T>(...)` — the function's own type parameters (A-2). Empty for
     /// an ordinary function, and empty for a *receiver method*, whose type
     /// parameters come from the receiver instead (`Receiver::type_args`).

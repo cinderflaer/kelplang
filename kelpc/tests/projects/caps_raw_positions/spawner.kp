@@ -2,7 +2,7 @@ impl "std/fs"
 impl "std/io"
 impl "std/process"
 
-fun open_mode_ok().R: bool {
+pub fun open_mode_ok().R: bool {
     val fd = fs.open_raw("/tmp/kelp_caps_raw_positions/note.txt", "r")
     val ok = fd >= 0
     io.File(fd = fd).close()
@@ -12,7 +12,7 @@ fun open_mode_ok().R: bool {
 // The directory `/tmp` is outside the grant on purpose: it is the child's
 // working directory, which no pattern governs, and the granted program is
 // argument 1.
-fun spawn_raw_ok().R: bool {
+pub fun spawn_raw_ok().R: bool {
     var pid: i32 = 0
     var fd_in: i32 = 0
     var fd_out: i32 = 1

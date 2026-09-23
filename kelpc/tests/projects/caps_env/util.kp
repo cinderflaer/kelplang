@@ -3,14 +3,14 @@
 impl "std/str"
 impl "std/env"
 
-fun has_home().R: bool = env.has("HOME")
+pub fun has_home().R: bool = env.has("HOME")
 
-fun get_home_nonempty().R: bool {
+pub fun get_home_nonempty().R: bool {
     val v = env.get("HOME")
     return str.len(v.as_str()) > 0
 }
 
-fun set_read_unset().R: bool {
+pub fun set_read_unset().R: bool {
     env.set("KELP_ENV_PROBE", "value")
     val v = env.get("KELP_ENV_PROBE")
     val ok = str.eq(v.as_str(), "value")

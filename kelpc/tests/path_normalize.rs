@@ -408,7 +408,7 @@ fn a_deep_path_is_denied_instead_of_overrunning_the_stack() {
     std::fs::write(
         dir.join("u.kp"),
         format!(
-            "impl \"std/fs\"\n\nfun probe().R: String = fs.read_text({})\n",
+            "impl \"std/fs\"\n\npub fun probe().R: String = fs.read_text({})\n",
             literal(&outside)
         ),
     )

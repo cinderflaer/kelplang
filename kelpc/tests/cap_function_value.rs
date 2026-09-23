@@ -42,10 +42,13 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// Writes the two-file project: `main.kp` imports `util` with `import_line`,
-/// and `util.kp` holds `body`, whose free function is `leak`.
+/// and `util.kp` holds `body`, whose free function is `leak`. The entry module
+/// reaches it as `util.leak`, so A-13's exported-by-`pub` rule makes the
+/// declaration `pub` on the way in.
 fn project(dir: &Path, import_line: &str, body: &str) {
     let main = format!("{import_line}\n\nfun main() {{\n    print(util.leak())\n}}\n");
     fs::write(dir.join("main.kp"), main).expect("write main.kp");
+    let body = body.replace("fun leak(", "pub fun leak(");
     fs::write(dir.join("util.kp"), format!("impl \"std/fs\"\n\n{body}\n")).expect("write util.kp");
 }
 

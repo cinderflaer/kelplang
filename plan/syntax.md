@@ -76,7 +76,7 @@ With no `-o`, the binary is written into the **current working directory**, name
 What a project buys you, concretely:
 
 - **`impl` paths and module ids are relative to `src/`**, not to the working directory or to the importing file. `impl "shapes/circle"` is always `<root>/src/shapes/circle.kp`, however deep the importer sits (§13.3).
-- **The entry module can be somewhere other than `src/main.kp`**, and it is the only module whose top-level names are unprefixed — everything else is reached as `alias.Item` (§13.3).
+- **The entry module can be somewhere other than `src/main.kp`**, and it is the only module whose top-level names are unprefixed. A non-entry module's items are reached only as `alias.Item`, and only the ones that module exports with `pub` (§13.3, §13.4).
 - **A `alias.kpconf` at the project root** (beside `coral.toml`, not in `src/`).
 - **The program-level settings** in the manifest — today `http_pool`.
 
@@ -264,7 +264,7 @@ An identifier starts with a letter or `_`. These words are keywords:
 
 ```
 as  closure  const  datac  elif  else  enum  extern  false  for  fun  if  impl
-move  mut  pd  return  true  val  var  when  while
+move  mut  pd  pub  return  true  val  var  when  while
 ```
 
 `fn`, `let`, `struct`, `use`, `loop`, `break`, `continue`, `match`, `trait` and `self` are not keywords. Writing `fn`, as in Rust or Kotlin, is a parse error, and `self` is an ordinary identifier (see 8). `in` is not a keyword either: `for x in xs` reads it as a separator, the way `if let` reads `let` (6.1), so a binding may still be named `in`.
@@ -1560,6 +1560,27 @@ impl %*db*%
 
 Aliases come from two places: an inline `alias %*name*% = <raw text to end of line>` declaration, and `alias.kpconf` at the project root, one `name="replacement text"` per line. Substitution has no parameters, no scoping and no hygiene; `%*a*%` defined as `%*b*% * 2` with `%*b*%` defined as `40 + 2` prints `84`, because precedence is whatever the expanded text happens to produce.
 
+### 13.4 Visibility
+
+Every top-level item is **private to its own module** (A-13). A module that imports another reaches only what that module exports, and it exports an item by writing `pub` in front of its declaration:
+
+```kelp
+pub const LIMIT: i32 = 10
+pub datac Point(val x: i32, val y: i32)
+pub enum Shape { Circle(val r: f64) Empty }
+pub fun scale(v: f64, k: f64).R: f64 = v * k
+pub extern fun clock_ticks().R: u64
+```
+
+- `pub` is accepted only on a top-level `fun`, `extern fun`, `datac`, `enum` or `const`. Written anywhere else it is a parse error, and the message names the item forms it applies to.
+- A `pd` never takes `pub`. A passdown is module-scoped by design (§9, `plan/roadmap.md` item 10), so `pub pd` is refused where it is written; a `fun` that reads the passdown is what another module uses, and that function can be `pub`.
+- A method never takes `pub`. A method's reachability follows its declaring type, so `pub datac Circle` is what lets another module call `value.area()` on a `Circle` it holds, however that method was declared. `pub fun Circle.area()` is a parse error that says to mark the type instead.
+- Inside its own file an item is reachable by its bare name whether or not it is written `pub`. `pub` governs only another module's `alias.Item` spelling.
+- Naming an imported item that exists but is not exported gets an error of its own: `'lib.hidden' is private: 'hidden' is declared in module 'lib' without 'pub', so only that module can name it; add 'pub' to its declaration to export it`. That is distinct from `module 'lib' has no item 'hidden'`, which means the name does not exist at all, and a "did you mean" hint never offers a private item.
+- A private type may still appear in an exported signature, and a value of it may flow to another module: `pub fun make().R: Hidden` where `Hidden` is private compiles, and the caller can read `make().field` even though it cannot name `Hidden`. Refusing that is a "private type in a public signature" rule, and this slice does not add one: it scopes the *name* a module reaches, not the shape of an exported signature. The measured behavior is deliberate rather than an oversight, and it is the limit a later slice would close.
+
+**The shipped standard library is exempt, transitionally.** A compiler-shipped `std/...` module exports every top-level item whether or not it is written `pub`. This is load-bearing rather than convenient: shipped modules import each other (`std/fmt` imports `std/str`, `std/net` imports `std/io` and `std/str`, `std/path` imports `std/mem` and `std/str`, `std/io` imports `std/mem`, `std/str` and `std/option`, `std/list` imports `std/option`), so without the rule the standard library stops building. The exemption is transitional: the slice that marks the shipped declarations `pub` removes it.
+
 ## 14. Constants and passdowns
 
 ### 14.1 `const`
@@ -2249,14 +2270,16 @@ impl         := "impl" string [ "caps" "(" grant ("," grant)* ")" ]
                 // `as name` was removed (13.1) and `with caps(...)` with it (15.2):
                 // the parser refuses each by name, and `as` stays a keyword
 grant        := ident "=" "[" string ("," string)* "]"
-const        := "const" ident ":" type "=" expr
+// A leading "pub" (13.4) is accepted on const, datac, enum and fun, and
+// nowhere else: a `pd` is module-scoped and an impl is not an item.
+const        := [ "pub" ] "const" ident ":" type "=" expr
 pd           := "pd" ("val" | "var") ident [ ":" type ] "=" expr
-datac        := "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
+datac        := [ "pub" ] "datac" ident [ typeparams ] "(" [ field ("," field)* ] ")"
 field        := ("val" | "var") ident ":" type
-enum         := "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
+enum         := [ "pub" ] "enum" ident [ typeparams ] "{" ( ident [ "(" [ field ("," field)* ] ")" ] )* "}"
 typeparams   := "<" ident ("," ident)* ">"
 typeargs     := "<" type ("," type)* ">"   // in an expression: adjacent to the name and to "("
-fun          := [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
+fun          := [ "pub" ] [ "extern" ] "fun" [ "mut" ] ( ident [ typeparams ] "." )? ident [ typeparams ]
                 "(" [ param ("," param)* ] ")" [ ".R" ":" type ] body
 param        := ident ":" [ "mut" | "move" ] type
 body         := "=" expr | block | <nothing for extern>

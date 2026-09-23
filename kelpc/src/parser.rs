@@ -124,6 +124,14 @@ impl Parser {
         // lists (A-1).
         let mut type_order = 0usize;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
+            // `pub` is an optional leading token on the item forms that can
+            // carry one (A-13). It is read here, before the dispatch below,
+            // because a public item is otherwise the same declaration.
+            let is_pub = self.check(&TokenKind::Pub);
+            if is_pub {
+                let pub_span = self.advance().span;
+                self.check_pub_target(pub_span)?;
+            }
             if self.check(&TokenKind::Impl) {
                 if !consts.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
@@ -139,7 +147,7 @@ impl Parser {
                         span: self.peek().span,
                     });
                 }
-                consts.push(self.parse_const_decl()?);
+                consts.push(self.parse_const_decl(is_pub)?);
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
@@ -149,17 +157,17 @@ impl Parser {
                 }
                 pds.push(self.parse_pd_decl()?);
             } else if self.check(&TokenKind::Datac) {
-                let mut d = self.parse_datac_decl()?;
+                let mut d = self.parse_datac_decl(is_pub)?;
                 d.order = type_order;
                 type_order += 1;
                 datacs.push(d);
             } else if self.check(&TokenKind::Enum) {
-                let mut e = self.parse_enum_decl()?;
+                let mut e = self.parse_enum_decl(is_pub)?;
                 e.order = type_order;
                 type_order += 1;
                 enums.push(e);
             } else {
-                functions.push(self.parse_function()?);
+                functions.push(self.parse_function(is_pub)?);
             }
             self.skip_newlines();
         }
@@ -173,9 +181,35 @@ impl Parser {
         })
     }
 
+    /// The item a leading `pub` must be followed by (A-13). `pub` on anything
+    /// else is refused where it is written, naming what it applies to, rather
+    /// than read as a no-op or as something else. A `pd` gets its own message
+    /// because it is not a missing feature: a passdown is module-scoped by
+    /// design (`plan/roadmap.md` item 10), so `pub` on one can never be true.
+    fn check_pub_target(&self, pub_span: Span) -> PResult<()> {
+        match self.peek_kind() {
+            TokenKind::Fun
+            | TokenKind::Extern
+            | TokenKind::Datac
+            | TokenKind::Enum
+            | TokenKind::Const => Ok(()),
+            TokenKind::Pd => Err(ParseError {
+                message: "a 'pd' cannot be 'pub': a passdown is module-scoped by design, so another module cannot reach it; a 'fun' that reads it can be exported instead".to_string(),
+                span: pub_span.to(self.peek().span),
+            }),
+            _ => Err(ParseError {
+                message: format!(
+                    "'pub' applies to a top-level 'fun', 'extern fun', 'datac', 'enum' or 'const', found {:?}",
+                    self.peek_kind()
+                ),
+                span: pub_span.to(self.peek().span),
+            }),
+        }
+    }
+
     /// `const NAME: T = expr` — the type is mandatory, since a `const` is a
     /// declared contract rather than an inferred binding.
-    fn parse_const_decl(&mut self) -> PResult<ConstDecl> {
+    fn parse_const_decl(&mut self, is_pub: bool) -> PResult<ConstDecl> {
         let start = self.expect(TokenKind::Const, "'const'")?.span;
         let (name, _) = self.expect_ident()?;
         self.expect(TokenKind::Colon, "':' (a 'const' must declare its type)")?;
@@ -185,6 +219,7 @@ impl Parser {
         let span = start.to(init.span());
         Ok(ConstDecl {
             name,
+            is_pub,
             ty,
             init,
             module: String::new(),
@@ -332,7 +367,7 @@ impl Parser {
         })
     }
 
-    fn parse_datac_decl(&mut self) -> PResult<DatacDecl> {
+    fn parse_datac_decl(&mut self, is_pub: bool) -> PResult<DatacDecl> {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
         let (name, _) = self.expect_ident()?;
         let type_params = self.parse_type_params()?;
@@ -341,6 +376,7 @@ impl Parser {
         let end = self.expect(TokenKind::RParen, "')'")?.span;
         Ok(DatacDecl {
             name,
+            is_pub,
             type_params,
             fields,
             order: 0,
@@ -417,7 +453,7 @@ impl Parser {
     /// `enum Shape { Circle(val r: f64) Rect(val w: f64, val h: f64) Empty }`
     /// — variants are newline-separated, and a variant's payload list is the
     /// same one a `datac` uses (`plan/syntax.md` §9.2).
-    fn parse_enum_decl(&mut self) -> PResult<EnumDecl> {
+    fn parse_enum_decl(&mut self, is_pub: bool) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
         let (name, _) = self.expect_ident()?;
         let type_params = self.parse_type_params()?;
@@ -459,6 +495,7 @@ impl Parser {
         }
         Ok(EnumDecl {
             name,
+            is_pub,
             type_params,
             variants,
             order: 0,
@@ -467,7 +504,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self) -> PResult<FunctionDecl> {
+    fn parse_function(&mut self, is_pub: bool) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -525,6 +562,16 @@ impl Parser {
             }
             (None, first, name_params)
         };
+
+        // A method is reached through a value of its type, never through a
+        // module alias, so `pub` on one has nothing to govern: the type's own
+        // `pub` is what exports the method with it (A-13).
+        if is_pub && receiver.is_some() {
+            return Err(ParseError {
+                message: "'pub' cannot be written on a method: a method's reachability follows its declaring type, so mark the type 'pub' instead".to_string(),
+                span: start,
+            });
+        }
 
         let params = self.parse_params()?;
 
@@ -589,6 +636,7 @@ impl Parser {
         };
         Ok(FunctionDecl {
             name,
+            is_pub,
             type_params,
             extern_,
             receiver,
@@ -925,6 +973,13 @@ impl Parser {
             TokenKind::While => self.parse_while_stmt(),
             TokenKind::For => self.parse_for_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
+            // `pub` leads a declaration, and a declaration is not a statement,
+            // so the message names the forms it can lead (A-13) rather than
+            // reading the keyword as a start-of-expression.
+            TokenKind::Pub => Err(ParseError {
+                message: "'pub' applies to a top-level 'fun', 'extern fun', 'datac', 'enum' or 'const', and only at the top level of a file".to_string(),
+                span: self.peek().span,
+            }),
             _ => {
                 let expr = self.parse_expr()?;
                 let span = expr.span();
@@ -2768,5 +2823,60 @@ mod tests {
         assert!(matches!(&parts[1], TemplatePart::Expr(Expr::Ident(n, _)) if n == "b"));
         assert!(matches!(&parts[2], TemplatePart::Text(t) if t == " "));
         assert!(matches!(&parts[3], TemplatePart::Expr(Expr::MethodCall { method, .. }) if method == "d"));
+    }
+
+    #[test]
+    fn pub_is_read_on_the_five_item_forms_that_can_carry_it() {
+        let p = parse(
+            "pub const LIMIT: i32 = 1\npub datac Point(val x: i32)\npub enum Shape { Empty }\npub fun f().R: i32 = 1\npub extern fun g().R: i32",
+        );
+        assert!(p.consts[0].is_pub);
+        assert!(p.datacs[0].is_pub);
+        assert!(p.enums[0].is_pub);
+        assert!(p.functions[0].is_pub);
+        assert!(p.functions[1].is_pub);
+        assert!(p.functions[1].extern_);
+    }
+
+    #[test]
+    fn an_item_without_pub_is_private() {
+        let p = parse("fun f().R: i32 = 1");
+        assert!(!p.functions[0].is_pub);
+    }
+
+    #[test]
+    fn pub_pd_is_refused_by_name() {
+        let e = parse_err("pub pd val x = 1\nfun main() {}");
+        assert!(e.message.contains("a 'pd' cannot be 'pub'"), "got: {}", e.message);
+    }
+
+    #[test]
+    fn pub_on_a_receiver_method_names_the_type() {
+        let e = parse_err("pub fun Circle.area().R: f64 = 1.0");
+        assert!(
+            e.message.contains("mark the type 'pub' instead"),
+            "got: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn pub_on_anything_else_names_what_it_applies_to() {
+        let e = parse_err("pub impl \"util\"");
+        assert!(
+            e.message.contains("'pub' applies to a top-level 'fun'"),
+            "got: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn pub_inside_a_block_names_the_top_level_forms() {
+        let e = parse_err("fun main() {\n    pub val x = 1\n}");
+        assert!(
+            e.message.contains("and only at the top level of a file"),
+            "got: {}",
+            e.message
+        );
     }
 }

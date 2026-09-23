@@ -2,4 +2,4 @@ impl "std/fs"
 
 pd val present: bool = fs.exists("/tmp/kelp_caps_pd_gated_granted/note.txt")
 
-fun show().R: bool = present
+pub fun show().R: bool = present

@@ -36,10 +36,11 @@ fn scratch(shape: &str) -> PathBuf {
     dir
 }
 
+// `pub`: `main` reaches `probe` through the module alias (A-13).
 const UNIT: &str = "\
 impl \"std/fs\"
 
-fun probe().R: String = fs.read_text(\"/etc/hostname\")
+pub fun probe().R: String = fs.read_text(\"/etc/hostname\")
 ";
 
 // The grant is a prefix nothing under `/etc` can match, so the denial is

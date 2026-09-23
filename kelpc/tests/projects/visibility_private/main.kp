@@ -1,0 +1,5 @@
+impl "lib"
+
+fun main() {
+    print(lib.hidden(n = 21))
+}

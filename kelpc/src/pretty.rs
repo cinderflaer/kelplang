@@ -32,7 +32,7 @@ fn indent(out: &mut String, depth: usize) {
 }
 
 fn print_datac(out: &mut String, d: &DatacDecl) {
-    write!(out, "datac {}(", d.name).unwrap();
+    write!(out, "{}datac {}(", pub_kw(d.is_pub), d.name).unwrap();
     for (i, f) in d.fields.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
@@ -43,8 +43,17 @@ fn print_datac(out: &mut String, d: &DatacDecl) {
     out.push_str(")\n");
 }
 
+/// The `pub ` a public item prints (A-13), or nothing for a private one.
+fn pub_kw(is_pub: bool) -> &'static str {
+    if is_pub {
+        "pub "
+    } else {
+        ""
+    }
+}
+
 fn print_enum(out: &mut String, e: &EnumDecl) {
-    write!(out, "enum {} {{\n", e.name).unwrap();
+    write!(out, "{}enum {} {{\n", pub_kw(e.is_pub), e.name).unwrap();
     for v in &e.variants {
         write!(out, "    {}", v.name).unwrap();
         if !v.fields.is_empty() {
@@ -65,6 +74,7 @@ fn print_enum(out: &mut String, e: &EnumDecl) {
 
 fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
     indent(out, depth);
+    out.push_str(pub_kw(f.is_pub));
     if f.extern_ {
         out.push_str("extern ");
     }

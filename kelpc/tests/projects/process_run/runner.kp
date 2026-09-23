@@ -14,15 +14,15 @@ fun sh(script: &str).R: List<String> {
 // wants the exit code, the captured stderr and the output reads them off one
 // owned value (`val text = r.out` moves the field out). The type is spelled
 // `process.RunResult` because an imported type is always module-qualified.
-fun run_echo().R: process.RunResult = process.run("/bin/sh", sh("printf hi"))
+pub fun run_echo().R: process.RunResult = process.run("/bin/sh", sh("printf hi"))
 
-fun run_exit().R: process.RunResult = process.run("/bin/sh", sh("exit 3"))
+pub fun run_exit().R: process.RunResult = process.run("/bin/sh", sh("exit 3"))
 
-fun run_stderr().R: process.RunResult = process.run("/bin/sh", sh("printf oops >&2"))
+pub fun run_stderr().R: process.RunResult = process.run("/bin/sh", sh("printf oops >&2"))
 
 // Everything after `argv[0]`, joined with commas. The arguments the harness
 // passes are the visible part of `process.args`.
-fun tail_args().R: String {
+pub fun tail_args().R: String {
     val args = process.args()
     val n = args.len()
     var out = String.with_capacity(16)
@@ -37,7 +37,7 @@ fun tail_args().R: String {
     return out
 }
 
-fun arg_count().R: usize {
+pub fun arg_count().R: usize {
     val args = process.args()
     return args.len()
 }

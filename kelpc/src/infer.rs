@@ -96,6 +96,13 @@ struct TypeEnv {
     /// `datac` that names such a type has to see the same key set a body
     /// does.
     declared_keys: std::rc::Rc<std::collections::HashSet<String>>,
+    /// The canonical keys of the items each module exports (A-13). Private by
+    /// default, so a key is here only for a declaration written `pub`, or for
+    /// any declaration in a compiler-shipped module (the transitional rule
+    /// `plan/syntax.md` 13.4 records). Shared through the same `Rc` every
+    /// `Ctx` clone and every `TypeScope` see, since it is one answer for the
+    /// whole program.
+    exported: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -527,6 +534,39 @@ impl Ctx {
             self.captures.push((name.to_string(), ty.clone()));
         }
         Some(ty)
+    }
+
+    /// The visibility gate (A-13): an item another module reaches through an
+    /// alias is reachable only when its declaration is `pub` there. `key` is
+    /// the canonical lookup key, and `alias.item` is how the reference is
+    /// written. Called only after the item is known to exist, so the refusal
+    /// always means "private" and never "missing".
+    fn check_exported(&self, key: &str, alias: &str, item: &str, span: Span) -> Result<()> {
+        if exported(key, &self.env) {
+            return Ok(());
+        }
+        Err(private_item_error(alias, item, span))
+    }
+
+    /// The visibility gate for a type path an expression names through an
+    /// alias (`shapes.Shape.Empty`, `shapes.Shape.Circle(...)`). A local,
+    /// parameter or passdown of the alias's own name shadows it, exactly as
+    /// it shadows any other name lookup, so `a.b` stays a field of the value
+    /// `a` and is not read as an alias at all.
+    fn check_type_path_exported(&self, path: &str, span: Span) -> Result<()> {
+        if let Some((alias, _)) = path.split_once('.') {
+            if self.lookup(alias).is_some() || self.pds.contains_key(alias) {
+                return Ok(());
+            }
+        }
+        check_type_exported(
+            path,
+            &self.structs,
+            &self.enums,
+            &self.aliases,
+            &self.env,
+            span,
+        )
     }
 
     /// The capability gate (M7): a gated module's item is reachable only
@@ -961,6 +1001,14 @@ impl TypeScope<'_> {
             // right), then the declaration is instantiated for them.
             let qualified = self.qualify(&ty.name, ty.span)?;
             if let Some(tmpl) = self.env.generics.get(&qualified) {
+                check_type_exported(
+                    &ty.name,
+                    self.structs,
+                    self.enums,
+                    self.aliases,
+                    &self.env,
+                    ty.span,
+                )?;
                 if ty.args.len() != tmpl.params.len() {
                     return Err(TypeError {
                         message: format!(
@@ -1001,6 +1049,14 @@ impl TypeScope<'_> {
         }
         let qualified = self.qualify(&ty.name, ty.span)?;
         if self.structs.contains_key(&qualified) {
+            check_type_exported(
+                &ty.name,
+                self.structs,
+                self.enums,
+                self.aliases,
+                &self.env,
+                ty.span,
+            )?;
             Ok(Ty::Struct(qualified))
         } else if let Some(tmpl) = self
             .env
@@ -1008,6 +1064,14 @@ impl TypeScope<'_> {
             .get(&qualified)
             .or_else(|| self.env.generics.get(&ty.name))
         {
+            check_type_exported(
+                &ty.name,
+                self.structs,
+                self.enums,
+                self.aliases,
+                &self.env,
+                ty.span,
+            )?;
             // A generic type written without its arguments. The generic half
             // of the name is enough to say what is missing.
             Err(TypeError {
@@ -1042,7 +1106,12 @@ impl TypeScope<'_> {
             }
         } else {
             Err(TypeError {
-                message: match qualified_hint(&ty.name, self.structs.keys(), self.aliases) {
+                message: match qualified_hint(
+                    &ty.name,
+                    self.structs.keys(),
+                    self.aliases,
+                    &self.env,
+                ) {
                     Some(hint) => format!("unknown type '{}' — did you mean {hint}?", ty.name),
                     None => format!("unknown type '{}'", ty.name),
                 },
@@ -1836,6 +1905,104 @@ const OVERLOADABLE: &[&str] = &["abs", "min", "max", "clamp"];
 /// means in code.
 fn is_std_module(module: &str) -> bool {
     module == "std" || module.starts_with("std/")
+}
+
+/// The canonical keys of the items each module exports (A-13, `plan/syntax.md`
+/// 13.4). Private by default, so a key is present only for a declaration
+/// written `pub`. A key is a declaration's own lookup name, which is exactly
+/// what a cross-module lookup is keyed by.
+///
+/// A compiler-shipped module exports everything. That is the transitional
+/// rule, not a convenience: shipped modules import each other (`std/fmt` ->
+/// `std/str`, `std/net` -> `std/io` + `std/str`), so without it the standard
+/// library stops building, and marking every shipped declaration `pub` is a
+/// sweep this slice does not need.
+///
+/// The names are read from the *merged* program, where `resolve.rs` has
+/// already prefixed every non-entry declaration with its module path, so a
+/// declaration's own `name` is its canonical key as it stands.
+fn collect_exports(program: &ast::Program) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut export = |module: &str, name: &str, is_pub: bool| {
+        if is_pub || is_std_module(module) {
+            out.insert(name.to_string());
+        }
+    };
+    for d in &program.datacs {
+        export(&d.module, &d.name, d.is_pub);
+    }
+    for e in &program.enums {
+        export(&e.module, &e.name, e.is_pub);
+    }
+    for c in &program.consts {
+        export(&c.module, &c.name, c.is_pub);
+    }
+    for f in &program.functions {
+        // A method's reachability follows its declaring type, and the parser
+        // refuses `pub` on one, so only a free function contributes a key: a
+        // method is reached through a value, never through a module alias.
+        if f.receiver.is_none() {
+            export(&f.module, &f.name, f.is_pub);
+        }
+    }
+    out
+}
+
+/// Whether the module that owns `key` exports it (A-13).
+fn exported(key: &str, env: &TypeEnv) -> bool {
+    env.exported.contains(key)
+}
+
+/// The refusal a cross-module reference to an existing but unexported item
+/// gets (A-13). It is deliberately apart from the "has no item" message: the
+/// item exists, and its own module is the reason it is out of reach.
+fn private_item_error(alias: &str, item: &str, span: Span) -> TypeError {
+    TypeError {
+        message: format!(
+            "'{alias}.{item}' is private: '{item}' is declared in module '{alias}' without 'pub', so only that module can name it; add 'pub' to its declaration to export it"
+        ),
+        span,
+    }
+}
+
+/// Whether a canonical lookup key names some declared item in the merged
+/// program. This is the existence half of the visibility gate, so a reference
+/// to an item that does not exist still reads as "has no item" rather than
+/// as "private".
+fn declares(key: &str, ctx: &Ctx) -> bool {
+    ctx.structs.contains_key(key)
+        || ctx.enums.contains_key(key)
+        || ctx.consts.contains_key(key)
+        || ctx.sigs.contains_key(key)
+        || ctx.env.generics.contains_key(key)
+        || ctx.fns.templates.contains_key(key)
+        || ctx.overloads.contains_key(key)
+}
+
+/// The visibility gate for a type name written through an alias
+/// (`alias.Type`, A-13). `Ok(())` when the name is not alias-qualified, when
+/// the alias is unknown, or when the name is no type at all, so the ordinary
+/// "unknown type" path still reports those.
+fn check_type_exported(
+    name: &str,
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    aliases: &HashMap<String, String>,
+    env: &TypeEnv,
+    span: Span,
+) -> Result<()> {
+    let Some((alias, item)) = name.split_once('.') else {
+        return Ok(());
+    };
+    let Some(prefix) = aliases.get(alias) else {
+        return Ok(());
+    };
+    let key = format!("{prefix}{item}");
+    let known = structs.contains_key(&key) || enums.contains_key(&key) || env.generics.contains_key(&key);
+    if known && !exported(&key, env) {
+        return Err(private_item_error(alias, item, span));
+    }
+    Ok(())
 }
 
 /// The name a callee key shows in a diagnostic: overload keys carry their
@@ -3560,6 +3727,9 @@ impl<'a> ConstEvaluator<'a> {
                     });
                 };
                 let key = format!("{prefix}{field}");
+                if self.consts.contains_key(&key) && !exported(&key, self.env) {
+                    return Err(private_item_error(alias, field, *span));
+                }
                 match self.consts.get(&key).and_then(|c| value_of(&c.value)) {
                     Some(c) => Ok(c),
                     None => Err(TypeError {
@@ -3698,6 +3868,9 @@ impl<'a> ConstEvaluator<'a> {
                 if let ast::Expr::Ident(alias, _) = receiver.as_ref() {
                     if let Some(prefix) = scope.aliases.get(alias).cloned() {
                         let key = format!("{prefix}{method}");
+                        if self.const_fns.fns.contains_key(&key) && !exported(&key, self.env) {
+                            return Err(private_item_error(alias, method, *span));
+                        }
                         return self.call_fn(&key, &format!("{alias}.{method}"), args, *span, scope);
                     }
                 }
@@ -4520,6 +4693,7 @@ fn check_program_pass(
         generics: std::rc::Rc::new(generics),
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
         declared_keys: declared_keys.clone(),
+        exported: std::rc::Rc::new(collect_exports(program)),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -7049,6 +7223,9 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     // function and needs a call.
                     if let Some(prefix) = ctx.aliases.get(name).cloned() {
                         let qualified = format!("{prefix}{field}");
+                        if declares(&qualified, ctx) {
+                            ctx.check_exported(&qualified, name, field, *span)?;
+                        }
                         if let Some(c) = ctx.consts.get(&qualified).cloned() {
                             let mut value = c.value;
                             value.span = *span;
@@ -7082,6 +7259,11 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         span: *span,
                     });
                 }
+            }
+            // A cross-module type path (`shapes.Shape.Empty`) is gated
+            // before it is read as a variant: the type has to be exported.
+            if let Some(path) = expr_path(base) {
+                ctx.check_type_path_exported(&path, *span)?;
             }
             // `Option.None` — a payload-less variant of a generic `enum`
             // (A-2), the generic counterpart of the `Shape.Empty` case below.
@@ -7275,6 +7457,11 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                         );
                     }
                 }
+            }
+            // A cross-module type path (`shapes.Shape.Circle(...)`) is gated
+            // before it is read as a variant construction.
+            if let Some(path) = expr_path(receiver) {
+                ctx.check_type_path_exported(&path, *span)?;
             }
             // `Option.Some(v = 1)` — construction of a generic `enum`
             // variant (A-2), before the concrete-enum check because a generic
@@ -8508,7 +8695,10 @@ fn shadowed_module_alias_note(receiver: &ast::Expr, method: &str, ctx: &Ctx) -> 
     let Some(prefix) = ctx.aliases.get(name) else {
         return String::new();
     };
-    if ctx.sig_of(&format!("{prefix}{method}")).is_none() {
+    let key = format!("{prefix}{method}");
+    // The sentence is a claim about where the call could have gone, so the
+    // item has to be one the module actually exports (A-13).
+    if ctx.sig_of(&key).is_none() || !exported(&key, &ctx.env) {
         return String::new();
     }
     format!(
@@ -9304,6 +9494,7 @@ fn check_call(
                                     .chain(ctx.sigs.keys())
                                     .chain(ctx.fns.templates.keys()),
                                 &ctx.aliases,
+                                &ctx.env,
                             ) {
                                 Some(hint) => format!("call to undefined function '{callee}' — did you mean {hint}?"),
                                 None => format!("call to undefined function '{callee}'"),
@@ -10554,15 +10745,19 @@ fn check_atomic_associated(
 /// very likely strict-namespace mistake (M5: imported items are reached
 /// only as `alias.Item`). Returns a "did you mean ..." fragment when `name`
 /// matches some qualified key's last segment.
+/// Only an exported key is offered (A-13): suggesting the qualified spelling
+/// of an item another module keeps private would tell the reader to write a
+/// line that the visibility gate refuses.
 fn qualified_hint<'a>(
     name: &str,
     keys: impl Iterator<Item = &'a String>,
     aliases: &HashMap<String, String>,
+    env: &TypeEnv,
 ) -> Option<String> {
     let want = format!(".{name}");
     let key = keys
         .into_iter()
-        .find(|k| k.ends_with(&want) && k.contains('.'))?;
+        .find(|k| k.ends_with(&want) && k.contains('.') && exported(k, env))?;
     let (module_path, _) = key.rsplit_once('.')?;
     let qualified_prefix = format!("{module_path}.");
     Some(match aliases.iter().find(|(_, p)| p.as_str() == qualified_prefix) {
@@ -10592,6 +10787,12 @@ fn check_module_item(
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
     let qualified = format!("{prefix}{item}");
+    // Private by default (A-13), and this is the gate: the item is known to
+    // exist here, so an unexported one is refused as private rather than
+    // reported as missing.
+    if declares(&qualified, ctx) {
+        ctx.check_exported(&qualified, alias, item, span)?;
+    }
     if ctx.structs.contains_key(&qualified)
         || ctx.env.generics.contains_key(&qualified)
         || ctx.sigs.contains_key(&qualified)

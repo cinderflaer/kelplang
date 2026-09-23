@@ -608,6 +608,55 @@ fn unqualified_imported_item_is_rejected() {
 }
 
 #[test]
+fn an_exported_item_is_reachable_from_another_module() {
+    // A-13: `pub` on a `const`, a `datac` and a `fun` is what makes each one
+    // reachable through the module alias. The receiver method carries no
+    // `pub`: it follows its declaring type, and `p.sum()` reaches it through
+    // the value.
+    assert_project_runs(
+        "visibility_import",
+        &project("visibility_import").join("main.kp"),
+        "10\n42\n",
+    );
+}
+
+#[test]
+fn a_private_item_is_not_reachable_from_another_module() {
+    // Private by default: `hidden` exists, so the refusal is about its
+    // visibility, not about a missing item (`unknown_member` pins that text).
+    assert_project_rejected(
+        "visibility_private",
+        &project("visibility_private").join("main.kp"),
+        "'lib.hidden' is private",
+    );
+}
+
+#[test]
+fn a_private_item_is_not_offered_by_the_did_you_mean_hint() {
+    let target = project("visibility_private_hint").join("main.kp");
+    let build = kelpc()
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(out_path("visibility_private_hint"))
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected project 'visibility_private_hint' to be rejected, but it built"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("call to undefined function 'Thing'"),
+        "expected the unqualified name to be undefined, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("did you mean"),
+        "the hint must not offer a private item, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn unshipped_stdlib_module_is_rejected() {
     // `std/tls` is the next module in the roadmap (S4b, behind open item 37)
     // and is deliberately absent; the error names what *is* shipped so the
@@ -1605,10 +1654,11 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
          a different path than the check admitted"
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
-    // `util.kp:23:27` is `fs.read_text("/etc/passwd")` in the control, as the
-    // compiler was invoked with the file.
+    // `util.kp:23:31` is `fs.read_text("/etc/passwd")` in the control, as the
+    // compiler was invoked with the file. (`pub` on the control's own line is
+    // what moved the column from 27; A-13.)
     let expected = format!(
-        "{}:23:27: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:23:31: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    /tmp/kelp_caps_double_eval/**\n",
         project("caps_double_eval").join("util.kp").display()
     );
@@ -1730,7 +1780,7 @@ fn a_primitive_checks_its_resource_argument_once() {
     );
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
     let expected = format!(
-        "{}:20:26: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
+        "{}:20:30: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
          granted:\n    /tmp/kelp_caps_raw_double_eval/**\n",
         project("caps_raw_double_eval").join("util.kp").display()
     );

@@ -1,0 +1,10 @@
+// A-13: only the items written `pub` are reachable from another module. The
+// receiver method is not: a method follows its declaring type, and a value of
+// that type reaches it.
+pub const LIMIT: i32 = 42
+
+pub datac Point(val x: i32, val y: i32)
+
+fun Point.sum().R: i32 = x + y
+
+pub fun twice(n: i32).R: i32 = n * 2

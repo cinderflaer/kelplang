@@ -1,5 +1,5 @@
 pd val shared = "util only"
 
-fun show() {
+pub fun show() {
     print("util: $shared")
 }

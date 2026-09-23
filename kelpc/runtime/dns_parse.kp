@@ -425,7 +425,8 @@ fun render_message(m: &DnsMessage).R: String {
 }
 
 // The one line for one message: the rendered message, or `reject <reason>`.
-fun line(data: Bytes).R: String {
+// `pub`: the differential driver reaches it as `dns_parse.line` (A-13).
+pub fun line(data: Bytes).R: String {
     val parsed = parse(data)
     return when parsed {
         Ok(m) -> render_message(m)

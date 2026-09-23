@@ -1216,6 +1216,7 @@ pub(crate) fn is_keyword(s: &str) -> bool {
             | "impl"
             | "as"
             | "pd"
+            | "pub"
             | "alias"
             | "print"
     )

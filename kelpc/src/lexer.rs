@@ -119,6 +119,10 @@ pub enum TokenKind {
     /// whole point is to confine the unportable primitive (a syscall, a
     /// `malloc`) to a body that is not `.kp` source.
     Extern,
+    /// `pub`: a top-level item another module may reach (A-13,
+    /// `plan/syntax.md` 13.4). Items are private to their module by default;
+    /// `pub` on a `fun`, `extern fun`, `datac`, `enum` or `const` exports it.
+    Pub,
 
     // punctuation
     LParen,
@@ -806,6 +810,7 @@ impl<'a> Lexer<'a> {
                         "as" => TokenKind::As,
                         "const" => TokenKind::Const,
                         "extern" => TokenKind::Extern,
+                        "pub" => TokenKind::Pub,
                         _ => TokenKind::Ident(text.to_string()),
                     }
                 }
@@ -1285,7 +1290,7 @@ mod tests {
     #[test]
     fn lexes_keywords_and_idents() {
         assert_eq!(
-            kinds("fun val var mut if else elif while for when return true false datac foo"),
+            kinds("fun val var mut if else elif while for when return true false datac pub foo"),
             vec![
                 TokenKind::Fun,
                 TokenKind::Val,
@@ -1301,6 +1306,7 @@ mod tests {
                 TokenKind::True,
                 TokenKind::False,
                 TokenKind::Datac,
+                TokenKind::Pub,
                 TokenKind::Ident("foo".to_string()),
                 TokenKind::Eof,
             ]

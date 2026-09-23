@@ -876,8 +876,9 @@ fun render_resolv(c: &ResolvConf).R: String {
 }
 
 // The one line for one `/etc/hosts` file: the rendered entries, or
-// `reject <reason>`.
-fun line_hosts(data: Bytes).R: String {
+// `reject <reason>`. `pub`: the differential driver reaches it as
+// `resolver_conf.line_hosts` (A-13).
+pub fun line_hosts(data: Bytes).R: String {
     val parsed = parse_hosts(data)
     return when parsed {
         Ok(f) -> render_hosts(f)
@@ -886,8 +887,9 @@ fun line_hosts(data: Bytes).R: String {
 }
 
 // The one line for one `/etc/resolv.conf` file: the rendered configuration, or
-// `reject <reason>`.
-fun line_resolv(data: Bytes).R: String {
+// `reject <reason>`. `pub`: the differential driver reaches it as
+// `resolver_conf.line_resolv` (A-13).
+pub fun line_resolv(data: Bytes).R: String {
     val parsed = parse_resolv(data)
     return when parsed {
         Ok(c) -> render_resolv(c)

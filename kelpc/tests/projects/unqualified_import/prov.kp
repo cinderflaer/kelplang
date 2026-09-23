@@ -1,1 +1,1 @@
-datac Thing(val n: i32)
+pub datac Thing(val n: i32)

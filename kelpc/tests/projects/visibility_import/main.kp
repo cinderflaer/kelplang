@@ -1,0 +1,7 @@
+impl "lib"
+
+fun main() {
+    val p = lib.Point(x = 2, y = 3)
+    print(lib.twice(p.sum()))
+    print(lib.LIMIT)
+}

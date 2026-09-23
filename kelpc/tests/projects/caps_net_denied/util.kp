@@ -5,7 +5,7 @@ impl "std/net"
 // any resolution, so the port need not be listening for this to be denied.
 //
 // `net.close` is never reached — the panic is at the `connect` call site.
-fun connect_by_another_name().R: i64 {
+pub fun connect_by_another_name().R: i64 {
     val s = net.connect("localhost", 1)
     net.close(s)
     return 0

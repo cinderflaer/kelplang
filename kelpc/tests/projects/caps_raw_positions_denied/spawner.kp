@@ -1,6 +1,6 @@
 impl "std/process"
 
-fun spawn_outside() {
+pub fun spawn_outside() {
     var pid: i32 = 0
     var fd_in: i32 = 0
     var fd_out: i32 = 1

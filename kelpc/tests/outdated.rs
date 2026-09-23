@@ -67,7 +67,7 @@ fn stderr(out: &Output) -> String {
 /// The grant under it is a real `fs` delegation, so the case is about the
 /// keyword rather than about a clause the resolver skips.
 fn caps_with_project(dir: &Path) -> PathBuf {
-    write(dir, "src/util.kp", "fun answer().R: i32 = 42\n");
+    write(dir, "src/util.kp", "pub fun answer().R: i32 = 42\n");
     write(
         dir,
         "src/main.kp",
@@ -80,7 +80,7 @@ fn the_impl_as_clause_is_gone() {
     // Retired with the first entry: not a warning, a refusal that names the fix,
     // because the register only holds spellings that still compile.
     let dir = scratch("impl-as");
-    write(&dir, "src/util.kp", "fun answer().R: i32 = 42\n");
+    write(&dir, "src/util.kp", "pub fun answer().R: i32 = 42\n");
     let source = write(
         &dir,
         "src/main.kp",
@@ -165,7 +165,7 @@ fn the_with_caps_clause_is_gone() {
 #[test]
 fn a_program_with_no_outdated_syntax_prints_nothing() {
     let dir = scratch("clean");
-    write(&dir, "src/util.kp", "fun answer().R: i32 = 42\n");
+    write(&dir, "src/util.kp", "pub fun answer().R: i32 = 42\n");
     let source = write(
         &dir,
         "src/main.kp",
@@ -209,7 +209,7 @@ fn a_dependency_is_reached_by_the_name_under_deps() {
     // is the key the `[dependencies]` line gave it.
     let dir = scratch("deps");
     write(&dir, "coral.toml", "name = \"depsdemo\"\n");
-    write(&dir, "src/deps/argparse/lib.kp", "fun parse().R: i32 = 7\n");
+    write(&dir, "src/deps/argparse/lib.kp", "pub fun parse().R: i32 = 7\n");
     let source = write(
         &dir,
         "src/main.kp",

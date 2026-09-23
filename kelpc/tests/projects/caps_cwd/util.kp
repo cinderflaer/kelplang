@@ -3,7 +3,7 @@ impl "std/path"
 
 // The narrow grant above is the whole authority this module holds; `fs.cwd`
 // needs no path argument, so it is the domain gate and nothing else.
-fun where_is_absolute().R: bool {
+pub fun where_is_absolute().R: bool {
     val here = fs.cwd()
     return path.is_absolute(here.as_str())
 }

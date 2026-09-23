@@ -2,6 +2,6 @@ impl "std/fs"
 
 // The link's own path is inside the grant; the target is not. `fs.symlink`
 // checks both, in argument order, so the denial names `/etc/passwd`.
-fun escape() {
+pub fun escape() {
     fs.symlink("/etc/passwd", "/tmp/kelp_caps_link_denied/escape")
 }

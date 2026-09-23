@@ -1,9 +1,9 @@
 impl "std/process"
 
-fun count().R: usize = process.arg_count()
+pub fun count().R: usize = process.arg_count()
 
 // Everything after `argv[0]`, joined with commas.
-fun after_program_name().R: String {
+pub fun after_program_name().R: String {
     val args = process.args()
     val n = args.len()
     var out = String.with_capacity(16)
