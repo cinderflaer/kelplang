@@ -2283,11 +2283,11 @@ fn list_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason}: a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', another 'List', or a 'Box'"
+            "{reason}: a 'List' element is owned by the list, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', another 'List', or a 'Box'"
         );
     }
     format!(
-        "'{}' cannot be a 'List' element: a 'Map', an array, a borrow or a view, an atomic, a function value, and 'unit' are refused. A list holds its elements in its own buffer, so a 'List' or a 'Box' element is fine; use a scalar, 'String', 'Bytes', a 'datac', another 'List', or a 'Box'",
+        "'{}' cannot be a 'List' element: a 'Map', an array, a borrow or a view, an atomic, a function value, and 'unit' are refused. A list holds its elements in its own buffer, so a 'List' or a 'Box' element is fine; use a scalar, 'String', 'Bytes', a 'datac', an 'enum', another 'List', or a 'Box'",
         ty.display()
     )
 }
@@ -2305,11 +2305,11 @@ fn map_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason}: a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', or a 'datac'"
+            "{reason}: a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or an 'enum'"
         );
     }
     format!(
-        "'{}' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', or a 'datac', which is narrower than a list's (that also takes a 'List' or a 'Box'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused",
+        "'{}' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', a 'datac', or an 'enum', which is narrower than a list's (that also takes a 'List' or a 'Box'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused",
         ty.display()
     )
 }
@@ -2341,11 +2341,11 @@ fn array_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason}. An array holds its elements inline, so they have to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another array"
+            "{reason}. An array holds its elements inline, so they have to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', or another array"
         );
     }
     format!(
-        "'{}' cannot be an array element: an array holds its elements inline and is fixed-size, so a 'List'/'Box'/'Map' element is refused here (a container finds its home in a 'List' or a 'Box' instead); use a scalar, 'String', 'Bytes', a 'datac', or a nested array",
+        "'{}' cannot be an array element: an array holds its elements inline and is fixed-size, so a 'List'/'Box'/'Map' element is refused here (a container finds its home in a 'List' or a 'Box' instead); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', or a nested array",
         ty.display()
     )
 }
@@ -2365,11 +2365,11 @@ fn box_element_error(ty: &Ty) -> String {
     }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
-            "{reason}: a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or another 'Box'/'List'"
+            "{reason}: a 'Box' owns its value, so the value has to outlive the box (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', an 'enum', or another 'Box'/'List'"
         );
     }
     format!(
-        "'{}' cannot be a 'Box' element: use a scalar, 'String', 'Bytes', a 'datac', a 'List', or another 'Box'",
+        "'{}' cannot be a 'Box' element: use a scalar, 'String', 'Bytes', a 'datac', an 'enum', a 'List', or another 'Box'",
         ty.display()
     )
 }
