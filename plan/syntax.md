@@ -1682,7 +1682,7 @@ impl "std/time"
 - The path is a string, relative to `src/` for project modules and to the shipped standard library for `std/...`. The `.kp` extension is not written.
 - `impl` lines come first in the file.
 - The namespace is the module's own name: the last path segment, so `impl "shapes/circle"` gives `circle.area(...)` and `impl "std/fs"` gives `fs.read(...)`. A **dependency's entry module** is named after the directory Coral fetched it into: a path ending in `/lib` under `deps/` takes the name of its folder, which is the `[dependencies]` key (`impl "deps/argparse/lib"` is `argparse.parse(...)`) or, for a whole-repository dependency, the library's own folder inside it (`impl "deps/fpl/json/lib"` is `json.write(...)`). Everything else under `deps/` is an internal module with its own name. `as name`, which used to override this, is **removed**: `impl "std/path" as p` is a parse error naming the fix, and the name to change is the one at the call sites.
-- A capability grant is written in the same clause: `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (15.2). The `with` that used to precede `caps` is **removed** as well, and the grant under it is unchanged: `impl "std/fs" with caps(...)` is a parse error that names the surviving spelling (15.2, 23).
+- A capability grant is written in the same clause: `impl "std/fs" caps(fs = ["/var/log/myapp/*"])` (15.2). `caps(*)` is the same clause spelling every domain at once, the whole resource of each: `impl "helper" caps(*)` hands `helper` everything the importing module holds, and the `*` stands alone (15.2). The `with` that used to precede `caps` is **removed** as well, and the grant under it is unchanged: `impl "std/fs" with caps(...)` is a parse error that names the surviving spelling (15.2, 23).
 - Imports are transitive: a file that imports a module also loads what that module imports.
 - Import cycles and missing modules are errors, and the missing-module message names the file it expected.
 - Only the entry module has unprefixed names. Every other module is reached through its namespace.
@@ -1825,6 +1825,10 @@ impl "logger" caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
 
 - The entry module holds the wildcard for every domain (`/**` for path domains, `*` for name domains), so a single-file program needs no grant for its own calls.
 - Every other module holds exactly what its importers grant it, and nothing else.
+- `caps(*)` is that whole set in one clause: `impl "helper" caps(*)` delegates `/**` for the path domains and `*` for the name domains, the same set the entry module holds. It is for a caller that hands a library everything it may reach without enumerating domains one by one, and it is not a way to acquire authority: it grants exactly what the delegating module holds, never more.
+- `caps(*)` on a gated import is refused when the delegating module does not hold the wildcard itself. A module that holds only `net = ["api.example.com:443"]` and writes `caps(*)` is refused, and the message names the wildcard it claimed rather than a pattern. A module that received `caps(*)` holds it, so it can delegate it onward exactly as it can delegate a pattern it was given.
+- The `*` stands alone. `caps(*, net = [...])` and `caps(net = [...], *)` are parse errors naming both surviving spellings, because a domain named beside the wildcard has nothing left to say: `*` already means every domain.
+- `caps(*)` on a module that reaches no capability domain (`std/str`, `std/math`) is refused by name. There is nothing to grant, so the clause is noise at best and a hint that the wrong module was named at worst. A module that reaches a gated one counts even when it is ungated itself (`std/http` holds `net`), and is a legitimate target.
 - A module can delegate less than it holds, never more. Granting a pattern the importer does not hold is an error.
 - Referencing a gated function without holding the domain is a compile error naming the missing domain and the grant to write.
 - `net` patterns are `host`, `host:port`, `*.host`, `*:port` or `*`, matched as names, never as resolved addresses. `127.0.0.1:*` does not cover `localhost`.
@@ -2508,7 +2512,9 @@ directory walk are printed as raw strings and are not in that data.
 program      := line* EOF
 line         := impl | const | pd | datac | enum | fun
 
-impl         := "impl" string [ "caps" "(" grant ("," grant)* ")" ]
+impl         := "impl" string [ "caps" "(" ( grant ( "," grant )* | "*" ) ")" ]
+                // `caps(*)` (15.2) delegates the whole resource of every domain and
+                // stands alone: a named domain beside the `*` is refused by name.
                 // `as name` was removed (13.1) and `with caps(...)` with it (15.2):
                 // the parser refuses each by name, and `as` stays a keyword
 grant        := ident "=" "[" string ("," string)* "]"
@@ -2821,6 +2827,7 @@ impl "std/fs" caps(fs = ["/project/out/**", "/project/data/**"])
 ```
 
 - A module gets nothing it did not `impl`, and the checker knows each module's authority statically.
+- `caps(*)` is the one-line form of the grant: it delegates the whole resource of every domain the importing module holds, for a caller that hands a library everything without listing domains one by one. It acquires no authority, because the set it hands over is the delegator's own.
 - Every path passed to a gated call is matched against the patterns, so it must be absolute and must not contain `..`.
 - `main` in the entry module holds the whole resource for its domain, which is why the interesting module sits behind one level of delegation when the point is to *test* a restriction.
 - The grant is the ceiling for the whole module, so a helper that reads a file needs the module holding the `impl` to have been granted it.

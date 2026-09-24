@@ -1802,6 +1802,56 @@ fn a_module_cannot_delegate_more_than_it_holds() {
 }
 
 #[test]
+fn a_delegated_wildcard_lets_the_import_reach_every_resource() {
+    // `caps(*)` is the whole-resource wildcard of every domain, handed to the
+    // import. `helper` reads one file in each of two unrelated trees, which no
+    // single narrow pattern could cover, so a passing run is the wildcard
+    // travelling with the import.
+    let first = caps_scratch("star");
+    let second = caps_scratch("star_elsewhere");
+    std::fs::write(first.join("first.txt"), "hello ").unwrap();
+    std::fs::write(second.join("second.txt"), "world").unwrap();
+    assert_project_runs(
+        "caps_star",
+        &project("caps_star").join("main.kp"),
+        "hello world\n",
+    );
+    let _ = std::fs::remove_dir_all(&first);
+    let _ = std::fs::remove_dir_all(&second);
+}
+
+#[test]
+fn a_module_cannot_delegate_the_wildcard_it_does_not_hold() {
+    // `mid` holds one narrow `fs` pattern, so `caps(*)` on its own import
+    // claims a wildcard it was never given; the refusal names the wildcard.
+    assert_project_rejected(
+        "caps_star_escalation",
+        &project("caps_star_escalation").join("main.kp"),
+        "cannot give 'inner' the whole-resource wildcard for 'fs' with `caps(*)`",
+    );
+}
+
+#[test]
+fn a_named_domain_beside_the_wildcard_is_refused() {
+    // A fixture, not a project: the mixed clause is a syntax error, and the
+    // fixtures are where the suite keeps programs that do not parse (the
+    // formatter is right to refuse one and must not be asked to format it).
+    assert_rejected_with(
+        "tests/fixtures/caps_star_mixing.kp",
+        "already means every domain",
+    );
+}
+
+#[test]
+fn the_wildcard_on_a_module_that_reaches_no_domain_is_refused() {
+    assert_project_rejected(
+        "caps_star_ungated",
+        &project("caps_star_ungated").join("main.kp"),
+        "'std/str' is ungated: it reaches no capability domain",
+    );
+}
+
+#[test]
 fn an_ungranted_importer_is_named_as_the_line_to_change() {
     // `main` imports `store` with no `caps(...)`, so the error names `store`
     // even though the grant that has to change is `main`'s bare `impl` line.

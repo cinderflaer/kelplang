@@ -240,6 +240,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
         modules: Vec::new(),
         prefixes: HashMap::new(),
         grants: Vec::new(),
+        all_grants: Vec::new(),
         deprecations: Vec::new(),
     };
     loader.load_project()?;
@@ -349,15 +350,10 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
     let mut caps: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     let mut entry_caps = HashMap::new();
     for domain in crate::stdlib::DOMAINS {
-        // The entry module's implicit set has to be spelled in whatever
-        // vocabulary the domain uses: paths for `fs`, a bare name wildcard
-        // for `env`.
-        let wildcard = if crate::stdlib::patterns_are_paths(domain) {
-            "/**"
-        } else {
-            "*"
-        };
-        entry_caps.insert(domain.to_string(), vec![wildcard.to_string()]);
+        entry_caps.insert(
+            domain.to_string(),
+            vec![crate::stdlib::whole_resource(domain).to_string()],
+        );
     }
     caps.insert(entry.clone(), entry_caps);
     for g in &loader.grants {
@@ -370,6 +366,80 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
             if !slot.contains(pattern) {
                 slot.push(pattern.clone());
             }
+        }
+    }
+    // `caps(*)` hands the target the same set the entry module holds: the
+    // whole resource of every domain. That happens here, before the
+    // no-escalation check below, so a module that *received* the wildcard can
+    // delegate it onward exactly as it could delegate a pattern it was given.
+    for g in &loader.all_grants {
+        let slot = caps.entry(g.target.clone()).or_default();
+        for domain in crate::stdlib::DOMAINS {
+            let wildcard = crate::stdlib::whole_resource(domain).to_string();
+            let patterns = slot.entry(domain.to_string()).or_default();
+            if !patterns.contains(&wildcard) {
+                patterns.push(wildcard);
+            }
+        }
+    }
+    for g in &loader.all_grants {
+        // A module that declares nothing gated and reaches no module that
+        // does is ungated, so there is no domain to be granted: `caps(*)` on
+        // it is noise at best and a hint that the wrong module was named at
+        // worst. Refusing it by name is the same refusal the ungranted-
+        // namespace error is: the clause and the module disagree about what
+        // there is to hand over.
+        if !reaches_a_domain(&loader.modules, &g.target) {
+            return Err(Diagnostic::new(
+                format!(
+                    "module '{}' is ungated: it reaches no capability domain, so `caps(*)` would grant it nothing; drop the clause",
+                    g.target
+                ),
+                g.span,
+                g.importer.clone(),
+            ));
+        }
+        let held = caps.get(&g.importer).cloned().unwrap_or_default();
+        for domain in crate::stdlib::DOMAINS {
+            let wildcard = crate::stdlib::whole_resource(domain);
+            let holds_it = held
+                .get(*domain)
+                .map(|patterns| {
+                    patterns
+                        .iter()
+                        .any(|h| pattern_covered(h, wildcard, domain))
+                })
+                .unwrap_or(false);
+            if holds_it {
+                continue;
+            }
+            let shown = held
+                .get(*domain)
+                .filter(|patterns| !patterns.is_empty())
+                .map(|patterns| patterns.join(", "))
+                .unwrap_or_else(|| "none".to_string());
+            // The wildcard is one clause over every domain, so the message
+            // names `caps(*)` and the domain that failed rather than a single
+            // pattern the importer never wrote.
+            return Err(Diagnostic::new(
+                format!(
+                    "module '{}' cannot give '{}' the whole-resource wildcard for '{}' with `caps(*)`: it does not hold that wildcard itself (it holds: {}){}; a module can delegate less than it has, never more",
+                    g.importer,
+                    g.target,
+                    domain,
+                    shown,
+                    if held.get(*domain).map(|p| p.is_empty()).unwrap_or(true) {
+                        format!(
+                            "; '{}' holds nothing for '{}' because the module that imports it wrote no 'caps({} = [...])' or `caps(*)` grant on that `impl` line",
+                            g.importer, domain, domain
+                        )
+                    } else {
+                        String::new()
+                    }
+                ),
+                g.span,
+                g.importer.clone(),
+            ));
         }
     }
     for g in &loader.grants {
@@ -491,6 +561,12 @@ struct Loader<'a> {
     /// until the whole graph is known, because a module's own set is the
     /// union of the grants made *to* it by importers loaded from anywhere.
     grants: Vec<GrantEdge>,
+    /// Every `caps(*)` seen while loading, in load order. Kept apart from
+    /// `grants` because the wildcard is not one pattern: it delegates the
+    /// whole resource of every domain at once, its refusal names that set
+    /// rather than a single pattern, and it is refused outright for a module
+    /// that reaches no domain at all.
+    all_grants: Vec<AllGrantEdge>,
     /// Outdated syntax found while loading, in load order (`deprecated.rs`).
     deprecations: Vec<Diagnostic>,
 }
@@ -502,6 +578,15 @@ struct GrantEdge {
     target: String,
     domain: String,
     patterns: Vec<String>,
+    span: Span,
+}
+
+/// One `impl "target" caps(*)` from `importer`: the whole resource of every
+/// domain that `importer` holds, delegated in one clause (`syntax.md` 15.2).
+#[derive(Debug, Clone)]
+struct AllGrantEdge {
+    importer: String,
+    target: String,
     span: Span,
 }
 
@@ -721,6 +806,13 @@ impl Loader<'_> {
                     domain: grant.domain.clone(),
                     patterns: grant.patterns.clone(),
                     span: grant.span,
+                });
+            }
+            if imp.caps_all {
+                self.all_grants.push(AllGrantEdge {
+                    importer: id.to_string(),
+                    target: imp.path.clone(),
+                    span: imp.span,
                 });
             }
             let target = imp.path.clone();
@@ -1018,6 +1110,32 @@ fn pattern_covered(held: &str, granted: &str, domain: &str) -> bool {
         Some(root) => granted == root || granted.starts_with(&format!("{root}/")),
         None => false,
     }
+}
+
+/// Whether `module` reaches a capability domain at all: it *is* a gated module,
+/// or some module in its import closure is.
+///
+/// A module that reaches none has nothing to be granted, which is what makes
+/// `caps(*)` on it a refusal (`syntax.md` 15.2) rather than a no-op. The
+/// closure is over `impl` targets, so an ungated wrapper counts as reaching a
+/// domain through what it imports (`std/http` holds `net`), while a module made
+/// of arithmetic and byte shuffling (`std/str`, `std/math`) does not.
+fn reaches_a_domain(modules: &[ModuleInfo], module: &str) -> bool {
+    let by_id: HashMap<&str, &ModuleInfo> = modules.iter().map(|m| (m.id.as_str(), m)).collect();
+    let mut queue = vec![module.to_string()];
+    let mut seen: HashSet<String> = HashSet::new();
+    while let Some(id) = queue.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if crate::stdlib::domain_of(&id).is_some() {
+            return true;
+        }
+        if let Some(m) = by_id.get(id.as_str()) {
+            queue.extend(m.aliases.values().cloned());
+        }
+    }
+    false
 }
 
 /// A capability pattern, validated by what the domain actually names.

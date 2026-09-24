@@ -1,0 +1,8 @@
+// `caps(*)` already means every domain, so a named domain beside the `*` has
+// no meaning: the clause is refused at the `impl` line, and the message names
+// both surviving spellings.
+impl "helper" caps(*, fs = ["/tmp/**"])
+
+fun main() {
+    print("unreachable")
+}

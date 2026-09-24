@@ -1,0 +1,3 @@
+impl "inner" caps(*)
+
+fun probe().R: bool = inner.check()
