@@ -144,7 +144,7 @@ fun parse_url(s: &str).R: Url {
     val scheme = str.prefix(s, sep)
     if !str.eq(scheme.as_str(), DEFAULT_SCHEME) {
         if str.eq(scheme.as_str(), "wss") {
-            panic("ws.parse_url: 'wss' is not supported: v1 has no TLS, and TLS is a decision the owner has not made (MISSING-XkcSp) - use 'ws://'")
+            panic("ws.parse_url: 'wss' is not supported: v1 has no TLS, so only 'ws://' is reachable")
         }
         panic("ws.parse_url: only 'ws' is supported")
     }
