@@ -1,0 +1,6 @@
+// MISSING-z2bB9: a destructuring binding takes a tuple apart and nothing else,
+// so an initializer of any other type is refused by name (`plan/syntax.md` 4).
+fun main() {
+    val (a, b) = 7
+    print(a + b)
+}

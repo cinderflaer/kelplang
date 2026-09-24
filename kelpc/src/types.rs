@@ -1191,6 +1191,75 @@ pub fn struct_tag(name: &str) -> String {
     format!("tag_{}", c_ident(name))
 }
 
+/// The name a tuple type's derived record is keyed by: the tuple as it is
+/// written, element by element in position order (`(i32, i32)`).
+///
+/// A tuple is a record with positional fields (`plan/syntax.md` 3), and v1's
+/// record type is `Ty::Struct(<key>)`, the same shape A-2 gives a generic
+/// instantiation (`Pair<i32, String>`). The key is the written form rather
+/// than a mangled identifier because a written form cannot be a declared name:
+/// `(` is not an identifier byte, so a derived tuple record can never collide
+/// with a `datac`/`enum` a program declares, and `Ty::display` of the record
+/// then reads exactly as the source wrote it. `ty_mangle` turns it into a C
+/// identifier the way it does for every other name.
+pub fn tuple_struct_name(elems: &[Ty]) -> String {
+    format!(
+        "({})",
+        elems
+            .iter()
+            .map(|e| e.display())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Whether a record name is one of the compiler's derived tuple records. The
+/// key is the tuple as written, so this is a property of the name alone: no
+/// declared `datac`/`enum` name begins with `(`.
+pub fn is_tuple_name(name: &str) -> bool {
+    name.starts_with('(')
+}
+
+/// The field name one tuple position holds in its derived record. One place
+/// names it, because the record's field list, the `tir` field access a
+/// destructuring binding lowers to, and the `Projection` a partial move of one
+/// position records all have to agree.
+pub fn tuple_field_name(index: usize) -> String {
+    format!("f{index}")
+}
+
+/// The position a derived record's field name stands for, or `None` for a
+/// declared field. The inverse of `tuple_field_name`, so a pass that reports
+/// the place a tuple element was read from names the position a reader counts
+/// rather than the name the record uses.
+pub fn tuple_field_index(name: &str) -> Option<usize> {
+    name.strip_prefix('f')?.parse::<usize>().ok()
+}
+
+/// The `datac` record one tuple type *is*: its fields are its positions, named
+/// `f0`, `f1`, ... in element order, each holding that element by value.
+///
+/// The declaration is derived (nothing in the source declares it), and
+/// `infer.rs` registers it on first use, exactly as it registers a generic
+/// instantiation (A-2). `order` is the same sentinel an instance carries:
+/// `order_declarations` gives every derived record its place in the merged
+/// declaration order before codegen sees it.
+pub fn tuple_struct_def(name: &str, elems: &[Ty]) -> StructDef {
+    StructDef {
+        name: name.to_string(),
+        fields: elems
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| FieldDef {
+                name: tuple_field_name(i),
+                ty: ty.clone(),
+                mutable: false,
+            })
+            .collect(),
+        order: usize::MAX,
+    }
+}
+
 /// Mangles an `.kp` top-level name into a valid C identifier.
 ///
 /// M5 prefixes every module's items with their module path

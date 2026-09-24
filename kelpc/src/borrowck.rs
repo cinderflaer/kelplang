@@ -1631,6 +1631,24 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             // `owned_field_read.kp` pinned, so it stays refused.
             if crate::types::needs_drop(&expr.ty, &ctx.owned_structs) {
                 let Some(root) = partial_move_base(base, ctx) else {
+                    // A tuple position is read by value only by the lowering a
+                    // destructuring binding does, whose base is that binding's
+                    // own temporary, so the message names the position rather
+                    // than the derived record's field (`f0`) and the
+                    // synthesized name a reader never wrote.
+                    if let Some(index) = crate::types::tuple_field_index(field) {
+                        let message = match base.ty {
+                            Ty::Ref { .. } => format!(
+                                "cannot read element {} of the tuple out of a borrow by value: the value is borrowed, so it is not this frame's to give away; read a 'Copy' element, use the tuple through a borrow (pass it to a parameter, call a method on it), or take it with 'move'",
+                                index + 1
+                            ),
+                            _ => format!(
+                                "cannot read element {} of the tuple by value: the base is not a local this frame owns, so a partial move cannot take the element out; use the tuple through a borrow, or hold it in a 'Box' and 'take()' it",
+                                index + 1
+                            ),
+                        };
+                        return Err(BorrowError { message, span: expr.span });
+                    }
                     let message = match base.ty {
                         Ty::Ref { .. } => format!(
                             "cannot move the field '{field}' out of '{}': the value is borrowed, so it is not this frame's to give away",

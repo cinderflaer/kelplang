@@ -2916,6 +2916,15 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // could get wrong. ASAN is what sees either.
         "atomic_counter",
         "atomic_bool",
+        // MISSING-z2bB9: a tuple is a derived record, so its positions own and
+        // drop exactly as a `datac` field does. The first is the deep copy of
+        // an owned element out of a `List` (the original is cleared first), the
+        // second a `String` taken over by a `move` parameter, and the third a
+        // `String` dropped as a `Result` payload. Each is a drop the tuple
+        // record, rather than a declared type, decided.
+        "tuple_derived_copy_sort",
+        "tuple_param",
+        "tuple_try",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -6244,5 +6253,102 @@ fn a_thread_handle_cannot_be_a_container_element() {
             &format!("tests/fixtures/{fixture}.kp"),
             &format!("'Thread<i64>' cannot be {container}"),
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MISSING-z2bB9: tuple types and the destructuring binding that takes one
+// apart (`plan/syntax.md` 3 and 4). A tuple is a record with positional
+// fields, so it is a value like every other owned one: it owns its elements,
+// it takes the derived deep copy and the derived order a `datac` takes in
+// position order, it may appear in every position the element rules allow, and
+// it is refused in the positions they refuse.
+// ---------------------------------------------------------------------------
+
+/// The item's own example: a function hands back two things as one tuple, and
+/// the caller takes it apart, so no one-shot `datac` is needed per pair.
+#[test]
+fn a_function_hands_back_two_things_as_a_tuple() {
+    assert_compiles_and_runs("tests/fixtures/tuple_min_max.kp", "1\n9\n8\n");
+}
+
+/// A tuple is a `datac` field, a parameter (a borrow) and a `move` parameter,
+/// a `List` element, a `Map` key and value, a `Box` element, an array element,
+/// an `enum` payload and a generic argument. Every position follows the element
+/// rule of the position rather than a second set of rules of its own, so this
+/// fixture is also what says a tuple key is keyable by derivation.
+#[test]
+fn a_tuple_is_a_value_in_every_position() {
+    assert_compiles_and_runs("tests/fixtures/tuple_datac_field.kp", "4\n5\n14\n");
+    assert_compiles_and_runs("tests/fixtures/tuple_param.kp", "3\nmoved\n7\n");
+    assert_compiles_and_runs(
+        "tests/fixtures/tuple_placements.kp",
+        "30\n15\n3\n2\n4\ntrue\n19\n6\n",
+    );
+}
+
+/// A tuple has two or more elements: `(T)` is the parenthesized type `T` and
+/// `(e)` the parenthesized expression `e`. A tuple may hold another tuple, a
+/// destructuring binding may nest, `_` ignores a position at any level, and
+/// `var (a, b) = ...` makes every position a `var`.
+#[test]
+fn a_tuple_has_two_or_more_positions_and_a_pattern_takes_it_apart() {
+    assert_compiles_and_runs("tests/fixtures/tuple_one_element.kp", "42\n42\n42\n");
+    assert_compiles_and_runs("tests/fixtures/tuple_nested.kp", "1\n3\n11\n5\n3\n");
+}
+
+/// `?` reaches the `Result` a tuple *element* may be and never the tuple:
+/// `mk(n)?` is the tuple the call succeeded with, and it destructures like any
+/// other value.
+#[test]
+fn question_about_a_tuple_element_is_about_that_element() {
+    assert_compiles_and_runs("tests/fixtures/tuple_try.kp", "5\n6\nnegative\n");
+}
+
+/// A tuple takes the derived deep copy and the derived order a `datac` takes,
+/// position by position. The copy is deep (the original list is cleared before
+/// the copy is read, so a shared buffer is a use-after-free) and the order is
+/// the first position's, then the second's, which is what `copy.sort()` and the
+/// reads after it pin.
+#[test]
+fn a_tuple_gets_the_derived_copy_and_order_a_datac_does() {
+    assert_compiles_and_runs(
+        "tests/fixtures/tuple_derived_copy_sort.kp",
+        "3\na\n1\na\n3\nb\n2\n0\n7\nkept\n",
+    );
+}
+
+/// The refusals, each naming the rule it breaks: the empty type, a borrowed
+/// element, the absent value as an element, a pattern whose position count does
+/// not match, a destructuring of something that is not a tuple, an element
+/// naming a type declared later (open item 12, the by-value field rule), an
+/// owned element read out of a borrow, the initializer used twice, and a tuple
+/// handed to `print`.
+#[test]
+fn the_tuple_surface_is_refused_where_its_rules_refuse_it() {
+    for (fixture, needle) in [
+        ("tuple_empty_type", "'()' is not a type"),
+        (
+            "tuple_borrowed_element",
+            "element 1 of the tuple is a borrowed type ('str')",
+        ),
+        ("tuple_unit_element", "element 2 of the tuple is 'unit'"),
+        ("tuple_arity", "this pattern has 3 position(s)"),
+        (
+            "tuple_not_a_tuple",
+            "a destructuring binding takes one tuple value apart",
+        ),
+        ("tuple_later_element", "'Later' is declared after this type"),
+        (
+            "tuple_element_borrow",
+            "cannot read element 1 of the tuple out of a borrow by value",
+        ),
+        ("tuple_moved_twice", "use of moved value 'p'"),
+        (
+            "tuple_print",
+            "cannot pass a value of type '(i32, i32)' to 'print'",
+        ),
+    ] {
+        assert_rejected_with(&format!("tests/fixtures/{fixture}.kp"), needle);
     }
 }

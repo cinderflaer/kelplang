@@ -1,0 +1,36 @@
+// MISSING-z2bB9: a tuple takes the same derived deep copy and derived order a
+// `datac` takes, field by field in position order. The copy is deep: the
+// original list is cleared before the copy is read, so a shared buffer would be
+// a use-after-free and this fixture is in the sanitizer pass for exactly that.
+fun main() {
+    var xs: List<(String, i32)> = List.empty()
+    xs.push((String.from_str("b"), 2))
+    xs.push((String.from_str("a"), 3))
+    xs.push((String.from_str("a"), 1))
+
+    var copy = xs.clone()
+    xs.clear()
+    print(copy.len())
+
+    // The order is position by position: the text first, then the number.
+    copy.sort()
+    val (path0, n0) = copy.remove(i = 0)
+    print(path0.as_str())
+    print(n0)
+    val (path1, n1) = copy.remove(i = 0)
+    print(path1.as_str())
+    print(n1)
+    val (path2, n2) = copy.remove(i = 0)
+    print(path2.as_str())
+    print(n2)
+    print(copy.len())
+
+    // `slice` is the same deep copy over a range, on a nested tuple.
+    var deep: List<((i32, i32), String)> = List.empty()
+    deep.push(((3, 4), String.from_str("kept")))
+    var one = deep.slice(0, 1)
+    deep.clear()
+    val ((dx, dy), text) = one.pop()
+    print(dx + dy)
+    print(text.as_str())
+}

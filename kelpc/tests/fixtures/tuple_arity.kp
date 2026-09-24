@@ -1,0 +1,7 @@
+// MISSING-z2bB9: the number of positions a pattern writes has to equal the
+// number of elements the tuple has, exactly as a `when` arm's bindings have to
+// equal a variant's payload (`plan/syntax.md` 4).
+fun main() {
+    val (a, b, c) = (1, 2)
+    print(a + b + c)
+}

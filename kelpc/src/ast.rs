@@ -265,6 +265,12 @@ impl FnTypeParam {
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
     pub name: String,
+    /// The element types of a tuple type, `(A, B)` (`plan/syntax.md` 3):
+    /// `Some`, with two or more entries, exactly when the type was written in
+    /// parentheses with a comma. `name` is empty in that case, because a tuple
+    /// type has no name of its own: it is its element list. `(T)` is not a
+    /// tuple and is parsed as the parenthesized type `T`; `()` is refused.
+    pub tuple: Option<Vec<TypeExpr>>,
     /// Type arguments, for the one generic the compiler knows: `List<T>`.
     /// Empty for every ordinary type name, and the parser only accepts them
     /// after a bare or dotted name — `List<i32>`, never `math.List<i32>`.
@@ -302,6 +308,7 @@ impl TypeExpr {
     pub fn named(name: impl Into<String>, span: Span) -> TypeExpr {
         TypeExpr {
             name: name.into(),
+            tuple: None,
             args: Vec::new(),
             array_elem: None,
             array_len: None,
@@ -325,7 +332,10 @@ impl TypeExpr {
 
     /// The type as it was written, for diagnostics and the pretty-printer.
     pub fn display(&self) -> String {
-        let mut s = if let Some(elem) = &self.array_elem {
+        let mut s = if let Some(elems) = &self.tuple {
+            let parts: Vec<String> = elems.iter().map(|e| e.display()).collect();
+            format!("({})", parts.join(", "))
+        } else if let Some(elem) = &self.array_elem {
             let len = self
                 .array_len
                 .as_ref()
@@ -357,6 +367,39 @@ pub struct Block {
     pub span: Span,
 }
 
+/// One binding position of a destructuring `val`/`var` (`plan/syntax.md` 4):
+/// a name, `_` to ignore the position, or a nested tuple pattern.
+#[derive(Debug, Clone)]
+pub enum BindingPattern {
+    /// One bound name.
+    Name(String),
+    /// `_`: the position is not bound. What it holds stays in the value that
+    /// was destructured, so an owned element an `_` ignores is freed by that
+    /// value's own drop.
+    Ignore,
+    /// `((a, b), c)`: a nested tuple pattern, one entry per element.
+    Tuple(Vec<BindingPattern>),
+}
+
+impl BindingPattern {
+    /// Every name the pattern binds, in position order, with the pattern path
+    /// each one sits at: `[(a, [0, 0]), (b, [0, 1]), (c, [1])]`. The path is
+    /// what a diagnostic names a position by (`element 1 of element 0`).
+    pub fn binds(&self, path: &mut Vec<usize>, out: &mut Vec<(String, Vec<usize>)>) {
+        match self {
+            BindingPattern::Name(name) => out.push((name.clone(), path.clone())),
+            BindingPattern::Ignore => {}
+            BindingPattern::Tuple(elems) => {
+                for (i, e) in elems.iter().enumerate() {
+                    path.push(i);
+                    e.binds(path, out);
+                    path.pop();
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Let {
@@ -364,6 +407,17 @@ pub enum Stmt {
         /// `true` for `var`, `false` for `val`.
         mutable: bool,
         ty: Option<TypeExpr>,
+        init: Expr,
+        span: Span,
+    },
+    /// `val (lo, hi) = min_max(xs)`: a binding that takes one tuple value
+    /// apart into its positions (`plan/syntax.md` 4). A statement of its own
+    /// rather than a second `Let` shape, because it binds several names.
+    LetTuple {
+        pattern: BindingPattern,
+        /// `true` for `var`, `false` for `val`: every name the pattern binds
+        /// takes that mutability.
+        mutable: bool,
         init: Expr,
         span: Span,
     },
@@ -639,6 +693,11 @@ pub enum Expr {
         len: Box<Expr>,
         span: Span,
     },
+    /// `(lo, hi)`: a tuple value, two or more elements (`plan/syntax.md` 3).
+    /// The one-element form is not a tuple: `(e)` is `e` in parentheses, and
+    /// `()` is not an expression at all, so a tuple literal always has at
+    /// least two elements and its type is the elements' own, in order.
+    TupleLit { elems: Vec<Expr>, span: Span },
 }
 
 /// One arm of the pattern form of `when`. `pattern` is `None` for an `else`
@@ -698,7 +757,8 @@ impl Expr {
             | Expr::FnLit { span: s, .. }
             | Expr::When { span: s, .. }
             | Expr::ArrayLit { span: s, .. }
-            | Expr::ArrayRepeat { span: s, .. } => *s,
+            | Expr::ArrayRepeat { span: s, .. }
+            | Expr::TupleLit { span: s, .. } => *s,
             Expr::Block(b) => b.span,
         }
     }

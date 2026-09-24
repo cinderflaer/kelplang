@@ -1,0 +1,9 @@
+// MISSING-z2bB9: `unit` is the absent value and cannot be stored, in a tuple
+// exactly as in a `datac` field (`plan/syntax.md` 3).
+fun side_effect() {}
+
+fun broken().R: (i32, unit) = (1, side_effect())
+
+fun main() {
+    print(1)
+}

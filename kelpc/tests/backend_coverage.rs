@@ -76,7 +76,7 @@ const REFUSAL_PREFIX: &str = "error: the llvm backend cannot lower";
 const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 
 /// The corpus targets the `llvm` backend built when this ratchet was recorded:
-/// **251 of the 251 targets the C backend builds**. The refusal ranking is
+/// **270 of the 270 targets the C backend builds**. The refusal ranking is
 /// empty, which is MK7 §4.1's "the refusal ranking empty" met.
 ///
 /// Recorded at MK8-S2 item A-10 slice 1 on 2026-09-23, raised from the 246 the
@@ -217,7 +217,23 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// a joiner that sees `Err` with the process still exiting 0). The merged tree
 /// re-recorded at 262: those six, `map_datac_value_clone` and the two `u64`
 /// context fixtures all build on both backends.
-const LLVM_BUILT_BASELINE: usize = 262;
+/// Raised from 262 by MISSING-z2bB9: a tuple type and the destructuring
+/// binding that takes one apart. Eight fixtures land with the slice and every
+/// one of them is a target here, because a tuple is a derived record and both
+/// backends already lower a record: `tuple_min_max` (a function that returns
+/// `(i32, i32)`, the item's own example), `tuple_datac_field` (a tuple as a
+/// `datac` field, holding an earlier `datac` by value), `tuple_one_element`
+/// (`(T)` is the type `T` and `(e)` the expression `e`), `tuple_nested` (a
+/// tuple of tuples, a nested pattern, `_` and `var (a, b) = ...`), `tuple_param`
+/// (a borrowed parameter and a `move` one), `tuple_placements` (a `List`
+/// element, a `Map` key and value, a `Box` element, an array element, an `enum`
+/// payload and a generic argument), `tuple_try` (`?` reaching the `Result` a
+/// tuple element is) and `tuple_derived_copy_sort` (the derived deep copy and
+/// the position-by-position order, over an owned element). The nine refusal
+/// fixtures that land with the same slice are rejected by the C backend by
+/// design, so they stay outside the corpus definition and do not move this
+/// count.
+const LLVM_BUILT_BASELINE: usize = 270;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

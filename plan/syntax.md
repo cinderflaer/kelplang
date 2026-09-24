@@ -351,6 +351,7 @@ print("r = $c.r")            // $name names an identifier, nothing more
 | `Atomic<T>` | owned | one location every access to which is a single atomic operation; element set `bool` and the integers, not `Copy`, no drop (12.5) |
 | `datac` name | owned | record with per-field `val`/`var`, optionally with type parameters (9.3) |
 | `enum` name | owned | tagged union: one variant is live, and patterns match on it (9.2), optionally with type parameters (9.3) |
+| `(A, B)` | owned | a tuple: two or more element types held in **position order** (3.1). Not `Copy`, and it takes the derived deep copy and the derived order a `datac` takes, position by position |
 | `fun(T, U).R: V` | Copy | a function value: a function pointer, with the parameters it takes and what it returns (7.4) |
 | `closure(T, U).R: V` | owned | a *closure*: a function value plus the environment its captures were moved into (7.4). What a `fun` literal becomes when it names a binding from the enclosing scope |
 | `Unit` | Copy | absent value, the implicit return type |
@@ -363,10 +364,85 @@ Rules that follow from the table:
 - A `List` may hold another `List` or a `Box` directly (A-10 slice 1): an element lives in the list's own buffer, so any complete, droppable type works. A `Map` value set is narrower, so a `Map` may not hold a `List`, a `Box` or another `Map`; keep a container value elsewhere and store a key or a `datac` that names it.
 - `[T; N]` holds its elements inline too, and it is the one container that may hold another *array*: `[[u8; 4]; 8]` is a page table. It may not hold a `List`, a `Map` or a `Box` (12.4).
 - A user-declared `datac` or `enum` may take type parameters, and every use site writes them (`Pair<i32, String>`); see 9.3. Two instantiations of one template are different types.
+- A tuple type, `(A, B)`, is a record with positional fields and no name of its own; it owns its elements, so its elements obey the field rules (3.1).
 - `Unit` is not a value and cannot be stored.
 - A function type is Copy and owns nothing: a function value is a plain function pointer, so copying one is copying a pointer. It cannot be borrowed (`&`/`mut`), stored in a container, or used as a type argument's *element* — the placements 7.4 lists.
 - A closure type is **not** Copy: it owns the environment its captures were moved into, and dropping it frees that environment. A parameter of the closure type borrows it (as an owned type's parameter does), and `move closure(...)` takes it over. It cannot be borrowed with `&`, cannot be a `List`/`Map` element, and *may* be a `Box` element (`Box<closure(...)>`, the optional-callback shape) or a `datac`/`enum` field.
 - `Atomic<T>` is not Copy either, but for the opposite reason to every other owned type: it owns nothing (so it needs no drop), and a copy would be a second handle to one location. Every one of its operations takes a **shared** borrow, `store` included, which is what leaves the type no `&mut` path at all and lets a `&Atomic<T>` be shared rather than moved (12.5). Its element set is closed: `bool` and the integer types.
+
+### 3.1 Tuples
+
+A tuple is two or more values held in **position order**, and it is a type:
+`(i32, i32)` is a pair of `i32`s, and it is written wherever a type is written.
+
+```kelp
+fun min_max(xs: &List<i32>).R: (i32, i32) {
+    // ...
+    return (lo, hi)
+}
+
+val (lo, hi) = min_max(xs)      // the destructuring binding (4)
+```
+
+A tuple is a record with positional fields: there is nothing to declare, the
+compiler derives one record per element list, and every rule below is the rule
+the equivalent `datac` would have obeyed.
+
+- **Two or more elements.** `(T)` is not a one-element tuple: it is the
+  parenthesized type `T`, exactly as `(e)` is the parenthesized expression `e`,
+  so `val x = (5)` binds an `i32`. `()` is refused by name, because the absent
+  value's type is spelled `unit`. There is no one-element tuple, so there is no
+  rule about one.
+- **A tuple owns its elements.** An element is stored by value where the tuple
+  sits, so it is *field-like*: an element may not be a borrow, a `str` or a
+  `View` (it would point at something that can end first, and v1 has no lifetime
+  syntax to say otherwise), and `unit` cannot be an element. An owned `String`
+  is what to store instead of a `str`.
+- **Not `Copy`.** No record is: assigning one moves it, a parameter of an owned
+  type borrows it (10.2), and a container hands out a borrow for an element
+  (12.1). Each *element* is copied or moved by its own rule, which is why
+  `val (a, b) = p` copies a `Copy` element and moves an owned one out.
+- **The derived deep copy and the derived order are position by position**, the
+  way a `datac`'s are field by field: `List.sort` orders a tuple whose elements
+  have an order (the first position decides, the second breaks the tie), and
+  `List.clone`/`List.slice`/`Map.get_or` copy a tuple whose elements can each be
+  deep-copied. There is no `==` between two tuples, exactly as there is none
+  between two `datac`s.
+- **Where a tuple may appear.** Everywhere its elements may, and nowhere else: a
+  local, a parameter, a return type, a `datac` field, an `enum` payload, a
+  `List`/`Box` element, a `Map` key or value, an array element, and a generic
+  argument. Each of those follows the element rule of the position rather than
+  adding a second set, so a tuple is refused wherever a `datac` of the same
+  fields would be, and `(str, i32)` is refused by the field rule with the
+  position named.
+- **An element obeys declaration order like every other by-value field** (open
+  item 12): a tuple in a `datac` field may only name types declared before that
+  declaration, so `datac Holder(val span: (Later, i32))` before `datac Later` is
+  refused exactly as `val later: Later` would be. Behind a `Box` or a `List` it
+  may name any type, as always.
+- **A tuple moves as a whole, and a position moves out of it.** `move (A, B)` is
+  the parameter form that takes ownership (10.1). Reading a position out of an
+  owned binding with a destructuring binding is the partial move 10.1 states:
+  the source slot is cleared and the value's own drop frees the positions that
+  stayed. Reading the same position twice, using the source as a whole after a
+  position left it, and reading an owned position out of a *borrow* are each
+  refused.
+- **`?` is about its operand and never about the tuple.** A tuple is not an
+  `enum`, so `?` cannot be written on one; when a tuple is the success payload,
+  `mk(n)?` is the tuple and the binding takes it apart (5, 4).
+- **A tuple value is written `(lo, hi)`** and a tuple type `(i32, i32)`, both two
+  or more positions deep; a nested tuple is a tuple of tuples,
+  `((i32, i32), i32)`.
+- **A tuple is read by destructuring.** There is no positional access on a value
+  (`t.0`): the binding form reaches every position, an owned element is taken out
+  by binding the whole value first, and the surface stays as small as the need.
+- **Deliberately not part of it**: a tuple pattern in `when` (6.3), a
+  destructuring pattern as a `for` binding (6.2, which names one element and
+  destructures it in the body), a tuple in a `const` initializer (14.1), a tuple
+  with one element, and anything variadic.
+  A tuple is a `Map` key exactly when the derived key rule already says a record
+  of those fields is one (12.2), and it is not printable (`print` takes a
+  scalar, a `str` or a `String`), exactly as a `datac` is not.
 
 ## 4. Bindings and assignment
 
@@ -381,6 +457,38 @@ total += n               // compound assignment: total = total + n
 - A `datac` field is assigned only when the field is `var` in the `datac` **and** the path to it is mutable. Both conditions are separate errors.
 - Compound assignment exists for `+ - * / %`, and desugars to a read, the operation, and a write, so it obeys the same mutability and borrow rules.
 - Assigning to an owned binding moves the new value in and drops the old one.
+
+#### Destructuring a tuple
+
+A binding may take one tuple value apart in the same statement (3.1):
+
+```kelp
+val (lo, hi) = min_max(xs)      // one binding per position
+var (a, b) = (1, 2)             // every position is a `var`
+val (_, text) = read_pair()     // `_` ignores a position
+val ((x, y), z) = corners()     // a nested tuple takes a nested pattern
+```
+
+- The number of positions the pattern writes has to equal the number of elements
+the tuple has; a pattern written for another arity is refused with both counts.
+- `_` ignores a position instead of binding it. What the position holds stays in
+the value that was destructured, so an owned element an `_` ignores is freed by
+that value's own drop at the end of the block.
+- `val` and `var` mean what they mean on an ordinary binding, for every position:
+`var (a, b) = ...` makes both `a` and `b` assignable.
+- A destructuring binding takes **no written type**. `val (a, b): (i32, i32) = ...`
+is refused: the types of the positions come from the initializer's tuple, in
+order, and one written type for several positions could not be checked against
+the positions it names. Bind the whole value first when its type needs writing:
+`val p: (i32, i32) = ...`, then `val (a, b) = p`.
+- The initializer is moved into the binding, so a place is taken by value exactly
+as `val p = place` takes it, and each position is then read out of that value,
+which is the partial move 10.1 states. An initializer that is a borrow of a
+tuple (the element `List.get` hands back) binds every `Copy` position and
+refuses an owned one, the rule a field of a borrow already follows (10.2).
+- The whole value is bound once, so a second binding of the same place is a use
+of a moved value. Two positions that write the same name are ordinary shadowing,
+exactly as two `val` declarations of one name in one block are.
 
 ## 5. Operators and expressions
 
@@ -502,6 +610,7 @@ fun loud(n: i64).R: Option<String> {
 - The enclosing function must return an enum of the **same shape**, and for `Ok`/`Err` with the **same failure payload type** — v1 has no error conversion, so `Result<i64, String>` cannot be propagated out of a function returning `Result<i64, IoErr>`. A function returning `Unit` (including `main`) has nowhere to propagate to.
 - The value of `expr?` is the success payload, so it composes: `1 + half(n = n)?`. A failure returns immediately, which means the enclosing function's locals are dropped on the way out, exactly as any `return` drops them.
 - `?` is postfix and binds tighter than every binary operator. Because it moves a payload out of the operand, a borrow cannot be an operand: match that with `when` (6.3) or `if let` (6.1).
+- It applies to the expression it is written on and to nothing else, so a tuple is never its operand. When a tuple is the *success* payload, `?` reaches the `Result` the element is and hands the tuple back: `val (lo, hi) = min_max_checked(xs)?` where the function returns `Result<(i32, i32), String>` is the tuple, taken apart by the binding (3.1, 4). A tuple is not an enum, so writing `?` on the tuple itself is the ordinary "the operand must be an `enum`" refusal.
 
 ## 6. Control flow
 
@@ -1346,9 +1455,9 @@ while !xs.is_empty() {
 
 `get` and `pop` move an owned element out and return a copy for a `Copy` element, so `List<i32>.get(i)` is an `i32` while `List<String>.get(i)` is a `&String`. Out-of-range indices and popping an empty list panic.
 
-The element type may be a scalar, `String`, `Bytes` or a `datac`. It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice`, `clone` and `Map.values` are offered only for element types that support them.
+The element type may be a scalar, `String`, `Bytes`, a `datac` or a tuple (3.1). It may not be a borrow, a `str`, `Unit`, a `List` or a `Map`; put a container in a `Box` instead. `sort`, `contains`, `slice`, `clone` and `Map.values` are offered only for element types that support them.
 
-A `datac`/`enum` element takes a **derived deep copy and a derived order from its fields**. It is clonable (`clone`/`slice`) when every field it holds is, and sortable when every field has an order, so `datac Digest(val path: String, val size: u64)` gives `List<Digest>` both. The order is field by field in declaration order: a `String`/`Bytes` byte-wise (length-aware), an `enum` by tag and then by the live variant's payload. A `List`, `Box`, `Map` or owned-array field has neither, so a record that holds one is not clonable or sortable. `contains` still needs equality, which a `datac` does not have, and `Map`'s cloning operations (`get_or`, `values`) are still scalar-only.
+A `datac`/`enum` element takes a **derived deep copy and a derived order from its fields**, and a tuple element takes the same two position by position (3.1). It is clonable (`clone`/`slice`) when every field it holds is, and sortable when every field has an order, so `datac Digest(val path: String, val size: u64)` gives `List<Digest>` both. The order is field by field in declaration order: a `String`/`Bytes` byte-wise (length-aware), an `enum` by tag and then by the live variant's payload. A `List`, `Box`, `Map` or owned-array field has neither, so a record that holds one is not clonable or sortable. `contains` still needs equality, which a `datac` does not have, and `Map`'s cloning operations (`get_or`, `values`) are still scalar-only.
 
 The element-wise methods above are builtin. The callback-shaped operations
 (`map`, `filter`, `each`, `find_index`, `any`, `all`) live in `std/list`,
@@ -1376,7 +1485,7 @@ print(runs.get(key = 7))
 ```
 
 - **`Map<V>` written with one argument means `Map<String, V>`.** That is the shorthand every program written before keys were generic uses, and the two spellings are the same type.
-- **A key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` whose every field (or variant payload) is itself one of those.** The compiler derives the key's hash and its equality from the type, the same way it derives a `datac`'s order and its deep copy, so nothing here is a trait or a comparator. A float is refused because `nan != nan` would make an inserted key unfindable, and a `List`, `Map`, `Box`, view or borrow is refused because there is no derived equality for it (17).
+- **A key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, payload or position is itself one of those.** The compiler derives the key's hash and its equality from the type, the same way it derives a `datac`'s order and its deep copy, so nothing here is a trait or a comparator. A float is refused because `nan != nan` would make an inserted key unfindable, and a `List`, `Map`, `Box`, view or borrow is refused because there is no derived equality for it (17).
 - **A `datac` or `enum` that declares both `fun T.hash().R: u64` and `fun T.eq(other: &T).R: bool` is a key**, which is the escape hatch for a type the derived set refuses: a float field, or a comparison the derived rules do not express for the field shape the type has. The two method names are the whole declaration, so there is no trait and no new syntax, and the two signatures are fixed: the receiver is a shared borrow with no type parameters, `hash` takes no parameter and returns `u64`, and `eq` takes exactly one parameter, `&T`, and returns `bool`. That parameter is a shared borrow because a lookup compares the caller's key against an entry the caller does not own, so an owned `other: T` is refused. The map calls the declared pair *instead of* a derived one, never alongside it, and the key is still cloned into the entry, so the type has to be deep-copyable as well (`String`, `Bytes`, a scalar, or a `datac`/`enum` of those). A declaration of one half only, or a signature the map cannot call, is refused where it is declared, with the missing or wrong half named. `hash` may hash whatever it can reach and `eq` may compare whatever it likes; `==` is still not defined on the type, so only `Map` uses the pair. A type that declares its pair is keyable by that declaration and not by derivation, so a field of such a type is not keyable either: the pair belongs to the type that made it, and another type reaches a `Map` by declaring its own.
 - `Map<K, V>` is not a list element (the `List` element set takes a `List` and a `Box` since A-10 slice 1, but not a `Map`) and not a map value, so `Map<String, Map<i32>>` and `List<Map<i32>>` stay impossible.
 
@@ -2150,10 +2259,11 @@ A join hands back `Result<T, ThreadErr>`, so a program that writes one also need
 
 These are deliberate, and each one has a workaround in this document:
 
+- A tuple is a record with positional fields, so it is read by destructuring and nothing else: there is no positional access on a value (`t.0`), no tuple pattern in `when` (6.3), no destructuring `for` binding (6.2), and no tuple value in a `const` initializer (3.1, 14.1). Bind the whole tuple to a `val` when the positions need to be visible separately, and print its positions rather than the tuple (`print` takes a scalar, a `str` or a `String`).
 - No `break` or `continue`. Iteration is a `for` over a `List` (6.2), or a `while` plus an index when the loop is not a front-to-back walk.
 - `?` propagates only an *identical* failure type (5.2): there is no error conversion, no `From`, and no boxing. `Option<T>`/`Result<T, E>` ship in `std/option`/`std/result`, and the stdlib's older error `datac`s remain as wrappers.
 - A receiver on a generic type must write the type's own parameters (`fun Pair<A, B>.first()`, 9.3); there is no way to declare a method over the template with parameters of its own. A concrete `enum` may declare a method and a value of it calls it (9.2), but a generic `enum`'s template declares none.
-- A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum` whose every field or variant payload is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
+- A `Map` key must be `String`, an integer, `bool`, `char`, or a `datac`/`enum`/tuple whose every field, variant payload or position is itself one of those (12.2): the compiler derives the key's hash and its equality from the type, so a key that could not be derived that way is still refused.
 - No user overloading (7.2) and no user `extern` bodies: `extern fun` is reserved for compiler-shipped stdlib modules.
 - Partial moves cover one projection of an owned place: reading an owned field, or an owned `enum` payload, by value out of a `val`/`var` binding or a `move` parameter moves it out (9), and a `when`/`if let` over an owned place binds an owned payload by value for it. A projection read out of a borrowed structure or out of a nested place is still refused, so the helpers whose receiver stays a borrow are `Copy`-only: `list.filter` over a `List<String>` reads an accepted element out of a borrow, which is refused. The helpers that only needed the move (`option.unwrap` on an `Option<String>`, `result.map` over a `Result<T, MyErr>`) take their receiver with `move` now.
 - No references -- and no `View` -- in fields, `List` elements, `Map` values or `Box` contents. `str` and `View` are borrows, so text that must be stored is a `String`; a view is taken at the point of use (11.5).
@@ -2347,17 +2457,21 @@ body         := "=" expr | block | <nothing for extern>
 
 type         := [ "&" ] ( ident [ "<" type ("," type)* ">" ] [ "." ident ]
                        | "fun" "(" [ fparam ("," fparam)* ] ")" [ ".R" "：" type ]
-                       | "[" type ";" expr "]" )        // a fixed-size array: [T; N]
+                       | "[" type ";" expr "]"        // a fixed-size array: [T; N]
+                       | "(" type "," type ("," type)* ")" )  // a tuple: (A, B)
 fparam       := [ "mut" | "move" ] type
 ```
 
 (`View` is an ordinary `ident` here — it is a builtin type name like `str` or
-`String`, not a keyword.)
+`String`, not a keyword. `(T)` is the parenthesized type `T`, not a
+one-element tuple, and `()` is not a type at all: `unit` is.)
 
 ```
 stmt         := "val" | "var" | "while" | "for" | "return" | expr
-val          := "val" ident [ ":" type ] "=" expr
-var          := "var" ident [ ":" type ] "=" expr
+val          := "val" ( ident [ ":" type ] | pattern ) "=" expr
+var          := "var" ( ident [ ":" type ] | pattern ) "=" expr
+pattern      := "(" position "," position ("," position)* ")"
+position     := ident | "_" | pattern
 while        := "while" expr block
 for          := "for" ident "in" expr block   // the `in` is contextual, not a keyword
 return       := "return" [ expr ]
@@ -2376,6 +2490,7 @@ primary      := int | float | string | char | template | "true" | "false"
                 ( "=" expr | block )
               | "[" expr ("," expr)* "]"       // an array literal: length is the count
               | "[" expr ";" expr "]"          // a repeat: [0; 4096]
+              | "(" expr "," expr ("," expr)* ")"   // a tuple value: (lo, hi)
               | ident [ typeargs ] [ "(" args ")" ] | "(" expr ")" | block
               | "if" expr block chain
               | "if" "let" ident [ "(" (ident | "_") ("," (ident | "_"))* ")" ] "=" expr

@@ -1,0 +1,11 @@
+// MISSING-z2bB9: an owned element cannot be moved out of a borrow, exactly as
+// an owned `datac` field cannot: the value out of `List.get` is a borrow of the
+// element, so only a `Copy` position binds out of it (`plan/syntax.md` 4 and
+// 10.2).
+fun main() {
+    var xs: List<(String, i32)> = List.empty()
+    xs.push((String.from_str("a"), 1))
+    val (text, n) = xs.get(i = 0)
+    print(text.as_str())
+    print(n)
+}
