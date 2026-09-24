@@ -20,6 +20,20 @@ pub struct ParseError {
 
 type PResult<T> = Result<T, ParseError>;
 
+/// The refusal for a `*` that does not stand alone in a `caps(...)` clause
+/// (`caps(*, fs = [...])` and `caps(fs = [...], *)`). `*` already means every
+/// domain, so a named domain beside it has nothing left to say; the message
+/// names the spelling that does mean what the writer wanted.
+fn mixing_wildcard_error(span: Span) -> ParseError {
+    ParseError {
+        message: "`caps(*)` already means every domain, so nothing can stand beside the `*`: \
+                  write `caps(*)` alone, or name the domains it needs \
+                  (`caps(net = [\"host:port\"])`, `caps(fs = [\"/a/**\"], env = [\"HOME\"])`)"
+            .to_string(),
+        span,
+    }
+}
+
 /// The name prefix of the local an `if let` binds its scrutinee to. `#` cannot
 /// appear in a lexed identifier, so a synthesized name can never collide with
 /// one the user wrote — the same trick `infer.rs` uses for a hidden passdown
@@ -308,16 +322,31 @@ impl Parser {
         // `caps(domain = ["pattern", ...], ...)` — the capability grant
         // (M7). Domains and patterns are validated in `resolve.rs`, where the
         // module graph (and therefore the importer's own set) is known.
+        // `caps(*)` is the one alternative spelling: it delegates the whole
+        // resource of every domain, so it stands alone and is refused here
+        // when a named domain stands beside it.
         let has_caps_clause = if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "caps") {
             self.advance();
             true
         } else {
             false
         };
+        let mut caps_all = false;
         let caps = if has_caps_clause {
             self.expect(TokenKind::LParen, "'(' after 'caps'")?;
             let mut grants: Vec<CapGrant> = Vec::new();
+            if self.check(&TokenKind::Star) {
+                let star_span = self.peek().span;
+                self.advance();
+                caps_all = true;
+                if !self.check(&TokenKind::RParen) {
+                    return Err(mixing_wildcard_error(star_span));
+                }
+            }
             while !self.check(&TokenKind::RParen) {
+                if self.check(&TokenKind::Star) {
+                    return Err(mixing_wildcard_error(self.peek().span));
+                }
                 let (domain, dspan) = self.expect_ident()?;
                 self.expect(TokenKind::Eq, "'=' after the capability domain")?;
                 self.expect(TokenKind::LBracket, "'[' before the pattern list")?;
@@ -363,6 +392,7 @@ impl Parser {
         Ok(ImplDecl {
             path,
             caps,
+            caps_all,
             span: start.to(path_span),
         })
     }
@@ -3033,6 +3063,33 @@ mod tests {
     fn an_impl_without_caps_has_no_grants() {
         let p = parse("impl \"std/fs\"");
         assert!(p.impls[0].caps.is_empty());
+        assert!(!p.impls[0].caps_all);
+    }
+
+    #[test]
+    fn parses_the_caps_wildcard_clause() {
+        let p = parse("impl \"helper\" caps(*)");
+        assert!(p.impls[0].caps.is_empty());
+        assert!(p.impls[0].caps_all);
+    }
+
+    #[test]
+    fn a_named_domain_beside_the_wildcard_is_refused() {
+        // Either order: `*` already means every domain, so a domain named
+        // beside it has nothing left to say, and the refusal names both
+        // surviving spellings.
+        for source in [
+            "impl \"helper\" caps(*, fs = [\"/tmp/**\"])",
+            "impl \"helper\" caps(fs = [\"/tmp/**\"], *)",
+        ] {
+            let err = parse_err(source);
+            assert!(
+                err.message.contains("already means every domain"),
+                "{source}: {}",
+                err.message
+            );
+            assert!(err.message.contains("caps(*)` alone"), "{source}: {}", err.message);
+        }
     }
 
     #[test]
