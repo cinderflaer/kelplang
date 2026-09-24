@@ -1,0 +1,46 @@
+// MK9-S3-M1 stage C1: the stress gate. Eight workers hammer one shared
+// `pd val Atomic<i64>`, each doing a thousand `fetch_add`s, and every one of
+// them is joined before the total is read: a lost update anywhere shows up as a
+// total other than 8000, which is what a single-threaded counter test cannot
+// catch. The counter is the `pd val` a worker's shared borrow may cross to
+// (MK9 section 5 rules 2 and 3), which is why the same `&counter` is handed to
+// all eight.
+impl "std/thread"
+impl "std/atomic"
+impl "std/result"
+
+pd val counter: AtomicI64 = AtomicI64.new(0)
+
+// One thousand increments, then a value for the joiner: `T` is the worker's
+// return type, so a worker that returns nothing would make the join's
+// `Result<unit, ThreadErr>` carry no payload at all.
+fun bump(c: &AtomicI64).R: i64 {
+    var i: i64 = 0
+    while i < 1000 {
+        c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+        i = i + 1
+    }
+    0
+}
+
+fun main() {
+    val t0 = thread.spawn(bump, &counter)
+    val t1 = thread.spawn(bump, &counter)
+    val t2 = thread.spawn(bump, &counter)
+    val t3 = thread.spawn(bump, &counter)
+    val t4 = thread.spawn(bump, &counter)
+    val t5 = thread.spawn(bump, &counter)
+    val t6 = thread.spawn(bump, &counter)
+    val t7 = thread.spawn(bump, &counter)
+    // The joins are the barrier: every worker's writes are visible once its own
+    // join has returned, and no load happens before all eight have.
+    val r0 = thread.join(t0)
+    val r1 = thread.join(t1)
+    val r2 = thread.join(t2)
+    val r3 = thread.join(t3)
+    val r4 = thread.join(t4)
+    val r5 = thread.join(t5)
+    val r6 = thread.join(t6)
+    val r7 = thread.join(t7)
+    print(counter.load(order = atomic.Ordering.SeqCst))
+}

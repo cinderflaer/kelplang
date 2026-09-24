@@ -153,6 +153,23 @@ pub enum Ty {
     /// which is what lets a `pd val Atomic<i64>` be the process-lifetime shared
     /// counter of MK9 1 without the `atexit` machinery an owned passdown needs.
     Atomic(Box<Ty>),
+    /// The builtin thread handle (MK9-S3-M1 stage B1): `Thread<T>`, what
+    /// `thread.spawn` hands back and `thread.join` consumes.
+    ///
+    /// Monomorphized per element type exactly as `Atomic<T>` and `List<T>` are,
+    /// and `T` is the value the worker gives the joiner. **Not `Copy`.** It
+    /// *does* own heap memory, one allocation: the worker record `thread.spawn`
+    /// builds, which holds the running thread's identity, its result slot and
+    /// the argument moved into it. Stage C1 gives it a drop (`kelp_thread_drop`)
+    /// that detaches a worker nobody joined and leaks that record, because the
+    /// record cannot be freed while the worker may still write through it; the
+    /// decision is recorded in `plan/mk9-memory-model.md` section 5.
+    ///
+    /// A handle is accepted as a local, a `datac`/`enum` field and a parameter,
+    /// and refused as a `List`/`Map`/`Box`/array element for the reason the
+    /// refusal message gives: joining is a one-shot thing a container's own
+    /// copy-and-drop routines would duplicate.
+    Thread(Box<Ty>),
 }
 
 /// The element type one of the `Atomic*` names stands for, or `None` when
@@ -220,6 +237,7 @@ impl Ty {
                 self,
                 Ty::Struct(_)
                     | Ty::Atomic(_)
+                    | Ty::Thread(_)
                     | Ty::Bytes
                     | Ty::String
                     | Ty::List(_)
@@ -246,7 +264,11 @@ impl Ty {
                     | Ty::List(_)
                     | Ty::Box(_)
                     | Ty::Map(..)
-                    | Ty::Closure { .. }
+                    // A `Thread<T>` owns the worker record `thread.spawn`
+                    // allocated, so it is dropped (detached) like any other
+                    // owned value (MK9-S3-M1 stage C1).
+                    | Ty::Thread(_)
+                    | Ty::Closure { .. },
             ),
         }
     }
@@ -326,6 +348,7 @@ impl Ty {
             Ty::Map(key, value) => map_c_type(key, value),
             Ty::Array(elem, len) => array_c_type(elem, *len),
             Ty::Atomic(elem) => atomic_c_type(elem),
+            Ty::Thread(_) => thread_c_type(),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -378,6 +401,7 @@ impl Ty {
             Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
             Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
+            Ty::Thread(elem) => format!("Thread<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
@@ -725,6 +749,10 @@ pub fn drop_fn_name(ty: &Ty) -> String {
     match ty {
         Ty::Bytes => "kelp_bytes_drop".to_string(),
         Ty::String => "kelp_string_drop".to_string(),
+        // One runtime function for every element type: a handle detaches the
+        // worker and frees nothing, so the element type is not part of the
+        // step (MK9-S3-M1 stage C1).
+        Ty::Thread(_) => "kelp_thread_drop".to_string(),
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
@@ -895,6 +923,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
+        Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
         // A function type never reaches a container or a type argument (both
         // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
         // unreachable arm and by diagnostics, so it gets an identifier-shaped
@@ -960,6 +989,28 @@ pub fn array_c_type(elem: &Ty, len: u64) -> String {
 /// every access is a call the two backends lower to one instruction.
 pub fn atomic_c_type(elem: &Ty) -> String {
     format!("kelp_Atomic__{}", ty_mangle(elem))
+}
+
+/// The generated C type for `Thread<T>` (MK9-S3-M1 stage C1): the handle is one
+/// pointer to the worker record `thread.spawn` allocates, so the C type is
+/// uniform over the element type exactly as `str` is uniform over what it
+/// points at. The element type stays in the Kelp type, which is what decides
+/// the result slot's size and the `Result<T, ThreadErr>` a join builds, so it
+/// is deliberately not part of this name.
+pub fn thread_c_type() -> String {
+    "kelp_Thread*".to_string()
+}
+
+/// Whether `ty` may be a `Thread<T>`'s element: anything a worker may hand back
+/// to its joiner, which is anything that can be moved through the boundary.
+///
+/// A borrow, a `str` and a `View` are refused for the reason they are refused
+/// in every stored position: each points at data somebody else owns, and the
+/// frame that owns it ends before the joiner can read the result
+/// (`is_borrowed_field_ty` is the same predicate the stored positions use, so
+/// this cannot drift from them).
+pub fn is_thread_element(ty: &Ty) -> bool {
+    !is_borrowed_field_ty(ty)
 }
 
 /// Whether `ty` may be an `Atomic<T>`'s element: the integer types and `bool`,

@@ -1,0 +1,9 @@
+// MK9-S3-M1 stage B1: a `Thread<T>` is refused as a `Box` element: a box's own
+// routines read and write its value the same way a list's read and write an
+// element.
+impl "std/thread"
+
+fun main() {
+    val b: Box<Thread<i64>> = Box.empty()
+    print(b.is_empty())
+}

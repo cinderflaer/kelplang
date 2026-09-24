@@ -1,0 +1,9 @@
+// MK9-S3-M1 stage B1: `thread.join`'s parameter is a `Thread<T>` handle and
+// nothing else. A plain integer is refused with the reason the message gives:
+// the only way one is made is `thread.spawn`.
+impl "std/thread"
+
+fun main() {
+    val r = thread.join(5)
+    print(0)
+}

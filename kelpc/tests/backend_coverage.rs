@@ -208,13 +208,16 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// generic function instantiated at `unit`, which also passes a bound `unit` on
 /// to a `unit` parameter) both build with both backends and the differential
 /// sweep compares them.
-///
-/// Raised from 253 by MISSING-qM4Zx: `Map#get_or` and `Map#values` deep-copy a
-/// `datac` value by the declaration-graph predicate, so
-/// `map_datac_value_clone` (a `Map<String, Digest>` whose value owns a
-/// `String`) builds with both backends and the differential sweep compares
-/// them.
-const LLVM_BUILT_BASELINE: usize = 254;
+/// Raised again by MK9-S3-M1 stage C1: `thread.spawn` and `thread.join` lower
+/// on both backends, so the four accepted shapes B1 pinned as refusals
+/// (`thread_spawn_accepted`, `thread_spawn_closure`, `thread_spawn_pd_atomic`,
+/// `thread_join_accepted`) now build and are compared, and the two gates land as
+/// new fixtures (`thread_stress`, eight workers against one `pd val
+/// Atomic<i64>`, exact total asserted; `thread_panic`, a worker that panics and
+/// a joiner that sees `Err` with the process still exiting 0). The merged tree
+/// re-recorded at 262: those six, `map_datac_value_clone` and the two `u64`
+/// context fixtures all build on both backends.
+const LLVM_BUILT_BASELINE: usize = 262;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

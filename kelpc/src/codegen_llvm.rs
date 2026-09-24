@@ -712,6 +712,12 @@ struct Instantiations {
     /// value, or a literal that captured nothing, whose value is a `FnRef`
     /// too). Each gets a shim instead of the heap environment and the thunk.
     shims: HashSet<(String, Ty)>,
+    /// The closure signatures a `thread.spawn` entry reaches (MK9-S3-M1 stage
+    /// C1). Each needs one generated worker body, the IR twin of the C
+    /// backend's `write_thread_body`: the runtime's trampoline calls it inside
+    /// the new thread, so its parameters are pointers and the element type
+    /// stays out of it.
+    spawns: HashSet<Ty>,
 }
 
 impl<'a> Gen<'a> {
@@ -1695,6 +1701,18 @@ impl<'a> Gen<'a> {
                     Some((func, fty)) => (func, fty),
                     None => return Ok(()),
                 }
+            }
+            // A `Thread<T>` handle owns the worker record, and its drop is the
+            // runtime's: detach the worker and free nothing (MK9-S3-M1 stage
+            // C1). It takes the address of the slot holding the handle, exactly
+            // as `codegen_c.rs::drop_call` passes `&h`.
+            Ty::Thread(_) => {
+                let symbol = drop_fn_name(ty);
+                let rt = self
+                    .runtime
+                    .get(&symbol)
+                    .ok_or_else(|| no_value(&format!("the runtime drop '{symbol}'")))?;
+                (rt.func, rt.ty)
             }
             _ => return Ok(()),
         };
@@ -3921,6 +3939,213 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.builder.build_load(info.llvm_ty, slot, "atomic.cx.val"))
     }
 
+    /// `thread.spawn(entry, arg)` (MK9-S3-M1 stage C1): allocate the handle and
+    /// its two slots, move the argument into the argument slot, and start the
+    /// worker with the generated body for this signature. The handle's element
+    /// is the entry's *return* type, which is the value the worker hands its
+    /// joiner, so `sizeof` that type is the result slot. The C twin is
+    /// `codegen_c.rs::thread_spawn_value`, runtime call for runtime call.
+    fn emit_thread_spawn(&mut self, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
+        let Ty::Thread(elem) = ret else {
+            unreachable!("thread.spawn hands back a Thread<T> handle")
+        };
+        let (entry, arg) = match args {
+            [entry, arg] => (entry, arg),
+            _ => return Err(no_value("the two arguments of thread.spawn")),
+        };
+        let Ty::Closure { params, .. } = &entry.ty else {
+            unreachable!("thread.spawn's entry is a closure by the checker's coercion")
+        };
+        // The entry first, as the C backend binds it to a temporary in front of
+        // the call, so a field or a dereference is evaluated once.
+        let closure = self.value_of(entry)?;
+        let code = self.g.builder.build_extract_value(closure, 0, "fn");
+        let env = self.g.builder.build_extract_value(closure, 1, "env");
+        let drop = self.g.builder.build_extract_value(closure, 2, "drop");
+        let arg_size = self.g.layout.abi_size_of(self.lty(&params[0])?);
+        // A worker that returns `unit` stores nothing: `unit` has no LLVM type
+        // at all (`llvm_type` refuses it), and a handle on such a worker is one
+        // `Thread<unit>` a program may drop but not read a result out of. The
+        // runtime still allocates a byte for the slot.
+        let result_size = if *elem.as_ref() == Ty::Unit {
+            0
+        } else {
+            self.g.layout.abi_size_of(self.lty(elem)?)
+        };
+        let new = self.g.rt("kelp_thread_new")?;
+        let handle = self.g.call(
+            new.func,
+            new.ty,
+            &[self.g.v_i64(arg_size), self.g.v_i64(result_size)],
+            "thread",
+        );
+        self.cur = self.g.check_alloc(handle, self.cur_fn)?;
+        let arg_fn = self.g.rt("kelp_thread_arg")?;
+        let arg_slot = self.g.call(arg_fn.func, arg_fn.ty, &[handle], "arg");
+        let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+        let moved = self.arg_value(arg, &mut held)?;
+        self.g.builder.build_store(moved, arg_slot);
+        let start = self.g.rt("kelp_thread_start")?;
+        let body = self.g.closure_symbol(&thread_body_symbol(&entry.ty))?;
+        self.g.call(
+            start.func,
+            start.ty,
+            &[handle, body.as_value(), code, env, drop],
+            "",
+        );
+        for (slot, ty) in held {
+            self.g.call_drop(slot, &ty)?;
+        }
+        Ok(Some(handle))
+    }
+
+    /// `thread.join(handle)` (MK9-S3-M1 stage C1): wait for the worker, then
+    /// build `Result<T, ThreadErr>` from the result slot or the message the
+    /// worker panicked with. The result slot is read only on the success path,
+    /// because a worker that panicked never wrote it; the handle is freed once
+    /// the value is out of it. The C twin is `codegen_c.rs::thread_join_value`.
+    fn emit_thread_join(&mut self, args: &[Expr], ret: &Ty) -> Result<Option<Value<'a>>, String> {
+        let handle_arg = args
+            .first()
+            .ok_or_else(|| no_value("the handle of thread.join"))?;
+        let Ty::Thread(elem) = &handle_arg.ty else {
+            unreachable!("thread.join's argument is a Thread<T> handle")
+        };
+        let Ty::Struct(result_name) = ret else {
+            unreachable!("thread.join hands back a Result")
+        };
+        let info = self
+            .g
+            .enums
+            .get(result_name)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the enum '{result_name}'")))?;
+        // Recognized by variant name, never by the enum's own name: the same
+        // rule `compare_exchange`'s arm and `?` use, so a `std/result` replaced
+        // by any two-variant `Ok`/`Err` shape still lowers. The names live in
+        // the declaration; the layout above is keyed by index.
+        let decl = self
+            .g
+            .program
+            .enums
+            .iter()
+            .find(|e| e.name == *result_name)
+            .ok_or_else(|| no_value(&format!("the enum '{result_name}'")))?;
+        let variant_of = |variant: &str| {
+            decl.variants
+                .iter()
+                .position(|v| v.name == variant)
+                .expect("the Result shape has one arm per variant")
+        };
+        let ok = variant_of("Ok");
+        let err = variant_of("Err");
+
+        let handle = self.value_of(handle_arg)?;
+        let wait = self.g.rt("kelp_thread_wait")?;
+        let panicked = self.g.call(wait.func, wait.ty, &[handle], "panicked");
+        let zero = self.g.ctx.const_int(self.g.ctx.i32(), 0, false);
+        let failed = self
+            .g
+            .builder
+            .build_icmp(IntCmp::Ne, panicked, zero, "failed");
+        let result_ty = self.lty(ret)?;
+        let slot = self.temp_alloca(result_ty, "join.result");
+        self.g
+            .builder
+            .build_store(self.g.ctx.const_null(result_ty), slot);
+        let err_bb = self.cur_fn.append_block("join.err");
+        let ok_bb = self.cur_fn.append_block("join.ok");
+        let done_bb = self.cur_fn.append_block("join.done");
+        self.g.builder.build_cond_br(failed, err_bb, ok_bb);
+
+        // The failure arm: the message the worker recorded, into a `ThreadErr`.
+        self.g.builder.position_at_end(err_bb);
+        self.cur = err_bb;
+        self.terminated = false;
+        let msg_fn = self.g.rt("kelp_thread_message")?;
+        let message = self.g.call(msg_fn.func, msg_fn.ty, &[handle], "message");
+        let string_ty = *self
+            .g
+            .structs
+            .get("String")
+            .ok_or_else(|| no_value("the builtin 'String' layout"))?;
+        let text_slot = self.temp_alloca(string_ty, "join.text");
+        self.g
+            .sret_call("kelp_String__from_str", text_slot, &[message])?;
+        let text = self.g.builder.build_load(string_ty, text_slot, "text");
+        let err_ty = crate::infer::thread_err_ty();
+        let err_lty = self.lty(&err_ty)?;
+        let mut err_value = self.g.ctx.undef(err_lty);
+        err_value = self
+            .g
+            .builder
+            .build_insert_value(err_value, text, 0, "message");
+        self.store_enum_variant(slot, &info, err, &[err_value])?;
+        self.g.builder.build_br(done_bb);
+
+        // The success arm: the worker's value out of the result slot.
+        self.g.builder.position_at_end(ok_bb);
+        self.cur = ok_bb;
+        self.terminated = false;
+        let res_fn = self.g.rt("kelp_thread_result")?;
+        let res_ptr = self.g.call(res_fn.func, res_fn.ty, &[handle], "result");
+        let elem_lty = self.lty(elem)?;
+        let value = self.g.builder.build_load(elem_lty, res_ptr, "value");
+        self.store_enum_variant(slot, &info, ok, &[value])?;
+        self.g.builder.build_br(done_bb);
+
+        self.g.builder.position_at_end(done_bb);
+        self.cur = done_bb;
+        self.terminated = false;
+        let dispose = self.g.rt("kelp_thread_dispose")?;
+        self.g.call(dispose.func, dispose.ty, &[handle], "");
+        Ok(Some(self.g.builder.build_load(result_ty, slot, "joined")))
+    }
+
+    /// Store one variant's payload into an `enum` slot that has already been
+    /// zeroed: the tag, then each payload field into the variant's own payload
+    /// struct. What `emit_enum_lit` does for a literal, for the one value a
+    /// `thread.join` builds out of results rather than out of written payloads
+    /// (MK9-S3-M1 stage C1).
+    fn store_enum_variant(
+        &self,
+        slot: Value<'a>,
+        info: &EnumInfo<'a>,
+        variant: usize,
+        fields: &[Value<'a>],
+    ) -> Result<(), String> {
+        let tag_ptr = self
+            .g
+            .builder
+            .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
+        let tag = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
+        self.g.builder.build_store(tag, tag_ptr);
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let payload_ty = info
+            .variants
+            .get(variant)
+            .ok_or_else(|| no_value("the variant of a join's result"))?
+            .payload_ty;
+        let union_ptr = self.g.builder.build_struct_gep(
+            info.llvm_ty,
+            slot,
+            ENUM_UNION_FIELD,
+            "kelp_v",
+        );
+        for (index, value) in fields.iter().enumerate() {
+            let field_ptr = self.g.builder.build_struct_gep(
+                payload_ty,
+                union_ptr,
+                index as u32,
+                "field",
+            );
+            self.g.builder.build_store(*value, field_ptr);
+        }
+        Ok(())
+    }
+
     fn emit_call(
         &mut self,
         callee: &str,
@@ -4010,6 +4235,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
         if callee == crate::stdlib::FENCE_FN {
             self.g.builder.build_fence();
             return Ok(None);
+        }
+
+        // `thread.spawn` / `thread.join` (MK9-S3-M1 stage C1): the runtime owns
+        // the thread and the panic policy, and each call site is the handle
+        // build or the result build around it. `codegen_c.rs::call_value`
+        // dispatches the same two keys to the same shape in C.
+        if callee == crate::stdlib::SPAWN_FN {
+            return self.emit_thread_spawn(args, ret);
+        }
+        if callee == crate::stdlib::JOIN_FN {
+            return self.emit_thread_join(args, ret);
         }
 
         if let Some(info) = self.g.funcs.get(callee).cloned() {
@@ -4638,10 +4874,21 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 note_expr(target, out);
                 note_expr(value, out);
             }
-            ExprKind::Call { args, .. } | ExprKind::IndirectCall { args, .. } => {
-                if let ExprKind::IndirectCall { callee, .. } = &expr.kind {
-                    note_expr(callee, out);
+            ExprKind::Call { callee, args } => {
+                // `thread.spawn(entry, arg)` (MK9-S3-M1 stage C1): the entry is
+                // a closure by the checker's coercion, and that signature is
+                // what the worker body is generated for.
+                if callee == crate::stdlib::SPAWN_FN {
+                    if let Some(entry) = args.first() {
+                        out.spawns.insert(entry.ty.clone());
+                    }
                 }
+                for a in args {
+                    note_expr(a, out);
+                }
+            }
+            ExprKind::IndirectCall { callee, args } => {
+                note_expr(callee, out);
                 for a in args {
                     note_expr(a, out);
                 }
@@ -5251,6 +5498,18 @@ impl<'a> Gen<'a> {
             let func = self.module.add_function(&symbol, code_ty);
             self.closure_fns.insert(symbol, (func, code_ty));
         }
+
+        // One worker body per `thread.spawn` signature (MK9-S3-M1 stage C1):
+        // pointer parameters only, because the runtime's C trampoline is its
+        // caller.
+        let mut spawns: Vec<Ty> = inst.spawns.iter().cloned().collect();
+        spawns.sort_by_key(container_sort_name);
+        for sig in &spawns {
+            let symbol = thread_body_symbol(sig);
+            let ty = self.ctx.fn_type(void, &[ptr, ptr, ptr, ptr], false);
+            let func = self.module.add_function(&symbol, ty);
+            self.closure_fns.insert(symbol, (func, ty));
+        }
         Ok(())
     }
 
@@ -5282,6 +5541,48 @@ impl<'a> Gen<'a> {
         for (key, sig) in &shims {
             self.emit_shim(key, sig)?;
         }
+        let mut spawns: Vec<Ty> = inst.spawns.iter().cloned().collect();
+        spawns.sort_by_key(container_sort_name);
+        for sig in &spawns {
+            self.emit_thread_body(sig)?;
+        }
+        Ok(())
+    }
+
+    /// One spawn signature's worker body (MK9-S3-M1 stage C1): load the moved
+    /// argument out of its slot, call the closure's code pointer with its
+    /// environment, and store the result where the handle expects it. The shape
+    /// is the C backend's `write_thread_body`, pointer for pointer, because the
+    /// runtime's trampoline is the one caller of either.
+    fn emit_thread_body(&self, sig: &Ty) -> Result<(), String> {
+        let Ty::Closure { params, ret } = sig else {
+            unreachable!("a thread body is emitted per closure signature: {}", sig.display())
+        };
+        let symbol = thread_body_symbol(sig);
+        let (func, _) = *self
+            .closure_fns
+            .get(&symbol)
+            .ok_or_else(|| no_value(&format!("the thread body '{symbol}'")))?;
+        let entry = func.append_block("entry");
+        self.builder.position_at_end(entry);
+        let ptr = self.pty();
+        let code = func.get_param(0);
+        let env = func.get_param(1);
+        let arg_ptr = func.get_param(2);
+        let out_ptr = func.get_param(3);
+        let arg_ty = self.lty2(&params[0])?;
+        let arg = self.builder.build_load(arg_ty, arg_ptr, "arg");
+        let ret_lty = llvm_ret_type(self.ctx, &self.structs, &self.containers, ret)?;
+        let call_ty = self.ctx.fn_type(ret_lty, &[ptr, arg_ty], false);
+        let yields = **ret != Ty::Unit;
+        let name = if yields { "call" } else { "" };
+        let value = self
+            .builder
+            .build_indirect_call(code, call_ty, &[env, arg], name);
+        if yields {
+            self.builder.build_store(value, out_ptr);
+        }
+        self.builder.build_ret_void();
         Ok(())
     }
 
@@ -5447,6 +5748,13 @@ fn coerce_drop_symbol(ty: &Ty) -> String {
 
 fn shim_symbol(key: &str, ty: &Ty) -> String {
     format!("kelp_shim__{}__{}", crate::types::c_ident(key), closure_mangle_of(ty))
+}
+
+/// The symbol of one spawn signature's worker body (MK9-S3-M1 stage C1), the
+/// same name `codegen_c.rs::thread_body_name` gives the C body: the runtime's
+/// trampoline is the one caller of either.
+fn thread_body_symbol(sig: &Ty) -> String {
+    format!("kelp_thread_body__{}", closure_mangle_of(sig))
 }
 
 /// The signature a closure callee is called with, when the callee is a closure
@@ -8468,6 +8776,26 @@ fn declare_runtime<'a>(
     // module still terminates the block it is called from with `unreachable`.
     decl(&mut out, "kelp_panic", void, &[ptr], false, false);
     decl(&mut out, "kelp_assert", void, &[i1], false, false);
+    // The thread runtime (MK9-S3-M1 stage C1). The handle is one opaque pointer,
+    // and every accessor takes it and hands back one of the slots, so the
+    // record's layout stays `kelp_rt.c`'s business. `kelp_thread_start` takes
+    // the per-signature body's address as an ordinary pointer, the same shape
+    // the C backend calls it with.
+    decl(&mut out, "kelp_thread_new", ptr, &[i64, i64], true, false);
+    decl(
+        &mut out,
+        "kelp_thread_start",
+        void,
+        &[ptr, ptr, ptr, ptr, ptr],
+        false,
+        false,
+    );
+    decl(&mut out, "kelp_thread_wait", ctx.i32(), &[ptr], true, false);
+    decl(&mut out, "kelp_thread_arg", ptr, &[ptr], true, false);
+    decl(&mut out, "kelp_thread_result", ptr, &[ptr], true, false);
+    decl(&mut out, "kelp_thread_message", ptr, &[ptr], true, false);
+    decl(&mut out, "kelp_thread_dispose", void, &[ptr], false, false);
+    decl(&mut out, "kelp_thread_drop", void, &[ptr], false, false);
     // `kelp_Bytes`
     decl(&mut out, "kelp_Bytes__empty", bytes, &[], true, true);
     decl(&mut out, "kelp_Bytes__from_str", bytes, &[ptr], true, true);
@@ -8587,6 +8915,12 @@ fn llvm_type<'a>(
         // here too.
         Ty::Str => ctx.opaque_ptr(),
         Ty::Ref { inner, .. } if matches!(**inner, Ty::Str) => ctx.opaque_ptr(),
+        // `Thread<T>` is one pointer to the worker record `thread.spawn`
+        // allocates (MK9-S3-M1 stage C1), so the element type does not reach
+        // the IR at all; it decides the size of the result slot and the
+        // `Result<T, ThreadErr>` a join builds, both of which the call sites
+        // name themselves.
+        Ty::Thread(_) => ctx.opaque_ptr(),
         // The builtin heap types, in the same field order `runtime/kelp_rt.c`
         // defines them (MK7 §3.3). `View` is the borrowed pair.
         Ty::Bytes => *structs
@@ -8896,6 +9230,11 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // element sets are unchanged), where the container's own routines would
         // read and write it as a plain location.
         Ty::Atomic(_) => Ok(()),
+        // A `Thread<T>` field is one pointer to the worker record (MK9-S3-M1
+        // stage C1), so it is as nameable as the atomic beside it. The
+        // frontend accepts a handle as a field and refuses it as a container
+        // element, and the pointer is what both backends lay out.
+        Ty::Thread(_) => Ok(()),
         // A borrowed field never reaches codegen at all: the frontend refuses
         // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
         // and a reference). These three rows are therefore unreachable, and are

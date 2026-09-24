@@ -1,0 +1,19 @@
+// MK9-S3-M1 stage B1, section 5 rule 3: a shared borrow of a `pd` crosses only
+// when the borrowed type has no reachable `&mut` path. An `Atomic<T>` has none
+// by construction; this `datac` has a `var` field one step from the borrow, so
+// two threads could write it through the same shared borrow and the checker
+// refuses the sharing.
+impl "std/thread"
+
+pd val shared = Counter(base = 1, hits = 0)
+
+datac Counter(val base: i64, var hits: i64)
+
+fun worker(c: &Counter) {
+    print(c.base)
+}
+
+fun main() {
+    val h = thread.spawn(worker, &shared)
+    print(0)
+}

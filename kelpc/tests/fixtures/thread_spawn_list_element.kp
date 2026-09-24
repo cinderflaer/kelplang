@@ -1,0 +1,10 @@
+// MK9-S3-M1 stage B1: a `Thread<T>` is refused as a `List` element, the same
+// rule an `Atomic<T>` already has and for a neighbouring reason: a handle names
+// one running worker and is joined once, while a list's own routines copy and
+// drop an element like a plain location.
+impl "std/thread"
+
+fun main() {
+    var xs: List<Thread<i64>> = List.empty()
+    print(xs.len())
+}

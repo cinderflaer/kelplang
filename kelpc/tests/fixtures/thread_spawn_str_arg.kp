@@ -1,0 +1,14 @@
+// MK9-S3-M1 stage B1, section 5 rule 2's second shape: a `str` (and a `View`,
+// the same kind of thing with a length) is a borrowed view of text somebody
+// else owns. A worker outlives the frame that owns the text, so a `str`
+// argument is refused with the reason rather than as a plain type mismatch. An
+// entry point taking `str` is a plain function value: a `str` is `Copy`, so its
+// parameter is the bare type and `"hello"` matches it exactly.
+impl "std/thread"
+
+fun worker(s: str).R: i64 = 0
+
+fun main() {
+    val h = thread.spawn(worker, "hello")
+    print(0)
+}

@@ -6118,3 +6118,131 @@ fn a_thread_fence_lowers_to_the_fence_instruction_of_its_backend() {
         backend()
     );
 }
+
+// ---------------------------------------------------------------------------
+// MK9-S3-M1 stages B1 and C1: the `thread.spawn` / `thread.join` surface, the
+// argument rules of MK9 section 5, and the two gates section 7 asks for. Stage
+// B1 landed the checker and every rule as a *rejection*; stage C1 lowers both
+// calls, so the four rule probes are still refused by name and the accepted
+// shapes now build and run.
+// ---------------------------------------------------------------------------
+
+/// Rule 1: an exclusive borrow never crosses to a worker, because the worker
+/// outlives the frame that made the borrow and the borrow is the promise that
+/// no other path reaches the value.
+#[test]
+fn a_mut_borrow_argument_to_spawn_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_mut_borrow.kp",
+        "'thread.spawn' cannot send '&mut Atomic<i64>'",
+    );
+}
+
+/// Rule 2: a shared borrow may cross only when the place it borrows has process
+/// lifetime, which in v1 means a `pd` global, so a borrow of a frame local is
+/// refused.
+#[test]
+fn a_borrow_of_a_frame_local_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_local_borrow.kp",
+        "borrows a frame local that ends before the worker does",
+    );
+}
+
+/// Rule 2's other shape: a `str` (and a `View`, the same thing with a length)
+/// is borrowed text with no place of its own.
+#[test]
+fn a_str_argument_to_spawn_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_str_arg.kp",
+        "'thread.spawn' cannot send a 'str'",
+    );
+}
+
+/// Rule 3: a shared borrow of a `pd` whose pointee has a reachable `var` field
+/// is refused, because two threads could write it through the same borrow.
+#[test]
+fn a_shared_borrow_reaching_a_var_field_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_var_field.kp",
+        "the borrow reaches a 'var' field",
+    );
+}
+
+/// Rule 4: a moved value that carries a borrow cannot be constructed in the
+/// first place, so `thread.spawn` opens no hole there.
+#[test]
+fn a_moved_value_that_carries_a_borrow_is_still_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_borrowed_value.kp",
+        "field 'text' is a borrowed type ('View')",
+    );
+}
+
+/// Rules 2 and 3 in their accepted shape: a `&Atomic<T>` of a `pd` global is
+/// the one borrow that crosses to a worker, and stage C1 lowers the call.
+#[test]
+fn a_shared_pd_atomic_is_the_one_borrow_that_crosses() {
+    assert_compiles_and_runs("tests/fixtures/thread_spawn_pd_atomic.kp", "1\n");
+}
+
+/// The accepted shapes: a declared `fun`, a capturing closure, and a handle
+/// typed as a parameter, a `datac` field and an `enum` payload. Stage C1 lowers
+/// all of them, so each builds and runs.
+#[test]
+fn an_accepted_spawn_or_join_builds_and_runs() {
+    assert_compiles_and_runs("tests/fixtures/thread_spawn_accepted.kp", "42\n");
+    assert_compiles_and_runs("tests/fixtures/thread_spawn_closure.kp", "42\n");
+    assert_compiles_and_runs("tests/fixtures/thread_join_accepted.kp", "1\n");
+}
+
+/// The stress gate (MK9 section 7): eight workers, each doing a thousand
+/// `fetch_add`s of one shared `pd val Atomic<i64>`, every one of them joined
+/// before the total is read. A lost update anywhere makes the total something
+/// other than 8000, which is the one thing a single-threaded counter test
+/// cannot catch.
+#[test]
+fn a_thread_stress_gate_produces_the_exact_total() {
+    assert_compiles_and_runs("tests/fixtures/thread_stress.kp", "8000\n");
+}
+
+/// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`
+/// carrying the panic text, a second worker's work is intact, and the process
+/// exits 0. A panic ends the thread it happened in; `main` still decides what to
+/// do about it (MK9 section 2).
+#[test]
+fn a_panicking_worker_is_seen_as_an_error_by_its_joiner() {
+    assert_compiles_and_runs(
+        "tests/fixtures/thread_panic.kp",
+        "worker exploded\n0\n42\n",
+    );
+}
+
+/// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
+/// thing `thread.spawn` makes.
+#[test]
+fn join_refuses_a_value_that_is_not_a_thread_handle() {
+    assert_rejected_with(
+        "tests/fixtures/thread_join_not_a_handle.kp",
+        "takes a 'Thread<T>' handle",
+    );
+}
+
+/// A `Thread<T>` is refused as a `List`/`Map`/`Box`/array element, the rule an
+/// `Atomic<T>` already has: a handle names one running worker and is joined
+/// once, while a container's own routines copy and drop an element like a plain
+/// location.
+#[test]
+fn a_thread_handle_cannot_be_a_container_element() {
+    for (fixture, container) in [
+        ("thread_spawn_list_element", "a 'List' element"),
+        ("thread_spawn_map_element", "a 'Map' value"),
+        ("thread_spawn_box_element", "a 'Box' element"),
+        ("thread_spawn_array_element", "an array element"),
+    ] {
+        assert_rejected_with(
+            &format!("tests/fixtures/{fixture}.kp"),
+            &format!("'Thread<i64>' cannot be {container}"),
+        );
+    }
+}

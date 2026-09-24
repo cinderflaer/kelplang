@@ -1,0 +1,24 @@
+// MK9-S3-M1 sections 5 rules 2 and 3 in their accepted shape, which is the whole
+// of v1's shared data: a `pd val` atomic borrows the process-lifetime place rule
+// 2 allows, and an `Atomic<T>` has no reachable `&mut` path, so rule 3 passes it
+// too. This is the one spawn whose argument is a borrow rather than an owned
+// value, and the join proves it reached the worker: the worker increments the
+// shared counter and hands the count it sees back.
+impl "std/thread"
+impl "std/atomic"
+impl "std/result"
+
+pd val counter: AtomicI64 = AtomicI64.new(0)
+
+fun worker(c: &AtomicI64).R: i64 {
+    c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+    c.load(order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    val h = thread.spawn(worker, &counter)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
