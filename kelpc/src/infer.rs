@@ -2958,8 +2958,9 @@ pub fn atomic_order_ty() -> Ty {
 /// the key always names a declaration by the time one is reached.
 pub fn thread_err_ty() -> Ty {
     Ty::Struct(format!(
-        "{}ThreadErr",
-        crate::stdlib::key_prefix(crate::stdlib::THREAD_MODULE)
+        "{}{}",
+        crate::stdlib::key_prefix(crate::stdlib::THREAD_MODULE),
+        crate::stdlib::THREAD_ERR_NAME
     ))
 }
 
@@ -9581,8 +9582,9 @@ fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// MK9-S3-M1 stage B1: `thread.spawn` / `thread.join`, the checker surface and
-// the rules of MK9 section 5. Neither is lowered here; stage C1 emits both.
+// MK9-S3-M1 stages B1 and C1: `thread.spawn` / `thread.join`. B1 landed the
+// checker surface and the rules of MK9 section 5; C1 lowers both, so the two
+// calls below build the `tir` node each backend translates into a real worker.
 // ---------------------------------------------------------------------------
 
 /// One of the two thread calls, dispatched on the key `check_call` matched.
@@ -9600,15 +9602,15 @@ fn check_thread_call(
     }
 }
 
-/// `thread.spawn(entry, arg)` (MK9-S3-M1 stage B1). `T` is the single parameter
-/// type of `entry`, which is a declared `fun`, a `fun` literal, or a capturing
-/// closure (a plain function value is widened where a closure is expected, the
-/// ordinary A-4 phase E rule); `arg` is the value moved into the worker as that
-/// parameter, and the handle's element is `entry`'s return type.
+/// `thread.spawn(entry, arg)` (MK9-S3-M1 stages B1 and C1). `entry` is a
+/// declared `fun`, a `fun` literal, or a capturing closure, taking exactly one
+/// parameter; `arg` is the value moved into the worker as that parameter, and
+/// the handle's element is `entry`'s **return** type, which is the value the
+/// worker hands its joiner (MK9 section 4).
 ///
-/// The refusals are MK9 section 5's rules 1 to 4, each naming its own reason;
-/// the accepted path emits the interim error below, because lowering is stage
-/// C1.
+/// The refusals are MK9 section 5's rules 1 to 4, each naming its own reason.
+/// The accepted path is a `tir::Call` under this module's own key, which is what
+/// both backends recognize to emit the worker and the trampoline that calls it.
 fn check_thread_spawn(
     args: &[ast::CallArg],
     span: Span,
@@ -9625,8 +9627,8 @@ fn check_thread_spawn(
     let value_arg = &args[slots[1]];
 
     let entry = check_expr(&entry_arg.value, ctx, None)?;
-    let params = match &entry.ty {
-        Ty::Fn { params, .. } | Ty::Closure { params, .. } => params,
+    let (params, ret) = match &entry.ty {
+        Ty::Fn { params, ret } | Ty::Closure { params, ret } => (params.clone(), (**ret).clone()),
         other => {
             return Err(TypeError {
                 message: format!(
@@ -9648,32 +9650,46 @@ fn check_thread_spawn(
             span: entry_arg.value.span(),
         });
     }
-    let t = params[0].clone();
+    let moved = params[0].clone();
+    // A plain function value is widened into a closure here rather than at each
+    // backend, so `entry` has one shape downstream: the ordinary A-4 phase E
+    // widening, a `fun` value wrapped in the one-field environment a closure's
+    // code pointer is called with.
+    let entry = coerce_fn_to_closure(
+        Ty::Closure {
+            params: params.clone(),
+            ret: Box::new(ret.clone()),
+        },
+        entry,
+    );
 
-    let value = check_expr(&value_arg.value, ctx, Some(&t))?;
+    let value = check_expr(&value_arg.value, ctx, Some(&moved))?;
     check_thread_arg(&value_arg.value, &value, ctx)?;
-    if value.ty != t {
+    if value.ty != moved {
         return Err(TypeError {
             message: format!(
                 "'thread.spawn''s argument has type '{}', and its entry point takes '{}' by move: the worker's parameter is the value moved in, so the two have to be the same type",
                 value.ty.display(),
-                t.display()
+                moved.display()
             ),
             span: value_arg.value.span(),
         });
     }
 
-    // Stage C1 removes this refusal and lowers the call.
-    Err(TypeError {
-        message: "'thread.spawn' is not lowered yet: this call passes every MK9 section 5 checker rule, and MK9-S3-M1 stage C1 is the stage that emits the worker, so no call may reach codegen before then".to_string(),
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: crate::stdlib::SPAWN_FN.to_string(),
+            args: vec![entry, value],
+        },
+        ty: Ty::Thread(Box::new(ret)),
         span,
     })
 }
 
-/// `thread.join(handle)` (MK9-S3-M1 stage B1). The handle is a `Thread<T>`, and
-/// the result is `Result<T, ThreadErr>`: `Ok` the worker's value, `Err` why it
-/// ended without one (MK9 section 2). The accepted path emits the interim
-/// error for the same reason `spawn` does.
+/// `thread.join(handle)` (MK9-S3-M1 stages B1 and C1). The handle is a
+/// `Thread<T>`, the joiner consumes it, and the result is
+/// `Result<T, ThreadErr>`: `Ok` the worker's value, `Err` why it ended without
+/// one (MK9 section 2).
 fn check_thread_join(
     args: &[ast::CallArg],
     span: Span,
@@ -9701,8 +9717,7 @@ fn check_thread_join(
         }
     };
 
-    // The result type is built even though stage B1 lowers nothing, so the
-    // shipped `ThreadErr` declaration is named through this module's key
+    // The result names the shipped `ThreadErr` through this module's key
     // exactly as the signature states, and a program that never imported
     // `std/result` is told to rather than given an internal error.
     let result_key = format!(
@@ -9719,11 +9734,14 @@ fn check_thread_join(
             span,
         });
     }
-    let _joined = ctx.instantiate_type(&result_key, &[elem, thread_err_ty()], span)?;
+    let joined = ctx.instantiate_type(&result_key, &[elem, thread_err_ty()], span)?;
 
-    // Stage C1 removes this refusal and lowers the call.
-    Err(TypeError {
-        message: "'thread.join' is not lowered yet: this call passes the checker, and MK9-S3-M1 stage C1 is the stage that joins the worker, so no call may reach codegen before then".to_string(),
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call {
+            callee: crate::stdlib::JOIN_FN.to_string(),
+            args: vec![handle],
+        },
+        ty: joined,
         span,
     })
 }

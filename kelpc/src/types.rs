@@ -157,16 +157,18 @@ pub enum Ty {
     /// `thread.spawn` hands back and `thread.join` consumes.
     ///
     /// Monomorphized per element type exactly as `Atomic<T>` and `List<T>` are,
-    /// and `T` is the value the worker gives the joiner. **Not `Copy`, and
-    /// needing no drop.** Not `Copy` because the handle names one running
-    /// worker, and a copy would name it twice; no drop because the worker owns
-    /// nothing this frame may free, which is the same shape `Atomic<T>` has.
+    /// and `T` is the value the worker gives the joiner. **Not `Copy`.** It
+    /// *does* own heap memory, one allocation: the worker record `thread.spawn`
+    /// builds, which holds the running thread's identity, its result slot and
+    /// the argument moved into it. Stage C1 gives it a drop (`kelp_thread_drop`)
+    /// that detaches a worker nobody joined and leaks that record, because the
+    /// record cannot be freed while the worker may still write through it; the
+    /// decision is recorded in `plan/mk9-memory-model.md` section 5.
     ///
     /// A handle is accepted as a local, a `datac`/`enum` field and a parameter,
     /// and refused as a `List`/`Map`/`Box`/array element for the reason the
     /// refusal message gives: joining is a one-shot thing a container's own
-    /// copy-and-drop routines would duplicate. Stage B1 checks the type only;
-    /// MK9-S3-M1 stage C1 lowers `spawn` and `join`.
+    /// copy-and-drop routines would duplicate.
     Thread(Box<Ty>),
 }
 
@@ -262,7 +264,11 @@ impl Ty {
                     | Ty::List(_)
                     | Ty::Box(_)
                     | Ty::Map(..)
-                    | Ty::Closure { .. }
+                    // A `Thread<T>` owns the worker record `thread.spawn`
+                    // allocated, so it is dropped (detached) like any other
+                    // owned value (MK9-S3-M1 stage C1).
+                    | Ty::Thread(_)
+                    | Ty::Closure { .. },
             ),
         }
     }
@@ -342,7 +348,7 @@ impl Ty {
             Ty::Map(key, value) => map_c_type(key, value),
             Ty::Array(elem, len) => array_c_type(elem, *len),
             Ty::Atomic(elem) => atomic_c_type(elem),
-            Ty::Thread(elem) => thread_c_type(elem),
+            Ty::Thread(_) => thread_c_type(),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -750,6 +756,10 @@ pub fn drop_fn_name(ty: &Ty) -> String {
     match ty {
         Ty::Bytes => "kelp_bytes_drop".to_string(),
         Ty::String => "kelp_string_drop".to_string(),
+        // One runtime function for every element type: a handle detaches the
+        // worker and frees nothing, so the element type is not part of the
+        // step (MK9-S3-M1 stage C1).
+        Ty::Thread(_) => "kelp_thread_drop".to_string(),
         Ty::Struct(name) => format!("kelp_drop_{}", c_ident(name)),
         Ty::List(elem) => format!("kelp_list_drop__{}", ty_mangle(elem)),
         Ty::Box(elem) => format!("kelp_box_drop__{}", ty_mangle(elem)),
@@ -988,13 +998,14 @@ pub fn atomic_c_type(elem: &Ty) -> String {
     format!("kelp_Atomic__{}", ty_mangle(elem))
 }
 
-/// The generated C struct tag for `Thread<T>`. Stage B1 emits nothing for it:
-/// a valid `thread.spawn`/`thread.join` call is refused until MK9-S3-M1 stage
-/// C1 lowers the two, so no typedef with this name reaches an artifact yet. The
-/// name exists because `c_type` has to be total, and it is the name C1's
-/// lowering will emit.
-pub fn thread_c_type(elem: &Ty) -> String {
-    format!("kelp_Thread__{}", ty_mangle(elem))
+/// The generated C type for `Thread<T>` (MK9-S3-M1 stage C1): the handle is one
+/// pointer to the worker record `thread.spawn` allocates, so the C type is
+/// uniform over the element type exactly as `str` is uniform over what it
+/// points at. The element type stays in the Kelp type, which is what decides
+/// the result slot's size and the `Result<T, ThreadErr>` a join builds, so it
+/// is deliberately not part of this name.
+pub fn thread_c_type() -> String {
+    "kelp_Thread*".to_string()
 }
 
 /// Whether `ty` may be a `Thread<T>`'s element: anything a worker may hand back

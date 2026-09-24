@@ -1,13 +1,16 @@
-// MK9-S3-M1 stage B1: a `thread.spawn` call that passes every section 5 rule is
-// checked and then refused, because stage C1 is the stage that lowers it. This
-// is the accepted shape, with a declared `fun` as the entry point (the ordinary
-// function value). The message names the stage, so no valid call can reach
-// codegen before C1 exists.
+// MK9-S3-M1 stage C1: the accepted `thread.spawn` shape with a declared `fun`
+// as the entry point, which a plain function value is widened from. The call
+// passes every section 5 rule and is lowered, and the join proves the worker ran
+// the function it was given: `41` in, `42` back.
 impl "std/thread"
+impl "std/result"
 
 fun worker(x: move i64).R: i64 = x + 1
 
 fun main() {
     val h = thread.spawn(worker, 41)
-    print(0)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
 }

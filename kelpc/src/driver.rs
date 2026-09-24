@@ -50,8 +50,11 @@ pub fn compile_c(
         .arg(&c_path)
         // `-fwrapv` makes signed overflow wrap instead of being UB, which is
         // what the plan's arithmetic-overflow section promises. `-lm` is for
-        // `std/math`'s externs (an unused library is free to link).
+        // `std/math`'s externs (an unused library is free to link). `-pthread`
+        // is for the generated program's `thread.spawn`/`thread.join`, whose
+        // runtime half is part of the generated C (MK9-S3-M1 stage C1).
         .arg("-fwrapv")
+        .arg("-pthread")
         .arg("-lm")
         .output()
         .map_err(|e| CompileError {
@@ -96,6 +99,9 @@ pub fn compile_c_object(
         .arg("-c")
         .arg(opt.cc_flag())
         .arg("-fwrapv")
+        // The same reason the runtime object's own build passes it: an `extern
+        // fun` body may reach the thread runtime's helpers (MK9-S3-M1 stage C1).
+        .arg("-pthread")
         .arg("-Werror=implicit-function-declaration")
         .arg("-o")
         .arg(obj_path)
@@ -160,7 +166,10 @@ pub fn link_llvm_object(
         .arg("-o")
         .arg(out_path)
         .arg(object_path)
-        .arg(&runtime_path);
+        .arg(&runtime_path)
+        // The runtime object holds `pthread_create`/`pthread_join` now (MK9-S3-M1
+        // stage C1), so the link has to name the threading library.
+        .arg("-pthread");
     if let Some(externs) = externs_object {
         command.arg(externs);
     }

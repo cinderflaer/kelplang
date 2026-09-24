@@ -8,10 +8,61 @@ typedef struct {
     size_t cap;
 } kelp_Bytes;
 
+/* ---- kelp_Thread: the worker handle and the per-thread panic policy ---------
+   MK9-S3-M1 stage C1. One `thread.spawn` makes one handle: the worker's
+   identity, the slot the worker writes its result into, the slot the argument
+   was moved into, and the message the worker died with when it panicked.
+   `thread.join` waits on the worker and reads those slots; the drop of a handle
+   nobody joined detaches the worker and leaks the handle, because the handle
+   cannot be freed while the worker may still write through it.
+
+   The panic policy is MK9 section 2: a panic inside a worker records its
+   message here and ends that worker, while a panic anywhere else keeps today's
+   behaviour and takes the process. `kelp_thread_self` is the thread-local slot
+   that lets a `kelp_panic` call tell the two apart. */
+typedef struct {
+    pthread_t tid;
+    int panicked;
+    void* result;
+    void* arg;
+    const char* message;
+} kelp_Thread;
+
+static _Thread_local kelp_Thread* kelp_thread_self = NULL;
+
+/* The text a worker hands its joiner: `msg`, then the detail line the main
+   thread would have printed under it (an errno, a getaddrinfo code). Heap,
+   because the joiner reads it after the worker's frame is gone; it is freed by
+   nothing, which is the same admitted leak a panicking worker's frame is
+   (MK9 section 2). */
+static const char* kelp_thread_panic_text(const char* msg, const char* detail) {
+    size_t n = strlen(msg);
+    size_t m = detail == NULL ? 0 : strlen(detail);
+    char* out = (char*)malloc(n + m + 1);
+    if (out == NULL) {
+        return msg;
+    }
+    if (n > 0) {
+        memcpy(out, msg, n);
+    }
+    if (m > 0) {
+        memcpy(out + n, detail, m);
+    }
+    out[n + m] = 0;
+    return out;
+}
+
 /* `_Noreturn` is what tells the C compiler a `panic` cannot come back, so a
    generated function whose tail is a `panic` needs no trailing `return` and
-   draws no "control reaches end of non-void function" warning. */
+   draws no "control reaches end of non-void function" warning. A worker's
+   panic still never comes back: it ends the worker with `pthread_exit`, and
+   its joiner reads the message out of the handle. */
 _Noreturn static void kelp_panic(const char* msg) {
+    if (kelp_thread_self != NULL) {
+        kelp_thread_self->panicked = 1;
+        kelp_thread_self->message = msg;
+        pthread_exit(NULL);
+    }
     fprintf(stderr, "panic: %s\n", msg);
     exit(1);
 }
@@ -21,8 +72,19 @@ _Noreturn static void kelp_panic(const char* msg) {
    golden assertion on a message prefix is unaffected. `p` takes the code as
    an argument because the callers that clean up (a `close`, an `fclose`)
    between the failing call and the panic would otherwise let that cleanup
-   overwrite the `errno` being reported. */
+   overwrite the `errno` being reported.
+
+   In a worker the same line goes into the message the joiner gets, because
+   there is no stderr the main thread is watching for a failure it decided to
+   handle itself (MK9 section 2). */
 _Noreturn static void kelp_panic_at(const char* msg, int p) {
+    if (kelp_thread_self != NULL) {
+        char detail[256];
+        snprintf(detail, sizeof detail, "\n  errno %d: %s", p, strerror(p));
+        kelp_thread_self->panicked = 1;
+        kelp_thread_self->message = kelp_thread_panic_text(msg, detail);
+        pthread_exit(NULL);
+    }
     fprintf(stderr, "panic: %s\n", msg);
     fprintf(stderr, "  errno %d: %s\n", p, strerror(p));
     exit(1);
@@ -35,6 +97,13 @@ _Noreturn static void kelp_panic_errno(const char* msg) {
 /* `getaddrinfo` reports through its own return code, not `errno`, so a DNS
    failure gets `gai_strerror` instead of a misleading `errno 0: Success`. */
 _Noreturn static void kelp_panic_gai(const char* msg, int rc) {
+    if (kelp_thread_self != NULL) {
+        char detail[256];
+        snprintf(detail, sizeof detail, "\n  getaddrinfo: %s", gai_strerror(rc));
+        kelp_thread_self->panicked = 1;
+        kelp_thread_self->message = kelp_thread_panic_text(msg, detail);
+        pthread_exit(NULL);
+    }
     fprintf(stderr, "panic: %s\n", msg);
     fprintf(stderr, "  getaddrinfo: %s\n", gai_strerror(rc));
     exit(1);
@@ -526,4 +595,116 @@ static kelp_Bytes kelp_bytes_alloc_raw(size_t n) {
     b.cap = n;
     return b;
 }
+// ---- kelp_Thread helpers (MK9-S3-M1 stage C1) --------------------------------
+// One worker's lifecycle. `kelp_thread_new` allocates the handle and the two
+// slots it owns; the generated code stores the moved argument into `arg`; the
+// generated per-signature `body` is what calls the closure. The record below
+// carries what the trampoline needs and names no type, so one body per spawn
+// signature is all either backend writes.
+typedef struct {
+    kelp_Thread* handle;
+    /* `body(code, env, arg, out)`: call the closure `code`/`env` with the value
+       at `arg` and store its result at `out`. One per spawn signature, emitted
+       by whichever backend built the program, so this record names no type. */
+    void (*body)(void*, void*, void*, void*);
+    void* code;
+    void* env;
+    void (*env_drop)(void*);
+} kelp_ThreadStart;
+
+static void kelp_thread_release(void* raw) {
+    kelp_ThreadStart* s = (kelp_ThreadStart*)raw;
+    if (s->env != NULL && s->env_drop != NULL) {
+        s->env_drop(s->env);
+    }
+    free(s);
+}
+
+static void* kelp_thread_tramp(void* raw) {
+    kelp_ThreadStart* s = (kelp_ThreadStart*)raw;
+    kelp_thread_self = s->handle;
+    /* The handler runs on both ways out: a normal return and the `pthread_exit`
+       a worker's panic takes. So the record and the closure's environment are
+       freed either way, and what a panicking worker still abandons is its own
+       frame's owned values, which is exactly the leak MK9 section 2 admits. */
+    pthread_cleanup_push(kelp_thread_release, s);
+    s->body(s->code, s->env, s->handle->arg, s->handle->result);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+
+static kelp_Thread* kelp_thread_new(size_t arg_size, size_t result_size) {
+    kelp_Thread* h = (kelp_Thread*)malloc(sizeof(kelp_Thread));
+    if (h == NULL) {
+        kelp_panic("thread.spawn: out of memory");
+    }
+    h->panicked = 0;
+    h->message = NULL;
+    h->result = malloc(result_size == 0 ? 1 : result_size);
+    h->arg = malloc(arg_size == 0 ? 1 : arg_size);
+    if (h->result == NULL || h->arg == NULL) {
+        kelp_panic("thread.spawn: out of memory");
+    }
+    return h;
+}
+
+static void kelp_thread_start(kelp_Thread* h, void (*body)(void*, void*, void*, void*), void* code, void* env, void (*env_drop)(void*)) {
+    kelp_ThreadStart* s = (kelp_ThreadStart*)malloc(sizeof(kelp_ThreadStart));
+    if (s == NULL) {
+        kelp_panic("thread.spawn: out of memory");
+    }
+    s->handle = h;
+    s->body = body;
+    s->code = code;
+    s->env = env;
+    s->env_drop = env_drop;
+    if (pthread_create(&h->tid, NULL, kelp_thread_tramp, s) != 0) {
+        kelp_panic("thread.spawn: pthread_create failed");
+    }
+}
+
+/* Waits for the worker and reports whether it panicked. `pthread_join` is the
+   barrier: every slot the worker wrote is visible to this thread after it. */
+static int kelp_thread_wait(kelp_Thread* h) {
+    pthread_join(h->tid, NULL);
+    return h->panicked;
+}
+
+static void* kelp_thread_arg(kelp_Thread* h) {
+    return h->arg;
+}
+
+static void* kelp_thread_result(kelp_Thread* h) {
+    return h->result;
+}
+
+static const char* kelp_thread_message(kelp_Thread* h) {
+    return h->message;
+}
+
+/* Frees a joined handle: the worker has ended, so both slots are dead. The
+   result's own contents were moved out by the joiner and the panic text was
+   never owned, so this frees the three allocations and nothing else. */
+static void kelp_thread_dispose(kelp_Thread* h) {
+    free(h->arg);
+    free(h->result);
+    free(h);
+}
+
+/* The drop of a handle nobody joined: detach the worker and leak the handle and
+   its two slots. Freeing them would be a use-after-free the moment the worker
+   runs, and refusing to drop a handle is a rule the language does not have
+   (MK9 section 5, stage C1). The argument is the slot the local holds, so the
+   generated drop passes `&h` and the null test covers the zero value a moved
+   binding leaves behind. The worker's own record is not part of this: the
+   trampoline frees that on the way out, whichever way it leaves. */
+static void kelp_thread_drop(kelp_Thread** slot) {
+    kelp_Thread* h = *slot;
+    if (h == NULL) {
+        return;
+    }
+    pthread_detach(h->tid);
+    *slot = NULL;
+}
+
 // ---- end Kelp runtime -------------------------------------------------------

@@ -66,6 +66,11 @@ pub(crate) const C_HEADERS: &str = "\
 #include <stdbool.h>\n\
 // `isize` is `ptrdiff_t` (`types.rs`), which is `stddef.h`'s and not brought\n\
 // in by any of the headers above or below.\n\
+// `pthread.h` is the runtime's thread machinery (MK9-S3-M1 stage C1): the two\n\
+// generated backends include the runtime text in different places, so the\n\
+// header it needs belongs with the rest of them rather than in the middle of\n\
+// the text.\n\
+#include <pthread.h>\n\
 #include <stddef.h>\n\
 #include <stdio.h>\n\
 #include <stdlib.h>\n\
@@ -239,6 +244,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         shims: shim_tys,
         arrays: array_tys,
         atomics: atomic_tys,
+        spawns: spawn_tys,
     } = collection;
     // An array is emitted after the types it holds by value, so it is sorted
     // innermost-first like a container, and the ones a `datac` field needs are
@@ -257,6 +263,21 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         .chain(closure_tys.iter().cloned())
         .collect();
     containers.sort_by_key(|t| (container_depth(t), container_name(t)));
+    // An `Atomic<T>` is one member of a scalar type (MK9-S3-M1 stage A1), so it
+    // names no `datac` and needs no forward declaration, and it is emitted here
+    // before every container and `datac` that may name one: a closure signature
+    // whose parameter or return is `&Atomic<i64>` spells the atomic's C type in
+    // its typedef, and an unknown type name there is the C compiler's implicit
+    // `int`. A `HashSet` has no order, so the sort is only so two runs emit the
+    // same text.
+    if !atomic_tys.is_empty() {
+        let mut atomics: Vec<&Ty> = atomic_tys.iter().collect();
+        atomics.sort_by_key(|t| crate::types::ty_mangle(t));
+        for ty in &atomics {
+            write_atomic_typedef(&mut out, ty);
+        }
+        out.push('\n');
+    }
     if !containers.is_empty() || !arrays.is_empty() {
         write_tags(&mut out, &program.structs, &program.enums);
         // Every array's tag is typedef'd here, before anything can name it: a
@@ -291,20 +312,6 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
                 container_name(ty)
             )
             .unwrap();
-        }
-        out.push('\n');
-    }
-
-    // An `Atomic<T>` is one member of a scalar type (MK9-S3-M1 stage A1), so it
-    // names no `datac` and needs no forward declaration, and it is emitted here
-    // before the `datac` declarations, in case one names an atomic by value.
-    // A `HashSet` has no order, so the sort is only so two runs emit the same
-    // text.
-    if !atomic_tys.is_empty() {
-        let mut atomics: Vec<&Ty> = atomic_tys.iter().collect();
-        atomics.sort_by_key(|t| crate::types::ty_mangle(t));
-        for ty in &atomics {
-            write_atomic_typedef(&mut out, ty);
         }
         out.push('\n');
     }
@@ -442,6 +449,19 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         shims.sort_by_key(|(key, ty)| (container_name(ty), key.clone()));
         for (key, ty) in shims {
             write_shim(&mut out, key, ty);
+        }
+        out.push('\n');
+    }
+
+    // The worker bodies `thread.spawn` lowers to (MK9-S3-M1 stage C1): each
+    // calls the closure it was handed through a code pointer and stores the
+    // result where the handle expects it, so it needs the closure typedef and
+    // nothing else.
+    if !spawn_tys.is_empty() {
+        let mut spawns: Vec<&Ty> = spawn_tys.iter().collect();
+        spawns.sort_by_key(|ty| container_name(ty));
+        for ty in spawns {
+            write_thread_body(&mut out, ty);
         }
         out.push('\n');
     }
@@ -1271,6 +1291,47 @@ fn coerce_shim_name(key: &str, ty: &Ty) -> String {
         crate::types::c_ident(key),
         coerce_mangle(ty)
     )
+}
+
+/// The generated C name of one spawn signature's worker body (MK9-S3-M1 stage
+/// C1). One per closure signature, spelled from the signature's own mangle so
+/// the LLVM backend's IR body of the same program carries the same name.
+fn thread_body_name(sig: &Ty) -> String {
+    let Ty::Closure { params, ret } = sig else {
+        unreachable!("a thread body is emitted per closure signature: {}", sig.display())
+    };
+    format!(
+        "kelp_thread_body__{}",
+        crate::types::closure_mangle(params, ret)
+    )
+}
+
+/// One spawn signature's worker body (MK9-S3-M1 stage C1): what the runtime's
+/// trampoline calls inside the new thread. Its parameters are pointers, so the
+/// shape is the same for every element type and the two backends agree on it:
+/// the closure's code pointer, its environment, the address of the moved
+/// argument, and the address of the handle's result slot. A body whose closure
+/// returns `unit` stores nothing, because there is no slot for a result that is
+/// not a value.
+fn write_thread_body(out: &mut String, sig: &Ty) {
+    let Ty::Closure { params, ret } = sig else {
+        unreachable!("a thread body is emitted per closure signature: {}", sig.display())
+    };
+    let arg_c = params[0].c_type();
+    let call = if **ret == Ty::Unit {
+        format!("((void (*)(void*, {arg_c}))code)(env, *({arg_c}*)arg);")
+    } else {
+        format!(
+            "*({ret_c}*)out = (({ret_c} (*)(void*, {arg_c}))code)(env, *({arg_c}*)arg);",
+            ret_c = ret.c_type()
+        )
+    };
+    writeln!(
+        out,
+        "static void {}(void* code, void* env, void* arg, void* out) {{\n    {call}\n}}\n",
+        thread_body_name(sig)
+    )
+    .unwrap();
 }
 
 /// One closure instantiation's function set — which is one function: the
@@ -2185,6 +2246,12 @@ struct Instantiations {
     /// function set beside it, because every operation is a single
     /// `__atomic_*` builtin written at the call site rather than a routine.
     atomics: HashSet<Ty>,
+    /// The closure signatures a `thread.spawn` entry reaches (MK9-S3-M1 stage
+    /// C1). Each needs one generated worker body, which is what the runtime's
+    /// trampoline calls inside the new thread; the body's parameters are
+    /// pointers, so one per signature is enough and the element type stays out
+    /// of it.
+    spawns: HashSet<Ty>,
 }
 
 fn collect_containers(program: &Program, out: &mut Instantiations) {
@@ -2239,7 +2306,15 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                 note_expr(lhs, out);
                 note_expr(rhs, out);
             }
-            ExprKind::Call { args, .. } => {
+            ExprKind::Call { callee, args } => {
+                // `thread.spawn(entry, arg)` (MK9-S3-M1 stage C1): the entry is
+                // a closure by the checker's coercion, and that signature is
+                // what the worker body is generated for.
+                if callee == crate::stdlib::SPAWN_FN {
+                    if let Some(entry) = args.first() {
+                        out.spawns.insert(entry.ty.clone());
+                    }
+                }
                 for a in args {
                     note_expr(a, out);
                 }
@@ -3787,6 +3862,84 @@ impl<'a> Gen<'a> {
         }
     }
 
+    /// `thread.spawn(entry, arg)` (MK9-S3-M1 stage C1), as C: allocate the
+    /// handle and its two slots, move the argument into the argument slot, and
+    /// start the worker with the generated body for this signature. The
+    /// handle's element is the entry's *return* type, which is the value the
+    /// worker hands its joiner, so `sizeof` that type is the result slot.
+    fn thread_spawn_value(&self, entry: &Expr, arg: &Expr, ret: &Ty) -> String {
+        let Ty::Closure { params, .. } = &entry.ty else {
+            unreachable!("thread.spawn's entry is a closure by the checker's coercion")
+        };
+        let Ty::Thread(elem) = ret else {
+            unreachable!("thread.spawn hands back a Thread<T> handle")
+        };
+        let arg_c = params[0].c_type();
+        let handle = fresh_temp();
+        let closure = fresh_temp();
+        // A worker that returns `unit` writes nothing: there is no result value,
+        // so the slot is a single byte nothing reads. The runtime always
+        // allocates one, which is why the size is 1 rather than 0.
+        let result_size = if **elem == Ty::Unit {
+            "1".to_string()
+        } else {
+            format!("sizeof({})", elem.c_type())
+        };
+        format!(
+            "({{ {closure_c} {closure} = {entry}; kelp_Thread* {handle} = kelp_thread_new(sizeof({arg_c}), {result_size}); *({arg_c}*){handle}->arg = {arg}; kelp_thread_start({handle}, {body}, (void*){closure}.fn, {closure}.env, {closure}.drop); {handle}; }})",
+            closure_c = entry.ty.c_type(),
+            entry = self.expr_value(entry),
+            arg = self.expr_value(arg),
+            body = thread_body_name(&entry.ty),
+        )
+    }
+
+    /// `thread.join(handle)` (MK9-S3-M1 stage C1), as C: wait for the worker,
+    /// then build `Result<T, ThreadErr>`: `Ok` the value out of the result slot,
+    /// or `Err` carrying the message the worker panicked with. The result slot
+    /// is read only on the success path, because a worker that panicked never
+    /// wrote it; the handle is freed after the value is out of it.
+    fn thread_join_value(&self, handle: &Expr, ret: &Ty) -> String {
+        let Ty::Struct(name) = ret else {
+            unreachable!("thread.join hands back a Result")
+        };
+        let edef = self
+            .enum_def(name)
+            .expect("a join's Result instance is declared");
+        // Recognized by variant name, never by the enum's own name: the same
+        // rule `compare_exchange`'s arm and `?` use.
+        let index_of = |variant: &str| {
+            edef.variants
+                .iter()
+                .position(|v| v.name == variant)
+                .expect("the Result shape has one arm per variant")
+        };
+        let ok = index_of("Ok");
+        let err = index_of("Err");
+        let member = |i: usize| variant_member(&edef.variants[i].name);
+        let field = |i: usize| field_name(&edef.variants[i].fields[0].name);
+        let Ty::Thread(elem) = &handle.ty else {
+            unreachable!("thread.join's argument is a Thread<T> handle")
+        };
+        let elem_c = elem.c_type();
+        let err_ty = crate::infer::thread_err_ty();
+        let h = fresh_temp();
+        let result = fresh_temp();
+        let value = fresh_temp();
+        format!(
+            "({{ {handle_c} {h} = {handle}; kelp_thread_wait({h}); {result_c} {result}; if ({h}->panicked) {{ {result}.kelp_tag = {err}; {result}.kelp_v.{err_member}.{err_field} = (({err_c}){{ .{err_msg} = kelp_String__from_str({h}->message) }}); }} else {{ {elem_c} {value} = *({elem_c}*){h}->result; {result}.kelp_tag = {ok}; {result}.kelp_v.{ok_member}.{ok_field} = {value}; }} kelp_thread_dispose({h}); {result}; }})",
+            handle_c = handle.ty.c_type(),
+            handle = self.expr_value(handle),
+            result_c = ret.c_type(),
+            err_member = member(err),
+            err_field = field(err),
+            err_c = err_ty.c_type(),
+            err_msg = field_name(crate::stdlib::THREAD_ERR_MESSAGE_FIELD),
+            ok_member = member(ok),
+            ok_field = field(ok),
+        )
+    }
+
     fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
         // An atomic operation (MK9-S3-M1 stage A1): one `__atomic_*` builtin,
         // never a plain read or write. The ordering argument is deliberately
@@ -3803,6 +3956,16 @@ impl<'a> Gen<'a> {
         // argument says.
         if callee == crate::stdlib::FENCE_FN {
             return "__atomic_thread_fence(__ATOMIC_SEQ_CST)".to_string();
+        }
+        // `thread.spawn` and `thread.join` (MK9-S3-M1 stage C1): the runtime
+        // owns the thread and the panic policy, and each call site is a small
+        // statement expression around it plus, for a spawn, the generated
+        // worker body for that signature.
+        if callee == crate::stdlib::SPAWN_FN {
+            return self.thread_spawn_value(&args[0], &args[1], ret);
+        }
+        if callee == crate::stdlib::JOIN_FN {
+            return self.thread_join_value(&args[0], ret);
         }
         // `n.to_u8()` and friends (S1): a numeric conversion, emitted inline
         // as a cast — with a range check when the target is an integer that

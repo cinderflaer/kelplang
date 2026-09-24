@@ -1,18 +1,18 @@
 /* std/thread: the thread surface. Stage A2 of MK9-S3-M1 added the fence, stage
-   B1 added the checker rules for `spawn` and `join` (below), and the threads
-   milestone MK6-S1-M1 lowers the two in its stage C1.
+   B1 added the checker rules for `spawn` and `join` (below), and stage C1
+   lowered the two on both backends.
 
        fun fence(order: Ordering)
        fun spawn<t, r>(entry: closure(move t).R: r, arg: move t).R: Thread<r>
        fun join<t>(handle: move Thread<t>).R: Result<t, ThreadErr>
 
-   `spawn` and `join` are *checker* builtins: the compiler checks them and, in
-   stage B1, lowers nothing, so a call that passes every rule is refused with
-   the stage that lowers it (MK9-S3-M1 stage C1) named in the message. Only
+   `spawn` and `join` are *checker* builtins: the compiler builds their
+   signatures at each call site, because what crosses the boundary decides the
+   types, and stage C1 lowers them through the pthread machinery in
+   `runtime/kelp_rt.c` plus one generated worker body per call signature. Only
    `ThreadErr` is declared here, and the two calls are documented rather than
    declared for the reason the fence is: their signatures are generic in the
    values that cross the thread boundary and there is no `.kp` body to write.
-   Stage C1 emits them, not this file.
 
        fun thread.spawn(entry, arg)
 
@@ -41,19 +41,23 @@
    with the process still alive (MK9 section 2). The main thread keeps today's
    behaviour: a panic in `main` still ends the process.
 
-   A `Thread<T>` is a compiler builtin generic in the shape `Atomic<T>` has:
-   monomorphized per element type, not `Copy` (a copy would name one worker
-   twice), and needing no drop. A handle is accepted as a local, a `datac` or
-   `enum` field and a parameter, and refused as a `List`/`Map`/`Box`/array
-   element, because joining is a one-shot thing a container's own copy-and-drop
-   routines would duplicate.
+   A `Thread<T>` is a compiler builtin generic in the shape `Atomic<T>` has: not
+   `Copy` (a copy would name one worker twice), and one pointer to a worker
+   record the runtime owns, so it is dropped like any other owned value. A handle
+   is accepted as a local, a `datac` or `enum` field and a parameter, and refused
+   as a `List`/`Map`/`Box`/array element, because joining is a one-shot thing a
+   container's own copy-and-drop routines would duplicate.
 
-   The fence, the one part of this surface that is lowered today: the module's
-   fence is documented here rather than declared, exactly as `std/atomic`
-   documents the atomic methods it declares nowhere: a fence is one instruction
-   on either side (`__atomic_thread_fence` in C, `fence seq_cst` in IR), so it
-   needs no C body and the compiler lowers it. Its parameter type is
-   `std/atomic`'s `Ordering`, named the way any other enum is (`BUG-kQ7Rv` was
+   A handle nobody joins is dropped by detaching the worker, which keeps running
+   while its record is leaked rather than freed under it; a panicking worker's
+   frame is abandoned the same way. Both are deliberate and recorded in
+   `plan/mk9-memory-model.md` section 5.
+
+   The fence: the module's fence is documented here rather than declared, exactly
+   as `std/atomic` documents the atomic methods it declares nowhere: a fence is
+   one instruction on either side (`__atomic_thread_fence` in C, `fence seq_cst`
+   in IR), so it needs no C body and the compiler lowers it. Its parameter type
+   is `std/atomic`'s `Ordering`, named the way any other enum is (`BUG-kQ7Rv` was
    the backend prelude having no typedef for it; it does now).
 
    The fence has no cell and no receiver. `SeqCst` means one total order over

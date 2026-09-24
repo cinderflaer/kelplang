@@ -1516,6 +1516,44 @@ Until MK9-S3-M2 states it as the language's own, the definition of the model thi
 
 A fence changes nothing a single-threaded program can observe, and it is one instruction: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` on the C side and `fence seq_cst` on the LLVM side.
 
+### 12.7 Threads
+
+`thread.spawn` starts a real OS thread and `thread.join` waits for it. Both are compiler builtins in `std/thread` (16.17), beside the fence, and neither is in the builtin signature table: what crosses the boundary decides their types, so the checker builds the signature at the call site.
+
+```kelp
+impl "std/thread"
+impl "std/atomic"
+impl "std/result"
+
+pd val counter: AtomicI64 = AtomicI64.new(0)
+
+fun bump(c: &AtomicI64).R: i64 {
+    c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+    0
+}
+
+fun main() {
+    val h = thread.spawn(bump, &counter)      // Thread<i64>
+    when thread.join(h) {
+        Ok(v) -> print(v)                     // the value the worker returned
+        Err(e) -> print(e.message)            // why it ended without one
+    }
+}
+```
+
+| Call | Takes | Returns |
+| --- | --- | --- |
+| `thread.spawn(entry, arg)` | an entry point taking exactly one parameter, and the value moved into it | `Thread<T>`, where `T` is the entry point's **return** type |
+| `thread.join(handle)` | a `Thread<T>` handle, consumed | `Result<T, ThreadErr>` |
+
+- **The entry point is an ordinary function value or closure.** A declared `fun`, a `fun` literal and a capturing closure all work, and a plain function value is widened where a closure is expected (7.2), so the three spellings are one value. Its single parameter's type is the type of `arg`.
+- **`arg` is moved into the worker.** A `&mut T` argument is refused: an exclusive borrow promises that no other path reaches the value, and the worker outlives the frame that made the borrow.
+- **A shared borrow crosses only from a `pd` whose pointee has no reachable `var` field.** That is the whole of v1's thread-shared data. The first clause is checkable because a `pd` global's lifetime is the process and a frame local's is not; the second is the structural rule `Sync` states, and an `Atomic<T>` satisfies it by construction because every access to one is an atomic operation through a shared borrow (12.5). `thread.spawn(bump, &counter)` with `pd val counter: AtomicI64` is the shared counter; a shared borrow of a `datac` with a reachable `var` field is refused, because two threads could write it through the same borrow. A `str` or a `View` argument is refused for the same reason: borrowed text with no place of its own.
+- **`Thread<T>` is a compiler builtin** in the shape `Atomic<T>` has. It is not `Copy`, because a copy would name one worker twice. It is accepted as a local, a `datac`/`enum` field and a parameter, and refused as a `List`/`Map`/`Box`/array element, because joining is a one-shot thing a container's own copy-and-drop routines would duplicate.
+- **A join consumes the handle.** `Ok` carries the value the worker returned and `Err` carries a `ThreadErr`, whose `message` is the panic text the worker died with.
+- **A panic ends the thread it happened in.** A worker that panics is seen as `Err` by its joiner and the process survives; a panic in `main`, or in a worker nothing joins before the process ends, still ends the process with `exit(1)`. A handle nobody joins is dropped by detaching the worker, which keeps running, and its result slot is deliberately leaked rather than freed under it. v1 has no unwinding, so a panicking worker's frame is abandoned and the owned values in it are not dropped (`plan/mk9-memory-model.md` sections 2 and 5).
+- **`SeqCst` orders the atomics, not the threads.** A worker's writes are visible to its joiner because `thread.join` is a barrier, and nothing else orders two threads' ordinary memory without an atomic operation or a fence between them (12.6). The model this states is the one `plan/mk9-memory-model.md` section 3 records, until MK9-S3-M2 publishes it as the language's own.
+
 ## 13. Modules and imports
 
 ### 13.1 `impl`
@@ -2075,9 +2113,14 @@ enum Ordering {
 
 ```kelp
 fun fence(order: Ordering)
+
+fun spawn(entry: <a declared `fun`, a `fun` literal, or a capturing closure, taking one parameter>, arg: move T).R: Thread<T>
+fun join(handle: move Thread<T>).R: Result<T, ThreadErr>
+
+datac ThreadErr(val message: String)
 ```
 
-The fence, in the module MK6-S1-M1 stage C1 extends with `spawn` and `join`. `fence` is a free function rather than an `Atomic<T>` method because a standalone fence orders no location (12.6), and it lives here rather than beside the atomic cell so that the thread surface is one module: C1 adds names to this module instead of inventing one.
+The fence, `spawn`, `join` and the failure type a join hands back. `fence` is a free function rather than an `Atomic<T>` method because a standalone fence orders no location (12.6), and the thread surface is one module rather than two.
 
 `fence` takes the ordering of 16.16 and returns `Unit`. It has no `.kp` body: a fence cannot be written in Kelp, so the compiler lowers it to one instruction per backend (`__atomic_thread_fence(__ATOMIC_SEQ_CST)`, `fence seq_cst`), and this module's source documents the surface rather than declaring it, the way `std/atomic` documents the atomic methods it declares nowhere.
 
@@ -2086,6 +2129,22 @@ Reaching the ordering costs what every atomic call site pays, one `impl "std/ato
 ```kelp
 thread.fence(order = atomic.Ordering.SeqCst)
 ```
+
+`spawn` and `join` (12.7) are documented the same way and for the same reason: their signatures are generic in the values that cross the thread boundary, so there is no `.kp` declaration to write and the compiler builds the signature at each call site. The whole of the crossing rule is in 12.7: an owned value is moved in, a shared borrow crosses only from a `pd` whose pointee has no reachable `var` field, and a panic ends the worker rather than the process.
+
+Only `ThreadErr` is declared here. It is a plain `datac` with one owned `String` field, built by the worker's panic and read by whoever joins it, and the compiler names it through this module's key exactly as an `Atomic<T>` signature names `Ordering` through `std/atomic`:
+
+```kelp
+impl "std/thread"
+impl "std/result"
+
+when thread.join(h) {
+    Ok(v) -> print(v)
+    Err(e) -> print(e.message)   // the panic text, which already names the line
+}
+```
+
+A join hands back `Result<T, ThreadErr>`, so a program that writes one also needs `impl "std/result"`, exactly as `Atomic.compare_exchange`'s `Result<T, T>` does (16.14).
 
 ## 17. Limits in v1
 

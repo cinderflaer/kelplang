@@ -1,9 +1,9 @@
-// MK9-S3-M1 stage B1: `thread.join` takes a `Thread<T>` handle and hands back
+// MK9-S3-M1 stage C1: `thread.join` takes a `Thread<T>` handle and hands back
 // `Result<T, ThreadErr>`. A handle can only be made by `thread.spawn`, so the
-// checker surface is exercised through a parameter: a `Thread<i64>` is accepted
-// as a parameter (and as a `datac` field, below), which is what the surface
-// says. The call itself passes the checker and stops at the stage C1 interim
-// refusal, because joining is lowered there.
+// surface is exercised through a parameter: a `Thread<i64>` is accepted as a
+// parameter (and as a `datac` field and an `enum` payload, below), which is what
+// the surface says. `consume` is never called, so nothing is joined at run time;
+// what this fixture pins is that a handle's own type reaches both backends.
 impl "std/thread"
 impl "std/result"
 

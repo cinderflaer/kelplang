@@ -1,13 +1,16 @@
-// MK9-S3-M1 stage B1: the same accepted shape with a *capturing closure* as the
-// entry point, which is the third spelling the surface allows beside a declared
-// `fun` and a `fun` literal that captured nothing. The literal names `base`, so
-// it is a closure with an environment, and its single parameter is `move i64`
-// exactly as the declared function's is. The call passes every section 5 rule
-// and stops at the stage C1 interim refusal.
+// MK9-S3-M1 stage C1: the accepted `thread.spawn` shape with a *capturing
+// closure* as the entry point, which is the third spelling the surface allows
+// beside a declared `fun` and a `fun` literal that captured nothing. The literal
+// names `base`, so it is a closure with an environment; the worker reads that
+// environment and the join proves the capture crossed the thread boundary.
 impl "std/thread"
+impl "std/result"
 
 fun main() {
     val base: i64 = 40
     val h = thread.spawn(fun(x: move i64).R: i64 = x + base, 2)
-    print(0)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
 }

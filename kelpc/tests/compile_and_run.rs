@@ -6062,10 +6062,11 @@ fn a_thread_fence_lowers_to_the_fence_instruction_of_its_backend() {
 }
 
 // ---------------------------------------------------------------------------
-// MK9-S3-M1 stage B1: the `thread.spawn` / `thread.join` checker surface and
-// the argument rules of MK9 section 5. Stage B1 lowers nothing, so every
-// fixture here is a *rejection*: the four rule probes are refused by name, and
-// a call that passes every rule stops at the interim refusal naming stage C1.
+// MK9-S3-M1 stages B1 and C1: the `thread.spawn` / `thread.join` surface, the
+// argument rules of MK9 section 5, and the two gates section 7 asks for. Stage
+// B1 landed the checker and every rule as a *rejection*; stage C1 lowers both
+// calls, so the four rule probes are still refused by name and the accepted
+// shapes now build and run.
 // ---------------------------------------------------------------------------
 
 /// Rule 1: an exclusive borrow never crosses to a worker, because the worker
@@ -6121,31 +6122,42 @@ fn a_moved_value_that_carries_a_borrow_is_still_refused() {
 }
 
 /// Rules 2 and 3 in their accepted shape: a `&Atomic<T>` of a `pd` global is
-/// the one borrow that crosses, and the call then stops at the stage C1 interim
-/// refusal rather than being lowered.
+/// the one borrow that crosses to a worker, and stage C1 lowers the call.
 #[test]
-fn a_shared_pd_atomic_is_the_one_borrow_that_passes_the_rules() {
-    assert_rejected_with(
-        "tests/fixtures/thread_spawn_pd_atomic.kp",
-        "MK9-S3-M1 stage C1",
-    );
+fn a_shared_pd_atomic_is_the_one_borrow_that_crosses() {
+    assert_compiles_and_runs("tests/fixtures/thread_spawn_pd_atomic.kp", "1\n");
 }
 
 /// The accepted shapes: a declared `fun`, a capturing closure, and a handle
-/// typed as a `datac` field, an `enum` payload and a parameter. Stage B1 lowers
-/// none of them, so each ends at the interim refusal naming stage C1.
+/// typed as a parameter, a `datac` field and an `enum` payload. Stage C1 lowers
+/// all of them, so each builds and runs.
 #[test]
-fn an_accepted_spawn_or_join_stops_at_the_stage_c1_interim_refusal() {
-    for fixture in [
-        "thread_spawn_accepted",
-        "thread_spawn_closure",
-        "thread_join_accepted",
-    ] {
-        assert_rejected_with(
-            &format!("tests/fixtures/{fixture}.kp"),
-            "is not lowered yet",
-        );
-    }
+fn an_accepted_spawn_or_join_builds_and_runs() {
+    assert_compiles_and_runs("tests/fixtures/thread_spawn_accepted.kp", "42\n");
+    assert_compiles_and_runs("tests/fixtures/thread_spawn_closure.kp", "42\n");
+    assert_compiles_and_runs("tests/fixtures/thread_join_accepted.kp", "1\n");
+}
+
+/// The stress gate (MK9 section 7): eight workers, each doing a thousand
+/// `fetch_add`s of one shared `pd val Atomic<i64>`, every one of them joined
+/// before the total is read. A lost update anywhere makes the total something
+/// other than 8000, which is the one thing a single-threaded counter test
+/// cannot catch.
+#[test]
+fn a_thread_stress_gate_produces_the_exact_total() {
+    assert_compiles_and_runs("tests/fixtures/thread_stress.kp", "8000\n");
+}
+
+/// The panic gate (MK9 section 7): a worker panics, its joiner sees `Err`
+/// carrying the panic text, a second worker's work is intact, and the process
+/// exits 0. A panic ends the thread it happened in; `main` still decides what to
+/// do about it (MK9 section 2).
+#[test]
+fn a_panicking_worker_is_seen_as_an_error_by_its_joiner() {
+    assert_compiles_and_runs(
+        "tests/fixtures/thread_panic.kp",
+        "worker exploded\n0\n42\n",
+    );
 }
 
 /// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
