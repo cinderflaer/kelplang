@@ -245,7 +245,19 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// new refusal projects (`ws_net_denied`, `ws_rand_denied`) are negative
 /// fixtures without manifests and stay outside the corpus. The merged tree
 /// re-recorded at 272.
-const LLVM_BUILT_BASELINE: usize = 272;
+/// Raised from 272 by MISSING-w9Kda on 2026-09-24: the fallible dials,
+/// `net.try_connect` and `ws.try_connect`. Three fixtures land with the slice
+/// and both backends build all three: `net_try_connect` (a refused dial is an
+/// `Err` carrying the text the panicking form prints), `net_try_connect_retry`
+/// (three attempts at a port nobody owns, then a clean exit) and
+/// `ws_try_connect` (a refused dial told apart from a `403` answer by
+/// `WsErr`). Nothing in the slice is a new construct for either backend: the
+/// dial loop is one `kelp_rt.c` helper behind two thin extern bodies, and the
+/// fallible surface is Kelp over `std/net` and `std/result`. The two new
+/// denial projects (`caps_net_try_denied`, `ws_try_net_denied`) are negative
+/// fixtures without manifests and stay outside the corpus, like
+/// `ws_net_denied` before them.
+const LLVM_BUILT_BASELINE: usize = 275;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

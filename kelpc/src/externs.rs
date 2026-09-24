@@ -451,7 +451,18 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/net",
         "connect_raw",
-        "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    char service[8];\n    snprintf(service, sizeof service, \"%u\", (unsigned)kelp_port);\n    struct addrinfo* list = NULL;\n    int rc = getaddrinfo(kelp_host, service, &hints, &list);\n    if (rc != 0) {\n        kelp_panic_gai(\"net.connect: cannot resolve host\", rc);\n    }\n    /* Every address in order, so a name resolving to both ::1 and 127.0.0.1\n       works whichever one is listening. */\n    int fd = -1;\n    int last = 0;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);\n        if (fd < 0) {\n            last = errno;\n            continue;\n        }\n        if (connect(fd, a->ai_addr, a->ai_addrlen) == 0) {\n            break;\n        }\n        last = errno;\n        close(fd);\n        fd = -1;\n    }\n    freeaddrinfo(list);\n    if (fd < 0) {\n        kelp_panic_at(\"net.connect: connection failed\", last);\n    }\n    return fd;\n",
+        "    int gai = 0;\n    int last = 0;\n    int fd = kelp_rt_connect(kelp_host, (unsigned)kelp_port, &gai, &last);\n    if (fd < 0) {\n        if (gai != 0) {\n            kelp_panic_gai(\"net.connect: cannot resolve host\", gai);\n        }\n        kelp_panic_at(\"net.connect: connection failed\", last);\n    }\n    return fd;\n",
+    ),
+    // The fallible half of the same dial: the fd, or -1 with the reason the
+    // panicking body above would have printed (its message line and the detail
+    // line under it, without the `panic: ` lead-in) written into `kelp_reason`,
+    // so a `net.try_connect` caller reads what `net.connect` prints. The
+    // caller's own buffer is dropped inside the assignment: a Kelp `=` would run
+    // the old value's drop, and a C store to `*kelp_reason` cannot.
+    (
+        "std/net",
+        "connect_try_raw",
+        "    int gai = 0;\n    int last = 0;\n    int fd = kelp_rt_connect(kelp_host, (unsigned)kelp_port, &gai, &last);\n    if (fd < 0) {\n        char text[512];\n        if (gai != 0) {\n            snprintf(text, sizeof text, \"net.connect: cannot resolve host\\n  getaddrinfo: %s\", gai_strerror(gai));\n        } else {\n            snprintf(text, sizeof text, \"net.connect: connection failed\\n  errno %d: %s\", last, strerror(last));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n    }\n    return fd;\n",
     ),
     (
         "std/net",

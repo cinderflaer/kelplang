@@ -1,0 +1,15 @@
+// MISSING-w9Kda: `std/ws`'s `net` half is checked on the fallible connect too.
+// The grant names `127.0.0.1` and every port on it; the program asks for
+// `example.com:80`. The check matches the host as written, before `getaddrinfo`
+// runs, and it runs inside `std/ws` at the dial the handshake makes, so the
+// denial is the message `net.connect` already gives, naming the module that
+// holds the grant. No server and no DNS: nothing is opened.
+impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
+
+fun main() {
+    val r = ws.try_connect("example.com", 80, "/")
+    if let Ok(c) = r {
+        c.close(1000, "done")
+    }
+    print("done")
+}

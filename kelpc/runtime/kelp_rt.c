@@ -134,6 +134,52 @@ static void kelp_assert(bool cond) {
     }
 }
 
+/* ---- the dial (MISSING-w9Kda) ------------------------------------------------
+   One dial, one place. It resolves `host`, tries every address `getaddrinfo`
+   reported in order (so a name resolving to both ::1 and 127.0.0.1 works
+   whichever one is listening), and returns the connected descriptor.
+
+   A failure is *reported* here rather than panicking, which is what lets the
+   two thin extern bodies over it share this text: `connect_raw` panics with
+   the code and `connect_try_raw` turns it into the text a caller matches on.
+   `*gai_rc` is the `getaddrinfo` return code (0 when resolution succeeded) and
+   `*sys_errno` is the errno of the last failed `connect`; both are 0 when the
+   dial returned a descriptor. */
+static int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    char service[8];
+    snprintf(service, sizeof service, "%u", port);
+    struct addrinfo* list = NULL;
+    int rc = getaddrinfo(host, service, &hints, &list);
+    if (rc != 0) {
+        *gai_rc = rc;
+        *sys_errno = 0;
+        return -1;
+    }
+    int fd = -1;
+    int last = 0;
+    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {
+        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        if (fd < 0) {
+            last = errno;
+            continue;
+        }
+        if (connect(fd, a->ai_addr, a->ai_addrlen) == 0) {
+            break;
+        }
+        last = errno;
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(list);
+    *gai_rc = 0;
+    *sys_errno = last;
+    return fd;
+}
+
 /* ---- kelp_View (A-8) --------------------------------------------------------
    A length-carrying borrowed text view: a pointer and a length. `str` is a
    bare `const char*`, so a scan re-derives its length with `strlen` and a

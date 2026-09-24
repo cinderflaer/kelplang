@@ -1,0 +1,28 @@
+// MISSING-w9Kda: a refused dial is a value, not the end of the process.
+//
+// The dead port is learned from the kernel rather than written down: binding
+// port 0 asks for a free one, and closing the listener hands it back, so
+// nothing is listening there by the time the dial runs. A fixed port would
+// flake against whatever else the machine is running.
+impl "std/net"
+impl "std/result"
+
+fun dead_port().R: u16 {
+    val l = net.listen(0)
+    val port = l.port()
+    l.close()
+    return port
+}
+
+fun main() {
+    val port = dead_port()
+    val r = net.try_connect("127.0.0.1", port)
+    when r {
+        Ok(s) -> {
+            net.close(s)
+            print("connected, so something took the port after it was released")
+        }
+        Err(e) -> print("err ${e.reason}")
+    }
+    print("survived")
+}

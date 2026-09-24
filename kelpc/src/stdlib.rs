@@ -359,9 +359,15 @@ fn fs_checked_args(callee: &str, arg_is_str: &[bool]) -> Vec<CapCheck> {
 /// else in the namespace (the `Socket`/`Listener` methods, `send`, `recv`)
 /// names no resource the grant governs, and is admitted by the domain gate
 /// alone.
+///
+/// The fallible dial is here too, under both of its names: `try_connect` is
+/// checked exactly as `connect` is, so a caller cannot reach a host its grant
+/// does not name by asking for the fallible form.
 fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
     match callee {
-        "connect" | "connect_raw" => vec![CapCheck::HostPort(0, 1)],
+        "connect" | "connect_raw" | "try_connect" | "connect_try_raw" => {
+            vec![CapCheck::HostPort(0, 1)]
+        }
         "listen" | "listen_raw" => vec![CapCheck::Port(0)],
         "resolve" | "resolve_raw" => vec![CapCheck::Host(0)],
         _ => Vec::new(),
