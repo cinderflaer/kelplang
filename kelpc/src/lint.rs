@@ -408,10 +408,13 @@ fn ident_at(tokens: &[Token], i: usize) -> Option<(String, Span)> {
 /// its naming findings. The shapes a declaration can take are each local to
 /// their own tokens:
 ///
-/// - `val`, `var` and `for` are keywords, so the name is the identifier after
+/// - a `val`, `var` or `for` is a keyword, so the name is the identifier after
 ///   one. That covers a local binding, a passdown, a `datac` field, an enum
 ///   payload field and a loop binding, and it is why none of them needs a
-///   second case below.
+///   second case below. A `val`/`var` whose next token is `(` is a
+///   destructuring binding (a tuple taken apart), and every identifier in that
+///   parenthesized pattern is a binding it declares; the synthesized local the
+///   lowering binds the whole tuple to is not a name the file wrote.
 /// - a `fun` declaration's name is the identifier after `fun` (past `mut`),
 ///   unless a receiver's `Type.` follows it, in which case the name is the
 ///   identifier after that `.`.
@@ -439,6 +442,16 @@ fn declared_names(tokens: &[Token]) -> Vec<Declaration> {
                         span,
                         kind: NameKind::Binding,
                     });
+                } else if !matches!(token.kind, TokenKind::For)
+                    && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LParen))
+                {
+                    for (name, span) in tuple_pattern_binds(tokens, i + 1) {
+                        out.push(Declaration {
+                            name,
+                            span,
+                            kind: NameKind::Binding,
+                        });
+                    }
                 }
             }
             TokenKind::Fun => {
@@ -537,6 +550,26 @@ fn pattern_binds(tokens: &[Token], open: usize) -> Vec<(String, Span)> {
     for token in &tokens[open + 1..close] {
         if let TokenKind::Ident(name) = &token.kind {
             out.push((name.clone(), token.span));
+        }
+    }
+    out
+}
+
+/// The bindings of the tuple pattern the `(` at `open` opens: `val (lo, hi) =
+/// ...`, including a nested position (`val ((a, b), c) = ...`). Every
+/// identifier between the parentheses is a position the binding names, because
+/// a pattern has only names, `_` and further parentheses in it; `_` ignores a
+/// position and declares nothing.
+fn tuple_pattern_binds(tokens: &[Token], open: usize) -> Vec<(String, Span)> {
+    let Some(close) = matching_paren(tokens, open) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for token in &tokens[open + 1..close] {
+        if let TokenKind::Ident(name) = &token.kind {
+            if name != "_" {
+                out.push((name.clone(), token.span));
+            }
         }
     }
     out
@@ -832,6 +865,27 @@ mod tests {
         let src = "datac Point(val x_axis: i32, val y_axis: i32)\n";
         let found = case_findings(src, NamingCase::Camel);
         assert_eq!(found.len(), 2, "one finding per field, got {found:?}");
+    }
+
+    #[test]
+    fn a_destructuring_binding_declares_every_position_it_names() {
+        // `val (lo_index, _) = ...` declares `lo_index` and ignores the other
+        // position; a nested pattern declares its own names too, so the rule
+        // reaches every name a tuple taken apart binds.
+        let src = "fun f(p: (i32, i32)).R: i32 {\n    val (lo_index, _) = p\n    val ((first_val, second_val), last_val) = ((1, 2), 3)\n    return lo_index + first_val + second_val + last_val\n}\n";
+        assert_eq!(
+            named(src, NamingCase::Camel),
+            strings(&["lo_index", "first_val", "second_val", "last_val"])
+        );
+    }
+
+    #[test]
+    fn a_tuple_type_is_not_a_declaration() {
+        // `(i32, i32)` puts identifiers where a parameter list would, and a
+        // type name is `PascalCase` whatever the option says, so no position
+        // of a tuple type is this rule's business.
+        let src = "fun f(lo_axis: (i32, DeviceInfo)).R: (i32, i32) = (1, 2)\n";
+        assert_eq!(named(src, NamingCase::Camel), strings(&["lo_axis"]));
     }
 
     #[test]

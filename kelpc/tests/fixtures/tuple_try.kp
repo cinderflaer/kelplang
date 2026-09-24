@@ -1,0 +1,37 @@
+// MISSING-z2bB9: a tuple is a value, so `?` reaches the `Result` a tuple
+// *element* may be, never the tuple: `mk(n)?` is the tuple the call succeeded
+// with, and it destructures like any other value (`plan/syntax.md` 5).
+enum Res<T, E> {
+    Ok(val v: T)
+    Err(val e: E)
+}
+
+fun mk(n: i32).R: Res<(i32, i32), String> {
+    if n < 0 {
+        return Res.Err(e = String.from_str("negative"))
+    }
+    return Res.Ok(v = (n, n + 1))
+}
+
+fun go(n: i32).R: Res<(i32, i32), String> {
+    val (a, b) = mk(n)?
+    return Res.Ok(v = (a + b, a * b))
+}
+
+fun main() {
+    val first = go(2)
+    when first {
+        Ok(v) -> {
+            val (sum, product) = v
+            print(sum)
+            print(product)
+        }
+        Err(e) -> print(e.as_str())
+    }
+
+    val second = go(-1)
+    when second {
+        Ok(v) -> print(1)
+        Err(e) -> print(e.as_str())
+    }
+}

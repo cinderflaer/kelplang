@@ -1,0 +1,7 @@
+// MISSING-z2bB9: a tuple is a record, so `print` refuses it the way it refuses
+// a `datac`: printing a record is not defined in v1, and a caller prints its
+// positions instead (`plan/syntax.md` 3).
+fun main() {
+    val p = (1, 2)
+    print(p)
+}

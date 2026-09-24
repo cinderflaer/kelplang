@@ -1,0 +1,13 @@
+// MISSING-z2bB9: a tuple is a record with positional fields, so it is a legal
+// `datac` field, it may hold an earlier `datac` by value, and the field is read
+// back by destructuring (`plan/syntax.md` 3).
+datac Point(val x: i32, val y: i32)
+datac Segment(val from: Point, val span: (i32, i32))
+
+fun main() {
+    val s = Segment(from = Point(x = 2, y = 3), span = (4, 5))
+    val (lo, hi) = s.span
+    print(lo)
+    print(hi)
+    print(s.from.x + s.from.y + lo + hi)
+}

@@ -1,0 +1,13 @@
+// MISSING-z2bB9: `(T)` is not a one-element tuple, it is the parenthesized type
+// `T`, and `(e)` is the parenthesized expression `e`: a tuple has two or more
+// elements, and `()` is refused by name (`plan/syntax.md` 3).
+fun one(n: (i32)).R: (i32) = n * 2
+
+fun main() {
+    val doubled = one(21)
+    print(doubled)
+    val pair = (doubled, (42))
+    val (a, b) = pair
+    print(a)
+    print(b)
+}

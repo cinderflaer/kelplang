@@ -174,6 +174,12 @@ const MAX_FUNCTION_INSTANTIATIONS: usize = 2048;
 /// `parser::IF_LET_PREFIX` and a hidden passdown parameter use.
 const WHEN_TEMP_PREFIX: &str = "#when";
 
+/// The name prefix of the local a destructuring binding takes its value apart
+/// from, and of the local a *nested* pattern takes an inner tuple into
+/// (`plan/syntax.md` 4). Same `#` trick as `WHEN_TEMP_PREFIX`: a synthesized
+/// name can never collide with one the user wrote.
+const TUPLE_TEMP_PREFIX: &str = "#tuple";
+
 /// The type parameters a function declaration introduces: its own for a free
 /// function, the receiver's for a method on a generic type.
 fn decl_type_params(f: &ast::FunctionDecl) -> &[String] {
@@ -190,6 +196,56 @@ fn decl_type_params(f: &ast::FunctionDecl) -> &[String] {
 fn instance_key(name: &str, args: &[Ty]) -> String {
     let parts: Vec<String> = args.iter().map(|a| a.display()).collect();
     format!("{}<{}>", name, parts.join(", "))
+}
+
+/// The type of a tuple, and the one place its derived record is registered
+/// (MISSING-z2bB9).
+///
+/// A tuple is a record with positional fields (`plan/syntax.md` 3) and v1's
+/// record type is `Ty::Struct(<key>)`, keyed by the tuple as written. The
+/// record is *derived*: `types::tuple_struct_def` builds it and it goes into
+/// the same on-demand registry a generic instantiation uses (A-2), so every
+/// later pass treats it as an ordinary declaration: the derived deep copy,
+/// order and drop, the partial move of one position, and both backends'
+/// struct emission all read the declaration table and need no tuple case of
+/// their own. Idempotent: two use sites of one element list are one type.
+fn tuple_ty(env: &TypeEnv, elems: Vec<Ty>) -> Ty {
+    let name = crate::types::tuple_struct_name(&elems);
+    let mut state = env.instances.borrow_mut();
+    if !state.records.contains_key(&name) {
+        let def = crate::types::tuple_struct_def(&name, &elems);
+        state.records.insert(name.clone(), def);
+    }
+    drop(state);
+    Ty::Struct(name)
+}
+
+/// The element types of a tuple type, from the type itself: `Some` for a
+/// record whose name is a tuple's written form, with the field types of each
+/// position in order. `None` for every declared `datac`/`enum`.
+///
+/// A borrow of a tuple is the same tuple here: `val (lo, hi) = xs.get(i = 0)`
+/// reads the positions out of the element the borrow points at, and an owned
+/// element stays refused by the partial-move rule exactly as reading one field
+/// of a borrowed `datac` is.
+fn tuple_elems_of(ty: &Ty, ctx: &Ctx) -> Option<Vec<Ty>> {
+    let pointee = match ty {
+        Ty::Ref { inner, .. } => inner.as_ref(),
+        other => other,
+    };
+    let Ty::Struct(name) = pointee else {
+        return None;
+    };
+    if !crate::types::is_tuple_name(name) {
+        return None;
+    }
+    Some(
+        ctx.struct_def(name)?
+            .fields
+            .iter()
+            .map(|f| f.ty.clone())
+            .collect(),
+    )
 }
 
 /// Cloned once per function body checked, and once more per `fun` literal
@@ -336,6 +392,9 @@ struct Ctx {
     /// How many scrutinee temporaries a `when` has staged, so each one's
     /// synthesized binding has a name of its own (`infer::WHEN_TEMP_PREFIX`).
     when_temps: usize,
+    /// The same counter for a destructuring binding's value and its nested
+    /// levels (`infer::TUPLE_TEMP_PREFIX`).
+    tuple_temps: usize,
     /// Set only while the initializer of a `let` with no written type is being
     /// checked. A bare `List.empty()`/`Box.empty()`/`Map.new()` there leaves
     /// its element type open instead of failing at the declaration, for the
@@ -902,6 +961,49 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // A tuple type (`plan/syntax.md` 3): `(A, B)`. Every element is stored
+        // by value, exactly as a `datac` field is, so the element rules are the
+        // field rules: an element may not be a borrow, and `unit` cannot be
+        // stored either. `indirect` is passed through, because a tuple inside a
+        // `Box`/`List` argument is behind a pointer just as a named type is
+        // there, so an element declared later is legal in that position.
+        if let Some(elems) = &ty.tuple {
+            let mut resolved = Vec::with_capacity(elems.len());
+            for (i, e) in elems.iter().enumerate() {
+                if e.amp {
+                    return Err(TypeError {
+                        message: format!(
+                            "'&{}' cannot be element {} of a tuple: an element is stored by value, so a borrow of one has nowhere to put its lifetime; use the owned type",
+                            e.display(),
+                            i + 1
+                        ),
+                        span: e.span,
+                    });
+                }
+                let elem = self.resolve(e, indirect)?;
+                if crate::types::is_borrowed_field_ty(&elem) {
+                    return Err(TypeError {
+                        message: format!(
+                            "element {} of the tuple is a borrowed type ('{}'): a tuple holds owned data only in v1, exactly as a datac field does, so a '&str', 'View' or reference element is not expressible; an owned 'String' is the way to keep text in one",
+                            i + 1,
+                            elem.display()
+                        ),
+                        span: e.span,
+                    });
+                }
+                if elem == Ty::Unit {
+                    return Err(TypeError {
+                        message: format!(
+                            "element {} of the tuple is 'unit': 'unit' is the absent value and cannot be stored, exactly as a datac field cannot be",
+                            i + 1
+                        ),
+                        span: e.span,
+                    });
+                }
+                resolved.push(elem);
+            }
+            return Ok(tuple_ty(&self.env, resolved));
+        }
         // A fixed-size array (A-18): `[T; N]`. The length is a compile-time
         // constant expression (A-19) folded here, once, so the type is a
         // concrete `[T; N]` for every pass after this one.
@@ -2193,6 +2295,12 @@ impl<'a> SignatureScope<'a> {
         if let Some(elem) = &ty.array_elem {
             return self.check_type(elem);
         }
+        if let Some(elems) = &ty.tuple {
+            for e in elems {
+                self.check_type(e)?;
+            }
+            return Ok(());
+        }
         if let Some(fn_params) = &ty.fn_params {
             for p in fn_params {
                 self.check_type(&p.ty)?;
@@ -2745,6 +2853,28 @@ fn map_element_error(ty: &Ty) -> String {
         "'{}' cannot be a 'Map' value: the value set is a scalar, 'String', 'Bytes', a 'datac', or an 'enum', which is narrower than a list's (that also takes a 'List' or a 'Box'). A container, an array, a borrow or a view, an atomic, a function value, and 'unit' are refused",
         ty.display()
     )
+}
+
+/// Whether a value of `ty` owns memory, for the repeat literal's "the element
+/// must own nothing" rule (A-18).
+///
+/// `needs_drop` answers from the declared owned set, which is computed once
+/// before any body is checked, so it cannot know about a *derived* record,
+/// whose declaration is created on demand while bodies are checked: a tuple's.
+/// A tuple is resolved through `struct_def`, which finds both kinds, and its
+/// positions are walked (a nested tuple recurses). Everything else is
+/// `needs_drop`'s own answer, which already looks through an array.
+fn elem_owns_memory(ctx: &Ctx, ty: &Ty) -> bool {
+    if crate::types::needs_drop(ty, &ctx.owned_structs) {
+        return true;
+    }
+    match ty {
+        Ty::Struct(name) if crate::types::is_tuple_name(name) => ctx.struct_def(name).map_or(
+            false,
+            |def| def.fields.iter().any(|f| elem_owns_memory(ctx, &f.ty)),
+        ),
+        _ => false,
+    }
 }
 
 /// Why a type cannot be an array's element (A-18). The set is a scalar,
@@ -4022,7 +4152,7 @@ impl<'a> ConstEvaluator<'a> {
             // `math.PI`: another module's constant, reached through an alias.
             ast::Expr::FieldAccess { base, field, span } => {
                 let ast::Expr::Ident(alias, _) = base.as_ref() else {
-                    return Err(self.unsupported(expr, "a field of a value"));
+                    return Err(self.unsupported(expr.span(), "a field of a value"));
                 };
                 let Some(prefix) = scope.aliases.get(alias).cloned() else {
                     return Err(TypeError {
@@ -4113,7 +4243,7 @@ impl<'a> ConstEvaluator<'a> {
             },
             ast::Expr::Assign { target, value, span } => {
                 let ast::Expr::Ident(name, nspan) = target.as_ref() else {
-                    return Err(self.unsupported(expr, "an assignment to anything but a local"));
+                    return Err(self.unsupported(expr.span(), "an assignment to anything but a local"));
                 };
                 // The declared type is the binding's, so `x = 1` in an `i64`
                 // local is an `i64` assignment and not an `i32` one.
@@ -4156,7 +4286,7 @@ impl<'a> ConstEvaluator<'a> {
                 span,
             } => {
                 if !type_args.is_empty() {
-                    return Err(self.unsupported(expr, "a call with explicit type arguments"));
+                    return Err(self.unsupported(expr.span(), "a call with explicit type arguments"));
                 }
                 let key = format!("{}{}", scope.prefix, callee);
                 self.call_fn(&key, callee, args, *span, scope)
@@ -4182,7 +4312,7 @@ impl<'a> ConstEvaluator<'a> {
                 }
                 if let Some(to) = method.strip_prefix("to_") {
                     if !args.is_empty() {
-                        return Err(self.unsupported(expr, "a conversion call with arguments"));
+                        return Err(self.unsupported(expr.span(), "a conversion call with arguments"));
                     }
                     let (value, from) = self.eval(receiver, None, scope)?;
                     if scope.halted() {
@@ -4190,28 +4320,31 @@ impl<'a> ConstEvaluator<'a> {
                     }
                     return self.convert(&value, &from, to, method, *span);
                 }
-                Err(self.unsupported(expr, "a method call"))
+                Err(self.unsupported(expr.span(), "a method call"))
             }
             ast::Expr::ArrayLit { .. } | ast::Expr::ArrayRepeat { .. } => {
-                Err(self.unsupported(expr, "an array value"))
+                Err(self.unsupported(expr.span(), "an array value"))
             }
-            ast::Expr::Template { .. } => Err(self.unsupported(expr, "a string template")),
-            ast::Expr::FnLit { .. } => Err(self.unsupported(expr, "a 'fun' literal")),
-            ast::Expr::When { .. } => Err(self.unsupported(expr, "a 'when' pattern match")),
-            ast::Expr::Try { .. } => Err(self.unsupported(expr, "the '?' operator")),
-            ast::Expr::Deref { .. } => Err(self.unsupported(expr, "a dereference")),
-            ast::Expr::Ref { .. } => Err(self.unsupported(expr, "a borrow")),
+            ast::Expr::TupleLit { .. } => {
+                Err(self.unsupported(expr.span(), "a tuple value"))
+            }
+            ast::Expr::Template { .. } => Err(self.unsupported(expr.span(), "a string template")),
+            ast::Expr::FnLit { .. } => Err(self.unsupported(expr.span(), "a 'fun' literal")),
+            ast::Expr::When { .. } => Err(self.unsupported(expr.span(), "a 'when' pattern match")),
+            ast::Expr::Try { .. } => Err(self.unsupported(expr.span(), "the '?' operator")),
+            ast::Expr::Deref { .. } => Err(self.unsupported(expr.span(), "a dereference")),
+            ast::Expr::Ref { .. } => Err(self.unsupported(expr.span(), "a borrow")),
         }
     }
 
     /// The message every out-of-reach construct shares: it names the construct
     /// and says what a constant expression is allowed to do.
-    fn unsupported(&self, expr: &ast::Expr, what: &str) -> TypeError {
+    fn unsupported(&self, span: Span, what: &str) -> TypeError {
         TypeError {
             message: format!(
                 "a 'const' initializer cannot use {what}: what it can evaluate is literals, other 'const's, the arithmetic, comparison and bitwise operators, 'if', and a call to a plain 'fun' whose own body stays inside that"
             ),
-            span: expr.span(),
+            span,
         }
     }
 
@@ -4633,6 +4766,12 @@ impl<'a> ConstEvaluator<'a> {
                             mutable: *mutable,
                         },
                     );
+                }
+                // A destructuring binding is not a constant expression: the
+                // value it takes apart has no fold (there is no aggregate in
+                // `ConstValue`), so the binding cannot have one either.
+                ast::Stmt::LetTuple { span, .. } => {
+                    return Err(self.unsupported(*span, "a destructuring binding"));
                 }
                 ast::Stmt::While { cond, body, .. } => loop {
                     let (value, ty) = self.eval(cond, Some(&Ty::Bool), scope)?;
@@ -6028,6 +6167,7 @@ fn base_ctx(
         outer_receiver: None,
         receiver_struct: None,
         when_temps: 0,
+        tuple_temps: 0,
         defer_empty_container: false,
     }
 }
@@ -6106,6 +6246,17 @@ impl PdScan {
                 self.scan_expr(init);
                 self.define(name);
             }
+            ast::Stmt::LetTuple { pattern, init, .. } => {
+                // The same order as a `let`: the initializer is read before
+                // any position it binds exists, so `val (a, b) = a` reads the
+                // outer `a`.
+                self.scan_expr(init);
+                let mut names: Vec<(String, Vec<usize>)> = Vec::new();
+                pattern.binds(&mut Vec::new(), &mut names);
+                for (name, _) in &names {
+                    self.define(name);
+                }
+            }
             ast::Stmt::While { cond, body, .. } => {
                 self.scan_expr(cond);
                 self.scan_block(body);
@@ -6147,6 +6298,11 @@ impl PdScan {
             ast::Expr::ArrayRepeat { value, len, .. } => {
                 self.scan_expr(value);
                 self.scan_expr(len);
+            }
+            ast::Expr::TupleLit { elems, .. } => {
+                for e in elems {
+                    self.scan_expr(e);
+                }
             }
             // Only the base — a field named like a passdown isn't a read of
             // it.
@@ -6710,7 +6866,12 @@ fn check_block(block: &ast::Block, ctx: &mut Ctx, expected_tail: Option<&Ty>) ->
                     });
                 }
             }
-            stmts.push(checked);
+            // A destructuring binding lowers to several statements (the value
+            // it takes apart, then one binding per position), and the open-
+            // container repair below is keyed by a statement index, so the
+            // count is what the next binding's index has to be measured
+            // against. `check_stmt` is the only place that decides how many.
+            stmts.extend(checked);
         }
         settle_open_bindings(&mut open, &mut stmts, ctx);
     }
@@ -6796,7 +6957,7 @@ fn open_container_declaration_error(ty: &Ty, binding: &OpenBinding) -> TypeError
     TypeError { message, span: binding.span }
 }
 
-fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
+fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
     match stmt {
         ast::Stmt::Let {
             name,
@@ -6834,11 +6995,58 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                 });
             }
             ctx.define(name, final_ty.clone(), *mutable);
-            Ok(tir::Stmt::Let {
+            Ok(vec![tir::Stmt::Let {
                 name: name.clone(),
                 ty: final_ty,
                 init,
-            })
+            }])
+        }
+        // `val (lo, hi) = min_max(xs)`: a destructuring binding
+        // (MISSING-z2bB9, `plan/syntax.md` 4). One binding becomes one owning
+        // temporary plus one ordinary `let` per bound position, read out of
+        // that temporary: the lowering is spelled here, in terms of the
+        // record a tuple already is, so nothing downstream learns a new
+        // statement and the positions the pattern ignores stay in the
+        // temporary, whose own drop frees them.
+        ast::Stmt::LetTuple {
+            pattern,
+            mutable,
+            init,
+            span,
+        } => {
+            let value = check_expr(init, ctx, None)?;
+            // The initializer is moved into the destructuring, so a place is
+            // taken by value exactly as `val p = place` takes it, and the
+            // positions are then read out of that value one at a time.
+            let value_ty = value.ty.clone();
+            let elements = tuple_elems_of(&value_ty, ctx).ok_or_else(|| TypeError {
+                message: format!(
+                    "a destructuring binding takes one tuple value apart, and this initializer is a '{}': 'val (lo, hi) = ...' needs a tuple here ('(i32, i32)'), and a single value is bound with an ordinary 'val name = ...'",
+                    value_ty.display()
+                ),
+                span: init.span(),
+            })?;
+            if elements.len() != pattern_arity(pattern) {
+                return Err(TypeError {
+                    message: format!(
+                        "this pattern has {} position(s), and the tuple it destructures ('{}') has {}",
+                        pattern_arity(pattern),
+                        value_ty.display(),
+                        elements.len()
+                    ),
+                    span: *span,
+                });
+            }
+            ctx.tuple_temps += 1;
+            let tmp = format!("{}{}", TUPLE_TEMP_PREFIX, ctx.tuple_temps - 1);
+            ctx.define(&tmp, value_ty.clone(), false);
+            let mut stmts = vec![tir::Stmt::Let {
+                name: tmp.clone(),
+                ty: value_ty.clone(),
+                init: value,
+            }];
+            lower_pattern(pattern, &tmp, &value_ty, &elements, *mutable, ctx, &mut stmts, *span)?;
+            Ok(stmts)
         }
         ast::Stmt::While { cond, body, span } => {
             let cond = check_expr(cond, ctx, Some(&Ty::Bool))?;
@@ -6849,7 +7057,7 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                 });
             }
             let body = check_block(body, ctx, None)?;
-            Ok(tir::Stmt::While { cond, body })
+            Ok(vec![tir::Stmt::While { cond, body }])
         }
         ast::Stmt::Return { value, .. } => {
             let ret_ty = ctx.ret_ty.clone();
@@ -6876,10 +7084,10 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                     span: stmt_span(stmt),
                 });
             }
-            Ok(tir::Stmt::Return {
+            Ok(vec![tir::Stmt::Return {
                 value,
                 span: stmt_span(stmt),
-            })
+            }])
         }
         ast::Stmt::Expr { expr, .. } => {
             let checked = check_expr(expr, ctx, None)?;
@@ -6895,14 +7103,99 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<tir::Stmt> {
                     span: stmt_span(stmt),
                 });
             }
-            Ok(tir::Stmt::Expr(checked))
+            Ok(vec![tir::Stmt::Expr(checked)])
         }
+    }
+}
+
+/// One destructuring binding, lowered (`plan/syntax.md` 4): the whole value is
+/// already bound to `base`, and every position the pattern binds is read out of
+/// it by name. A nested pattern binds the position to a temporary of its own
+/// first, so `val ((a, b), c) = ...` is two ordinary levels of the same
+/// lowering. A position the pattern ignores is not read at all: what it holds
+/// stays in the value that was destructured, whose own drop frees it.
+#[allow(clippy::too_many_arguments)]
+fn lower_pattern(
+    pattern: &ast::BindingPattern,
+    base: &str,
+    base_ty: &Ty,
+    elements: &[Ty],
+    mutable: bool,
+    ctx: &mut Ctx,
+    stmts: &mut Vec<tir::Stmt>,
+    span: Span,
+) -> Result<()> {
+    let ast::BindingPattern::Tuple(positions) = pattern else {
+        return Err(TypeError {
+            message: "a destructuring pattern is a parenthesized list of two or more positions ('val (lo, hi) = ...')".to_string(),
+            span,
+        });
+    };
+    for (i, position) in positions.iter().enumerate() {
+        // The `tir` read of one position: a place (an owned local's field), so
+        // an owned element read by value is the partial move A-11 already
+        // plans, and a `Copy` element is a copy.
+        let read = tir::Expr {
+            kind: tir::ExprKind::FieldAccess {
+                base: Box::new(tir::Expr {
+                    kind: tir::ExprKind::Ident(base.to_string()),
+                    ty: base_ty.clone(),
+                    span,
+                }),
+                field: crate::types::tuple_field_name(i),
+            },
+            ty: elements[i].clone(),
+            span,
+        };
+        match position {
+            ast::BindingPattern::Ignore => {}
+            ast::BindingPattern::Name(name) => {
+                ctx.define(name, elements[i].clone(), mutable);
+                stmts.push(tir::Stmt::Let {
+                    name: name.clone(),
+                    ty: elements[i].clone(),
+                    init: read,
+                });
+            }
+            ast::BindingPattern::Tuple(_) => {
+                let nested = tuple_elems_of(&elements[i], ctx).ok_or_else(|| TypeError {
+                    message: format!(
+                        "position {} of the pattern is itself a pattern, and element {} of the tuple it destructures ('{}') is not a tuple; bind that element to one name instead",
+                        i + 1,
+                        i + 1,
+                        elements[i].display()
+                    ),
+                    span,
+                })?;
+                ctx.tuple_temps += 1;
+                let tmp = format!("{}{}", TUPLE_TEMP_PREFIX, ctx.tuple_temps - 1);
+                let tmp_ty = elements[i].clone();
+                ctx.define(&tmp, tmp_ty.clone(), false);
+                stmts.push(tir::Stmt::Let {
+                    name: tmp.clone(),
+                    ty: tmp_ty.clone(),
+                    init: read,
+                });
+                lower_pattern(position, &tmp, &tmp_ty, &nested, mutable, ctx, stmts, span)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The number of positions a pattern writes, which is the arity the tuple it
+/// destructures must have.
+fn pattern_arity(pattern: &ast::BindingPattern) -> usize {
+    match pattern {
+        ast::BindingPattern::Tuple(positions) => positions.len(),
+        _ => 1,
     }
 }
 
 fn stmt_span(stmt: &ast::Stmt) -> Span {
     match stmt {
         ast::Stmt::Let { span, .. } => *span,
+        ast::Stmt::LetTuple { span, .. } => *span,
         ast::Stmt::While { span, .. } => *span,
         ast::Stmt::Return { span, .. } => *span,
         ast::Stmt::Expr { span, .. } => *span,
@@ -7866,6 +8159,73 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 span: *span,
             })
         }
+        // `(lo, hi)`: a tuple value (MISSING-z2bB9, `plan/syntax.md` 3). Each
+        // element takes its own type, from the expected tuple's position when
+        // the context named one and from the element expression otherwise. The
+        // value is a `StructLit` of the derived record, whose fields are the
+        // positions, so codegen needs no tuple case and the elements are
+        // moved into the value exactly as a `datac` construction moves its
+        // arguments in.
+        ast::Expr::TupleLit { elems, span } => {
+            let hinted = match expected {
+                Some(t) => tuple_elems_of(t, ctx),
+                None => None,
+            };
+            if let Some(expected_elems) = &hinted {
+                if expected_elems.len() != elems.len() {
+                    return Err(TypeError {
+                        message: format!(
+                            "a tuple of {} element(s) is expected here, and this one has {}",
+                            expected_elems.len(),
+                            elems.len()
+                        ),
+                        span: *span,
+                    });
+                }
+            }
+            let mut checked: Vec<tir::Expr> = Vec::with_capacity(elems.len());
+            let mut elem_tys: Vec<Ty> = Vec::with_capacity(elems.len());
+            for (i, e) in elems.iter().enumerate() {
+                let hint = hinted.as_ref().map(|h| &h[i]);
+                let v = check_expr(e, ctx, hint)?;
+                if crate::types::is_borrowed_field_ty(&v.ty) {
+                    return Err(TypeError {
+                        message: format!(
+                            "element {} of the tuple is a borrowed type ('{}'): a tuple holds owned data only in v1, exactly as a datac field does, so a '&str', 'View' or reference element is not expressible; an owned 'String' is the way to keep text in one",
+                            i + 1,
+                            v.ty.display()
+                        ),
+                        span: e.span(),
+                    });
+                }
+                if v.ty == Ty::Unit {
+                    return Err(TypeError {
+                        message: format!(
+                            "element {} of the tuple produces no value ('unit'): 'unit' is the absent value and cannot be stored, exactly as a datac field cannot be",
+                            i + 1
+                        ),
+                        span: e.span(),
+                    });
+                }
+                elem_tys.push(v.ty.clone());
+                checked.push(v);
+            }
+            let ty = tuple_ty(&ctx.env, elem_tys);
+            let name = match &ty {
+                Ty::Struct(n) => n.clone(),
+                _ => unreachable!("tuple_ty builds a record"),
+            };
+            let fields = checked
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| (crate::types::tuple_field_name(i), v))
+                .collect();
+            Ok(tir::Expr {
+                kind: tir::ExprKind::StructLit { name, fields },
+                ty,
+                span: *span,
+            })
+        }
         // `[v; N]`: the repeat form (A-18). `N` is folded here exactly as an
         // array type's length is (A-19), and the element has to be `Copy`,
         // because the alternative is cloning an owned value once per element.
@@ -7890,8 +8250,10 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             // The repeat form *copies* its value into every slot, so the
             // element has to own nothing: a scalar, or a `datac` whose fields
             // are all scalars. An element that owns memory would need N
-            // clones, and a copy of an owner is a second owner.
-            if crate::types::needs_drop(&elem_ty, &ctx.owned_structs) {
+            // clones, and a copy of an owner is a second owner. A tuple is a
+            // derived record, so `needs_drop` cannot answer for one from the
+            // declared set and its positions are walked instead.
+            if elem_owns_memory(ctx, &elem_ty) {
                 return Err(TypeError {
                     message: format!(
                         "the repeat form '[x; N]' needs an element that owns nothing, and '{}' owns memory. Copying it into {n} slots would make {n} owners of the same buffer; write the elements out ('[a, b, c]') instead",

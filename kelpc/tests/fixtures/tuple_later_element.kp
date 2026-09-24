@@ -1,0 +1,9 @@
+// MISSING-z2bB9: a tuple element is stored by value, so it obeys open item 12
+// with every other by-value field: an element may only name a type declared
+// before the declaration that holds it (`plan/syntax.md` 3).
+datac Holder(val span: (Later, i32))
+datac Later(val n: i32)
+
+fun main() {
+    print(1)
+}

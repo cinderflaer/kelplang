@@ -1,0 +1,9 @@
+// MISSING-z2bB9: a tuple stores its elements by value exactly as a `datac`
+// stores its fields, so a borrowed element (`str`, `View`, a reference) is
+// refused by the field rule rather than getting a second element rule of its
+// own (`plan/syntax.md` 3).
+datac Text(val pair: (str, i32))
+
+fun main() {
+    print(1)
+}

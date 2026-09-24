@@ -676,6 +676,7 @@ impl Parser {
             let close = self.expect(TokenKind::RBracket, "']' to close the array type")?.span;
             return Ok(TypeExpr {
                 name: String::new(),
+                tuple: None,
                 args: Vec::new(),
                 array_elem: Some(Box::new(elem)),
                 array_len: Some(Box::new(len)),
@@ -683,6 +684,50 @@ impl Parser {
                 fn_params: None,
                 fn_ret: None,
                 span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
+            });
+        }
+        // A tuple type (MISSING-z2bB9): `(A, B)`, two or more element types.
+        // A tuple is a record with positional fields (`plan/syntax.md` 3), so
+        // this is a *type* like any other. `(T)` is not a tuple: it is the
+        // parenthesized type `T`, and `()` is refused by name because the
+        // absent value's type is spelled `unit`.
+        if self.check(&TokenKind::LParen) {
+            let open = self.advance().span;
+            if self.check(&TokenKind::RParen) {
+                let close = self.advance().span;
+                return Err(ParseError {
+                    message: "'()' is not a type: a tuple has two or more element types ('(i32, i32)'), and the absent value's type is 'unit'"
+                        .to_string(),
+                    span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
+                });
+            }
+            let first = self.parse_type()?;
+            if !self.check(&TokenKind::Comma) {
+                let close = self.expect(TokenKind::RParen, "')' to close the tuple type")?.span;
+                let mut inner = first;
+                if let Some(amp) = amp_start {
+                    inner.amp = true;
+                    inner.span = amp.to(close);
+                }
+                return Ok(inner);
+            }
+            let mut elems = vec![first];
+            while self.check(&TokenKind::Comma) {
+                self.advance();
+                elems.push(self.parse_type()?);
+            }
+            let close = self.expect(TokenKind::RParen, "')' to close the tuple type")?.span;
+            let span = amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close));
+            return Ok(TypeExpr {
+                name: String::new(),
+                tuple: Some(elems),
+                args: Vec::new(),
+                array_elem: None,
+                array_len: None,
+                amp: amp_start.is_some(),
+                fn_params: None,
+                fn_ret: None,
+                span,
             });
         }
         if self.check(&TokenKind::Fun) {
@@ -715,6 +760,7 @@ impl Parser {
             span = span.to(close);
             return Ok(TypeExpr {
                 name,
+                tuple: None,
                 args,
                 array_elem: None,
                 array_len: None,
@@ -726,6 +772,7 @@ impl Parser {
         }
         Ok(TypeExpr {
             name,
+            tuple: None,
             args: Vec::new(),
             array_elem: None,
             array_len: None,
@@ -879,6 +926,7 @@ impl Parser {
         };
         Ok(TypeExpr {
             name: name.to_string(),
+            tuple: None,
             args: Vec::new(),
             array_elem: None,
             array_len: None,
@@ -995,6 +1043,29 @@ impl Parser {
         } else {
             self.expect(TokenKind::Val, "'val'")?.span
         };
+        // `val (lo, hi) = min_max(xs)`: a destructuring binding takes one
+        // tuple value apart (`plan/syntax.md` 4). The pattern is a comma-
+        // separated list in parentheses, so the one thing that tells it from
+        // the ordinary `val name = ...` is the `(` right after the keyword.
+        if self.check(&TokenKind::LParen) {
+            let pattern = self.parse_binding_pattern()?;
+            if self.check(&TokenKind::Colon) {
+                return Err(ParseError {
+                    message: "a destructuring binding takes no written type: every position's type comes from the initializer, in order; bind the whole value first ('val p = ...') and write the type there"
+                        .to_string(),
+                    span: self.peek().span,
+                });
+            }
+            self.expect(TokenKind::Eq, "'='")?;
+            let init = self.parse_expr()?;
+            let span = start.to(init.span());
+            return Ok(Stmt::LetTuple {
+                pattern,
+                mutable,
+                init,
+                span,
+            });
+        }
         let (name, _) = self.expect_ident()?;
         let ty = if self.check(&TokenKind::Colon) {
             self.advance();
@@ -1012,6 +1083,46 @@ impl Parser {
             init,
             span,
         })
+    }
+
+    /// `(lo, hi)` / `((a, b), c)`: the pattern a destructuring binding takes
+    /// its value apart with (`plan/syntax.md` 4). A position is a name, `_` to
+    /// ignore it, or a nested pattern, and there are two or more of them:
+    /// `(x)` is not a pattern but the parenthesized name `x`, exactly as `(T)`
+    /// is not a tuple type.
+    fn parse_binding_pattern(&mut self) -> PResult<BindingPattern> {
+        let open = self
+            .expect(TokenKind::LParen, "'(' to open a destructuring pattern")?
+            .span;
+        let mut positions = Vec::new();
+        loop {
+            if self.check(&TokenKind::LParen) {
+                positions.push(self.parse_binding_pattern()?);
+            } else {
+                let (name, _) = self.expect_ident()?;
+                positions.push(if name == "_" {
+                    BindingPattern::Ignore
+                } else {
+                    BindingPattern::Name(name)
+                });
+            }
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        let close = self
+            .expect(TokenKind::RParen, "')' to close a destructuring pattern")?
+            .span;
+        if positions.len() < 2 {
+            return Err(ParseError {
+                message: "a destructuring pattern needs two or more positions ('val (lo, hi) = ...'); a single name is an ordinary 'val', and '_' ignores a position rather than binding one"
+                    .to_string(),
+                span: open.to(close),
+            });
+        }
+        Ok(BindingPattern::Tuple(positions))
     }
 
     fn parse_while_stmt(&mut self) -> PResult<Stmt> {
@@ -1048,6 +1159,17 @@ impl Parser {
     /// tail expression stays the tail of a block.
     fn parse_for_stmt(&mut self) -> PResult<Stmt> {
         let start = self.expect(TokenKind::For, "'for'")?.span;
+        // The loop binds one name, and a destructuring pattern is not one: a
+        // `val`/`var` takes a tuple apart (4), and a loop body that wants the
+        // positions writes that binding itself. Saying so beats the
+        // "expected identifier" a `(` would get.
+        if self.check(&TokenKind::LParen) {
+            return Err(ParseError {
+                message: "a 'for' binding is one name ('for x in xs'), not a destructuring pattern; bind the element and take it apart in the body ('val (a, b) = x')"
+                    .to_string(),
+                span: self.peek().span,
+            });
+        }
         let (binding, binding_span) = self.expect_ident()?;
         // `in` is an ordinary identifier (2.3): it is the separator only in
         // this position, the way `let` is a pattern only after `if` (6.1).
@@ -1515,10 +1637,33 @@ impl Parser {
                 }
             }
             TokenKind::LParen => {
+                // A tuple literal `(a, b)` is the parenthesized form with a
+                // comma in it, so the first element decides which one this is:
+                // `(e)` stays the parenthesized expression it always was, and
+                // a tuple has two or more elements (`plan/syntax.md` 3).
                 self.advance();
+                if self.check(&TokenKind::RParen) {
+                    return Err(ParseError {
+                        message: "'()' is not a value: a tuple has two or more elements, and the absent value is 'unit', which no expression writes"
+                            .to_string(),
+                        span: tok.span,
+                    });
+                }
                 let expr = self.parse_expr()?;
-                self.expect(TokenKind::RParen, "')'")?;
-                Ok(expr)
+                if !self.check(&TokenKind::Comma) {
+                    self.expect(TokenKind::RParen, "')'")?;
+                    return Ok(expr);
+                }
+                let mut elems = vec![expr];
+                while self.check(&TokenKind::Comma) {
+                    self.advance();
+                    elems.push(self.parse_expr()?);
+                }
+                let end = self.expect(TokenKind::RParen, "')' to close the tuple")?.span;
+                Ok(Expr::TupleLit {
+                    elems,
+                    span: tok.span.to(end),
+                })
             }
             TokenKind::LBrace => {
                 let block = self.parse_block()?;
@@ -1993,6 +2138,121 @@ mod tests {
         assert!(p.functions[0].params.is_empty());
         assert!(p.functions[0].return_type.is_none());
         assert!(matches!(p.functions[0].body, FunctionBody::Block(_)));
+    }
+
+    #[test]
+    fn a_tuple_type_is_its_element_list() {
+        // MISSING-z2bB9: `(A, B)` is a type, and `(A)` is not a tuple but the
+        // parenthesized type `A` (`plan/syntax.md` 3).
+        let p = parse("fun f(p: (i32, String)).R: (i32, i32) = (1, 2)");
+        let param = &p.functions[0].params[0].ty;
+        assert_eq!(param.display(), "(i32, String)");
+        assert_eq!(param.tuple.as_ref().unwrap().len(), 2);
+        let ret = p.functions[0].return_type.as_ref().unwrap();
+        assert_eq!(ret.display(), "(i32, i32)");
+
+        let paren = parse("fun f().R: (i32) = 1");
+        let ret = paren.functions[0].return_type.as_ref().unwrap();
+        assert!(ret.tuple.is_none(), "(T) is the parenthesized type T");
+        assert_eq!(ret.display(), "i32");
+
+        let nested = parse("fun f(p: ((i32, i32), i32)) {}");
+        assert_eq!(
+            nested.functions[0].params[0].ty.display(),
+            "((i32, i32), i32)"
+        );
+    }
+
+    #[test]
+    fn an_empty_tuple_type_is_refused_by_name() {
+        let err = parse_err("fun f(p: ()) {}");
+        assert!(err.message.contains("'()' is not a type"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_tuple_literal_needs_two_elements() {
+        // `(e)` is the parenthesized expression it always was, and `()` has no
+        // value at all.
+        let p = parse("fun f().R: i32 {\n    val a = (1)\n    return a\n}");
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => match &b.stmts[0] {
+                Stmt::Let { init, .. } => {
+                    assert!(matches!(init, Expr::IntLit(1, _)), "got {init:?}");
+                }
+                other => panic!("expected a let, got {other:?}"),
+            },
+            other => panic!("expected a block body, got {other:?}"),
+        }
+
+        let p = parse("fun f() {\n    val p = (1, 2)\n}");
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => match &b.stmts[0] {
+                Stmt::Let { init, .. } => match init {
+                    Expr::TupleLit { elems, .. } => assert_eq!(elems.len(), 2),
+                    other => panic!("expected a tuple literal, got {other:?}"),
+                },
+                other => panic!("expected a let, got {other:?}"),
+            },
+            other => panic!("expected a block body, got {other:?}"),
+        }
+
+        let err = parse_err("fun f() {\n    val p = ()\n}");
+        assert!(err.message.contains("'()' is not a value"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_destructuring_binding_binds_every_position() {
+        // MISSING-z2bB9: `val (lo, _) = p`, with `_` ignoring a position and a
+        // nested pattern allowed (`plan/syntax.md` 4).
+        let p = parse("fun f(p: (i32, i32)) {\n    val (lo, _) = p\n    var ((a, b), c) = ((1, 2), 3)\n}");
+        let stmts = match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            other => panic!("expected a block body, got {other:?}"),
+        };
+        assert_eq!(stmts.len(), 2);
+        let Stmt::LetTuple {
+            pattern, mutable, ..
+        } = &stmts[0]
+        else {
+            panic!("expected a destructuring binding, got {:?}", stmts[0]);
+        };
+        assert!(!*mutable);
+        let BindingPattern::Tuple(positions) = pattern else {
+            panic!("expected a tuple pattern, got {pattern:?}");
+        };
+        assert!(matches!(positions[0], BindingPattern::Name(ref n) if n == "lo"));
+        assert!(matches!(positions[1], BindingPattern::Ignore));
+
+        let Stmt::LetTuple {
+            pattern, mutable, ..
+        } = &stmts[1]
+        else {
+            panic!("expected a destructuring binding, got {:?}", stmts[1]);
+        };
+        assert!(*mutable, "`var (a, b) = ...` makes every position a `var`");
+        let mut names = Vec::new();
+        pattern.binds(&mut Vec::new(), &mut names);
+        assert_eq!(
+            names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(names[1].1, vec![0, 1], "`b` is element 2 of element 1");
+    }
+
+    #[test]
+    fn a_destructuring_binding_needs_two_positions_and_no_written_type() {
+        let err = parse_err("fun f() {\n    val (a) = 1\n}");
+        assert!(
+            err.message.contains("needs two or more positions"),
+            "{}",
+            err.message
+        );
+        let err = parse_err("fun f() {\n    val (a, b): (i32, i32) = (1, 2)\n}");
+        assert!(
+            err.message.contains("takes no written type"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

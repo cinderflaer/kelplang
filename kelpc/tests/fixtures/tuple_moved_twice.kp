@@ -1,0 +1,11 @@
+// MISSING-z2bB9: the initializer is moved into the destructuring, so a second
+// binding of the same value is a use of a moved value (`plan/syntax.md` 4 and
+// 10.1).
+fun main() {
+    val p = (String.from_str("a"), 1)
+    val (text, n) = p
+    print(text.as_str())
+    print(n)
+    val (text2, n2) = p
+    print(text2.as_str())
+}

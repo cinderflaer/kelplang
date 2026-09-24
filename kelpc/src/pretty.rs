@@ -137,6 +137,18 @@ fn print_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
             print_expr(out, init);
             out.push('\n');
         }
+        Stmt::LetTuple {
+            pattern,
+            mutable,
+            init,
+            ..
+        } => {
+            out.push_str(if *mutable { "var " } else { "val " });
+            print_pattern(out, pattern);
+            out.push_str(" = ");
+            print_expr(out, init);
+            out.push('\n');
+        }
         Stmt::While { cond, body, .. } => {
             out.push_str("while ");
             print_expr(out, cond);
@@ -156,6 +168,23 @@ fn print_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
         Stmt::Expr { expr, .. } => {
             print_expr(out, expr);
             out.push('\n');
+        }
+    }
+}
+
+fn print_pattern(out: &mut String, pattern: &BindingPattern) {
+    match pattern {
+        BindingPattern::Name(name) => out.push_str(name),
+        BindingPattern::Ignore => out.push('_'),
+        BindingPattern::Tuple(positions) => {
+            out.push('(');
+            for (i, p) in positions.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                print_pattern(out, p);
+            }
+            out.push(')');
         }
     }
 }
@@ -208,6 +237,16 @@ fn print_expr(out: &mut String, expr: &Expr) {
             out.push_str("; ");
             print_expr(out, len);
             out.push(']');
+        }
+        Expr::TupleLit { elems, .. } => {
+            out.push('(');
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                print_expr(out, e);
+            }
+            out.push(')');
         }
         Expr::CharLit(v, _) => write!(out, "{}", char_literal(*v)).unwrap(),
         Expr::ByteLit(v, _) => write!(out, "{}", byte_literal(*v)).unwrap(),
