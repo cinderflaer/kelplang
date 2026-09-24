@@ -1,0 +1,7 @@
+// `std/str` reaches no capability domain, so `caps(*)` has nothing to hand it:
+// the clause is refused by name, at the `impl` line.
+impl "std/str" caps(*)
+
+fun main() {
+    print("unreachable")
+}

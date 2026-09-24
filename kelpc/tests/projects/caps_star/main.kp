@@ -1,0 +1,10 @@
+// `caps(*)` hands `helper` the whole-resource wildcard of every domain that
+// `main` holds, and as the entry module `main` holds all of them. It is the
+// one-line delegation a program writes when it hands a library everything it
+// may reach, instead of naming each domain: `impl "helper" caps(fs = ["/**"])`
+// and its siblings say the same thing the long way.
+impl "helper" caps(*)
+
+fun main() {
+    print(helper.read_two())
+}

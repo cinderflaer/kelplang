@@ -67,6 +67,10 @@ pub struct ImplDecl {
     /// imported module, and it is how the importing module states which
     /// patterns it is willing to hand over.
     pub caps: Vec<CapGrant>,
+    /// `caps(*)`: delegate the whole resource of every domain, whatever the
+    /// importing module holds. Mutually exclusive with `caps` by construction:
+    /// the parser refuses a named domain beside the wildcard.
+    pub caps_all: bool,
     pub span: Span,
 }
 

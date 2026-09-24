@@ -212,6 +212,22 @@ pub fn patterns_are_paths(domain: &str) -> bool {
     matches!(domain, "fs" | "process")
 }
 
+/// The pattern that names a domain's whole resource: `/**` for a path domain,
+/// `*` for a name domain (`net`, `env`). It is what the entry module holds
+/// implicitly for every domain, and what `caps(*)` delegates to an import
+/// (`syntax.md` 15.2), so both spell it through this one function rather than
+/// repeating the vocabulary.
+///
+/// `time` and `rand` have no named resource at all, so their whole-resource
+/// pattern is never matched against anything: it is the domain gate alone.
+pub fn whole_resource(domain: &str) -> &'static str {
+    if patterns_are_paths(domain) {
+        "/**"
+    } else {
+        "*"
+    }
+}
+
 /// How one gated call's resource arguments are matched against the module's
 /// compiled-in allowlist. Which variant applies is a property of the *call*,
 /// not of the argument types: `net.send_text(s, text)` has a `str` argument
