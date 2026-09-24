@@ -939,10 +939,16 @@ impl TypeScope<'_> {
             }
         }
         // The generic names v1 knows (`List<T>` from C1, `Box<T>` from M8,
-        // `Map<V>` from MK5-S5, `Atomic<T>` from MK9-S3-M1 stage A1). All are
-        // compiler builtins, not user-definable types; each checks its element
-        // against what its representation can hold.
-        if ty.name == "List" || ty.name == "Box" || ty.name == "Map" || ty.name == "Atomic" {
+        // `Map<V>` from MK5-S5, `Atomic<T>` from MK9-S3-M1 stage A1, `Thread<T>`
+        // from its stage B1). All are compiler builtins, not user-definable
+        // types; each checks its element against what its representation can
+        // hold.
+        if ty.name == "List"
+            || ty.name == "Box"
+            || ty.name == "Map"
+            || ty.name == "Atomic"
+            || ty.name == "Thread"
+        {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
             // for a `String` key — which is what every use site written before
             // A-2 says, and the two spellings are the same `Ty`.
@@ -988,6 +994,8 @@ impl TypeScope<'_> {
                 (crate::types::is_map_element(&elem), map_element_error(&elem))
             } else if ty.name == "Atomic" {
                 (crate::types::is_atomic_element(&elem), atomic_element_error(&elem))
+            } else if ty.name == "Thread" {
+                (crate::types::is_thread_element(&elem), thread_element_error(&elem))
             } else {
                 (crate::types::is_box_element(&elem), box_element_error(&elem))
             };
@@ -1003,6 +1011,8 @@ impl TypeScope<'_> {
                 Ty::Map(Box::new(key), Box::new(elem))
             } else if ty.name == "Atomic" {
                 Ty::Atomic(Box::new(elem))
+            } else if ty.name == "Thread" {
+                Ty::Thread(Box::new(elem))
             } else {
                 Ty::Box(Box::new(elem))
             });
@@ -1040,7 +1050,7 @@ impl TypeScope<'_> {
             }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>' and 'Atomic<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>' and 'Thread<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
                     name = ty.name
                 ),
@@ -2650,6 +2660,22 @@ fn atomic_element_reason(ty: &Ty, container: &str) -> Option<String> {
     ))
 }
 
+/// Why a `Thread<T>` cannot be a container element (MK9-S3-M1 stage B1, where
+/// `Thread<T>` arrives). The same shape as the atomic refusal above and for a
+/// neighbouring reason: a handle names one running worker, and a container's
+/// own routines copy and drop an element as a plain location, which would name
+/// the worker twice and join it once. A handle is accepted as a local, a field
+/// and a parameter, which is where a join has one place to happen.
+fn thread_element_reason(ty: &Ty, container: &str) -> Option<String> {
+    let Ty::Thread(elem) = ty else {
+        return None;
+    };
+    Some(format!(
+        "'Thread<{}>' cannot be {container}: a handle names one running worker and is joined once, while a container's own routines copy and drop an element like a plain location. Keep the handle in a local or a field ('val h = thread.spawn(...)') and join it there",
+        elem.display()
+    ))
+}
+
 /// Why a container that still carries the open-container marker cannot be a
 /// container element, in one sentence that says the real reason: `ty` is such
 /// a container, or holds one, so the generated typedef, its `push` and its drop
@@ -2679,6 +2705,9 @@ fn list_element_error(ty: &Ty) -> String {
     if let Some(reason) = atomic_element_reason(ty, "a 'List' element") {
         return reason;
     }
+    if let Some(reason) = thread_element_reason(ty, "a 'List' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "List") {
         return reason;
     }
@@ -2704,6 +2733,9 @@ fn map_element_error(ty: &Ty) -> String {
     if let Some(reason) = atomic_element_reason(ty, "a 'Map' value") {
         return reason;
     }
+    if let Some(reason) = thread_element_reason(ty, "a 'Map' value") {
+        return reason;
+    }
     if let Some(reason) = borrowed_element_reason(ty) {
         return format!(
             "{reason}: a 'Map' value is owned by the map, so it has to outlive it (v1 has no lifetime syntax to say otherwise); use a scalar, 'String', 'Bytes', a 'datac', or an 'enum'"
@@ -2723,6 +2755,9 @@ fn map_element_error(ty: &Ty) -> String {
 /// slice 1 left this rule alone even as it widened the `List` element set).
 fn array_element_error(ty: &Ty) -> String {
     if let Some(reason) = atomic_element_reason(ty, "an array element") {
+        return reason;
+    }
+    if let Some(reason) = thread_element_reason(ty, "an array element") {
         return reason;
     }
     match ty {
@@ -2761,6 +2796,9 @@ fn box_element_error(ty: &Ty) -> String {
     if let Some(reason) = atomic_element_reason(ty, "a 'Box' element") {
         return reason;
     }
+    if let Some(reason) = thread_element_reason(ty, "a 'Box' element") {
+        return reason;
+    }
     if let Some(reason) = open_container_element_reason(ty, "Box") {
         return reason;
     }
@@ -2787,6 +2825,24 @@ fn atomic_element_error(ty: &Ty) -> String {
     }
     format!(
         "'{}' cannot be an 'Atomic' element in v1: the element set is 'bool' and the integer types ('i32', 'i64', 'u32', 'u64', 'u8', 'u16', 'usize', 'isize'), because one atomic operation is one machine-word operation and there is no atomic arithmetic for a float",
+        ty.display()
+    )
+}
+
+/// Why a type cannot be a `Thread<T>`'s element. The element set is everything
+/// a worker may hand its joiner, so the only refusals are the borrowed shapes:
+/// a value that points at data owned by a frame that ends before the joiner
+/// reads the result. The stored positions refuse the same three types
+/// (`is_borrowed_field_ty`), which is what keeps this message and theirs in
+/// step.
+fn thread_element_error(ty: &Ty) -> String {
+    if let Some(reason) = borrowed_element_reason(ty) {
+        return format!(
+            "{reason}. A 'Thread<T>' carries the value its worker returns to the joiner, and that value leaves the worker's frame, so T has to be an owned type; hand an owned value back instead"
+        );
+    }
+    format!(
+        "'{}' cannot be a 'Thread' element: a thread handle carries the value its worker returns, so T has to be a type that can be moved out of the worker's frame",
         ty.display()
     )
 }
@@ -2891,6 +2947,19 @@ pub fn atomic_order_ty() -> Ty {
     Ty::Struct(format!(
         "{}Ordering",
         crate::stdlib::key_prefix(crate::stdlib::ATOMIC_MODULE)
+    ))
+}
+
+/// The type of the failure half of `thread.join`'s result: the `ThreadErr`
+/// `datac` the shipped `std/thread` module declares, named by that module's key
+/// prefix. Built here for the same reason `atomic_order_ty` builds `Ordering`:
+/// a builtin signature has no declaration site for the resolver to qualify a
+/// type at, and a program that writes `thread.join` has imported the module, so
+/// the key always names a declaration by the time one is reached.
+pub fn thread_err_ty() -> Ty {
+    Ty::Struct(format!(
+        "{}ThreadErr",
+        crate::stdlib::key_prefix(crate::stdlib::THREAD_MODULE)
     ))
 }
 
@@ -9511,6 +9580,297 @@ fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MK9-S3-M1 stage B1: `thread.spawn` / `thread.join`, the checker surface and
+// the rules of MK9 section 5. Neither is lowered here; stage C1 emits both.
+// ---------------------------------------------------------------------------
+
+/// One of the two thread calls, dispatched on the key `check_call` matched.
+fn check_thread_call(
+    callee: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if callee == crate::stdlib::SPAWN_FN {
+        check_thread_spawn(args, span, ctx, expected)
+    } else {
+        check_thread_join(args, span, ctx, expected)
+    }
+}
+
+/// `thread.spawn(entry, arg)` (MK9-S3-M1 stage B1). `T` is the single parameter
+/// type of `entry`, which is a declared `fun`, a `fun` literal, or a capturing
+/// closure (a plain function value is widened where a closure is expected, the
+/// ordinary A-4 phase E rule); `arg` is the value moved into the worker as that
+/// parameter, and the handle's element is `entry`'s return type.
+///
+/// The refusals are MK9 section 5's rules 1 to 4, each naming its own reason;
+/// the accepted path emits the interim error below, because lowering is stage
+/// C1.
+fn check_thread_spawn(
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    _expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let slots = arg_slots(
+        "function 'thread.spawn'",
+        &["entry".to_string(), "arg".to_string()],
+        args,
+        span,
+    )?;
+    let entry_arg = &args[slots[0]];
+    let value_arg = &args[slots[1]];
+
+    let entry = check_expr(&entry_arg.value, ctx, None)?;
+    let params = match &entry.ty {
+        Ty::Fn { params, .. } | Ty::Closure { params, .. } => params,
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "'thread.spawn' takes a function or closure value as its entry point, found '{}': a declared 'fun', a 'fun' literal and a capturing closure all work, because a function value is widened where a closure is expected",
+                    other.display()
+                ),
+                span: entry_arg.value.span(),
+            })
+        }
+    };
+    // One parameter, because the worker is handed exactly one value: the `arg`
+    // moved in as that parameter (MK9 section 5 rule 1).
+    if params.len() != 1 {
+        return Err(TypeError {
+            message: format!(
+                "'thread.spawn''s entry point has to take exactly one parameter, the value moved into the worker, and this one takes {}",
+                params.len()
+            ),
+            span: entry_arg.value.span(),
+        });
+    }
+    let t = params[0].clone();
+
+    let value = check_expr(&value_arg.value, ctx, Some(&t))?;
+    check_thread_arg(&value_arg.value, &value, ctx)?;
+    if value.ty != t {
+        return Err(TypeError {
+            message: format!(
+                "'thread.spawn''s argument has type '{}', and its entry point takes '{}' by move: the worker's parameter is the value moved in, so the two have to be the same type",
+                value.ty.display(),
+                t.display()
+            ),
+            span: value_arg.value.span(),
+        });
+    }
+
+    // Stage C1 removes this refusal and lowers the call.
+    Err(TypeError {
+        message: "'thread.spawn' is not lowered yet: this call passes every MK9 section 5 checker rule, and MK9-S3-M1 stage C1 is the stage that emits the worker, so no call may reach codegen before then".to_string(),
+        span,
+    })
+}
+
+/// `thread.join(handle)` (MK9-S3-M1 stage B1). The handle is a `Thread<T>`, and
+/// the result is `Result<T, ThreadErr>`: `Ok` the worker's value, `Err` why it
+/// ended without one (MK9 section 2). The accepted path emits the interim
+/// error for the same reason `spawn` does.
+fn check_thread_join(
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    _expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let slots = arg_slots(
+        "function 'thread.join'",
+        &["handle".to_string()],
+        args,
+        span,
+    )?;
+    let handle_arg = &args[slots[0]];
+    let handle = check_expr(&handle_arg.value, ctx, None)?;
+    let elem = match &handle.ty {
+        Ty::Thread(elem) => (**elem).clone(),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "'thread.join' takes a 'Thread<T>' handle, found '{}': a handle comes from 'thread.spawn', which is the only call that makes one",
+                    other.display()
+                ),
+                span: handle_arg.value.span(),
+            })
+        }
+    };
+
+    // The result type is built even though stage B1 lowers nothing, so the
+    // shipped `ThreadErr` declaration is named through this module's key
+    // exactly as the signature states, and a program that never imported
+    // `std/result` is told to rather than given an internal error.
+    let result_key = format!(
+        "{}Result",
+        crate::stdlib::key_prefix(crate::stdlib::RESULT_MODULE)
+    );
+    if !ctx.env.generics.contains_key(&result_key) {
+        return Err(TypeError {
+            message: format!(
+                "'thread.join' hands back 'Result<T, ThreadErr>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
+                result_key,
+                crate::stdlib::RESULT_MODULE
+            ),
+            span,
+        });
+    }
+    let _joined = ctx.instantiate_type(&result_key, &[elem, thread_err_ty()], span)?;
+
+    // Stage C1 removes this refusal and lowers the call.
+    Err(TypeError {
+        message: "'thread.join' is not lowered yet: this call passes the checker, and MK9-S3-M1 stage C1 is the stage that joins the worker, so no call may reach codegen before then".to_string(),
+        span,
+    })
+}
+
+/// MK9 section 5's argument rules, applied to `thread.spawn`'s moved value.
+/// The rule is structural and builtin (rule 5): there is no `Send`/`Sync` marker
+/// to implement until traits ship (A-12), so this lives beside the existing
+/// "a borrowed type cannot be stored" rule rather than in a trait.
+///
+/// `expr` is the argument as written, because rules 2 and 3 are about the
+/// *place* a borrow comes from and that is a lexical question; `value` is it
+/// checked, because the borrow's shape is its type.
+fn check_thread_arg(expr: &ast::Expr, value: &tir::Expr, ctx: &Ctx) -> Result<()> {
+    match &value.ty {
+        // Rule 1: an exclusive borrow never crosses. A `&mut T` is the promise
+        // that no other path reaches the value, and the worker outlives the
+        // frame the borrow was made in, so the promise cannot hold.
+        Ty::Ref { mutable: true, inner } => Err(TypeError {
+            message: format!(
+                "'thread.spawn' cannot send '&mut {}': an exclusive borrow promises that no other path reaches the value, and the worker outlives the frame that made the borrow, so the promise cannot cross the thread boundary; move an owned value in, or share a '&Atomic<T>'",
+                inner.display()
+            ),
+            span: expr.span(),
+        }),
+        // Rules 2 and 3: a shared borrow crosses only when it borrows a `pd`
+        // global (process lifetime, so it outlives the worker) and only when
+        // the borrowed type has no reachable `&mut` path.
+        Ty::Ref { mutable: false, inner } => {
+            if !borrows_a_pd(expr, ctx) {
+                return Err(TypeError {
+                    message: format!(
+                        "'thread.spawn' cannot send '{}': a shared borrow may cross to a worker only when the place it borrows has process lifetime, which in v1 means a 'pd' global, and this one borrows a frame local that ends before the worker does; share a 'pd' value instead, or move an owned value in",
+                        value.ty.display()
+                    ),
+                    span: expr.span(),
+                });
+            }
+            if has_reachable_mut_path(inner, ctx) {
+                return Err(TypeError {
+                    message: format!(
+                        "'thread.spawn' cannot share '{}' across a thread boundary: the borrow reaches a 'var' field, so two threads could write it through the same shared borrow. A shared borrow may cross only when its pointee has no reachable '&mut' path, which an 'Atomic<T>' has by construction",
+                        inner.display()
+                    ),
+                    span: expr.span(),
+                });
+            }
+            Ok(())
+        }
+        // Rule 2's other shapes: a `str` and a `View` are borrowed text with
+        // no place of their own, so there is nothing with process lifetime for
+        // them to borrow.
+        Ty::Str | Ty::View => Err(TypeError {
+            message: format!(
+                "'thread.spawn' cannot send a '{}': it is a borrowed view of text somebody else owns, and the worker outlives the frame that owns the text; pass an owned 'String' or 'Bytes' instead, or share a 'pd' value",
+                value.ty.display()
+            ),
+            span: expr.span(),
+        }),
+        // Rule 4 falls out of `move T`: an owned value that carried a borrow
+        // could not be constructed in the first place (`is_borrowed_field_ty`
+        // refuses a borrow, a `str` or a `View` in a `datac` field, an enum
+        // payload, a `List` element or a `Map` value), and the top-level
+        // borrow shapes are the three arms above. There is no hole to open.
+        _ => Ok(()),
+    }
+}
+
+/// Whether the expression that made a shared borrow borrows a `pd` global,
+/// which is the one place MK9 section 5 rule 2 lets a borrow cross to a worker:
+/// a `pd`'s lifetime is the process, so it outlives the worker.
+///
+/// Checked over the place expression as written, which is what makes the rule
+/// decidable: the root identifier has to be a passdown of this module and not
+/// shadowed by a local of the same name.
+fn borrows_a_pd(expr: &ast::Expr, ctx: &Ctx) -> bool {
+    let ast::Expr::Ref { expr: place, .. } = expr else {
+        return false;
+    };
+    matches!(place_root_ident(place), Some(name) if ctx.pds.contains_key(name) && ctx.lookup(name).is_none())
+}
+
+/// The identifier a place expression is rooted at: `counter`, `counter.field`
+/// and `counter.a.b` all answer `counter`. `None` for anything else, a
+/// dereference included, whose storage this lexical check does not follow.
+fn place_root_ident(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Ident(name, _) => Some(name),
+        // The one field spelling a place is written with: `p.x` parses as a
+        // `FieldAccess`. There is no other way to write a place.
+        ast::Expr::FieldAccess { base, .. } => place_root_ident(base),
+        _ => None,
+    }
+}
+
+/// Whether a shared borrow of `ty` reaches a `var` field, which is exactly the
+/// `Sync`-shaped question MK9 section 5 rule 3 asks: a type with no reachable
+/// `&mut` path may be shared across a thread boundary, and one with a reachable
+/// `var` field may not. An `Atomic<T>` answers no by construction, which is what
+/// makes a `&Atomic<T>` the shareable type v1 ships.
+fn has_reachable_mut_path(ty: &Ty, ctx: &Ctx) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    reachable_mut_path(ty, ctx, &mut seen)
+}
+
+fn reachable_mut_path(
+    ty: &Ty,
+    ctx: &Ctx,
+    seen: &mut std::collections::HashSet<String>,
+) -> bool {
+    match ty {
+        // A `datac` field and an `enum` payload are both reachable by a field
+        // or a pattern access, so either one being `var` is a `&mut` path. The
+        // walk recurses through a field whatever the field's own mutability:
+        // `a.b.c` is reachable from `a` when `c` is `var`, and section 5 asks
+        // about reachability rather than about the first step.
+        Ty::Struct(name) => {
+            if !seen.insert(name.clone()) {
+                return false;
+            }
+            if let Some(def) = ctx.struct_def(name) {
+                return def
+                    .fields
+                    .iter()
+                    .any(|f| f.mutable || reachable_mut_path(&f.ty, ctx, seen));
+            }
+            if let Some(def) = ctx.enum_def(name) {
+                return def
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter())
+                    .any(|f| f.mutable || reachable_mut_path(&f.ty, ctx, seen));
+            }
+            false
+        }
+        // A container's element is reached through the container's own access,
+        // so a `var` field under one is just as reachable.
+        Ty::List(elem) | Ty::Box(elem) | Ty::Array(elem, _) => {
+            reachable_mut_path(elem, ctx, seen)
+        }
+        Ty::Map(_, value) => reachable_mut_path(value, ctx, seen),
+        // An atomic mutates through a shared borrow and has no `&mut` path at
+        // all, which is the property the whole rule is built on (MK9 section 4).
+        Ty::Atomic(_) => false,
+        _ => false,
+    }
+}
+
 fn check_call(
     callee: &str,
     type_args: &[ast::TypeExpr],
@@ -9731,6 +10091,14 @@ fn check_call(
                     // shadowing surprise.
                     None => match builtin_sig(callee) {
                     Some(sig) => (callee.to_string(), sig),
+                    // `thread.spawn` and `thread.join` (MK9-S3-M1 stage B1),
+                    // whose signatures depend on the value that crosses the
+                    // boundary and so live outside the table. Checked here, with
+                    // the other builtin free functions, so a declaration of the
+                    // same key still wins.
+                    None if crate::stdlib::is_thread_fn(callee) => {
+                        return check_thread_call(callee, args, span, ctx, expected)
+                    }
                     None => {
                         return Err(TypeError {
                             message: match qualified_hint(
@@ -11076,6 +11444,13 @@ fn check_module_item(
     // declaration (see the entry in `BUILTINS`). Checked last, so a real
     // declaration of the same key always wins.
     if builtin_sig(&qualified).is_some() {
+        return check_call(&qualified, type_args, args, span, ctx, expected);
+    }
+    // `thread.spawn` and `thread.join` (MK9-S3-M1 stage B1) sit beside the
+    // fence for the same reason, one step further: their signatures depend on
+    // the value that crosses the boundary, so they are checked in `check_call`
+    // rather than read from the table.
+    if crate::stdlib::is_thread_fn(&qualified) {
         return check_call(&qualified, type_args, args, span, ctx, expected);
     }
     Err(TypeError {

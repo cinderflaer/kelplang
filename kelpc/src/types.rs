@@ -153,6 +153,21 @@ pub enum Ty {
     /// which is what lets a `pd val Atomic<i64>` be the process-lifetime shared
     /// counter of MK9 1 without the `atexit` machinery an owned passdown needs.
     Atomic(Box<Ty>),
+    /// The builtin thread handle (MK9-S3-M1 stage B1): `Thread<T>`, what
+    /// `thread.spawn` hands back and `thread.join` consumes.
+    ///
+    /// Monomorphized per element type exactly as `Atomic<T>` and `List<T>` are,
+    /// and `T` is the value the worker gives the joiner. **Not `Copy`, and
+    /// needing no drop.** Not `Copy` because the handle names one running
+    /// worker, and a copy would name it twice; no drop because the worker owns
+    /// nothing this frame may free, which is the same shape `Atomic<T>` has.
+    ///
+    /// A handle is accepted as a local, a `datac`/`enum` field and a parameter,
+    /// and refused as a `List`/`Map`/`Box`/array element for the reason the
+    /// refusal message gives: joining is a one-shot thing a container's own
+    /// copy-and-drop routines would duplicate. Stage B1 checks the type only;
+    /// MK9-S3-M1 stage C1 lowers `spawn` and `join`.
+    Thread(Box<Ty>),
 }
 
 /// The element type one of the `Atomic*` names stands for, or `None` when
@@ -220,6 +235,7 @@ impl Ty {
                 self,
                 Ty::Struct(_)
                     | Ty::Atomic(_)
+                    | Ty::Thread(_)
                     | Ty::Bytes
                     | Ty::String
                     | Ty::List(_)
@@ -326,6 +342,7 @@ impl Ty {
             Ty::Map(key, value) => map_c_type(key, value),
             Ty::Array(elem, len) => array_c_type(elem, *len),
             Ty::Atomic(elem) => atomic_c_type(elem),
+            Ty::Thread(elem) => thread_c_type(elem),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -378,6 +395,7 @@ impl Ty {
             Ty::List(elem) => format!("List<{}>", elem.display()),
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
             Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
+            Ty::Thread(elem) => format!("Thread<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
@@ -902,6 +920,7 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Map(key, value) => format!("Map__{}__{}", ty_mangle(key), ty_mangle(value)),
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
+        Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
         // A function type never reaches a container or a type argument (both
         // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
         // unreachable arm and by diagnostics, so it gets an identifier-shaped
@@ -967,6 +986,27 @@ pub fn array_c_type(elem: &Ty, len: u64) -> String {
 /// every access is a call the two backends lower to one instruction.
 pub fn atomic_c_type(elem: &Ty) -> String {
     format!("kelp_Atomic__{}", ty_mangle(elem))
+}
+
+/// The generated C struct tag for `Thread<T>`. Stage B1 emits nothing for it:
+/// a valid `thread.spawn`/`thread.join` call is refused until MK9-S3-M1 stage
+/// C1 lowers the two, so no typedef with this name reaches an artifact yet. The
+/// name exists because `c_type` has to be total, and it is the name C1's
+/// lowering will emit.
+pub fn thread_c_type(elem: &Ty) -> String {
+    format!("kelp_Thread__{}", ty_mangle(elem))
+}
+
+/// Whether `ty` may be a `Thread<T>`'s element: anything a worker may hand back
+/// to its joiner, which is anything that can be moved through the boundary.
+///
+/// A borrow, a `str` and a `View` are refused for the reason they are refused
+/// in every stored position: each points at data somebody else owns, and the
+/// frame that owns it ends before the joiner can read the result
+/// (`is_borrowed_field_ty` is the same predicate the stored positions use, so
+/// this cannot drift from them).
+pub fn is_thread_element(ty: &Ty) -> bool {
+    !is_borrowed_field_ty(ty)
 }
 
 /// Whether `ty` may be an `Atomic<T>`'s element: the integer types and `bool`,

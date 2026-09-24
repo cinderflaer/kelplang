@@ -1,0 +1,18 @@
+// MK9-S3-M1 stage B1, section 5 rule 1: a thread entry point's argument is
+// moved, and an exclusive borrow is the one shape that can never be moved into
+// a worker. A `&mut T` promises that no other path reaches the value, and the
+// worker outlives the frame the borrow was made in, so the promise cannot cross
+// the thread boundary. The entry point's own parameter is a `mut` borrow here,
+// which is the only way to write one on a `fun`.
+impl "std/thread"
+impl "std/atomic"
+
+fun worker(c: mut AtomicI64) {
+    c.store(value = 1, order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    var c: AtomicI64 = AtomicI64.new(0)
+    val h = thread.spawn(worker, &mut c)
+    print(0)
+}

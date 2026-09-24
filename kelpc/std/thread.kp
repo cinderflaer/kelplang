@@ -1,23 +1,67 @@
-/* std/thread: the thread surface. Stage A2 of MK9-S3-M1 added the fence, and the
-   threads milestone MK6-S1-M1 adds `spawn` and `join` to this module (its stage
-   C1 in plan/mk9-memory-model.md).
+/* std/thread: the thread surface. Stage A2 of MK9-S3-M1 added the fence, stage
+   B1 added the checker rules for `spawn` and `join` (below), and the threads
+   milestone MK6-S1-M1 lowers the two in its stage C1.
 
        fun fence(order: Ordering)
+       fun spawn<t, r>(entry: closure(move t).R: r, arg: move t).R: Thread<r>
+       fun join<t>(handle: move Thread<t>).R: Result<t, ThreadErr>
 
-   The fence, and the module's surface is documented here rather than declared,
-   exactly as `std/atomic` documents the atomic methods it declares nowhere: a
-   fence is one instruction on either side (`__atomic_thread_fence` in C,
-   `fence seq_cst` in IR), so it needs no C body and the compiler lowers it. Its
-   parameter type is `std/atomic`'s `Ordering`, named the way any other enum is
-   (`BUG-kQ7Rv` was the backend prelude having no typedef for it; it does now).
+   `spawn` and `join` are *checker* builtins: the compiler checks them and, in
+   stage B1, lowers nothing, so a call that passes every rule is refused with
+   the stage that lowers it (MK9-S3-M1 stage C1) named in the message. Only
+   `ThreadErr` is declared here, and the two calls are documented rather than
+   declared for the reason the fence is: their signatures are generic in the
+   values that cross the thread boundary and there is no `.kp` body to write.
+   Stage C1 emits them, not this file.
+
+       fun thread.spawn(entry, arg)
+
+   `entry` is a declared `fun`, a `fun` literal, or a capturing closure, and it
+   takes exactly one parameter: the value `arg` is moved into the worker as that
+   parameter. A plain function value is widened where a closure is expected, so
+   all three spellings work. `arg` is moved, never borrowed, because a borrow's
+   lifetime in v1 is lexical in the frame that made it and the worker outlives
+   that frame.
+
+   One exception, and it is the whole of v1's thread-shared data: a *shared*
+   borrow may cross when the place it borrows has process lifetime, which in v1
+   means a `pd` global, and when the borrowed type has no reachable `&mut` path.
+   An `Atomic<T>` has no `&mut` path by construction, which is what makes
+   `thread.spawn(worker, &counter)` with `pd val counter: AtomicI64` the shared
+   counter, and what makes a `datac` with a reachable `var` field the case the
+   checker refuses. The rules are structural and builtin (MK9 section 5): there
+   is no `Send`/`Sync` marker, because traits are A-12, and each refusal names
+   its own reason.
+
+       fun thread.join(handle)
+
+   `join` consumes the handle and returns `Result<T, ThreadErr>`: `Ok` carries
+   the value the worker returned, and `Err` carries why it ended without one. A
+   panic inside the worker ends that thread and is seen as `Err` by its joiner,
+   with the process still alive (MK9 section 2). The main thread keeps today's
+   behaviour: a panic in `main` still ends the process.
+
+   A `Thread<T>` is a compiler builtin generic in the shape `Atomic<T>` has:
+   monomorphized per element type, not `Copy` (a copy would name one worker
+   twice), and needing no drop. A handle is accepted as a local, a `datac` or
+   `enum` field and a parameter, and refused as a `List`/`Map`/`Box`/array
+   element, because joining is a one-shot thing a container's own copy-and-drop
+   routines would duplicate.
+
+   The fence, the one part of this surface that is lowered today: the module's
+   fence is documented here rather than declared, exactly as `std/atomic`
+   documents the atomic methods it declares nowhere: a fence is one instruction
+   on either side (`__atomic_thread_fence` in C, `fence seq_cst` in IR), so it
+   needs no C body and the compiler lowers it. Its parameter type is
+   `std/atomic`'s `Ordering`, named the way any other enum is (`BUG-kQ7Rv` was
+   the backend prelude having no typedef for it; it does now).
 
    The fence has no cell and no receiver. `SeqCst` means one total order over
    every sequentially consistent operation, and a fence is the one operation
    that joins that order while naming no location, which is why it is a free
    function rather than an `Atomic<T>.fence` (MK9 open question 9.2, resolved
    this way by A2). It lives in `std/thread` rather than beside the atomic
-   builtin because that is where the thread surface goes, so C1 adds `spawn` and
-   `join` to a module instead of inventing one.
+   builtin because that is where the thread surface goes.
 
    A program pays the same `impl "std/atomic"` line every atomic call site pays,
    plus the module qualifier, because that is where `Ordering` is declared:
@@ -33,3 +77,9 @@
    A fence is one instruction and changes nothing a single-threaded program can
    observe: `__atomic_thread_fence(__ATOMIC_SEQ_CST)` on the C side and
    `fence seq_cst` on the LLVM side. */
+
+// Why a joined worker ended without a value, and where: the message carries the
+// panic text, which already names the `.kp` line, so the joiner can report where
+// the worker died (MK9 section 2). One owned `String` field, so the reason is
+// built by the worker's panic and read by whoever joins it.
+datac ThreadErr(val message: String)

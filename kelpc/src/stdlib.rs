@@ -32,6 +32,14 @@ pub const OPTION_MODULE: &str = "std/option";
 /// `key_prefix`, exactly as `try_to_<T>` names `Option` through `OPTION_MODULE`.
 pub const ATOMIC_MODULE: &str = "std/atomic";
 
+/// The module that declares `ThreadErr`, and the module `thread.spawn` and
+/// `thread.join` are reached through (MK9-S3-M1 stage B1). `ThreadErr` is a
+/// plain Kelp `datac` in this module, and the builtin `thread.join` signature
+/// names it by this id's `key_prefix`, exactly as an `Atomic<T>` signature
+/// names `Ordering` through `ATOMIC_MODULE`: a builtin signature has no
+/// declaration site for the resolver to qualify a type at.
+pub const THREAD_MODULE: &str = "std/thread";
+
 /// The call key of `thread.fence`, the one function the shipped `std/thread`
 /// module holds (MK9-S3-M1 stage A2): the module id with `/` replaced by `.`
 /// plus the function's bare name, which is what `resolve.rs` builds for a
@@ -40,6 +48,22 @@ pub const ATOMIC_MODULE: &str = "std/atomic";
 /// and `fence seq_cst`), so the key is named here rather than spelled at those
 /// two comparisons.
 pub const FENCE_FN: &str = "std.thread.fence";
+
+/// The call keys of the two thread calls the checker handles structurally
+/// (MK9-S3-M1 stage B1). Neither has a fixed signature: `thread.spawn`'s `T`
+/// comes from its entry point's single parameter, and `thread.join`'s from the
+/// handle it is given, so the two live beside `FENCE_FN` rather than in the
+/// builtin signature table, whose entries are all concrete. Stage C1 lowers
+/// both; stage B1 refuses every call that passes the checker's rules.
+pub const SPAWN_FN: &str = "std.thread.spawn";
+pub const JOIN_FN: &str = "std.thread.join";
+
+/// Whether `key` is one of the two thread calls above. One predicate rather
+/// than a `matches!` at each of the two sites that recognize them, because the
+/// module item path and the call checker have to agree on which keys they are.
+pub fn is_thread_fn(key: &str) -> bool {
+    key == SPAWN_FN || key == JOIN_FN
+}
 
 /// The module that declares `Result<T, E>`. A builtin whose result *is* a
 /// `Result` names the instance through `key_prefix` of this id, for the same

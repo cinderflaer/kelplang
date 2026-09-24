@@ -1,0 +1,18 @@
+// MK9-S3-M1 stage B1, section 5 rules 2 and 3 in their accepted shape, which is
+// the whole of v1's shared data: a `pd val` atomic borrows the process-lifetime
+// place rule 2 allows, and an `Atomic<T>` has no reachable `&mut` path, so rule
+// 3 passes it too. The call passes the checker and stops at the stage C1
+// interim refusal, like every other accepted shape.
+impl "std/thread"
+impl "std/atomic"
+
+pd val counter: AtomicI64 = AtomicI64.new(0)
+
+fun worker(c: &AtomicI64) {
+    c.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    val h = thread.spawn(worker, &counter)
+    print(0)
+}

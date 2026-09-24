@@ -1,0 +1,16 @@
+// MK9-S3-M1 stage B1, section 5 rule 2: a shared borrow may cross to a worker
+// only when the place it borrows has process lifetime, which in v1 means a `pd`
+// global. This one borrows a frame local, whose lifetime ends before the worker
+// does, so the checker refuses it and names the reason.
+impl "std/thread"
+impl "std/atomic"
+
+fun worker(c: &AtomicI64) {
+    print(c.load(order = atomic.Ordering.SeqCst))
+}
+
+fun main() {
+    val c: AtomicI64 = AtomicI64.new(0)
+    val h = thread.spawn(worker, &c)
+    print(0)
+}

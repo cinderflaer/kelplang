@@ -1,0 +1,9 @@
+// MK9-S3-M1 stage B1: the same refusal per container, so each phrasing of the
+// one reason is pinned. A map value is read and written as a plain location by
+// the map's own routines.
+impl "std/thread"
+
+fun main() {
+    var m: Map<Thread<i64>> = Map.new()
+    print(m.len())
+}

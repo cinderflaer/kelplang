@@ -1,0 +1,8 @@
+// MK9-S3-M1 stage B1: a `Thread<T>` is refused as an array element, which holds
+// its elements inline.
+impl "std/thread"
+
+fun main() {
+    var xs: [Thread<i64>; 2] = [0, 0]
+    print(xs.len())
+}

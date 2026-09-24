@@ -6060,3 +6060,119 @@ fn a_thread_fence_lowers_to_the_fence_instruction_of_its_backend() {
         backend()
     );
 }
+
+// ---------------------------------------------------------------------------
+// MK9-S3-M1 stage B1: the `thread.spawn` / `thread.join` checker surface and
+// the argument rules of MK9 section 5. Stage B1 lowers nothing, so every
+// fixture here is a *rejection*: the four rule probes are refused by name, and
+// a call that passes every rule stops at the interim refusal naming stage C1.
+// ---------------------------------------------------------------------------
+
+/// Rule 1: an exclusive borrow never crosses to a worker, because the worker
+/// outlives the frame that made the borrow and the borrow is the promise that
+/// no other path reaches the value.
+#[test]
+fn a_mut_borrow_argument_to_spawn_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_mut_borrow.kp",
+        "'thread.spawn' cannot send '&mut Atomic<i64>'",
+    );
+}
+
+/// Rule 2: a shared borrow may cross only when the place it borrows has process
+/// lifetime, which in v1 means a `pd` global, so a borrow of a frame local is
+/// refused.
+#[test]
+fn a_borrow_of_a_frame_local_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_local_borrow.kp",
+        "borrows a frame local that ends before the worker does",
+    );
+}
+
+/// Rule 2's other shape: a `str` (and a `View`, the same thing with a length)
+/// is borrowed text with no place of its own.
+#[test]
+fn a_str_argument_to_spawn_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_str_arg.kp",
+        "'thread.spawn' cannot send a 'str'",
+    );
+}
+
+/// Rule 3: a shared borrow of a `pd` whose pointee has a reachable `var` field
+/// is refused, because two threads could write it through the same borrow.
+#[test]
+fn a_shared_borrow_reaching_a_var_field_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_var_field.kp",
+        "the borrow reaches a 'var' field",
+    );
+}
+
+/// Rule 4: a moved value that carries a borrow cannot be constructed in the
+/// first place, so `thread.spawn` opens no hole there.
+#[test]
+fn a_moved_value_that_carries_a_borrow_is_still_refused() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_borrowed_value.kp",
+        "field 'text' is a borrowed type ('View')",
+    );
+}
+
+/// Rules 2 and 3 in their accepted shape: a `&Atomic<T>` of a `pd` global is
+/// the one borrow that crosses, and the call then stops at the stage C1 interim
+/// refusal rather than being lowered.
+#[test]
+fn a_shared_pd_atomic_is_the_one_borrow_that_passes_the_rules() {
+    assert_rejected_with(
+        "tests/fixtures/thread_spawn_pd_atomic.kp",
+        "MK9-S3-M1 stage C1",
+    );
+}
+
+/// The accepted shapes: a declared `fun`, a capturing closure, and a handle
+/// typed as a `datac` field, an `enum` payload and a parameter. Stage B1 lowers
+/// none of them, so each ends at the interim refusal naming stage C1.
+#[test]
+fn an_accepted_spawn_or_join_stops_at_the_stage_c1_interim_refusal() {
+    for fixture in [
+        "thread_spawn_accepted",
+        "thread_spawn_closure",
+        "thread_join_accepted",
+    ] {
+        assert_rejected_with(
+            &format!("tests/fixtures/{fixture}.kp"),
+            "is not lowered yet",
+        );
+    }
+}
+
+/// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
+/// thing `thread.spawn` makes.
+#[test]
+fn join_refuses_a_value_that_is_not_a_thread_handle() {
+    assert_rejected_with(
+        "tests/fixtures/thread_join_not_a_handle.kp",
+        "takes a 'Thread<T>' handle",
+    );
+}
+
+/// A `Thread<T>` is refused as a `List`/`Map`/`Box`/array element, the rule an
+/// `Atomic<T>` already has: a handle names one running worker and is joined
+/// once, while a container's own routines copy and drop an element like a plain
+/// location.
+#[test]
+fn a_thread_handle_cannot_be_a_container_element() {
+    for (fixture, container) in [
+        ("thread_spawn_list_element", "a 'List' element"),
+        ("thread_spawn_map_element", "a 'Map' value"),
+        ("thread_spawn_box_element", "a 'Box' element"),
+        ("thread_spawn_array_element", "an array element"),
+    ] {
+        assert_rejected_with(
+            &format!("tests/fixtures/{fixture}.kp"),
+            &format!("'Thread<i64>' cannot be {container}"),
+        );
+    }
+}

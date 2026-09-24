@@ -1,0 +1,16 @@
+// MK9-S3-M1 stage B1, section 5 rule 4: a moved value that contains a borrow
+// stays refused. `thread.spawn` opens no hole here, because the value cannot be
+// constructed in the first place: `is_borrowed_field_ty` refuses a `str`, a
+// `View` or a reference in a `datac` field, an enum payload, a `List` element
+// and a `Map` value, so no moved argument can carry one.
+impl "std/thread"
+impl "std/str"
+
+datac Payload(val text: View)
+
+fun worker(p: move Payload).R: usize = p.text.len()
+
+fun main() {
+    val h = thread.spawn(worker, Payload(text = "x".view()))
+    print(0)
+}

@@ -1,0 +1,23 @@
+// MK9-S3-M1 stage B1: `thread.join` takes a `Thread<T>` handle and hands back
+// `Result<T, ThreadErr>`. A handle can only be made by `thread.spawn`, so the
+// checker surface is exercised through a parameter: a `Thread<i64>` is accepted
+// as a parameter (and as a `datac` field, below), which is what the surface
+// says. The call itself passes the checker and stops at the stage C1 interim
+// refusal, because joining is lowered there.
+impl "std/thread"
+impl "std/result"
+
+datac Holder(val h: Thread<i64>)
+
+enum Job {
+    Run(val h: Thread<i64>)
+}
+
+fun consume(h: move Thread<i64>) {
+    val r = thread.join(h)
+    print(0)
+}
+
+fun main() {
+    print(1)
+}

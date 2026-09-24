@@ -4383,9 +4383,10 @@ impl<'a> Gen<'a> {
             | Ty::Map(..)
             | Ty::Array(..)
             | Ty::Atomic(_)
+            | Ty::Thread(_)
             | Ty::Ref { .. } => {
                 unreachable!(
-                    "type checker rejects printing unit/struct/container/atomic/reference values"
+                    "type checker rejects printing unit/struct/container/atomic/thread/reference values"
                 )
             }
         }
