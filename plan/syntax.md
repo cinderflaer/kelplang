@@ -1551,7 +1551,10 @@ fun main() {
 | `set(i, v)` | exclusive, `usize` | `Unit` |
 
 - **The length is a compile-time constant**, written as a literal, another `const`, or an expression over them (A-19): `[u64; PAGE_SIZE / ENTRY_SIZE]`. A `val` computed at runtime is refused, however obviously constant its initializer looks.
-- **The element type may be a scalar, `String`, `Bytes`, a `datac`, an `enum`, or another array.** It may not be a borrow (a `str`, a `View` or a `&T`), a `Unit`, or a `List`/`Map`/`Box`, for the reason 12.1 gives: an element is held inline and owned by the array.
+- **The element type may be a scalar, `String`, `Bytes`, a `datac`, an `enum`, a
+tuple (3.1), or another array.** It may not be a borrow (a `str`, a `View` or a
+`&T`), a `Unit`, or a `List`/`Map`/`Box`, for the reason 12.1 gives: an element is
+held inline and owned by the array.
 - **`Copy` when the element is.** `[i32; 3]` is a value you can assign freely; `[String; 3]` owns its three strings, so assigning it moves it and dropping it frees each element. `set` drops the element it replaces.
 - **Both literals.** `[a, b, c]` takes the length from the number of elements, and its type is the one the context declares or, with no declaration, `[T; n]` for the type its elements agree on. `[x; N]` fills `N` slots with `x`, and copied means `x` has to **own nothing**: a scalar, or a `datac` whose fields are all scalars. A `String` element is refused by name, because `[s; 4]` would be four owners of one buffer.
 - **No `[T; 0]`.** A zero-length array would be a C array with no elements, which is not standard C; there is no empty form.
