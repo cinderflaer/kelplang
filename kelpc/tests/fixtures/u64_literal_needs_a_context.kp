@@ -1,0 +1,7 @@
+// A value above `i64::MAX` still needs a context (MISSING-x8Wq3): with nothing
+// to give it a type it falls back to `i32` like any other literal, and the
+// message names a type wide enough to hold the value rather than wrapping it.
+fun main() {
+    val untyped = 18446744073709551615
+    print(untyped)
+}

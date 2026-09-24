@@ -26,10 +26,10 @@ fun main() {
     print(fmt.commas_u64(999))
     print(fmt.commas_u64(1000))
     print(fmt.commas_u64(1234567))
-    // `u64` max has no literal spelling, so it is the arithmetic form
-    // `fpl/hash` already uses for the FNV offset basis. Each part is bound
-    // with its type: a literal that is only the receiver of a method call gets
-    // no type from anywhere and defaults to `i32`.
+    // `u64` max has a literal spelling now (MISSING-x8Wq3); this keeps the
+    // arithmetic form `fpl/hash` writes for the FNV offset basis, and each part
+    // is bound with its type because a literal that is only the receiver of a
+    // method call gets no type from anywhere and defaults to `i32`.
     val unit: u64 = 4294967296
     val mask: u64 = 4294967295
     print(fmt.commas_u64(mask * unit + mask))
