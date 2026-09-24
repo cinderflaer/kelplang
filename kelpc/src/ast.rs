@@ -494,7 +494,12 @@ pub fn rebase_root(expr: &Expr, base: &Expr) -> Expr {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    IntLit(i64, Span),
+    /// A decimal, hexadecimal or binary integer literal, as the magnitude the
+    /// source wrote. `u64` is the payload's width because that is the range a
+    /// literal may spell: the widest integer type holds values `i64` cannot, and
+    /// a negative value is an `Unary` negation of one of these (MISSING-x8Wq3).
+    /// `infer.rs` decides the type from the literal's context.
+    IntLit(u64, Span),
     /// `'a'` — one Unicode scalar value (open item 53), from the lexer
     /// already decoded. Its *type* is not decided here: `infer.rs` gives it
     /// the integer type its context asks for (so a `u8` byte comparison can

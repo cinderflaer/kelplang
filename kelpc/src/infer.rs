@@ -3356,8 +3356,8 @@ fn int_lit_ty(expected: Option<&Ty>) -> (Ty, bool) {
 
 /// The narrowest integer type that holds `value`, for the repair line of a
 /// literal that does not fit the type it landed on. Every value the lexer
-/// yields is within `i64`'s range, and a sign only adds the minimum, so this
-/// always names a type that holds the value.
+/// yields is within `u64`'s range (the widest integer type), and a sign only
+/// adds the minimum, so this always names a type that holds the value.
 fn int_lit_repair(value: i128) -> &'static str {
     if value < 0 {
         if value >= i32::MIN as i128 {

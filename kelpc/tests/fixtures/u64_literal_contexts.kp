@@ -1,0 +1,20 @@
+// Every path that decides an integer literal's type admits `u64`'s range
+// (MISSING-x8Wq3): a `const`'s declared type, a call argument against the
+// parameter's type, a `fun`'s return type, and a written type on a binding.
+//
+// The `i64` minimum is in here because it is spelled as its magnitude under a
+// sign: the magnitude is 2^63, which only the widened literal can carry, so the
+// minimum was unwritable too and is the signed half of the same rule.
+const MASK: u64 = 0xFFFFFFFFFFFFFFFF
+
+fun take(x: u64).R: u64 = x
+
+fun give().R: u64 = 18446744073709551615
+
+fun main() {
+    print(MASK)
+    print(take(0xFFFFFFFFFFFFFFFF))
+    print(give())
+    val min: i64 = -9223372036854775808
+    print(min)
+}
