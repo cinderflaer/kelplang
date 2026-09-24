@@ -1,0 +1,33 @@
+// MISSING-qM4Zx: `get_or` and `values` deep-copy a `datac` value out of a
+// `Map`, through the same derived `kelp_clone_<T>` the `List` methods use. The
+// value owns a `String`, so a shallow copy would leave two owners of one
+// buffer: ASAN re-runs this fixture (see
+// `heap_fixtures_are_double_free_and_leak_clean`).
+impl "std/str"
+
+datac Digest(val path: String, val size: i32)
+
+fun main() {
+    var m: Map<String, Digest> = Map.new()
+    m.insert("a", Digest(path = String.from_str("alpha"), size = 10))
+    m.insert("b", Digest(path = String.from_str("beta"), size = 20))
+
+    val present = m.get_or(key = "a", fallback = Digest(path = String.from_str("none"), size = 0))
+    print(present.path)
+    print(present.size)
+
+    val absent = m.get_or(key = "z", fallback = Digest(path = String.from_str("none"), size = 0))
+    print(absent.path)
+    print(absent.size)
+
+    val values = m.values()
+    print(values.len())
+    print(values.get(0).path)
+    print(values.get(0).size)
+    print(values.get(1).path)
+    print(values.get(1).size)
+
+    // The map keeps its own values: the copies above own their own buffers.
+    print(m.get("a").path)
+    print(m.len())
+}
