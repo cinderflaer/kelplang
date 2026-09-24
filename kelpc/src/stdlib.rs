@@ -139,6 +139,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/process" => include_str!("../std/process.kp"),
         "std/net" => include_str!("../std/net.kp"),
         "std/http" => include_str!("../std/http.kp"),
+        "std/ws" => include_str!("../std/ws.kp"),
         "std/encoding" => include_str!("../std/encoding.kp"),
         "std/list" => include_str!("../std/list.kp"),
         "std/atomic" => include_str!("../std/atomic.kp"),
@@ -160,8 +161,8 @@ fn raw_source(id: &str) -> Option<&'static str> {
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
-        "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/encoding", "std/list",
-        "std/option", "std/result", "std/atomic", "std/thread",
+        "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/ws", "std/encoding",
+        "std/list", "std/option", "std/result", "std/atomic", "std/thread",
     ]
 }
 
@@ -177,10 +178,18 @@ pub fn is_domain(name: &str) -> bool {
 /// The domain a stdlib module's items are gated on, if it is a gated module.
 /// `std/mem`, `std/str`, `std/path` and `std/math` are ungated: they are
 /// arithmetic and byte shuffling, and cannot reach the outside world.
+///
+/// `std/ws` is gated **and** needs a second domain, which is unusual: its
+/// items are reached through `net` (so a caller must hold it, as `std/net`'s
+/// own items require), and its text also names `std/rand` for the handshake's
+/// key and the masking key of every frame. A module holds what its importer
+/// grants, so a program that imports it writes both domains on that `impl`
+/// line: `caps(net = ["host:port"], rand = [])`.
 pub fn domain_of(module: &str) -> Option<&'static str> {
     Some(match module {
         "std/fs" => "fs",
         "std/net" => "net",
+        "std/ws" => "net",
         "std/process" => "process",
         "std/env" => "env",
         "std/time" => "time",

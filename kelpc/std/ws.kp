@@ -1,0 +1,748 @@
+impl "std/mem"
+impl "std/net"
+impl "std/str"
+impl "std/fmt"
+impl "std/option"
+impl "std/result"
+impl "std/encoding"
+impl "std/rand"
+
+/* std/ws: a WebSocket client (RFC 6455), over `ws://` only.
+
+   Two capabilities, because the module has two needs, and the `impl` line is
+   where a reader sees both:
+
+       impl "std/ws" caps(net = ["gateway.example.com:80"], rand = [])
+
+   `net` reaches the socket, and its half of the check is the host-and-port
+   check `net.connect` already gives: the grant matches the host as written and
+   the port beside it, before `getaddrinfo` runs, and a call for anything else
+   is denied at `connect` with the message `net` produces. `rand` is here
+   because RFC 6455 requires the sixteen bytes of `Sec-WebSocket-Key` and the
+   four-byte masking key of every client frame to be unpredictable. A module
+   holds exactly what its importer granted, so a program that never grants
+   `rand` does not build: the refusal names `std.rand.bytes` and `std/ws`, at
+   the call inside this module. The pattern list for `rand` is empty because
+   there is no resource to name, the same spelling `caps(process = [])` uses
+   for argv.
+
+   TLS is not here. `wss://` is refused by name in `parse_url`, and the message
+   says that v1 has no TLS rather than pretending the scheme parsed: the
+   decision TLS waits on is the owner's (`MISSING-XkcSp`). Nothing about the
+   framing depends on the transport, which is why the client ships now.
+
+   `recv` and control frames: **a control frame is returned to the caller**.
+   `Msg.Ping` and `Msg.Pong` arrive as values, and a ping is answered by the
+   caller with `conn.pong(payload)`; `recv` never answers one on its own. A
+   fragmented data message is assembled here, across as many continuation
+   frames as the peer sends, and a control frame that arrives in the middle of
+   one is returned while the partial message stays where it was, so the next
+   `recv` continues it. `Msg.Close` is returned like the others, and the caller
+   completes the closing handshake with `conn.close(code, reason)`.
+
+   Protocol errors panic, with their own message each: a frame the server
+   masked (RFC 6455 5.1 forbids it), a continuation with nothing to continue, a
+   data frame while a fragmented message is open, a control frame that is
+   fragmented or longer than 125 bytes, a close frame whose payload is exactly
+   one byte, an unknown opcode, and a length above `MAX_FRAME`. A `Text` frame
+   that is not UTF-8 is refused by `String.from_bytes`'s own panic, because v1
+   has no validating helper that returns a value.
+
+   Not here, deliberately: a server, extensions (`Sec-WebSocket-Extensions`,
+   so `permessage-deflate` and Discord's `zlib-stream`), subprotocols
+   (`Sec-WebSocket-Protocol`), redirects, automatic reconnect, and the close
+   timeout that waits for the peer's answering `Close`. That last one is the
+   caller's: `close` sends one frame and does not wait, so a caller that wants
+   the peer's answer reads until it sees `Msg.Close` (or end of file) first. */
+
+const DEFAULT_PORT: u16 = 80
+const DEFAULT_SCHEME: str = "ws"
+
+// The RFC 6455 1.3 GUID, appended to the key before the digest.
+const WS_GUID: str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+// The largest frame payload this client reads. RFC 6455 allows a 63-bit
+// length; a client that believes that number allocates whatever the peer
+// announces, so this is the ceiling it agrees to instead, and a longer frame
+// is a protocol error. A megabyte is headroom for a JSON payload and far below
+// what a peer would need to exhaust memory.
+const MAX_FRAME: usize = 1048576
+
+// The largest response head `connect` accepts before it gives up. A 101 with a
+// `Sec-WebSocket-Accept` is under 200 bytes; the ceiling is what stops a peer
+// that never sends the terminator from growing this client's buffer.
+const MAX_HEAD: usize = 8192
+
+// Opcodes (RFC 6455 5.2), by the number on the wire.
+const OP_CONTINUATION: u8 = 0
+const OP_TEXT: u8 = 1
+const OP_BINARY: u8 = 2
+const OP_CLOSE: u8 = 8
+const OP_PING: u8 = 9
+const OP_PONG: u8 = 10
+
+// What a close frame with no payload means: RFC 6455 7.1.5 reserves 1005 for
+// "no status code was present", so an absent code and a code of 1005 are the
+// same value here, and a caller that matches on `Close` cannot tell them
+// apart. The alternative is an `Option`, which this enum would have to grow a
+// third field for.
+const CLOSE_NO_STATUS: u16 = 1005
+
+// One WebSocket URL, shaped like `std/http`'s `Url`: the scheme is kept so
+// that `parse_url`'s refusal of `wss` has somewhere to sit, and `path` carries
+// the path *and* query, exactly as the HTTP client's does.
+datac Url(val scheme: String, val host: String, val port: u16, val path: String)
+
+datac Header(val name: String, val value: String)
+
+// One decoded frame: the frame layer under `recv`. `recv` is what a caller
+// wants; this is public because a shipped module has no privacy and a caller
+// that wants to see the frames rather than the messages should not have to
+// re-implement the length decoding.
+datac Frame(val fin: bool, val opcode: u8, val data: Bytes)
+
+// One message, or one control frame. Text and Binary are whole messages,
+// assembled across continuation frames; Ping, Pong and Close are the control
+// frames of RFC 6455 5.5, returned rather than answered or hidden.
+enum Msg {
+    Text(val text: String)
+    Binary(val data: Bytes)
+    Ping(val data: Bytes)
+    Pong(val data: Bytes)
+    Close(val code: u16, val reason: String)
+}
+
+// An open connection: the descriptor, the bytes already received from it and
+// how far into them the frame reader is, and the partial message a
+// continuation frame left open (`frag_opcode` is 0 when there is none).
+//
+// It holds an fd rather than a `net.Socket`, for the reason `http.Cursor`
+// does: a parameter is always a borrow, so an owned socket cannot be moved
+// into a struct field, and the socket is rebuilt at each call. Nothing closes
+// on drop, `close` is explicit.
+datac Conn(
+    val fd: i32,
+    var buf: Bytes,
+    var start: usize,
+    var frag_opcode: u8,
+    var frag_data: Bytes,
+)
+
+/* ----- URLs ----- */
+
+// Parses an absolute `ws://` URL. Panics: if there is no scheme, no host, or
+// the scheme is anything but `ws` (`wss` gets its own message naming TLS).
+//
+// The port is split at the first `:`, so an IPv6 literal is not expressible
+// here either, the same rule `net`'s capability patterns follow: a host
+// containing the port separator would be ambiguous.
+fun parse_url(s: &str).R: Url {
+    val sep = option.expect(
+        o = str.index_of(s, "://"),
+        message = "ws.parse_url: URL must start with 'ws://' (no scheme found)",
+    )
+    val scheme = str.prefix(s, sep)
+    if !str.eq(scheme.as_str(), DEFAULT_SCHEME) {
+        if str.eq(scheme.as_str(), "wss") {
+            panic("ws.parse_url: 'wss' is not supported: v1 has no TLS, and TLS is a decision the owner has not made (MISSING-XkcSp) - use 'ws://'")
+        }
+        panic("ws.parse_url: only 'ws' is supported")
+    }
+    val rest = str.substring(s, sep + 3)
+    return split_authority(rest)
+}
+
+// Splits `host[:port][/path]`, the part after `://`. The path is everything
+// from the first `/`, so a query string without a path (`host?a=b`) parses as
+// part of the authority and fails there rather than silently losing the query.
+fun split_authority(rest: &str).R: Url {
+    if str.is_empty(rest) {
+        panic("ws.parse_url: URL has no host")
+    }
+    val slash = str.index_of(rest, "/")
+    if let Some(at) = slash {
+        val authority = str.prefix(rest, at)
+        val path = str.substring(rest, at)
+        return make_url(authority, path)
+    }
+    val whole = str.prefix(rest, str.len(rest))
+    return make_url(whole, "/")
+}
+
+fun make_url(authority: String, path: &str).R: Url {
+    if str.is_empty(authority.as_str()) {
+        panic("ws.parse_url: URL has no host")
+    }
+    val colon = str.index_of(authority.as_str(), ":")
+    if let Some(at) = colon {
+        // Bound to a place first: `str.substring` hands back a borrow of its
+        // argument, and a borrow-returning call needs a variable or a field.
+        val text = authority.as_str()
+        val host = str.prefix(text, at)
+        val port_text = str.substring(text, at + 1)
+        return Url(
+            scheme = String.from_str(DEFAULT_SCHEME),
+            host = host,
+            port = parse_port(port_text),
+            path = String.from_str(path),
+        )
+    }
+    return Url(
+        scheme = String.from_str(DEFAULT_SCHEME),
+        host = authority.clone(),
+        port = DEFAULT_PORT,
+        path = String.from_str(path),
+    )
+}
+
+fun parse_port(text: &str).R: u16 {
+    if str.is_empty(text) {
+        panic("ws.parse_url: URL has an empty port")
+    }
+    val p = result.expect(
+        r = str.parse_u64(text),
+        message = "ws.parse_url: URL port is not a number",
+    )
+    if p > 65535 {
+        panic("ws.parse_url: URL port is out of range")
+    }
+    return p.to_u16()
+}
+
+/* ----- the handshake ----- */
+
+// The accept value the server must echo: the base64 of the SHA-1 of the key
+// text plus the GUID (RFC 6455 4.2.2). The key is used as the *text* the
+// client sent, not as the sixteen bytes it was made from.
+fun accept_for(key: &str).R: String {
+    val material = str.concat(key, WS_GUID)
+    val digest = encoding.sha1(Bytes.from_str(material.as_str()))
+    return encoding.base64_encode(digest)
+}
+
+// `prefix`, then `n` in decimal, then `suffix`: the shape every numeric
+// refusal in this module has. A `panic` takes one `&str`, so the three parts
+// are concatenated in two steps rather than passed nested (an owned `String`
+// argument does not borrow itself into a `&str` parameter).
+fun with_number(prefix: &str, n: u64, suffix: &str).R: String {
+    val digits = fmt.uint(n)
+    val middle = str.concat(prefix, digits.as_str())
+    return str.concat(middle.as_str(), suffix)
+}
+
+// The `GET` that opens a WebSocket (RFC 6455 4.1), through the blank line.
+// `Host` carries the port only when it is not the default, as `std/http`'s
+// head builder does.
+fun build_head(host: &str, port: u16, path: &str, key: &str).R: String {
+    var out = String.with_capacity(256)
+    out.push_str("GET ")
+    out.push_str(path)
+    out.push_str(" HTTP/1.1\r\nHost: ")
+    out.push_str(host)
+    if port != DEFAULT_PORT {
+        out.push_str(":")
+        // A formatted number is an owned temporary, so its `&str` view has to
+        // be bound before it can be used.
+        val port_text = fmt.uint(port.to_u64())
+        out.push_str(port_text.as_str())
+    }
+    out.push_str("\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ")
+    out.push_str(key)
+    out.push_str("\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    return out
+}
+
+// The byte after the head's terminator: `CRLFCRLF` is four bytes, so an empty
+// response is 0 and the head is `b[0..end-4]`.
+//
+// This scans **bytes**, not text: the buffer holds whatever arrived with the
+// head, which is the first frames, and `Bytes.as_str` validates UTF-8 and
+// would panic on a binary frame before the head was even located. `std/http`
+// learned that from a 200 KB image (`find_head_end` in that module).
+fun find_head_end(b: Bytes).R: usize {
+    val n = b.len()
+    var i: usize = 0
+    while i + 4 <= n {
+        if b.get(i) == 13 && b.get(i + 1) == 10 && b.get(i + 2) == 13 && b.get(i + 3) == 10 {
+            return i + 4
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+// The header block as text: the bytes before the terminator, copied and
+// validated in one step, since `String.from_bytes` adopts the buffer instead
+// of copying it.
+fun head_text(b: Bytes, end: usize).R: String {
+    val n = end - 4
+    var raw = mem.alloc(n)
+    var i: usize = 0
+    while i < n {
+        raw.set(i, b.get(i))
+        i = i + 1
+    }
+    return String.from_bytes(raw)
+}
+
+// ASCII case-insensitive comparison, the rule header names follow. The values
+// here are ASCII by construction and `str.to_lower` is ASCII-only.
+fun name_eq(a: &str, b: &str).R: bool {
+    if str.len(a) != str.len(b) {
+        return false
+    }
+    val la = str.to_lower(a)
+    val lb = str.to_lower(b)
+    return str.eq(la.as_str(), lb.as_str())
+}
+
+// Every line after the status line, split at the first `:` with both halves
+// trimmed. The head text has no trailing `CRLF` (the terminator was consumed
+// to find its end), so splitting on `CRLF` gives clean lines and the last
+// header without a `\r`. A line with no `:` is skipped, as HTTP allows.
+fun split_head_headers(head: &str).R: List<Header> {
+    val lines = str.split(head, "\r\n")
+    var hs: List<Header> = List.empty()
+    var i: usize = 1
+    while i < lines.len() {
+        val text = lines.get(i).as_str()
+        if !str.is_empty(text) {
+            val colon = str.index_of(text, ":")
+            if let Some(at) = colon {
+                hs.push(Header(
+                    name = str.prefix(text, at),
+                    value = str.trim(str.substring(text, at + 1)),
+                ))
+            }
+        }
+        i = i + 1
+    }
+    return hs
+}
+
+// The first matching header's value, or an empty `String` when it is absent,
+// for the reason `std/http`'s `Response.header` gives: a borrow reached
+// through `List.get` cannot be handed back, so the value is copied.
+fun header_value(hs: List<Header>, name: &str).R: String {
+    var i: usize = 0
+    while i < hs.len() {
+        if name_eq(hs.get(i).name.as_str(), name) {
+            return String.from_str(hs.get(i).value.as_str())
+        }
+        i = i + 1
+    }
+    return String.empty()
+}
+
+// The status line `HTTP/1.1 101 Switching Protocols`, through the code. Only
+// the code matters: the reason phrase may be absent or anything at all.
+//
+// Panics: if the head has no status line, or its code is not a number.
+fun parse_status(head: &str).R: i32 {
+    val sp = str.index_of(head, " ")
+    if let Some(at) = sp {
+        val line = str.prefix(head, at)
+        if str.starts_with(line.as_str(), "HTTP/") {
+            val rest = str.substring(head, at + 1)
+            val sp2 = str.index_of(rest, " ")
+            if let Some(at2) = sp2 {
+                val code_text = str.prefix(rest, at2)
+                return status_code(code_text.as_str())
+            }
+            return status_code(rest)
+        }
+    }
+    panic("ws.connect: the response has no status line, so it is not an HTTP response")
+}
+
+fun status_code(text: &str).R: i32 {
+    val p = result.expect(
+        r = str.parse_u64(text),
+        message = "ws.connect: the status code is not a number",
+    )
+    if p > 999 {
+        panic("ws.connect: the status code is out of range")
+    }
+    return p.to_i32()
+}
+
+// Reads the response head and leaves the rest of what arrived in `buf`, which
+// is where the first frames already are: a server may write the `101` and the
+// first frame into one segment, and a client that dropped those bytes would
+// lose a message.
+//
+// Panics: if the peer closes first, or sends more than `MAX_HEAD` bytes
+// without a terminator.
+fun mut Conn.read_head().R: String {
+    var going = true
+    while going {
+        val end = find_head_end(buf)
+        if end > 0 {
+            val head = head_text(buf, end)
+            start = end
+            return head
+        }
+        if buf.len() >= MAX_HEAD {
+            panic("ws.connect: the response head did not arrive within 8192 bytes, so the peer is not answering the handshake")
+        }
+        val chunk = net.recv(net.Socket(fd = fd), 4096)
+        if chunk.is_empty() {
+            panic("ws.connect: the connection closed before the response head arrived")
+        }
+        buf.append(chunk)
+    }
+    // Unreachable, like the tail of `recv`: a `.R: String` function has to end
+    // with a `return`, and this loop either returns or panics.
+    return String.empty()
+}
+
+// Opens a WebSocket to `host:port` and completes the handshake, or panics.
+//
+// `path` is the request target, path and query together (`/gateway?v=10`).
+// `host` is checked against the importing module's `net` grant, as written,
+// before anything connects.
+//
+// The four refusals of the handshake, each with its own message: a status
+// other than 101, a `101` with no `Sec-WebSocket-Accept`, an accept value that
+// does not match the key this call sent, and a head that is not HTTP at all
+// (`parse_status`). The accept check is what makes the `101` mean WebSocket:
+// keys are per-connection, so a peer that is not the one the key was sent to
+// cannot produce the digest. RFC 6455 4.1 also asks for `Upgrade: websocket`
+// and `Connection: Upgrade` to be validated, and they are not checked
+// separately here: the accept value is the stronger test of the same thing,
+// and a peer that cannot produce it is refused whatever its other headers say.
+// What this side *sends* does carry both, and the loopback gate asserts it.
+//
+// Panics: if the connect fails, the head is malformed or refused, or the peer
+// closes during the handshake.
+fun connect(host: &str, port: u16, path: &str).R: Conn {
+    // A fresh 16-byte key per connection (RFC 6455 4.1): it must not be a
+    // fixed value, or a peer can precompute what a client will send.
+    val key = rand.bytes(16)
+    val key_text = encoding.base64_encode(key)
+    val expected = accept_for(key_text.as_str())
+
+    val s = net.connect(host, port)
+    val head = build_head(host, port, path, key_text.as_str())
+    net.send_text(s, head.as_str())
+
+    var c = Conn(
+        fd = s.fd,
+        buf = Bytes.empty(),
+        start = 0,
+        frag_opcode = 0,
+        frag_data = Bytes.empty(),
+    )
+    val response = c.read_head()
+    val status = parse_status(response.as_str())
+    if status != 101 {
+        val answer = with_number(
+            prefix = "ws.connect: the server answered '",
+            n = status.to_u64(),
+            suffix = "' instead of '101 Switching Protocols'",
+        )
+        panic(answer.as_str())
+    }
+    val accept = header_value(split_head_headers(response.as_str()), "sec-websocket-accept")
+    if str.is_empty(accept.as_str()) {
+        panic("ws.connect: the 101 response has no Sec-WebSocket-Accept header, so it is not a WebSocket server")
+    }
+    if !str.eq(accept.as_str(), expected.as_str()) {
+        panic("ws.connect: Sec-WebSocket-Accept does not match the key this connection sent, so the peer did not compute it from the handshake")
+    }
+    return c
+}
+
+/* ----- sending ----- */
+
+// One client frame, never fragmented: the first byte always sets `FIN`. Every
+// client frame carries a masking key (RFC 6455 5.3), four fresh random bytes
+// here, and the payload is XORed with it. The length is written in the
+// shortest of the three forms the RFC defines.
+fun Conn.send_frame(opcode: u8, data: &Bytes) {
+    val key = rand.bytes(4)
+    var out = Bytes.empty()
+    out.push(opcode | 128)
+    val n = data.len()
+    if n <= 125 {
+        out.push(n.to_u8() | 128)
+    } elif n <= 65535 {
+        out.push(126 | 128)
+        out.push(((n >> 8) & 255).to_u8())
+        out.push((n & 255).to_u8())
+    } else {
+        out.push(127 | 128)
+        var i: usize = 0
+        while i < 8 {
+            out.push(((n >> (56 - i * 8)) & 255).to_u8())
+            i = i + 1
+        }
+    }
+    var k: usize = 0
+    while k < 4 {
+        out.push(key.get(k))
+        k = k + 1
+    }
+    var i: usize = 0
+    while i < n {
+        out.push(data.get(i) ^ key.get(i % 4))
+        i = i + 1
+    }
+    net.send_all(net.Socket(fd = fd), out)
+}
+
+// One text message. The text is UTF-8 by construction (it is a `str`), which
+// is what the frame's payload has to be.
+fun Conn.send_text(text: &str) {
+    val data = Bytes.from_str(text)
+    self.send_frame(OP_TEXT, data)
+}
+
+fun Conn.send_binary(data: &Bytes) {
+    self.send_frame(OP_BINARY, data)
+}
+
+// A ping. The peer answers with a pong carrying the same payload, which
+// `recv` returns as `Msg.Pong`.
+//
+// Panics: if `data` is longer than 125 bytes, which is a control frame's
+// limit (RFC 6455 5.5).
+fun Conn.ping(data: &Bytes) {
+    if data.len() > 125 {
+        panic("ws.ping: a control frame's payload may not exceed 125 bytes")
+    }
+    self.send_frame(OP_PING, data)
+}
+
+// A pong, which is what a caller sends after `recv` handed it a `Msg.Ping`.
+//
+// Panics: as `ping`.
+fun Conn.pong(data: &Bytes) {
+    if data.len() > 125 {
+        panic("ws.pong: a control frame's payload may not exceed 125 bytes")
+    }
+    self.send_frame(OP_PONG, data)
+}
+
+// Whether `code` is one an endpoint may send in a close frame. RFC 6455 7.4.2
+// reserves 0 to 999 outright, and 7.4.1 says three of the 1xxx values are for
+// local use only (1005 is what a close frame with no payload means, 1006 is a
+// connection that closed without one, and 1015 is a TLS handshake failure), so
+// a caller echoing back the code `recv` reported has to be stopped from
+// sending 1005 on.
+fun sendable_close_code(code: u16).R: bool {
+    if code < 1000 {
+        return false
+    }
+    return code != 1004 && code != 1005 && code != 1006 && code != 1015
+}
+
+// The closing handshake, and the end of the connection: the close frame goes
+// out, then the descriptor is closed.
+//
+// The peer's answering close frame is *not* read. The RFC's closing handshake
+// is two frames and this sends one: a caller that wants the peer's answer
+// reads until it sees `Msg.Close` (or end of file) before calling this. That
+// is deliberate, because waiting here would block on a peer that has already
+// gone, and v1 has no way to time that out.
+//
+// `code` is the status code (1000 is normal closure) and `reason` the text
+// after it.
+//
+// Panics: if the code is not one an endpoint may send (`sendable_close_code`;
+// a caller that got `Msg.Close` with no payload has 1005 in hand and must not
+// send it back) or the reason is longer than 123 bytes, since the code takes
+// two of the 125 a control frame allows.
+fun Conn.close(code: u16, reason: &str) {
+    if !sendable_close_code(code) {
+        val refused = with_number(
+            prefix = "ws.close: ",
+            n = code.to_u64(),
+            suffix = " is not a status code an endpoint may send (RFC 6455 7.4.1, 7.4.2)",
+        )
+        panic(refused.as_str())
+    }
+    val reason_bytes = Bytes.from_str(reason)
+    if reason_bytes.len() > 123 {
+        panic("ws.close: a close reason may not exceed 123 bytes, because the code it follows takes two of a control frame's 125")
+    }
+    var data = Bytes.empty()
+    data.push((code >> 8).to_u8())
+    data.push((code & 255).to_u8())
+    data.append(reason_bytes)
+    self.send_frame(OP_CLOSE, data)
+    net.close(net.Socket(fd = fd))
+}
+
+/* ----- receiving ----- */
+
+// Exactly `n` bytes: whatever the buffer already holds, then direct reads into
+// a buffer sized for the whole thing. Reading straight into the destination
+// means the socket can never over-read past the frame, which is what keeps the
+// bytes of the *next* frame where the reader expects them.
+//
+// Panics: if the peer closes before `n` bytes have arrived.
+fun mut Conn.read_exact(n: usize).R: Bytes {
+    var out = mem.alloc(n)
+    var got: usize = 0
+    while got < n && start < buf.len() {
+        out.set(got, buf.get(start))
+        start = start + 1
+        got = got + 1
+    }
+    if start >= buf.len() {
+        buf.clear()
+        start = 0
+    }
+    while got < n {
+        val k = net.recv_into(net.Socket(fd = fd), out, got)
+        if k == 0 {
+            panic("ws.recv: the connection closed in the middle of a frame")
+        }
+        got = got + k
+    }
+    return out
+}
+
+// One frame off the wire, with the checks a server's frames must pass.
+//
+// Panics: if the frame is masked (RFC 6455 5.1: a server must not mask), if
+// the opcode is one of the reserved values, if a control frame is fragmented
+// or carries more than 125 bytes, or if the payload is longer than `MAX_FRAME`.
+fun mut Conn.read_frame().R: Frame {
+    val head = self.read_exact(2)
+    val fin = (head.get(0) & 128) != 0
+    val opcode = head.get(0) & 15
+    if (head.get(1) & 128) != 0 {
+        panic("ws.recv: the server masked a frame, and RFC 6455 5.1 forbids that for anything but a client")
+    }
+    var len: u64 = (head.get(1) & 127).to_u64()
+    if len == 126 {
+        val ext = self.read_exact(2)
+        len = (ext.get(0).to_u64() << 8) | ext.get(1).to_u64()
+    } elif len == 127 {
+        val ext = self.read_exact(8)
+        var i: usize = 0
+        len = 0
+        while i < 8 {
+            len = (len << 8) | ext.get(i).to_u64()
+            i = i + 1
+        }
+    }
+    if opcode == OP_CLOSE || opcode == OP_PING || opcode == OP_PONG {
+        if !fin {
+            panic("ws.recv: a control frame arrived fragmented, and RFC 6455 5.5 forbids that")
+        }
+        if len > 125 {
+            panic("ws.recv: a control frame carries more than 125 bytes, and RFC 6455 5.5 forbids that")
+        }
+    } elif opcode != OP_CONTINUATION && opcode != OP_TEXT && opcode != OP_BINARY {
+        val reserved = with_number(
+            prefix = "ws.recv: frame opcode 0x",
+            n = opcode.to_u64(),
+            suffix = " is reserved, so the peer is not speaking RFC 6455",
+        )
+        panic(reserved.as_str())
+    }
+    if len > MAX_FRAME.to_u64() {
+        val over = with_number(
+            prefix = "ws.recv: a frame of ",
+            n = len,
+            suffix = " bytes is beyond the 1048576-byte cap this client reads",
+        )
+        panic(over.as_str())
+    }
+    return Frame(fin = fin, opcode = opcode, data = self.read_exact(len.to_usize()))
+}
+
+// A data frame's payload as a message: `Text` when the opcode says text,
+// `Binary` otherwise. The payload is taken with `move` because the message
+// payload is the same buffer, and a plain parameter is a borrow that neither
+// `String.from_bytes` nor an enum payload can take over. A text payload that
+// is not UTF-8 panics inside `String.from_bytes`, which validates on the way
+// in.
+fun data_msg(opcode: u8, data: move Bytes).R: Msg {
+    if opcode == OP_TEXT {
+        return Msg.Text(text = String.from_bytes(data))
+    }
+    return Msg.Binary(data = data)
+}
+
+// A close frame's payload as a message. An empty payload is "no status code"
+// (`CLOSE_NO_STATUS`), a payload of exactly one byte is a protocol error, and
+// otherwise the first two bytes are the code and the rest is the reason.
+fun close_msg(data: Bytes).R: Msg {
+    if data.len() == 0 {
+        return Msg.Close(code = CLOSE_NO_STATUS, reason = String.empty())
+    }
+    if data.len() == 1 {
+        panic("ws.recv: a close frame with a one-byte payload has no status code (RFC 6455 5.5.1)")
+    }
+    val code = (data.get(0).to_u16() << 8) | data.get(1).to_u16()
+    var reason = Bytes.empty()
+    var i: usize = 2
+    while i < data.len() {
+        reason.push(data.get(i))
+        i = i + 1
+    }
+    return Msg.Close(code = code, reason = String.from_bytes(reason))
+}
+
+// The next message, or the next control frame.
+//
+// A text or binary message is assembled across as many continuation frames as
+// the peer sends and returned once, so a caller never sees half a message. The
+// partial state lives in `Conn`, which is why a control frame can be returned
+// from the middle of a fragmented message: the fragments stay where they are
+// and the next `recv` continues them.
+//
+// A ping is *returned*, not answered here: the caller decides. See the module
+// header.
+//
+// Panics: on a continuation frame with no message to continue, on a data frame
+// while a fragmented message is open, and on every frame-level protocol error
+// `read_frame` names.
+fun mut Conn.recv().R: Msg {
+    var going = true
+    while going {
+        val f = self.read_frame()
+        if f.opcode == OP_CLOSE {
+            return close_msg(f.data)
+        }
+        if f.opcode == OP_PING {
+            return Msg.Ping(data = f.data)
+        }
+        if f.opcode == OP_PONG {
+            return Msg.Pong(data = f.data)
+        }
+        if f.opcode == OP_CONTINUATION {
+            if frag_opcode == 0 {
+                panic("ws.recv: a continuation frame arrived with no message to continue")
+            }
+            frag_data.append(f.data)
+            if f.fin {
+                val opcode = frag_opcode
+                // The assembled payload is copied out rather than moved: the
+                // field is reached through the receiver's borrow, and a field
+                // cannot be moved out of a borrow. `Box` would be the other way
+                // out, at one allocation per message and a second ownership
+                // story in the struct.
+                val whole = frag_data.clone()
+                frag_opcode = 0
+                frag_data.clear()
+                return data_msg(opcode, whole)
+            }
+        } else {
+            if frag_opcode != 0 {
+                panic("ws.recv: a data frame arrived while a fragmented message was still open")
+            }
+            if f.fin {
+                return data_msg(f.opcode, f.data)
+            }
+            frag_opcode = f.opcode
+            frag_data = f.data
+        }
+    }
+    // Unreachable, like the tail of `read_head`.
+    return Msg.Binary(data = Bytes.empty())
+}

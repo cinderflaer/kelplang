@@ -1695,7 +1695,7 @@ fn the_encoding_stdlib_module_runs_from_kelp_source() {
     // and `Result<String, _>`) without a `?` or a `Copy` payload to lean on.
     assert_compiles_and_runs(
         "tests/fixtures/stdlib_encoding.kp",
-        "aGVsbG8=\naGk=\nYQ==\n\nhello\nhi\na\ntrue\ntrue\nNBSWY3DP\nNBUQ====\nhello\ntrue\ntrue\nCn8eVZg\n2g\nhello\ntrue\n4869\nHi\nHello\ntrue\ntrue\na%20b%2Fc%3Fd%3De%26f\nplain-._~\na b/c\ntrue\ntrue\na+b%2Bc\na b+c\ntrue\n00000000  48 69                                             |Hi|\n\n",
+        "aGVsbG8=\naGk=\nYQ==\n\nhello\nhi\na\ntrue\ntrue\nNBSWY3DP\nNBUQ====\nhello\ntrue\ntrue\nCn8eVZg\n2g\nhello\ntrue\n4869\nHi\nHello\ntrue\ntrue\na%20b%2Fc%3Fd%3De%26f\nplain-._~\na b/c\ntrue\ntrue\na+b%2Bc\na b+c\ntrue\n00000000  48 69                                             |Hi|\n\nda39a3ee5e6b4b0d3255bfef95601890afd80709\na9993e364706816aba3e25717850c26c9cd0d89d\n84983e441c3bd26ebaae4aa1f95129e5e54670f1\n",
     );
 }
 
@@ -4655,6 +4655,367 @@ fn a_redirect_to_a_host_the_grant_does_not_name_is_denied() {
         &project("http_redirect_denied"),
         one_connection(&[REDIRECT_ELSEWHERE]),
         "outside the net capability granted to module 'std/http'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// MISSING-k4Nvz: `std/ws`, the WebSocket client. A client nobody has spoken to
+// is not shipped, so this is a real server: it reads the handshake, checks the
+// `Sec-WebSocket-Key` by computing the accept value the client must compare
+// against (a Rust RFC 3174 SHA-1, the test's own copy), answers `101`, and
+// then runs one scripted exchange so that every layer the module claims is
+// exercised: a text frame, a message split across two continuation frames, a
+// ping whose pong is read back, and a close handshake.
+//
+// Nothing here is canned bytes: the accept value is derived from the key the
+// *client* sent, so a wrong `sha1` or a wrong base64 in `std/ws` fails the
+// handshake instead of passing a fixture that hard-coded an answer. And every
+// frame the server reads is checked for the mask bit and unmasked before its
+// payload is compared, so a client that forgot to mask fails here.
+// ---------------------------------------------------------------------------
+
+/// The GUID of RFC 6455 1.3, beside the Rust SHA-1 below.
+const WS_TEST_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// SHA-1 of `data` (RFC 3174), for the accept value. The test's own copy, so
+/// the handshake check does not lean on the module it is checking.
+fn test_sha1(data: &[u8]) -> [u8; 20] {
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
+    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
+    for block in msg.chunks(64) {
+        let mut w = [0u32; 80];
+        for (i, word) in w.iter_mut().take(16).enumerate() {
+            *word = u32::from_be_bytes([
+                block[i * 4],
+                block[i * 4 + 1],
+                block[i * 4 + 2],
+                block[i * 4 + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i / 20 {
+                0 => ((b & c) | (!b & d), 0x5A827999u32),
+                1 => (b ^ c ^ d, 0x6ED9EBA1),
+                2 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+                _ => (b ^ c ^ d, 0xCA62C1D6),
+            };
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut out = [0u8; 20];
+    for (i, word) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+/// Standard base64, padded: the accept value is 20 bytes, so this always ends
+/// in one `=`.
+fn test_base64(data: &[u8]) -> String {
+    const ALPHABET: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(triple >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(triple >> 12) as usize & 63] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[(triple >> 6) as usize & 63] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[triple as usize & 63] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+/// The client's handshake head, up to (not including) the blank line.
+fn read_ws_head(stream: &mut TcpStream) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            return String::from_utf8_lossy(&buf[..pos]).to_string();
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) => panic!("the client closed during the handshake"),
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(e) => panic!("failed to read the handshake: {e}"),
+        }
+    }
+}
+
+/// The value of `name` in a handshake head, case-insensitively, or the empty
+/// string.
+fn ws_header(head: &str, name: &str) -> String {
+    head.lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .find(|(n, _)| n.trim().eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// One unmasked server frame. Every frame this side sends has `FIN` set except
+/// the first half of the fragmented message, which is the `fin` argument.
+fn ws_frame(opcode: u8, fin: bool, payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() <= 125, "this gate writes no extended lengths");
+    let mut out = vec![(if fin { 0x80 } else { 0 }) | opcode, payload.len() as u8];
+    out.extend_from_slice(payload);
+    out
+}
+
+/// One frame from the client: its opcode and its unmasked payload. The mask
+/// bit is required (RFC 6455 5.1), which is the half of the framing a client
+/// can get wrong without the server noticing anything else.
+fn read_ws_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+    let mut header = [0u8; 2];
+    stream
+        .read_exact(&mut header)
+        .expect("the client closed instead of sending a frame");
+    let opcode = header[0] & 0x0f;
+    assert!(
+        header[1] & 0x80 != 0,
+        "the client sent an unmasked frame (opcode {opcode:#x}), which RFC 6455 5.1 forbids"
+    );
+    let mut len = (header[1] & 0x7f) as usize;
+    if len == 126 {
+        let mut ext = [0u8; 2];
+        stream.read_exact(&mut ext).expect("short extended length");
+        len = u16::from_be_bytes(ext) as usize;
+    } else if len == 127 {
+        let mut ext = [0u8; 8];
+        stream.read_exact(&mut ext).expect("short extended length");
+        len = u64::from_be_bytes(ext) as usize;
+    }
+    let mut key = [0u8; 4];
+    stream.read_exact(&mut key).expect("short masking key");
+    let mut payload = vec![0u8; len];
+    stream.read_exact(&mut payload).expect("short frame payload");
+    for (i, byte) in payload.iter_mut().enumerate() {
+        *byte ^= key[i % 4];
+    }
+    (opcode, payload)
+}
+
+/// The scripted exchange, on one accepted connection. Every expectation here
+/// is an assertion rather than a return value: a client that gets a step
+/// wrong fails the test in this thread, and `WsServer::finish` turns that into
+/// the test's own failure.
+fn serve_ws(listener: TcpListener, accepted: Arc<AtomicUsize>) {
+    let _ = listener.set_nonblocking(true);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break Some(stream),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() > deadline {
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(_) => break None,
+        }
+    };
+    let Some(mut stream) = stream.take() else { return };
+    // Non-blocking was only for the accept loop; an accepted socket inherits
+    // the listener's mode on Linux. The timeouts are what stop a client that
+    // stalls mid-handshake from hanging the suite.
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(20)));
+    accepted.fetch_add(1, Ordering::SeqCst);
+
+    let head = read_ws_head(&mut stream);
+    assert!(
+        head.starts_with("GET /gateway HTTP/1.1"),
+        "the request line was not the gate's own path:\n{head}"
+    );
+    assert!(
+        head.to_lowercase().contains("upgrade: websocket")
+            && head.to_lowercase().contains("connection: upgrade"),
+        "the handshake did not ask for an upgrade:\n{head}"
+    );
+    assert!(
+        ws_header(&head, "sec-websocket-version") == "13",
+        "the handshake did not name version 13:\n{head}"
+    );
+    let key = ws_header(&head, "sec-websocket-key");
+    assert!(!key.is_empty(), "the handshake carried no Sec-WebSocket-Key:\n{head}");
+    assert_eq!(
+        key.len(),
+        24,
+        "a 16-byte key in base64 is 24 characters, and this was {key:?}"
+    );
+    let accept = test_base64(&test_sha1(format!("{key}{WS_TEST_GUID}").as_bytes()));
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+    );
+    stream
+        .write_all(response.as_bytes())
+        .expect("failed to write the 101");
+
+    stream.write_all(&ws_frame(0x1, true, b"hello")).expect("text frame");
+    stream.write_all(&ws_frame(0x1, false, b"frag")).expect("first fragment");
+    stream.write_all(&ws_frame(0x0, true, b"ment")).expect("continuation");
+    stream.write_all(&ws_frame(0x9, true, b"ping?")).expect("ping frame");
+
+    let (opcode, payload) = read_ws_frame(&mut stream);
+    assert_eq!(
+        opcode, 0xA,
+        "the client answered the ping with opcode {opcode:#x}, not a pong"
+    );
+    assert_eq!(payload, b"ping?", "the pong carried a different payload");
+
+    let mut close = 1000u16.to_be_bytes().to_vec();
+    close.extend_from_slice(b"done");
+    stream.write_all(&ws_frame(0x8, true, &close)).expect("close frame");
+
+    let (opcode, payload) = read_ws_frame(&mut stream);
+    assert_eq!(
+        opcode, 0x8,
+        "the client's closing frame was opcode {opcode:#x}, not a close"
+    );
+    assert_eq!(
+        &payload[..2],
+        &1000u16.to_be_bytes(),
+        "the client's close code was not 1000"
+    );
+    assert_eq!(&payload[2..], b"bye", "the client's close reason was not 'bye'");
+}
+
+/// The `std/ws` gate: one connection, one scripted exchange. It lives in a
+/// thread for the duration of one test, like `CannedServer`.
+struct WsServer {
+    port: u16,
+    accepted: Arc<AtomicUsize>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl WsServer {
+    fn start() -> WsServer {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        let handle = thread::spawn(move || serve_ws(listener, counter));
+        WsServer { port, accepted, handle: Some(handle) }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    /// Waits for the serving thread, so its assertions reach this test: a
+    /// panic in that thread is a failure here, not a silent pass.
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.join().expect("the WebSocket gate thread failed; see its message");
+        }
+    }
+}
+
+#[test]
+fn a_websocket_client_speaks_the_handshake_and_every_frame_kind() {
+    let mut server = WsServer::start();
+    let bin = out_path("ws_gate");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/ws_gate.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the ws_gate fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let expected = format!(
+        "url 127.0.0.1 {} /gateway\nconnected\ntext hello\nfrag fragment\n\
+         ping ping?\nclose 1000 done\nclosed\n",
+        server.port
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for 'ws_gate'"
+    );
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn wss_is_refused_by_name_because_v1_has_no_tls() {
+    // The scheme is the whole refusal: the URL is otherwise well formed and
+    // the grant covers the host it names.
+    assert_fixture_panics("ws_wss_refused", "v1 has no TLS");
+}
+
+#[test]
+fn a_ws_host_outside_the_grant_is_denied_at_the_connect_call() {
+    // The grant names `127.0.0.1` and every port on it; the program asks for
+    // `example.com:80`. The check matches the host as written, before
+    // `getaddrinfo` runs, and it runs inside `std/ws` at the handshake's own
+    // `net.connect`, so no socket is opened and this needs no server.
+    assert_project_denied_at_runtime(
+        "ws_net_denied",
+        &project("ws_net_denied").join("main.kp"),
+        "'example.com:80' is outside the net capability granted to module 'std/ws'",
+    );
+}
+
+#[test]
+fn a_ws_program_that_does_not_grant_rand_does_not_build() {
+    // `std/ws` draws the handshake key and every masking key from `std/rand`,
+    // and a module holds exactly what its importer granted it, so `net` alone
+    // is not a working grant. The refusal names what was not granted, at the
+    // call inside the module.
+    assert_project_rejected(
+        "ws_rand_denied",
+        &project("ws_rand_denied").join("main.kp"),
+        "needs the 'rand' capability, which module 'std/ws' was not granted",
     );
 }
 

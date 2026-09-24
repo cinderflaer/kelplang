@@ -1,0 +1,16 @@
+// MISSING-k4Nvz: the `rand` half of the grant, missing. `std/ws` draws the
+// sixteen bytes of `Sec-WebSocket-Key` and the four-byte masking key of every
+// client frame from `std/rand`, and a module holds exactly what its importer
+// granted it, so this program does not build: the refusal names
+// `std.rand.bytes` and `std/ws`, at the call inside the module.
+//
+// This is the gate proving the second domain is really held rather than
+// mentioned in a comment. `caps(rand = [])` is the whole fix: `rand` has no
+// resource argument, so an empty pattern list admits the module, the same
+// spelling `caps(process = [])` uses for argv.
+impl "std/ws" caps(net = ["127.0.0.1:*"])
+
+fun main() {
+    var c = ws.connect("127.0.0.1", 8080, "/")
+    print("connected")
+}

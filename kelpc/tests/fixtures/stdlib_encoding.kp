@@ -1,6 +1,10 @@
 // MISSING-FZqe6: `std/encoding` — the alphabet-and-codec module. Every decoder
 // is exercised once with a good input and once with a bad one, and both
 // directions of each codec are checked against a literal.
+//
+// MISSING-k4Nvz added `sha1` to the module, and the three lines at the end of
+// `main` are RFC 3174's own vectors: the empty message, `abc`, and the
+// 56-byte message whose padding needs a second block.
 impl "std/encoding"
 impl "std/str"
 impl "std/result"
@@ -62,4 +66,10 @@ fun main() {
 
     print(encoding.dump(Bytes.from_str("Hi")))
     print(encoding.dump(Bytes.empty()))
+
+    print(encoding.hex_encode(encoding.sha1(Bytes.empty())))
+    print(encoding.hex_encode(encoding.sha1(Bytes.from_str("abc"))))
+    print(encoding.hex_encode(encoding.sha1(Bytes.from_str(
+        "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+    ))))
 }
