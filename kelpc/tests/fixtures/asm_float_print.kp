@@ -29,8 +29,9 @@ fun main() {
 
     // An unsigned value with bit 63 set is the one integer-to-float conversion
     // `cvtsi2sd` alone gets wrong, and both edges of the shift trick matter:
-    // exactly 2^63, one below it, and the maximum. No literal can spell the
-    // last two, so they are built — see `stdlib_build.kp`'s note.
+    // exactly 2^63, one below it, and the maximum. The last two have a literal
+    // spelling now (MISSING-x8Wq3); they stay built here because this fixture is
+    // about the conversion rather than the literal that reaches it.
     val below: u64 = 9223372036854775807
     val top: u64 = below + 1
     val biggest: u64 = top * 2 - 1

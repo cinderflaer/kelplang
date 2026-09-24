@@ -574,17 +574,10 @@ pub fn list_comparable_elem(ty: &Ty) -> bool {
     list_sortable_elem(ty)
 }
 
-/// Whether a `List<T>` element can be copied out of the list, which is what
-/// `List.slice` does: a scalar is copied, `String`/`Bytes` are cloned (their
-/// own buffer), and a `datac` cannot be (v1 has no deep copy, and a shallow
-/// one would be a second owner).
-pub fn list_clonable_elem(ty: &Ty) -> bool {
-    ty.is_copy() || matches!(ty, Ty::String | Ty::Bytes)
-}
-
 /// Whether one field, payload or `List` element of type `ty` can be deep-copied
 /// once its user types can. `clonable` holds the `datac`/`enum` names that can
-/// be (see `clonable_types`).
+/// be (see `clonable_types`). This is the single gate for every copy *out* of a
+/// container, `List.slice`/`List.clone` and `Map.get_or`/`Map.values` alike.
 pub fn value_is_clonable(ty: &Ty, clonable: &std::collections::HashSet<String>) -> bool {
     ty.is_copy()
         || matches!(ty, Ty::String | Ty::Bytes)

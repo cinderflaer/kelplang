@@ -1,0 +1,8 @@
+// Admitting `u64`'s range for a `u64` context does not let the value narrow
+// silently into a narrower type (MISSING-x8Wq3, BUG-t6Mz2): the literal's own
+// type decides the range, so a `u64`-range value written where an `i32` is
+// wanted is still refused at its own line rather than truncated.
+fun main() {
+    val small: i32 = 0xFFFFFFFFFFFFFFFF
+    print(small)
+}

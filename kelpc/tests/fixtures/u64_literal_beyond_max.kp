@@ -1,0 +1,7 @@
+// One above `u64`'s maximum is refused by the scanner, and the message names
+// that limit rather than the `i32` a literal defaults to (MISSING-x8Wq3): the
+// widest integer type is the last value a literal may spell.
+fun main() {
+    val too_big: u64 = 18446744073709551616
+    print(too_big)
+}

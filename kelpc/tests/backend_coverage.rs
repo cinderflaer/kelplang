@@ -214,8 +214,10 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// `thread_join_accepted`) now build and are compared, and the two gates land as
 /// new fixtures (`thread_stress`, eight workers against one `pd val
 /// Atomic<i64>`, exact total asserted; `thread_panic`, a worker that panics and
-/// a joiner that sees `Err` with the process still exiting 0).
-const LLVM_BUILT_BASELINE: usize = 259;
+/// a joiner that sees `Err` with the process still exiting 0). The merged tree
+/// re-recorded at 262: those six, `map_datac_value_clone` and the two `u64`
+/// context fixtures all build on both backends.
+const LLVM_BUILT_BASELINE: usize = 262;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

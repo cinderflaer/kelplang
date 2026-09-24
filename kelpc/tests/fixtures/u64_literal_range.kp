@@ -1,0 +1,19 @@
+// The item's own repro (MISSING-x8Wq3): a `u64` annotation admits the top half
+// of `u64`, which no literal could spell while the scanner stopped at
+// `i64::MAX`. The hex mask and the decimal spelling of the same value, then the
+// first value above `i64::MAX` in both spellings.
+fun main() {
+    val mask: u64 = 0xFFFFFFFFFFFFFFFF
+    print(mask)
+    val decimal: u64 = 18446744073709551615
+    print(decimal)
+
+    val top: u64 = 0x8000000000000000
+    val top_decimal: u64 = 9223372036854775808
+    print(top)
+    print(top_decimal)
+
+    // A value from the top half is an ordinary `u64` once it is bound: the
+    // arithmetic stays in the type the context gave the literal.
+    print(mask - top)
+}

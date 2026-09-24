@@ -341,7 +341,7 @@ use crate::opt::OptLevel;
 use crate::tir::{Block, Expr, ExprKind, Function, Pd, Program, Stmt, TemplatePiece};
 use crate::types::{
     box_c_type, capture_field, clone_fn_name, closure_c_type, closure_mangle, cmp_fn_name,
-    drop_fn_name, eq_fn_name, hash_fn_name, list_c_type, list_clonable_elem, map_c_type,
+    drop_fn_name, eq_fn_name, hash_fn_name, list_c_type, map_c_type,
     needs_drop, owned_types, struct_tag, ty_mangle, Ty,
 };
 
@@ -5884,17 +5884,16 @@ impl<'a> Gen<'a> {
         }
     }
 
-    /// The value of a copied element (a scalar load), for a `Map` value. Only
-    /// reached for a `Copy` element or a `String`/`Bytes` clone, because
-    /// `list_clonable_elem` refuses a `datac`.
+    /// The value of a copied element (a scalar load), for a `Map` value. A
+    /// `String`/`Bytes` or an owned `datac`/`enum` is deep-copied into `slot`
+    /// first, by the same generated clone a `List` element takes. A
+    /// non-clonable element type is never reached here, because
+    /// `map_specs`/`emit_map_bodies` gate `get_or`/`values` on the
+    /// declaration-graph predicate.
     fn clone_value(&self, src: Value<'a>, elem: &Ty, slot: Value<'a>) -> Result<Value<'a>, String> {
         match elem {
-            Ty::String => {
-                self.sret_call("kelp_String__clone", slot, &[src])?;
-                Ok(self.ld(self.lty2(elem)?, slot, "clone"))
-            }
-            Ty::Bytes => {
-                self.sret_call("kelp_Bytes__clone", slot, &[src])?;
+            Ty::String | Ty::Bytes | Ty::Struct(_) => {
+                self.clone_into(src, slot, elem)?;
                 Ok(self.ld(self.lty2(elem)?, slot, "clone"))
             }
             _ => Ok(self.ld(self.lty2(elem)?, src, "copy")),
@@ -7587,7 +7586,7 @@ impl<'a> Gen<'a> {
         let ptr = self.pty();
         let void = self.ctx.void();
         let (i1t, i64t) = (self.ctx.i1(), self.ctx.i64());
-        let clonable = list_clonable_elem(value);
+        let clonable = crate::types::value_is_clonable(value, &self.clonable);
         let mut out = vec![
             spec(&format!("{base}__new"), map_ty, &[]),
             spec(&format!("{base}__find"), i64t, &[ptr, key_arg, ptr]),
@@ -7808,7 +7807,7 @@ impl<'a> Gen<'a> {
         let (i1t, i8t, i64t) = (self.ctx.i1(), self.ctx.i8(), self.ctx.i64());
         let entry_size = self.layout.abi_size_of(entry_ty);
         let value_drops = needs_drop(value, &self.owned);
-        let clonable = list_clonable_elem(value);
+        let clonable = crate::types::value_is_clonable(value, &self.clonable);
         let size_max = u64::MAX;
 
         // --- new ---
@@ -8066,6 +8065,10 @@ impl<'a> Gen<'a> {
                     let rt = self.rt("kelp_bytes_drop")?;
                     self.call(rt.func, rt.ty, &[fb_slot], "");
                 }
+                // The caller moved the fallback in and this path does not
+                // hand it back, so the fallback is dropped here like the
+                // C backend's `map__get_or` drops it.
+                Ty::Struct(_) if value_drops => self.call_drop(fb_slot, value)?,
                 _ => {}
             }
             self.builder.build_ret(result);

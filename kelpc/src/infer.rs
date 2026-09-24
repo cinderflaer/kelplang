@@ -2857,6 +2857,9 @@ fn thread_element_error(ty: &Ty) -> String {
 /// - `push`/`set`/`pop` take and give the element by value, which is where a
 ///   move in or out of the list happens (M3's move tracking runs on the
 ///   ordinary call-argument path, so no new borrow rules were needed).
+///
+/// A `Map`'s value type is the container's element here, so `elem_clonable` is
+/// what `Map#get_or`/`Map#values` are gated on as well.
 fn container_sig(
     key: &str,
     elem: &Ty,
@@ -2868,7 +2871,7 @@ fn container_sig(
     if key.starts_with("List#") {
         list_sig(key, elem, elem_sortable, elem_clonable)
     } else if key.starts_with("Map#") {
-        map_sig(key, map_key, elem)
+        map_sig(key, map_key, elem, elem_clonable)
     } else if key.starts_with("Array#") {
         array_sig(key, elem, array_len.unwrap_or(0))
     } else {
@@ -3110,10 +3113,9 @@ fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> Option<FnSi
             ret: list.clone(),
         },
         // `clone()` under the name a caller reaches for first: the copy
-        // `slice(0, len)` already makes, with the same
-        // `list_clonable_elem` gate, so an element that cannot be copied
-        // out gets the "no method" diagnostic rather than a signature
-        // codegen has no body for.
+        // `slice(0, len)` already makes, under the same clonable gate, so an
+        // element that cannot be copied out gets the "no method" diagnostic
+        // rather than a signature codegen has no body for.
         "List#clone" if clonable => {
             FnSig { params: vec![p("self", shared)], ret: list.clone() }
         }
@@ -3137,17 +3139,17 @@ fn list_sig(key: &str, elem: &Ty, sortable: bool, clonable: bool) -> Option<FnSi
 /// - `get` returns a *copy* for a `Copy` value and a shared borrow for an
 ///   owned one, rooted at the receiver by the elision rule (`Map#get` is in
 ///   `builtin_borrow_root` for exactly this reason);
-/// - `get_or` and `values` have to copy or clone a value *out*, which a
-///   `datac` cannot do, so they are offered only for a clonable value type
-///   (`types::list_clonable_elem`) — the same gate `List.slice` uses;
+/// - `get_or` and `values` have to copy or clone a value *out*, so they are
+///   offered only for a clonable value type, by the same declaration-graph
+///   predicate (`types::value_is_clonable`) that gates `List.slice`, which
+///   reaches a `datac`/`enum` whose fields all deep-copy (MISSING-qM4Zx);
 /// - `insert` moves the value in, `remove` moves it out.
-fn map_sig(key: &str, map_key: &Ty, value: &Ty) -> Option<FnSig> {
+fn map_sig(key: &str, map_key: &Ty, value: &Ty, clonable: bool) -> Option<FnSig> {
     let map = Ty::Map(Box::new(map_key.clone()), Box::new(value.clone()));
     let shared = Ty::Ref { mutable: false, inner: Box::new(map.clone()) };
     let exclusive = Ty::Ref { mutable: true, inner: Box::new(map.clone()) };
     let p = |n: &str, t: Ty| (n.to_string(), t);
     let value_ref = Ty::Ref { mutable: false, inner: Box::new(value.clone()) };
-    let clonable = crate::types::list_clonable_elem(value);
     // A `String` key is passed as a view and copied in by the map; a scalar
     // key is passed by value.
     let key_param = map_key_param(map_key);
@@ -3426,8 +3428,8 @@ fn int_lit_ty(expected: Option<&Ty>) -> (Ty, bool) {
 
 /// The narrowest integer type that holds `value`, for the repair line of a
 /// literal that does not fit the type it landed on. Every value the lexer
-/// yields is within `i64`'s range, and a sign only adds the minimum, so this
-/// always names a type that holds the value.
+/// yields is within `u64`'s range (the widest integer type), and a sign only
+/// adds the minimum, so this always names a type that holds the value.
 fn int_lit_repair(value: i128) -> &'static str {
     if value < 0 {
         if value >= i32::MIN as i128 {

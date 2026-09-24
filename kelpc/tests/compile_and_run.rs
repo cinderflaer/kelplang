@@ -1406,7 +1406,9 @@ fn a_panic_message_may_be_an_owned_string() {
 fn stdlib_text_builds_numbers_replaces_and_parses() {
     // Concatenation, replacement, and both live edges of the decimal
     // conversion: `u64`'s maximum and `i64`'s minimum, round-tripped through
-    // the parsers because no literal can spell either one.
+    // the parsers. Both have a literal spelling now that a `u64` context admits
+    // the whole `u64` range (MISSING-x8Wq3); the parser path is what this
+    // fixture is testing.
     assert_compiles_and_runs(
         "tests/fixtures/stdlib_build.kp",
         "foobar\na:b:c\naaa\n0\n145\n-145\n18446744073709551615\n-9223372036854775808\n9\n",
@@ -1492,6 +1494,43 @@ fn an_out_of_range_literal_is_refused_at_its_own_line() {
     assert_compiles_and_runs(
         "tests/fixtures/int_literal_width.kp",
         "-2147483648\n-147483634\n-2147483647\n2147483648\n147483634\n147483633\n-2147483648\n255\n65535\n999993014\n",
+    );
+}
+
+/// A literal may spell the whole `u64` range where the context asks for a `u64`
+/// (MISSING-x8Wq3). The scanner used to stop at `i64::MAX`, so the top half of
+/// `u64` could not be written down and a mask or a maximum sentinel was spelled
+/// as arithmetic. The range comes from the type the literal lands on, which is
+/// the rule the lexical page already states, so the language needs no suffix;
+/// and a value wider than the type it lands on is still refused at its own line,
+/// naming that type (BUG-t6Mz2).
+#[test]
+fn a_u64_literal_takes_the_range_of_its_context() {
+    // The item's repro: the hex mask and the decimal spelling of the same value,
+    // both a `u64` from the annotation on the binding, plus the same two
+    // spellings of 2^63, the first value `i64` cannot hold.
+    assert_compiles_and_runs(
+        "tests/fixtures/u64_literal_range.kp",
+        "18446744073709551615\n18446744073709551615\n9223372036854775808\n9223372036854775808\n9223372036854775807\n",
+    );
+    // The same rule on every other path that gives a literal a type: a `const`'s
+    // declared type, a call argument against the parameter's type, a `fun`'s
+    // return type, and the `i64` minimum spelled as its magnitude under a sign.
+    assert_compiles_and_runs(
+        "tests/fixtures/u64_literal_contexts.kp",
+        "18446744073709551615\n18446744073709551615\n18446744073709551615\n-9223372036854775808\n",
+    );
+    assert_rejected_with(
+        "tests/fixtures/u64_literal_beyond_max.kp",
+        "'18446744073709551616' is larger than the largest integer literal, 18446744073709551615",
+    );
+    assert_rejected_with(
+        "tests/fixtures/u64_literal_does_not_narrow.kp",
+        "'18446744073709551615' does not fit 'i32': write a type that holds it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/u64_literal_needs_a_context.kp",
+        "'18446744073709551615' does not fit 'i32', the type a literal takes when nothing determines one",
     );
 }
 
@@ -2736,6 +2775,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "map_basic",
         "map_owned",
         "map_datac",
+        // MISSING-qM4Zx: `get_or`/`values` deep-copy a `datac` value out of
+        // the map, so the value's own `String` is cloned into the result and
+        // the map keeps its own. A shallow copy would be a double free at
+        // scope exit and a missing one would leak.
+        "map_datac_value_clone",
         // A-6: a `datac` key with an owned `String` field and an `enum` key
         // with an owned `String` payload. The entry owns a deep copy of the
         // key, so a drop that missed it is a leak and a double drop is a
@@ -3655,6 +3699,20 @@ fn a_map_of_owned_values_borrows_clones_and_moves() {
 #[test]
 fn a_map_holds_datac_values_and_can_live_in_a_datac_field() {
     assert_compiles_and_runs("tests/fixtures/map_datac.kp", "30\n2\n3\n1\n");
+}
+
+#[test]
+fn a_map_deep_copies_a_datac_value_out_through_get_or_and_values() {
+    // MISSING-qM4Zx: `get_or` and `values` are gated on the same
+    // declaration-graph deep-copy predicate `List.slice` uses, so a `datac`
+    // whose fields all copy takes the same derived `kelp_clone_<T>` out of the
+    // map that it takes out of a list. The value owns a `String`, so a shallow
+    // copy would print the right text and then double-free the buffer; ASAN
+    // re-runs this fixture (see `heap_fixtures_are_double_free_and_leak_clean`).
+    assert_compiles_and_runs(
+        "tests/fixtures/map_datac_value_clone.kp",
+        "alpha\n10\nnone\n0\n2\nalpha\n10\nbeta\n20\nalpha\n2\n",
+    );
 }
 
 #[test]

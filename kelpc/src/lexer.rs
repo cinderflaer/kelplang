@@ -19,7 +19,14 @@ impl Span {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // literals
-    IntLit(i64),
+    /// A decimal, hexadecimal or binary integer literal, as the magnitude the
+    /// source wrote. The payload is `u64` rather than `i64` because the range a
+    /// literal may spell is the widest integer type's: `0xFFFFFFFFFFFFFFFF` is
+    /// a legal `u64` literal, and a negative value is the negation of one of
+    /// these (MISSING-x8Wq3). The *type* is still not decided here; `infer.rs`
+    /// gives the literal the integer type its context requires and refuses one
+    /// that does not fit.
+    IntLit(u64),
     FloatLit(f64),
     /// A string with no `$` interpolation in it, stored decoded (escapes
     /// already processed). A string *with* interpolation becomes the
@@ -704,11 +711,11 @@ impl<'a> Lexer<'a> {
                         }
                         let digits = &self.src[digits_start..self.pos];
                         let text = &self.src[start..self.pos];
-                        TokenKind::IntLit(i64::from_str_radix(digits, radix).map_err(|_| {
+                        TokenKind::IntLit(u64::from_str_radix(digits, radix).map_err(|_| {
                             LexError {
                                 message: format!(
                                     "'{text}' is larger than the largest integer literal, {}",
-                                    i64::MAX
+                                    u64::MAX
                                 ),
                                 span: Span::new(start, self.pos),
                             }
@@ -754,8 +761,15 @@ impl<'a> Lexer<'a> {
                                     });
                                 }
                             }
+                            // The digit run is decimal digits already, so the
+                            // only way the parse fails is a value wider than
+                            // the widest integer type, and that is named as the
+                            // limit it passed rather than as a malformed run.
                             TokenKind::IntLit(text.parse().map_err(|_| LexError {
-                                message: format!("invalid integer literal '{text}'"),
+                                message: format!(
+                                    "'{text}' is larger than the largest integer literal, {}",
+                                    u64::MAX
+                                ),
                                 span: Span::new(start, self.pos),
                             })?)
                         }
@@ -1389,6 +1403,23 @@ mod tests {
         );
     }
 
+    /// The whole `u64` range is lexable (MISSING-x8Wq3): the payload is the
+    /// magnitude the source wrote, so the top half of `u64` reaches the checker
+    /// instead of being refused before any type is known. Which of those values
+    /// is legal is still the checker's decision, from the literal's context.
+    #[test]
+    fn lexes_the_top_half_of_the_u64_range() {
+        assert_eq!(
+            kinds("0xFFFFFFFFFFFFFFFF 18446744073709551615 9223372036854775808"),
+            vec![
+                TokenKind::IntLit(u64::MAX),
+                TokenKind::IntLit(u64::MAX),
+                TokenKind::IntLit(1u64 << 63),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
     /// Each malformed shape is named at its own span, rather than splitting
     /// into two tokens and failing later in the parser: `0b12` used to be
     /// `0b1` then `2`, and `1_000` was `1` then an identifier `_000`.
@@ -1405,6 +1436,10 @@ mod tests {
             (
                 "0x10000000000000000",
                 "larger than the largest integer literal",
+            ),
+            (
+                "18446744073709551616",
+                "larger than the largest integer literal, 18446744073709551615",
             ),
         ];
         for (src, needle) in cases {
