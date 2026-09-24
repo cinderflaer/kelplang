@@ -2258,6 +2258,62 @@ when thread.join(h) {
 
 A join hands back `Result<T, ThreadErr>`, so a program that writes one also needs `impl "std/result"`, exactly as `Atomic.compare_exchange`'s `Result<T, T>` does (16.14).
 
+### 16.18 `std/ws` (ungated, holds `net` and `rand`)
+
+```kelp
+fun parse_url(s: &str).R: Url
+fun connect(host: &str, port: u16, path: &str).R: Conn
+
+datac Url(val scheme: String, val host: String, val port: u16, val path: String)
+datac Conn(val fd: i32, var buf: Bytes, var start: usize, var frag_opcode: u8, var frag_data: Bytes)
+
+fun Conn.send_text(text: &str)
+fun Conn.send_binary(data: &Bytes)
+fun Conn.ping(data: &Bytes)
+fun Conn.pong(data: &Bytes)
+fun Conn.close(code: u16, reason: &str)
+fun mut Conn.recv().R: Msg
+
+enum Msg {
+    Text(val text: String)
+    Binary(val data: Bytes)
+    Ping(val data: Bytes)
+    Pong(val data: Bytes)
+    Close(val code: u16, val reason: String)
+}
+```
+
+A WebSocket **client** (RFC 6455), over `ws://` only, shipped in the same style as every other MK5 module: it is `.kp` source over `std/net` and `std/encoding`, with no compiler change and no dependency. `parse_url` splits `ws://host[:port][/path]` (port 80 when it is absent) and `connect` performs the HTTP/1.1 upgrade: a `GET` carrying `Upgrade: websocket`, `Connection: Upgrade`, `Sec-WebSocket-Version: 13` and a `Sec-WebSocket-Key` of sixteen random bytes, then the `101` response, whose `Sec-WebSocket-Accept` must equal the base64 of the SHA-1 of that key plus `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`. A non-`101`, a missing accept header and a value computed from another key are each refused with their own message, and `std/encoding`'s `sha1` (16.13's module) is what the check is built on.
+
+**Two capabilities, because the module has two needs.** The grant line is
+
+```kelp
+impl "std/ws" caps(net = ["gateway.example.com:80"], rand = [])
+```
+
+`net` reaches the socket, and its half of the check is the host-and-port check `net.connect` already gives, before any name resolution. `rand` is there because RFC 6455 requires the handshake key and the four-byte masking key of every client frame to be **unpredictable**, and a module holds exactly what its importer granted: a program that leaves `rand` off does not build, and the refusal names the call inside `std/ws`. The pattern list is empty because there is no resource to name, the spelling `caps(process = [])` already uses. `wss://` is refused by name in `parse_url`, because v1 has no TLS (16.12's `std/http` has the same limit, and TLS is MK5-S4b-M1); nothing about the framing depends on the transport, which is why the client ships first.
+
+**A control frame is returned, not answered here.** `recv` assembles a data message across as many continuation frames as the peer sends, and hands back `Msg.Text` or `Msg.Binary`; a `Ping`, a `Pong` or a `Close` arrives as its own variant, and the caller answers a ping with `conn.pong(payload)` and finishes the closing handshake with `conn.close(code, reason)`. A control frame that arrives in the middle of a fragmented message is returned while the partial message stays where it was, so the next `recv` continues it. Every client frame is masked; a masked frame *from* the server, a continuation with nothing to continue, a data frame while a fragmented message is open, a fragmented or over-long control frame, an unknown opcode and an over-long frame each panic with their own message.
+
+Not here, deliberately: a **server**, extensions (`Sec-WebSocket-Extensions`, so `permessage-deflate` and the `zlib-stream` transport a compressed gateway asks for), subprotocols (`Sec-WebSocket-Protocol`), redirects, automatic reconnect, and waiting for the peer's answering `Close` inside `close`.
+
+```kelp
+impl "std/ws" caps(net = ["gateway.example.com:80"], rand = [])
+
+fun main() {
+    val u = ws.parse_url("ws://gateway.example.com/socket")
+    var c = ws.connect(u.host.as_str(), u.port, u.path.as_str())
+    c.send_text("hello")
+    when c.recv() {
+        Text(t) -> print(t)
+        Ping(d) -> c.pong(d)
+        Close(code, reason) -> print("closed ${code}")
+        else -> print("other")
+    }
+    c.close(1000, "done")
+}
+```
+
 ## 17. Limits in v1
 
 These are deliberate, and each one has a workaround in this document:
