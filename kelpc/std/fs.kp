@@ -3,7 +3,7 @@ impl "std/path"
 impl "std/io"
 impl "std/result"
 
-/* std/fs — the gated filesystem namespace (M7).
+/* std/fs: the gated filesystem namespace (M7).
 
    The domain gate is compile-time: a module without the `fs` capability
    cannot *name* `fs.read` at all (resolution fails), and a module that does
@@ -16,7 +16,7 @@ impl "std/result"
 
    Symlinks appear twice here. The capability check *resolves* one before
    matching (`realpath`, and the rule each gated module's header states),
-   because a link is not a name the author chose — so a link inside the grant
+   because a link is not a name the author chose, so a link inside the grant
    that points outside it is denied. And `fs.symlink` *creates* one (MK5-S2-M2), with
    both of its paths checked against the grant, so a grant stays closed under
    link creation: a module can only make a link whose target it could also
@@ -75,7 +75,7 @@ datac Metadata(val size: u64, val mtime: i64, val mode: u32, val is_dir: bool, v
 fun read(path: &str).R: Bytes = read_raw(path)
 
 // The whole file, as owned bytes, or the reason it cannot be read: the
-// fallible twin of `read` for a path the caller did not author — a scanner, an
+// fallible twin of `read` for a path the caller did not author, a scanner, an
 // indexer or a backup tool that skips what it may not read instead of ending
 // the run on the first such file. The error carries the POSIX `errno` and its
 // text (`io.IoErr`).
@@ -153,7 +153,7 @@ fun remove(path: &str) {
     remove_raw(path)
 }
 
-// Both paths are checked against the grant — `rename` is the one call with
+// Both paths are checked against the grant: `rename` is the one call with
 // two resource arguments.
 // Panics: if either path is outside the granted capability, or the rename
 // fails.
@@ -189,7 +189,7 @@ fun sync(path: &str) {
 // build something `fs` will accept.
 //
 // Returning *N* items needed the growable sequence type, which is why this
-// arrived with the collections milestone rather than M7 — the raw walk hands
+// arrived with the collections milestone rather than M7, the raw walk hands
 // back one newline-separated buffer (`str.split` then turns it into a
 // `List<String>`).
 // Panics: if the directory cannot be read.
@@ -211,7 +211,7 @@ fun list(path: &str).R: List<String> {
 // because the check sits on the public `fs` functions, not on the syscalls.
 
 // Creates every missing component of `path`, in order, treating an existing
-// component as success — so repeated setup is idempotent. The walk happens
+// component as success, so repeated setup is idempotent. The walk happens
 // inside one `extern` rather than in Kelp: the whole path is checked against the
 // grant once, at the call site, and a recursive Kelp version would have to check
 // each prefix, including the ones *above* the granted root (which is exactly
@@ -223,8 +223,8 @@ fun mkdir_all(path: &str) {
 }
 
 // Removes `path`, recursively when it is a directory. A symlink is removed and
-// never descended into — `is_symlink` is checked before `is_dir`, so a link to a
-// directory is unlinked rather than walked into (BUG-a9Km4) — and because every
+// never descended into, `is_symlink` is checked before `is_dir`, so a link to a
+// directory is unlinked rather than walked into (BUG-a9Km4), and because every
 // child it does name is checked against the grant *after* resolution, a link
 // inside the grant that points outside it makes this panic instead of escaping.
 // `fs.symlink` cannot create such a link, since it checks both of its paths, but
@@ -293,7 +293,7 @@ fun walk(dir: &str).R: List<String> {
 // loop, so a large file is never held in memory: a read/write loop would
 // buffer the whole thing at 20 GiB, and the repo already benchmarks that.
 //
-// Both paths are checked against the grant — `copy`, like `rename`, is a
+// Both paths are checked against the grant: `copy`, like `rename`, is a
 // two-resource call.
 // Panics: if either path is outside the grant, or the copy fails.
 fun copy(from: &str, to: &str) {
@@ -301,8 +301,8 @@ fun copy(from: &str, to: &str) {
 }
 
 // Creates `link` as a symlink whose contents are `target`. Both paths are
-// checked against the grant — `symlink`, like `rename` and `copy`, is a
-// two-resource call — so the link is created inside the grant and may only
+// checked against the grant: `symlink`, like `rename` and `copy`, is a
+// two-resource call, so the link is created inside the grant and may only
 // point inside it as well. `target` must be absolute, for the reason every
 // path here must be; it does not have to exist yet, since a dangling link is a
 // legitimate thing to create.
