@@ -2283,9 +2283,9 @@ enum Msg {
 }
 ```
 
-A WebSocket **client** (RFC 6455), over `ws://` only, shipped in the same style as every other MK5 module: it is `.kp` source over `std/net` and `std/encoding`, with no compiler change and no dependency. `parse_url` splits `ws://host[:port][/path]` (port 80 when it is absent) and `connect` performs the HTTP/1.1 upgrade: a `GET` carrying `Upgrade: websocket`, `Connection: Upgrade`, `Sec-WebSocket-Version: 13` and a `Sec-WebSocket-Key` of sixteen random bytes, then the `101` response, whose `Sec-WebSocket-Accept` must equal the base64 of the SHA-1 of that key plus `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`. A non-`101`, a missing accept header and a value computed from another key are each refused with their own message, and `std/encoding`'s `sha1` (16.13's module) is what the check is built on.
+A WebSocket **client** (RFC 6455), over `ws://` only, shipped in the same style as every other MK5 module: it is `.kp` source over `std/net` and `std/encoding`, with no compiler change and no dependency. `parse_url` splits `ws://host[:port][/path]` (port 80 when it is absent) and `connect` performs the HTTP/1.1 upgrade: a `GET` carrying `Upgrade: websocket`, `Connection: Upgrade`, `Sec-WebSocket-Version: 13` and a `Sec-WebSocket-Key` of sixteen random bytes, then the `101` response, whose `Sec-WebSocket-Accept` must equal the base64 of the SHA-1 of that key plus `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`. A non-`101`, a missing accept header and a value computed from another key are each refused with their own message, and `std/encoding`'s `sha1` is what the check is built on.
 
-**Two capabilities, because the module has two needs.** The grant line is
+**Two capabilities, because the module has two needs, and neither is a domain of its own.** There is no `caps(ws = ...)`: the two domains this module uses are the ones an importer delegates to it, which is the shape 16.12 already has for `std/http` and `net`. The grant line is
 
 ```kelp
 impl "std/ws" caps(net = ["gateway.example.com:80"], rand = [])
