@@ -17,9 +17,10 @@ impl "std/rand"
    `net` reaches the socket, and its half of the check is the host-and-port
    check `net.connect` already gives: the grant matches the host as written and
    the port beside it, before `getaddrinfo` runs, and a call for anything else
-   is denied at `connect` with the message `net` produces. `rand` is here
-   because RFC 6455 requires the sixteen bytes of `Sec-WebSocket-Key` and the
-   four-byte masking key of every client frame to be unpredictable. A module
+   is denied at `connect` or `try_connect` with the message `net` produces.
+   `rand` is here because RFC 6455 requires the sixteen bytes of
+   `Sec-WebSocket-Key` and the four-byte masking key of every client frame to
+   be unpredictable. A module
    holds exactly what its importer granted, so a program that never grants
    `rand` does not build: the refusal names `std.rand.bytes` and `std/ws`, at
    the call inside this module. The pattern list for `rand` is empty because
@@ -53,7 +54,14 @@ impl "std/rand"
    (`Sec-WebSocket-Protocol`), redirects, automatic reconnect, and the close
    timeout that waits for the peer's answering `Close`. That last one is the
    caller's: `close` sends one frame and does not wait, so a caller that wants
-   the peer's answer reads until it sees `Msg.Close` (or end of file) first. */
+   the peer's answer reads until it sees `Msg.Close` (or end of file) first.
+
+   A dial or a handshake that fails is a value in `try_connect` (`WsErr.Dial`
+   for the network half, `WsErr.Handshake` for a peer that answered something
+   other than `101 Switching Protocols`) and a panic in `connect`, which stays
+   as the convenience wrapper over the same code. The fallible form is what a
+   reconnect loop needs: a refused dial must not end the process
+   (`MISSING-w9Kda`), and the two halves call for different answers. */
 
 const DEFAULT_PORT: u16 = 80
 const DEFAULT_SCHEME: str = "ws"
@@ -396,34 +404,61 @@ fun mut Conn.read_head().R: String {
     return String.empty()
 }
 
-// Opens a WebSocket to `host:port` and completes the handshake, or panics.
+// Why a fallible connect refused, as a value a caller can branch on.
+//
+// `Dial` is the network half: the name did not resolve, or nothing answered,
+// and `reason` is the text `net.try_connect` gave back. `Handshake` is the
+// peer half: something answered, and it was not a WebSocket handshake
+// (`status` is what it answered with, `101` included, since a `101` with the
+// wrong `Sec-WebSocket-Accept` is a handshake failure too), with `reason` the
+// text `connect` panics with for that case.
+//
+// The distinction is what a reconnecting caller needs: a refused dial is worth
+// another attempt, and a peer answering `403` is not.
+enum WsErr {
+    Dial(val reason: String)
+    Handshake(val status: i32, val reason: String)
+}
+
+// Opens a WebSocket to `host:port` and completes the handshake, or returns why
+// it could not: the fallible twin of `connect` (MISSING-w9Kda), for a caller
+// that reconnects instead of ending. Each variant's `reason` is the text
+// `connect` panics with for that failure, so the two forms report the same
+// cause and a caller can log what the panicking form would have printed.
 //
 // `path` is the request target, path and query together (`/gateway?v=10`).
 // `host` is checked against the importing module's `net` grant, as written,
-// before anything connects.
+// before anything connects, exactly as `connect` checks it.
 //
-// The four refusals of the handshake, each with its own message: a status
-// other than 101, a `101` with no `Sec-WebSocket-Accept`, an accept value that
-// does not match the key this call sent, and a head that is not HTTP at all
-// (`parse_status`). The accept check is what makes the `101` mean WebSocket:
-// keys are per-connection, so a peer that is not the one the key was sent to
-// cannot produce the digest. RFC 6455 4.1 also asks for `Upgrade: websocket`
-// and `Connection: Upgrade` to be validated, and they are not checked
-// separately here: the accept value is the stronger test of the same thing,
-// and a peer that cannot produce it is refused whatever its other headers say.
-// What this side *sends* does carry both, and the loopback gate asserts it.
-//
-// Panics: if the connect fails, the head is malformed or refused, or the peer
-// closes during the handshake.
-fun connect(host: &str, port: u16, path: &str).R: Conn {
+// Panics: if `host` is outside the granted capability, on a head that is not an
+// HTTP response at all (`parse_status`), and on a peer that closes before the
+// head arrives (`read_head`). Those last two carry no status to report, and a
+// peer that answers neither is not something a reconnect loop can act on.
+fun try_connect(host: &str, port: u16, path: &str).R: result.Result<Conn, WsErr> {
     // A fresh 16-byte key per connection (RFC 6455 4.1): it must not be a
     // fixed value, or a peer can precompute what a client will send.
     val key = rand.bytes(16)
     val key_text = encoding.base64_encode(key)
     val expected = accept_for(key_text.as_str())
 
-    val s = net.connect(host, port)
-    val head = build_head(host, port, path, key_text.as_str())
+    val dialed = net.try_connect(host, port)
+    val out = when dialed {
+        Ok(s) -> handshake(s, host, port, path, key_text.as_str(), expected.as_str())
+        Err(e) -> result.Result.Err(error = WsErr.Dial(reason = e.reason))
+    }
+    return out
+}
+
+// The handshake over a socket that is already connected: the `GET`, the
+// response head, and the three checks on it. `key_text` is the base64 key this
+// call sent and `expected` is the accept value derived from it, so the response
+// is held to the key this side chose, which is what makes a `101` mean
+// WebSocket.
+//
+// Panics: as `try_connect` does for the errors with no status to report, and if
+// the request cannot be sent (`net.send_text`).
+fun handshake(s: net.Socket, host: &str, port: u16, path: &str, key_text: &str, expected: &str).R: result.Result<Conn, WsErr> {
+    val head = build_head(host, port, path, key_text)
     net.send_text(s, head.as_str())
 
     var c = Conn(
@@ -441,16 +476,69 @@ fun connect(host: &str, port: u16, path: &str).R: Conn {
             n = status.to_u64(),
             suffix = "' instead of '101 Switching Protocols'",
         )
-        panic(answer.as_str())
+        return result.Result.Err(error = WsErr.Handshake(status = status, reason = answer))
     }
     val accept = header_value(split_head_headers(response.as_str()), "sec-websocket-accept")
     if str.is_empty(accept.as_str()) {
-        panic("ws.connect: the 101 response has no Sec-WebSocket-Accept header, so it is not a WebSocket server")
+        return result.Result.Err(error = WsErr.Handshake(
+            status = status,
+            reason = String.from_str("ws.connect: the 101 response has no Sec-WebSocket-Accept header, so it is not a WebSocket server"),
+        ))
     }
-    if !str.eq(accept.as_str(), expected.as_str()) {
-        panic("ws.connect: Sec-WebSocket-Accept does not match the key this connection sent, so the peer did not compute it from the handshake")
+    if !str.eq(accept.as_str(), expected) {
+        return result.Result.Err(error = WsErr.Handshake(
+            status = status,
+            reason = String.from_str("ws.connect: Sec-WebSocket-Accept does not match the key this connection sent, so the peer did not compute it from the handshake"),
+        ))
     }
-    return c
+    return result.Result.Ok(value = c)
+}
+
+// The text a `WsErr` panics with. Both variants carry the whole message, so
+// this is the same answer for either one; it exists so `connect` can be one
+// `panic` over the reason a `try_connect` handed it.
+fun refusal_text(e: move WsErr).R: String = when e {
+    Dial(reason) -> reason
+    Handshake(_, reason) -> reason
+}
+
+// The panicking end of a refused connect. Every message `connect` prints comes
+// out of here and nothing else, so the text a `try_connect` caller reads and
+// the text `connect` panics with cannot drift.
+fun fail_connect(e: move WsErr).R: Conn {
+    val reason = refusal_text(e)
+    panic(reason.as_str())
+}
+
+// Opens a WebSocket to `host:port` and completes the handshake, or panics.
+//
+// `path` is the request target, path and query together (`/gateway?v=10`).
+// `host` is checked against the importing module's `net` grant, as written,
+// before anything connects.
+//
+// The four refusals of the handshake, each with its own message: a status
+// other than 101, a `101` with no `Sec-WebSocket-Accept`, an accept value that
+// does not match the key this call sent, and a head that is not HTTP at all
+// (`parse_status`). The accept check is what makes the `101` mean WebSocket:
+// keys are per-connection, so a peer that is not the one the key was sent to
+// cannot produce the digest. RFC 6455 4.1 also asks for `Upgrade: websocket`
+// and `Connection: Upgrade` to be validated, and they are not checked
+// separately here: the accept value is the stronger test of the same thing,
+// and a peer that cannot produce it is refused whatever its other headers say.
+// What this side *sends* does carry both, and the loopback gate asserts it.
+//
+// This is the convenience wrapper for a caller for whom a refused dial really
+// is fatal; `try_connect` is the same call with the refusal as a value. The
+// shape is `std/process`'s (`run` beside `try_run`, with `ProcErr`).
+//
+// Panics: if the connect fails, the head is malformed or refused, or the peer
+// closes during the handshake.
+fun connect(host: &str, port: u16, path: &str).R: Conn {
+    val up = when try_connect(host, port, path) {
+        Ok(c) -> c
+        Err(e) -> fail_connect(e)
+    }
+    return up
 }
 
 /* ----- sending ----- */

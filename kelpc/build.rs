@@ -45,6 +45,16 @@ fn main() {
          #include <stdio.h>\n\
          #include <stdlib.h>\n\
          #include <string.h>\n\
+         /* The socket surface the shared dial in `runtime/kelp_rt.c` needs:
+\
+            `sys/socket.h` and `sys/types.h` for `socket`/`connect`, and
+\
+            `unistd.h` for `close`. The generated program supplies the same
+\
+            headers before the same text. */\n\
+         #include <sys/socket.h>\n\
+         #include <sys/types.h>\n\
+         #include <unistd.h>\n\
          #define static\n\
          #include \"{}\"\n\
          \n\

@@ -2925,6 +2925,16 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "tuple_derived_copy_sort",
         "tuple_param",
         "tuple_try",
+        // MISSING-w9Kda: a fallible dial builds its reason text on the failure
+        // path and frees the caller's previous buffer with it, so the error
+        // arm owns exactly one allocation and the success arm still owns the
+        // empty one it was given. Both arms are leak-checked here and under
+        // valgrind. `ws_try_connect` is deliberately absent: it reads a port
+        // from `argv`, so on this gate's no-argument run it would panic before
+        // reaching either error arm, and the list holds only fixtures that
+        // exit 0.
+        "net_try_connect",
+        "net_try_connect_retry",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -4344,6 +4354,46 @@ fn the_host_port_denial_names_the_host_as_written_and_its_own_port() {
     );
 }
 
+#[test]
+fn a_refused_dial_is_a_value_and_not_the_end_of_the_program() {
+    // `try_connect` against a port the program itself released: the bind, the
+    // port the kernel assigned and the close are the whole preparation, so the
+    // refusal is deterministic and no server is needed. The reason is the text
+    // `net.connect` panics with, and the process exits 0 rather than dying.
+    assert_compiles_and_runs(
+        "tests/fixtures/net_try_connect.kp",
+        "err net.connect: connection failed\n  errno 111: Connection refused\nsurvived\n",
+    );
+}
+
+/// The `net` half of the fallible dial, denied: a fallible form must not be a
+/// way around the grant the panicking one obeys. `util` holds `127.0.0.1:*` and
+/// asks for `localhost`, so the check refuses before any resolution runs and no
+/// `Err` is ever built.
+#[test]
+fn the_fallible_dial_is_checked_like_the_panicking_one() {
+    assert_project_denied_at_runtime(
+        "caps_net_try_denied",
+        &project("caps_net_try_denied").join("main.kp"),
+        "'localhost:1' is outside the net capability granted to module 'util'",
+    );
+}
+
+#[test]
+fn a_reconnect_loop_survives_three_refused_dials_and_gives_up() {
+    // The fixture that could not exist before this: three dials at a port
+    // nobody owns, one line per attempt, and a clean exit at the end instead
+    // of a panic on the first one. The fpl discord library's gateway loop is
+    // this shape, and `MISSING-w9Kda` is the dial that ended it.
+    assert_compiles_and_runs(
+        "tests/fixtures/net_try_connect_retry.kp",
+        "attempt 1: net.connect: connection failed\n  errno 111: Connection refused\n\
+         attempt 2: net.connect: connection failed\n  errno 111: Connection refused\n\
+         attempt 3: net.connect: connection failed\n  errno 111: Connection refused\n\
+         gave up\n",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // S4: `std/http`. The client blocks inside `send` until the response arrives,
 // so — unlike S3's `net` fixtures, which could be both ends in one process —
@@ -4370,6 +4420,10 @@ const CHUNKED_200: &[u8] =
     b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nchunk\r\n1\r\n!\r\n0\r\n\r\n";
 
 const STATUS_404: &[u8] = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+
+/// The answer the `ws.try_connect` gate serves: a peer that is not a WebSocket
+/// server, which is the `Handshake` half of that call's error type.
+const STATUS_403: &[u8] = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
 
 /// A relative redirect, so the follow-up keeps the same host (and therefore the
 /// same pooled connection).
@@ -4987,6 +5041,57 @@ fn a_websocket_client_speaks_the_handshake_and_every_frame_kind() {
 }
 
 #[test]
+fn a_ws_try_connect_tells_a_refused_dial_from_a_non_101_answer() {
+    // Two ports, two failures. The refused half dials a port this test
+    // released (bind 0, learn the port, drop the listener), so nothing is
+    // listening on it and the dial is refused without a server; the answered
+    // half is the canned server, which answers `403`. The program branches on
+    // the variant and exits 0 either way, which is the whole point: a
+    // reconnect loop can tell "nothing is there" from "that is not a
+    // WebSocket server". The `403` reason is the text `ws.connect` panics
+    // with, byte for byte, because the panicking form is one `panic` over the
+    // reason a `try_connect` produced.
+    let mut server = CannedServer::start(one_connection(&[STATUS_403]));
+    let dead = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+    let dead_port = dead.local_addr().expect("local address").port();
+    drop(dead);
+
+    let bin = out_path("ws_try_connect");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/ws_try_connect.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the ws_try_connect fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(dead_port.to_string())
+        .arg(server.port.to_string())
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let expected = "dial refused net.connect: connection failed\n  errno 111: Connection refused\n\
+         handshake 403 ws.connect: the server answered '403' instead of '101 Switching Protocols'\n\
+         survived\n";
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for 'ws_try_connect'"
+    );
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
 fn wss_is_refused_by_name_because_v1_has_no_tls() {
     // The scheme is the whole refusal: the URL is otherwise well formed and
     // the grant covers the host it names.
@@ -5002,6 +5107,17 @@ fn a_ws_host_outside_the_grant_is_denied_at_the_connect_call() {
     assert_project_denied_at_runtime(
         "ws_net_denied",
         &project("ws_net_denied").join("main.kp"),
+        "'example.com:80' is outside the net capability granted to module 'std/ws'",
+    );
+}
+
+#[test]
+fn a_ws_host_outside_the_grant_is_denied_at_the_fallible_connect_too() {
+    // The same denial the panicking form gets, at the same dial inside
+    // `std/ws`: whichever of the two a caller reaches for, the grant holds.
+    assert_project_denied_at_runtime(
+        "ws_try_net_denied",
+        &project("ws_try_net_denied").join("main.kp"),
         "'example.com:80' is outside the net capability granted to module 'std/ws'",
     );
 }

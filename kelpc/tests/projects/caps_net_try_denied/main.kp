@@ -1,0 +1,9 @@
+// MISSING-w9Kda: the fallible dial is checked exactly as the panicking one is.
+// `util` holds `127.0.0.1:*` and asks for `localhost`, the same machine under
+// another name, so `net.try_connect` is denied before any resolution runs and
+// no `Err` is ever built: a fallible form must not be a way around the grant.
+impl "util" caps(net = ["127.0.0.1:*"])
+
+fun main() {
+    print(util.connect_by_another_name())
+}

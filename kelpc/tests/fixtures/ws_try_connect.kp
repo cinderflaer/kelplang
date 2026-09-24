@@ -1,0 +1,48 @@
+// MISSING-w9Kda: `ws.try_connect` tells the two failures apart. argv[1] is a
+// port nothing is listening on, so the dial fails and the caller gets
+// `WsErr.Dial`; argv[2] is the harness's canned server, which answers `403`, so
+// the caller gets `WsErr.Handshake` with the status. Both are values, the
+// program branches on the variant and exits 0.
+//
+// The grant names the host and every port on it, because both ports are the
+// harness's and one of them is chosen by the kernel: the check matches the host
+// and port as *written*, and a grant cannot name a port that is only known at
+// run time.
+impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun arg_port(at: usize).R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(at).as_str()),
+        message = "arg_port: an argument is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun main() {
+    val refused = ws.try_connect("127.0.0.1", arg_port(1), "/gateway")
+    when refused {
+        Err(e) -> {
+            when e {
+                Dial(reason) -> print("dial refused ${reason}")
+                Handshake(status, _) -> print("dial unexpected handshake ${status}")
+            }
+        }
+        else -> print("dial connected, so something was listening after all")
+    }
+
+    val answered = ws.try_connect("127.0.0.1", arg_port(2), "/gateway")
+    when answered {
+        Err(e) -> {
+            when e {
+                Dial(reason) -> print("handshake unexpected dial ${reason}")
+                Handshake(status, reason) -> print("handshake ${status} ${reason}")
+            }
+        }
+        else -> print("handshake connected, so the server answered 101")
+    }
+    print("survived")
+}

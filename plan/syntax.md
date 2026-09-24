@@ -2081,6 +2081,7 @@ The grant names the program path itself, so `process = ["/bin/sh"]` is one path 
 
 ```kelp
 fun connect(host: &str, port: u16).R: Socket
+fun try_connect(host: &str, port: u16).R: result.Result<Socket, ConnectErr>
 fun listen(port: u16).R: Listener
 fun accept(l: Listener).R: Socket
 fun close(s: Socket)
@@ -2100,7 +2101,10 @@ fun resolve(host: &str).R: List<String>
 
 datac Socket(val fd: i32)
 datac Listener(val fd: i32)
+datac ConnectErr(val reason: String)
 ```
+
+The panicking form stays, and it is the convenience wrapper: `connect` is what a caller uses when a refused dial really is fatal, and `try_connect` is the same call with the failure as a value. `ConnectErr.reason` is the text `connect` panics with, so a caller that logs a failure prints what the panicking form would have printed. The shape is `std/process`'s: `run` beside `try_run`, with the error as a named type (`ProcErr`), decided before the call rather than by inspecting `errno` afterwards.
 
 ### 16.12 `std/http` (ungated, holds `net`)
 
@@ -2263,6 +2267,7 @@ A join hands back `Result<T, ThreadErr>`, so a program that writes one also need
 ```kelp
 fun parse_url(s: &str).R: Url
 fun connect(host: &str, port: u16, path: &str).R: Conn
+fun try_connect(host: &str, port: u16, path: &str).R: result.Result<Conn, WsErr>
 
 datac Url(val scheme: String, val host: String, val port: u16, val path: String)
 datac Conn(val fd: i32, var buf: Bytes, var start: usize, var frag_opcode: u8, var frag_data: Bytes)
@@ -2273,6 +2278,11 @@ fun Conn.ping(data: &Bytes)
 fun Conn.pong(data: &Bytes)
 fun Conn.close(code: u16, reason: &str)
 fun mut Conn.recv().R: Msg
+
+enum WsErr {
+    Dial(val reason: String)
+    Handshake(val status: i32, val reason: String)
+}
 
 enum Msg {
     Text(val text: String)
@@ -2292,6 +2302,8 @@ impl "std/ws" caps(net = ["gateway.example.com:80"], rand = [])
 ```
 
 `net` reaches the socket, and its half of the check is the host-and-port check `net.connect` already gives, before any name resolution. `rand` is there because RFC 6455 requires the handshake key and the four-byte masking key of every client frame to be **unpredictable**, and a module holds exactly what its importer granted: a program that leaves `rand` off does not build, and the refusal names the call inside `std/ws`. The pattern list is empty because there is no resource to name, the spelling `caps(process = [])` already uses. `wss://` is refused by name in `parse_url`, because v1 has no TLS (16.12's `std/http` has the same limit, and TLS is MK5-S4b-M1); nothing about the framing depends on the transport, which is why the client ships first.
+
+**A refused dial or handshake is a value, not a panic.** `try_connect` returns `Result<Conn, WsErr>`, whose `Dial` carries what `net.try_connect` gave back and whose `Handshake` carries the status the peer answered with and the message `connect` panics with for it. That is what lets a caller tell "nothing is listening" from "that is not a WebSocket server": the first is worth retrying, the second usually is not, and a reconnect loop needs the distinction before it can exist at all (`MISSING-w9Kda`). `connect` stays as the convenience wrapper over the same code, for a caller for whom the refusal really is fatal, and each `reason` is byte for byte the text that panic prints. The shape is `std/process`'s: `run` beside `try_run`, with the error as a named type (`ProcErr`).
 
 **A control frame is returned, not answered here.** `recv` assembles a data message across as many continuation frames as the peer sends, and hands back `Msg.Text` or `Msg.Binary`; a `Ping`, a `Pong` or a `Close` arrives as its own variant, and the caller answers a ping with `conn.pong(payload)` and finishes the closing handshake with `conn.close(code, reason)`. A control frame that arrives in the middle of a fragmented message is returned while the partial message stays where it was, so the next `recv` continues it. Every client frame is masked; a masked frame *from* the server, a continuation with nothing to continue, a data frame while a fragmented message is open, a fragmented or over-long control frame, an unknown opcode and an over-long frame each panic with their own message.
 

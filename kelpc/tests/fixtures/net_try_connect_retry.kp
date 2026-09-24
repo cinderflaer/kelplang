@@ -1,0 +1,30 @@
+// MISSING-w9Kda: the retry loop this feature exists for. Three dials at a port
+// nobody owns, one line per attempt, and a clean exit: before `try_connect`
+// the first attempt panicked and killed the process, which is the shape the
+// fpl discord library's gateway loop hit.
+impl "std/net"
+impl "std/result"
+
+fun dead_port().R: u16 {
+    val l = net.listen(0)
+    val port = l.port()
+    l.close()
+    return port
+}
+
+fun main() {
+    val port = dead_port()
+    var attempt = 1
+    while attempt <= 3 {
+        val r = net.try_connect("127.0.0.1", port)
+        when r {
+            Ok(s) -> {
+                net.close(s)
+                print("attempt ${attempt}: connected, so something took the port after it was released")
+            }
+            Err(e) -> print("attempt ${attempt}: ${e.reason}")
+        }
+        attempt = attempt + 1
+    }
+    print("gave up")
+}

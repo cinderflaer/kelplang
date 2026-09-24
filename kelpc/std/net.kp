@@ -1,5 +1,6 @@
 impl "std/io"
 impl "std/str"
+impl "std/result"
 
 /* std/net — sockets (S3). Gated on the `net` capability.
 
@@ -29,6 +30,7 @@ impl "std/str"
    name. */
 
 extern fun connect_raw(host: &str, port: u16).R: i32
+extern fun connect_try_raw(host: &str, port: u16, reason: mut String).R: i32
 extern fun listen_raw(port: u16).R: i32
 extern fun accept_raw(fd: i32).R: i32
 extern fun close_raw(fd: i32)
@@ -58,8 +60,42 @@ datac Listener(val fd: i32)
 // DNS is blocking and has no timeout in v1; a name that hangs hangs here.
 //
 // Panics: if `host:port` is outside the granted capability, the host does not
-// resolve, or every address refuses the connection.
+// resolve, or every address refuses the connection. `try_connect` is the same
+// call with those last two as a value.
 fun connect(host: &str, port: u16).R: Socket = Socket(fd = connect_raw(host, port))
+
+// Why a fallible dial failed, as a value a caller can show or match on.
+//
+// `reason` is the text `connect` panics with, its message line and the detail
+// line below it, so a caller that logs it prints exactly what the panicking
+// form would have printed on stderr. One `String` rather than an `errno`,
+// because a name that does not resolve reports a `getaddrinfo` code and no
+// `errno` at all: `io.IoErr`'s `errno` field would have to be 0 for half the
+// failures.
+datac ConnectErr(val reason: String)
+
+// Connects to `host:port`, or returns why it could not: the fallible twin of
+// `connect`, for the caller that has somewhere to go on a failure. A program
+// that reconnects is the case this exists for (MISSING-w9Kda): a refused dial
+// is an `Err` to retry, not the end of the process.
+//
+// The failure `connect` panics on is the `Err` here, carrying the same text
+// (`ConnectErr.reason`), so the two forms cannot report a different cause.
+// `connect` stays as the convenience wrapper for a caller for whom the dial
+// failing really is fatal. The shape is `std/process`'s: `run` beside
+// `try_run`, with the reason as a named type (`ProcErr`).
+//
+// Panics: if `host:port` is outside the granted capability. That check is
+// compiled into the caller and runs before the dial, exactly as `connect`'s
+// does, and it has no value-returning form.
+fun try_connect(host: &str, port: u16).R: result.Result<Socket, ConnectErr> {
+    var reason = String.empty()
+    val fd = connect_try_raw(host, port, &mut reason)
+    if fd < 0 {
+        return result.Result.Err(error = ConnectErr(reason = reason))
+    }
+    return result.Result.Ok(value = Socket(fd = fd))
+}
 
 // Binds `port` on every interface and listens, leaving the backlog to the
 // kernel. Port 0 asks the kernel for a free port, which `Listener.port` then

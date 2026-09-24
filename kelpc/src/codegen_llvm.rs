@@ -8581,6 +8581,7 @@ fn program_c_source(program: &Program) -> Option<String> {
          kelp_String kelp_String__empty(void);\n\
          kelp_String kelp_String__from_str(const char* text);\n\
          kelp_String kelp_String__from_bytes(kelp_Bytes b);\n\
+         int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);\n\
          extern int kelp_argc;\n\
          extern char** kelp_argv;\n",
     );
@@ -9398,6 +9399,7 @@ mod layout_tests {
             "kelp_String kelp_String__empty(void);",
             "kelp_String kelp_String__from_str(const char* text);",
             "kelp_String kelp_String__from_bytes(kelp_Bytes b);",
+            "int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);",
         ];
         for decl in declarations {
             assert!(
