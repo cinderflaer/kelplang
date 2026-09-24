@@ -208,7 +208,13 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// generic function instantiated at `unit`, which also passes a bound `unit` on
 /// to a `unit` parameter) both build with both backends and the differential
 /// sweep compares them.
-const LLVM_BUILT_BASELINE: usize = 253;
+///
+/// Raised from 253 by MISSING-qM4Zx: `Map#get_or` and `Map#values` deep-copy a
+/// `datac` value by the declaration-graph predicate, so
+/// `map_datac_value_clone` (a `Map<String, Digest>` whose value owns a
+/// `String`) builds with both backends and the differential sweep compares
+/// them.
+const LLVM_BUILT_BASELINE: usize = 254;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

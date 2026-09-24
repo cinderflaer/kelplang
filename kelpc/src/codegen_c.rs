@@ -390,7 +390,9 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         match ty {
             Ty::List(elem) => write_list(&mut out, elem, &owned, &clonable, &sortable),
             Ty::Box(elem) => write_box(&mut out, elem, &owned),
-            Ty::Map(key, value) => write_map(&mut out, key, value, &owned, &program.declared_keys),
+            Ty::Map(key, value) => {
+                write_map(&mut out, key, value, &owned, &program.declared_keys, &clonable)
+            }
             // A closure's shared function set is one drop: the `fn` member is
             // whatever generated (or converted) function the value holds, and
             // the environment is dropped through the pointer stored beside
@@ -1748,6 +1750,7 @@ fn write_map(
     value: &Ty,
     owned: &HashSet<String>,
     declared_keys: &HashSet<String>,
+    clonable_types: &HashSet<String>,
 ) {
     let map = crate::types::map_c_type(key, value);
     let map_ty = Ty::Map(Box::new(key.clone()), Box::new(value.clone()));
@@ -1757,14 +1760,19 @@ fn write_map(
     let drop_value = value_drops.then(|| drop_fn_name(value));
     let list_key = crate::types::list_c_type(key);
     let list_value = crate::types::list_c_type(value);
-    let clonable = crate::types::list_clonable_elem(value);
-    // Reading a value *out* of the map is a copy for a `Copy` value and a
-    // clone for `String`/`Bytes` (a `datac` cannot be cloned, and `infer.rs`
-    // never offers `get_or`/`values` for one).
-    let copy_from = |ptr: &str| match value {
-        Ty::String => format!("kelp_String__clone({ptr})"),
-        Ty::Bytes => format!("kelp_Bytes__clone({ptr})"),
-        _ => format!("*{ptr}"),
+    // The same declaration-graph deep-copy predicate `List.slice` is gated on
+    // (`infer::map_sig` asks it with the same set), so `get_or`/`values` exist
+    // exactly when this is true.
+    let clonable = crate::types::value_is_clonable(value, clonable_types);
+    // Reading a value *out* of the map is a copy for a `Copy` value, a clone
+    // for `String`/`Bytes`, and the derived `kelp_clone_<T>` into the
+    // destination for an owned `datac`/`enum` (a shallow `*ptr` would leave
+    // two owners of the value's own fields, MISSING-qM4Zx).
+    let copy_from = |dst: &str, ptr: &str| match value {
+        Ty::String => format!("{dst} = kelp_String__clone({ptr});"),
+        Ty::Bytes => format!("{dst} = kelp_Bytes__clone({ptr});"),
+        Ty::Struct(_) => format!("{}({ptr}, &{dst});", clone_fn_name(value)),
+        _ => format!("{dst} = *{ptr};"),
     };
     // A `String` key reaches the map as a `str` view (the map copies it in);
     // a scalar key is already the value the map stores; a user key reaches it
@@ -1897,10 +1905,16 @@ fn write_map(
     if clonable {
         writeln!(out, "static {value_c} {map}__get_or(const {map}* self, {key_arg_c} k, {value_c} fallback) {{").unwrap();
         writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        return fallback;\n    }}").unwrap();
-        writeln!(out, "    const {value_c}* existing = self->entries[self->index[slot] - 1].value;\n    {value_c} result = {};", copy_from("existing")).unwrap();
+        writeln!(out, "    const {value_c}* existing = self->entries[self->index[slot] - 1].value;\n    {value_c} result;").unwrap();
+        writeln!(out, "    {}", copy_from("result", "existing")).unwrap();
         match value {
             Ty::String => out.push_str("    kelp_string_drop(&fallback);\n"),
             Ty::Bytes => out.push_str("    kelp_bytes_drop(&fallback);\n"),
+            // The caller moved the fallback in, and this path does not hand
+            // it back, so the function owns it and has to drop it.
+            Ty::Struct(_) if value_drops => {
+                writeln!(out, "    {}(&fallback);", drop_fn_name(value)).unwrap();
+            }
             _ => out.push_str("    (void)fallback;\n"),
         }
         out.push_str("    return result;\n}\n\n");
@@ -1943,7 +1957,9 @@ fn write_map(
     if clonable {
         writeln!(out, "static {list_value} {map}__values(const {map}* self) {{").unwrap();
         writeln!(out, "    {list_value} out = {list_value}__empty();\n    {list_value}__reserve(&out, self->len);").unwrap();
-        writeln!(out, "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            out.data[out.len++] = {};\n        }}\n    }}\n    return out;\n}}\n", copy_from("self->entries[e].value")).unwrap();
+        writeln!(out, "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            {}", copy_from("out.data[out.len]", "self->entries[e].value")).unwrap();
+        out.push_str("            out.len++;\n        }\n    }\n");
+        writeln!(out, "    return out;\n}}\n").unwrap();
     }
 
     writeln!(out, "static void {}({map}* self) {{", drop_fn_name(&map_ty)).unwrap();

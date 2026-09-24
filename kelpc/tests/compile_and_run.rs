@@ -2736,6 +2736,11 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "map_basic",
         "map_owned",
         "map_datac",
+        // MISSING-qM4Zx: `get_or`/`values` deep-copy a `datac` value out of
+        // the map, so the value's own `String` is cloned into the result and
+        // the map keeps its own. A shallow copy would be a double free at
+        // scope exit and a missing one would leak.
+        "map_datac_value_clone",
         // A-6: a `datac` key with an owned `String` field and an `enum` key
         // with an owned `String` payload. The entry owns a deep copy of the
         // key, so a drop that missed it is a leak and a double drop is a
@@ -3655,6 +3660,20 @@ fn a_map_of_owned_values_borrows_clones_and_moves() {
 #[test]
 fn a_map_holds_datac_values_and_can_live_in_a_datac_field() {
     assert_compiles_and_runs("tests/fixtures/map_datac.kp", "30\n2\n3\n1\n");
+}
+
+#[test]
+fn a_map_deep_copies_a_datac_value_out_through_get_or_and_values() {
+    // MISSING-qM4Zx: `get_or` and `values` are gated on the same
+    // declaration-graph deep-copy predicate `List.slice` uses, so a `datac`
+    // whose fields all copy takes the same derived `kelp_clone_<T>` out of the
+    // map that it takes out of a list. The value owns a `String`, so a shallow
+    // copy would print the right text and then double-free the buffer; ASAN
+    // re-runs this fixture (see `heap_fixtures_are_double_free_and_leak_clean`).
+    assert_compiles_and_runs(
+        "tests/fixtures/map_datac_value_clone.kp",
+        "alpha\n10\nnone\n0\n2\nalpha\n10\nbeta\n20\nalpha\n2\n",
+    );
 }
 
 #[test]
