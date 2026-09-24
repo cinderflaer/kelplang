@@ -233,7 +233,19 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// fixtures that land with the same slice are rejected by the C backend by
 /// design, so they stay outside the corpus definition and do not move this
 /// count.
-const LLVM_BUILT_BASELINE: usize = 270;
+/// Raised from 270 by MISSING-k4Nvz: the `std/ws` client. Two fixtures land
+/// with the slice and both build with both backends: `ws_gate` (the client
+/// against the loopback gate in `compile_and_run.rs`, which checks the
+/// handshake's accept value with its own Rust SHA-1 and then runs one frame of
+/// every kind the module claims) and `ws_wss_refused` (`wss://` refused by
+/// name, a panic rather than a build failure, so it is a target here). Nothing
+/// in the slice is a new construct for either backend: `std/ws` is Kelp over
+/// `std/net` and `std/rand`, with `sha1` beside the encoders in `std/encoding`,
+/// so the sweep has no refusal to retire and no disagreement to report. The two
+/// new refusal projects (`ws_net_denied`, `ws_rand_denied`) are negative
+/// fixtures without manifests and stay outside the corpus. The merged tree
+/// re-recorded at 272.
+const LLVM_BUILT_BASELINE: usize = 272;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

@@ -1,0 +1,15 @@
+// MISSING-k4Nvz: the `net` half of the `std/ws` grant, denied. The grant names
+// `127.0.0.1` and every port on it; the program asks for `example.com:80`. The
+// check matches the host as written, before `getaddrinfo` runs, and it runs
+// inside `std/ws` at the `net.connect` the handshake makes, so the denial is
+// the message `net.connect` already gives, naming the module that holds the
+// grant.
+//
+// No server and no DNS: the denial happens before any socket is opened, which
+// is why this fixture needs nothing running.
+impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
+
+fun main() {
+    var c = ws.connect("example.com", 80, "/")
+    print("connected")
+}

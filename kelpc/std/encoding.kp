@@ -3,12 +3,19 @@ impl "std/option"
 impl "std/result"
 impl "std/fmt"
 
-/* std/encoding: base64, base32, base58, hex and percent encoding.
+/* std/encoding: base64, base32, base58, hex and percent encoding, plus
+   `sha1`.
 
    Five alphabets, and nothing here touches the outside world, so the module
    is ungated. Every encoder takes `&Bytes` and returns `String`, every decoder
    takes `&str` and returns `Result<Bytes, DecodeErr>`: one alphabet table per
    scheme, one failure case, no half-success.
+
+   The one hash is here for the same reason the encoders are: no resource, no
+   state, and bytes in for bytes out. `sha1` exists because the WebSocket
+   handshake needs it (`std/ws`'s `Sec-WebSocket-Accept`) and RFC 6455 fixes
+   the function, not because a digest is recommended: SHA-1 is not collision
+   resistant any more, and nothing here uses it for authentication.
 
    The same handful of encoders used to exist three times over, in `fpl/encoding`
    and again inside `fpl/httpx`'s and `std/http`'s private copies. This is the
@@ -540,6 +547,126 @@ fun percent_decode(text: &str).R: result.Result<String, DecodeErr> {
         }
     }
     return result.Result.Ok(value = out)
+}
+
+/* ----- SHA-1 (RFC 3174) ----- */
+
+// One left rotation by `n` bits. The call sites never pass 0, and the branch is
+// here because a shift by 32 is undefined in v1 (`plan/syntax.md` 5), which is
+// what `rotl32(x, 0)` would otherwise be.
+fun rotl32(x: u32, n: u32).R: u32 {
+    if n == 0 {
+        return x
+    }
+    return (x << n) | (x >> (32 - n))
+}
+
+// The 20-byte digest, big-endian, in the order `h0` to `h4` are finalized.
+// `encoding.hex_encode(sha1(data))` is the hex spelling.
+//
+// RFC 3174 with no streaming state: the whole message is padded into one
+// buffer, because a WebSocket handshake key is 24 bytes of text and the
+// digest's other users in this tree are test vectors. A `Hasher` that takes
+// chunks belongs here the day something digests a file.
+fun sha1(data: &Bytes).R: Bytes {
+    var msg = Bytes.empty()
+    msg.append(data)
+    msg.push(128)
+    while msg.len() % 64 != 56 {
+        msg.push(0)
+    }
+    // The bit length as eight big-endian bytes. `data.len()` cannot overflow
+    // this on a machine that could hold the buffer: `usize` is at most 64 bits
+    // and the multiply is exact up to 2^61 bytes.
+    val bits: u64 = data.len().to_u64() * 8
+    var i: usize = 0
+    while i < 8 {
+        msg.push(((bits >> ((7 - i).to_u64() * 8)) & 255).to_u8())
+        i = i + 1
+    }
+
+    var h0: u32 = 0x67452301
+    var h1: u32 = 0xEFCDAB89
+    var h2: u32 = 0x98BADCFE
+    var h3: u32 = 0x10325476
+    var h4: u32 = 0xC3D2E1F0
+
+    val n = msg.len()
+    var off: usize = 0
+    while off < n {
+        // The 80-word schedule: 16 words from the block, then four XORs and a
+        // rotation each. It is a `List<u32>` rather than 80 locals because the
+        // loop that reads it is index-driven, and v1 has no array literal.
+        var w: List<u32> = List.empty()
+        var t: usize = 0
+        while t < 16 {
+            val b0 = msg.get(off + t * 4).to_u32()
+            val b1 = msg.get(off + t * 4 + 1).to_u32()
+            val b2 = msg.get(off + t * 4 + 2).to_u32()
+            val b3 = msg.get(off + t * 4 + 3).to_u32()
+            w.push((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+            t = t + 1
+        }
+        while t < 80 {
+            val x = w.get(t - 3) ^ w.get(t - 8) ^ w.get(t - 14) ^ w.get(t - 16)
+            w.push(rotl32(x, 1))
+            t = t + 1
+        }
+
+        var a = h0
+        var b = h1
+        var c = h2
+        var d = h3
+        var e = h4
+        var j: usize = 0
+        while j < 80 {
+            var f: u32 = 0
+            var k: u32 = 0
+            if j < 20 {
+                f = (b & c) | (~b & d)
+                k = 0x5A827999
+            } elif j < 40 {
+                f = b ^ c ^ d
+                k = 0x6ED9EBA1
+            } elif j < 60 {
+                f = (b & c) | (b & d) | (c & d)
+                k = 0x8F1BBCDC
+            } else {
+                f = b ^ c ^ d
+                k = 0xCA62C1D6
+            }
+            // Unsigned addition wraps, which is what SHA-1 is defined on.
+            val temp = rotl32(a, 5) + f + e + k + w.get(j)
+            e = d
+            d = c
+            c = rotl32(b, 30)
+            b = a
+            a = temp
+            j = j + 1
+        }
+
+        h0 = h0 + a
+        h1 = h1 + b
+        h2 = h2 + c
+        h3 = h3 + d
+        h4 = h4 + e
+        off = off + 64
+    }
+
+    var out = Bytes.empty()
+    push_u32_be(out, h0)
+    push_u32_be(out, h1)
+    push_u32_be(out, h2)
+    push_u32_be(out, h3)
+    push_u32_be(out, h4)
+    return out
+}
+
+fun push_u32_be(out: mut Bytes, v: u32) {
+    out.push(((v >> 24) & 255).to_u8())
+    out.push(((v >> 16) & 255).to_u8())
+    out.push(((v >> 8) & 255).to_u8())
+    out.push((v & 255).to_u8())
 }
 
 // The `application/x-www-form-urlencoded` encoder: same unreserved set as
