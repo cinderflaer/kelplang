@@ -78,25 +78,26 @@ fun commas_i64(n: i64).R: String {
 // The digit run of `text` with a comma every three digits, a leading `-`
 // copied before the grouping starts.
 fun group_digits(text: &str).R: String {
-    val len = str.len(text)
+    val tv = text.view()
+    val len = tv.len()
     if len == 0 {
         return String.empty()
     }
     var start: usize = 0
-    if str.byte(text, 0) == 45 {
+    if tv.get(0) == 45 {
         start = 1
     }
     var out = String.with_capacity(len + len / 3)
     var i: usize = 0
     while i < start {
-        out.push(str.byte(text, i))
+        out.push(tv.get(i))
         i = i + 1
     }
     while i < len {
         if i > start && (len - i) % 3 == 0 {
             out.push(',')
         }
-        out.push(str.byte(text, i))
+        out.push(tv.get(i))
         i = i + 1
     }
     return out

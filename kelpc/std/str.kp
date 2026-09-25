@@ -32,13 +32,14 @@ fun substring(s: &str, from: usize).R: &str = slice_from_raw(s, from)
 /// How many characters a `&str` has: bytes that do not continue a UTF-8
 /// sequence.
 fun char_count(s: &str).R: usize {
-    val n = len(s)
+    val sv = s.view()
+    val n = sv.len()
     var count: usize = 0
     var i: usize = 0
     while i < n {
         // A byte in 128..191 is a UTF-8 continuation; everything else starts
         // a character. (No bitwise operators in v1, so this is a range test.)
-        val c = byte(s, i)
+        val c = sv.get(i)
         if c < 128 || c >= 192 {
             count = count + 1
         }
@@ -73,10 +74,12 @@ fun index_of(s: &str, needle: &str).R: option.Option<usize> {
 // Whether `needle` occurs in `s` starting exactly at byte `at`. Private to
 // the module in practice (nothing outside needs the offset form).
 fun starts_with_at(s: &str, needle: &str, at: usize).R: bool {
-    val ln = len(needle)
+    val sv = s.view()
+    val nv = needle.view()
+    val ln = nv.len()
     var i: usize = 0
     while i < ln {
-        if byte(s, at + i) != byte(needle, i) {
+        if sv.get(at + i) != nv.get(i) {
             return false
         }
         i = i + 1
@@ -106,20 +109,7 @@ fun contains(s: &str, needle: &str).R: bool {
 
 // Text equality, which `==` deliberately does not provide for `str` (it
 // would compare addresses — see `infer.rs::comparable`).
-fun eq(a: &str, b: &str).R: bool {
-    if len(a) != len(b) {
-        return false
-    }
-    val n = len(a)
-    var i: usize = 0
-    while i < n {
-        if byte(a, i) != byte(b, i) {
-            return false
-        }
-        i = i + 1
-    }
-    return true
-}
+fun eq(a: &str, b: &str).R: bool = a.view().eq(b.view())
 
 // Byte-wise ordering, the `<` that `str` deliberately does not have: `eq` above
 // explains why `==` compares addresses rather than bytes, and the same argument
@@ -135,13 +125,15 @@ fun eq(a: &str, b: &str).R: bool {
 // sibling library and std had no comparison to offer. Bytes, not codepoints, so
 // the answer is stable for any UTF-8 input and costs no allocation.
 fun less(a: &str, b: &str).R: bool {
-    val na = len(a)
-    val nb = len(b)
+    val av = a.view()
+    val bv = b.view()
+    val na = av.len()
+    val nb = bv.len()
     var i: usize = 0
     val limit = if nb < na { nb } else { na }
     while i < limit {
-        val ca = byte(a, i)
-        val cb = byte(b, i)
+        val ca = av.get(i)
+        val cb = bv.get(i)
         if ca != cb {
             return ca < cb
         }
@@ -167,9 +159,10 @@ fun is_digit(c: u8).R: bool = c >= '0' && c <= '9'
 // Leading whitespace is skipped by advancing the pointer, so this is a view
 // of `s` rather than a copy.
 fun trim_start(s: &str).R: &str {
-    val n = len(s)
+    val sv = s.view()
+    val n = sv.len()
     var i: usize = 0
-    while i < n && is_space(byte(s, i)) {
+    while i < n && is_space(sv.get(i)) {
         i = i + 1
     }
     return slice_from_raw(s, i)
@@ -181,9 +174,10 @@ fun trim_start(s: &str).R: &str {
 // start-trimming ones stay views. This is the one place M6.3 diverges from
 // the plan's `str` sketch.
 fun trim_end(s: &str).R: String {
-    val n = len(s)
+    val sv = s.view()
+    val n = sv.len()
     var end: usize = n
-    while end > 0 && is_space(byte(s, end - 1)) {
+    while end > 0 && is_space(sv.get(end - 1)) {
         end = end - 1
     }
     return prefix(s, end)
@@ -194,10 +188,11 @@ fun trim_end(s: &str).R: String {
 // buffer to put a terminator.
 // Panics: if `n` is past the end of `s`.
 fun prefix(s: &str, n: usize).R: String {
+    val sv = s.view()
     var out = mem.alloc(n)
     var i: usize = 0
     while i < n {
-        out.set(i, byte(s, i))
+        out.set(i, sv.get(i))
         i = i + 1
     }
     return String.from_bytes(out)
@@ -208,11 +203,12 @@ fun trim(s: &str).R: String = trim_end(trim_start(s))
 // Non-ASCII bytes are copied through unchanged: upper-casing arbitrary
 // Unicode needs a character table, which v1 has no place to put.
 fun to_upper(s: &str).R: String {
-    val n = len(s)
+    val sv = s.view()
+    val n = sv.len()
     var out = mem.alloc(n)
     var i: usize = 0
     while i < n {
-        val c = byte(s, i)
+        val c = sv.get(i)
         if c >= 97 && c <= 122 {
             out.set(i, c - 32)
         } else {
@@ -224,11 +220,12 @@ fun to_upper(s: &str).R: String {
 }
 
 fun to_lower(s: &str).R: String {
-    val n = len(s)
+    val sv = s.view()
+    val n = sv.len()
     var out = mem.alloc(n)
     var i: usize = 0
     while i < n {
-        val c = byte(s, i)
+        val c = sv.get(i)
         if c >= 65 && c <= 90 {
             out.set(i, c + 32)
         } else {
@@ -241,13 +238,14 @@ fun to_lower(s: &str).R: String {
 
 // `s` repeated `n` times.
 fun repeat(s: &str, n: usize).R: String {
-    val ls = len(s)
+    val sv = s.view()
+    val ls = sv.len()
     var out = mem.alloc(ls * n)
     var i: usize = 0
     while i < n {
         var j: usize = 0
         while j < ls {
-            out.set(i * ls + j, byte(s, j))
+            out.set(i * ls + j, sv.get(j))
             j = j + 1
         }
         i = i + 1
@@ -260,10 +258,11 @@ fun repeat(s: &str, n: usize).R: String {
 // NUL-terminated C string), so it is copied — the same reason `prefix`
 // allocates.
 fun copy_range(s: &str, from: usize, to: usize).R: String {
+    val sv = s.view()
     var out = mem.alloc(to - from)
     var i: usize = 0
     while i < to - from {
-        out.set(i, byte(s, from + i))
+        out.set(i, sv.get(from + i))
         i = i + 1
     }
     return String.from_bytes(out)
@@ -301,10 +300,11 @@ fun split(s: &str, sep: &str).R: List<String> {
 // past the end. The pieces of `join` cannot be written with one `String`
 // operation, so this is the byte-level form it is built from.
 fun copy_into(dst: mut Bytes, at: usize, src: &str).R: usize {
-    val n = len(src)
+    val sv = src.view()
+    val n = sv.len()
     var i: usize = 0
     while i < n {
-        dst.set(at + i, byte(src, i))
+        dst.set(at + i, sv.get(i))
         i = i + 1
     }
     return at + n
@@ -360,11 +360,12 @@ fun from_u64(n: u64).R: String {
         v = v / 10
     }
     val digits = rev.as_str()
+    val dv = digits.view()
     var out = String.with_capacity(rev.len())
-    var i = rev.len()
+    var i = dv.len()
     while i > 0 {
         i = i - 1
-        out.push(byte(digits, i))
+        out.push(dv.get(i))
     }
     return out
 }
@@ -392,14 +393,15 @@ fun from_i64(n: i64).R: String {
         v = v / 10
     }
     val digits = rev.as_str()
+    val dv = digits.view()
     var out = String.with_capacity(21)
     if neg {
         out.push(45)
     }
-    var i = rev.len()
+    var i = dv.len()
     while i > 0 {
         i = i - 1
-        out.push(byte(digits, i))
+        out.push(dv.get(i))
     }
     return out
 }
@@ -473,7 +475,8 @@ fun replace(s: &str, from: &str, to: &str).R: String {
     if lf == 0 {
         return String.from_str(s)
     }
-    val ls = len(s)
+    val sv = s.view()
+    val ls = sv.len()
     var out = String.with_capacity(ls)
     var i: usize = 0
     while i < ls {
@@ -481,7 +484,7 @@ fun replace(s: &str, from: &str, to: &str).R: String {
             out.push_str(to)
             i = i + lf
         } else {
-            out.push(byte(s, i))
+            out.push(sv.get(i))
             i = i + 1
         }
     }
@@ -492,11 +495,12 @@ fun replace(s: &str, from: &str, to: &str).R: String {
 // character. A byte that does not continue a UTF-8 sequence starts a
 // character (the same rule `char_count` uses).
 fun byte_index(s: &str, i: usize).R: usize {
-    val n = len(s)
+    val sv = s.view()
+    val n = sv.len()
     var chars: usize = 0
     var at: usize = 0
     while at < n {
-        val c = byte(s, at)
+        val c = sv.get(at)
         if c < 128 || c >= 192 {
             if chars == i {
                 return at
@@ -512,8 +516,9 @@ fun byte_index(s: &str, i: usize).R: usize {
 // no bitwise operators, so the UTF-8 lead-byte masks are subtractions.
 // A truncated sequence returns 0, the same value past-the-end returns.
 fun decode_at(s: &str, at: usize).R: u32 {
-    val n = len(s)
-    val b0 = byte(s, at).to_u32()
+    val sv = s.view()
+    val n = sv.len()
+    val b0 = sv.get(at).to_u32()
     if b0 < 128 {
         return b0
     }
@@ -534,7 +539,7 @@ fun decode_at(s: &str, at: usize).R: u32 {
         if at + 1 + k >= n {
             return 0
         }
-        cp = cp * 64 + (byte(s, at + 1 + k).to_u32() - 128)
+        cp = cp * 64 + (sv.get(at + 1 + k).to_u32() - 128)
         k = k + 1
     }
     return cp

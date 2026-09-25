@@ -39,8 +39,14 @@ impl "std/str"
 // are the same tests with the reads made safe, and the corpus covers the short
 // patterns (`""`, `*`, `**`, `/**`) those reads are about.
 fun glob_match(pat: &str, path: &str).R: bool {
-    val plen = str.len(pat)
-    val slen = str.len(path)
+    // One `view` per call: it derives the length once, and every read below is
+    // then a real bounds check rather than a `strlen` (BUG-hT3wK). The
+    // recursive calls still take `&str`, so each derives its own length once;
+    // the inner *loop* is what must not pay per byte.
+    val pv = pat.view()
+    val sv = path.view()
+    val plen = pv.len()
+    val slen = sv.len()
     var pi: usize = 0
     var si: usize = 0
     while pi < plen {
@@ -48,12 +54,12 @@ fun glob_match(pat: &str, path: &str).R: bool {
         // more segments, and `fs.mkdir_all`/`fs.remove_all` walk up to (and back
         // down to) the grant root, so a grant on a tree has to admit the tree's
         // own root.
-        if pi + 3 == plen && si == slen && dir_wildcard_at(pat, pi) {
+        if pi + 3 == plen && si == slen && dir_wildcard_at(pv, pi) {
             return true
         }
-        if pi + 1 < plen && str.byte(pat, pi) == 42 && str.byte(pat, pi + 1) == 42 {
+        if pi + 1 < plen && pv.get(pi) == 42 && pv.get(pi + 1) == 42 {
             var rest = pi + 2
-            if rest < plen && str.byte(pat, rest) == 47 {
+            if rest < plen && pv.get(rest) == 47 {
                 rest = rest + 1
             }
             // A trailing `**` matches everything below.
@@ -71,14 +77,14 @@ fun glob_match(pat: &str, path: &str).R: bool {
                 p = p + 1
             }
         }
-        if str.byte(pat, pi) == 42 {
+        if pv.get(pi) == 42 {
             val rest = pi + 1
             var p: usize = si
             while true {
                 if glob_match(str.substring(pat, rest), str.substring(path, p)) {
                     return true
                 }
-                if p == slen || str.byte(path, p) == 47 {
+                if p == slen || sv.get(p) == 47 {
                     return false
                 }
                 p = p + 1
@@ -90,7 +96,7 @@ fun glob_match(pat: &str, path: &str).R: bool {
         if si == slen {
             return false
         }
-        if str.byte(pat, pi) != str.byte(path, si) {
+        if pv.get(pi) != sv.get(si) {
             return false
         }
         pi = pi + 1
@@ -100,8 +106,8 @@ fun glob_match(pat: &str, path: &str).R: bool {
 }
 
 // `s[i..]` is exactly `/`, `*`, `*`. The caller guarantees `i + 3 <= len`.
-fun dir_wildcard_at(s: &str, i: usize).R: bool {
-    return str.byte(s, i) == 47 && str.byte(s, i + 1) == 42 && str.byte(s, i + 2) == 42
+fun dir_wildcard_at(s: View, i: usize).R: bool {
+    return s.get(i) == 47 && s.get(i + 1) == 42 && s.get(i + 2) == 42
 }
 
 // Whether `pat` admits `text` in the `net` vocabulary: `*` is one label wide, so
@@ -120,11 +126,13 @@ fun host_glob(pat: &str, text: &str).R: bool {
 // copied, and the verdicts are the same — which is what the corpus checks, the
 // `host:port` cases included.
 fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usize).R: bool {
-    val plen = str.len(pat)
+    val pv = pat.view()
+    val tv = text.view()
+    val plen = pv.len()
     var pi = pstart
     var ti = tstart
     while pi < plen {
-        if str.byte(pat, pi) == 42 {
+        if pv.get(pi) == 42 {
             val rest = pi + 1
             var p = ti
             while true {
@@ -133,7 +141,7 @@ fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usiz
                 }
                 // `*p == 0` in the C version: with the host copied into a
                 // buffer, the bound *is* the terminator.
-                if p == tend || str.byte(text, p) == 46 || str.byte(text, p) == 58 {
+                if p == tend || tv.get(p) == 46 || tv.get(p) == 58 {
                     return false
                 }
                 p = p + 1
@@ -142,7 +150,7 @@ fun host_glob_at(pat: &str, pstart: usize, text: &str, tstart: usize, tend: usiz
         if ti == tend {
             return false
         }
-        if str.byte(pat, pi) != str.byte(text, ti) {
+        if pv.get(pi) != tv.get(ti) {
             return false
         }
         pi = pi + 1
@@ -175,11 +183,12 @@ fun host_match(pat: &str, hostport: &str).R: bool {
 // is 4096 on Linux, and the C version keeps the first `cap - 1` bytes of what it
 // copied.
 fun host_end(hostport: &str).R: usize {
-    val n = str.len(hostport)
+    val hv = hostport.view()
+    val n = hv.len()
     var end = n
     var i = n
     while i > 0 {
-        if str.byte(hostport, i - 1) == 58 {
+        if hv.get(i - 1) == 58 {
             end = i - 1
             i = 0
         } else {
@@ -195,10 +204,11 @@ fun host_end(hostport: &str).R: usize {
 // Whether `pat` names a port at all — the C version's `strrchr(pat, ':') !=
 // NULL`, which asks only whether a colon exists, not where.
 fun has_colon(pat: &str).R: bool {
-    val n = str.len(pat)
+    val pv = pat.view()
+    val n = pv.len()
     var i: usize = 0
     while i < n {
-        if str.byte(pat, i) == 58 {
+        if pv.get(i) == 58 {
             return true
         }
         i = i + 1
@@ -228,8 +238,9 @@ fun has_colon(pat: &str).R: bool {
 // `path.normalize`'s body both do exactly that, and say so where they do it.
 fun path_normalize(s: &str, out: mut Bytes).R: bool {
     val cap = out.len()
-    val n = str.len(s)
-    if n == 0 || str.byte(s, 0) != 47 {
+    val sv = s.view()
+    val n = sv.len()
+    if n == 0 || sv.get(0) != 47 {
         return false
     }
     out.set(0, 47)
@@ -237,7 +248,7 @@ fun path_normalize(s: &str, out: mut Bytes).R: bool {
     var p: usize = 0
     var depth: usize = 0
     while p < n {
-        while p < n && str.byte(s, p) == 47 {
+        while p < n && sv.get(p) == 47 {
             p = p + 1
         }
         // The C version `break`s here when the path ended in separators. Kelp
@@ -245,7 +256,7 @@ fun path_normalize(s: &str, out: mut Bytes).R: bool {
         // loop's own condition is what ends it.
         if p < n {
             val start = p
-            while p < n && str.byte(s, p) != 47 {
+            while p < n && sv.get(p) != 47 {
                 p = p + 1
             }
             val len = p - start
@@ -253,8 +264,8 @@ fun path_normalize(s: &str, out: mut Bytes).R: bool {
             // each of the three shapes is handled on its own: Kelp has no
             // `continue`, and the two flags are what the C version's two
             // `continue`s said.
-            val this_dir = len == 1 && str.byte(s, start) == 46
-            val up_dir = len == 2 && str.byte(s, start) == 46 && str.byte(s, start + 1) == 46
+            val this_dir = len == 1 && sv.get(start) == 46
+            val up_dir = len == 2 && sv.get(start) == 46 && sv.get(start + 1) == 46
             if up_dir {
                 if depth == 0 {
                     return false
@@ -283,7 +294,7 @@ fun path_normalize(s: &str, out: mut Bytes).R: bool {
                 }
                 var i: usize = 0
                 while i < len {
-                    out.set(o + i, str.byte(s, start + i))
+                    out.set(o + i, sv.get(start + i))
                     i = i + 1
                 }
                 o = o + len

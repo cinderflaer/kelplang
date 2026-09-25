@@ -420,10 +420,11 @@ fun parse_hex(text: &str).R: usize {
     }
     var value: usize = 0
     var digits: usize = 0
-    val n = str.len(text)
+    val tv = text.view()
+    val n = tv.len()
     var i: usize = 0
     while i < n {
-        val c = str.byte(text, i)
+        val c = tv.get(i)
         if c == 59 {
             i = n
         } else {
