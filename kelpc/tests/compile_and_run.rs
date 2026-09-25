@@ -1821,6 +1821,99 @@ fn a_delegated_wildcard_lets_the_import_reach_every_resource() {
 }
 
 #[test]
+fn a_full_grant_elides_the_runtime_path_check_but_a_narrow_one_keeps_it() {
+    // A path domain's whole-resource pattern (`/**`) matches any string
+    // unconditionally in `glob_match` (`std/rt.kp`), so when a module's own
+    // compiled-in pattern list for `fs` holds that literal pattern, the
+    // `kelp_cap_check_path` call at a gated call site is provably always
+    // going to pass and `cap_plan` drops it before codegen rather than
+    // emitting a runtime call that can only ever succeed
+    // (`codegen_c.rs::Gen::cap_plan`, `codegen_llvm.rs`'s mirror). This is a
+    // codegen-shape assertion, so it reads the generated C the way
+    // `the_generated_c_maps_statements_back_to_their_kp_lines` does, and pins
+    // `KELPC_ORACLE=c` explicitly for the same reason that test does: the
+    // artifact under test is one only that backend writes.
+    //
+    // `caps_elide_full_grant` (`util` holds `caps(fs = ["/**"])` outright) is
+    // the positive case: its one `fs.read_text` call site must compile to no
+    // `kelp_cap_check_path` call at all, while still reading the file
+    // correctly. It uses its own scratch directory, not one another test also
+    // writes to, so there is no cross-test race on the setup.
+    let full = caps_scratch("elide_full_grant");
+    std::fs::write(full.join("note.txt"), "hello caps").unwrap();
+
+    let bin = out_path("caps_elide_full_grant");
+    let build = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(project("caps_elide_full_grant").join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'caps_elide_full_grant' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(
+        run.status.success(),
+        "expected 'caps_elide_full_grant' to run cleanly"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "hello caps\n",
+        "the elided check must not change the program's observable result"
+    );
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    assert!(
+        !generated.contains("kelp_cap_check_path(\""),
+        "a module holding the full '/**' grant for 'fs' must have no \
+         'kelp_cap_check_path' call left at its call sites, since every one \
+         of them is provably going to pass:\n{generated}"
+    );
+
+    // The negative case: `caps_elide_narrow_grant`'s `util` module holds a
+    // narrower pattern (not `/**`), so its call to `fs.read_text` still has
+    // to carry the runtime check. Eliding it there would be the correctness
+    // hole this task exists to avoid: a narrower grant silently starting to
+    // admit everything.
+    //
+    // Denial itself, for a narrower grant, is already covered by
+    // `a_path_outside_the_grant_is_denied_at_a_primitive_too` (project
+    // `caps_raw_denied`), so this only re-proves the check is still *emitted*
+    // rather than duplicating that denial test.
+    let narrow = caps_scratch("elide_narrow_grant");
+    std::fs::write(narrow.join("note.txt"), "hello caps").unwrap();
+    let bin2 = out_path("caps_elide_narrow_grant");
+    let build2 = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(project("caps_elide_narrow_grant").join("main.kp"))
+        .arg("-o")
+        .arg(&bin2)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build2.status.success(),
+        "expected 'caps_elide_narrow_grant' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build2.stderr)
+    );
+    let generated2 = std::fs::read_to_string(bin2.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    assert!(
+        generated2.contains("kelp_cap_check_path(\""),
+        "a module holding a narrower-than-'/**' grant for 'fs' must keep its \
+         runtime 'kelp_cap_check_path' call:\n{generated2}"
+    );
+
+    let _ = std::fs::remove_dir_all(&full);
+    let _ = std::fs::remove_dir_all(&narrow);
+}
+
+#[test]
 fn a_module_cannot_delegate_the_wildcard_it_does_not_hold() {
     // `mid` holds one narrow `fs` pattern, so `caps(*)` on its own import
     // claims a wildcard it was never given; the refusal names the wildcard.

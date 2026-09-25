@@ -3716,7 +3716,23 @@ impl<'a> Gen<'a> {
         // is qualified (`std.net.connect`); the per-function table in
         // `stdlib.rs` is keyed on the bare name the author wrote.
         let bare = callee.rsplit('.').next().unwrap_or(callee);
-        let checked: Vec<CapCheck> = crate::stdlib::checked_args(domain, bare, &arg_is_str);
+        let mut checked: Vec<CapCheck> = crate::stdlib::checked_args(domain, bare, &arg_is_str);
+        // A path domain's whole-resource pattern (`/**`) matches any string
+        // unconditionally (see `glob_match` in `std/rt.kp`, the `**` branch's
+        // `if rest == plen { return true }` fast path). When the calling
+        // module's own compiled-in pattern list for this domain holds that
+        // literal pattern, a `CapCheck::Path` at this call site is provably
+        // going to pass no matter what the argument is, so there is nothing
+        // for the runtime check to decide: drop it before it is ever
+        // generated. This is NOT done for name domains (`env`, `net`), whose
+        // whole-resource pattern is a single `*`: unlike `/**`, a lone `*`
+        // does not cross a `/` byte in `glob_match`, so it is not a true
+        // unconditional match and `CapCheck::Name` is never elided here.
+        if crate::stdlib::patterns_are_paths(domain)
+            && patterns.iter().any(|p| p == crate::stdlib::whole_resource(domain))
+        {
+            checked.retain(|c| !matches!(c, CapCheck::Path(_)));
+        }
         if checked.is_empty() {
             return None;
         }

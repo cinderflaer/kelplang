@@ -1251,7 +1251,22 @@ impl<'a> Gen<'a> {
         // The per-call table is keyed on the bare name the author wrote
         // (`read`, not `fs.read`), the qualified key being what `gated` holds.
         let bare = callee.rsplit('.').next().unwrap_or(callee);
-        let checks = crate::stdlib::checked_args(domain, bare, &arg_is_str);
+        let mut checks = crate::stdlib::checked_args(domain, bare, &arg_is_str);
+        // Mirror of `codegen_c.rs::Gen::cap_plan`'s elision, field for field:
+        // a path domain's whole-resource pattern (`/**`) matches any string
+        // unconditionally in `glob_match` (`std/rt.kp`, the `**` branch's
+        // `if rest == plen { return true }` fast path), so when the calling
+        // module's own grant for this domain holds that literal pattern, a
+        // `CapCheck::Path` here is provably always going to pass and is
+        // dropped before codegen rather than emitted as a runtime call. Name
+        // domains (`env`, `net`) are never elided this way: their
+        // whole-resource pattern is a lone `*`, which does not cross a `/`
+        // byte in `glob_match` and so is not a true unconditional match.
+        if crate::stdlib::patterns_are_paths(domain)
+            && grant.patterns.iter().any(|p| p == crate::stdlib::whole_resource(domain))
+        {
+            checks.retain(|c| !matches!(c, crate::stdlib::CapCheck::Path(_)));
+        }
         if checks.is_empty() {
             return None;
         }
