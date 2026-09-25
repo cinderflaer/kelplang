@@ -9596,7 +9596,7 @@ mod layout_tests {
         std::fs::write(&entry, entry_source).expect("the entry file");
 
         let mut sources = SourceMap::new();
-        let loaded = crate::resolve::load(&entry, &mut sources)
+        let loaded = crate::resolve::load(&entry, &mut sources, None)
             .expect("an import of every shipped stdlib module resolves");
         let program = crate::infer::check_program(&loaded.program, &loaded.project)
             .expect("the shipped stdlib type-checks");

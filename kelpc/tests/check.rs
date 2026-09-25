@@ -19,8 +19,9 @@
 //! two documents that are short enough to write out.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn kelpc() -> Command {
     Command::new(env!("CARGO_BIN_EXE_kelpc"))
@@ -55,6 +56,27 @@ fn check(path: &Path, flags: &[&str]) -> Output {
         cmd.arg(flag);
     }
     cmd.output().expect("failed to spawn kelpc")
+}
+
+/// Like `check`, but with `--text` and a buffer piped in on stdin instead of
+/// whatever is on disk at `path` (MISSING-b6Ytr).
+fn check_text(path: &Path, buffer: &str, flags: &[&str]) -> Output {
+    let mut cmd = kelpc();
+    cmd.arg("check").arg(path).arg("--text");
+    for flag in flags {
+        cmd.arg(flag);
+    }
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("failed to spawn kelpc");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(buffer.as_bytes())
+        .expect("write the buffer");
+    child.wait_with_output().expect("failed to wait on kelpc")
 }
 
 fn stderr_of(out: &Output) -> String {
@@ -225,4 +247,42 @@ fn a_bad_flag_and_a_missing_path_are_errors_of_their_own() {
     };
     assert!(!no_path.status.success());
     assert!(stderr_of(&no_path).contains("needs a .kp file"), "{}", stderr_of(&no_path));
+}
+
+#[test]
+fn text_checks_the_stdin_buffer_instead_of_what_is_on_disk() {
+    // The whole point (MISSING-b6Ytr): the file on disk is clean, the buffer
+    // an editor has not saved yet is not, and `--text` answers about the
+    // buffer while naming the real file's own path in the finding.
+    let dir = scratch("text-buffer");
+    let file = write(&dir, "main.kp", GOOD);
+
+    let out = check_text(&file, BAD, &["--json"]);
+    assert!(!out.status.success());
+    let json = stdout_of(&out);
+    assert!(json.contains("\"ok\":false"), "{json}");
+    assert!(json.contains("\"line\":3,\"column\":11,"), "{json}");
+    let file_str = file.to_string_lossy();
+    assert!(json.contains(file_str.as_ref()), "{json}");
+
+    // The disk copy is untouched, and a plain check of it still passes: the
+    // buffer never gets written anywhere.
+    assert_eq!(fs::read_to_string(&file).expect("read main.kp"), GOOD);
+    let disk = check(&file, &["--json"]);
+    assert!(disk.status.success(), "{}", stderr_of(&disk));
+}
+
+#[test]
+fn text_over_a_project_directory_is_refused() {
+    // A buffer is always one open file: naming a project root would leave no
+    // file for the buffer to replace.
+    let dir = scratch("text-directory");
+    write(&dir, "main.kp", GOOD);
+    let out = check_text(&dir, GOOD, &[]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("needs a .kp file, not a project directory"),
+        "{}",
+        stderr_of(&out)
+    );
 }

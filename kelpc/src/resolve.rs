@@ -131,7 +131,17 @@ pub struct Loaded {
 /// Loads the entry file, follows every `impl` transitively, rejects import
 /// cycles and bad paths, and returns the merged program plus the module
 /// tables `infer.rs` needs.
-pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagnostic> {
+///
+/// `entry_text` overrides the entry module's text with a buffer instead of
+/// what is on disk at `entry_path` (`kelpc check --text`, MISSING-b6Ytr): the
+/// path is still resolved and canonicalized normally, so module identity, the
+/// `src/` layout rule and every other module's disk read are unaffected, and
+/// only the one module named by `entry_path` reads from the override.
+pub fn load(
+    entry_path: &Path,
+    sources: &mut SourceMap,
+    entry_text: Option<String>,
+) -> Result<Loaded, Diagnostic> {
     let given = fs::canonicalize(entry_path).map_err(|e| {
         Diagnostic::new(
             format!("cannot read '{}': {e}", entry_path.display()),
@@ -229,6 +239,7 @@ pub fn load(entry_path: &Path, sources: &mut SourceMap) -> Result<Loaded, Diagno
     let mut loader = Loader {
         src_dir: src_dir.clone(),
         entry: entry.clone(),
+        entry_text,
         kpconf_path,
         sources,
         http_pool,
@@ -537,6 +548,11 @@ struct Loader<'a> {
     src_dir: PathBuf,
     /// Module id of the entry module — the only one with an empty prefix.
     entry: String,
+    /// The entry module's text, when it comes from a buffer (`kelpc check
+    /// --text`, MISSING-b6Ytr) rather than from disk. Taken the first time
+    /// the entry module is read, so a re-expansion round reads the cached
+    /// tokens instead of consuming it twice.
+    entry_text: Option<String>,
     /// `<project root>/alias.kpconf`, whether or not it exists.
     kpconf_path: PathBuf,
     /// The manifest's `http_pool` ceiling (S4), or the compiler default when
@@ -706,13 +722,30 @@ impl Loader<'_> {
             Some(text) => (self.src_dir.join(id).with_extension(EXT), text),
             None => {
                 let path = self.src_dir.join(format!("{id}.{EXT}"));
-                let text = fs::read_to_string(&path).map_err(|_| {
-                    Diagnostic::new(
-                        format!("cannot find module '{id}': expected '{}'", path.display()),
-                        at,
-                        from,
-                    )
-                })?;
+                // `kelpc check --text` hands the entry module's buffer in on
+                // stdin (MISSING-b6Ytr): the path still names the file on
+                // disk, an editor's unsaved edit does not, so an unsaved
+                // buffer gets a real diagnostic instead of the last save's.
+                let text = if id == self.entry {
+                    match self.entry_text.take() {
+                        Some(text) => text,
+                        None => fs::read_to_string(&path).map_err(|_| {
+                            Diagnostic::new(
+                                format!("cannot find module '{id}': expected '{}'", path.display()),
+                                at,
+                                from,
+                            )
+                        })?,
+                    }
+                } else {
+                    fs::read_to_string(&path).map_err(|_| {
+                        Diagnostic::new(
+                            format!("cannot find module '{id}': expected '{}'", path.display()),
+                            at,
+                            from,
+                        )
+                    })?
+                };
                 (path, text)
             }
         };

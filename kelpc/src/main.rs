@@ -26,6 +26,7 @@ use diag::{Diagnostic, Severity, SourceMap};
 use fmt::RefusalKind;
 use opt::OptLevel;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -75,7 +76,7 @@ fn usage() {
     eprintln!(
         "usage: {BIN_NAME} build <file.{EXT}> [-o <out>] [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
          {BIN_NAME} run <file.{EXT}> [-O0|-O1|-O2|-O3|-Os] [--deny-outdated]\n       \
-         {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated]\n       \
+         {BIN_NAME} check <file.{EXT}> [--json] [--deny-outdated] [--text]\n       \
          {BIN_NAME} fmt <file.{EXT}>\n       \
          {BIN_NAME} fmt -w <path>...\n       \
          {BIN_NAME} fmt --check <path>...\n       \
@@ -138,14 +139,19 @@ fn usage() {
 /// `ok` is false when any finding is an error, which is the same question the
 /// exit status answers. Outdated syntax is a finding rather than a failure
 /// unless `deny_outdated` asks otherwise, matching `build`.
+///
+/// `entry_text` is `--text`'s buffer (MISSING-b6Ytr): when given, it replaces
+/// what is on disk at `path` for the one module `path` names, so a caller can
+/// ask about an unsaved edit.
 fn front_end(
     path: &str,
     deny_outdated: bool,
     sources: &mut SourceMap,
+    entry_text: Option<String>,
 ) -> (Vec<(Severity, Diagnostic)>, bool) {
     let mut findings: Vec<(Severity, Diagnostic)> = Vec::new();
 
-    let loaded = match resolve::load(Path::new(path), sources) {
+    let loaded = match resolve::load(Path::new(path), sources, entry_text) {
         Ok(l) => l,
         Err(d) => {
             findings.push((Severity::Error, d));
@@ -180,24 +186,34 @@ fn front_end(
     (findings, true)
 }
 
-/// `kelpc check <path> [--json] [--deny-outdated]`: whether the program
-/// compiles, without an artifact.
+/// `kelpc check <path> [--json] [--deny-outdated] [--text]`: whether the
+/// program compiles, without an artifact.
 ///
 /// `--json` is the machine-readable contract Coral and `lighthouse` read
 /// (MK13-S1-M3): one JSON object on stdout, the prose form on stderr
 /// otherwise. A caller that reads the JSON never has to parse a message to
 /// find out which file and which range it is about, which is the whole reason
 /// the form exists.
+///
+/// `--text` reads the entry file's content from stdin instead of from disk
+/// (MISSING-b6Ytr): `<path>` still names the real file, so module resolution
+/// and every finding's `file`/`module` are the ones a caller expects, but the
+/// text checked is the buffer, not the last save. It needs a file, not a
+/// project directory: a buffer is always one open file.
 fn check_command(args: &[String]) -> ExitCode {
     let mut json = false;
     let mut deny_outdated = false;
+    let mut text = false;
     let mut path: Option<String> = None;
     for arg in args {
         match arg.as_str() {
             "--json" => json = true,
             "--deny-outdated" => deny_outdated = true,
+            "--text" => text = true,
             other if other.starts_with('-') && other != "-" => {
-                eprintln!("error: unknown flag '{other}'; expected one of: --json, --deny-outdated");
+                eprintln!(
+                    "error: unknown flag '{other}'; expected one of: --json, --deny-outdated, --text"
+                );
                 return ExitCode::FAILURE;
             }
             other if path.is_none() => path = Some(other.to_string()),
@@ -214,8 +230,23 @@ fn check_command(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
 
+    let entry_text = if text {
+        if Path::new(&path).is_dir() {
+            eprintln!("error: '--text' needs a .{EXT} file, not a project directory: a buffer is always one open file", EXT = resolve::EXT);
+            return ExitCode::FAILURE;
+        }
+        let mut buf = String::new();
+        if let Err(e) = io::stdin().read_to_string(&mut buf) {
+            eprintln!("error: cannot read '--text' from stdin: {e}");
+            return ExitCode::FAILURE;
+        }
+        Some(buf)
+    } else {
+        None
+    };
+
     let mut sources = SourceMap::new();
-    let (findings, ok) = front_end(&path, deny_outdated, &mut sources);
+    let (findings, ok) = front_end(&path, deny_outdated, &mut sources, entry_text);
     if json {
         let borrowed: Vec<(Severity, &Diagnostic)> = findings
             .iter()
@@ -260,7 +291,7 @@ fn build(
 ) -> bool {
     let mut sources = SourceMap::new();
 
-    let loaded = match resolve::load(Path::new(path), &mut sources) {
+    let loaded = match resolve::load(Path::new(path), &mut sources, None) {
         Ok(l) => l,
         Err(d) => {
             sources.report(&d);
@@ -500,7 +531,7 @@ fn fmt_text(path: &Path, src: &str) -> Result<String, ()> {
     let own = fmt::format(src);
     let Ok(text) = own else {
         let mut sources = SourceMap::new();
-        return match resolve::load(path, &mut sources) {
+        return match resolve::load(path, &mut sources, None) {
             Ok(_) => fmt::format_after_resolve(src).map_err(|e| {
                 report_fmt_error(path, src, &e);
             }),
