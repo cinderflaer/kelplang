@@ -534,6 +534,23 @@ struct EnumVariant<'a> {
     fields: Vec<Ty>,
 }
 
+impl<'a> EnumVariant<'a> {
+    /// The payload struct's field index for declared field `field`: the count
+    /// of `unit`-typed fields declared before it, subtracted out, because a
+    /// `unit` field gets no struct member (`MISSING-r7Wqb`). LLVM addresses a
+    /// struct positionally, unlike the C backend's by-name
+    /// `.kelp_v.<variant>.<field>`, so a declared index and a payload-struct
+    /// index only coincide when nothing before `field` was filtered out.
+    /// `field` itself must not be `unit`: reading one is answered by
+    /// `emit_expr`'s own `unit` guard before a place is ever asked for.
+    fn payload_index(&self, field: usize) -> u32 {
+        self.fields[..field]
+            .iter()
+            .filter(|t| **t != Ty::Unit)
+            .count() as u32
+    }
+}
+
 /// The tag is field 0 and the union field 1 of every `enum` struct, so those two
 /// indices are named once rather than spelled at each projection.
 const ENUM_TAG_FIELD: u32 = 0;
@@ -1361,7 +1378,10 @@ impl<'a> Gen<'a> {
         }
         for e in &program.enums {
             for v in &e.variants {
-                for f in &v.fields {
+                // A `unit` field carries no data (`MISSING-r7Wqb`): it is
+                // never laid out, so it is never checked against the layouts
+                // `refuse_field` recognizes.
+                for f in v.real_fields() {
                     refuse_field(&f.ty)?;
                 }
             }
@@ -1389,8 +1409,12 @@ impl<'a> Gen<'a> {
                     // A payload-less variant is a bare `i8` rather than an empty
                     // struct: an empty struct is zero bytes in LLVM and one in
                     // C, and the one byte is what sizes a union every variant of
-                    // which carries nothing.
-                    payload_ty: if v.fields.is_empty() {
+                    // which carries nothing. A variant whose fields are every
+                    // one `unit` is payload-less by the same rule
+                    // (`VariantDef::is_payload_less`, `MISSING-r7Wqb`): a `unit`
+                    // field stores nothing, so `Ok`/`Some` instantiated with
+                    // `unit` is exactly as bare as `None`/`Err`'s empty case.
+                    payload_ty: if v.is_payload_less() {
                         ctx.i8()
                     } else {
                         ctx.struct_type(&enum_payload_name(&e.name, i))
@@ -1484,12 +1508,11 @@ impl<'a> Gen<'a> {
             .ok_or_else(|| no_value(&format!("the enum '{}'", e.name)))?;
         for (i, v) in e.variants.iter().enumerate() {
             let payload_ty = info.variants[i].payload_ty;
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             let fields = v
-                .fields
-                .iter()
+                .real_fields()
                 .map(|f| llvm_type(ctx, &self.structs, &self.containers, &f.ty))
                 .collect::<Result<Vec<_>, _>>()?;
             ctx.struct_set_body(payload_ty, &fields);
@@ -1652,9 +1675,14 @@ impl<'a> Gen<'a> {
                 if !needs_drop(&field.ty, owned) {
                     continue;
                 }
+                // A `unit` field is never owned (`needs_drop` already skipped
+                // it above), but a field *after* one in the same variant still
+                // needs its position in the payload struct rather than its
+                // declared position (`MISSING-r7Wqb`).
+                let payload_index = info.variants[*index].payload_index(fi);
                 let field_ptr =
                     self.builder
-                        .build_struct_gep(payload_ty, union_ptr, fi as u32, &field.name);
+                        .build_struct_gep(payload_ty, union_ptr, payload_index, &field.name);
                 self.call_drop(field_ptr, &field.ty)?;
             }
             self.builder.build_br(done);
@@ -2303,6 +2331,11 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // already known to be `variant`. It is a *place*, which is what lets
             // an owned payload be bound as a borrow rather than moved out, and
             // what lets the move out by value clear the slot it came from.
+            // A `unit` payload read is no value, the same rule an `Ident` read
+            // follows: its variant has no struct field for it
+            // (`VariantDef::is_payload_less`, `MISSING-r7Wqb`), so there is
+            // nothing to load.
+            ExprKind::EnumField { .. } if e.ty == Ty::Unit => Ok(None),
             ExprKind::EnumField {
                 base,
                 variant,
@@ -2774,11 +2807,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         field: usize,
     ) -> Result<Value<'a>, String> {
         let (ptr, info) = self.enum_place(base)?;
-        let payload_ty = info
+        let v = info
             .variants
             .get(variant)
-            .ok_or_else(|| no_value(&format!("the variant {variant} of an enum")))?
-            .payload_ty;
+            .ok_or_else(|| no_value(&format!("the variant {variant} of an enum")))?;
+        let payload_ty = v.payload_ty;
+        let index = v.payload_index(field);
         let union_ptr = self
             .g
             .builder
@@ -2786,7 +2820,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self
             .g
             .builder
-            .build_struct_gep(payload_ty, union_ptr, field as u32, "field"))
+            .build_struct_gep(payload_ty, union_ptr, index, "field"))
     }
 
     /// Read one payload field of one variant as a value.
@@ -2870,26 +2904,50 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
         let tag = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
         self.g.builder.build_store(tag, tag_ptr);
-        if !fields.is_empty() {
-            let payload_ty = info
-                .variants
-                .get(variant)
-                .ok_or_else(|| no_value(&format!("the variant {variant} of '{name}'")))?
-                .payload_ty;
-            let union_ptr = self
-                .g
-                .builder
-                .build_struct_gep(info.llvm_ty, slot, ENUM_UNION_FIELD, "kelp_v");
-            for (index, field) in fields.iter().enumerate() {
-                let value = self.value_of(field)?;
-                let field_ptr = self.g.builder.build_struct_gep(
-                    payload_ty,
-                    union_ptr,
-                    index as u32,
-                    "field",
-                );
-                self.g.builder.build_store(value, field_ptr);
+        // A `unit` field is never stored (`VariantDef::is_payload_less` gives
+        // an all-`unit` variant the bare `i8` placeholder rather than a
+        // struct, `MISSING-r7Wqb`): its expression is still emitted, for
+        // whatever side effect it has, but discarded rather than written
+        // through a GEP that would not typecheck against that placeholder.
+        // The struct index counts only the fields that do get a slot, so it
+        // stays in step with the payload struct `declare_enum_body` built
+        // from the same filter.
+        let has_real_field = fields.iter().any(|f| f.ty != Ty::Unit);
+        let union_ptr = if has_real_field {
+            Some(self.g.builder.build_struct_gep(
+                info.llvm_ty,
+                slot,
+                ENUM_UNION_FIELD,
+                "kelp_v",
+            ))
+        } else {
+            None
+        };
+        let payload_ty = if has_real_field {
+            Some(
+                info.variants
+                    .get(variant)
+                    .ok_or_else(|| no_value(&format!("the variant {variant} of '{name}'")))?
+                    .payload_ty,
+            )
+        } else {
+            None
+        };
+        let mut index = 0u32;
+        for field in fields {
+            if field.ty == Ty::Unit {
+                self.emit_expr(field)?;
+                continue;
             }
+            let value = self.value_of(field)?;
+            let field_ptr = self.g.builder.build_struct_gep(
+                payload_ty.expect("a real field implies a payload struct"),
+                union_ptr.expect("a real field implies a union pointer"),
+                index,
+                "field",
+            );
+            self.g.builder.build_store(value, field_ptr);
+            index += 1;
         }
         Ok(self.g.builder.build_load(info.llvm_ty, slot, "enum"))
     }
@@ -2970,7 +3028,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .ctx
             .const_int(self.g.ctx.i32(), target_err_variant as u64, false);
         self.g.builder.build_store(dst_tag, dst_tag_ptr);
-        if err_has_payload {
+        // `err_has_payload` is arity, not type: an `Err` field typed `unit`
+        // has one declared field and no payload struct
+        // (`VariantDef::is_payload_less`, `MISSING-r7Wqb`), so the tag above
+        // is the whole failure value and there is nothing here to copy.
+        let err_is_unit = matches!(src.variants[err_variant].fields.first(), Some(Ty::Unit));
+        if err_has_payload && !err_is_unit {
             let src_payload_ty = src.variants[err_variant].payload_ty;
             let src_union = self
                 .g
@@ -2999,10 +3062,16 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.g.builder.build_ret(ret);
         self.terminated = true;
 
-        // The success arm is where the operator's value lives.
+        // The success arm is where the operator's value lives. A `unit`
+        // success type has no payload to read (`MISSING-r7Wqb`): `expr?` is
+        // then no value at all, the same as any other `unit`-typed
+        // expression.
         self.g.builder.position_at_end(ok_bb);
         self.cur = ok_bb;
         self.terminated = false;
+        if *ty == Ty::Unit {
+            return Ok(None);
+        }
         let ok_payload_ty = src.variants[ok_variant].payload_ty;
         let ok_union = self
             .g
@@ -3259,11 +3328,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     ENUM_UNION_FIELD,
                     "kelp_v",
                 );
-                let payload_ty = info.variants[*variant].payload_ty;
+                let v = &info.variants[*variant];
+                let payload_ty = v.payload_ty;
+                let index = v.payload_index(*field);
                 Ok(self
                     .g
                     .builder
-                    .build_struct_gep(payload_ty, union_ptr, *field as u32, "field"))
+                    .build_struct_gep(payload_ty, union_ptr, index, "field"))
             }
             _ => Ok(root),
         }
@@ -4083,15 +4154,22 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.store_enum_variant(slot, &info, err, &[err_value])?;
         self.g.builder.build_br(done_bb);
 
-        // The success arm: the worker's value out of the result slot.
+        // The success arm: the worker's value out of the result slot. A
+        // worker that returns `unit` wrote nothing there (`emit_thread_body`),
+        // and `unit` has no LLVM type to load one as, so the arm reads
+        // nothing and stores the `Ok` tag alone (`MISSING-r7Wqb`).
         self.g.builder.position_at_end(ok_bb);
         self.cur = ok_bb;
         self.terminated = false;
         let res_fn = self.g.rt("kelp_thread_result")?;
         let res_ptr = self.g.call(res_fn.func, res_fn.ty, &[handle], "result");
-        let elem_lty = self.lty(elem)?;
-        let value = self.g.builder.build_load(elem_lty, res_ptr, "value");
-        self.store_enum_variant(slot, &info, ok, &[value])?;
+        if **elem == Ty::Unit {
+            self.store_enum_variant(slot, &info, ok, &[])?;
+        } else {
+            let elem_lty = self.lty(elem)?;
+            let value = self.g.builder.build_load(elem_lty, res_ptr, "value");
+            self.store_enum_variant(slot, &info, ok, &[value])?;
+        }
         self.g.builder.build_br(done_bb);
 
         self.g.builder.position_at_end(done_bb);
@@ -6325,7 +6403,7 @@ impl<'a> Gen<'a> {
         self.st(tag, self.fld(info.llvm_ty, dst, ENUM_TAG_FIELD, "tag"));
         let mut cont = entry;
         for (i, v) in e.variants.iter().enumerate() {
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             self.builder.position_at_end(cont);
@@ -6338,7 +6416,7 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(then_bb);
             let src_union = self.fld(info.llvm_ty, src, ENUM_UNION_FIELD, "kelp_v");
             let dst_union = self.fld(info.llvm_ty, dst, ENUM_UNION_FIELD, "kelp_v");
-            for (fi, field) in v.fields.iter().enumerate() {
+            for (fi, field) in v.real_fields().enumerate() {
                 let s = self.fld(
                     info.variants[i].payload_ty,
                     src_union,
@@ -6397,7 +6475,7 @@ impl<'a> Gen<'a> {
 
         let mut cont = cont0;
         for (i, v) in e.variants.iter().enumerate() {
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             self.builder.position_at_end(cont);
@@ -6411,7 +6489,7 @@ impl<'a> Gen<'a> {
             let a_union = self.fld(info.llvm_ty, a, ENUM_UNION_FIELD, "kelp_v");
             let b_union = self.fld(info.llvm_ty, b, ENUM_UNION_FIELD, "kelp_v");
             let mut inner = then_bb;
-            for (fi, field) in v.fields.iter().enumerate() {
+            for (fi, field) in v.real_fields().enumerate() {
                 self.builder.position_at_end(inner);
                 let ap = self.fld(info.variants[i].payload_ty, a_union, fi as u32, "f");
                 let bp = self.fld(info.variants[i].payload_ty, b_union, fi as u32, "f");
@@ -6577,7 +6655,7 @@ impl<'a> Gen<'a> {
         self.st(h0, h_slot);
         let mut cont = entry;
         for (i, variant) in e.variants.iter().enumerate() {
-            if variant.fields.is_empty() {
+            if variant.is_payload_less() {
                 continue;
             }
             self.builder.position_at_end(cont);
@@ -6589,7 +6667,7 @@ impl<'a> Gen<'a> {
             self.builder.build_cond_br(is_i, then_bb, next);
             self.builder.position_at_end(then_bb);
             let union = self.fld(info.llvm_ty, v, ENUM_UNION_FIELD, "kelp_v");
-            for (fi, field) in variant.fields.iter().enumerate() {
+            for (fi, field) in variant.real_fields().enumerate() {
                 let fp = self.fld(info.variants[i].payload_ty, union, fi as u32, "f");
                 let field_hash = self.emit_field_hash(&field.ty, fp)?;
                 let h = self.ld(self.ctx.i64(), h_slot, "h");
@@ -6636,7 +6714,7 @@ impl<'a> Gen<'a> {
         self.builder.build_cond_br(same_tag, cont0, false_bb);
         let mut cont = cont0;
         for (i, variant) in e.variants.iter().enumerate() {
-            if variant.fields.is_empty() {
+            if variant.is_payload_less() {
                 continue;
             }
             self.builder.position_at_end(cont);
@@ -6650,7 +6728,7 @@ impl<'a> Gen<'a> {
             let a_union = self.fld(info.llvm_ty, a, ENUM_UNION_FIELD, "kelp_v");
             let b_union = self.fld(info.llvm_ty, b, ENUM_UNION_FIELD, "kelp_v");
             let mut acc = self.ctx.const_bool(true);
-            for (fi, field) in variant.fields.iter().enumerate() {
+            for (fi, field) in variant.real_fields().enumerate() {
                 let ap = self.fld(info.variants[i].payload_ty, a_union, fi as u32, "f");
                 let bp = self.fld(info.variants[i].payload_ty, b_union, fi as u32, "f");
                 let eq = self.emit_field_eq(&field.ty, ap, bp)?;

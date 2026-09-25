@@ -1386,6 +1386,27 @@ impl EnumDef {
     }
 }
 
+impl VariantDef {
+    /// The fields this variant actually stores: every declared field except
+    /// one typed `unit`, which carries no runtime representation
+    /// (`MISSING-r7Wqb`). `Ok`/`Some` instantiated with a `unit` type
+    /// argument — the shape `thread.join` builds for a `Thread<unit>` — is
+    /// declared with one field, and that field stores nothing.
+    pub fn real_fields(&self) -> impl Iterator<Item = &FieldDef> {
+        self.fields.iter().filter(|f| f.ty != Ty::Unit)
+    }
+
+    /// Whether this variant's union member is the bare placeholder byte
+    /// (`char kelp_none` in C, `i8` in LLVM) rather than a payload struct: no
+    /// fields at all, or every field `unit`. Both backends lay out, construct,
+    /// read and derive over a variant by this rule rather than by
+    /// `fields.is_empty()`, so a `unit` payload is exactly as payload-less as
+    /// no payload.
+    pub fn is_payload_less(&self) -> bool {
+        self.real_fields().next().is_none()
+    }
+}
+
 impl StructDef {
     pub fn field(&self, name: &str) -> Option<&FieldDef> {
         self.fields.iter().find(|f| f.name == name)
