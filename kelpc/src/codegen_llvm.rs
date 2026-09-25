@@ -6064,6 +6064,11 @@ impl<'a> Gen<'a> {
         out.push(spec(&format!("{base}__reverse"), void, &[ptr]));
         if sortable {
             out.push(spec(&format!("{base}__cmp"), i32t, &[ptr, ptr]));
+            out.push(spec(
+                &format!("{base}__sift_down"),
+                void,
+                &[ptr, i64t, i64t],
+            ));
             out.push(spec(&format!("{base}__sort"), void, &[ptr]));
         }
         // `contains` is gated on equality, which is a wider set than order in
@@ -7156,53 +7161,103 @@ impl<'a> Gen<'a> {
             };
             self.builder.build_ret(out);
 
-            // sort(self): insertion sort, stable and in place, the mirror of
-            // `write_list_s1`'s loop.
+            // One sift-down for a max-heap: heapify and the sort loop below
+            // both use it. `cmp` returns > 0 when its first argument is
+            // greater, so the larger child is the one with cmp(child, sibling)
+            // > 0 and a swap happens only while cmp(child, root) > 0.
+            let (f, _) = self.start(&format!("{base}__sift_down"), "entry")?;
+            let self_p = f.get_param(0);
+            let heap_len = f.get_param(2);
+            let root_slot = self.builder.build_alloca(i64t, "root");
+            self.st(f.get_param(1), root_slot);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
+            let sift = self.loop_header(f, "sift.cond");
+            let root = self.ld(i64t, root_slot, "root");
+            let twice = self.builder.build_int_binop(IntBinOp::Mul, root, self.v_i64(2), "twice");
+            let child = self.builder.build_int_binop(IntBinOp::Add, twice, self.v_i64(1), "child");
+            let in_heap = self.builder.build_icmp(IntCmp::Ult, child, heap_len, "in_heap");
+            let pick = self.block(f, "sift.pick");
+            let compare = self.block(f, "sift.compare");
+            let exit = self.block(f, "sift.end");
+            self.builder.build_cond_br(in_heap, pick, exit);
+            self.builder.position_at_end(pick);
+            let child1 = self.builder.build_int_binop(IntBinOp::Add, child, self.v_i64(1), "child1");
+            let has_right = self.builder.build_icmp(IntCmp::Ult, child1, heap_len, "has_right");
+            let cmp_child = self.block(f, "sift.cmpchild");
+            let after_pick = self.block(f, "sift.afterpick");
+            self.builder.build_cond_br(has_right, cmp_child, after_pick);
+            self.builder.position_at_end(cmp_child);
+            let lptr = self.gep(elem_ty, data, child, "l");
+            let rptr = self.gep(elem_ty, data, child1, "r");
+            let c = self.call(cmpsym, cmpty, &[lptr, rptr], "cmp");
+            let right_bigger = self.builder.build_icmp(IntCmp::Slt, c, self.v_i32(0), "rb");
+            let bigger = self.builder.build_select(right_bigger, child1, child, "bigger");
+            self.builder.build_br(after_pick);
+            self.builder.position_at_end(after_pick);
+            let chosen = self.builder.build_phi(i64t, "chosen");
+            self.builder.add_incoming(chosen, &[(child, pick), (bigger, cmp_child)]);
+            self.builder.build_br(compare);
+            self.builder.position_at_end(compare);
+            let rootp = self.gep(elem_ty, data, root, "rootp");
+            let childp = self.gep(elem_ty, data, chosen, "childp");
+            let gt = self.call(cmpsym, cmpty, &[childp, rootp], "cmp");
+            let child_greater = self.builder.build_icmp(IntCmp::Sgt, gt, self.v_i32(0), "gt");
+            let swap = self.block(f, "sift.swap");
+            self.builder.build_cond_br(child_greater, swap, exit);
+            self.builder.position_at_end(swap);
+            let pv = self.ld(elem_ty, rootp, "pv");
+            let cv = self.ld(elem_ty, childp, "cv");
+            self.st(cv, rootp);
+            self.st(pv, childp);
+            self.st(chosen, root_slot);
+            self.builder.build_br(sift);
+            self.builder.position_at_end(exit);
+            self.builder.build_ret_void();
+
+            // sort(self): heapsort, in place, the mirror of `write_list_s1`.
+            // A swap is two element-sized loads and two stores, so an owned
+            // element is only moved, never cloned or dropped.
             let (f, _) = self.start(&format!("{base}__sort"), "entry")?;
             let self_p = f.get_param(0);
-            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
-            let i_slot = self.builder.build_alloca(i64t, "i");
-            let j_slot = self.builder.build_alloca(i64t, "j");
-            let v_slot = self.builder.build_alloca(elem_ty, "v");
-            self.st(self.v_i64(1), i_slot);
-            let outer = self.loop_header(f, "sort.cond");
-            let i = self.ld(i64t, i_slot, "i");
             let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
-            let more = self.builder.build_icmp(IntCmp::Ult, i, len, "more");
-            let obody = self.block(f, "sort.body");
-            let oexit = self.block(f, "sort.end");
-            self.builder.build_cond_br(more, obody, oexit);
-            self.builder.position_at_end(obody);
-            let at = self.gep(elem_ty, data, i, "at");
-            self.st(self.ld(elem_ty, at, "v"), v_slot);
-            self.st(i, j_slot);
-            let inner = self.loop_header(f, "sort.inner");
-            let j = self.ld(i64t, j_slot, "j");
-            let jpos = self.builder.build_icmp(IntCmp::Ugt, j, self.v_i64(0), "jpos");
-            let cond = self.block(f, "sort.inner.cond");
-            let iexit = self.block(f, "sort.inner.end");
-            self.builder.build_cond_br(jpos, cond, iexit);
-            self.builder.position_at_end(cond);
-            let jm = self.builder.build_int_binop(IntBinOp::Sub, j, self.v_i64(1), "j1");
-            let prev = self.gep(elem_ty, data, jm, "prev");
-            let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
-            let c = self.call(cmpsym, cmpty, &[prev, v_slot], "cmp");
-            let swap = self.builder.build_icmp(IntCmp::Sgt, c, self.v_i32(0), "gt");
-            let ibody = self.block(f, "sort.inner.body");
-            self.builder.build_cond_br(swap, ibody, iexit);
-            self.builder.position_at_end(ibody);
-            let dst = self.gep(elem_ty, data, j, "dst");
-            self.st(self.ld(elem_ty, prev, "pv"), dst);
-            self.st(jm, j_slot);
-            self.builder.build_br(inner);
-            self.builder.position_at_end(iexit);
-            let jfin = self.ld(i64t, j_slot, "j");
-            let slot = self.gep(elem_ty, data, jfin, "slot");
-            self.st(self.ld(elem_ty, v_slot, "vv"), slot);
-            let inext = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
-            self.st(inext, i_slot);
-            self.builder.build_br(outer);
-            self.builder.position_at_end(oexit);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (sift, sfty) = self.cfn(&format!("{base}__sift_down"))?;
+            let start_slot = self.builder.build_alloca(i64t, "start");
+            let half = self.builder.build_int_binop(IntBinOp::UDiv, len, self.v_i64(2), "half");
+            self.st(half, start_slot);
+            let heap = self.loop_header(f, "heap.cond");
+            let s = self.ld(i64t, start_slot, "s");
+            let spos = self.builder.build_icmp(IntCmp::Ugt, s, self.v_i64(0), "spos");
+            let hbody = self.block(f, "heap.body");
+            let hexit = self.block(f, "heap.end");
+            self.builder.build_cond_br(spos, hbody, hexit);
+            self.builder.position_at_end(hbody);
+            let s1 = self.builder.build_int_binop(IntBinOp::Sub, s, self.v_i64(1), "s1");
+            self.st(s1, start_slot);
+            self.call(sift, sfty, &[self_p, s1, len], "");
+            self.builder.build_br(heap);
+            self.builder.position_at_end(hexit);
+            let end_slot = self.builder.build_alloca(i64t, "end");
+            self.st(len, end_slot);
+            let sort = self.loop_header(f, "sort.cond");
+            let e = self.ld(i64t, end_slot, "e");
+            let epos = self.builder.build_icmp(IntCmp::Ugt, e, self.v_i64(1), "epos");
+            let sbody = self.block(f, "sort.body");
+            let sexit = self.block(f, "sort.end");
+            self.builder.build_cond_br(epos, sbody, sexit);
+            self.builder.position_at_end(sbody);
+            let e1 = self.builder.build_int_binop(IntBinOp::Sub, e, self.v_i64(1), "e1");
+            self.st(e1, end_slot);
+            let d0 = self.gep(elem_ty, data, self.v_i64(0), "d0");
+            let de = self.gep(elem_ty, data, e1, "de");
+            let tv = self.ld(elem_ty, d0, "tv");
+            let ev = self.ld(elem_ty, de, "ev");
+            self.st(ev, d0);
+            self.st(tv, de);
+            self.call(sift, sfty, &[self_p, self.v_i64(0), e1], "");
+            self.builder.build_br(sort);
+            self.builder.position_at_end(sexit);
             self.builder.build_ret_void();
         }
 
