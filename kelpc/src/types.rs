@@ -810,7 +810,7 @@ pub fn contains_open_container(ty: &Ty) -> bool {
 
 /// Whether `ty` may be a `Map<K, V>` value: a scalar, `String`, `Bytes`, or a
 /// `datac`. Narrower than the `List` element set, which also takes a `List` or
-/// a `Box` (A-10 slice 1): a map value sits behind a pointer but is read and
+/// a `Box` (A-10 slice 1): a map value sits inline in the entry but is read and
 /// written as a plain location by the map's own routines, so a container value
 /// is left out for now. `Map<String, Map<i32>>` and `Map<String, List<i32>>`
 /// stay impossible.

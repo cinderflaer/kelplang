@@ -1,7 +1,7 @@
 // MK5-S5: a `datac` value type, and a `datac` that owns a `Map` field. The
-// map typedef is emitted before every `datac` (the value is behind a
-// pointer), so the field type is complete; the drop walks keys and values,
-// which ASAN proves on the `Bag`.
+// map entry holds its value inline, and the entry body is written after every
+// `datac` typedef, so the value type is complete when the entry is; the drop
+// walks keys and values, which ASAN proves on the `Bag`.
 impl "std/str"
 
 datac Pair(val a: i32, val b: i32)
