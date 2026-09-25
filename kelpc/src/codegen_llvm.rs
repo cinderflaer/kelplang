@@ -8719,6 +8719,9 @@ fn program_c_source(program: &Program) -> Option<String> {
          kelp_String kelp_String__from_str(const char* text);\n\
          kelp_String kelp_String__from_bytes(kelp_Bytes b);\n\
          int kelp_rt_connect(const char* host, unsigned port, int* gai_rc, int* sys_errno);\n\
+         const char* kelp_env_lookup(const char* name);\n\
+         int kelp_env_set(const char* name, const char* value);\n\
+         int kelp_env_unset(const char* name);\n\
          extern int kelp_argc;\n\
          extern char** kelp_argv;\n",
     );

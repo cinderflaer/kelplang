@@ -39,6 +39,7 @@ fn main() {
          #include <errno.h>\n\
          #include <netdb.h>\n\
          #include <pthread.h>\n\
+         #include <stdatomic.h>\n\
          #include <stdbool.h>\n\
          #include <stddef.h>\n\
          #include <stdint.h>\n\

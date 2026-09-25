@@ -64,6 +64,10 @@ pub(crate) const C_HEADERS: &str = "\
 #include <unistd.h>\n\
 #include <stdint.h>\n\
 #include <stdbool.h>\n\
+// `stdatomic.h` is C11 standard, gcc and clang both ship it. The runtime's\n\
+// environment read cache (`kelp_env_table` in `kelp_rt.c`) is the one thing\n\
+// that needs it; everything else in this preamble predates it.\n\
+#include <stdatomic.h>\n\
 // `isize` is `ptrdiff_t` (`types.rs`), which is `stddef.h`'s and not brought\n\
 // in by any of the headers above or below.\n\
 // `pthread.h` is the runtime's thread machinery (MK9-S3-M1 stage C1): the two\n\
