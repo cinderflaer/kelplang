@@ -1942,6 +1942,30 @@ impl Drop for Builder<'_> {
     }
 }
 
+/// The portable architecture baseline `LLVMCreateTargetMachine` is given as
+/// its CPU name for `triple` (MISSING-hV6qL). Not the host's actual CPU —
+/// that is `LLVMGetHostCPUName`, which is `-march=native` and makes the
+/// object non-portable, a different and unrelated thing. This just names
+/// the architecture's own floor, the same baseline `clang -O2` (with no
+/// `-march`) targets, so LLVM's X86 subtarget stops falling back to `i586`
+/// tuning for an empty CPU string — a fallback with a real, cited FIXME in
+/// LLVM's own source, not a deliberate choice anyone made for that string.
+///
+/// An architecture this doesn't know keeps the old empty-string behavior:
+/// `kelpc` only ever builds for the host's own triple today
+/// (`default_target_triple`), so only that triple's prefix needs an entry
+/// here for the fallback to stop biting; an unrecognized prefix is exactly
+/// as portable as before this function existed, just not any better tuned.
+fn baseline_cpu(triple: &str) -> &'static str {
+    if triple.starts_with("x86_64") {
+        "x86-64"
+    } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+        "generic"
+    } else {
+        ""
+    }
+}
+
 /// Guard for `LLVMTargetMachineRef`: the code generator for one triple.
 ///
 /// This is what turns a verified module into an object, and it is why MK7 §1.3
@@ -1981,8 +2005,16 @@ impl TargetMachine {
     /// `LLVMCreateTargetMachine`), disposed on drop.
     ///
     /// `initialize_native_target` must have run first for a triple the host's
-    /// LLVM build covers. CPU and features are left to the target's defaults and
-    /// the code model to `LLVMCodeModelDefault`. Relocations are
+    /// LLVM build covers. The CPU is `baseline_cpu(triple)` (MISSING-hV6qL):
+    /// an empty CPU string makes LLVM's X86 subtarget fall back to tuning for
+    /// `i586`, whose scheduling model has no micro-op buffer, which silently
+    /// turns off partial loop unrolling for every program this backend
+    /// builds — not a feature choice, an LLVM fallback with no legitimate use
+    /// here. Features are still left empty: no CPU-specific instruction-set
+    /// extension is assumed, only the architecture's own baseline name is
+    /// given, so this stays as portable as the old empty string was and is
+    /// not `-march=native`. The code model is `LLVMCodeModelDefault`.
+    /// Relocations are
     /// `LLVMRelocPIC`, not `LLVMRelocDefault`: LLVM's default for x86-64 Linux is
     /// a static reloc model, whose object carries absolute relocations, and the
     /// host `cc` builds PIE executables by default, so that object would fail to
@@ -1992,8 +2024,8 @@ impl TargetMachine {
     ///
     /// `Err` carries LLVM's message when the triple names no compiled-in target,
     /// which is the one failure mode.
-    pub fn for_triple(triple: &str, level: LLVMCodeGenOptLevel) -> Result<Self, String> {
-        let triple = cstring(triple);
+    pub fn for_triple(triple_str: &str, level: LLVMCodeGenOptLevel) -> Result<Self, String> {
+        let triple = cstring(triple_str);
         let mut target = null_mut();
         let mut message: *mut c_char = null_mut();
         // SAFETY: the out-parameters point at our slots, and the target has no
@@ -2008,15 +2040,19 @@ impl TargetMachine {
                 text
             });
         }
-        let empty = cstring("");
-        // SAFETY: the target came from the call above and is registered; the
-        // empty CPU and features mean the defaults, and LLVM copies the strings.
+        let cpu = cstring(baseline_cpu(triple_str));
+        let features = cstring("");
+        // SAFETY: the target came from the call above and is registered; LLVM
+        // copies both strings. `cpu` is a portable architecture baseline (see
+        // `baseline_cpu`), never the host's own CPU — that would be
+        // `-march=native` and make the object non-portable, which this is
+        // not. `features` stays empty: no CPU-specific extension is assumed.
         let raw = unsafe {
             LLVMCreateTargetMachine(
                 target,
                 triple.as_ptr(),
-                empty.as_ptr(),
-                empty.as_ptr(),
+                cpu.as_ptr(),
+                features.as_ptr(),
                 level,
                 LLVMRelocMode::LLVMRelocPIC,
                 LLVMCodeModel::LLVMCodeModelDefault,
