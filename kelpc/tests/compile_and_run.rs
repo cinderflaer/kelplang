@@ -6754,6 +6754,22 @@ fn a_panicking_worker_is_seen_as_an_error_by_its_joiner() {
     );
 }
 
+/// `MISSING-r7Wqb`: a worker that returns `unit` can be spawned *and* joined.
+/// `thread.join` on a `Thread<unit>` builds `Result<unit, ThreadErr>`, whose
+/// `Ok` variant now lays out payload-less rather than refusing `unit`.
+#[test]
+fn a_worker_that_returns_unit_can_be_joined() {
+    assert_compiles_and_runs("tests/fixtures/thread_join_unit.kp", "1\njoined\n");
+}
+
+/// `MISSING-r7Wqb`'s general case: a `Result<unit, E>` written by hand, with
+/// no thread anywhere. `Ok`'s field is `unit`; constructing one still runs the
+/// value expression for its side effect even though nothing is stored.
+#[test]
+fn a_hand_written_result_of_unit_lays_out_and_runs() {
+    assert_compiles_and_runs("tests/fixtures/result_unit_payload.kp", "ok\n1\n7\n");
+}
+
 /// MK9-S3-M1 stage C2: `thread.sleep_ms` sleeps the calling thread (main or a
 /// worker) and returns control to it, and `thread.current_id` is stable
 /// across two calls on the same thread and distinct between the main thread

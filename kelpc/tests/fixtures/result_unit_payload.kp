@@ -1,0 +1,27 @@
+// MISSING-r7Wqb, the general case underneath the thread-specific one: a
+// `Result<unit, E>` written by hand, with no thread involved at all. `Ok`'s
+// field is `unit`, so it is laid out payload-less, and the value the `Ok(x)`
+// constructor is given is still evaluated for its side effect (the `print`
+// here) even though nothing is stored.
+impl "std/result"
+
+pd var calls: i64 = 0
+
+fun noop().R: unit {
+    calls = calls + 1
+}
+
+fun main() {
+    val r: result.Result<unit, i64> = result.Result.Ok(value = noop())
+    when r {
+        Ok(v) -> print("ok")
+        Err(e) -> print(e)
+    }
+    print(calls)
+
+    val e: result.Result<unit, i64> = result.Result.Err(error = 7)
+    when e {
+        Ok(v) -> print("ok")
+        Err(err) -> print(err)
+    }
+}

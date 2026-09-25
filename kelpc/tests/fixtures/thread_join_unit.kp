@@ -1,0 +1,20 @@
+// MISSING-r7Wqb: a worker that returns `unit` can be spawned but not joined.
+// `thread.join` on a `Thread<unit>` builds `Result<unit, ThreadErr>`, whose
+// `Ok` variant carries a `unit` field: neither backend could lay that out
+// (the C backend emitted `void kelp_value`, the LLVM backend refused
+// 'unit'). `Ok`'s field is now payload-less, the same shape `None` already
+// has, so the join succeeds and hands back a value with nothing in it.
+impl "std/thread"
+impl "std/result"
+
+fun worker(x: move i64) {
+    print(x)
+}
+
+fun main() {
+    val h: Thread<unit> = thread.spawn(worker, 1)
+    when thread.join(h) {
+        Ok(v) -> print("joined")
+        Err(e) -> print(e.message)
+    }
+}

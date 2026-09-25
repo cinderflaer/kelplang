@@ -865,10 +865,10 @@ fn write_enum(
     out.push_str("    union {\n");
     for v in &e.variants {
         writeln!(out, "        struct {{").unwrap();
-        if v.fields.is_empty() {
+        if v.is_payload_less() {
             out.push_str("            char kelp_none;\n");
         }
-        for f in &v.fields {
+        for f in v.real_fields() {
             writeln!(out, "            {};", f.ty.c_decl(&field_name(&f.name))).unwrap();
         }
         writeln!(out, "        }} {};", variant_member(&v.name)).unwrap();
@@ -926,11 +926,11 @@ fn write_enum(
         .unwrap();
         out.push_str("    dst->kelp_tag = src->kelp_tag;\n    switch (src->kelp_tag) {\n");
         for (i, v) in e.variants.iter().enumerate() {
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             writeln!(out, "    case {i}: {{").unwrap();
-            for f in &v.fields {
+            for f in v.real_fields() {
                 let at = format!("kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
                 write_field_clone(out, &f.ty, &format!("dst->{at}"), &format!("src->{at}"));
             }
@@ -952,11 +952,11 @@ fn write_enum(
         .unwrap();
         out.push_str("    if (a->kelp_tag != b->kelp_tag) {\n        return a->kelp_tag < b->kelp_tag ? -1 : 1;\n    }\n    switch (a->kelp_tag) {\n");
         for (i, v) in e.variants.iter().enumerate() {
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             writeln!(out, "    case {i}: {{").unwrap();
-            for f in &v.fields {
+            for f in v.real_fields() {
                 let at = format!("kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
                 write_field_cmp(out, &f.ty, &format!("a->{at}"), &format!("b->{at}"));
             }
@@ -980,11 +980,11 @@ fn write_enum(
         out.push_str("    h = kelp_map_combine(h, kelp_map_mix((uint64_t)(v->kelp_tag)));\n");
         out.push_str("    switch (v->kelp_tag) {\n");
         for (i, v) in e.variants.iter().enumerate() {
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             writeln!(out, "    case {i}: {{").unwrap();
-            for f in &v.fields {
+            for f in v.real_fields() {
                 let at = format!("v->kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
                 write_field_hash(out, &f.ty, &at);
             }
@@ -1002,11 +1002,11 @@ fn write_enum(
         .unwrap();
         out.push_str("    if (a->kelp_tag != b->kelp_tag) {\n        return false;\n    }\n    switch (a->kelp_tag) {\n");
         for (i, v) in e.variants.iter().enumerate() {
-            if v.fields.is_empty() {
+            if v.is_payload_less() {
                 continue;
             }
             writeln!(out, "    case {i}: {{").unwrap();
-            for f in &v.fields {
+            for f in v.real_fields() {
                 let at = format!("kelp_v.{}.{}", variant_member(&v.name), field_name(&f.name));
                 write_field_eq(out, &f.ty, &format!("a->{at}"), &format!("b->{at}"));
             }
@@ -3369,25 +3369,40 @@ impl<'a> Gen<'a> {
                     Some(e) => variant_member(&e.variants[*variant].name),
                     None => unreachable!("every enum literal names a declared enum"),
                 };
-                let payload = if fields.is_empty() {
+                // A `unit`-typed field is never a designator (`MISSING-r7Wqb`):
+                // its variant's union member is the bare `char kelp_none`
+                // placeholder once every field is `unit`
+                // (`VariantDef::is_payload_less`), exactly like a variant
+                // declared with no fields. The field's own expression is still
+                // evaluated for whatever side effect it has, discarded rather
+                // than stored; `Ok`/`Some`/`Err` carry one field each, so the
+                // discard-before-literal order below never reorders two
+                // fields' side effects against each other in practice.
+                let mut discards: Vec<String> = Vec::new();
+                let mut inits: Vec<String> = Vec::new();
+                for (i, f) in fields.iter().enumerate() {
+                    let value = self.expr_value(f);
+                    if f.ty == Ty::Unit {
+                        discards.push(format!("(void)({value})"));
+                    } else {
+                        let name = match edef {
+                            Some(e) => field_name(&e.variants[*variant].fields[i].name),
+                            None => unreachable!("every enum literal names a declared enum"),
+                        };
+                        inits.push(format!(".{name} = {value}"));
+                    }
+                }
+                let payload = if inits.is_empty() {
                     String::new()
                 } else {
-                    let inits: Vec<String> = fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, f)| {
-                            let name = match edef {
-                                Some(e) => {
-                                    field_name(&e.variants[*variant].fields[i].name)
-                                }
-                                None => unreachable!("every enum literal names a declared enum"),
-                            };
-                            format!(".{name} = {}", self.expr_value(f))
-                        })
-                        .collect();
                     format!(", .kelp_v = {{ .{member} = {{ {} }} }}", inits.join(", "))
                 };
-                format!("({}){{ .kelp_tag = {variant}{payload} }}", ty.c_type())
+                let literal = format!("({}){{ .kelp_tag = {variant}{payload} }}", ty.c_type());
+                if discards.is_empty() {
+                    literal
+                } else {
+                    format!("({}, {literal})", discards.join(", "))
+                }
             }
             ExprKind::EnumTag { expr: base, variant } => {
                 format!("({} == {variant})", self.enum_tag_access(base))
@@ -3397,6 +3412,14 @@ impl<'a> Gen<'a> {
                 variant,
                 field,
             } => {
+                // A `unit` payload is not a C object (`VariantDef::is_payload_less`
+                // gave its variant the bare placeholder member instead of a
+                // field), so reading one is a no-op expression rather than a
+                // reference to a field that was never declared
+                // (`MISSING-r7Wqb`), the same rule `Ident` follows.
+                if expr.ty == Ty::Unit {
+                    return "(void)0".to_string();
+                }
                 // Same as a `FieldAccess`: a payload read by value out of an
                 // enum temporary stages and drops the temporary.
                 if let Some(root) = temporary_root(expr) {
@@ -3441,6 +3464,20 @@ impl<'a> Gen<'a> {
                 let dst_def = dst_def.clone();
                 let src_ty = Ty::Struct(source.clone());
                 let dst_ty = Ty::Struct(target.clone());
+                // `err_has_payload` and the field lookups above are arity, not
+                // type: a field typed `unit` has no struct member
+                // (`VariantDef::is_payload_less`, `MISSING-r7Wqb`), so a
+                // variant whose one field is `unit` is read and copied as
+                // payload-less rather than through a member that was never
+                // declared.
+                let ok_is_unit = src_def.variants[*ok_variant]
+                    .fields
+                    .first()
+                    .is_some_and(|f| f.ty == Ty::Unit);
+                let err_is_unit = src_def.variants[*err_variant]
+                    .fields
+                    .first()
+                    .is_some_and(|f| f.ty == Ty::Unit);
                 let ok_member = variant_member(&src_def.variants[*ok_variant].name);
                 let ok_field = field_name(&src_def.variants[*ok_variant].fields[0].name);
                 let err_member = variant_member(&src_def.variants[*err_variant].name);
@@ -3460,7 +3497,7 @@ impl<'a> Gen<'a> {
                 writeln!(out, "if ({} == {}) {{", format!("{tmp}.kelp_tag"), err_variant).unwrap();
                 writeln!(out, "    {} {} = ({}){{0}};", dst_ty.c_type(), ret, dst_ty.c_type()).unwrap();
                 writeln!(out, "    {}.kelp_tag = {};", ret, target_err_variant).unwrap();
-                if *err_has_payload {
+                if *err_has_payload && !err_is_unit {
                     let src_field =
                         field_name(&src_def.variants[*err_variant].fields[0].name);
                     let dst_field =
@@ -3485,7 +3522,11 @@ impl<'a> Gen<'a> {
                 }
                 writeln!(out, "    return {};", ret).unwrap();
                 writeln!(out, "}}").unwrap();
-                writeln!(out, "{}.kelp_v.{}.{};", tmp, ok_member, ok_field).unwrap();
+                if ok_is_unit {
+                    writeln!(out, "(void)0;").unwrap();
+                } else {
+                    writeln!(out, "{}.kelp_v.{}.{};", tmp, ok_member, ok_field).unwrap();
+                }
                 out.push_str("})");
                 out
             }
@@ -3937,13 +3978,27 @@ impl<'a> Gen<'a> {
         let Ty::Thread(elem) = &handle.ty else {
             unreachable!("thread.join's argument is a Thread<T> handle")
         };
-        let elem_c = elem.c_type();
         let err_ty = crate::infer::thread_err_ty();
         let h = fresh_temp();
         let result = fresh_temp();
-        let value = fresh_temp();
+        // A worker that returns `unit` wrote nothing to its result slot
+        // (`thread_spawn_value`), and the `Ok` variant's field is `unit`
+        // too, so it is the bare `char kelp_none` placeholder
+        // (`VariantDef::is_payload_less`) rather than a struct member: the
+        // success arm sets only the tag (`MISSING-r7Wqb`).
+        let ok_arm = if **elem == Ty::Unit {
+            format!("{result}.kelp_tag = {ok};")
+        } else {
+            let elem_c = elem.c_type();
+            let value = fresh_temp();
+            format!(
+                "{elem_c} {value} = *({elem_c}*){h}->result; {result}.kelp_tag = {ok}; {result}.kelp_v.{ok_member}.{ok_field} = {value};",
+                ok_member = member(ok),
+                ok_field = field(ok),
+            )
+        };
         format!(
-            "({{ {handle_c} {h} = {handle}; kelp_thread_wait({h}); {result_c} {result}; if ({h}->panicked) {{ {result}.kelp_tag = {err}; {result}.kelp_v.{err_member}.{err_field} = (({err_c}){{ .{err_msg} = kelp_String__from_str({h}->message) }}); }} else {{ {elem_c} {value} = *({elem_c}*){h}->result; {result}.kelp_tag = {ok}; {result}.kelp_v.{ok_member}.{ok_field} = {value}; }} kelp_thread_dispose({h}); {result}; }})",
+            "({{ {handle_c} {h} = {handle}; kelp_thread_wait({h}); {result_c} {result}; if ({h}->panicked) {{ {result}.kelp_tag = {err}; {result}.kelp_v.{err_member}.{err_field} = (({err_c}){{ .{err_msg} = kelp_String__from_str({h}->message) }}); }} else {{ {ok_arm} }} kelp_thread_dispose({h}); {result}; }})",
             handle_c = handle.ty.c_type(),
             handle = self.expr_value(handle),
             result_c = ret.c_type(),
@@ -3951,8 +4006,6 @@ impl<'a> Gen<'a> {
             err_field = field(err),
             err_c = err_ty.c_type(),
             err_msg = field_name(crate::stdlib::THREAD_ERR_MESSAGE_FIELD),
-            ok_member = member(ok),
-            ok_field = field(ok),
         )
     }
 
