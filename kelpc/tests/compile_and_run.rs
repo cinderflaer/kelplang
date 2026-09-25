@@ -3756,7 +3756,7 @@ fn a_map_stores_keys_and_returns_insertion_order() {
 
 #[test]
 fn a_map_of_owned_values_borrows_clones_and_moves() {
-    // The value is behind a pointer, the key is an owned `String`, and
+    // The value is inline in the entry, the key is an owned `String`, and
     // `get_or`/`remove`/`values` all transfer or clone it; ASAN re-runs this
     // fixture (see `heap_fixtures_are_double_free_and_leak_clean`).
     assert_compiles_and_runs(
@@ -3952,7 +3952,7 @@ fn a_map_probe_steps_over_a_tombstone_and_still_finds_the_live_key() {
 }
 
 #[test]
-fn a_map_entry_moves_the_value_pointer_with_the_key_width() {
+fn a_map_entry_keeps_the_value_at_the_key_width_offset() {
     assert_compiles_and_runs(
         "tests/fixtures/map_key_widths.kp",
         "2\n1000000007\n1000000009\n2\n2000000011\n2000000013\n2\n3000000017\n3000000019\n2\n4000000023\n4000000029\n2\n5000000031\n5000000037\n",

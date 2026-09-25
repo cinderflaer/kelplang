@@ -370,15 +370,13 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
     }
 
-    // A map whose key is a `datac` gets its entry body here, after every
-    // `datac` typedef, because the entry holds the key type by value and that
-    // typedef is what makes the key a complete C type. Everything that reads
+    // Every map entry body is written here, after every `datac` typedef: the
+    // entry holds its key and value inline, so a `datac` in either position
+    // needs the typedef that makes it a complete C type. Everything that reads
     // the entry is a map function set, and those all come later.
     for ty in &containers {
         if let Ty::Map(key, value) = ty {
-            if matches!(**key, Ty::Struct(_)) {
-                write_map_entry_body(&mut out, key, value);
-            }
+            write_map_entry_body(&mut out, key, value);
         }
     }
 
@@ -1016,15 +1014,15 @@ fn write_enum(
     }
 }
 
-/// The body of one map entry whose key is a `datac`. Split from
-/// `write_container_typedef` because the key is held by value and its typedef
-/// is only complete after the `datac` declarations.
+/// The body of one map entry, split from `write_container_typedef` because both
+/// the key and the value are held by value and their typedefs are only complete
+/// after the `datac` declarations.
 fn write_map_entry_body(out: &mut String, key: &Ty, value: &Ty) {
     let name = crate::types::map_c_type(key, value);
     let entry = format!("{name}_entry");
     writeln!(
         out,
-        "struct {entry} {{\n    {} key;\n    {}* value;\n    uint8_t live;\n}};",
+        "struct {entry} {{\n    {} key;\n    {} value;\n    uint8_t live;\n}};",
         key.c_type(),
         crate::types::container_elem_c_type(value)
     )
@@ -1066,31 +1064,16 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
         }
         // A map stores its entries in insertion order and keeps a separate
         // open-addressed index of `entry index + 1` (0 empty, `SIZE_MAX`
-        // tombstone), because `keys()` must return insertion order. The key
-        // sits inline (`kelp_String` is complete in the runtime preamble) and
-        // the value sits behind a pointer, so this typedef can still be
-        // emitted before every `datac` — a `datac` value is named by its
-        // forward-declared struct tag.
-        //
-        // A `datac` *key* is the one case that cannot sit inline here: its C
-        // typedef comes after every container typedef, so the entry is only
-        // forward-declared now and its body is written once the `datac`s are
-        // complete (`write_map_entry_body`). The map itself holds a pointer
-        // to the entry either way, so it stays complete here.
+        // tombstone), because `keys()` must return insertion order. Both the
+        // key and the value sit inline in the entry, so the entry needs a
+        // complete key and value type: it is forward-declared here and its
+        // body is written once every `datac` typedef exists
+        // (`write_map_entry_body`). The map itself only holds a pointer to the
+        // entry, so it stays complete here regardless.
         Ty::Map(key, value) => {
             let name = crate::types::map_c_type(key, value);
             let entry = format!("{name}_entry");
-            if !matches!(&**key, Ty::Struct(_)) {
-                writeln!(
-                    out,
-                    "typedef struct {{\n    {} key;\n    {}* value;\n    uint8_t live;\n}} {entry};",
-                    key.c_type(),
-                    crate::types::container_elem_c_type(value)
-                )
-                .unwrap();
-            } else {
-                writeln!(out, "typedef struct {entry} {entry};").unwrap();
-            }
+            writeln!(out, "typedef struct {entry} {entry};").unwrap();
             writeln!(
                 out,
                 "typedef struct {{\n    {entry}* entries;\n    size_t entry_count;\n    size_t entry_cap;\n    size_t len;\n    size_t* index;\n    size_t index_cap;\n    size_t index_used;\n}} {name};"
@@ -1503,14 +1486,12 @@ pub(crate) fn write_referenced_type_layouts(
         out.push('\n');
     }
 
-    // A map whose key is one of those `datac`s gets its entry body here, after
-    // the typedef that makes the key a complete C type, exactly where
-    // `generate` writes it.
+    // Every map entry body is written here, after the `datac` typedefs that
+    // make an inline key or value a complete C type, exactly where `generate`
+    // writes it.
     for ty in &containers {
         if let Ty::Map(key, value) = ty {
-            if matches!(**key, Ty::Struct(_)) {
-                write_map_entry_body(out, key, value);
-            }
+            write_map_entry_body(out, key, value);
         }
     }
 
@@ -1933,9 +1914,9 @@ fn write_map(
     writeln!(out, "    size_t slot = {map}__find(self, k, &found);").unwrap();
     out.push_str("    if (found) {\n        size_t e = self->index[slot] - 1;\n");
     if value_drops {
-        writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
+        writeln!(out, "        {}(&self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
     }
-    out.push_str("        *self->entries[e].value = v;\n        return;\n    }\n");
+    out.push_str("        self->entries[e].value = v;\n        return;\n    }\n");
     out.push_str("    if (self->entry_count == self->entry_cap) {\n        size_t cap = self->entry_cap == 0 ? 8 : self->entry_cap * 2;\n");
     writeln!(out, "        self->entries = ({entry}*)realloc(self->entries, cap * sizeof({entry}));").unwrap();
     out.push_str("        if (self->entries == NULL) {\n            kelp_panic(\"out of memory\");\n        }\n        self->entry_cap = cap;\n    }\n");
@@ -1948,25 +1929,23 @@ fn write_map(
     } else {
         writeln!(out, "    self->entries[e].key = k;").unwrap();
     }
-    writeln!(out, "    self->entries[e].value = ({value_c}*)malloc(sizeof({value_c}));").unwrap();
-    out.push_str("    if (self->entries[e].value == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n");
-    out.push_str("    *self->entries[e].value = v;\n    self->entries[e].live = 1;\n");
+    out.push_str("    self->entries[e].value = v;\n    self->entries[e].live = 1;\n");
     out.push_str("    if (self->index[slot] == 0) {\n        self->index_used++;\n    }\n    self->index[slot] = e + 1;\n    self->len++;\n}\n\n");
 
     writeln!(out, "static bool {map}__has(const {map}* self, {key_arg_c} k) {{\n    bool found = false;\n    {map}__find(self, k, &found);\n    return found;\n}}\n").unwrap();
 
     if value.is_copy() {
         writeln!(out, "static {value_c} {map}__get(const {map}* self, {key_arg_c} k) {{").unwrap();
-        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return *self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
     } else {
         writeln!(out, "static const {value_c}* {map}__get_const(const {map}* self, {key_arg_c} k) {{").unwrap();
-        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
+        writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.get: key not found\");\n    }}\n    return &self->entries[self->index[slot] - 1].value;\n}}\n").unwrap();
     }
 
     if clonable {
         writeln!(out, "static {value_c} {map}__get_or(const {map}* self, {key_arg_c} k, {value_c} fallback) {{").unwrap();
         writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        return fallback;\n    }}").unwrap();
-        writeln!(out, "    const {value_c}* existing = self->entries[self->index[slot] - 1].value;\n    {value_c} result;").unwrap();
+        writeln!(out, "    const {value_c}* existing = &self->entries[self->index[slot] - 1].value;\n    {value_c} result;").unwrap();
         writeln!(out, "    {}", copy_from("result", "existing")).unwrap();
         match value {
             Ty::String => out.push_str("    kelp_string_drop(&fallback);\n"),
@@ -1984,14 +1963,14 @@ fn write_map(
     writeln!(out, "static {value_c} {map}__remove({map}* self, {key_arg_c} k) {{").unwrap();
     writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.remove: key not found\");\n    }}\n    size_t e = self->index[slot] - 1;").unwrap();
     out.push_str("    ");
-    writeln!(out, "{value_c} v = *self->entries[e].value;\n    free(self->entries[e].value);\n    self->entries[e].value = NULL;\n    {}\n    self->entries[e].live = 0;\n    self->index[slot] = SIZE_MAX;\n    self->len--;\n    return v;\n}}\n", drop_key("self->entries[e].key")).unwrap();
+    writeln!(out, "{value_c} v = self->entries[e].value;\n    {}\n    self->entries[e].live = 0;\n    self->index[slot] = SIZE_MAX;\n    self->len--;\n    return v;\n}}\n", drop_key("self->entries[e].key")).unwrap();
 
     writeln!(out, "static void {map}__clear({map}* self) {{").unwrap();
     out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
     if value_drops {
-        writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
+        writeln!(out, "        {}(&self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
     }
-    writeln!(out, "        free(self->entries[e].value);\n        self->entries[e].value = NULL;\n        {}\n        self->entries[e].live = 0;\n    }}", drop_key("self->entries[e].key")).unwrap();
+    writeln!(out, "        {}\n        self->entries[e].live = 0;\n    }}", drop_key("self->entries[e].key")).unwrap();
     out.push_str("    self->entry_count = 0;\n    self->len = 0;\n    self->index_used = 0;\n    if (self->index != NULL) {\n        memset(self->index, 0, self->index_cap * sizeof(size_t));\n    }\n}\n\n");
 
     writeln!(out, "static size_t {map}__len(const {map}* self) {{\n    return self->len;\n}}\n").unwrap();
@@ -2018,7 +1997,7 @@ fn write_map(
     if clonable {
         writeln!(out, "static {list_value} {map}__values(const {map}* self) {{").unwrap();
         writeln!(out, "    {list_value} out = {list_value}__empty();\n    {list_value}__reserve(&out, self->len);").unwrap();
-        writeln!(out, "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            {}", copy_from("out.data[out.len]", "self->entries[e].value")).unwrap();
+        writeln!(out, "    for (size_t e = 0; e < self->entry_count; e++) {{\n        if (self->entries[e].live) {{\n            {}", copy_from("out.data[out.len]", "&self->entries[e].value")).unwrap();
         out.push_str("            out.len++;\n        }\n    }\n");
         writeln!(out, "    return out;\n}}\n").unwrap();
     }
@@ -2026,9 +2005,9 @@ fn write_map(
     writeln!(out, "static void {}({map}* self) {{", drop_fn_name(&map_ty)).unwrap();
     out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
     if value_drops {
-        writeln!(out, "        {}(self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
+        writeln!(out, "        {}(&self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
     }
-    writeln!(out, "        free(self->entries[e].value);\n        {}\n    }}", drop_key("self->entries[e].key")).unwrap();
+    writeln!(out, "        {}\n    }}", drop_key("self->entries[e].key")).unwrap();
     out.push_str("    free(self->entries);\n    free(self->index);\n    self->entries = NULL;\n    self->entry_count = 0;\n    self->entry_cap = 0;\n    self->len = 0;\n    self->index = NULL;\n    self->index_cap = 0;\n    self->index_used = 0;\n}\n\n");
 }
 

@@ -845,10 +845,10 @@ impl<'a> Gen<'a> {
         // reported by its own construct rather than behind an unrelated std
         // declaration.
         self.declare_aggregates()?;
-        // A map entry whose key is a `datac` holds that key by value, so its
-        // body is only settable once the `datac` types exist. The C backend
-        // splits the same typedef for the same reason.
-        self.set_struct_key_map_entry_bodies()?;
+        // A map entry that holds a `datac` by value, as a key or a value, is
+        // only settable once the `datac` types exist. The C backend splits the
+        // same typedef for the same reason.
+        self.set_late_map_entry_bodies()?;
         // The environment struct of each capturing literal (S2E), after every
         // aggregate type exists and before any signature names the `ptr` that
         // carries it.
@@ -5333,36 +5333,37 @@ impl<'a> Gen<'a> {
             }
         }
         for (map, entry_ty) in &self.map_entries {
-            if let Ty::Map(key, _) = map {
-                // A `datac` key is held by value, and no `datac` type exists
-                // yet, so that entry's body waits for
-                // `set_struct_key_map_entry_bodies`.
-                if matches!(**key, Ty::Struct(_)) {
+            if let Ty::Map(key, value) = map {
+                // A `datac` key or value is held by value, and no `datac` type
+                // exists yet, so that entry's body waits for
+                // `set_late_map_entry_bodies`.
+                if matches!(**key, Ty::Struct(_)) || matches!(**value, Ty::Struct(_)) {
                     continue;
                 }
                 let key_ty = llvm_type(self.ctx, &self.structs, &self.containers, key)?;
-                self.ctx.struct_set_body(*entry_ty, &[key_ty, ptr, i8t]);
+                let value_ty = llvm_type(self.ctx, &self.structs, &self.containers, value)?;
+                self.ctx.struct_set_body(*entry_ty, &[key_ty, value_ty, i8t]);
             }
         }
         Ok(())
     }
 
-    /// Set the body of every map entry whose key is a `datac`. Runs after
-    /// `declare_aggregates`, because the key sits in the entry by value and its
-    /// laid-out type is what names it; the container-body pass above runs
-    /// before any `datac` type exists.
-    fn set_struct_key_map_entry_bodies(&self) -> Result<(), String> {
-        let ptr = self.pty();
+    /// Set the body of every map entry that holds a `datac` by value, as a key
+    /// or a value. Runs after `declare_aggregates`, because the laid-out type
+    /// is what names it; the container-body pass above runs before any `datac`
+    /// type exists.
+    fn set_late_map_entry_bodies(&self) -> Result<(), String> {
         let i8t = self.ctx.i8();
         for (map, entry_ty) in &self.map_entries {
-            let Ty::Map(key, _) = map else {
+            let Ty::Map(key, value) = map else {
                 continue;
             };
-            if !matches!(**key, Ty::Struct(_)) {
+            if !matches!(**key, Ty::Struct(_)) && !matches!(**value, Ty::Struct(_)) {
                 continue;
             }
             let key_ty = self.lty2(key)?;
-            self.ctx.struct_set_body(*entry_ty, &[key_ty, ptr, i8t]);
+            let value_ty = self.lty2(value)?;
+            self.ctx.struct_set_body(*entry_ty, &[key_ty, value_ty, i8t]);
         }
         Ok(())
     }
@@ -8229,12 +8230,8 @@ impl<'a> Gen<'a> {
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let entry = self.gep(entry_ty, entries, e, "entry");
             let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
-            let value_ptr = self.ld(ptr, value_slot, "value");
             let out_slot = self.builder.build_alloca(value_ty, "out");
-            self.st(self.ld(value_ty, value_ptr, "v"), out_slot);
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[value_ptr], "");
-            self.st(self.ctx.const_null(ptr), value_slot);
+            self.st(self.ld(value_ty, value_slot, "v"), out_slot);
             self.map_key_drop(key, entry_ty, entry)?;
             self.st(self.v_i8(0), self.fld(entry_ty, entry, E_LIVE, "live"));
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
@@ -8313,10 +8310,7 @@ impl<'a> Gen<'a> {
             let entry = self.gep(entry_ty, entries, e, "entry");
             let key_value = self.map_key_value(key, k, key_slot)?;
             self.st(key_value, self.fld(entry_ty, entry, E_KEY, "key"));
-            let value_ptr = self.malloc_for(value_ty)?;
-            self.check_alloc(value_ptr, f)?;
-            self.st(value_ptr, self.fld(entry_ty, entry, E_VALUE, "value"));
-            self.st(v, value_ptr);
+            self.st(v, self.fld(entry_ty, entry, E_VALUE, "value"));
             self.st(self.v_i8(1), self.fld(entry_ty, entry, E_LIVE, "live"));
             // Bump `index_used` only when the slot was empty (not a tombstone).
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
@@ -8365,13 +8359,9 @@ impl<'a> Gen<'a> {
             self.builder.build_cond_br(dead, skip, free_bb);
             self.builder.position_at_end(free_bb);
             let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
-            let value_ptr = self.ld(ptr, value_slot, "value");
             if value_drops {
-                self.call_drop(value_ptr, value)?;
+                self.call_drop(value_slot, value)?;
             }
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[value_ptr], "");
-            self.st(self.ctx.const_null(ptr), value_slot);
             self.map_key_drop(key, entry_ty, entry)?;
             self.st(self.v_i8(0), self.fld(entry_ty, entry, E_LIVE, "live"));
             self.builder.build_br(skip);
@@ -8484,8 +8474,8 @@ impl<'a> Gen<'a> {
             let append = self.block(f, "values.append");
             self.builder.build_cond_br(dead, skip, append);
             self.builder.position_at_end(append);
-            let value_ptr = self.ld(ptr, self.fld(entry_ty, entry, E_VALUE, "value"), "value");
-            let vv = self.clone_value(value_ptr, value, clone_slot)?;
+            let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
+            let vv = self.clone_value(value_slot, value, clone_slot)?;
             let olen = self.ld(i64t, self.fld(list_value_ty, out_slot, L_LEN, "olen"), "olen");
             let odata = self.ld(ptr, self.fld(list_value_ty, out_slot, L_DATA, "odata"), "odata");
             let dst = self.gep(value_ty, odata, olen, "dst");
@@ -8527,12 +8517,10 @@ impl<'a> Gen<'a> {
             let free_bb = self.block(f, "drop.free");
             self.builder.build_cond_br(dead, skip, free_bb);
             self.builder.position_at_end(free_bb);
-            let value_ptr = self.ld(ptr, self.fld(entry_ty, entry, E_VALUE, "value"), "value");
+            let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
             if value_drops {
-                self.call_drop(value_ptr, value)?;
+                self.call_drop(value_slot, value)?;
             }
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[value_ptr], "");
             self.map_key_drop(key, entry_ty, entry)?;
             self.builder.build_br(skip);
             self.builder.position_at_end(skip);
@@ -8542,6 +8530,7 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(exit);
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
+            let (free, fty) = self.libc_fn("free")?;
             self.call(free, fty, &[entries], "");
             self.call(free, fty, &[index], "");
             self.st(self.ctx.const_null(map_ty), self_p);
@@ -8551,8 +8540,9 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// The address of the value cell an entry holds: `entries[e].value`, where
-    /// `slot` is the index-slot result `find` returned (`entries[slot - 1]`).
+    /// The address of the value cell an entry holds: `&entries[e].value`,
+    /// where `slot` is the index-slot result `find` returned
+    /// (`entries[slot - 1]`).
     fn map_value_ptr(
         &self,
         map_ty: Type<'a>,
@@ -8567,8 +8557,7 @@ impl<'a> Gen<'a> {
         let e = self.builder.build_int_binop(IntBinOp::Sub, holder, self.v_i64(1), "e");
         let entries = self.ld(self.pty(), self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
         let entry = self.gep(entry_ty, entries, e, "entry");
-        let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
-        Ok(self.ld(self.pty(), value_slot, "value"))
+        Ok(self.fld(entry_ty, entry, E_VALUE, "value"))
     }
 }
 

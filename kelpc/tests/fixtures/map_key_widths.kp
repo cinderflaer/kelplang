@@ -1,10 +1,10 @@
-// An entry is `{ key; value*; live }`: the value pointer sits at
+// An entry is `{ key; value; live }`: the value sits at
 // `align_up(sizeof(K), 8)`, the live byte just after it, and the stride
 // between entries is the padded size. A one- or two-byte key and a
 // twenty-four-byte `String` key move both offsets, so a layout that assumed
-// the wrong key width would read a value from the wrong bytes — the value
-// pointer would be the key's trailing bytes, or the live byte would be the
-// low byte of the pointer. `map_key_types` holds one entry per key type and
+// the wrong key width would read a value from the wrong bytes: the value
+// would start in the key's trailing bytes, or the live byte would be the
+// low byte of the value. `map_key_types` holds one entry per key type and
 // small values, so a wrong offset could still land on a byte that happens to
 // read as the same number.
 //
