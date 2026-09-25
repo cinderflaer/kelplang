@@ -6754,6 +6754,16 @@ fn a_panicking_worker_is_seen_as_an_error_by_its_joiner() {
     );
 }
 
+/// MK9-S3-M1 stage C2: `thread.sleep_ms` sleeps the calling thread (main or a
+/// worker) and returns control to it, and `thread.current_id` is stable
+/// across two calls on the same thread and distinct between the main thread
+/// and a worker it spawned.
+#[test]
+fn thread_sleep_ms_and_current_id_work_on_both_threads() {
+    assert_compiles_and_runs("tests/fixtures/thread_sleep.kp", "42\n");
+    assert_compiles_and_runs("tests/fixtures/thread_current_id.kp", "true\nfalse\n");
+}
+
 /// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
 /// thing `thread.spawn` makes.
 #[test]

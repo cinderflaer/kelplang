@@ -1,0 +1,21 @@
+// MK9-S3-M1 stage C2: `thread.current_id` is stable across two calls on the
+// same thread and distinct between the main thread and a worker it spawned.
+impl "std/thread"
+impl "std/result"
+
+fun worker(x: move i64).R: u64 {
+    thread.current_id()
+}
+
+fun main() {
+    val main_id = thread.current_id()
+    val main_id_again = thread.current_id()
+    val h = thread.spawn(worker, 1)
+    when thread.join(h) {
+        Ok(worker_id) -> {
+            print(main_id == main_id_again)
+            print(main_id == worker_id)
+        }
+        Err(e) -> print(e.message)
+    }
+}

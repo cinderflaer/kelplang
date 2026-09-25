@@ -303,6 +303,16 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "    struct timespec ts;\n    ts.tv_sec = (time_t)(kelp_ms / 1000);\n    ts.tv_nsec = (long)((kelp_ms % 1000) * 1000000);\n    while (nanosleep(&ts, &ts) != 0) {\n        /* interrupted: finish the remainder */\n    }\n",
     ),
     (
+        "std/thread",
+        "sleep_ms_raw",
+        "    struct timespec ts;\n    ts.tv_sec = (time_t)(kelp_ms / 1000);\n    ts.tv_nsec = (long)((kelp_ms % 1000) * 1000000);\n    while (nanosleep(&ts, &ts) != 0) {\n        /* interrupted: finish the remainder */\n    }\n",
+    ),
+    (
+        "std/thread",
+        "current_id_raw",
+        "    return (uint64_t)pthread_self();\n",
+    ),
+    (
         "std/rand",
         "u64_raw",
         "    uint64_t v = 0;\n    FILE* f = fopen(\"/dev/urandom\", \"rb\");\n    if (f == NULL) {\n        kelp_panic_errno(\"rand.u64: no entropy source\");\n    }\n    if (fread(&v, 1, sizeof v, f) != sizeof v) {\n        fclose(f);\n        kelp_panic(\"rand.u64: short read from /dev/urandom\");\n    }\n    fclose(f);\n    return v;\n",

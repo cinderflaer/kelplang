@@ -1,0 +1,20 @@
+// MK9-S3-M1 stage C2: `thread.sleep_ms` is a worker-pool-shaped backoff, not a
+// `std/time` re-import. A worker sleeps, then hands back a value its joiner
+// reads, proving the call returns control to the thread that made it rather
+// than to the process.
+impl "std/thread"
+impl "std/result"
+
+fun worker(x: move i64).R: i64 {
+    thread.sleep_ms(5)
+    x + 1
+}
+
+fun main() {
+    thread.sleep_ms(1)
+    val h = thread.spawn(worker, 41)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
