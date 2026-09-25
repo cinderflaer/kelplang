@@ -1,0 +1,10 @@
+// The elision case, spelled out with the literal `/**` pattern rather than
+// `caps(*)`: `util` holds the whole-resource wildcard for `fs` outright, so
+// every `fs.read_text` call site inside it is provably going to pass its
+// runtime check no matter the path, and `cap_plan` drops the check rather
+// than emit a call that can only ever succeed.
+impl "util" caps(fs = ["/**"])
+
+fun main() {
+    print(util.read_note())
+}
