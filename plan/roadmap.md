@@ -556,7 +556,7 @@ the C backend's half of A-16; DWARF, which is the other half, is still A-16's.
 | **Custom allocators, arenas, fallible allocation** | A panicking `malloc` is not an option in a kernel: `try_alloc` instead of `alloc` (B-7, MK9-S5-M1). | medium |
 | **`Drop`/`defer`** | Deterministic cleanup points you can see in the code (B-8, MK9-S6-M1). | medium |
 | **SIMD, intrinsics, CPU-feature detection, inline asm, naked/interrupt functions** | Without them there is no lock-free primitive, no context switch, no ISR (B-9, MK9-S7-M1). | large |
-| **Threads, `Mutex`, a `Send`-shaped rule** | Without them there is no real parallelism (MK6-S1-M1, B-5). | large, because it needs function values and a move-taking parameter |
+| **`Mutex`** | **Threads and the `Send`-shaped crossing rule are done** (MK6-S1-M1/MK9-S3-M1, B-5): `thread.spawn`/`thread.join`, owned data moved in, a shared borrow crossing only from a `pd` with no reachable `var` field. `Mutex` itself is what remains: today's one shared-mutable shape is `Atomic<T>`, so anything bigger still needs a per-thread copy (as `examples/download_pool.kp` does) rather than a lock. | medium, now that threads and atomics exist under it |
 | **Endianness conversion, unaligned load/store, byte-order reads** | Wire and disk formats without hand-shifted bits (B-10, MK9-S8-M1). | small |
 | **Device tree / ACPI, bootloader support** | Kernel and bootloader work (MK9-S9-M1/M2). | large, and very specialised |
 | **A fixed-size, stack-allocated array type** | **Done** (A-18, MK8-S2-M2): `[T; N]` is held inline with its length in its type, so every fixed-size kernel buffer (page tables, IDT/GDT, register-save frames, ISR stacks) can exist with zero heap. | medium; independent of `unsafe`/FFI/threads, so buildable now |
