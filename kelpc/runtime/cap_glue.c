@@ -113,7 +113,19 @@ static void kelp_cap_check_path(const char* domain, const char* path, const char
 static void kelp_cap_check_name(const char* domain, const char* name, const char* const* patterns,
                              size_t count, const char* module, const char* at) {
     for (size_t i = 0; i < count; i++) {
-        if (kelp_std__rt__glob_match(patterns[i], name)) {
+        const char* pat = patterns[i];
+        /* A name domain's whole-resource grant is the lone `*`, and a `*` in
+           glob_match stays within one path segment, so its verdict is exactly
+           "name has no `/`". Scanning that directly skips the call into the
+           Kelp matcher that both the caller's own grant and std/env.kp's own
+           forwarding call take on every gated env access. */
+        if (pat[0] == '*' && pat[1] == '\0') {
+            if (strchr(name, '/') == NULL) {
+                return;
+            }
+            continue;
+        }
+        if (kelp_std__rt__glob_match(pat, name)) {
             return;
         }
     }
