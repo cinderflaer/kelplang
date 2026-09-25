@@ -79,6 +79,20 @@ fun glob_match(pat: &str, path: &str).R: bool {
         }
         if pv.get(pi) == 42 {
             val rest = pi + 1
+            // A trailing `*` matches the rest of the segment: the general loop
+            // would recurse once per byte on an empty pattern remainder, which
+            // only ever succeeds at `p == slen`, so the verdict is exactly
+            // "no `/` from `si` to `slen`".
+            if rest == plen {
+                var p: usize = si
+                while p < slen {
+                    if sv.get(p) == 47 {
+                        return false
+                    }
+                    p = p + 1
+                }
+                return true
+            }
             var p: usize = si
             while true {
                 if glob_match(str.substring(pat, rest), str.substring(path, p)) {
