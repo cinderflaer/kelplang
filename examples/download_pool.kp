@@ -1,0 +1,203 @@
+// download_pool.kp — fetch a list of paths from one host concurrently, with
+// one keep-alive connection pool per worker thread (MK6-S2-M1: the payoff of
+// row 4 on the critical path, once threads existed to spend).
+//
+//     kelpc build examples/download_pool.kp -o download_pool
+//     ./download_pool 127.0.0.1 8000 /a.bin /b.bin /c.bin /d.bin /e.bin
+//
+// `Thread<T>` cannot be a `List`/array element (MK9 section 5: a handle names
+// one running worker and is joined once, while a container's own routines
+// copy and drop an element like a plain location), so the worker count here
+// is fixed at four, named individually the way `thread_stress.kp`'s eight
+// are. The paths are split across those four workers *before* any of them
+// starts: v1 has no `Mutex` and no channel (MK9 section 8), so there is no
+// shared queue a running worker could pull its next path from. Splitting the
+// work ahead of time, by a plain round-robin over the argument list, is what
+// "one pool per worker" costs without one.
+//
+// Each worker owns one `http.Pool` for the run's one host, never shared with
+// another thread (a `Pool`'s `var idle` field is exactly the kind of shared
+// mutable state `thread.spawn` refuses to send — MK9 section 5 rule 3 — so
+// the only way to give a worker one is to let it build its own), so the four
+// in-flight workers keep at most four sockets open between them and every
+// path a worker downloads after its first reuses its own connection.
+//
+// The capability is `net = ["*"]` because the host is a command-line
+// argument, decided at run time, and a compile-time pattern cannot spell a
+// value that is not known yet — the same tradeoff `examples/download.kp`'s
+// header discusses for its own fixed pattern. Narrow this to the host you
+// actually run against if you adapt the program.
+impl "std/thread"
+impl "std/http" caps(net = ["*"])
+impl "std/str"
+impl "std/fmt"
+impl "std/process"
+impl "std/result"
+
+const WORKER_COUNT: usize = 4
+
+datac Job(val host: String, val port: u16, val paths: List<String>)
+datac Outcome(val ok: usize, val failed: usize, val bytes: u64)
+
+fun build_url(host: &str, port: u16, path: &str).R: String {
+    var url = String.empty()
+    url.push_str("http://")
+    url.push_str(host)
+    url.push_str(":")
+    val port_str = fmt.uint(port.to_u64())
+    url.push_str(port_str.as_str())
+    url.push_str(path)
+    return url
+}
+
+// One worker's whole run: its own pool, one request per path in its own
+// share, sequentially — the pool's keep-alive is what makes a sequential loop
+// here as cheap as it is, since only the first request per worker pays for a
+// handshake.
+fun fetch_all(job: move Job).R: Outcome {
+    var pool = http.pool(job.host.as_str(), job.port)
+    var ok: usize = 0
+    var failed: usize = 0
+    var bytes: u64 = 0
+    var i: usize = 0
+    while i < job.paths.len() {
+        val path = job.paths.get(i)
+        val url = build_url(job.host.as_str(), job.port, path.as_str())
+        val req = http.Request(
+            method = String.from_str("GET"),
+            url = url,
+            headers = http.empty_headers(),
+            body = Bytes.empty(),
+        )
+        val resp = pool.send(req)
+        if resp.is_ok() {
+            ok = ok + 1
+            bytes = bytes + resp.body.len().to_u64()
+        } else {
+            failed = failed + 1
+        }
+        i = i + 1
+    }
+    return Outcome(ok = ok, failed = failed, bytes = bytes)
+}
+
+// Every `worker`th path, starting at `worker`: a round-robin split decided
+// entirely from the index, so it costs no coordination between the workers
+// that will each get one slice.
+fun slice_for(paths: &List<String>, worker: usize).R: List<String> {
+    var out: List<String> = List.empty()
+    var i: usize = worker
+    while i < paths.len() {
+        out.push(paths.get(i).clone())
+        i = i + WORKER_COUNT
+    }
+    return out
+}
+
+fun report(label: &str, o: &Outcome) {
+    var msg = String.empty()
+    msg.push_str(label)
+    msg.push_str(": ")
+    val ok_str = fmt.uint(o.ok.to_u64())
+    msg.push_str(ok_str.as_str())
+    msg.push_str(" ok, ")
+    val failed_str = fmt.uint(o.failed.to_u64())
+    msg.push_str(failed_str.as_str())
+    msg.push_str(" failed, ")
+    val bytes_str = fmt.uint(o.bytes)
+    msg.push_str(bytes_str.as_str())
+    msg.push_str(" bytes")
+    print(msg)
+}
+
+fun main() {
+    val args = process.args()
+    if args.len() < 4 {
+        print("usage: download_pool <host> <port> <path>...")
+        process.exit(2)
+    }
+    val host = args.get(1).clone()
+    val port = when str.parse_u64(args.get(2).as_str()) {
+        Ok(v) -> v.to_u16()
+        Err(e) -> {
+            print("bad port")
+            process.exit(2)
+            0
+        }
+    }
+
+    var paths: List<String> = List.empty()
+    var i: usize = 3
+    while i < args.len() {
+        paths.push(args.get(i).clone())
+        i = i + 1
+    }
+
+    val job0 = Job(host = host.clone(), port = port, paths = slice_for(&paths, 0))
+    val job1 = Job(host = host.clone(), port = port, paths = slice_for(&paths, 1))
+    val job2 = Job(host = host.clone(), port = port, paths = slice_for(&paths, 2))
+    val job3 = Job(host = host.clone(), port = port, paths = slice_for(&paths, 3))
+
+    val h0 = thread.spawn(fetch_all, job0)
+    val h1 = thread.spawn(fetch_all, job1)
+    val h2 = thread.spawn(fetch_all, job2)
+    val h3 = thread.spawn(fetch_all, job3)
+
+    var total_ok: usize = 0
+    var total_failed: usize = 0
+    var total_bytes: u64 = 0
+
+    when thread.join(h0) {
+        Ok(o) -> {
+            report("worker 0", &o)
+            total_ok = total_ok + o.ok
+            total_failed = total_failed + o.failed
+            total_bytes = total_bytes + o.bytes
+        }
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h1) {
+        Ok(o) -> {
+            report("worker 1", &o)
+            total_ok = total_ok + o.ok
+            total_failed = total_failed + o.failed
+            total_bytes = total_bytes + o.bytes
+        }
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h2) {
+        Ok(o) -> {
+            report("worker 2", &o)
+            total_ok = total_ok + o.ok
+            total_failed = total_failed + o.failed
+            total_bytes = total_bytes + o.bytes
+        }
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h3) {
+        Ok(o) -> {
+            report("worker 3", &o)
+            total_ok = total_ok + o.ok
+            total_failed = total_failed + o.failed
+            total_bytes = total_bytes + o.bytes
+        }
+        Err(e) -> print(e.message)
+    }
+
+    var summary = String.empty()
+    summary.push_str("total: ")
+    val total_ok_str = fmt.uint(total_ok.to_u64())
+    summary.push_str(total_ok_str.as_str())
+    summary.push_str(" ok, ")
+    val total_failed_str = fmt.uint(total_failed.to_u64())
+    summary.push_str(total_failed_str.as_str())
+    summary.push_str(" failed, ")
+    val total_bytes_str = fmt.uint(total_bytes)
+    summary.push_str(total_bytes_str.as_str())
+    summary.push_str(" bytes")
+    print(summary)
+
+    if total_failed > 0 {
+        process.exit(1)
+    }
+}
