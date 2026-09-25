@@ -6937,6 +6937,20 @@ fn thread_sleep_ms_and_current_id_work_on_both_threads() {
     assert_compiles_and_runs("tests/fixtures/thread_current_id.kp", "true\nfalse\n");
 }
 
+/// perf-env-cache: `env.has`/`env.get`/`env.set`/`env.unset` from three
+/// threads at once, each on a name none of the others touches. This is what
+/// caught the real bug in the first version of the environment read cache:
+/// an unguarded scan of `environ` (built once per lookup, twice per
+/// `set`/`unset` here) racing a concurrent thread's own `setenv`/`unsetenv`
+/// segfaulted reliably (glibc may `realloc` the whole `environ` array), which
+/// a single-threaded `set`-then-`get` test has no way to see. The three
+/// per-worker names keep the joined output deterministic no matter how the
+/// threads interleave.
+#[test]
+fn env_reads_and_writes_from_several_threads_at_once_are_safe() {
+    assert_compiles_and_runs("tests/fixtures/env_thread_stress.kp", "true\ntrue\ntrue\n");
+}
+
 /// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
 /// thing `thread.spawn` makes.
 #[test]

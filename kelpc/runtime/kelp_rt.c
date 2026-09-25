@@ -134,6 +134,197 @@ static void kelp_assert(bool cond) {
     }
 }
 
+/* ---- the environment read cache (perf-env-cache) -----------------------
+   glibc's `getenv` linearly scans `environ` on every call, comparing each
+   entry's name; a lookup for a name that is NOT set has to scan the whole
+   array every time, since nothing lets it stop early. `std/env`'s four
+   externs (`has_raw`, `get_raw`, `set_raw`, `unset_raw`, in `externs.rs`)
+   are the only place this runtime touches `environ`, and — because Kelp has
+   no `unsafe` and no general C-FFI escape hatch — `set_raw`/`unset_raw` are
+   the ONLY way a Kelp program can ever change its own environment. So a
+   read-through cache that is rebuilt on exactly those two calls can never go
+   stale from anything else the program does.
+
+   The table is open addressing over pointers straight into `environ`'s own
+   strings (no copying of the name or the value text), built by one scan of
+   `environ`.
+
+     - A single `_Atomic` pointer holds the current table (or NULL before the
+       first lookup). Once a table exists, a lookup is a lock-free atomic
+       load plus a probe of that table: no lock, ever, on the hot path this
+       cache exists for.
+     - The scan that *builds* a table, though, has to hold `kelp_env_mutex`
+       for as long as it reads `environ` — and the real `setenv`/`unsetenv`
+       calls have to hold the same mutex for as long as they mutate it. This
+       was not the first design tried here: an earlier version let the build
+       race lock-free (double-checked, CAS, loser frees its own candidate),
+       on the theory that reads and writes only need the same weak ordering
+       plain `getenv`/`setenv` already have. That version segfaulted under
+       real concurrent `set`/`unset` calls on different names from different
+       threads, reproduced directly with a standalone harness outside Kelp
+       entirely: glibc's `setenv` may `realloc` the whole `environ` array
+       when a name does not already exist, and an unguarded scan of
+       `environ` (or, worse, this table's own two passes over it: one to
+       count entries, one to read them) can be reading through a pointer
+       `realloc` just freed out from under it, or reading past a now-shorter
+       array a concurrent `setenv` swapped in mid-scan. That is a real
+       use-after-free / out-of-bounds read, not a benign race, so the mutex
+       stays. What it buys is still what matters here: the 5,000,000-call
+       hot loop this cache was built for never touches it, because by the
+       time that loop runs the table already exists.
+     - `set_raw`/`unset_raw` make the real `setenv`/`unsetenv` call and
+       rebuild the table inside that same critical section — so the
+       process's actual environment (and anything a spawned child inherits)
+       is always correct regardless of caching, and the rebuild's scan of
+       `environ` can never overlap another thread's mutation of it. The
+       table a rebuild replaces is deliberately never freed: a concurrent
+       reader may still hold a pointer to it that it loaded (lock-free)
+       before the swap, and there is no way to know when the last such
+       reader is done with it. Leaking on `set`/`unset` (rare; nothing like
+       a hot loop in a real program) is the accepted price for lock-free
+       reads, which are not rare.
+
+   Both the very first build and every rebuild after a `set`/`unset` go
+   through the same `kelp_env_build`, so there is one code path for "how a
+   table gets made", not two that could quietly drift apart. */
+typedef struct {
+    const char** slots; /* NULL-terminated-by-absence; each entry points into
+                            one of `environ`'s own "NAME=value" strings */
+    size_t cap;          /* power of two; the table's own open-addressing size */
+} kelp_EnvTable;
+
+static _Atomic(kelp_EnvTable*) kelp_env_table = NULL;
+
+/* Guards every read of `environ` this cache does (`kelp_env_build`) and
+   every write to it (the real `setenv`/`unsetenv` inside `kelp_env_set` and
+   `kelp_env_unset`, below), so the two can never overlap. It does not guard
+   `kelp_env_lookup`'s read of an already-published table: that is the
+   lock-free path. */
+static pthread_mutex_t kelp_env_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* FNV-1a, the same hash the validated prototype used. */
+static uint64_t kelp_env_hash(const char* data, size_t len) {
+    uint64_t h = 14695981039346656037ULL;
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint64_t)(unsigned char)data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+/* One scan of `environ`, building a fresh table at roughly 2x its entry
+   count so probing stays short. Used both for the very first table and for
+   every rebuild after `set`/`unset` (requirement: one code path). Callers
+   must hold `kelp_env_mutex`: see the comment above `kelp_EnvTable`. */
+static kelp_EnvTable* kelp_env_build(void) {
+    extern char** environ;
+    size_t n = 0;
+    while (environ[n] != NULL) {
+        n++;
+    }
+    size_t cap = 8;
+    while (cap < n * 2 + 1) {
+        cap *= 2;
+    }
+    kelp_EnvTable* t = (kelp_EnvTable*)malloc(sizeof(kelp_EnvTable));
+    if (t == NULL) {
+        kelp_panic("env: out of memory building the lookup table");
+    }
+    t->slots = (const char**)calloc(cap, sizeof(const char*));
+    if (t->slots == NULL) {
+        kelp_panic("env: out of memory building the lookup table");
+    }
+    t->cap = cap;
+    for (size_t i = 0; i < n; i++) {
+        const char* entry = environ[i];
+        const char* eq = strchr(entry, '=');
+        size_t name_len = (eq != NULL) ? (size_t)(eq - entry) : strlen(entry);
+        size_t idx = (size_t)(kelp_env_hash(entry, name_len) & (uint64_t)(cap - 1));
+        while (t->slots[idx] != NULL) {
+            idx = (idx + 1) & (cap - 1);
+        }
+        t->slots[idx] = entry;
+    }
+    return t;
+}
+
+/* The read side: returns the current table, building one first (under the
+   mutex, double-checked) if none exists yet. Once a table exists this is a
+   single lock-free atomic load: the mutex is only ever taken once per
+   process, for whichever thread's lookup or `set`/`unset` happens to run
+   first. */
+static kelp_EnvTable* kelp_env_ensure(void) {
+    kelp_EnvTable* t = atomic_load_explicit(&kelp_env_table, memory_order_acquire);
+    if (t != NULL) {
+        return t;
+    }
+    pthread_mutex_lock(&kelp_env_mutex);
+    t = atomic_load_explicit(&kelp_env_table, memory_order_relaxed);
+    if (t == NULL) {
+        t = kelp_env_build();
+        atomic_store_explicit(&kelp_env_table, t, memory_order_release);
+    }
+    pthread_mutex_unlock(&kelp_env_mutex);
+    return t;
+}
+
+/* Rebuilds the table from the current `environ` and publishes it. Called
+   only from `kelp_env_set`/`kelp_env_unset`, which already hold
+   `kelp_env_mutex` and have just finished mutating `environ` themselves; the
+   table this replaces is deliberately leaked (see the comment above
+   `kelp_EnvTable`). */
+static void kelp_env_publish(void) {
+    kelp_EnvTable* built = kelp_env_build();
+    atomic_store_explicit(&kelp_env_table, built, memory_order_release);
+}
+
+/* The real `setenv`, and the rebuild that follows it, as one critical
+   section: `kelp_env_build` may not overlap a mutation of `environ`, on this
+   thread or any other, and this is the one function that performs one.
+   Returns what `setenv` returned, so the caller (`std/env`'s `set_raw`) can
+   panic on failure outside the lock, the way `kelp_panic_errno` needs to. */
+static int kelp_env_set(const char* name, const char* value) {
+    pthread_mutex_lock(&kelp_env_mutex);
+    int rc = setenv(name, value, 1);
+    if (rc == 0) {
+        kelp_env_publish();
+    }
+    pthread_mutex_unlock(&kelp_env_mutex);
+    return rc;
+}
+
+/* The same for `unsetenv`. */
+static int kelp_env_unset(const char* name) {
+    pthread_mutex_lock(&kelp_env_mutex);
+    int rc = unsetenv(name);
+    if (rc == 0) {
+        kelp_env_publish();
+    }
+    pthread_mutex_unlock(&kelp_env_mutex);
+    return rc;
+}
+
+/* `NULL` if `name` is not set, otherwise a pointer to its value inside
+   `environ` (not a copy). Entries are compared up to their `=` byte, exactly
+   like `getenv` compares up to it, so a name that is a prefix of a longer one
+   is never mistaken for it. */
+static const char* kelp_env_lookup(const char* name) {
+    kelp_EnvTable* t = kelp_env_ensure();
+    size_t name_len = strlen(name);
+    size_t idx = (size_t)(kelp_env_hash(name, name_len) & (uint64_t)(t->cap - 1));
+    for (size_t probes = 0; probes < t->cap; probes++) {
+        const char* entry = t->slots[idx];
+        if (entry == NULL) {
+            return NULL;
+        }
+        if (strncmp(entry, name, name_len) == 0 && entry[name_len] == '=') {
+            return entry + name_len + 1;
+        }
+        idx = (idx + 1) & (t->cap - 1);
+    }
+    return NULL;
+}
+
 /* ---- the dial (MISSING-w9Kda) ------------------------------------------------
    One dial, one place. It resolves `host`, tries every address `getaddrinfo`
    reported in order (so a name resolving to both ::1 and 127.0.0.1 works

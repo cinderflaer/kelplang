@@ -1,0 +1,61 @@
+// perf-env-cache: three threads concurrently drive env.has/env.get/env.set/
+// env.unset against three disjoint variable names, so the read-through cache
+// in `kelp_rt.c` has to build (and rebuild) its lookup table under real
+// concurrency rather than only across sequential calls. All three threads may
+// race the very first lookup's double-checked table build, and every
+// set/unset publishes a fresh table while the other two threads may still be
+// reading through an older one. Distinct names per worker keep the joined
+// result deterministic no matter how the threads interleave, since no two
+// workers ever touch the same variable.
+impl "std/env"
+impl "std/thread"
+impl "std/result"
+impl "std/str"
+
+fun worker_a(x: move i64).R: bool {
+    val before = !env.has("KELP_ENV_THREAD_A")
+    env.set("KELP_ENV_THREAD_A", "value-a")
+    val v = env.get("KELP_ENV_THREAD_A")
+    val mid = str.eq(v.as_str(), "value-a")
+    env.unset("KELP_ENV_THREAD_A")
+    val after = !env.has("KELP_ENV_THREAD_A")
+    before && mid && after
+}
+
+fun worker_b(x: move i64).R: bool {
+    val before = !env.has("KELP_ENV_THREAD_B")
+    env.set("KELP_ENV_THREAD_B", "value-b")
+    val v = env.get("KELP_ENV_THREAD_B")
+    val mid = str.eq(v.as_str(), "value-b")
+    env.unset("KELP_ENV_THREAD_B")
+    val after = !env.has("KELP_ENV_THREAD_B")
+    before && mid && after
+}
+
+fun worker_c(x: move i64).R: bool {
+    val before = !env.has("KELP_ENV_THREAD_C")
+    env.set("KELP_ENV_THREAD_C", "value-c")
+    val v = env.get("KELP_ENV_THREAD_C")
+    val mid = str.eq(v.as_str(), "value-c")
+    env.unset("KELP_ENV_THREAD_C")
+    val after = !env.has("KELP_ENV_THREAD_C")
+    before && mid && after
+}
+
+fun main() {
+    val h0 = thread.spawn(worker_a, 0)
+    val h1 = thread.spawn(worker_b, 0)
+    val h2 = thread.spawn(worker_c, 0)
+    when thread.join(h0) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h1) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(h2) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}

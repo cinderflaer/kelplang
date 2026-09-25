@@ -336,22 +336,31 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/env",
         "has_raw",
-        "    return getenv(kelp_name) != NULL;\n",
+        // `kelp_env_lookup` (`kelp_rt.c`) is a read-through cache over
+        // `environ`, kept correct by `set_raw`/`unset_raw` below rebuilding
+        // it on every write: see the comment on `kelp_EnvTable` for why that
+        // is airtight (those two are the only way a Kelp program can ever
+        // change its own environment).
+        "    return kelp_env_lookup(kelp_name) != NULL;\n",
     ),
     (
         "std/env",
         "get_raw",
-        "    const char* v = getenv(kelp_name);\n    if (v == NULL) {\n        return kelp_String__empty();\n    }\n    return kelp_String__from_str(v);\n",
+        "    const char* v = kelp_env_lookup(kelp_name);\n    if (v == NULL) {\n        return kelp_String__empty();\n    }\n    return kelp_String__from_str(v);\n",
     ),
     (
         "std/env",
         "set_raw",
-        "    if (setenv(kelp_name, kelp_value, 1) != 0) {\n        kelp_panic_errno(\"env.set: cannot set variable\");\n    }\n",
+        // `kelp_env_set` (`kelp_rt.c`) makes the real `setenv` call and
+        // rebuilds the cache from the now-current `environ` as one critical
+        // section, so the rebuild's scan can never race another thread's own
+        // `setenv`/`unsetenv`. The panic stays outside that section.
+        "    if (kelp_env_set(kelp_name, kelp_value) != 0) {\n        kelp_panic_errno(\"env.set: cannot set variable\");\n    }\n",
     ),
     (
         "std/env",
         "unset_raw",
-        "    if (unsetenv(kelp_name) != 0) {\n        kelp_panic_errno(\"env.unset: cannot unset variable\");\n    }\n",
+        "    if (kelp_env_unset(kelp_name) != 0) {\n        kelp_panic_errno(\"env.unset: cannot unset variable\");\n    }\n",
     ),
     // ---- std/io (S2) -------------------------------------------------------
     (
