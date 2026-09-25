@@ -5319,6 +5319,70 @@ fn the_download_example_writes_exactly_what_it_received() {
     let _ = std::fs::remove_file(&out);
 }
 
+/// MK6-S2-M1: `examples/download_pool.kp` fetches N paths from one host with
+/// four worker threads, each holding its own keep-alive `Pool`. The canned
+/// server accepts four connections and answers two requests on each, which is
+/// the shape a worker's own pool produces (one handshake, then reuse): a
+/// worker whose second request opened a *fifth* connection would mean its
+/// pool was not being reused, and a run that hung would mean fewer than four
+/// workers ever started.
+#[test]
+fn the_download_pool_example_uses_one_kept_alive_connection_per_worker() {
+    let body = b"data".to_vec();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    let mut per_connection = response.clone();
+    per_connection.extend_from_slice(&body);
+    let per_connection = per_connection;
+    let connections: Vec<Vec<Vec<u8>>> = (0..4)
+        .map(|_| vec![per_connection.clone(), per_connection.clone()])
+        .collect();
+    let mut server = CannedServer::start(connections);
+
+    let bin = out_path("download_pool_example");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("../examples/download_pool.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected examples/download_pool.kp to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&bin)
+        .arg("127.0.0.1")
+        .arg(server.port.to_string())
+        .args(["/a", "/b", "/c", "/d", "/e", "/f", "/g", "/h"])
+        .output()
+        .expect("failed to run the compiled binary");
+    server.finish();
+
+    assert!(
+        run.status.success(),
+        "expected the pooled download to succeed, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(server.accepted(), 4, "expected exactly one connection per worker");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    for i in 0..4 {
+        assert!(
+            stdout.contains(&format!("worker {i}: 2 ok, 0 failed, 8 bytes\n")),
+            "missing worker {i}'s report:\n{stdout}"
+        );
+    }
+    assert!(
+        stdout.ends_with("total: 8 ok, 0 failed, 32 bytes\n"),
+        "unexpected stdout:\n{stdout}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // A-1: `enum` — tagged unions, variant construction, and pattern `when`.
 // ---------------------------------------------------------------------------
