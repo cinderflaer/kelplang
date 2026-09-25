@@ -2127,7 +2127,7 @@ fn write_list_s1(
     let elem_clonable = crate::types::value_is_clonable(elem, clonable);
     if elem_sortable {
         // One comparator per element kind, so the sort itself stays one
-        // insertion sort. `String`/`Bytes` compare length-aware: `strcmp`
+        // heapsort. `String`/`Bytes` compare length-aware: `strcmp`
         // would stop at an embedded NUL and ignore everything after it.
         writeln!(out, "static int {list}__cmp(const {elem_c}* a, const {elem_c}* b) {{").unwrap();
         match elem {
@@ -2149,17 +2149,22 @@ fn write_list_s1(
             }
         }
 
+        // One sift-down for a max-heap: heapify and the sort loop below both
+        // use it, so the child/parent comparison lives in one place. `cmp`
+        // returns > 0 when its first argument is greater, the comparator's
+        // existing convention.
+        writeln!(out, "static void {list}__sift_down({list}* self, size_t root, size_t heap_len) {{").unwrap();
+        out.push_str("    for (;;) {\n        size_t child = 2 * root + 1;\n        if (child >= heap_len) {\n            return;\n        }\n");
+        writeln!(out, "        if (child + 1 < heap_len && {list}__cmp(&self->data[child], &self->data[child + 1]) < 0) {{\n            child++;\n        }}").unwrap();
+        writeln!(out, "        if ({list}__cmp(&self->data[root], &self->data[child]) >= 0) {{\n            return;\n        }}").unwrap();
+        writeln!(out, "        {elem_c} t = self->data[root];\n        self->data[root] = self->data[child];\n        self->data[child] = t;\n        root = child;\n    }}\n}}\n\n").unwrap();
+
         writeln!(out, "static void {list}__sort({list}* self) {{").unwrap();
-        out.push_str("    /* insertion sort: stable, no comparator indirection, and\n       in-place for an owned element because the shifts are moves */\n");
-        writeln!(out, "    for (size_t i = 1; i < self->len; i++) {{").unwrap();
-        writeln!(out, "        {elem_c} v = self->data[i];").unwrap();
-        out.push_str("        size_t j = i;\n");
-        writeln!(
-            out,
-            "        while (j > 0 && {list}__cmp(&self->data[j - 1], &v) > 0) {{\n            self->data[j] = self->data[j - 1];\n            j--;\n        }}"
-        )
-        .unwrap();
-        out.push_str("        self->data[j] = v;\n    }\n}\n\n");
+        writeln!(out, "    /* heapsort: O(n log n) worst case, in place, and no extra buffer.\n       A swap is two element-sized copies, so an owned element is only moved,\n       never cloned or dropped, exactly as {list}__reverse elsewhere. */").unwrap();
+        out.push_str("    size_t n = self->len;\n");
+        writeln!(out, "    for (size_t start = n / 2; start-- > 0; ) {{\n        {list}__sift_down(self, start, n);\n    }}").unwrap();
+        writeln!(out, "    for (size_t end = n; end-- > 1; ) {{\n        {elem_c} t = self->data[0];\n        self->data[0] = self->data[end];\n        self->data[end] = t;\n        {list}__sift_down(self, 0, end);\n    }}").unwrap();
+        out.push_str("}\n\n");
     }
 
     writeln!(out, "static void {list}__reverse({list}* self) {{").unwrap();
