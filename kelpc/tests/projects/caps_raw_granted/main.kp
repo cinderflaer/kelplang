@@ -2,10 +2,10 @@
 // domain and reads a path inside its grant. The name resolves (the module holds
 // `fs`) and the check admits (the path is inside the pattern), which is what a
 // rule that gated externs must not break.
-impl "util" caps(fs = ["/tmp/kelp_caps_raw_granted/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_raw_granted/**"])
 impl "std/fs"
 
 fun main() {
     print(util.read_note_raw())
-    print(fs.exists("/tmp/kelp_caps_raw_granted/note.txt"))
+    print(fs.exists("__KELP_SCRATCH__/kelp_caps_raw_granted/note.txt"))
 }

@@ -1,5 +1,5 @@
 // M7: the write half of the filesystem surface, all inside the grant.
-impl "util" caps(fs = ["/tmp/kelp_caps_write/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_write/**"])
 
 fun main() {
     util.exercise()

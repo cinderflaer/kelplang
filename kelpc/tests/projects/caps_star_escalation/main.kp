@@ -2,7 +2,7 @@
 // pattern. `mid` then writes `caps(*)`, claiming the whole resource of every
 // domain: it holds no wildcard, so the grant is refused and the refusal names
 // the wildcard it claimed rather than one pattern.
-impl "mid" caps(fs = ["/tmp/kelp_caps_star_esc/**"])
+impl "mid" caps(fs = ["__KELP_SCRATCH__/kelp_caps_star_esc/**"])
 
 fun main() {
     print(mid.probe())

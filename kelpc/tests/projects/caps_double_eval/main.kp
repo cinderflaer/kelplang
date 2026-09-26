@@ -9,7 +9,7 @@
 //
 // `util.outside()` is the control: out of the grant on every evaluation. It is
 // denied at runtime, and the denial names `util.kp` where it is written.
-impl "util" caps(fs = ["/tmp/kelp_caps_double_eval/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_double_eval/**"])
 
 fun main() {
     print(util.inside_once())

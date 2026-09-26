@@ -4,10 +4,10 @@
 // call site before any of this. The working directory is deliberately not a
 // resource — `runner.dir_outside_grant` passes `/tmp`, which no process
 // pattern admits, and still runs.
-impl "runner" caps(process = ["/bin/**", "/nix/store/**", "/tmp/kelp_caps_process_in/**"])
+impl "runner" caps(process = ["/bin/**", "/nix/store/**", "__KELP_SCRATCH__/kelp_caps_process_in/**"])
 
 fun main() {
-    val dir = "/tmp/kelp_caps_process_in"
+    val dir = "__KELP_SCRATCH__/kelp_caps_process_in"
 
     // `run_in`: the marker lands in `dir`, so the child's cwd was `dir`, and
     // `pwd` agrees.

@@ -1,10 +1,10 @@
 // M7: main holds every capability implicitly, so it delegates a narrow `fs`
 // grant to `util` and can use `fs` itself without restrictions.
-impl "util" caps(fs = ["/tmp/kelp_caps_granted/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_granted/**"])
 impl "std/fs"
 
 fun main() {
     print(util.read_note())
-    print(fs.exists("/tmp/kelp_caps_granted/note.txt"))
-    print(fs.is_file("/tmp/kelp_caps_granted/note.txt"))
+    print(fs.exists("__KELP_SCRATCH__/kelp_caps_granted/note.txt"))
+    print(fs.is_file("__KELP_SCRATCH__/kelp_caps_granted/note.txt"))
 }

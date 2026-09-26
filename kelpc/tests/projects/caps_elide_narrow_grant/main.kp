@@ -3,7 +3,7 @@
 // elision looks for, and its call to `fs.read_text` must keep the runtime
 // check. Eliding here would be the correctness hole the elision must not
 // open: a narrower grant silently starting to admit everything.
-impl "util" caps(fs = ["/tmp/kelp_caps_elide_narrow_grant/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_elide_narrow_grant/**"])
 
 fun main() {
     print(util.read_note())

@@ -8,7 +8,7 @@ fun mk().R: str {
     print("SIDE")
     n = n + 1
     if n == 1 {
-        return "/tmp/kelp_caps_raw_double_eval/a"
+        return "__KELP_SCRATCH__/kelp_caps_raw_double_eval/a"
     }
     return "/etc/passwd"
 }

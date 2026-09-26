@@ -3,7 +3,7 @@
 // remove built on `fs.list` itself), then creates, lists and removes known
 // contents, so the run is repeatable and depends on nothing already on disk.
 impl "std/str"
-impl "std/fs" caps(fs = ["/tmp/kelp_caps_list_test/**"])
+impl "std/fs" caps(fs = ["__KELP_SCRATCH__/kelp_caps_list_test/**"])
 
 fun path_of(dir: &str, name: &str).R: String {
     var parts: List<String> = List.empty()
@@ -31,12 +31,12 @@ fun clear(dir: &str) {
 }
 
 fun main() {
-    val dir = "/tmp/kelp_caps_list_test"
+    val dir = "__KELP_SCRATCH__/kelp_caps_list_test"
     clear(dir)
     fs.mkdir(dir)
-    fs.write_text("/tmp/kelp_caps_list_test/b.txt", String.from_str("b"))
-    fs.write_text("/tmp/kelp_caps_list_test/a.txt", String.from_str("a"))
-    fs.mkdir("/tmp/kelp_caps_list_test/sub")
+    fs.write_text("__KELP_SCRATCH__/kelp_caps_list_test/b.txt", String.from_str("b"))
+    fs.write_text("__KELP_SCRATCH__/kelp_caps_list_test/a.txt", String.from_str("a"))
+    fs.mkdir("__KELP_SCRATCH__/kelp_caps_list_test/sub")
 
     val entries = fs.list(dir)
     print(entries.len())

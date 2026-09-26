@@ -1729,18 +1729,70 @@ fn an_owned_value_in_statement_position_is_rejected() {
 // allowlist.
 // ---------------------------------------------------------------------------
 
+/// The placeholder a capability fixture's source carries instead of a literal
+/// scratch root (BUG-q8Vkr). A capability pattern has to be a literal, absolute
+/// path in the fixture's own source text (a grant is source), so the harness
+/// cannot simply hand the fixture a per-run directory the way `assert_*`
+/// passes an expected string: the substitution has to happen in the text
+/// itself, before `kelpc` ever lexes it. This mirrors `std/http`'s
+/// `__KELP_HTTP_POOL__` (`stdlib.rs::HTTP_POOL_PLACEHOLDER`), substituted into
+/// shipped module text before lexing; `caps_project` is the fixture-suite
+/// equivalent, substituting into a throwaway copy instead of compiler-shipped
+/// text.
+const SCRATCH_PLACEHOLDER: &str = "__KELP_SCRATCH__";
+
+/// The root every capability fixture's scratch paths are substituted under for
+/// this process, computed once and reused for the life of the test binary.
+///
+/// Two suites running at once, each in its own worktree, used to both write
+/// and delete the literal `/tmp/kelp_caps_*` trees the fixtures' source named,
+/// which is the flake BUG-q8Vkr records. Keying the root on this process's own
+/// id keeps two concurrent `cargo test` invocations apart even when they share
+/// one `/tmp` (a `TMPDIR` pointed elsewhere works the same way, since
+/// `std::env::temp_dir()` is the base rather than a literal `/tmp`).
+fn scratch_root() -> &'static Path {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        std::env::temp_dir().join(format!("kelpc_test_scratch_{}", std::process::id()))
+    })
+}
+
 /// A scratch directory the capability fixtures point at. Their patterns are
 /// absolute (a grant must be), so the path has to exist before the program
 /// runs and is removed afterwards.
 fn caps_scratch(name: &str) -> PathBuf {
-    // `/tmp` literally, not `std::env::temp_dir()`: the capability patterns in
-    // the fixtures are source text and say `/tmp/kelp_caps_<name>/**`, so a
-    // `TMPDIR` that points somewhere else (a sandbox, a CI runner) would leave
-    // the harness writing one directory while the program reads another.
-    let dir = PathBuf::from("/tmp").join(format!("kelp_caps_{name}"));
+    let dir = scratch_root().join(format!("kelp_caps_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("could not create the capability scratch directory");
     dir
+}
+
+/// A capability fixture project, copied into a throwaway, process-unique
+/// directory with `SCRATCH_PLACEHOLDER` substituted for `scratch_root()` in
+/// every `.kp` file. The original under `tests/projects/<name>` is untouched
+/// (it is shared with every other worktree checked out from the same
+/// history), and the copy is deliberately thrown away and rewritten on every
+/// call, the same way `caps_scratch`'s directory is.
+///
+/// Callers use this exactly like `project(name)`: `.join("main.kp")` for the
+/// build target, `.join("util.kp")` for a path a denial message names.
+fn caps_project(name: &str) -> PathBuf {
+    let src_dir = project(name);
+    let dst_dir = out_path(&format!("{name}_src"));
+    let _ = std::fs::remove_dir_all(&dst_dir);
+    std::fs::create_dir_all(&dst_dir).expect("could not create the substituted project copy");
+    let root = scratch_root().to_string_lossy().into_owned();
+    for entry in std::fs::read_dir(&src_dir).expect("could not read fixture project dir") {
+        let entry = entry.expect("could not read a fixture project dir entry");
+        let path = entry.path();
+        if path.is_file() {
+            let text = std::fs::read_to_string(&path).expect("could not read fixture source");
+            let substituted = text.replace(SCRATCH_PLACEHOLDER, &root);
+            std::fs::write(dst_dir.join(path.file_name().unwrap()), substituted)
+                .expect("could not write the substituted fixture source");
+        }
+    }
+    dst_dir
 }
 
 /// Builds a caps project, runs it, and asserts the run fails with `needle` on
@@ -1777,7 +1829,7 @@ fn a_granted_module_reads_inside_its_grant() {
     std::fs::write(dir.join("note.txt"), "hello caps").unwrap();
     assert_project_runs(
         "caps_granted",
-        &project("caps_granted").join("main.kp"),
+        &caps_project("caps_granted").join("main.kp"),
         "hello caps\ntrue\ntrue\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -1787,7 +1839,7 @@ fn a_granted_module_reads_inside_its_grant() {
 fn an_ungranted_module_cannot_name_the_gated_namespace() {
     assert_project_rejected(
         "caps_ungranted",
-        &project("caps_ungranted").join("main.kp"),
+        &caps_project("caps_ungranted").join("main.kp"),
         "needs the 'fs' capability, which module 'util' was not granted",
     );
 }
@@ -1796,7 +1848,7 @@ fn an_ungranted_module_cannot_name_the_gated_namespace() {
 fn a_module_cannot_delegate_more_than_it_holds() {
     assert_project_rejected(
         "caps_escalation",
-        &project("caps_escalation").join("main.kp"),
+        &caps_project("caps_escalation").join("main.kp"),
         "can delegate less than it has, never more",
     );
 }
@@ -1813,7 +1865,7 @@ fn a_delegated_wildcard_lets_the_import_reach_every_resource() {
     std::fs::write(second.join("second.txt"), "world").unwrap();
     assert_project_runs(
         "caps_star",
-        &project("caps_star").join("main.kp"),
+        &caps_project("caps_star").join("main.kp"),
         "hello world\n",
     );
     let _ = std::fs::remove_dir_all(&first);
@@ -1846,7 +1898,7 @@ fn a_full_grant_elides_the_runtime_path_check_but_a_narrow_one_keeps_it() {
     let build = kelpc()
         .env("KELPC_ORACLE", "c")
         .arg("build")
-        .arg(project("caps_elide_full_grant").join("main.kp"))
+        .arg(caps_project("caps_elide_full_grant").join("main.kp"))
         .arg("-o")
         .arg(&bin)
         .output()
@@ -1891,7 +1943,7 @@ fn a_full_grant_elides_the_runtime_path_check_but_a_narrow_one_keeps_it() {
     let build2 = kelpc()
         .env("KELPC_ORACLE", "c")
         .arg("build")
-        .arg(project("caps_elide_narrow_grant").join("main.kp"))
+        .arg(caps_project("caps_elide_narrow_grant").join("main.kp"))
         .arg("-o")
         .arg(&bin2)
         .output()
@@ -2092,7 +2144,7 @@ fn a_module_cannot_delegate_the_wildcard_it_does_not_hold() {
     // claims a wildcard it was never given; the refusal names the wildcard.
     assert_project_rejected(
         "caps_star_escalation",
-        &project("caps_star_escalation").join("main.kp"),
+        &caps_project("caps_star_escalation").join("main.kp"),
         "cannot give 'inner' the whole-resource wildcard for 'fs' with `caps(*)`",
     );
 }
@@ -2151,7 +2203,7 @@ fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");
     assert_project_runs(
         "caps_write",
-        &project("caps_write").join("main.kp"),
+        &caps_project("caps_write").join("main.kp"),
         "true\n5\nfalse\nhello\nfalse\ntrue\n3\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -2161,7 +2213,7 @@ fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
 fn a_path_outside_the_grant_is_denied_at_runtime() {
     assert_project_denied_at_runtime(
         "caps_denied",
-        &project("caps_denied").join("main.kp"),
+        &caps_project("caps_denied").join("main.kp"),
         "outside the fs capability granted to module 'util'",
     );
 }
@@ -2172,7 +2224,7 @@ fn a_symlink_inside_the_grant_pointing_outside_is_denied() {
     std::os::unix::fs::symlink("/etc/passwd", dir.join("escape")).unwrap();
     assert_project_denied_at_runtime(
         "caps_symlink",
-        &project("caps_symlink").join("main.kp"),
+        &caps_project("caps_symlink").join("main.kp"),
         "/etc/passwd",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -2195,7 +2247,7 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
     // the location, the `granted:` line and its indentation are all pinned.
     let dir = caps_scratch("double_eval");
     std::fs::write(dir.join("a"), "FILECONTENT").unwrap();
-    let target = project("caps_double_eval").join("main.kp");
+    let target = caps_project("caps_double_eval").join("main.kp");
     let bin = out_path("caps_double_eval");
     let build = kelpc()
         .arg("build")
@@ -2222,8 +2274,9 @@ fn a_gated_resource_argument_is_evaluated_once_and_the_control_is_denied() {
     // what moved the column from 27; A-13.)
     let expected = format!(
         "{}:23:31: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
-         granted:\n    /tmp/kelp_caps_double_eval/**\n",
-        project("caps_double_eval").join("util.kp").display()
+         granted:\n    {}/kelp_caps_double_eval/**\n",
+        caps_project("caps_double_eval").join("util.kp").display(),
+        scratch_root().display()
     );
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),
@@ -2263,7 +2316,7 @@ fn a_path_outside_the_grant_is_denied_at_a_primitive_too() {
     // does, so its denial names the same module, call site and grant.
     assert_project_denied_at_runtime(
         "caps_raw_denied",
-        &project("caps_raw_denied").join("main.kp"),
+        &caps_project("caps_raw_denied").join("main.kp"),
         "outside the fs capability granted to module 'util'",
     );
 }
@@ -2277,7 +2330,7 @@ fn a_granted_module_reads_inside_its_grant_through_a_primitive() {
     std::fs::write(dir.join("note.txt"), "hello caps").unwrap();
     assert_project_runs(
         "caps_raw_granted",
-        &project("caps_raw_granted").join("main.kp"),
+        &caps_project("caps_raw_granted").join("main.kp"),
         "hello caps\ntrue\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -2292,7 +2345,7 @@ fn the_position_tables_keep_the_mode_and_the_directory_out_of_the_check() {
     std::fs::write(dir.join("note.txt"), "note content\n").unwrap();
     assert_project_runs(
         "caps_raw_positions",
-        &project("caps_raw_positions").join("main.kp"),
+        &caps_project("caps_raw_positions").join("main.kp"),
         "true\ntrue\ntrue\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -2305,7 +2358,7 @@ fn the_spawn_check_matches_the_program_and_not_the_directory() {
     // argument 0 would have denied the directory and let the program through.
     assert_project_denied_at_runtime(
         "caps_raw_positions_denied",
-        &project("caps_raw_positions_denied").join("main.kp"),
+        &caps_project("caps_raw_positions_denied").join("main.kp"),
         "is outside the process capability granted to module 'spawner'",
     );
 }
@@ -2321,7 +2374,7 @@ fn a_primitive_checks_its_resource_argument_once() {
     // whole, so the path, the location and the `granted:` block are pinned.
     let dir = caps_scratch("raw_double_eval");
     std::fs::write(dir.join("a"), "FILECONTENT").unwrap();
-    let target = project("caps_raw_double_eval").join("main.kp");
+    let target = caps_project("caps_raw_double_eval").join("main.kp");
     let bin = out_path("caps_raw_double_eval");
     let build = kelpc()
         .arg("build")
@@ -2344,8 +2397,9 @@ fn a_primitive_checks_its_resource_argument_once() {
     assert_eq!(run.status.code(), Some(1), "the control must be denied");
     let expected = format!(
         "{}:20:30: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
-         granted:\n    /tmp/kelp_caps_raw_double_eval/**\n",
-        project("caps_raw_double_eval").join("util.kp").display()
+         granted:\n    {}/kelp_caps_raw_double_eval/**\n",
+        caps_project("caps_raw_double_eval").join("util.kp").display(),
+        scratch_root().display()
     );
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),
@@ -2413,7 +2467,7 @@ fn a_pd_initializer_outside_the_grant_is_denied_at_runtime() {
     // has to be checked at run time against the same module's patterns. The
     // denial is pinned whole here, including the module name and the `granted:`
     // block from `util`'s own allowlist.
-    let target = project("pd_gated_denied").join("main.kp");
+    let target = caps_project("pd_gated_denied").join("main.kp");
     let bin = out_path("pd_gated_denied");
     let build = kelpc()
         .arg("build")
@@ -2431,8 +2485,9 @@ fn a_pd_initializer_outside_the_grant_is_denied_at_runtime() {
     assert_eq!(run.status.code(), Some(1), "the initializer must be denied");
     let expected = format!(
         "{}:3:21: panic: '/etc/passwd' is outside the fs capability granted to module 'util'\n  \
-         granted:\n    /tmp/kelp_caps_pd_gated_denied/**\n",
-        project("pd_gated_denied").join("util.kp").display()
+         granted:\n    {}/kelp_caps_pd_gated_denied/**\n",
+        caps_project("pd_gated_denied").join("util.kp").display(),
+        scratch_root().display()
     );
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),
@@ -2447,7 +2502,7 @@ fn a_pd_initializer_inside_the_grant_still_runs() {
     std::fs::write(dir.join("note.txt"), "x").unwrap();
     assert_project_runs(
         "pd_gated_granted",
-        &project("pd_gated_granted").join("main.kp"),
+        &caps_project("pd_gated_granted").join("main.kp"),
         "true\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -2462,7 +2517,7 @@ fn a_granted_module_creates_a_symlink_inside_its_grant() {
     let dir = caps_scratch("link");
     assert_project_runs(
         "caps_link",
-        &project("caps_link").join("main.kp"),
+        &caps_project("caps_link").join("main.kp"),
         "true\nhello link\nfalse\n0\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -2476,7 +2531,7 @@ fn a_symlink_whose_target_is_outside_the_grant_cannot_be_created() {
     let dir = caps_scratch("link_denied");
     assert_project_denied_at_runtime(
         "caps_link_denied",
-        &project("caps_link_denied").join("main.kp"),
+        &caps_project("caps_link_denied").join("main.kp"),
         "'/etc/passwd' is outside the fs capability granted to module 'util'",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -4412,7 +4467,7 @@ fn fs_list_returns_a_granted_directories_entries() {
     // the same function leaves the directory gone.
     assert_project_runs(
         "caps_list",
-        &project("caps_list").join("main.kp"),
+        &caps_project("caps_list").join("main.kp"),
         "3\na.txt,b.txt,sub\na.txt b.txt sub \nfalse\n",
     );
 }
@@ -4468,7 +4523,7 @@ fn a_discarded_wide_return_still_builds() {
 fn a_narrow_fs_grant_still_reaches_cwd() {
     assert_project_runs(
         "caps_cwd",
-        &project("caps_cwd").join("main.kp"),
+        &caps_project("caps_cwd").join("main.kp"),
         "true\n",
     );
 }
@@ -4637,7 +4692,7 @@ fn a_child_gets_a_working_directory_and_a_fallible_run_reports_why() {
     std::fs::write(dir.join("not-exec"), "x").unwrap();
     assert_project_runs(
         "process_in",
-        &project("process_in").join("main.kp"),
+        &caps_project("process_in").join("main.kp"),
         "0\ntrue\n0\n126\ntrue\nout-of-grant-cwd\ntrue\nthere\nnot-found\nnot-executable\ndir-not-found\nok\n",
     );
     assert_eq!(
