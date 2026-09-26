@@ -1,0 +1,8 @@
+// The lone `*` grant crosses no `/` byte (MK7 S8, `cap_glue.c`'s own fast
+// path): a name that contains one is denied even though `*` is the
+// whole-resource pattern.
+impl "util" caps(env = ["*"])
+
+fun main() {
+    print(util.probe())
+}

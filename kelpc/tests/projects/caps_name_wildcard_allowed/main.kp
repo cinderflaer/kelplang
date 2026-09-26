@@ -1,0 +1,9 @@
+// The lone `*` grant, the domain's whole-resource pattern (MK7 S8): the
+// LLVM backend hand-builds this exact shape as inline IR instead of a call
+// into `kelp_cap_check_name` (perf-cap-llvm-inline). A name with no `/` is
+// inside it.
+impl "util" caps(env = ["*"])
+
+fun main() {
+    print(util.probe())
+}

@@ -1,0 +1,8 @@
+// A grant on the literal `PATH` must not admit `PATHX` as a prefix match:
+// the fast path compares the full byte length AND confirms the checked
+// name's terminator, exactly as `cap_glue.c`'s reference does.
+impl "util" caps(env = ["PATH"])
+
+fun main() {
+    print(util.probe())
+}

@@ -506,8 +506,51 @@ struct RtFn<'a> {
 struct CapPlan {
     domain: String,
     pattern_count: usize,
+    /// The calling module's whole compiled-in pattern list for `domain`, text
+    /// and all, not just its count: `emit_cap_checks` inspects it to decide
+    /// whether a `CapCheck::Name` here is one of the two fast-path shapes
+    /// `cap_glue.c`'s own `kelp_cap_check_name` already fast-paths (the lone
+    /// `*`, or a literal with no `*`), which can be hand-built as inline IR
+    /// instead of a call into that separately-compiled object. `codegen_c.rs`
+    /// needs no equivalent field: the C backend gets this optimization for
+    /// free from `cc`'s own inlining of the spliced text.
+    patterns: Vec<String>,
     at: String,
     checks: Vec<crate::stdlib::CapCheck>,
+}
+
+/// Which fast path, if any, a `CapCheck::Name` at one call site can take,
+/// decided from the calling module's whole pattern list for the domain: every
+/// `CapCheck::Name` inside one `CapPlan` shares the same grant, so the list is
+/// read once per plan rather than once per check. `None` covers every shape
+/// this task leaves alone: more than one pattern, or a single pattern whose
+/// `*` is not the lone wildcard (a real glob, still matched through
+/// `kelp_std__rt__glob_match` exactly as before).
+enum NameFastPath<'p> {
+    /// The pattern list is exactly `["*"]`. `cap_glue.c`'s own fast path reads
+    /// this as "the name has no `/`", so the inline IR is the same scan.
+    Wildcard,
+    /// The pattern list is exactly one pattern with no `*` byte anywhere: the
+    /// check is byte-for-byte identity between the checked name and it.
+    Literal(&'p str),
+}
+
+/// Whether `patterns` (a calling module's whole compiled-in allowlist for one
+/// domain) is one of the two shapes `cap_glue.c`'s `kelp_cap_check_name`
+/// already fast-paths, so `emit_cap_checks` can hand-build the check as
+/// inline IR instead of emitting a call into that separately-compiled object.
+fn name_fast_path(patterns: &[String]) -> Option<NameFastPath<'_>> {
+    if patterns.len() != 1 {
+        return None;
+    }
+    let pattern = patterns[0].as_str();
+    if pattern == "*" {
+        Some(NameFastPath::Wildcard)
+    } else if !pattern.contains('*') {
+        Some(NameFastPath::Literal(pattern))
+    } else {
+        None
+    }
 }
 
 /// One `enum`'s LLVM layout, mirroring the `{ tag, union }` typedef
@@ -1279,6 +1322,7 @@ impl<'a> Gen<'a> {
         Some(CapPlan {
             domain: domain.clone(),
             pattern_count: grant.patterns.len(),
+            patterns: grant.patterns.clone(),
             at,
             checks,
         })
@@ -3828,6 +3872,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .get(&(self.module.clone(), plan.domain.clone()))
             .ok_or_else(|| no_value("the allowlist of a gated call site"))?;
         let count = self.g.v_i64(plan.pattern_count as u64);
+        // Read once per plan, not once per check: every `CapCheck::Name` here
+        // shares the one grant `plan.patterns` already is.
+        let fast_path = name_fast_path(&plan.patterns);
         for check in &plan.checks {
             let value = |index: usize| -> Result<Value<'a>, String> {
                 prepared
@@ -3835,6 +3882,32 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     .copied()
                     .ok_or_else(|| no_value("a checked call argument"))
             };
+            // The two fast paths: hand-built IR in this same module, so
+            // LLVM's own optimizer can see through and inline them, instead
+            // of the call every other check kind still emits below into
+            // `cap_glue.c`'s separately-compiled object (see the module doc
+            // comment above `cap_plan` for why that call is otherwise opaque
+            // to it). `deny_args` is exactly the argument list
+            // `kelp_cap_check_name`'s own loop would have handed
+            // `kelp_cap_deny`, so a denial from either fast path is
+            // byte-for-byte the same message.
+            if let CapCheck::Name(i) = *check {
+                if let Some(path) = &fast_path {
+                    let name = value(i)?;
+                    let deny_args = [domain, name, patterns, count, module, at];
+                    let ok = match path {
+                        NameFastPath::Wildcard => {
+                            self.emit_cap_name_wildcard_fast(name, &deny_args)?
+                        }
+                        NameFastPath::Literal(pattern) => {
+                            let pattern_ptr = self.string_global(pattern)?;
+                            self.emit_cap_name_literal_fast(name, pattern, pattern_ptr, &deny_args)?
+                        }
+                    };
+                    self.cur = ok;
+                    continue;
+                }
+            }
             let (func, ty) = match check {
                 CapCheck::Path(_) => self.g.cap_fn("kelp_cap_check_path")?,
                 CapCheck::Name(_) => self.g.cap_fn("kelp_cap_check_name")?,
@@ -3854,6 +3927,112 @@ impl<'g, 'a> FnGen<'g, 'a> {
             self.g.builder.build_call(func, ty, &args, "");
         }
         Ok(())
+    }
+
+    /// `CapCheck::Name`'s lone-`*` fast path (see `NameFastPath::Wildcard`):
+    /// scan `name` for a `/` byte, byte by byte, exactly the way
+    /// `cap_glue.c`'s own fast path and `std/rt.kp`'s `glob_match` both do.
+    /// Finding a `/` before the NUL terminator denies, calling
+    /// `kelp_cap_deny` with `deny_args` unchanged (the same six arguments the
+    /// runtime match loop's own denial would have used); reaching the
+    /// terminator with none found is the check passing. The returned block is
+    /// where the builder is left positioned, for the caller to adopt as its
+    /// own `self.cur`.
+    fn emit_cap_name_wildcard_fast(
+        &self,
+        name: Value<'a>,
+        deny_args: &[Value<'a>],
+    ) -> Result<BasicBlock<'a>, String> {
+        let func = self.cur_fn;
+        let i8t = self.g.ctx.i8();
+        let i64t = self.g.ctx.i64();
+        let deny_bb = self.g.block(func, "capname.deny");
+        let ok_bb = self.g.block(func, "capname.ok");
+        let idx = self.g.builder.build_alloca(i64t, "capname.idx");
+        self.g.st(self.g.v_i64(0), idx);
+        let cond = self.g.loop_header(func, "capname.scan.cond");
+        let i = self.g.ld(i64t, idx, "capname.i");
+        let cptr = self.g.gep(i8t, name, i, "capname.cptr");
+        let c = self.g.ld(i8t, cptr, "capname.c");
+        let is_nul = self.g.builder.build_icmp(IntCmp::Eq, c, self.g.v_i8(0), "capname.nul");
+        let is_slash = self.g.builder.build_icmp(IntCmp::Eq, c, self.g.v_i8(47), "capname.slash");
+        let stop_now = self.g.builder.build_int_binop(IntBinOp::Or, is_nul, is_slash, "capname.stop");
+        let body = self.g.block(func, "capname.scan.body");
+        let stop = self.g.block(func, "capname.scan.stop");
+        self.g.builder.build_cond_br(stop_now, stop, body);
+        self.g.builder.position_at_end(body);
+        let next = self.g.builder.build_int_binop(IntBinOp::Add, i, self.g.v_i64(1), "capname.next");
+        self.g.st(next, idx);
+        self.g.builder.build_br(cond);
+        self.g.builder.position_at_end(stop);
+        // `is_slash` was computed in `cond`, which dominates `stop` (`cond`
+        // branches straight to it), so reusing the value here rather than
+        // recomputing it is ordinary SSA use across a dominated block, the
+        // same way this file's other hand-built loops reuse a header's value
+        // in the block it branches to.
+        self.g.builder.build_cond_br(is_slash, deny_bb, ok_bb);
+        self.g.builder.position_at_end(deny_bb);
+        let (deny_fn, deny_ty) = self.g.cap_fn("kelp_cap_deny")?;
+        self.g.builder.build_call(deny_fn, deny_ty, deny_args, "");
+        self.g.builder.build_unreachable();
+        self.g.builder.position_at_end(ok_bb);
+        Ok(ok_bb)
+    }
+
+    /// `CapCheck::Name`'s literal fast path (see `NameFastPath::Literal`):
+    /// compare `name` against `pattern`'s bytes one at a time, over a
+    /// compile-time-known length (no `strlen` needed, `pattern.len()` is
+    /// already known in Rust), then confirm `name[pattern.len()]` is the NUL
+    /// terminator so a name that merely has `pattern` as a prefix (`"PATHX"`
+    /// against a grant of `"PATH"`) does not spuriously pass. Any mismatch,
+    /// in the loop or at the terminator, denies with `deny_args` unchanged; a
+    /// full match is the check passing. `pattern_ptr` is `pattern` interned
+    /// as an LLVM global string constant (`self.string_global`, the same
+    /// helper the domain/module/`at` strings above use).
+    fn emit_cap_name_literal_fast(
+        &self,
+        name: Value<'a>,
+        pattern: &str,
+        pattern_ptr: Value<'a>,
+        deny_args: &[Value<'a>],
+    ) -> Result<BasicBlock<'a>, String> {
+        let func = self.cur_fn;
+        let i8t = self.g.ctx.i8();
+        let i64t = self.g.ctx.i64();
+        let len = pattern.len() as u64;
+        let deny_bb = self.g.block(func, "capname.deny");
+        let ok_bb = self.g.block(func, "capname.ok");
+        let idx = self.g.builder.build_alloca(i64t, "capname.idx");
+        self.g.st(self.g.v_i64(0), idx);
+        let cond = self.g.loop_header(func, "capname.cmp.cond");
+        let i = self.g.ld(i64t, idx, "capname.i");
+        let more = self.g.builder.build_icmp(IntCmp::Ult, i, self.g.v_i64(len), "capname.more");
+        let body = self.g.block(func, "capname.cmp.body");
+        let after = self.g.block(func, "capname.cmp.after");
+        self.g.builder.build_cond_br(more, body, after);
+        self.g.builder.position_at_end(body);
+        let np = self.g.gep(i8t, name, i, "capname.np");
+        let pp = self.g.gep(i8t, pattern_ptr, i, "capname.pp");
+        let nv = self.g.ld(i8t, np, "capname.nv");
+        let pv = self.g.ld(i8t, pp, "capname.pv");
+        let eq = self.g.builder.build_icmp(IntCmp::Eq, nv, pv, "capname.eq");
+        let cont = self.g.block(func, "capname.cmp.cont");
+        self.g.builder.build_cond_br(eq, cont, deny_bb);
+        self.g.builder.position_at_end(cont);
+        let next = self.g.builder.build_int_binop(IntBinOp::Add, i, self.g.v_i64(1), "capname.next");
+        self.g.st(next, idx);
+        self.g.builder.build_br(cond);
+        self.g.builder.position_at_end(after);
+        let endp = self.g.gep(i8t, name, self.g.v_i64(len), "capname.endp");
+        let endc = self.g.ld(i8t, endp, "capname.endc");
+        let is_nul = self.g.builder.build_icmp(IntCmp::Eq, endc, self.g.v_i8(0), "capname.endnul");
+        self.g.builder.build_cond_br(is_nul, ok_bb, deny_bb);
+        self.g.builder.position_at_end(deny_bb);
+        let (deny_fn, deny_ty) = self.g.cap_fn("kelp_cap_deny")?;
+        self.g.builder.build_call(deny_fn, deny_ty, deny_args, "");
+        self.g.builder.build_unreachable();
+        self.g.builder.position_at_end(ok_bb);
+        Ok(ok_bb)
     }
 
     /// A value of the element type as the storage type: a zero extension for
@@ -5128,6 +5307,12 @@ fn declare_cap_fns<'a>(
     decl("kelp_cap_check_host", &text);
     decl("kelp_cap_check_hostport", &[ptr, ptr, i16t, ptr, i64t, ptr, ptr]);
     decl("kelp_cap_check_port", &[ptr, i16t, ptr, i64t, ptr, ptr]);
+    // Declared so the two `CapCheck::Name` fast paths in `emit_cap_checks` can
+    // call straight into the same denial `kelp_cap_check_name`'s own loop
+    // calls, rather than duplicating its message or its `exit(1)`. Every
+    // other check kind still denies from inside its own runtime call and
+    // never reaches this declaration directly.
+    decl("kelp_cap_deny", &text);
     out
 }
 
