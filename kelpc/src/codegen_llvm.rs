@@ -112,10 +112,10 @@
 //! - `Box<T>` is one pointer, `empty`/`of`/`get`/`set`/`take`, and `take` moves
 //!   the value out, which is what makes a recursive `datac` expressible.
 //! - `Map<K, V>` keeps its entries dense in insertion order and a separate
-//!   open-addressed index of `entry index + 1` (`0` empty, `SIZE_MAX`
-//!   tombstone), so `keys()` returns insertion order. Its key helpers are the
-//!   runtime's own (`kelp_map_hash`, `kelp_map_mix`, `kelp_map_key_eq`),
-//!   reached by declaration rather than re-derived.
+//!   open-addressed index of `entry index + 1` in a `u32` (`0` empty,
+//!   `UINT32_MAX` tombstone), so `keys()` returns insertion order. Its key
+//!   helpers are the runtime's own (`kelp_map_hash`, `kelp_map_mix`,
+//!   `kelp_map_key_eq`), reached by declaration rather than re-derived.
 //! - `[T; N]` is inline, not a pointer: `len()` is the type's constant,
 //!   `get`/`set` are the same bounds check with the array's panic text, and the
 //!   repeat literal goes through a generated `fill` loop rather than N
@@ -6490,6 +6490,12 @@ impl<'a> Gen<'a> {
         for s in specs {
             let ty = self.ctx.fn_type(s.ret, &s.params, false);
             let func = self.module.add_function(&s.symbol, ty);
+            // C's `static`: the body is emitted into this module just below,
+            // and an external symbol is one LLVM will not inline into its
+            // callers, which is why the C backend's copy of these bodies runs
+            // 1.15x faster than this backend's. No runtime C body names a
+            // container symbol, so nothing outside the module calls one.
+            func.as_value().set_internal_linkage();
             self.container_fns.insert(s.symbol, (func, ty));
         }
         Ok(())
@@ -9048,8 +9054,8 @@ impl<'a> Gen<'a> {
 
     /// One `Map<K, V>` function set, the mirror of `codegen_c::write_map`.
     /// Entries sit in insertion order in a dense array and a separate
-    /// open-addressed index of `entry index + 1` (`0` empty, `SIZE_MAX`
-    /// tombstone) does the lookup.
+    /// open-addressed index of `entry index + 1` in a `u32` (`0` empty,
+    /// `UINT32_MAX` tombstone) does the lookup.
     fn emit_map_bodies(&self, key: &Ty, value: &Ty) -> Result<(), String> {
         let base = map_c_type(key, value);
         let map_ty = self.cty(&Ty::Map(Box::new(key.clone()), Box::new(value.clone())))?;
@@ -9063,7 +9069,7 @@ impl<'a> Gen<'a> {
         let list_key_ty = self.cty(&Ty::List(Box::new(key.clone())))?;
         let list_value_ty = self.cty(&Ty::List(Box::new(value.clone())))?;
         let ptr = self.pty();
-        let (i1t, i8t, i64t) = (self.ctx.i1(), self.ctx.i8(), self.ctx.i64());
+        let (i1t, i8t, i32t, i64t) = (self.ctx.i1(), self.ctx.i8(), self.ctx.i32(), self.ctx.i64());
         let entry_size = self.layout.abi_size_of(entry_ty);
         let value_drops = needs_drop(value, &self.owned);
         let clonable = crate::types::value_is_clonable(value, &self.clonable);
@@ -9113,9 +9119,9 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(loop_bb);
             let i = self.ld(i64t, i_slot, "i");
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let slot_addr = self.gep(i64t, index, i, "slot");
-            let slot = self.ld(i64t, slot_addr, "slot");
-            let iszero = self.builder.build_icmp(IntCmp::Eq, slot, self.v_i64(0), "iszero");
+            let slot_addr = self.gep(i32t, index, i, "slot");
+            let slot = self.ld(i32t, slot_addr, "slot");
+            let iszero = self.builder.build_icmp(IntCmp::Eq, slot, self.v_i32(0), "iszero");
             self.builder.build_cond_br(iszero, empty_bb, probe_bb);
             self.builder.position_at_end(empty_bb);
             // empty: the first tombstone seen, else this slot
@@ -9126,7 +9132,7 @@ impl<'a> Gen<'a> {
             self.builder.build_ret(sel);
             // probe: tombstone, or a live entry to compare
             self.builder.position_at_end(probe_bb);
-            let istomb2 = self.builder.build_icmp(IntCmp::Eq, slot, self.v_i64(size_max), "istomb");
+            let istomb2 = self.builder.build_icmp(IntCmp::Eq, slot, self.v_i32(INDEX_TOMBSTONE), "istomb");
             self.builder.build_cond_br(istomb2, tomb_bb, live_bb);
             self.builder.position_at_end(tomb_bb);
             let t2 = self.ld(i64t, tomb_slot, "tomb");
@@ -9136,7 +9142,8 @@ impl<'a> Gen<'a> {
             self.builder.build_br(next_bb);
             self.builder.position_at_end(live_bb);
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
-            let e0 = self.builder.build_int_binop(IntBinOp::Sub, slot, self.v_i64(1), "e");
+            let slot64 = self.builder.build_int_cast(false, true, slot, i64t, "slot64");
+            let e0 = self.builder.build_int_binop(IntBinOp::Sub, slot64, self.v_i64(1), "e");
             let entry = self.gep(entry_ty, entries, e0, "entry");
             let live = self.ld(i8t, self.fld(entry_ty, entry, E_LIVE, "live"), "live");
             let dead = self.builder.build_icmp(IntCmp::Eq, live, self.v_i8(0), "dead");
@@ -9177,7 +9184,7 @@ impl<'a> Gen<'a> {
             let old = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
             let (free, fty) = self.libc_fn("free")?;
             self.call(free, fty, &[old], "");
-            let bytes = self.builder.build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(8), "bytes");
+            let bytes = self.builder.build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(4), "bytes");
             let (malloc, mty) = self.libc_fn("malloc")?;
             let buf = self.call(malloc, mty, &[bytes], "index");
             self.check_alloc(buf, f)?;
@@ -9213,9 +9220,9 @@ impl<'a> Gen<'a> {
             let jh = self.loop_header(f, "rehash.probe");
             let j = self.ld(i64t, j_slot, "j");
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let slot_addr = self.gep(i64t, index, j, "at");
-            let holder = self.ld(i64t, slot_addr, "holder");
-            let occupied = self.builder.build_icmp(IntCmp::Ne, holder, self.v_i64(0), "occupied");
+            let slot_addr = self.gep(i32t, index, j, "at");
+            let holder = self.ld(i32t, slot_addr, "holder");
+            let occupied = self.builder.build_icmp(IntCmp::Ne, holder, self.v_i32(0), "occupied");
             let jbody = self.block(f, "rehash.probe.body");
             let jexit = self.block(f, "rehash.probe.end");
             self.builder.build_cond_br(occupied, jbody, jexit);
@@ -9227,9 +9234,10 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(jexit);
             let jf = self.ld(i64t, j_slot, "j");
             let index2 = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let placed = self.gep(i64t, index2, jf, "at");
+            let placed = self.gep(i32t, index2, jf, "at");
             let ep1 = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "ep1");
-            self.st(ep1, placed);
+            let ep1_32 = self.builder.build_int_cast(false, false, ep1, i32t, "ep1_32");
+            self.st(ep1_32, placed);
             let used = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_USED, "used"), "used");
             let used1 = self.builder.build_int_binop(IntBinOp::Add, used, self.v_i64(1), "used1");
             self.st(used1, self.fld(map_ty, self_p, M_INDEX_USED, "used"));
@@ -9350,8 +9358,9 @@ impl<'a> Gen<'a> {
             self.emit_panic("Map.remove: key not found")?;
             self.builder.position_at_end(ok);
             let index0 = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let holder0 = self.ld(i64t, self.gep(i64t, index0, slot, "at"), "holder");
-            let e = self.builder.build_int_binop(IntBinOp::Sub, holder0, self.v_i64(1), "e");
+            let holder0 = self.ld(i32t, self.gep(i32t, index0, slot, "at"), "holder");
+            let holder64 = self.builder.build_int_cast(false, true, holder0, i64t, "holder64");
+            let e = self.builder.build_int_binop(IntBinOp::Sub, holder64, self.v_i64(1), "e");
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let entry = self.gep(entry_ty, entries, e, "entry");
             let value_slot = self.fld(entry_ty, entry, E_VALUE, "value");
@@ -9360,8 +9369,8 @@ impl<'a> Gen<'a> {
             self.map_key_drop(key, entry_ty, entry)?;
             self.st(self.v_i8(0), self.fld(entry_ty, entry, E_LIVE, "live"));
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let slot_addr = self.gep(i64t, index, slot, "at");
-            self.st(self.v_i64(size_max), slot_addr);
+            let slot_addr = self.gep(i32t, index, slot, "at");
+            self.st(self.v_i32(INDEX_TOMBSTONE), slot_addr);
             let len = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
             let len1 = self.builder.build_int_binop(IntBinOp::Sub, len, self.v_i64(1), "len1");
             self.st(len1, self.fld(map_ty, self_p, M_LEN, "len"));
@@ -9439,9 +9448,9 @@ impl<'a> Gen<'a> {
             self.st(self.v_i8(1), self.fld(entry_ty, entry, E_LIVE, "live"));
             // Bump `index_used` only when the slot was empty (not a tombstone).
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let slot_addr = self.gep(i64t, index, slot, "at");
-            let holder = self.ld(i64t, slot_addr, "holder");
-            let was_empty = self.builder.build_icmp(IntCmp::Eq, holder, self.v_i64(0), "wasempty");
+            let slot_addr = self.gep(i32t, index, slot, "at");
+            let holder = self.ld(i32t, slot_addr, "holder");
+            let was_empty = self.builder.build_icmp(IntCmp::Eq, holder, self.v_i32(0), "wasempty");
             let bump = self.block(f, "insert.bump");
             let done = self.block(f, "insert.done");
             self.builder.build_cond_br(was_empty, bump, done);
@@ -9452,9 +9461,10 @@ impl<'a> Gen<'a> {
             self.builder.build_br(done);
             self.builder.position_at_end(done);
             let index2 = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let slot_addr2 = self.gep(i64t, index2, slot, "at");
+            let slot_addr2 = self.gep(i32t, index2, slot, "at");
             let ep1 = self.builder.build_int_binop(IntBinOp::Add, e, self.v_i64(1), "ep1");
-            self.st(ep1, slot_addr2);
+            let ep1_32 = self.builder.build_int_cast(false, false, ep1, i32t, "ep1_32");
+            self.st(ep1_32, slot_addr2);
             let len2 = self.ld(i64t, self.fld(map_ty, self_p, M_LEN, "len"), "len");
             let len3 = self.builder.build_int_binop(IntBinOp::Add, len2, self.v_i64(1), "len1");
             self.st(len3, self.fld(map_ty, self_p, M_LEN, "len"));
@@ -9505,7 +9515,7 @@ impl<'a> Gen<'a> {
             self.builder.build_cond_br(noindex, end, clear_index);
             self.builder.position_at_end(clear_index);
             let icap = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
-            let bytes = self.builder.build_int_binop(IntBinOp::Mul, icap, self.v_i64(8), "bytes");
+            let bytes = self.builder.build_int_binop(IntBinOp::Mul, icap, self.v_i64(4), "bytes");
             let (memset, sety) = self.libc_fn("memset")?;
             self.call(memset, sety, &[index, self.v_i32(0), bytes], "");
             self.builder.build_br(end);
@@ -9678,8 +9688,9 @@ impl<'a> Gen<'a> {
         // `slot` is the *index* slot `find` returned; the entry it names is
         // `index[slot] - 1`, exactly the C `self->index[slot] - 1`.
         let index = self.ld(self.pty(), self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-        let holder = self.ld(self.ctx.i64(), self.gep(self.ctx.i64(), index, slot, "at"), "holder");
-        let e = self.builder.build_int_binop(IntBinOp::Sub, holder, self.v_i64(1), "e");
+        let holder = self.ld(self.ctx.i32(), self.gep(self.ctx.i32(), index, slot, "at"), "holder");
+        let holder64 = self.builder.build_int_cast(false, true, holder, self.ctx.i64(), "holder64");
+        let e = self.builder.build_int_binop(IntBinOp::Sub, holder64, self.v_i64(1), "e");
         let entries = self.ld(self.pty(), self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
         let entry = self.gep(entry_ty, entries, e, "entry");
         Ok(self.fld(entry_ty, entry, E_VALUE, "value"))
@@ -9692,6 +9703,11 @@ const M_ENTRIES: u32 = 0;
 const M_ENTRY_COUNT: u32 = 1;
 const M_ENTRY_CAP: u32 = 2;
 const M_LEN: u32 = 3;
+/// One index slot is a `u32` holding `entry index + 1`: `0` is empty, and this
+/// is the tombstone a `remove` leaves behind. `SIZE_MAX` marks "no tombstone
+/// seen yet" in `find`, which is a slot position and not a slot's content, so
+/// the two sentinels are different widths on purpose.
+const INDEX_TOMBSTONE: u64 = u32::MAX as u64;
 const M_INDEX: u32 = 4;
 const M_INDEX_CAP: u32 = 5;
 const M_INDEX_USED: u32 = 6;

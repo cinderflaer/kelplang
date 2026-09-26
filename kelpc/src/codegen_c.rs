@@ -1105,11 +1105,11 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
             .unwrap();
         }
         // A map stores its entries in insertion order and keeps a separate
-        // open-addressed index of `entry index + 1` (0 empty, `SIZE_MAX`
-        // tombstone), because `keys()` must return insertion order. Both the
-        // key and the value sit inline in the entry, so the entry needs a
-        // complete key and value type: it is forward-declared here and its
-        // body is written once every `datac` typedef exists
+        // open-addressed index of `entry index + 1` in a `uint32_t` (0 empty,
+        // `UINT32_MAX` tombstone), because `keys()` must return insertion
+        // order. Both the key and the value sit inline in the entry, so the
+        // entry needs a complete key and value type: it is forward-declared
+        // here and its body is written once every `datac` typedef exists
         // (`write_map_entry_body`). The map itself only holds a pointer to the
         // entry, so it stays complete here regardless.
         Ty::Map(key, value) => {
@@ -1118,7 +1118,7 @@ fn write_container_typedef(out: &mut String, ty: &Ty) {
             writeln!(out, "typedef struct {entry} {entry};").unwrap();
             writeln!(
                 out,
-                "typedef struct {{\n    {entry}* entries;\n    size_t entry_count;\n    size_t entry_cap;\n    size_t len;\n    size_t* index;\n    size_t index_cap;\n    size_t index_used;\n}} {name};"
+                "typedef struct {{\n    {entry}* entries;\n    size_t entry_count;\n    size_t entry_cap;\n    size_t len;\n    uint32_t* index;\n    size_t index_cap;\n    size_t index_used;\n}} {name};"
             )
             .unwrap();
         }
@@ -1811,7 +1811,7 @@ fn key_eq_target(key: &Ty, declared_keys: &HashSet<String>) -> String {
 /// One `Map<K, V>` instantiation's function set (MK5-S5). Entries live in
 /// insertion order in a dense array, so `keys()` returns insertion order
 /// rather than hash order; a separate open-addressed index of `entry index +
-/// 1` (`0` empty, `SIZE_MAX` tombstone) does the lookup. `clear()` resets
+/// 1` (`0` empty, `UINT32_MAX` tombstone) does the lookup. `clear()` resets
 /// both and keeps the buffers; a removal marks the entry dead and tombstones
 /// its index slot rather than shifting anything, so insertion order is
 /// stable. The value is held through a pointer, which is what lets this
@@ -1924,8 +1924,8 @@ fn write_map(
     writeln!(out, "static size_t {map}__find(const {map}* self, {key_arg_c} k, bool* found) {{").unwrap();
     out.push_str("    *found = false;\n    if (self->index_cap == 0) {\n        return 0;\n    }\n");
     writeln!(out, "    size_t mask = self->index_cap - 1;\n    size_t i = (size_t){} & mask;\n    size_t tomb = SIZE_MAX;", hash_arg("k")).unwrap();
-    out.push_str("    for (;;) {\n        size_t slot = self->index[i];\n        if (slot == 0) {\n            return tomb != SIZE_MAX ? tomb : i;\n        }\n");
-    out.push_str("        if (slot == SIZE_MAX) {\n            if (tomb == SIZE_MAX) {\n                tomb = i;\n            }\n        } else {\n");
+    out.push_str("    for (;;) {\n        uint32_t slot = self->index[i];\n        if (slot == 0) {\n            return tomb != SIZE_MAX ? tomb : i;\n        }\n");
+    out.push_str("        if (slot == UINT32_MAX) {\n            if (tomb == SIZE_MAX) {\n                tomb = i;\n            }\n        } else {\n");
     writeln!(
         out,
         "            const {entry}* e = &self->entries[slot - 1];\n            if (e->live && {}) {{\n                *found = true;\n                return i;\n            }}\n        }}",
@@ -1938,8 +1938,8 @@ fn write_map(
     // count alone and leaves the dense entries untouched.
     writeln!(out, "static void {map}__rehash({map}* self, size_t want) {{").unwrap();
     out.push_str("    size_t cap = 8;\n    while (cap < want * 4) {\n        cap *= 2;\n    }\n");
-    writeln!(out, "    free(self->index);\n    self->index = (size_t*)malloc(cap * sizeof(size_t));").unwrap();
-    out.push_str("    if (self->index == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n    memset(self->index, 0, cap * sizeof(size_t));\n");
+    writeln!(out, "    free(self->index);\n    self->index = (uint32_t*)malloc(cap * sizeof(uint32_t));").unwrap();
+    out.push_str("    if (self->index == NULL) {\n        kelp_panic(\"out of memory\");\n    }\n    memset(self->index, 0, cap * sizeof(uint32_t));\n");
     out.push_str("    self->index_cap = cap;\n    self->index_used = 0;\n");
     out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
     writeln!(
@@ -1948,7 +1948,7 @@ fn write_map(
         hash_stored("self->entries[e].key")
     )
     .unwrap();
-    out.push_str("        while (self->index[i] != 0) {\n            i = (i + 1) & (cap - 1);\n        }\n        self->index[i] = e + 1;\n        self->index_used++;\n    }\n}\n\n");
+    out.push_str("        while (self->index[i] != 0) {\n            i = (i + 1) & (cap - 1);\n        }\n        self->index[i] = (uint32_t)(e + 1);\n        self->index_used++;\n    }\n}\n\n");
 
     writeln!(out, "static void {map}__insert({map}* self, {key_arg_c} k, {value_c} v) {{").unwrap();
     writeln!(out, "    if (self->index_cap == 0 || (self->index_used + 1) * 4 >= self->index_cap * 3) {{\n        {map}__rehash(self, self->len + 1);\n    }}").unwrap();
@@ -1972,7 +1972,7 @@ fn write_map(
         writeln!(out, "    self->entries[e].key = k;").unwrap();
     }
     out.push_str("    self->entries[e].value = v;\n    self->entries[e].live = 1;\n");
-    out.push_str("    if (self->index[slot] == 0) {\n        self->index_used++;\n    }\n    self->index[slot] = e + 1;\n    self->len++;\n}\n\n");
+    out.push_str("    if (self->index[slot] == 0) {\n        self->index_used++;\n    }\n    self->index[slot] = (uint32_t)(e + 1);\n    self->len++;\n}\n\n");
 
     writeln!(out, "static bool {map}__has(const {map}* self, {key_arg_c} k) {{\n    bool found = false;\n    {map}__find(self, k, &found);\n    return found;\n}}\n").unwrap();
 
@@ -2005,7 +2005,7 @@ fn write_map(
     writeln!(out, "static {value_c} {map}__remove({map}* self, {key_arg_c} k) {{").unwrap();
     writeln!(out, "    bool found = false;\n    size_t slot = {map}__find(self, k, &found);\n    if (!found) {{\n        kelp_panic(\"Map.remove: key not found\");\n    }}\n    size_t e = self->index[slot] - 1;").unwrap();
     out.push_str("    ");
-    writeln!(out, "{value_c} v = self->entries[e].value;\n    {}\n    self->entries[e].live = 0;\n    self->index[slot] = SIZE_MAX;\n    self->len--;\n    return v;\n}}\n", drop_key("self->entries[e].key")).unwrap();
+    writeln!(out, "{value_c} v = self->entries[e].value;\n    {}\n    self->entries[e].live = 0;\n    self->index[slot] = UINT32_MAX;\n    self->len--;\n    return v;\n}}\n", drop_key("self->entries[e].key")).unwrap();
 
     writeln!(out, "static void {map}__clear({map}* self) {{").unwrap();
     out.push_str("    for (size_t e = 0; e < self->entry_count; e++) {\n        if (!self->entries[e].live) {\n            continue;\n        }\n");
@@ -2013,7 +2013,7 @@ fn write_map(
         writeln!(out, "        {}(&self->entries[e].value);", drop_value.as_deref().unwrap()).unwrap();
     }
     writeln!(out, "        {}\n        self->entries[e].live = 0;\n    }}", drop_key("self->entries[e].key")).unwrap();
-    out.push_str("    self->entry_count = 0;\n    self->len = 0;\n    self->index_used = 0;\n    if (self->index != NULL) {\n        memset(self->index, 0, self->index_cap * sizeof(size_t));\n    }\n}\n\n");
+    out.push_str("    self->entry_count = 0;\n    self->len = 0;\n    self->index_used = 0;\n    if (self->index != NULL) {\n        memset(self->index, 0, self->index_cap * sizeof(uint32_t));\n    }\n}\n\n");
 
     writeln!(out, "static size_t {map}__len(const {map}* self) {{\n    return self->len;\n}}\n").unwrap();
     writeln!(out, "static bool {map}__is_empty(const {map}* self) {{\n    return self->len == 0;\n}}\n").unwrap();
