@@ -1,0 +1,10 @@
+// The negative control for the name-domain elision: `std/env` holds the
+// literal `PATH`, not the whole-resource `*`, so its own internal check is the
+// effective gate for what its wrappers may read and must stay. The entry
+// module's own `*` admits `HOME`, so only that internal check can deny it, and
+// the denial names `std/env` rather than the entry module.
+impl "std/env" caps(env = ["PATH"])
+
+fun main() {
+    print(env.has(name = "HOME"))
+}

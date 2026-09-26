@@ -1914,6 +1914,179 @@ fn a_full_grant_elides_the_runtime_path_check_but_a_narrow_one_keeps_it() {
 }
 
 #[test]
+fn a_whole_resource_name_grant_elides_the_defining_modules_own_check() {
+    // A name domain's wrapper calls its own gated `extern fun` (`std/env`'s
+    // `has` over `has_raw`, one line each), and that inner call carries a
+    // `CapCheck::Name` against `std/env`'s own granted list. When that list is
+    // exactly the domain's whole-resource `*`, the inner check is provably
+    // going to pass for every name its callers can reach: an `env` grant may
+    // not name a `/` (`resolve.rs::validate_cap_pattern` refuses one) and `*`
+    // crosses none, so the call site's own check has already admitted the
+    // name. `cap_plan` drops it before codegen, in both backends
+    // (`codegen_c.rs::Gen::cap_plan` and its mirror in `codegen_llvm.rs`).
+    //
+    // This is a codegen-shape assertion, so it reads the generated C the way
+    // the path-domain elision test above does, and pins `KELPC_ORACLE=c`
+    // explicitly for the same reason: the artifact under test is one only that
+    // backend writes. The expected count is exact and stated: ONE
+    // `kelp_cap_check_name` call for the `env.has` access, the entry module's
+    // own. Without the elision there are five, the four inside `std/env`'s
+    // wrappers included, which the narrow case below pins.
+    let bin = out_path("caps_elide_name_full");
+    let build = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(project("caps_elide_name_full").join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'caps_elide_name_full' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(
+        run.status.success(),
+        "expected 'caps_elide_name_full' to run cleanly"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "true\n",
+        "the elided check must not change the program's observable result"
+    );
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    assert_eq!(
+        generated.matches("kelp_cap_check_name(\"").count(),
+        1,
+        "a whole-resource ('*') grant to 'std/env' must leave exactly one \
+         'kelp_cap_check_name' call for this access, the entry module's own:\n{generated}"
+    );
+    assert!(
+        generated.contains("kelp_cap_check_name(\"env\", \"PATH\", kelp_caps_main_env"),
+        "the one check left must be the entry module's own, against its own \
+         pattern list:\n{generated}"
+    );
+    assert!(
+        !generated.contains("kelp_cap_check_name(\"env\", kelp_name, kelp_caps_std_env_env"),
+        "the check the elision removes is the one inside 'std/env' itself, \
+         against 'std/env's own list:\n{generated}"
+    );
+
+    // The negative control: `std/env` holds a narrower list than `*`, so its
+    // own internal check is the effective gate for what its wrappers may read
+    // and is kept. The entry module holds `*`, which admits `HOME`, so this
+    // check is the only thing that can deny it, and the denial names
+    // `std/env` rather than the entry module.
+    let bin2 = out_path("caps_elide_name_narrow");
+    let build2 = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(project("caps_elide_name_narrow").join("main.kp"))
+        .arg("-o")
+        .arg(&bin2)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build2.status.success(),
+        "expected 'caps_elide_name_narrow' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build2.stderr)
+    );
+    let generated2 = std::fs::read_to_string(bin2.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    assert_eq!(
+        generated2.matches("kelp_cap_check_name(\"").count(),
+        5,
+        "a narrower grant to 'std/env' must keep all four internal \
+         'kelp_cap_check_name' calls beside the entry module's own:\n{generated2}"
+    );
+    let run2 = Command::new(&bin2).output().expect("failed to run the binary");
+    assert!(
+        !run2.status.success(),
+        "expected 'caps_elide_name_narrow' to be denied at runtime"
+    );
+    let stderr2 = String::from_utf8_lossy(&run2.stderr);
+    assert!(
+        stderr2.contains("'HOME' is outside the env capability granted to module 'std/env'"),
+        "expected the denial to name 'std/env' and the refused name, got:\n{stderr2}"
+    );
+    assert!(
+        stderr2.contains("PATH"),
+        "expected the denial to name the granted pattern, got:\n{stderr2}"
+    );
+}
+
+#[test]
+fn a_wildcard_caller_outside_the_domain_module_keeps_its_own_check() {
+    // The safety boundary, and the test that would catch the elision being
+    // broadened past the domain's own defining module: `util` holds the
+    // whole-resource `*` for `env` and is not `std/env`, so its own
+    // `CapCheck::Name` is emitted exactly as before, and its own
+    // `*`-does-not-cross-`/` rule is what denies the slashy name. `std/env`
+    // holds `*` in this same program, so the elision is active: if it had
+    // reached `util` too, there would be no check left at all and this run
+    // would succeed. Never an exact literal grant: an `env` pattern may not
+    // contain a `/` at all, which
+    // `an_env_grant_cannot_name_a_slashy_variable` pins as a refusal.
+    let bin = out_path("caps_elide_name_wild_caller");
+    let build = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(project("caps_elide_name_wild_caller").join("main.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'caps_elide_name_wild_caller' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let generated = std::fs::read_to_string(bin.with_extension("c"))
+        .expect("the generated C sits beside the binary");
+    assert_eq!(
+        generated.matches("kelp_cap_check_name(\"").count(),
+        1,
+        "'std/env's own checks are elided here, and 'util's own is not: \
+         exactly one 'kelp_cap_check_name' call is left:\n{generated}"
+    );
+    assert!(
+        generated.contains("kelp_cap_check_name(\"env\", \"has/nested\", kelp_caps_util_env"),
+        "the one check left must be the ordinary '*' holder's own, not an \
+         elided one:\n{generated}"
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(
+        !run.status.success(),
+        "a name with a '/' in it reached only through a '*' grant must still \
+         be denied"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("'has/nested' is outside the env capability granted to module 'util'"),
+        "expected 'util's own check to refuse the slashy name, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_env_grant_cannot_name_a_slashy_variable() {
+    // The scenario the elision was approved on was an exact, literal grant for
+    // a name that contains a `/`, which `std/env`'s own wildcard could never
+    // admit and the elision would have made newly sufficient. No such program
+    // can be written: `resolve.rs::validate_cap_pattern` refuses a `/` in an
+    // `env` pattern by name, at the `impl` line, so the only grant that can
+    // ever admit a slashy name is none at all. That is also why the elision
+    // cannot admit one where a grant could not.
+    assert_project_rejected(
+        "caps_elide_name_slashy_grant",
+        &project("caps_elide_name_slashy_grant").join("main.kp"),
+        "'has/slash' is not a variable name",
+    );
+}
+
+#[test]
 fn a_module_cannot_delegate_the_wildcard_it_does_not_hold() {
     // `mid` holds one narrow `fs` pattern, so `caps(*)` on its own import
     // claims a wildcard it was never given; the refusal names the wildcard.
