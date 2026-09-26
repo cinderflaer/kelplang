@@ -1278,6 +1278,31 @@ fn an_owned_local_bound_in_a_loop_body_is_dropped_on_both_paths() {
 }
 
 #[test]
+fn an_assignment_through_a_dereferenced_borrow_frees_the_old_value() {
+    // roadmap open item 15, case 2: `*p = value` (and `p.field = value`
+    // through a borrowed base) used to leak the value it overwrote, because
+    // `DropPlan::at_assign` only ever recorded a plain binding, and neither
+    // target has one — there is no declaration to key a `DropTarget` to,
+    // only a place. Both backends now free the old value at the target's own
+    // address instead of resolving a binding.
+    assert_compiles_and_runs("tests/fixtures/assign_through_deref.kp", "second\nbeta\n");
+}
+
+#[test]
+fn assigning_an_owned_field_frees_the_field_s_old_value() {
+    // roadmap open item 15, case 3: `h.name = s` used to leak the field's old
+    // buffer for the same reason case 2 did. Also covers `h.name = h.name`
+    // and a field reassigned after being partially moved out of: both leave
+    // the field's slot already zeroed by the time this drop runs, so the
+    // fixture is what pins that freeing zero stays a safe no-op rather than
+    // a double free.
+    assert_compiles_and_runs(
+        "tests/fixtures/assign_owned_field.kp",
+        "beta\ngamma\ndelta\nepsilon\n",
+    );
+}
+
+#[test]
 fn a_rebound_or_shadowed_owned_local_is_dropped_for_its_own_value() {
     // BUG-n7Wq3: the owned set kept one entry per *name* per scope, so a second
     // `var a` in one block replaced the first entry and the buffer the first
@@ -3435,6 +3460,12 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // exit 0.
         "net_try_connect",
         "net_try_connect_retry",
+        // roadmap open item 15, cases 2 and 3: an assignment through a
+        // dereferenced borrow and to an owned field used to leak the value
+        // they overwrote, because `DropPlan::at_assign` had no way to key a
+        // drop to anything but a plain binding.
+        "assign_through_deref",
+        "assign_owned_field",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");

@@ -3764,7 +3764,18 @@ impl<'a> Gen<'a> {
                 let mut out = String::new();
                 writeln!(out, "{} = {value_text};", target_ty.c_decl(&tmp)).unwrap();
                 for d in &drops {
-                    let old = self.drop_name(d);
+                    // An `Ident` target's drop names a binding `drop_name`
+                    // resolves the usual way. A `FieldAccess`/`Deref` target
+                    // (`h.name = ...`, `*p = ...`) has no binding at all —
+                    // `borrowck.rs` records `binding: None` for exactly this
+                    // shape (roadmap open item 15, cases 2 and 3) — so the
+                    // place to free is the target's own lvalue, read again:
+                    // nothing between the two evaluations writes it, so a
+                    // second render of the same place is the old value.
+                    let old = match &target.kind {
+                        ExprKind::Ident(_) => self.drop_name(d),
+                        _ => target_text.clone(),
+                    };
                     writeln!(out, "{}", drop_call(d, &old)).unwrap();
                 }
                 writeln!(out, "{target_text} = {tmp};").unwrap();

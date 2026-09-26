@@ -3624,24 +3624,39 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 self.g.builder.build_store(v, slot);
                 Ok(())
             }
-            // A field write: the field's address, then a store of the new value.
-            // The plan records `at_assign` only for an `Ident` target, so a
-            // field assignment frees nothing first, the same as the C backend.
+            // A field write: the field's address, then a store of the new
+            // value. `borrowck.rs` records an `at_assign` entry with
+            // `binding: None` for this shape too now (roadmap open item 15,
+            // case 3), so the old field value is freed first, the same as an
+            // `Ident` target — just at this address instead of a resolved
+            // binding, since there is no declaration to key one to.
             ExprKind::FieldAccess { base, field } => {
                 let (ptr, struct_ty, index) = self.field_place(base, field)?;
                 let field_ptr = self
                     .g
                     .builder
                     .build_struct_gep(struct_ty, ptr, index, field);
+                let drops = self.drops_at_assign(span);
+                if let Some(d) = drops.first() {
+                    self.g.call_drop(field_ptr, &d.ty)?;
+                }
                 self.g.builder.build_store(v, field_ptr);
                 Ok(())
             }
             // A store through a borrow: `*p = v` (or `(*p).field = v` through
             // the `FieldAccess` arm above, whose `place_of` steps through the
             // pointer). The pointer is the borrow's own value, so the store
-            // writes into whatever the borrow names.
+            // writes into whatever the borrow names. The value `*p` pointed
+            // at is freed first, the same way and for the same reason the
+            // `FieldAccess` arm above now does (roadmap open item 15, case
+            // 2) — without it, the value a `*p = value` overwrote had no
+            // binding anywhere in this frame to be freed by, ever.
             ExprKind::Deref { expr: sub } => {
                 let ptr = self.value_of(sub)?;
+                let drops = self.drops_at_assign(span);
+                if let Some(d) = drops.first() {
+                    self.g.call_drop(ptr, &d.ty)?;
+                }
                 self.g.builder.build_store(v, ptr);
                 Ok(())
             }
