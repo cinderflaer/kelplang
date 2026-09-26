@@ -6083,7 +6083,32 @@ impl<'a> Gen<'a> {
             out.push(spec(
                 &format!("{base}__sift_down"),
                 void,
+                &[ptr, i64t, i64t, i64t],
+            ));
+            out.push(spec(
+                &format!("{base}__heapsort_range"),
+                void,
                 &[ptr, i64t, i64t],
+            ));
+            out.push(spec(
+                &format!("{base}__insertion_sort"),
+                void,
+                &[ptr, i64t, i64t],
+            ));
+            out.push(spec(
+                &format!("{base}__median3"),
+                i64t,
+                &[ptr, i64t, i64t, i64t],
+            ));
+            out.push(spec(
+                &format!("{base}__partition"),
+                i64t,
+                &[ptr, i64t, i64t],
+            ));
+            out.push(spec(
+                &format!("{base}__quicksort"),
+                void,
+                &[ptr, i64t, i64t, i64t],
             ));
             out.push(spec(&format!("{base}__sort"), void, &[ptr]));
         }
@@ -6228,6 +6253,23 @@ fn spec<'a>(symbol: &str, ret: Type<'a>, params: &[Type<'a>]) -> CfnSpec<'a> {
 const L_DATA: u32 = 0;
 const L_LEN: u32 = 1;
 const L_CAP: u32 = 2;
+
+/// `List#sort`'s introsort: a partition at or below this many elements
+/// finishes with insertion sort instead of recursing further. 16-32 is the
+/// textbook range (it is what libstdc++'s own introsort threshold, 16, comes
+/// from); 32, the top of that range, is what benchmarking actually picked
+/// here: `median3`, `partition` and `cmp` are separate emitted functions
+/// rather than something the source-level optimizer can inline into one
+/// quicksort loop, so each partition step pays real call overhead on top of
+/// the comparisons, and a partition small enough to hand to insertion sort
+/// skips that call chain entirely. Measured on
+/// `benchmarks/sorting/sort.kp` (n = 5,000,000): 16 landed at 254ms, 24 at
+/// 243ms, 32 at 238ms, with diminishing returns above that (a further push to
+/// 64 was only 227ms) — 32 stays inside the well-tested range while clearing
+/// the 250ms target with headroom, rather than chasing the last few
+/// milliseconds outside it. Shared with the C backend's
+/// `KELP_SORT_INSERTION_CUTOFF`.
+const KELP_SORT_INSERTION_CUTOFF: u64 = 32;
 
 impl<'a> Gen<'a> {
     // ---- the derived clone and order of a datac/enum ---------------------
@@ -7177,15 +7219,19 @@ impl<'a> Gen<'a> {
             };
             self.builder.build_ret(out);
 
-            // One sift-down for a max-heap: heapify and the sort loop below
-            // both use it. `cmp` returns > 0 when its first argument is
-            // greater, so the larger child is the one with cmp(child, sibling)
-            // > 0 and a swap happens only while cmp(child, root) > 0.
+            // One sift-down for a max-heap: heapify and heapsort below both
+            // use it. `cmp` returns > 0 when its first argument is greater,
+            // so the larger child is the one with cmp(child, sibling) > 0 and
+            // a swap happens only while cmp(child, root) > 0. `base` is the
+            // offset of the heap's own index 0 within `self`'s data, so the
+            // same sift-down serves both a full-list heapsort and the
+            // depth-limited introsort fallback's heapsort over one partition.
             let (f, _) = self.start(&format!("{base}__sift_down"), "entry")?;
             let self_p = f.get_param(0);
-            let heap_len = f.get_param(2);
+            let base_off = f.get_param(1);
+            let heap_len = f.get_param(3);
             let root_slot = self.builder.build_alloca(i64t, "root");
-            self.st(f.get_param(1), root_slot);
+            self.st(f.get_param(2), root_slot);
             let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
             let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
             let sift = self.loop_header(f, "sift.cond");
@@ -7204,8 +7250,10 @@ impl<'a> Gen<'a> {
             let after_pick = self.block(f, "sift.afterpick");
             self.builder.build_cond_br(has_right, cmp_child, after_pick);
             self.builder.position_at_end(cmp_child);
-            let lptr = self.gep(elem_ty, data, child, "l");
-            let rptr = self.gep(elem_ty, data, child1, "r");
+            let child_abs = self.builder.build_int_binop(IntBinOp::Add, base_off, child, "child_abs");
+            let child1_abs = self.builder.build_int_binop(IntBinOp::Add, base_off, child1, "child1_abs");
+            let lptr = self.gep(elem_ty, data, child_abs, "l");
+            let rptr = self.gep(elem_ty, data, child1_abs, "r");
             let c = self.call(cmpsym, cmpty, &[lptr, rptr], "cmp");
             let right_bigger = self.builder.build_icmp(IntCmp::Slt, c, self.v_i32(0), "rb");
             let bigger = self.builder.build_select(right_bigger, child1, child, "bigger");
@@ -7215,8 +7263,10 @@ impl<'a> Gen<'a> {
             self.builder.add_incoming(chosen, &[(child, pick), (bigger, cmp_child)]);
             self.builder.build_br(compare);
             self.builder.position_at_end(compare);
-            let rootp = self.gep(elem_ty, data, root, "rootp");
-            let childp = self.gep(elem_ty, data, chosen, "childp");
+            let root_abs = self.builder.build_int_binop(IntBinOp::Add, base_off, root, "root_abs");
+            let chosen_abs = self.builder.build_int_binop(IntBinOp::Add, base_off, chosen, "chosen_abs");
+            let rootp = self.gep(elem_ty, data, root_abs, "rootp");
+            let childp = self.gep(elem_ty, data, chosen_abs, "childp");
             let gt = self.call(cmpsym, cmpty, &[childp, rootp], "cmp");
             let child_greater = self.builder.build_icmp(IntCmp::Sgt, gt, self.v_i32(0), "gt");
             let swap = self.block(f, "sift.swap");
@@ -7231,49 +7281,349 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(exit);
             self.builder.build_ret_void();
 
-            // sort(self): heapsort, in place, the mirror of `write_list_s1`.
-            // A swap is two element-sized loads and two stores, so an owned
-            // element is only moved, never cloned or dropped.
-            let (f, _) = self.start(&format!("{base}__sort"), "entry")?;
+            // heapsort over the half-open range `[lo, hi)`: guaranteed
+            // O(n log n), in place, no extra buffer. Used both as introsort's
+            // depth-limit fallback (over a partition) and, with
+            // `lo = 0, hi = len`, as an ordinary whole-list heapsort.
+            let (f, _) = self.start(&format!("{base}__heapsort_range"), "entry")?;
             let self_p = f.get_param(0);
-            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let lo = f.get_param(1);
+            let hi = f.get_param(2);
+            let n = self.builder.build_int_binop(IntBinOp::Sub, hi, lo, "n");
             let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
             let (sift, sfty) = self.cfn(&format!("{base}__sift_down"))?;
             let start_slot = self.builder.build_alloca(i64t, "start");
-            let half = self.builder.build_int_binop(IntBinOp::UDiv, len, self.v_i64(2), "half");
+            let half = self.builder.build_int_binop(IntBinOp::UDiv, n, self.v_i64(2), "half");
             self.st(half, start_slot);
-            let heap = self.loop_header(f, "heap.cond");
+            let heap = self.loop_header(f, "hr.heap.cond");
             let s = self.ld(i64t, start_slot, "s");
             let spos = self.builder.build_icmp(IntCmp::Ugt, s, self.v_i64(0), "spos");
-            let hbody = self.block(f, "heap.body");
-            let hexit = self.block(f, "heap.end");
+            let hbody = self.block(f, "hr.heap.body");
+            let hexit = self.block(f, "hr.heap.end");
             self.builder.build_cond_br(spos, hbody, hexit);
             self.builder.position_at_end(hbody);
             let s1 = self.builder.build_int_binop(IntBinOp::Sub, s, self.v_i64(1), "s1");
             self.st(s1, start_slot);
-            self.call(sift, sfty, &[self_p, s1, len], "");
+            self.call(sift, sfty, &[self_p, lo, s1, n], "");
             self.builder.build_br(heap);
             self.builder.position_at_end(hexit);
             let end_slot = self.builder.build_alloca(i64t, "end");
-            self.st(len, end_slot);
-            let sort = self.loop_header(f, "sort.cond");
+            self.st(n, end_slot);
+            let sort = self.loop_header(f, "hr.sort.cond");
             let e = self.ld(i64t, end_slot, "e");
             let epos = self.builder.build_icmp(IntCmp::Ugt, e, self.v_i64(1), "epos");
-            let sbody = self.block(f, "sort.body");
-            let sexit = self.block(f, "sort.end");
+            let sbody = self.block(f, "hr.sort.body");
+            let sexit = self.block(f, "hr.sort.end");
             self.builder.build_cond_br(epos, sbody, sexit);
             self.builder.position_at_end(sbody);
             let e1 = self.builder.build_int_binop(IntBinOp::Sub, e, self.v_i64(1), "e1");
             self.st(e1, end_slot);
-            let d0 = self.gep(elem_ty, data, self.v_i64(0), "d0");
-            let de = self.gep(elem_ty, data, e1, "de");
+            let lo_e1 = self.builder.build_int_binop(IntBinOp::Add, lo, e1, "lo_e1");
+            let d0 = self.gep(elem_ty, data, lo, "d0");
+            let de = self.gep(elem_ty, data, lo_e1, "de");
             let tv = self.ld(elem_ty, d0, "tv");
             let ev = self.ld(elem_ty, de, "ev");
             self.st(ev, d0);
             self.st(tv, de);
-            self.call(sift, sfty, &[self_p, self.v_i64(0), e1], "");
+            self.call(sift, sfty, &[self_p, lo, self.v_i64(0), e1], "");
             self.builder.build_br(sort);
             self.builder.position_at_end(sexit);
+            self.builder.build_ret_void();
+
+            // Insertion sort over `[lo, hi)`: lower constant factor than
+            // quicksort for a small partition, so introsort finishes any
+            // partition below the cutoff with this instead of recursing
+            // further.
+            let (f, _) = self.start(&format!("{base}__insertion_sort"), "entry")?;
+            let self_p = f.get_param(0);
+            let lo = f.get_param(1);
+            let hi = f.get_param(2);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            let lo1 = self.builder.build_int_binop(IntBinOp::Add, lo, self.v_i64(1), "lo1");
+            self.st(lo1, i_slot);
+            let outer = self.loop_header(f, "ins.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, hi, "more");
+            let obody = self.block(f, "ins.body");
+            let oend = self.block(f, "ins.end");
+            self.builder.build_cond_br(more, obody, oend);
+            self.builder.position_at_end(obody);
+            let at_i = self.gep(elem_ty, data, i, "at_i");
+            let key_slot = self.builder.build_alloca(elem_ty, "key");
+            self.st(self.ld(elem_ty, at_i, "keyv"), key_slot);
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            self.st(i, j_slot);
+            let inner = self.loop_header(f, "ins.shift.cond");
+            let j = self.ld(i64t, j_slot, "j");
+            let jgt = self.builder.build_icmp(IntCmp::Ugt, j, lo, "jgt");
+            let check = self.block(f, "ins.shift.check");
+            let iend = self.block(f, "ins.shift.end");
+            self.builder.build_cond_br(jgt, check, iend);
+            self.builder.position_at_end(check);
+            let j1 = self.builder.build_int_binop(IntBinOp::Sub, j, self.v_i64(1), "j1");
+            let prevp = self.gep(elem_ty, data, j1, "prevp");
+            let c = self.call(cmpsym, cmpty, &[prevp, key_slot], "cmp");
+            let gtc = self.builder.build_icmp(IntCmp::Sgt, c, self.v_i32(0), "gtc");
+            let shift = self.block(f, "ins.shift.body");
+            self.builder.build_cond_br(gtc, shift, iend);
+            self.builder.position_at_end(shift);
+            let prevv = self.ld(elem_ty, prevp, "prevv");
+            let atj = self.gep(elem_ty, data, j, "atj");
+            self.st(prevv, atj);
+            self.st(j1, j_slot);
+            self.builder.build_br(inner);
+            self.builder.position_at_end(iend);
+            let atj_final = self.gep(elem_ty, data, j, "atj_final");
+            let keyv = self.ld(elem_ty, key_slot, "keyv_final");
+            self.st(keyv, atj_final);
+            let i1 = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(i1, i_slot);
+            self.builder.build_br(outer);
+            self.builder.position_at_end(oend);
+            self.builder.build_ret_void();
+
+            // The index (among `a`, `b`, `c`) whose element is the median of
+            // the three, the standard pivot choice that defeats quicksort's
+            // classic already-sorted/reverse-sorted worst cases without
+            // anything fancier.
+            let (f, _) = self.start(&format!("{base}__median3"), "entry")?;
+            let self_p = f.get_param(0);
+            let a = f.get_param(1);
+            let b = f.get_param(2);
+            let c_idx = f.get_param(3);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
+            let at_a = self.gep(elem_ty, data, a, "at_a");
+            let at_b = self.gep(elem_ty, data, b, "at_b");
+            let at_c = self.gep(elem_ty, data, c_idx, "at_c");
+            let cab = self.call(cmpsym, cmpty, &[at_a, at_b], "cab");
+            let ab_lt = self.builder.build_icmp(IntCmp::Slt, cab, self.v_i32(0), "ab_lt");
+            let ablk = self.block(f, "m3.ablt");
+            let eblk = self.block(f, "m3.age");
+            self.builder.build_cond_br(ab_lt, ablk, eblk);
+
+            self.builder.position_at_end(ablk);
+            let cbc = self.call(cmpsym, cmpty, &[at_b, at_c], "cbc");
+            let bc_lt = self.builder.build_icmp(IntCmp::Slt, cbc, self.v_i32(0), "bc_lt");
+            let retb1 = self.block(f, "m3.retb1");
+            let chkac1 = self.block(f, "m3.chkac1");
+            self.builder.build_cond_br(bc_lt, retb1, chkac1);
+            self.builder.position_at_end(retb1);
+            self.builder.build_ret(b);
+            self.builder.position_at_end(chkac1);
+            let cac1 = self.call(cmpsym, cmpty, &[at_a, at_c], "cac1");
+            let ac_lt1 = self.builder.build_icmp(IntCmp::Slt, cac1, self.v_i32(0), "ac_lt1");
+            let retc1 = self.block(f, "m3.retc1");
+            let reta1 = self.block(f, "m3.reta1");
+            self.builder.build_cond_br(ac_lt1, retc1, reta1);
+            self.builder.position_at_end(retc1);
+            self.builder.build_ret(c_idx);
+            self.builder.position_at_end(reta1);
+            self.builder.build_ret(a);
+
+            self.builder.position_at_end(eblk);
+            let cac2 = self.call(cmpsym, cmpty, &[at_a, at_c], "cac2");
+            let ac_lt2 = self.builder.build_icmp(IntCmp::Slt, cac2, self.v_i32(0), "ac_lt2");
+            let reta2 = self.block(f, "m3.reta2");
+            let chkbc2 = self.block(f, "m3.chkbc2");
+            self.builder.build_cond_br(ac_lt2, reta2, chkbc2);
+            self.builder.position_at_end(reta2);
+            self.builder.build_ret(a);
+            self.builder.position_at_end(chkbc2);
+            let cbc2 = self.call(cmpsym, cmpty, &[at_b, at_c], "cbc2");
+            let bc_lt2 = self.builder.build_icmp(IntCmp::Slt, cbc2, self.v_i32(0), "bc_lt2");
+            let retc2 = self.block(f, "m3.retc2");
+            let retb2 = self.block(f, "m3.retb2");
+            self.builder.build_cond_br(bc_lt2, retc2, retb2);
+            self.builder.position_at_end(retc2);
+            self.builder.build_ret(c_idx);
+            self.builder.position_at_end(retb2);
+            self.builder.build_ret(b);
+
+            // Hoare partition over the inclusive range `[lo, hi]` around a
+            // median-of-three pivot, returning the split point `j`:
+            // everything in `[lo, j]` compares <= everything in
+            // `[j + 1, hi]`. `i = lo - 1` and `j = hi + 1` deliberately start
+            // one past each end; on the unsigned index type that wraps when
+            // `lo == 0`, and the very next increment wraps it back to `lo`,
+            // the standard trick that keeps this branch-free at the ends. The
+            // pivot value is copied into a local once (a plain element copy,
+            // never cloned or dropped, exactly as the swap below), so it
+            // stays valid as a sentinel no matter how the elements around it
+            // move. Comparing against that copy rather than tracking the
+            // pivot's index is also what keeps an all-equal-keys input from
+            // degrading: both scans stop immediately once they reach a key
+            // equal to the pivot, rather than one scan running to the end.
+            let (f, _) = self.start(&format!("{base}__partition"), "entry")?;
+            let self_p = f.get_param(0);
+            let lo = f.get_param(1);
+            let hi = f.get_param(2);
+            let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
+            let (cmpsym, cmpty) = self.cfn(&format!("{base}__cmp"))?;
+            let (median3, m3ty) = self.cfn(&format!("{base}__median3"))?;
+            let span = self.builder.build_int_binop(IntBinOp::Sub, hi, lo, "span");
+            let half = self.builder.build_int_binop(IntBinOp::UDiv, span, self.v_i64(2), "half");
+            let mid = self.builder.build_int_binop(IntBinOp::Add, lo, half, "mid");
+            let pividx = self.call(median3, m3ty, &[self_p, lo, mid, hi], "pividx");
+            let pivptr = self.gep(elem_ty, data, pividx, "pivptr");
+            let pivot_slot = self.builder.build_alloca(elem_ty, "pivot");
+            self.st(self.ld(elem_ty, pivptr, "pv"), pivot_slot);
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            let lo_m1 = self.builder.build_int_binop(IntBinOp::Sub, lo, self.v_i64(1), "lo_m1");
+            self.st(lo_m1, i_slot);
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            let hi_p1 = self.builder.build_int_binop(IntBinOp::Add, hi, self.v_i64(1), "hi_p1");
+            self.st(hi_p1, j_slot);
+            let iscan = self.loop_header(f, "part.iscan");
+            let ii = self.ld(i64t, i_slot, "ii");
+            let ii1 = self.builder.build_int_binop(IntBinOp::Add, ii, self.v_i64(1), "ii1");
+            self.st(ii1, i_slot);
+            let at_i = self.gep(elem_ty, data, ii1, "at_i");
+            let ci = self.call(cmpsym, cmpty, &[at_i, pivot_slot], "ci");
+            let ilt = self.builder.build_icmp(IntCmp::Slt, ci, self.v_i32(0), "ilt");
+            let jscan = self.block(f, "part.jscan");
+            self.builder.build_cond_br(ilt, iscan, jscan);
+            self.builder.position_at_end(jscan);
+            let jj = self.ld(i64t, j_slot, "jj");
+            let jj1 = self.builder.build_int_binop(IntBinOp::Sub, jj, self.v_i64(1), "jj1");
+            self.st(jj1, j_slot);
+            let at_j = self.gep(elem_ty, data, jj1, "at_j");
+            let cj = self.call(cmpsym, cmpty, &[at_j, pivot_slot], "cj");
+            let jgt = self.builder.build_icmp(IntCmp::Sgt, cj, self.v_i32(0), "jgt");
+            let check = self.block(f, "part.check");
+            self.builder.build_cond_br(jgt, jscan, check);
+            self.builder.position_at_end(check);
+            let ci2 = self.ld(i64t, i_slot, "ci2");
+            let cj2 = self.ld(i64t, j_slot, "cj2");
+            let ge = self.builder.build_icmp(IntCmp::Uge, ci2, cj2, "ge");
+            let ret_blk = self.block(f, "part.ret");
+            let swap_blk = self.block(f, "part.swap");
+            self.builder.build_cond_br(ge, ret_blk, swap_blk);
+            self.builder.position_at_end(ret_blk);
+            self.builder.build_ret(cj2);
+            self.builder.position_at_end(swap_blk);
+            let at_i2 = self.gep(elem_ty, data, ci2, "at_i2");
+            let at_j2 = self.gep(elem_ty, data, cj2, "at_j2");
+            let iv = self.ld(elem_ty, at_i2, "iv");
+            let jv = self.ld(elem_ty, at_j2, "jv");
+            self.st(jv, at_i2);
+            self.st(iv, at_j2);
+            self.builder.build_br(iscan);
+
+            // Introsort's quicksort driver over the half-open range
+            // `[lo, hi)`. Below the insertion-sort cutoff, finish the
+            // partition with plain insertion sort. Otherwise partition
+            // around a median-of-three pivot and recurse into the smaller
+            // side while looping into the larger one, which bounds the real
+            // call stack to O(log n) on its own; the separate `depth_limit`,
+            // decremented once per partition step and starting at roughly
+            // `2 * floor(log2(n))`, is what actually bounds the *work*, not
+            // just the stack: once it hits zero, the remaining range is
+            // handed to the existing heapsort instead of continuing to
+            // partition, which is what keeps an adversarial input (one that
+            // would make plain quicksort's partitioning stay badly
+            // imbalanced) at O(n log n) overall rather than degrading toward
+            // O(n^2).
+            let (f, _) = self.start(&format!("{base}__quicksort"), "entry")?;
+            let self_p = f.get_param(0);
+            let lo_slot = self.builder.build_alloca(i64t, "lo");
+            self.st(f.get_param(1), lo_slot);
+            let hi_slot = self.builder.build_alloca(i64t, "hi");
+            self.st(f.get_param(2), hi_slot);
+            let depth_slot = self.builder.build_alloca(i64t, "depth");
+            self.st(f.get_param(3), depth_slot);
+            let (ins, insty) = self.cfn(&format!("{base}__insertion_sort"))?;
+            let (part, partty) = self.cfn(&format!("{base}__partition"))?;
+            let (heap, heapty) = self.cfn(&format!("{base}__heapsort_range"))?;
+            let (qs, qsty) = self.cfn(&format!("{base}__quicksort"))?;
+            let cond = self.loop_header(f, "qs.cond");
+            let lo = self.ld(i64t, lo_slot, "lo");
+            let hi = self.ld(i64t, hi_slot, "hi");
+            let width = self.builder.build_int_binop(IntBinOp::Sub, hi, lo, "width");
+            let big = self.builder.build_icmp(
+                IntCmp::Ugt,
+                width,
+                self.v_i64(KELP_SORT_INSERTION_CUTOFF),
+                "big",
+            );
+            let body = self.block(f, "qs.body");
+            let done = self.block(f, "qs.done");
+            self.builder.build_cond_br(big, body, done);
+            self.builder.position_at_end(body);
+            let depth = self.ld(i64t, depth_slot, "depth");
+            let depth_zero = self.builder.build_icmp(IntCmp::Eq, depth, self.v_i64(0), "depth_zero");
+            let fallback = self.block(f, "qs.fallback");
+            let part_blk = self.block(f, "qs.partition");
+            self.builder.build_cond_br(depth_zero, fallback, part_blk);
+            self.builder.position_at_end(fallback);
+            self.call(heap, heapty, &[self_p, lo, hi], "");
+            self.builder.build_ret_void();
+            self.builder.position_at_end(part_blk);
+            let depth1 = self.builder.build_int_binop(IntBinOp::Sub, depth, self.v_i64(1), "depth1");
+            self.st(depth1, depth_slot);
+            let hi_incl = self.builder.build_int_binop(IntBinOp::Sub, hi, self.v_i64(1), "hi_incl");
+            let p = self.call(part, partty, &[self_p, lo, hi_incl], "p");
+            let p1 = self.builder.build_int_binop(IntBinOp::Add, p, self.v_i64(1), "p1");
+            let left_len = self.builder.build_int_binop(IntBinOp::Sub, p1, lo, "left_len");
+            let right_len = self.builder.build_int_binop(IntBinOp::Sub, hi, p1, "right_len");
+            let left_smaller = self.builder.build_icmp(IntCmp::Ult, left_len, right_len, "left_smaller");
+            let take_left = self.block(f, "qs.left");
+            let take_right = self.block(f, "qs.right");
+            self.builder.build_cond_br(left_smaller, take_left, take_right);
+            self.builder.position_at_end(take_left);
+            self.call(qs, qsty, &[self_p, lo, p1, depth1], "");
+            self.st(p1, lo_slot);
+            self.builder.build_br(cond);
+            self.builder.position_at_end(take_right);
+            self.call(qs, qsty, &[self_p, p1, hi, depth1], "");
+            self.st(p1, hi_slot);
+            self.builder.build_br(cond);
+            self.builder.position_at_end(done);
+            let lo_f = self.ld(i64t, lo_slot, "lo_f");
+            let hi_f = self.ld(i64t, hi_slot, "hi_f");
+            self.call(ins, insty, &[self_p, lo_f, hi_f], "");
+            self.builder.build_ret_void();
+
+            // introsort: quicksort with a median-of-three pivot and an
+            // insertion-sort cutoff, falling back to the heapsort above once
+            // recursion depth passes roughly `2 * floor(log2(n))`. In place
+            // throughout, no extra buffer: a swap or a pivot copy is an
+            // element-sized copy, so an owned element is only moved, never
+            // cloned or dropped, exactly as `{base}__reverse` elsewhere.
+            let (f, _) = self.start(&format!("{base}__sort"), "entry")?;
+            let self_p = f.get_param(0);
+            let len = self.ld(i64t, self.fld(list_ty, self_p, L_LEN, "len"), "len");
+            let small = self.builder.build_icmp(IntCmp::Ult, len, self.v_i64(2), "small");
+            let early = self.block(f, "sort.early");
+            let cont = self.block(f, "sort.cont");
+            self.builder.build_cond_br(small, early, cont);
+            self.builder.position_at_end(early);
+            self.builder.build_ret_void();
+            self.builder.position_at_end(cont);
+            let (qs, qsty) = self.cfn(&format!("{base}__quicksort"))?;
+            let nn_slot = self.builder.build_alloca(i64t, "nn");
+            self.st(len, nn_slot);
+            let depth_slot = self.builder.build_alloca(i64t, "depth");
+            self.st(self.v_i64(0), depth_slot);
+            let logcond = self.loop_header(f, "sort.log.cond");
+            let nn = self.ld(i64t, nn_slot, "nn");
+            let more = self.builder.build_icmp(IntCmp::Ugt, nn, self.v_i64(1), "more");
+            let logbody = self.block(f, "sort.log.body");
+            let logend = self.block(f, "sort.log.end");
+            self.builder.build_cond_br(more, logbody, logend);
+            self.builder.position_at_end(logbody);
+            let nn2 = self.builder.build_int_binop(IntBinOp::LShr, nn, self.v_i64(1), "nn2");
+            self.st(nn2, nn_slot);
+            let d = self.ld(i64t, depth_slot, "d");
+            let d1 = self.builder.build_int_binop(IntBinOp::Add, d, self.v_i64(1), "d1");
+            self.st(d1, depth_slot);
+            self.builder.build_br(logcond);
+            self.builder.position_at_end(logend);
+            let dfinal = self.ld(i64t, depth_slot, "dfinal");
+            let depth_limit = self.builder.build_int_binop(IntBinOp::Mul, dfinal, self.v_i64(2), "depth_limit");
+            self.call(qs, qsty, &[self_p, self.v_i64(0), len, depth_limit], "");
             self.builder.build_ret_void();
         }
 

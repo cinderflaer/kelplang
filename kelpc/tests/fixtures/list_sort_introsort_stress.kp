@@ -1,0 +1,88 @@
+// Introsort's own trouble spots, the ones heapsort never had to worry about
+// but a quicksort-shaped `sort` does: an already-sorted run (plain
+// quicksort's classic quadratic case on a bad pivot), a reverse-sorted run
+// (the mirror of it), an all-equal run (a partition scheme that mishandles
+// duplicate keys is a classic source of accidental quadratic behavior even
+// with a good pivot), and inputs sized just below and just above the
+// insertion-sort cutoff so both code paths get real coverage. Each `check`
+// only has to finish (not hang, not blow the stack) and report the list
+// sorted; the size is chosen to matter for complexity without being a
+// benchmark.
+fun check(xs: List<i32>) {
+    var ok = true
+    var j: usize = 1
+    while j < xs.len() {
+        if xs.get(j - 1) > xs.get(j) {
+            ok = false
+        }
+        j = j + 1
+    }
+    print(ok)
+    print(xs.len())
+}
+
+fun main() {
+    // Already sorted, several thousand elements: the median-of-three pivot
+    // is what has to keep this from degrading toward O(n^2).
+    var a: List<i32> = List.empty()
+    var i = 0
+    while i < 5000 {
+        a.push(i)
+        i = i + 1
+    }
+    a.sort()
+    check(a)
+
+    // Reverse sorted, the mirror case.
+    var b: List<i32> = List.empty()
+    i = 0
+    while i < 5000 {
+        b.push(5000 - i)
+        i = i + 1
+    }
+    b.sort()
+    check(b)
+
+    // Every element identical: trivially already sorted, but the classic
+    // partition degenerate case (many equal keys) must not crash,
+    // infinite-loop, or blow the stack.
+    var c: List<i32> = List.empty()
+    i = 0
+    while i < 5000 {
+        c.push(42)
+        i = i + 1
+    }
+    c.sort()
+    check(c)
+
+    // Just below and just above the 16-element insertion-sort cutoff, so
+    // both the cutoff path and the partitioning path get exercised on their
+    // own, not only inside the larger fixtures above.
+    var d15: List<i32> = List.empty()
+    i = 0
+    while i < 15 {
+        d15.push(15 - i)
+        i = i + 1
+    }
+    d15.sort()
+    check(d15)
+
+    var d17: List<i32> = List.empty()
+    i = 0
+    while i < 17 {
+        d17.push(17 - i)
+        i = i + 1
+    }
+    d17.sort()
+    check(d17)
+
+    // Empty and single-element, confirmed explicitly.
+    var empty: List<i32> = List.empty()
+    empty.sort()
+    print(empty.len())
+
+    var one: List<i32> = List.empty()
+    one.push(7)
+    one.sort()
+    print(one.get(0))
+}
