@@ -401,6 +401,11 @@ pub fn compile(
         opt.is_optimized(),
     )?;
     lowering.declare()?;
+    // The small builtin accessors get their bodies here, as IR rather than a
+    // declaration into the runtime object, so the module's own `-O2` inlines
+    // them at the call site. `emit_container_bodies` below is the same idea for
+    // the monomorphized containers.
+    lowering.emit_runtime_bodies()?;
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
     // `codegen_c.rs` writes each typedef and its drop routine in. The container
@@ -5472,6 +5477,59 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// `if (i >= len) panic(msg);`, the bounds check every indexed builtin
+    /// accessor opens with. The text is the C body's own, so the message a
+    /// program prints is the same one the runtime object would have printed.
+    fn emit_bounds_check(
+        &self,
+        func: LlvmFunction<'a>,
+        len: Value<'a>,
+        i: Value<'a>,
+        msg: &str,
+    ) -> Result<(), String> {
+        let oob = self.builder.build_icmp(IntCmp::Uge, i, len, "oob");
+        let out = self.block(func, "panic");
+        let ok = self.block(func, "in.bounds");
+        self.builder.build_cond_br(oob, out, ok);
+        self.builder.position_at_end(out);
+        self.emit_panic(msg)?;
+        self.builder.position_at_end(ok);
+        Ok(())
+    }
+
+    /// The inline half of `kelp_buf_reserve` for an owned buffer: test
+    /// `len + extra <= cap` where the callee tests it, which is its own first
+    /// line, and call the callee only when the buffer has to grow. Both sides
+    /// of the comparison are `size_t` sums that wrap the same way in C, so an
+    /// overflow takes the growth branch in both. The buffers stay the runtime's
+    /// (`realloc` and the NUL terminator are its business).
+    fn emit_grow_call(
+        &self,
+        func: LlvmFunction<'a>,
+        agg: Type<'a>,
+        self_p: Value<'a>,
+        extra: Value<'a>,
+    ) -> Result<(), String> {
+        let i64t = self.ctx.i64();
+        let len = self.ld(i64t, self.fld(agg, self_p, L_LEN, "len"), "len");
+        let cap = self.ld(i64t, self.fld(agg, self_p, L_CAP, "cap"), "cap");
+        let need = self
+            .builder
+            .build_int_binop(IntBinOp::Add, len, extra, "need");
+        let fits = self.builder.build_icmp(IntCmp::Ule, need, cap, "fits");
+        let grow = self.block(func, "grow");
+        let done = self.block(func, "reserved");
+        self.builder.build_cond_br(fits, done, grow);
+        self.builder.position_at_end(grow);
+        let reserve = self.rt("kelp_buf_reserve")?;
+        let data_p = self.fld(agg, self_p, L_DATA, "data");
+        let cap_p = self.fld(agg, self_p, L_CAP, "cap");
+        self.call(reserve.func, reserve.ty, &[data_p, len, cap_p, extra], "");
+        self.builder.build_br(done);
+        self.builder.position_at_end(done);
+        Ok(())
+    }
+
     fn call(&self, func: LlvmFunction<'a>, ty: FnType<'a>, args: &[Value<'a>], name: &str) -> Value<'a> {
         self.builder.build_call(func, ty, args, name)
     }
@@ -8294,6 +8352,175 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    // ---- builtin runtime bodies -------------------------------------------
+
+    /// Emit bodies for the small builtin accessors whose whole cost is the call
+    /// itself, and give each definition internal linkage so this module's own
+    /// `-O2` inlines it the way clang inlines the same text spliced into the C
+    /// backend's translation unit. The runtime object still defines every one of
+    /// them for the callers that stay out of line, and an internal definition is
+    /// no link-time name, so the two never meet. The bodies, their bounds checks
+    /// and their panic strings are `runtime/kelp_rt.c`'s, so nothing observable
+    /// moves.
+    ///
+    /// Only fixed-layout accessors are here: an owned buffer, a `String` free of
+    /// a layout question, and a `View`, which is two eightbytes by value. The
+    /// rest of the runtime (allocation, drops, the map hash, the capability
+    /// checks) stays an out-of-line call.
+    fn emit_runtime_bodies(&self) -> Result<(), String> {
+        let i8t = self.ctx.i8();
+        let i64t = self.ctx.i64();
+        let ptr = self.pty();
+        let bytes = *self
+            .structs
+            .get("Bytes")
+            .ok_or_else(|| no_value("the builtin 'Bytes' layout"))?;
+        let string = *self
+            .structs
+            .get("String")
+            .ok_or_else(|| no_value("the builtin 'String' layout"))?;
+
+        // Begin an already-declared helper's body, and make the definition
+        // module-private: it is no link-time name, and this module's own `-O2`
+        // is free to inline it away or drop it.
+        let body = |symbol: &str| -> Result<LlvmFunction<'a>, String> {
+            let rt = self.rt(symbol)?;
+            rt.func.as_value().set_internal_linkage();
+            let bb = rt.func.append_block("entry");
+            self.builder.position_at_end(bb);
+            Ok(rt.func)
+        };
+        let len_of = |agg: Type<'a>, self_p: Value<'a>| -> Value<'a> {
+            self.ld(i64t, self.fld(agg, self_p, L_LEN, "len"), "len")
+        };
+        let data_of = |agg: Type<'a>, self_p: Value<'a>| -> Value<'a> {
+            self.ld(ptr, self.fld(agg, self_p, L_DATA, "data"), "data")
+        };
+
+        // --- Bytes.len / is_empty / get / set ---
+        {
+            let f = body("kelp_Bytes__len")?;
+            let n = len_of(bytes, f.get_param(0));
+            self.builder.build_ret(n);
+        }
+        {
+            let f = body("kelp_Bytes__is_empty")?;
+            let n = len_of(bytes, f.get_param(0));
+            let empty = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "empty");
+            self.builder.build_ret(empty);
+        }
+        {
+            let f = body("kelp_Bytes__get")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let n = len_of(bytes, self_p);
+            self.emit_bounds_check(f, n, i, "Bytes.get: index out of bounds")?;
+            let at = self.gep(i8t, data_of(bytes, self_p), i, "at");
+            let byte = self.ld(i8t, at, "byte");
+            self.builder.build_ret(byte);
+        }
+        {
+            let f = body("kelp_Bytes__set")?;
+            let self_p = f.get_param(0);
+            let i = f.get_param(1);
+            let value = f.get_param(2);
+            let n = len_of(bytes, self_p);
+            self.emit_bounds_check(f, n, i, "Bytes.set: index out of bounds")?;
+            let at = self.gep(i8t, data_of(bytes, self_p), i, "at");
+            self.st(value, at);
+            self.builder.build_ret_void();
+        }
+
+        // --- String.len / is_empty ---
+        {
+            let f = body("kelp_String__len")?;
+            let n = len_of(string, f.get_param(0));
+            self.builder.build_ret(n);
+        }
+        {
+            let f = body("kelp_String__is_empty")?;
+            let n = len_of(string, f.get_param(0));
+            let empty = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "empty");
+            self.builder.build_ret(empty);
+        }
+
+        // --- String.push ---
+        {
+            let f = body("kelp_String__push")?;
+            let self_p = f.get_param(0);
+            let ch = f.get_param(1);
+            let n = len_of(string, self_p);
+            self.emit_grow_call(f, string, self_p, self.v_i64(1))?;
+            let at = self.gep(i8t, data_of(string, self_p), n, "at");
+            self.st(ch, at);
+            let next = self.builder.build_int_binop(IntBinOp::Add, n, self.v_i64(1), "len1");
+            self.st(next, self.fld(string, self_p, L_LEN, "len"));
+            let term = self.gep(i8t, data_of(string, self_p), next, "term");
+            self.st(self.v_i8(0), term);
+            self.builder.build_ret_void();
+        }
+
+        // --- String.push_str ---
+        {
+            let f = body("kelp_String__push_str")?;
+            let self_p = f.get_param(0);
+            let text = f.get_param(1);
+            let (strlen, strlen_ty) = self.libc_fn("strlen")?;
+            let n = self.call(strlen, strlen_ty, &[text], "n");
+            let none = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "len0");
+            let done = self.block(f, "ret");
+            let copy = self.block(f, "copy");
+            self.builder.build_cond_br(none, done, copy);
+            self.builder.position_at_end(copy);
+            let len = len_of(string, self_p);
+            self.emit_grow_call(f, string, self_p, n)?;
+            let dst = self.gep(i8t, data_of(string, self_p), len, "dst");
+            let (memcpy, memcpy_ty) = self.libc_fn("memcpy")?;
+            self.call(memcpy, memcpy_ty, &[dst, text, n], "");
+            let next = self.builder.build_int_binop(IntBinOp::Add, len, n, "len1");
+            self.st(next, self.fld(string, self_p, L_LEN, "len"));
+            let term = self.gep(i8t, data_of(string, self_p), next, "term");
+            self.st(self.v_i8(0), term);
+            self.builder.build_br(done);
+            self.builder.position_at_end(done);
+            self.builder.build_ret_void();
+        }
+
+        // --- String.reserve ---
+        {
+            let f = body("kelp_String__reserve")?;
+            let self_p = f.get_param(0);
+            let extra = f.get_param(1);
+            self.emit_grow_call(f, string, self_p, extra)?;
+            self.builder.build_ret_void();
+        }
+
+        // --- View.len / is_empty / get ---
+        {
+            let f = body("kelp_View__len")?;
+            let n = self.builder.build_extract_value(f.get_param(0), 1, "len");
+            self.builder.build_ret(n);
+        }
+        {
+            let f = body("kelp_View__is_empty")?;
+            let n = self.builder.build_extract_value(f.get_param(0), 1, "len");
+            let empty = self.builder.build_icmp(IntCmp::Eq, n, self.v_i64(0), "empty");
+            self.builder.build_ret(empty);
+        }
+        {
+            let f = body("kelp_View__get")?;
+            let self_v = f.get_param(0);
+            let i = f.get_param(1);
+            let n = self.builder.build_extract_value(self_v, 1, "len");
+            self.emit_bounds_check(f, n, i, "View.get: index out of bounds")?;
+            let text = self.builder.build_extract_value(self_v, 0, "ptr");
+            let at = self.gep(i8t, text, i, "at");
+            let byte = self.ld(i8t, at, "byte");
+            self.builder.build_ret(byte);
+        }
+        Ok(())
+    }
+
     // ---- container bodies -------------------------------------------------
 
     fn emit_container_bodies(&self) -> Result<(), String> {
@@ -9757,6 +9984,9 @@ fn extend_narrow_c_abi(func: LlvmFunction<'_>, ret: Type<'_>, params: &[Type<'_>
 /// them through the same lookup every other runtime method uses. Because every
 /// `String` construction in the stdlib goes through `from_bytes`, that direction
 /// is not left out.
+///
+/// The one entry that is not a cross-object call: `kelp_buf_reserve`, which only
+/// the `String` append bodies `Gen::emit_runtime_bodies` emits as IR reach.
 fn declare_runtime<'a>(
     ctx: &'a Context,
     module: &'a Module<'a>,
@@ -9849,6 +10079,12 @@ fn declare_runtime<'a>(
     decl(&mut out, "kelp_String__reserve", void, &[ptr, i64], false, false);
     decl(&mut out, "kelp_String__clear", void, &[ptr], false, false);
     decl(&mut out, "kelp_string_drop", void, &[ptr], false, false);
+    // The growth routine both owned buffers share. The append bodies this
+    // module emits test `len + extra <= cap` themselves, which is the callee's
+    // own first line, and reach this declaration only when the buffer really
+    // has to grow: the point of the declaration is that the common append never
+    // crosses the object boundary.
+    decl(&mut out, "kelp_buf_reserve", void, &[ptr, i64, ptr, i64], false, false);
     // `kelp_View`: the two-word struct is passed and returned by value, which is
     // the ABI's `INTEGER, INTEGER` e-classes on this target, so it crosses
     // unchanged.
