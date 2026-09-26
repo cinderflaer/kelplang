@@ -1769,30 +1769,48 @@ fn caps_scratch(name: &str) -> PathBuf {
 
 /// A capability fixture project, copied into a throwaway, process-unique
 /// directory with `SCRATCH_PLACEHOLDER` substituted for `scratch_root()` in
-/// every `.kp` file. The original under `tests/projects/<name>` is untouched
+/// every file's text. The original under `tests/projects/<name>` is untouched
 /// (it is shared with every other worktree checked out from the same
 /// history), and the copy is deliberately thrown away and rewritten on every
 /// call, the same way `caps_scratch`'s directory is.
 ///
-/// Callers use this exactly like `project(name)`: `.join("main.kp")` for the
-/// build target, `.join("util.kp")` for a path a denial message names.
+/// Callers use this exactly like `project(name)`: bare, for a manifest-driven
+/// project directory (`coral.toml` + `src/`, C-2's `[caps]` fixtures), or
+/// `.join("main.kp")`/`.join("util.kp")` for a flat, manifest-less one (every
+/// other capability fixture) whose build target or denial-message path is one
+/// file beside its siblings.
 fn caps_project(name: &str) -> PathBuf {
     let src_dir = project(name);
     let dst_dir = out_path(&format!("{name}_src"));
     let _ = std::fs::remove_dir_all(&dst_dir);
     std::fs::create_dir_all(&dst_dir).expect("could not create the substituted project copy");
     let root = scratch_root().to_string_lossy().into_owned();
-    for entry in std::fs::read_dir(&src_dir).expect("could not read fixture project dir") {
+    copy_substituted(&src_dir, &dst_dir, &root);
+    dst_dir
+}
+
+/// `caps_project`'s recursive half: copies every file under `src` to the same
+/// relative path under `dst`, substituting `SCRATCH_PLACEHOLDER` for `root` in
+/// each one's text, and recreates every subdirectory rather than skipping it.
+/// A flat fixture (`main.kp`, `util.kp` beside each other) never recurses; a
+/// manifest-driven one (`coral.toml` at the root, `.kp` files under `src/`)
+/// needs the recursion to bring `src/` along at all.
+fn copy_substituted(src: &Path, dst: &Path, root: &str) {
+    for entry in std::fs::read_dir(src).expect("could not read fixture project dir") {
         let entry = entry.expect("could not read a fixture project dir entry");
         let path = entry.path();
-        if path.is_file() {
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            std::fs::create_dir_all(&target)
+                .expect("could not create a substituted project subdirectory");
+            copy_substituted(&path, &target, root);
+        } else {
             let text = std::fs::read_to_string(&path).expect("could not read fixture source");
-            let substituted = text.replace(SCRATCH_PLACEHOLDER, &root);
-            std::fs::write(dst_dir.join(path.file_name().unwrap()), substituted)
+            let substituted = text.replace(SCRATCH_PLACEHOLDER, root);
+            std::fs::write(&target, substituted)
                 .expect("could not write the substituted fixture source");
         }
     }
-    dst_dir
 }
 
 /// Builds a caps project, runs it, and asserts the run fails with `needle` on
@@ -1868,10 +1886,11 @@ fn the_entry_modules_own_caps_section_can_leave_a_domain_ungranted() {
     // This project's coral.toml [caps] grants only 'env', so main's direct
     // reference to 'fs' resolves against nothing — a resolution error at the
     // same place and with the same wording an imported module's ungranted
-    // reference gets.
+    // reference gets. Nothing in this fixture touches disk (the build never
+    // gets past resolution), so it needs no scratch directory at all.
     assert_project_rejected(
         "caps_entry_ungranted",
-        &project("caps_entry_ungranted"),
+        &caps_project("caps_entry_ungranted"),
         "needs the 'fs' capability, which module 'main' was not granted",
     );
 }
@@ -1881,7 +1900,7 @@ fn a_caps_restricted_entry_module_can_still_reach_what_it_was_granted() {
     let dir = caps_scratch("entry_restricted");
     assert_project_runs(
         "caps_entry_restricted",
-        &project("caps_entry_restricted"),
+        &caps_project("caps_entry_restricted"),
         "true\nhi\n",
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -1890,17 +1909,19 @@ fn a_caps_restricted_entry_module_can_still_reach_what_it_was_granted() {
 #[test]
 fn a_caps_restricted_entry_module_is_denied_outside_its_own_pattern_at_runtime() {
     // 'fs' is held (resolution passes), but only for a scratch directory this
-    // project's main.kp never names, so the denial is the runtime pattern
-    // check, not the resolution gate above — and it names 'main', the way
+    // project's main.kp never names (it reads '/tmp', not the granted
+    // directory), so the denial is the runtime pattern check, not the
+    // resolution gate above — and it names 'main', the way
     // a_path_outside_the_grant_is_denied_at_runtime names 'util' for a
-    // delegated module.
-    let dir = caps_scratch("entry_pattern_denied");
+    // delegated module. No scratch directory needs to exist on disk for that
+    // same reason (a_path_outside_the_grant_is_denied_at_runtime creates none
+    // either): the check is a pattern match against the argument, not a
+    // lookup inside the granted directory.
     assert_project_denied_at_runtime(
         "caps_entry_pattern_denied",
-        &project("caps_entry_pattern_denied"),
+        &caps_project("caps_entry_pattern_denied"),
         "outside the fs capability granted to module 'main'",
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -4,4 +4,4 @@ name = "capsentrypatterndenied"
 # reference to a path outside it is a runtime denial rather than a resolution
 # error — resolution only asks whether main holds the domain at all.
 [caps]
-fs = ["/tmp/kelp_caps_entry_pattern_denied/**"]
+fs = ["__KELP_SCRATCH__/kelp_caps_entry_pattern_denied/**"]
