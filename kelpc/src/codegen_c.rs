@@ -52,6 +52,27 @@ const RUNTIME: &str = include_str!("../runtime/kelp_rt.c");
 /// `KELP_SORT_INSERTION_CUTOFF`.
 const KELP_SORT_INSERTION_CUTOFF: u64 = 32;
 
+/// `List#sort`'s partition, branchless block size: the number of elements
+/// scanned per side, per round, before the collected "wrong side" offsets get
+/// swapped into place. This is pdqsort's own technique (itself borrowed from
+/// BlockQuicksort), not plain introsort: a textbook Hoare partition has a
+/// data-dependent conditional branch on every comparison (advance the scan
+/// or stop), which mispredicts constantly on random data, since which side a
+/// given element belongs on is exactly the unpredictable thing being
+/// computed. The block scan replaces that per-element branch with a
+/// per-element comparison plus an unconditional store into a small offsets
+/// buffer, with the branch outcome folded into a counter increment
+/// (`num_l += (cmp(...) >= 0)`) instead of a control-flow branch; a decent C
+/// compiler turns that into a conditional move, not a mispredictable branch.
+/// The actual element swaps then happen afterward in a second, tight loop
+/// over the matched offsets, which is itself branch-free and has excellent
+/// spatial locality. 64 is pdqsort's own published block size and what its
+/// reference implementation and Rust's `core::slice::sort` both use; there is
+/// nothing benchmarked-and-tuned about this specific number the way the
+/// insertion cutoff above was, it is simply the well-established constant for
+/// this technique. Shared with the LLVM backend's `KELP_SORT_BLOCK`.
+const KELP_SORT_BLOCK: u64 = 64;
+
 /// Where the capability check's own half lives (MK7 §8): the deny path, the
 /// buffered plumbing, and the allowlist loops. The *matching* and the *path
 /// normalization* it calls are Kelp (`std/rt`), declared just before this text
@@ -2194,24 +2215,80 @@ fn write_list_s1(
         writeln!(out, "    if ({list}__cmp(&self->data[b], &self->data[c]) < 0) {{\n        return c;\n    }}").unwrap();
         out.push_str("    return b;\n}\n\n");
 
-        // Hoare partition over the inclusive range `[lo, hi]` around a
+        // Partition over the inclusive range `[lo, hi]` around a
         // median-of-three pivot, returning the split point `j`: everything in
-        // `[lo, j]` compares <= everything in `[j + 1, hi]`. `i = lo - 1` and
-        // `j = hi + 1` deliberately start one past each end; on `size_t` that
-        // wraps to `SIZE_MAX` when `lo == 0`, and the very next `i++` wraps it
-        // back to `lo`, the standard trick that keeps this branch-free at the
-        // ends. The pivot value is copied into a local once (a plain element
-        // copy, never cloned or dropped, exactly as the swap below), so it
-        // stays valid as a sentinel no matter how the elements around it move.
-        // Comparing against that copy rather than tracking the pivot's index
-        // is also what keeps an all-equal-keys input from degrading: both
-        // scans stop immediately once they reach a key equal to the pivot,
-        // rather than one scan running to the end.
+        // `[lo, j]` compares <= everything in `[j + 1, hi]`. This is
+        // pdqsort/BlockQuicksort's branchless partition, not a plain Hoare
+        // scan: while at least two full blocks (`KELP_SORT_BLOCK` elements
+        // each) remain between the two cursors `l` and `rr`, each round scans
+        // one block from each side and records, into `offsets_l`/`offsets_r`,
+        // the in-block offsets of elements on the wrong side of the pivot
+        // (>= pivot for the left block, <= pivot for the right block). That
+        // scan is the branch-free part: every iteration stores its offset
+        // unconditionally and folds the comparison's outcome into an
+        // increment (`num_l += (... >= 0)`) instead of a conditional branch,
+        // so there is nothing here for the branch predictor to get wrong on
+        // random data the way a per-element Hoare scan does. Only `num =
+        // min(num_l, num_r)` pairs get swapped this round; if one side has
+        // leftover flagged offsets (because the two counts differed), that
+        // side's block does not advance and those offsets simply carry over
+        // to be matched against next round's fresh block from the other
+        // side, exactly as pdqsort's own reference implementation does.
+        //
+        // Once fewer than `2 * KELP_SORT_BLOCK` elements remain between `l`
+        // and `rr`, the block loop stops and the tail is finished with the
+        // exact same branchy Hoare scan the previous, block-free version of
+        // this function used end to end (`i = l - 1`, `j = rr`, matching
+        // `lo = l, hi = rr - 1` passed to that scan): any offsets collected
+        // above but not yet swapped are still sitting exactly where they
+        // started inside `[l, rr)` (a swap only ever happens for a matched
+        // pair, and unmatched offsets are pure bookkeeping, never touched),
+        // so `[l, rr)` is still plain, valid, unpartitioned data and the
+        // tail scan re-derives its own classification from scratch; this
+        // wastes at most `O(KELP_SORT_BLOCK)` redundant comparisons per
+        // partition call, negligible next to the elements already handled
+        // branch-free above. `i = lo - 1` type wraparound reasoning for the
+        // tail scan's `l - 1` is the same as the previous version's: `l >=
+        // lo` always holds here, and if `l == lo == 0` this wraps to
+        // `SIZE_MAX` and the very next `i++` wraps it back to `lo`. The pivot
+        // value is copied into a local once (a plain element copy, never
+        // cloned or dropped, exactly as every swap here), so it stays valid
+        // as a sentinel no matter how the elements around it move, and
+        // comparing against that copy rather than tracking the pivot's index
+        // is what keeps an all-equal-keys input from degrading: every scan,
+        // block or tail, stops as soon as it reaches a key equal to the
+        // pivot rather than running to the end.
         writeln!(out, "static size_t {list}__partition({list}* self, size_t lo, size_t hi) {{").unwrap();
         out.push_str("    size_t mid = lo + (hi - lo) / 2;\n");
         writeln!(out, "    size_t pivot_idx = {list}__median3(self, lo, mid, hi);").unwrap();
         writeln!(out, "    {elem_c} pivot = self->data[pivot_idx];").unwrap();
-        out.push_str("    size_t i = lo - 1;\n    size_t j = hi + 1;\n    for (;;) {\n");
+        out.push_str("    size_t l = lo;\n    size_t rr = hi + 1;\n");
+        writeln!(out, "    size_t offsets_l[{KELP_SORT_BLOCK}];").unwrap();
+        writeln!(out, "    size_t offsets_r[{KELP_SORT_BLOCK}];").unwrap();
+        out.push_str("    size_t num_l = 0, num_r = 0;\n    size_t start_l = 0, start_r = 0;\n");
+        writeln!(out, "    while (rr - l > 2 * {KELP_SORT_BLOCK}) {{").unwrap();
+        out.push_str("        if (num_l == 0) {\n            start_l = 0;\n");
+        writeln!(out, "            for (size_t i = 0; i < {KELP_SORT_BLOCK}; i++) {{").unwrap();
+        out.push_str("                offsets_l[num_l] = i;\n");
+        writeln!(out, "                num_l += ({list}__cmp(&self->data[l + i], &pivot) >= 0);").unwrap();
+        out.push_str("            }\n        }\n");
+        out.push_str("        if (num_r == 0) {\n            start_r = 0;\n");
+        writeln!(out, "            size_t rbase = rr - {KELP_SORT_BLOCK};").unwrap();
+        writeln!(out, "            for (size_t i = 0; i < {KELP_SORT_BLOCK}; i++) {{").unwrap();
+        out.push_str("                offsets_r[num_r] = i;\n");
+        writeln!(out, "                num_r += ({list}__cmp(&self->data[rbase + i], &pivot) <= 0);").unwrap();
+        out.push_str("            }\n        }\n");
+        out.push_str("        size_t num = num_l < num_r ? num_l : num_r;\n");
+        writeln!(out, "        size_t rbase = rr - {KELP_SORT_BLOCK};").unwrap();
+        out.push_str("        for (size_t k = 0; k < num; k++) {\n");
+        out.push_str("            size_t li = l + offsets_l[start_l + k];\n");
+        out.push_str("            size_t ri = rbase + offsets_r[start_r + k];\n");
+        writeln!(out, "            {elem_c} t = self->data[li];\n            self->data[li] = self->data[ri];\n            self->data[ri] = t;\n        }}").unwrap();
+        out.push_str("        num_l -= num; start_l += num;\n        num_r -= num; start_r += num;\n");
+        writeln!(out, "        if (num_l == 0) {{ l += {KELP_SORT_BLOCK}; }}").unwrap();
+        writeln!(out, "        if (num_r == 0) {{ rr -= {KELP_SORT_BLOCK}; }}").unwrap();
+        out.push_str("    }\n");
+        out.push_str("    size_t i = l - 1;\n    size_t j = rr;\n    for (;;) {\n");
         writeln!(out, "        do {{ i++; }} while ({list}__cmp(&self->data[i], &pivot) < 0);").unwrap();
         writeln!(out, "        do {{ j--; }} while ({list}__cmp(&self->data[j], &pivot) > 0);").unwrap();
         out.push_str("        if (i >= j) {\n            return j;\n        }\n");
