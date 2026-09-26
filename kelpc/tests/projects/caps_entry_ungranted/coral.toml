@@ -1,0 +1,8 @@
+name = "capsentryungranted"
+
+# C-2 (roadmap open item 18): a [caps] section restricts the entry module
+# itself, the way an ordinary impl "..." caps(...) clause restricts an
+# imported module. This one grants only 'env', so main's own reference to
+# 'fs' in src/main.kp has no grant to resolve against.
+[caps]
+env = ["PATH"]

@@ -1853,6 +1853,56 @@ fn a_module_cannot_delegate_more_than_it_holds() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// C-2 (roadmap open item 18): coral.toml's [caps] section restricts the
+// entry module's own capability set, which the entry module could not
+// restrict any other way — an ordinary `caps(...)` clause on one of its own
+// `impl` lines grants the *imported* module, never main itself. A project
+// with no [caps] section keeps the old default (main holds everything, every
+// project above this point in the file has none), so these three are the
+// only fixtures pinning the new surface.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_entry_modules_own_caps_section_can_leave_a_domain_ungranted() {
+    // This project's coral.toml [caps] grants only 'env', so main's direct
+    // reference to 'fs' resolves against nothing — a resolution error at the
+    // same place and with the same wording an imported module's ungranted
+    // reference gets.
+    assert_project_rejected(
+        "caps_entry_ungranted",
+        &project("caps_entry_ungranted"),
+        "needs the 'fs' capability, which module 'main' was not granted",
+    );
+}
+
+#[test]
+fn a_caps_restricted_entry_module_can_still_reach_what_it_was_granted() {
+    let dir = caps_scratch("entry_restricted");
+    assert_project_runs(
+        "caps_entry_restricted",
+        &project("caps_entry_restricted"),
+        "true\nhi\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_caps_restricted_entry_module_is_denied_outside_its_own_pattern_at_runtime() {
+    // 'fs' is held (resolution passes), but only for a scratch directory this
+    // project's main.kp never names, so the denial is the runtime pattern
+    // check, not the resolution gate above — and it names 'main', the way
+    // a_path_outside_the_grant_is_denied_at_runtime names 'util' for a
+    // delegated module.
+    let dir = caps_scratch("entry_pattern_denied");
+    assert_project_denied_at_runtime(
+        "caps_entry_pattern_denied",
+        &project("caps_entry_pattern_denied"),
+        "outside the fs capability granted to module 'main'",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_delegated_wildcard_lets_the_import_reach_every_resource() {
     // `caps(*)` is the whole-resource wildcard of every domain, handed to the

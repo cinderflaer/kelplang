@@ -1,0 +1,6 @@
+name = "capsentryrestricted"
+
+# C-2: main's own grant, narrowed from the default "holds everything" to one
+# path under this scratch directory.
+[caps]
+fs = ["/tmp/kelp_caps_entry_restricted/**"]
