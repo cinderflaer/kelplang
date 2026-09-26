@@ -11498,10 +11498,11 @@ fn lower_try_to(src: &Ty, dst: &Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> 
 
 /// The associated constructors of the three builtin containers, written on
 /// the type name: `List.of(x)`/`List.empty()`, `Box.of(x)`/`Box.empty()`,
-/// and `Map.new()`/`Map.empty()`. Each needs its element type from
-/// somewhere — `of` takes it from its argument (or from the binding's
-/// written type, which is what `expected` is for), `empty`/`new` only from
-/// the written type.
+/// and `Map.new()`/`Map.empty()`/`Map.with_capacity(n)`. Each needs its
+/// element type from somewhere — `of` takes it from its argument (or from
+/// the binding's written type, which is what `expected` is for),
+/// `empty`/`new` only from the written type, and `with_capacity` from the
+/// written type as well because its argument is a count, not an element.
 fn check_container_associated(
     container: &str,
     method: &str,
@@ -11574,6 +11575,50 @@ fn check_container_associated(
             };
             Ok(tir::Expr {
                 kind: tir::ExprKind::Call { callee: key, args: vec![] },
+                ty: wrap(value),
+                span,
+            })
+        }
+        // `Map.with_capacity(n)` is `Map.new()` that sizes both buffers up
+        // front, which is the only way a caller can pay the growth once: a
+        // map that fills three million entries otherwise rebuilds its index a
+        // dozen times on the way there. The count is a hint, never a fence:
+        // the map grows past it like any other.
+        "with_capacity" if container == "Map" => {
+            if args.len() != 1 {
+                return Err(TypeError {
+                    message: format!(
+                        "'Map.with_capacity' takes exactly 1 argument (the entry count), found {}",
+                        args.len()
+                    ),
+                    span,
+                });
+            }
+            let cap = check_expr(&args[0].value, ctx, Some(&Ty::Usize))?;
+            if !matches!(cap.ty, Ty::Usize | Ty::I64) {
+                return Err(TypeError {
+                    message: format!(
+                        "'Map.with_capacity' needs a 'usize' or 'i64' entry count, found '{}'",
+                        cap.ty.display()
+                    ),
+                    span: args[0].value.span(),
+                });
+            }
+            let Some(value) = expected_elem else {
+                if ctx.defer_empty_container {
+                    return Ok(tir::Expr {
+                        kind: tir::ExprKind::Call { callee: key, args: vec![cap] },
+                        ty: open(),
+                        span,
+                    });
+                }
+                return Err(TypeError {
+                    message: "cannot tell what 'Map.with_capacity(n)' holds, write the type on the binding ('var m: Map<String, i32> = Map.with_capacity(n)')".to_string(),
+                    span,
+                });
+            };
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call { callee: key, args: vec![cap] },
                 ty: wrap(value),
                 span,
             })

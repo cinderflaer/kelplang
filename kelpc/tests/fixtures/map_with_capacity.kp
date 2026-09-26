@@ -1,0 +1,44 @@
+// `Map.with_capacity(n)` is the preallocation `Map.new()` cannot offer: both
+// buffers are sized up front, so a map that fills n entries never rebuilds its
+// index on the way there. The hint is not a fence, so a map that outgrows it
+// has to grow exactly like any other, and `keys()` order, removals and
+// tombstones must be the same as on a map that grew from nothing.
+//
+// Sixty-four entries of capacity for two hundred inserts forces that growth,
+// and `Map.with_capacity(0)`/`(1)` are the two degenerate sizes an up-front
+// malloc has to survive.
+fun main() {
+    var m: Map<i32, i32> = Map.with_capacity(64)
+    var i: i32 = 0
+    while i < 200 {
+        m.insert(i, i * 3)
+        i += 1
+    }
+    print(m.len())
+    print(m.get(199))
+    print(m.has(200))
+
+    var z: Map<i32, i32> = Map.with_capacity(0)
+    z.insert(7, 70)
+    print(z.get(7))
+    print(z.len())
+
+    var s: Map<i32, i32> = Map.with_capacity(1)
+    s.insert(1, 10)
+    s.insert(2, 20)
+    print(s.get(2))
+    print(s.remove(1))
+    print(s.has(1))
+    s.insert(3, 30)
+    print(s.get(3))
+
+    val ks = m.keys()
+    print(ks.len())
+    print(ks.get(0))
+    print(ks.get(199))
+
+    val n: i64 = 5
+    var big: Map<i64, i64> = Map.with_capacity(n)
+    big.insert(9, 99)
+    print(big.get(9))
+}

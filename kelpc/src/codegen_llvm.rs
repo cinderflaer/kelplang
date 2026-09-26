@@ -8848,6 +8848,7 @@ impl<'a> Gen<'a> {
         let clonable = crate::types::value_is_clonable(value, &self.clonable);
         let mut out = vec![
             spec(&format!("{base}__new"), map_ty, &[]),
+            spec(&format!("{base}__with_capacity"), map_ty, &[i64t]),
             spec(&format!("{base}__find"), i64t, &[ptr, key_arg, ptr]),
             spec(&format!("{base}__rehash"), void, &[ptr, i64t]),
             spec(&format!("{base}__insert"), void, &[ptr, key_arg, value_ty]),
@@ -9081,6 +9082,33 @@ impl<'a> Gen<'a> {
             let m = self.builder.build_alloca(map_ty, "m");
             self.st(self.ctx.const_null(map_ty), m);
             let v = self.ld(map_ty, m, "new");
+            self.builder.build_ret(v);
+        }
+
+        // --- with_capacity(cap) ---
+        {
+            let (f, _) = self.start(&format!("{base}__with_capacity"), "entry")?;
+            let cap = f.get_param(0);
+            let m = self.builder.build_alloca(map_ty, "m");
+            self.st(self.ctx.const_null(map_ty), m);
+            let empty = self.block(f, "wc.empty");
+            let sized = self.block(f, "wc.sized");
+            let zerocap = self.builder.build_icmp(IntCmp::Eq, cap, self.v_i64(0), "zerocap");
+            self.builder.build_cond_br(zerocap, empty, sized);
+            self.builder.position_at_end(sized);
+            let bytes = self.builder.build_int_binop(IntBinOp::Mul, cap, self.v_i64(entry_size), "bytes");
+            let (malloc, mty) = self.libc_fn("malloc")?;
+            let entries = self.call(malloc, mty, &[bytes], "entries");
+            self.check_alloc(entries, f)?;
+            self.st(entries, self.fld(map_ty, m, M_ENTRIES, "entries"));
+            self.st(cap, self.fld(map_ty, m, M_ENTRY_CAP, "entry_cap"));
+            // The index is built for `cap` live entries exactly as the first
+            // insert after `cap` inserts would have: same `rehash`, same size.
+            let (rehash, rhty) = self.cfn(&format!("{base}__rehash"))?;
+            self.call(rehash, rhty, &[m, cap], "");
+            self.builder.build_br(empty);
+            self.builder.position_at_end(empty);
+            let v = self.ld(map_ty, m, "map");
             self.builder.build_ret(v);
         }
 
@@ -10413,7 +10441,7 @@ fn container_symbol(callee: &str, args: &[Expr], ret: &Ty) -> Option<String> {
         return Some(format!("{base}__{suffix}"));
     }
     if let Some(op) = callee.strip_prefix("Map#") {
-        let (value, key) = if op == "new" {
+        let (value, key) = if op == "new" || op == "with_capacity" {
             (
                 crate::types::map_elem_of(ret).cloned(),
                 crate::types::map_key_of(ret).cloned(),

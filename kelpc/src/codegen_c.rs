@@ -1950,6 +1950,10 @@ fn write_map(
     .unwrap();
     out.push_str("        while (self->index[i] != 0) {\n            i = (i + 1) & (cap - 1);\n        }\n        self->index[i] = (uint32_t)(e + 1);\n        self->index_used++;\n    }\n}\n\n");
 
+    // `Map.with_capacity(n)`: both buffers sized up front, and never a fence:
+    // a map that outgrows the hint grows like any other.
+    writeln!(out, "static {map} {map}__with_capacity(size_t cap) {{\n    {map} m = {map}__new();\n    if (cap == 0) {{\n        return m;\n    }}\n    m.entries = ({entry}*)malloc(cap * sizeof({entry}));\n    if (m.entries == NULL) {{\n        kelp_panic(\"out of memory\");\n    }}\n    m.entry_cap = cap;\n    {map}__rehash(&m, cap);\n    return m;\n}}\n\n").unwrap();
+
     writeln!(out, "static void {map}__insert({map}* self, {key_arg_c} k, {value_c} v) {{").unwrap();
     writeln!(out, "    if (self->index_cap == 0 || (self->index_used + 1) * 4 >= self->index_cap * 3) {{\n        {map}__rehash(self, self->len + 1);\n    }}").unwrap();
     out.push_str("    bool found = false;\n");
@@ -4379,7 +4383,7 @@ impl<'a> Gen<'a> {
         // separately: its key comes from the receiver (or, for `Map.new()`,
         // from the call's own result type) and its value from the same place.
         if let Some(op) = callee.strip_prefix("Map#") {
-            let (from_ret, from_args) = if op == "new" {
+            let (from_ret, from_args) = if op == "new" || op == "with_capacity" {
                 (
                     crate::types::map_elem_of(ret).cloned(),
                     crate::types::map_key_of(ret).cloned(),
