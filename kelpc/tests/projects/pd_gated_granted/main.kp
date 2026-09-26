@@ -1,7 +1,7 @@
 // The positive control for the `pd` frame: the same initializer with a path
 // inside `util`'s grant. The check the fix emits has to admit this, on both
 // backends, or the fix would have broken every gated passdown initializer.
-impl "util" caps(fs = ["/tmp/kelp_caps_pd_gated_granted/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_pd_gated_granted/**"])
 
 fun main() {
     print(util.show())

@@ -9,7 +9,7 @@ pub fun spawn_outside() {
     args.push(String.from_str("-c"))
     args.push(String.from_str("exit 0"))
     process.spawn_raw(
-        "/tmp/kelp_caps_raw_positions_denied",
+        "__KELP_SCRATCH__/kelp_caps_raw_positions_denied",
         "/bin/sh",
         args,
         pid,

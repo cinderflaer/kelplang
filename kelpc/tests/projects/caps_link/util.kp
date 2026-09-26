@@ -4,7 +4,7 @@ impl "std/path"
 // This module holds `fs` because `main.kp` delegated it, so every path below
 // is checked against the patterns it received.
 pub fun build() {
-    val dir = "/tmp/kelp_caps_link"
+    val dir = "__KELP_SCRATCH__/kelp_caps_link"
     val target = path.join(dir, "target.txt")
     val link = path.join(dir, "link.txt")
     fs.write_text(target.as_str(), String.from_str("hello link"))

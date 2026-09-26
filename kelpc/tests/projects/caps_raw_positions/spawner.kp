@@ -3,7 +3,7 @@ impl "std/io"
 impl "std/process"
 
 pub fun open_mode_ok().R: bool {
-    val fd = fs.open_raw("/tmp/kelp_caps_raw_positions/note.txt", "r")
+    val fd = fs.open_raw("__KELP_SCRATCH__/kelp_caps_raw_positions/note.txt", "r")
     val ok = fd >= 0
     io.File(fd = fd).close()
     return ok

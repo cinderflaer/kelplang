@@ -3,7 +3,7 @@
 // module that declared the `pd` (`util`) and not on `main`, whose frame the
 // initializer runs in. The path is outside `util`'s grant, so this is denied
 // with `util`'s own allowlist in the message.
-impl "util" caps(fs = ["/tmp/kelp_caps_pd_gated_denied/**"])
+impl "util" caps(fs = ["__KELP_SCRATCH__/kelp_caps_pd_gated_denied/**"])
 
 fun main() {
     print(util.show())

@@ -10,11 +10,11 @@
 //
 // The program grant is the two prefixes the other process fixtures use:
 // `/bin/sh` is a symlink, and the check resolves it before matching.
-impl "spawner" caps(fs = ["/tmp/kelp_caps_raw_positions/**"], process = ["/bin/**", "/nix/store/**"])
+impl "spawner" caps(fs = ["__KELP_SCRATCH__/kelp_caps_raw_positions/**"], process = ["/bin/**", "/nix/store/**"])
 impl "std/fs"
 
 fun main() {
     print(spawner.open_mode_ok())
     print(spawner.spawn_raw_ok())
-    print(fs.exists("/tmp/kelp_caps_raw_positions/note.txt"))
+    print(fs.exists("__KELP_SCRATCH__/kelp_caps_raw_positions/note.txt"))
 }
