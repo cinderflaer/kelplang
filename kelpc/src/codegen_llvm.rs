@@ -8369,10 +8369,10 @@ impl<'a> Gen<'a> {
     /// and their panic strings are `runtime/kelp_rt.c`'s, so nothing observable
     /// moves.
     ///
-    /// Only fixed-layout accessors are here: an owned buffer, a `String` free of
-    /// a layout question, and a `View`, which is two eightbytes by value. The
-    /// rest of the runtime (allocation, drops, the map hash, the capability
-    /// checks) stays an out-of-line call.
+    /// Only fixed-layout accessors and the one-byte append are here: an owned
+    /// buffer, a `String` free of a layout question, and a `View`, which is two
+    /// eightbytes by value. The rest of the runtime (allocation, drops, the map
+    /// hash, the capability checks) stays an out-of-line call.
     fn emit_runtime_bodies(&self) -> Result<(), String> {
         let i8t = self.ctx.i8();
         let i64t = self.ctx.i64();
@@ -8403,7 +8403,7 @@ impl<'a> Gen<'a> {
             self.ld(ptr, self.fld(agg, self_p, L_DATA, "data"), "data")
         };
 
-        // --- Bytes.len / is_empty / get / set ---
+        // --- Bytes.len / is_empty / get / set / push ---
         {
             let f = body("kelp_Bytes__len")?;
             let n = len_of(bytes, f.get_param(0));
@@ -8434,6 +8434,20 @@ impl<'a> Gen<'a> {
             self.emit_bounds_check(f, n, i, "Bytes.set: index out of bounds")?;
             let at = self.gep(i8t, data_of(bytes, self_p), i, "at");
             self.st(value, at);
+            self.builder.build_ret_void();
+        }
+        {
+            let f = body("kelp_Bytes__push")?;
+            let self_p = f.get_param(0);
+            let byte = f.get_param(1);
+            let n = len_of(bytes, self_p);
+            self.emit_grow_call(f, bytes, self_p, self.v_i64(1))?;
+            let at = self.gep(i8t, data_of(bytes, self_p), n, "at");
+            self.st(byte, at);
+            let next = self.builder.build_int_binop(IntBinOp::Add, n, self.v_i64(1), "len1");
+            self.st(next, self.fld(bytes, self_p, L_LEN, "len"));
+            let term = self.gep(i8t, data_of(bytes, self_p), next, "term");
+            self.st(self.v_i8(0), term);
             self.builder.build_ret_void();
         }
 
