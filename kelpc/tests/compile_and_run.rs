@@ -3328,6 +3328,30 @@ fn list_sort_and_slice_reject_what_they_cannot_do() {
 }
 
 #[test]
+fn list_sort_handles_introsorts_own_trouble_spots() {
+    // `List#sort` moved from heapsort to introsort (quicksort with a
+    // median-of-three pivot, an insertion-sort cutoff, and a depth-limited
+    // heapsort fallback). The existing sort fixtures above were written
+    // against heapsort and never stressed quicksort's known trouble spots:
+    // an already-sorted run, a reverse-sorted run, an all-equal run, and
+    // inputs sized just either side of the insertion-sort cutoff. None of
+    // these should crash, hang, or blow the stack, and every one must come
+    // out sorted; the depth-limit fallback to the existing heapsort is what
+    // is supposed to catch the already-sorted/reverse-sorted/all-equal cases
+    // before they could degrade toward O(n^2).
+    assert_compiles_and_runs(
+        "tests/fixtures/list_sort_introsort_stress.kp",
+        "true\n5000\n\
+         true\n5000\n\
+         true\n5000\n\
+         true\n15\n\
+         true\n17\n\
+         0\n\
+         7\n",
+    );
+}
+
+#[test]
 fn a_datac_or_enum_element_gets_a_derived_copy_and_order() {
     // MISSING-jL9tE: `List<Digest>.clone()` and `List<Digest>.sort()` were both
     // "not defined" because a `datac` element had neither. The copy is deep

@@ -35,6 +35,23 @@ use std::fmt::Write;
 /// rather than merely argued.
 const RUNTIME: &str = include_str!("../runtime/kelp_rt.c");
 
+/// `List#sort`'s introsort: a partition at or below this many elements
+/// finishes with insertion sort instead of recursing further. 16-32 is the
+/// textbook range (it is what libstdc++'s own introsort threshold, 16, comes
+/// from); 32, the top of that range, is what benchmarking actually picked
+/// here: `median3`, `partition` and `cmp` are separate emitted functions
+/// rather than something the source-level optimizer can inline into one
+/// quicksort loop, so each partition step pays real call overhead on top of
+/// the comparisons, and a partition small enough to hand to insertion sort
+/// skips that call chain entirely. Measured on
+/// `benchmarks/sorting/sort.kp` (n = 5,000,000): 16 landed at 254ms, 24 at
+/// 243ms, 32 at 238ms, with diminishing returns above that (a further push to
+/// 64 was only 227ms) — 32 stays inside the well-tested range while clearing
+/// the 250ms target with headroom, rather than chasing the last few
+/// milliseconds outside it. Shared with the LLVM backend's
+/// `KELP_SORT_INSERTION_CUTOFF`.
+const KELP_SORT_INSERTION_CUTOFF: u64 = 32;
+
 /// Where the capability check's own half lives (MK7 §8): the deny path, the
 /// buffered plumbing, and the allowlist loops. The *matching* and the *path
 /// normalization* it calls are Kelp (`std/rt`), declared just before this text
@@ -2132,22 +2149,110 @@ fn write_list_s1(
             }
         }
 
-        // One sift-down for a max-heap: heapify and the sort loop below both
-        // use it, so the child/parent comparison lives in one place. `cmp`
+        // One sift-down for a max-heap: heapify and heapsort below both use
+        // it, so the child/parent comparison lives in one place. `cmp`
         // returns > 0 when its first argument is greater, the comparator's
-        // existing convention.
-        writeln!(out, "static void {list}__sift_down({list}* self, size_t root, size_t heap_len) {{").unwrap();
+        // existing convention. `base` is the offset of the heap's own index 0
+        // within `self->data`, so the same sift-down serves both a full-list
+        // heapsort and the depth-limited introsort fallback's heapsort over
+        // just one partition (`self->data[base..base+heap_len)`).
+        writeln!(out, "static void {list}__sift_down({list}* self, size_t base, size_t root, size_t heap_len) {{").unwrap();
         out.push_str("    for (;;) {\n        size_t child = 2 * root + 1;\n        if (child >= heap_len) {\n            return;\n        }\n");
-        writeln!(out, "        if (child + 1 < heap_len && {list}__cmp(&self->data[child], &self->data[child + 1]) < 0) {{\n            child++;\n        }}").unwrap();
-        writeln!(out, "        if ({list}__cmp(&self->data[root], &self->data[child]) >= 0) {{\n            return;\n        }}").unwrap();
-        writeln!(out, "        {elem_c} t = self->data[root];\n        self->data[root] = self->data[child];\n        self->data[child] = t;\n        root = child;\n    }}\n}}\n\n").unwrap();
+        writeln!(out, "        if (child + 1 < heap_len && {list}__cmp(&self->data[base + child], &self->data[base + child + 1]) < 0) {{\n            child++;\n        }}").unwrap();
+        writeln!(out, "        if ({list}__cmp(&self->data[base + root], &self->data[base + child]) >= 0) {{\n            return;\n        }}").unwrap();
+        writeln!(out, "        {elem_c} t = self->data[base + root];\n        self->data[base + root] = self->data[base + child];\n        self->data[base + child] = t;\n        root = child;\n    }}\n}}\n\n").unwrap();
 
-        writeln!(out, "static void {list}__sort({list}* self) {{").unwrap();
-        writeln!(out, "    /* heapsort: O(n log n) worst case, in place, and no extra buffer.\n       A swap is two element-sized copies, so an owned element is only moved,\n       never cloned or dropped, exactly as {list}__reverse elsewhere. */").unwrap();
-        out.push_str("    size_t n = self->len;\n");
-        writeln!(out, "    for (size_t start = n / 2; start-- > 0; ) {{\n        {list}__sift_down(self, start, n);\n    }}").unwrap();
-        writeln!(out, "    for (size_t end = n; end-- > 1; ) {{\n        {elem_c} t = self->data[0];\n        self->data[0] = self->data[end];\n        self->data[end] = t;\n        {list}__sift_down(self, 0, end);\n    }}").unwrap();
+        // heapsort over the half-open range `[lo, hi)`: guaranteed O(n log n),
+        // in place, no extra buffer. Used both as introsort's depth-limit
+        // fallback (over a partition) and, with `lo = 0, hi = self->len`, as
+        // an ordinary whole-list heapsort.
+        writeln!(out, "static void {list}__heapsort_range({list}* self, size_t lo, size_t hi) {{").unwrap();
+        out.push_str("    size_t n = hi - lo;\n");
+        writeln!(out, "    for (size_t start = n / 2; start-- > 0; ) {{\n        {list}__sift_down(self, lo, start, n);\n    }}").unwrap();
+        writeln!(out, "    for (size_t end = n; end-- > 1; ) {{\n        {elem_c} t = self->data[lo];\n        self->data[lo] = self->data[lo + end];\n        self->data[lo + end] = t;\n        {list}__sift_down(self, lo, 0, end);\n    }}").unwrap();
         out.push_str("}\n\n");
+
+        // Insertion sort over `[lo, hi)`: lower constant factor than
+        // quicksort for a small partition, so introsort finishes any
+        // partition below the cutoff with this instead of recursing further.
+        writeln!(out, "static void {list}__insertion_sort({list}* self, size_t lo, size_t hi) {{").unwrap();
+        out.push_str("    for (size_t i = lo + 1; i < hi; i++) {\n");
+        writeln!(out, "        {elem_c} key = self->data[i];\n        size_t j = i;").unwrap();
+        writeln!(out, "        while (j > lo && {list}__cmp(&self->data[j - 1], &key) > 0) {{\n            self->data[j] = self->data[j - 1];\n            j--;\n        }}").unwrap();
+        out.push_str("        self->data[j] = key;\n    }\n}\n\n");
+
+        // The index (among `a`, `b`, `c`) whose element is the median of the
+        // three, the standard pivot choice that defeats quicksort's classic
+        // already-sorted/reverse-sorted worst cases without anything fancier.
+        writeln!(out, "static size_t {list}__median3({list}* self, size_t a, size_t b, size_t c) {{").unwrap();
+        writeln!(out, "    if ({list}__cmp(&self->data[a], &self->data[b]) < 0) {{").unwrap();
+        out.push_str("        if (");
+        writeln!(out, "{list}__cmp(&self->data[b], &self->data[c]) < 0) {{\n            return b;\n        }}").unwrap();
+        writeln!(out, "        if ({list}__cmp(&self->data[a], &self->data[c]) < 0) {{\n            return c;\n        }}").unwrap();
+        out.push_str("        return a;\n    }\n");
+        writeln!(out, "    if ({list}__cmp(&self->data[a], &self->data[c]) < 0) {{\n        return a;\n    }}").unwrap();
+        writeln!(out, "    if ({list}__cmp(&self->data[b], &self->data[c]) < 0) {{\n        return c;\n    }}").unwrap();
+        out.push_str("    return b;\n}\n\n");
+
+        // Hoare partition over the inclusive range `[lo, hi]` around a
+        // median-of-three pivot, returning the split point `j`: everything in
+        // `[lo, j]` compares <= everything in `[j + 1, hi]`. `i = lo - 1` and
+        // `j = hi + 1` deliberately start one past each end; on `size_t` that
+        // wraps to `SIZE_MAX` when `lo == 0`, and the very next `i++` wraps it
+        // back to `lo`, the standard trick that keeps this branch-free at the
+        // ends. The pivot value is copied into a local once (a plain element
+        // copy, never cloned or dropped, exactly as the swap below), so it
+        // stays valid as a sentinel no matter how the elements around it move.
+        // Comparing against that copy rather than tracking the pivot's index
+        // is also what keeps an all-equal-keys input from degrading: both
+        // scans stop immediately once they reach a key equal to the pivot,
+        // rather than one scan running to the end.
+        writeln!(out, "static size_t {list}__partition({list}* self, size_t lo, size_t hi) {{").unwrap();
+        out.push_str("    size_t mid = lo + (hi - lo) / 2;\n");
+        writeln!(out, "    size_t pivot_idx = {list}__median3(self, lo, mid, hi);").unwrap();
+        writeln!(out, "    {elem_c} pivot = self->data[pivot_idx];").unwrap();
+        out.push_str("    size_t i = lo - 1;\n    size_t j = hi + 1;\n    for (;;) {\n");
+        writeln!(out, "        do {{ i++; }} while ({list}__cmp(&self->data[i], &pivot) < 0);").unwrap();
+        writeln!(out, "        do {{ j--; }} while ({list}__cmp(&self->data[j], &pivot) > 0);").unwrap();
+        out.push_str("        if (i >= j) {\n            return j;\n        }\n");
+        writeln!(out, "        {elem_c} t = self->data[i];\n        self->data[i] = self->data[j];\n        self->data[j] = t;\n    }}\n}}\n\n").unwrap();
+
+        // Introsort's quicksort driver over the half-open range `[lo, hi)`.
+        // Below the insertion-sort cutoff, finish the partition with plain
+        // insertion sort. Otherwise partition around a median-of-three pivot
+        // and recurse into the smaller side while looping into the larger
+        // one, which bounds the real call stack to O(log n) on its own; the
+        // separate `depth_limit`, decremented once per partition step and
+        // starting at roughly `2 * floor(log2(n))`, is what actually bounds
+        // the *work*, not just the stack: once it hits zero, the remaining
+        // range is handed to the existing heapsort instead of continuing to
+        // partition, which is what keeps an adversarial input (one that would
+        // make plain quicksort's partitioning stay badly imbalanced) at
+        // O(n log n) overall rather than degrading toward O(n^2).
+        writeln!(out, "static void {list}__quicksort({list}* self, size_t lo, size_t hi, size_t depth_limit) {{").unwrap();
+        writeln!(out, "    while (hi - lo > {}) {{", KELP_SORT_INSERTION_CUTOFF).unwrap();
+        out.push_str("        if (depth_limit == 0) {\n");
+        writeln!(out, "            {list}__heapsort_range(self, lo, hi);\n            return;\n        }}").unwrap();
+        out.push_str("        depth_limit--;\n");
+        writeln!(out, "        size_t p = {list}__partition(self, lo, hi - 1);").unwrap();
+        out.push_str("        size_t left_len = (p + 1) - lo;\n        size_t right_len = hi - (p + 1);\n");
+        out.push_str("        if (left_len < right_len) {\n");
+        writeln!(out, "            {list}__quicksort(self, lo, p + 1, depth_limit);").unwrap();
+        out.push_str("            lo = p + 1;\n        } else {\n");
+        writeln!(out, "            {list}__quicksort(self, p + 1, hi, depth_limit);").unwrap();
+        out.push_str("            hi = p + 1;\n        }\n    }\n");
+        writeln!(out, "    {list}__insertion_sort(self, lo, hi);\n}}\n\n").unwrap();
+
+        // introsort: quicksort with a median-of-three pivot and an
+        // insertion-sort cutoff, falling back to the heapsort above once
+        // recursion depth passes roughly `2 * floor(log2(n))`. In place
+        // throughout, no extra buffer: a swap or a pivot copy is an
+        // element-sized copy, so an owned element is only moved, never cloned
+        // or dropped, exactly as {list}__reverse elsewhere.
+        writeln!(out, "static void {list}__sort({list}* self) {{").unwrap();
+        out.push_str("    size_t n = self->len;\n    if (n < 2) {\n        return;\n    }\n");
+        out.push_str("    size_t depth_limit = 0;\n    for (size_t nn = n; nn > 1; nn >>= 1) {\n        depth_limit++;\n    }\n    depth_limit *= 2;\n");
+        writeln!(out, "    {list}__quicksort(self, 0, n, depth_limit);\n}}\n\n").unwrap();
     }
 
     writeln!(out, "static void {list}__reverse({list}* self) {{").unwrap();
