@@ -6494,6 +6494,15 @@ const L_CAP: u32 = 2;
 /// `KELP_SORT_INSERTION_CUTOFF`.
 const KELP_SORT_INSERTION_CUTOFF: u64 = 32;
 
+/// `List#sort`'s partition, branchless block size: mirrors the C backend's
+/// `KELP_SORT_BLOCK` exactly, same value and same reasoning (pdqsort's own
+/// published block size, not something benchmarked here). See that constant's
+/// doc comment for the full explanation of the technique; this backend hand-
+/// builds the identical algorithm as LLVM IR instead of emitting C text for
+/// it, so both backends must keep agreeing on the value, checked by the
+/// differential test suite.
+const KELP_SORT_BLOCK: u64 = 64;
+
 impl<'a> Gen<'a> {
     // ---- the derived clone and order of a datac/enum ---------------------
 
@@ -7754,20 +7763,49 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(retb2);
             self.builder.build_ret(b);
 
-            // Hoare partition over the inclusive range `[lo, hi]` around a
+            // Partition over the inclusive range `[lo, hi]` around a
             // median-of-three pivot, returning the split point `j`:
             // everything in `[lo, j]` compares <= everything in
-            // `[j + 1, hi]`. `i = lo - 1` and `j = hi + 1` deliberately start
-            // one past each end; on the unsigned index type that wraps when
-            // `lo == 0`, and the very next increment wraps it back to `lo`,
-            // the standard trick that keeps this branch-free at the ends. The
-            // pivot value is copied into a local once (a plain element copy,
-            // never cloned or dropped, exactly as the swap below), so it
-            // stays valid as a sentinel no matter how the elements around it
-            // move. Comparing against that copy rather than tracking the
-            // pivot's index is also what keeps an all-equal-keys input from
-            // degrading: both scans stop immediately once they reach a key
-            // equal to the pivot, rather than one scan running to the end.
+            // `[j + 1, hi]`. This hand-builds pdqsort/BlockQuicksort's
+            // branchless partition as LLVM IR, not a plain Hoare scan (see
+            // the C backend's `{base}__partition`, and `KELP_SORT_BLOCK`'s
+            // doc comment above, for the full explanation of the technique
+            // and why it helps on random data): while at least two full
+            // blocks remain between the cursors `l` and `rr`, each round
+            // scans one block from each side and records, into the
+            // `offsets_l`/`offsets_r` stack buffers, the in-block offsets of
+            // elements on the wrong side of the pivot. That scan is the
+            // branch-free part: `wrong64 = zext(icmp sge/sle ...)` folds the
+            // comparison's outcome into an integer added to a running count
+            // instead of a conditional branch, so there is no per-element
+            // control-flow decision for the branch predictor to get wrong on
+            // random data. Only `num = min(num_l, num_r)` pairs are swapped
+            // each round; whichever side has leftover offsets keeps its
+            // block active and those offsets carry over (via `start_l`/
+            // `start_r`) to be matched against next round's fresh block from
+            // the other side, exactly as pdqsort's own reference
+            // implementation does.
+            //
+            // Once fewer than `2 * KELP_SORT_BLOCK` elements remain between
+            // `l` and `rr`, the block loop stops and the tail is finished
+            // with the exact same branchy Hoare scan the previous, block-
+            // free version of this function used end to end (starting from
+            // `l`/`rr` rather than `lo`/`hi`): any offsets collected above
+            // but not yet swapped are still sitting exactly where they
+            // started inside `[l, rr)` (a swap only ever happens for a
+            // matched pair; an unmatched offset is pure bookkeeping, never
+            // acted on), so `[l, rr)` is still plain, valid, unpartitioned
+            // data and the tail scan re-derives its own classification from
+            // scratch. This wastes at most `O(KELP_SORT_BLOCK)` redundant
+            // comparisons per partition call, negligible next to the
+            // elements handled branch-free above. The pivot value is copied
+            // into a local once (a plain element copy, never cloned or
+            // dropped, exactly as every swap here), so it stays valid as a
+            // sentinel no matter how the elements around it move, and
+            // comparing against that copy rather than tracking the pivot's
+            // index is what keeps an all-equal-keys input from degrading:
+            // every scan, block or tail, stops as soon as it reaches a key
+            // equal to the pivot rather than running to the end.
             let (f, _) = self.start(&format!("{base}__partition"), "entry")?;
             let self_p = f.get_param(0);
             let lo = f.get_param(1);
@@ -7782,12 +7820,189 @@ impl<'a> Gen<'a> {
             let pivptr = self.gep(elem_ty, data, pividx, "pivptr");
             let pivot_slot = self.builder.build_alloca(elem_ty, "pivot");
             self.st(self.ld(elem_ty, pivptr, "pv"), pivot_slot);
-            let i_slot = self.builder.build_alloca(i64t, "i");
-            let lo_m1 = self.builder.build_int_binop(IntBinOp::Sub, lo, self.v_i64(1), "lo_m1");
-            self.st(lo_m1, i_slot);
-            let j_slot = self.builder.build_alloca(i64t, "j");
+
+            let l_slot = self.builder.build_alloca(i64t, "l");
+            self.st(lo, l_slot);
+            let rr_slot = self.builder.build_alloca(i64t, "rr");
             let hi_p1 = self.builder.build_int_binop(IntBinOp::Add, hi, self.v_i64(1), "hi_p1");
-            self.st(hi_p1, j_slot);
+            self.st(hi_p1, rr_slot);
+            let offsets_arr_ty = self.ctx.array_type(i64t, KELP_SORT_BLOCK);
+            let offsets_l = self.builder.build_alloca(offsets_arr_ty, "offsets_l");
+            let offsets_r = self.builder.build_alloca(offsets_arr_ty, "offsets_r");
+            let num_l_slot = self.builder.build_alloca(i64t, "num_l");
+            self.st(self.v_i64(0), num_l_slot);
+            let num_r_slot = self.builder.build_alloca(i64t, "num_r");
+            self.st(self.v_i64(0), num_r_slot);
+            let start_l_slot = self.builder.build_alloca(i64t, "start_l");
+            self.st(self.v_i64(0), start_l_slot);
+            let start_r_slot = self.builder.build_alloca(i64t, "start_r");
+            self.st(self.v_i64(0), start_r_slot);
+
+            let blk_cond = self.loop_header(f, "part.blk.cond");
+            let l = self.ld(i64t, l_slot, "l");
+            let rr = self.ld(i64t, rr_slot, "rr");
+            let blk_width = self.builder.build_int_binop(IntBinOp::Sub, rr, l, "blk.width");
+            let has_room = self.builder.build_icmp(
+                IntCmp::Ugt,
+                blk_width,
+                self.v_i64(2 * KELP_SORT_BLOCK),
+                "has_room",
+            );
+            let blk_body = self.block(f, "part.blk.body");
+            let blk_done = self.block(f, "part.blk.done");
+            self.builder.build_cond_br(has_room, blk_body, blk_done);
+            self.builder.position_at_end(blk_body);
+            let rbase = self.builder.build_int_binop(
+                IntBinOp::Sub,
+                rr,
+                self.v_i64(KELP_SORT_BLOCK),
+                "rbase",
+            );
+
+            // if (num_l == 0): refill offsets_l from the block [l, l+BLOCK).
+            let num_l0 = self.ld(i64t, num_l_slot, "num_l0");
+            let num_l0_zero = self.builder.build_icmp(IntCmp::Eq, num_l0, self.v_i64(0), "num_l0_zero");
+            let fill_l = self.block(f, "part.fill_l");
+            let after_fill_l = self.block(f, "part.after_fill_l");
+            self.builder.build_cond_br(num_l0_zero, fill_l, after_fill_l);
+            self.builder.position_at_end(fill_l);
+            self.st(self.v_i64(0), start_l_slot);
+            self.st(self.v_i64(0), num_l_slot);
+            let fl_i_slot = self.builder.build_alloca(i64t, "fl_i");
+            self.st(self.v_i64(0), fl_i_slot);
+            let fl_cond = self.loop_header(f, "part.fl.cond");
+            let fl_i = self.ld(i64t, fl_i_slot, "fl_i.v");
+            let fl_more = self.builder.build_icmp(IntCmp::Ult, fl_i, self.v_i64(KELP_SORT_BLOCK), "fl_more");
+            let fl_body = self.block(f, "part.fl.body");
+            let fl_done = self.block(f, "part.fl.done");
+            self.builder.build_cond_br(fl_more, fl_body, fl_done);
+            self.builder.position_at_end(fl_body);
+            let fl_numl = self.ld(i64t, num_l_slot, "fl_numl");
+            let fl_off_ptr = self.gep(i64t, offsets_l, fl_numl, "fl_off_ptr");
+            self.st(fl_i, fl_off_ptr);
+            let fl_idx = self.builder.build_int_binop(IntBinOp::Add, l, fl_i, "fl_idx");
+            let fl_elem_ptr = self.gep(elem_ty, data, fl_idx, "fl_elem_ptr");
+            let fl_cmp = self.call(cmpsym, cmpty, &[fl_elem_ptr, pivot_slot], "fl_cmp");
+            let fl_wrong = self.builder.build_icmp(IntCmp::Sge, fl_cmp, self.v_i32(0), "fl_wrong");
+            let fl_wrong64 = self.builder.build_int_cast(false, true, fl_wrong, i64t, "fl_wrong64");
+            let fl_numl1 = self.builder.build_int_binop(IntBinOp::Add, fl_numl, fl_wrong64, "fl_numl1");
+            self.st(fl_numl1, num_l_slot);
+            let fl_i1 = self.builder.build_int_binop(IntBinOp::Add, fl_i, self.v_i64(1), "fl_i1");
+            self.st(fl_i1, fl_i_slot);
+            self.builder.build_br(fl_cond);
+            self.builder.position_at_end(fl_done);
+            self.builder.build_br(after_fill_l);
+            self.builder.position_at_end(after_fill_l);
+
+            // if (num_r == 0): refill offsets_r from the block [rbase, rr).
+            let num_r0 = self.ld(i64t, num_r_slot, "num_r0");
+            let num_r0_zero = self.builder.build_icmp(IntCmp::Eq, num_r0, self.v_i64(0), "num_r0_zero");
+            let fill_r = self.block(f, "part.fill_r");
+            let after_fill_r = self.block(f, "part.after_fill_r");
+            self.builder.build_cond_br(num_r0_zero, fill_r, after_fill_r);
+            self.builder.position_at_end(fill_r);
+            self.st(self.v_i64(0), start_r_slot);
+            self.st(self.v_i64(0), num_r_slot);
+            let fr_i_slot = self.builder.build_alloca(i64t, "fr_i");
+            self.st(self.v_i64(0), fr_i_slot);
+            let fr_cond = self.loop_header(f, "part.fr.cond");
+            let fr_i = self.ld(i64t, fr_i_slot, "fr_i.v");
+            let fr_more = self.builder.build_icmp(IntCmp::Ult, fr_i, self.v_i64(KELP_SORT_BLOCK), "fr_more");
+            let fr_body = self.block(f, "part.fr.body");
+            let fr_done = self.block(f, "part.fr.done");
+            self.builder.build_cond_br(fr_more, fr_body, fr_done);
+            self.builder.position_at_end(fr_body);
+            let fr_numr = self.ld(i64t, num_r_slot, "fr_numr");
+            let fr_off_ptr = self.gep(i64t, offsets_r, fr_numr, "fr_off_ptr");
+            self.st(fr_i, fr_off_ptr);
+            let fr_idx = self.builder.build_int_binop(IntBinOp::Add, rbase, fr_i, "fr_idx");
+            let fr_elem_ptr = self.gep(elem_ty, data, fr_idx, "fr_elem_ptr");
+            let fr_cmp = self.call(cmpsym, cmpty, &[fr_elem_ptr, pivot_slot], "fr_cmp");
+            let fr_wrong = self.builder.build_icmp(IntCmp::Sle, fr_cmp, self.v_i32(0), "fr_wrong");
+            let fr_wrong64 = self.builder.build_int_cast(false, true, fr_wrong, i64t, "fr_wrong64");
+            let fr_numr1 = self.builder.build_int_binop(IntBinOp::Add, fr_numr, fr_wrong64, "fr_numr1");
+            self.st(fr_numr1, num_r_slot);
+            let fr_i1 = self.builder.build_int_binop(IntBinOp::Add, fr_i, self.v_i64(1), "fr_i1");
+            self.st(fr_i1, fr_i_slot);
+            self.builder.build_br(fr_cond);
+            self.builder.position_at_end(fr_done);
+            self.builder.build_br(after_fill_r);
+            self.builder.position_at_end(after_fill_r);
+
+            // num = min(num_l, num_r); swap that many matched pairs.
+            let num_l1 = self.ld(i64t, num_l_slot, "num_l1");
+            let num_r1 = self.ld(i64t, num_r_slot, "num_r1");
+            let l_smaller = self.builder.build_icmp(IntCmp::Ult, num_l1, num_r1, "l_smaller");
+            let num = self.builder.build_select(l_smaller, num_l1, num_r1, "num");
+            let start_l1 = self.ld(i64t, start_l_slot, "start_l1");
+            let start_r1 = self.ld(i64t, start_r_slot, "start_r1");
+            let sw_k_slot = self.builder.build_alloca(i64t, "sw_k");
+            self.st(self.v_i64(0), sw_k_slot);
+            let sw_cond = self.loop_header(f, "part.sw.cond");
+            let sw_k = self.ld(i64t, sw_k_slot, "sw_k.v");
+            let sw_more = self.builder.build_icmp(IntCmp::Ult, sw_k, num, "sw_more");
+            let sw_body = self.block(f, "part.sw.body");
+            let sw_done = self.block(f, "part.sw.done");
+            self.builder.build_cond_br(sw_more, sw_body, sw_done);
+            self.builder.position_at_end(sw_body);
+            let sw_li_slot = self.builder.build_int_binop(IntBinOp::Add, start_l1, sw_k, "sw_li_slot");
+            let sw_off_l_ptr = self.gep(i64t, offsets_l, sw_li_slot, "sw_off_l_ptr");
+            let sw_off_l = self.ld(i64t, sw_off_l_ptr, "sw_off_l");
+            let sw_li = self.builder.build_int_binop(IntBinOp::Add, l, sw_off_l, "sw_li");
+            let sw_ri_slot = self.builder.build_int_binop(IntBinOp::Add, start_r1, sw_k, "sw_ri_slot");
+            let sw_off_r_ptr = self.gep(i64t, offsets_r, sw_ri_slot, "sw_off_r_ptr");
+            let sw_off_r = self.ld(i64t, sw_off_r_ptr, "sw_off_r");
+            let sw_ri = self.builder.build_int_binop(IntBinOp::Add, rbase, sw_off_r, "sw_ri");
+            let sw_li_ptr = self.gep(elem_ty, data, sw_li, "sw_li_ptr");
+            let sw_ri_ptr = self.gep(elem_ty, data, sw_ri, "sw_ri_ptr");
+            let sw_lv = self.ld(elem_ty, sw_li_ptr, "sw_lv");
+            let sw_rv = self.ld(elem_ty, sw_ri_ptr, "sw_rv");
+            self.st(sw_rv, sw_li_ptr);
+            self.st(sw_lv, sw_ri_ptr);
+            let sw_k1 = self.builder.build_int_binop(IntBinOp::Add, sw_k, self.v_i64(1), "sw_k1");
+            self.st(sw_k1, sw_k_slot);
+            self.builder.build_br(sw_cond);
+            self.builder.position_at_end(sw_done);
+
+            let new_num_l = self.builder.build_int_binop(IntBinOp::Sub, num_l1, num, "new_num_l");
+            let new_start_l = self.builder.build_int_binop(IntBinOp::Add, start_l1, num, "new_start_l");
+            self.st(new_num_l, num_l_slot);
+            self.st(new_start_l, start_l_slot);
+            let new_num_r = self.builder.build_int_binop(IntBinOp::Sub, num_r1, num, "new_num_r");
+            let new_start_r = self.builder.build_int_binop(IntBinOp::Add, start_r1, num, "new_start_r");
+            self.st(new_num_r, num_r_slot);
+            self.st(new_start_r, start_r_slot);
+
+            let num_l_zero2 = self.builder.build_icmp(IntCmp::Eq, new_num_l, self.v_i64(0), "num_l_zero2");
+            let adv_l = self.block(f, "part.adv_l");
+            let after_adv_l = self.block(f, "part.after_adv_l");
+            self.builder.build_cond_br(num_l_zero2, adv_l, after_adv_l);
+            self.builder.position_at_end(adv_l);
+            let l_adv = self.builder.build_int_binop(IntBinOp::Add, l, self.v_i64(KELP_SORT_BLOCK), "l_adv");
+            self.st(l_adv, l_slot);
+            self.builder.build_br(after_adv_l);
+            self.builder.position_at_end(after_adv_l);
+
+            let num_r_zero2 = self.builder.build_icmp(IntCmp::Eq, new_num_r, self.v_i64(0), "num_r_zero2");
+            let adv_r = self.block(f, "part.adv_r");
+            let after_adv_r = self.block(f, "part.after_adv_r");
+            self.builder.build_cond_br(num_r_zero2, adv_r, after_adv_r);
+            self.builder.position_at_end(adv_r);
+            let rr_adv = self.builder.build_int_binop(IntBinOp::Sub, rr, self.v_i64(KELP_SORT_BLOCK), "rr_adv");
+            self.st(rr_adv, rr_slot);
+            self.builder.build_br(after_adv_r);
+            self.builder.position_at_end(after_adv_r);
+            self.builder.build_br(blk_cond);
+
+            // Tail: finish `[l, rr)` with the original branchy Hoare scan.
+            self.builder.position_at_end(blk_done);
+            let l_final = self.ld(i64t, l_slot, "l_final");
+            let rr_final = self.ld(i64t, rr_slot, "rr_final");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            let l_final_m1 = self.builder.build_int_binop(IntBinOp::Sub, l_final, self.v_i64(1), "l_final_m1");
+            self.st(l_final_m1, i_slot);
+            let j_slot = self.builder.build_alloca(i64t, "j");
+            self.st(rr_final, j_slot);
             let iscan = self.loop_header(f, "part.iscan");
             let ii = self.ld(i64t, i_slot, "ii");
             let ii1 = self.builder.build_int_binop(IntBinOp::Add, ii, self.v_i64(1), "ii1");
