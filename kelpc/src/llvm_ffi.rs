@@ -71,22 +71,25 @@ use llvm_sys::core::{
     LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
     LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstInstruction,
-    LLVMGetIntTypeWidth, LLVMGetNamedFunction, LLVMGetNextInstruction, LLVMGetParam,
+    LLVMGetIntTypeWidth, LLVMGetMDKindIDInContext, LLVMGetNamedFunction, LLVMGetNextInstruction,
+    LLVMGetParam,
     LLVMGetTarget, LLVMGetTypeKind,
     LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
     LLVMInt64TypeInContext,
-    LLVMInt8TypeInContext, LLVMMetadataAsValue, LLVMModuleCreateWithNameInContext,
+    LLVMInt8TypeInContext, LLVMMDNodeInContext2, LLVMMDStringInContext2, LLVMMetadataAsValue,
+    LLVMModuleCreateWithNameInContext,
     LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage,
-    LLVMSetOrdering, LLVMSetTarget,
+    LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVoidTypeInContext,
 };
 use llvm_sys::debuginfo::{
     LLVMCreateDIBuilder, LLVMDIBuilderCreateCompileUnit, LLVMDIBuilderCreateDebugLocation,
     LLVMDIBuilderCreateFile, LLVMDIBuilderCreateFunction, LLVMDIBuilderCreateSubroutineType,
     LLVMDIBuilderFinalize, LLVMDebugMetadataVersion, LLVMDisposeDIBuilder,
-    LLVMDWARFEmissionKind, LLVMDWARFSourceLanguage, LLVMDIFlagPrototyped, LLVMSetSubprogram,
+    LLVMDWARFEmissionKind, LLVMDWARFSourceLanguage, LLVMDIFlagPrototyped,
+    LLVMMetadataReplaceAllUsesWith, LLVMSetSubprogram, LLVMTemporaryMDNode,
 };
 use llvm_sys::error::{LLVMDisposeErrorMessage, LLVMErrorRef, LLVMGetErrorMessage};
 use llvm_sys::LLVMLinkage;
@@ -257,6 +260,63 @@ impl Context {
     /// this guard is alive.
     pub fn as_raw(&self) -> LLVMContextRef {
         self.raw
+    }
+
+    /// Mark `br`, the backedge of one loop, with LLVM's `llvm.loop.unroll.full`
+    /// loop option (`LLVMSetMetadata` under the `llvm.loop` kind).
+    ///
+    /// The option tells the unroller to unroll the loop however large the body
+    /// is. That is what a small constant-bound loop needs: LLVM's own cost model
+    /// declines a body the size of a kernel's inner step, and the SLP vectorizer
+    /// packs across bodies only when they are already straight line, so a loop
+    /// the model leaves alone never becomes the shape the packing needs. Only a
+    /// loop whose bound is a small literal is marked
+    /// (`codegen_llvm::forced_unroll`), so the option never reaches a loop whose
+    /// trip count is unbounded or large.
+    ///
+    /// One `llvm.loop` node names the loop: its first operand is the node
+    /// itself and the options follow it. LLVM requires that self reference, and
+    /// only a distinct node can carry it, so the node is built around a
+    /// temporary placeholder that is then replaced by the node it sits in
+    /// (`LLVMTemporaryMDNode` and `LLVMMetadataReplaceAllUsesWith`, the pattern
+    /// the C API's own loop metadata is built with).
+    pub fn mark_loop_unroll_full(&self, br: Value<'_>) {
+        const KEY: &str = "llvm.loop";
+        const OPTION: &str = "llvm.loop.unroll.full";
+        // SAFETY: the context is live, the strings outlive the calls, and every
+        // node is built in this context. A string and a node survive as long as
+        // metadata does, which is the context's own lifetime, so the handles
+        // below outlive the loop they mark.
+        unsafe {
+            let option =
+                LLVMMDStringInContext2(self.raw, OPTION.as_ptr() as *const c_char, OPTION.len());
+            let mut property_operands = [option];
+            let property = LLVMMDNodeInContext2(
+                self.raw,
+                property_operands.as_mut_ptr(),
+                property_operands.len(),
+            );
+            // The placeholder stands in for the node's first operand, which
+            // has to be the node itself; replacing every use of it with the
+            // node completes the cycle. The C API can only build a temporary
+            // (forward-declaring) node directly, and a temporary node is
+            // rejected by the verifier, so the node with the cycle is the
+            // ordinary one: RAUW-ing the temporary operand makes LLVM resolve
+            // it, and a self-referential node resolves to a distinct one.
+            let placeholder = LLVMTemporaryMDNode(self.raw, null_mut(), 0);
+            let mut members = [placeholder, property];
+            let id = LLVMMDNodeInContext2(self.raw, members.as_mut_ptr(), members.len());
+            LLVMMetadataReplaceAllUsesWith(placeholder, id);
+            let kind = LLVMGetMDKindIDInContext(
+                self.raw,
+                KEY.as_ptr() as *const c_char,
+                KEY.len() as c_uint,
+            );
+            // SAFETY: `br` is a branch instruction of a module in this context
+            // and `id` is a metadata node of the same context, which is what
+            // attaching it requires.
+            LLVMSetMetadata(br.as_raw(), kind, LLVMMetadataAsValue(self.raw, id));
+        }
     }
 
     /// `i1`, LLVM's boolean: also the type of a comparison result.
@@ -620,6 +680,16 @@ pub enum IntExtension {
     SignExt,
 }
 
+impl IntExtension {
+    /// The attribute's own spelling.
+    fn name(self) -> &'static str {
+        match self {
+            IntExtension::ZeroExt => "zeroext",
+            IntExtension::SignExt => "signext",
+        }
+    }
+}
+
 /// A function: a declaration or a definition in a [`Module`].
 #[derive(Clone, Copy)]
 pub struct Function<'ctx> {
@@ -674,7 +744,23 @@ impl<'ctx> Function<'ctx> {
     /// the C header (BUG-rK2mW).
     pub fn add_parameter_extension(&self, index: usize, ext: IntExtension) {
         assert!(index >= 1, "parameter attribute indices are 1-based");
-        self.add_enum_attribute(index as LLVMAttributeIndex, ext);
+        self.add_enum_attribute(index as LLVMAttributeIndex, ext.name());
+    }
+
+    /// Attach `noalias` to the `index`-th parameter
+    /// (`LLVMAddAttributeAtIndex`).
+    ///
+    /// The promise is the callee's own: for the duration of the call, nothing
+    /// the body reaches through this pointer is reached through anything but a
+    /// pointer derived from it. A `mut` parameter is an exclusive borrow
+    /// (`borrowck`), so every call site already guarantees it, and the analysis
+    /// it buys is what lets LLVM reorder and vectorize accesses through the
+    /// array parameters against each other instead of treating each load and
+    /// store as possibly touching every array (the reason a kernel like
+    /// `nbody`'s pair loop stayed scalar before this).
+    pub fn add_parameter_noalias(&self, index: usize) {
+        assert!(index >= 1, "parameter attribute indices are 1-based");
+        self.add_enum_attribute(index as LLVMAttributeIndex, "noalias");
     }
 
     /// Attach `ext` to this function's return value
@@ -683,17 +769,13 @@ impl<'ctx> Function<'ctx> {
     /// before it returns, and a declaration that does not say so lets a caller
     /// read the register's upper bits as part of the value (BUG-rK2mW).
     pub fn add_return_extension(&self, ext: IntExtension) {
-        self.add_enum_attribute(LLVMAttributeReturnIndex, ext);
+        self.add_enum_attribute(LLVMAttributeReturnIndex, ext.name());
     }
 
-    /// Attach one integer-extension enum attribute at `index`, looking the
-    /// attribute's kind up by name because `llvm-sys` exports no constant for
-    /// it (the C API's kind ids are deliberately unstable).
-    fn add_enum_attribute(&self, index: LLVMAttributeIndex, ext: IntExtension) {
-        let name = match ext {
-            IntExtension::ZeroExt => "zeroext",
-            IntExtension::SignExt => "signext",
-        };
+    /// Attach one enum attribute named `name` at `index`, looking the kind up
+    /// by name because `llvm-sys` exports no constant for it (the C API's kind
+    /// ids are deliberately unstable).
+    fn add_enum_attribute(&self, index: LLVMAttributeIndex, name: &str) {
         // SAFETY: the name is a NUL-free static string and the length is its
         // own byte count; the kind is looked up in this context's table.
         let kind = unsafe {

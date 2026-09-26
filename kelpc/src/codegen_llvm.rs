@@ -983,6 +983,25 @@ impl<'a> Gen<'a> {
             };
             let ty = ctx.fn_type(ret, &params, false);
             let func = self.module.add_function(&symbol_name(&f.name), ty);
+            // A `mut` parameter is an exclusive borrow (`borrowck`), so no other
+            // live pointer reaches the same object through the call and LLVM may
+            // assume `noalias` of it. A shared parameter gets nothing: two
+            // shared parameters may be one object passed twice.
+            if f.name != "main" {
+                let mut index = if f.env.is_some() { 2 } else { 1 };
+                for (pname, pty) in f.params.iter().filter(|(_, pty)| *pty != Ty::Unit) {
+                    // A `pd`'s hidden parameter is the exception: the same
+                    // storage stays reachable through the generated global, and
+                    // a callee that took the global's own address (`relay` in
+                    // `tests/fixtures/pd_write_reaches_callers.kp`, which needs
+                    // no hidden parameter because it only calls) writes memory
+                    // this pointer would claim no one else can.
+                    if !pname.starts_with("pd#") && matches!(pty, Ty::Ref { mutable: true, .. }) {
+                        func.add_parameter_noalias(index);
+                    }
+                    index += 1;
+                }
+            }
             self.funcs.insert(
                 f.name.clone(),
                 FnInfo {
@@ -1362,6 +1381,36 @@ impl<'a> Gen<'a> {
         } else {
             Some(llvm_type(ctx, &self.structs, &self.containers, &f.ret)?)
         };
+        let symbol = symbol_name(&f.name);
+        // The bare name inside the module, the last dot-separated component,
+        // which is how `externs.rs` keys a body: `(module, bare name)`.
+        let bare = f.name.rsplit('.').next().unwrap_or(&f.name);
+        // `std/math`'s square root is LLVM's own `llvm.sqrt.f64` rather than the
+        // C body `externs.rs` carries: the body is a `call` at every use, and a
+        // call in the loop is what keeps the SLP vectorizer from packing the
+        // arithmetic around it (its remark is `call instruction cannot be
+        // vectorized`). The intrinsic is the same `sqrtsd` the C body's `sqrt`
+        // compiles to; only the errno the C call would set is lost, and Kelp has
+        // no errno. The C backend keeps the body, so the two backends still
+        // differ only in how they say the same operation.
+        if f.module == "std/math" && bare == "sqrt_raw" {
+            let Some(ret) = ret_llvm else {
+                return Err(no_value("the return type of 'sqrt_raw'"));
+            };
+            let ty = ctx.fn_type(ret, &[ret], false);
+            let func = self.module.add_function("llvm.sqrt.f64", ty);
+            self.runtime.insert(
+                symbol,
+                RtFn {
+                    func,
+                    ty,
+                    yields: true,
+                    ret: ret_llvm,
+                    sret: false,
+                },
+            );
+            return Ok(());
+        }
         let sret = ret_llvm
             .map(|ty| crosses_c_boundary_by_value(&f.ret, ty, self.layout))
             .unwrap_or(false);
@@ -2337,7 +2386,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.terminated = false;
         self.emit_block_value(body)?;
         if !self.terminated {
-            self.g.builder.build_br(header);
+            let back = self.g.builder.build_br(header);
+            // A loop whose bound is a small literal is unrolled in full, so its
+            // body is the straight line of steps the SLP vectorizer packs `nbody`
+            // across. See `FORCED_UNROLL_BOUND`.
+            if forced_unroll_bound(cond).is_some() {
+                self.g.ctx.mark_loop_unroll_full(back);
+            }
         }
 
         self.g.builder.position_at_end(exit_bb);
@@ -10349,6 +10404,35 @@ fn is_diverging_tail(tail: &Expr) -> bool {
 
 /// Whether an expression has stable storage, mirroring the subset of
 /// `codegen_c.rs::is_place` this slice lowers.
+/// The largest bound a `while` condition may state literally and still have
+/// its loop fully unrolled by LLVM (`llvm_ffi::Context::mark_loop_unroll_full`).
+///
+/// The step is what makes a literal bound mean a small trip count: a loop that
+/// runs `i < N` with a literal `N` runs at most `N + 1` times, so forcing the
+/// unroll cannot grow the code by more than that, while a bound that is a
+/// value or a wide literal is left to LLVM's own cost model. Sixteen is the
+/// count LLVM's own `unroll-full-max-count` defaults to.
+const FORCED_UNROLL_BOUND: i128 = 16;
+
+/// The bound of a `while` condition that states one as a small literal:
+/// `i < N` or `i <= N` with `N` at most [`FORCED_UNROLL_BOUND`].
+///
+/// Only the two upper-bound comparisons qualify. `i > N`/`i >= N` states a
+/// lower bound, which says nothing about the trip count, and `i != N` can be
+/// reached by a step that never lands on `N`.
+fn forced_unroll_bound(cond: &Expr) -> Option<i128> {
+    let ExprKind::Binary { op, rhs, .. } = &cond.kind else {
+        return None;
+    };
+    if !matches!(op, BinOp::Lt | BinOp::LtEq) {
+        return None;
+    }
+    let ExprKind::IntLit(bound) = rhs.kind else {
+        return None;
+    };
+    (0..=FORCED_UNROLL_BOUND).contains(&bound).then_some(bound)
+}
+
 fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,

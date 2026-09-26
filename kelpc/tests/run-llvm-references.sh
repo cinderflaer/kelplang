@@ -227,9 +227,11 @@ SCALAR_IR="$(strip_dbg "$REF_OUT/scalar.ll")"
 F64_IR="$(strip_dbg "$REF_OUT/scalar_f64.ll")"
 RETURNED_IR="$(strip_dbg "$REF_OUT/returned.ll")"
 PANIC_IR="$(strip_dbg "$REF_OUT/panic.ll")"
+# A `mut` parameter is an exclusive borrow, so the signature marks it
+# `noalias` (`codegen_llvm::declare`), on a scalar borrow as on an array.
 for want in \
-    'define void @kelp_add(ptr %0, i64 %1) {' \
-    'define i64 @kelp_accumulate(ptr %0, i64 %1, i64 %2) {'
+    'define void @kelp_add(ptr noalias %0, i64 %1) {' \
+    'define i64 @kelp_accumulate(ptr noalias %0, i64 %1, i64 %2) {'
 do
     if ! grep -qxF "$want" "$SCALAR_IR"; then
         echo "the scalar borrow in '$SCALAR_IR' is missing: $want" >&2
@@ -237,7 +239,7 @@ do
     fi
 done
 for want in \
-    'define void @kelp_scale(ptr %0, double %1) {'
+    'define void @kelp_scale(ptr noalias %0, double %1) {'
 do
     if ! grep -qxF "$want" "$F64_IR"; then
         echo "the float scalar borrow in '$F64_IR' is missing: $want" >&2
