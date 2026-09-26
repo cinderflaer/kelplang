@@ -12,6 +12,13 @@
 # pointer: BUG-vN4tR, MK7 §3.3), and the bodies are compiled into a per-program
 # object from the same `write_extern` text the C backend emits.
 #
+# One extern is the exception, and the declarations below say so: `std/math`'s
+# `sqrt_raw` is declared as LLVM's own `llvm.sqrt.f64` instead of with its C
+# signature, because the C body is a `call` at every use and a call inside a
+# loop is what stops the SLP vectorizer from packing the arithmetic around it.
+# Its C body is still written to the per-program object, where it is now
+# unreferenced; the C backend still calls it.
+#
 # This script carries the S1, S2A, S2B, S2C, S2D, S2F and S2E lists forward and
 # adds the S3A fixtures, so one run is the whole opt-in surface at this slice.
 # Its list is closed by `--exact`: a fixture that has grown a construct outside
@@ -310,9 +317,12 @@ SCALAR_IR="$(strip_dbg "$REF_OUT/scalar.ll")"
 F64_IR="$(strip_dbg "$REF_OUT/scalar_f64.ll")"
 RETURNED_IR="$(strip_dbg "$REF_OUT/returned.ll")"
 PANIC_IR="$(strip_dbg "$REF_OUT/panic.ll")"
+# A `mut` parameter is an exclusive borrow, so the signature marks it
+# `noalias` (`codegen_llvm::declare`): the scalar borrows below are what show
+# that attribute on a parameter that is not an array.
 for want in \
-    'define void @kelp_add(ptr %0, i64 %1) {' \
-    'define i64 @kelp_accumulate(ptr %0, i64 %1, i64 %2) {'
+    'define void @kelp_add(ptr noalias %0, i64 %1) {' \
+    'define i64 @kelp_accumulate(ptr noalias %0, i64 %1, i64 %2) {'
 do
     if ! grep -qxF "$want" "$SCALAR_IR"; then
         echo "the scalar borrow in '$SCALAR_IR' is missing: $want" >&2
@@ -320,7 +330,7 @@ do
     fi
 done
 for want in \
-    'define void @kelp_scale(ptr %0, double %1) {'
+    'define void @kelp_scale(ptr noalias %0, double %1) {'
 do
     if ! grep -qxF "$want" "$F64_IR"; then
         echo "the float scalar borrow in '$F64_IR' is missing: $want" >&2
@@ -455,7 +465,6 @@ for want in \
     'declare void @kelp_std__mem__alloc_raw(ptr, i64)' \
     'declare void @kelp_std__fmt__hex_raw(ptr, i64)' \
     'declare void @kelp_std__str__from_f64_raw(ptr, double, i32)' \
-    'declare double @kelp_std__math__sqrt_raw(double)' \
     'declare zeroext i1 @kelp_std__math__is_nan_raw(double)' \
     'declare i64 @kelp_std__str__byte_len_raw(ptr)' \
     'declare zeroext i8 @kelp_std__str__byte_at_raw(ptr, i64)' \
@@ -469,6 +478,17 @@ do
         exit 1
     fi
 done
+# The one extern that is not declared with its C signature: `sqrt_raw` is
+# LLVM's `llvm.sqrt.f64` (see the header). Its C body must not appear on any
+# call path, or the vectorizer sees the `call` the intrinsic removed.
+if ! grep -qF 'declare double @llvm.sqrt.f64(double)' "$EXTERN_IR"; then
+    echo "'$EXTERN_IR' has no llvm.sqrt.f64 declaration" >&2
+    exit 1
+fi
+if grep -q 'kelp_std__math__sqrt_raw' "$EXTERN_IR"; then
+    echo "'$EXTERN_IR' still calls std/math's C sqrt body" >&2
+    exit 1
+fi
 # The adapter is *called* with a staged argument, not with a struct value, and
 # no declared return is a 24-byte aggregate left by value.
 if ! grep -q 'call void @kelp_String__from_bytes_ptr(ptr ' "$EXTERN_IR"; then
@@ -481,7 +501,7 @@ if grep -qE '^declare %kelp_(Bytes|String) @' "$EXTERN_IR"; then
 fi
 # `path.normalize_raw`'s body is the one that calls into `std/rt`, so the
 # function it references has to be defined in the same module.
-if ! grep -qxF 'define i1 @kelp_std__rt__path_normalize(ptr %0, ptr %1) {' "$PATH_IR"; then
+if ! grep -qxF 'define i1 @kelp_std__rt__path_normalize(ptr %0, ptr noalias %1) {' "$PATH_IR"; then
     echo "'$PATH_IR' does not define kelp_std__rt__path_normalize" >&2
     exit 1
 fi

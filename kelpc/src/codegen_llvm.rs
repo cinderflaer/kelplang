@@ -989,8 +989,14 @@ impl<'a> Gen<'a> {
             // shared parameters may be one object passed twice.
             if f.name != "main" {
                 let mut index = if f.env.is_some() { 2 } else { 1 };
-                for (_, pty) in f.params.iter().filter(|(_, pty)| *pty != Ty::Unit) {
-                    if matches!(pty, Ty::Ref { mutable: true, .. }) {
+                for (pname, pty) in f.params.iter().filter(|(_, pty)| *pty != Ty::Unit) {
+                    // A `pd`'s hidden parameter is the exception: the same
+                    // storage stays reachable through the generated global, and
+                    // a callee that took the global's own address (`relay` in
+                    // `tests/fixtures/pd_write_reaches_callers.kp`, which needs
+                    // no hidden parameter because it only calls) writes memory
+                    // this pointer would claim no one else can.
+                    if !pname.starts_with("pd#") && matches!(pty, Ty::Ref { mutable: true, .. }) {
                         func.add_parameter_noalias(index);
                     }
                     index += 1;
