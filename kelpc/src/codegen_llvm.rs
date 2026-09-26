@@ -1873,6 +1873,10 @@ struct FnGen<'g, 'a> {
     /// passdown initializer is emitted through, which has a span of its own
     /// instead.
     decl_span: Option<Span>,
+    /// The most recently entry-hoisted `alloca`, so the next one chains in
+    /// right after it (`alloca`'s own doc comment) instead of always at the
+    /// block's absolute start. `None` before the first one.
+    alloca_after: Option<Value<'a>>,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -1910,6 +1914,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             env_slot: None,
             debug_scope: g.debug_scopes.get(&f.name).copied(),
             decl_span: Some(f.span),
+            alloca_after: None,
         })
     }
 
@@ -1948,6 +1953,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             env_slot: None,
             debug_scope: g.pd_init_scope,
             decl_span: Some(pd.init.span),
+            alloca_after: None,
         })
     }
 
@@ -3471,11 +3477,43 @@ impl<'g, 'a> FnGen<'g, 'a> {
     ///
     /// `mem2reg` promotes only slots in the entry block, and by the time a `let`
     /// in a later statement allocates one the entry block may already have been
-    /// terminated by a `return`, so the slot goes at the block's *start*.
-    fn alloca(&self, ty: &Ty, name: &str) -> Result<Value<'a>, String> {
+    /// terminated by a `return`, so the slot can never go at the block's
+    /// absolute *end* (that would land after the terminator). It also must not
+    /// always go at the block's absolute *start* either: that would insert
+    /// each new local *before* every one already hoisted there, reversing
+    /// their declaration order in the IR every function actually has more
+    /// than one local in (confirmed for `while i < N { ... }` with two `var`s,
+    /// MISSING-n4Zwq: `hash`, declared first, ended up allocated *after* `i`).
+    /// LLVM's own optimizer is not blind to that order: `mem2reg`'s promotion
+    /// walk, and the SCEV-based passes downstream of it (`indvars`, the
+    /// unroller) that decide which of a loop's phis is its primary induction
+    /// variable, are sensitive to the order values are produced in, so a
+    /// reversal here silently costs real codegen quality later, well past
+    /// where it looks like a purely cosmetic ordering choice. Confirmed
+    /// experimentally: swapping only the two `alloca`s' relative order in
+    /// `loop.kp`'s hand-edited pre-optimization `.ll`, with nothing else
+    /// touched, flips which phi `opt -O2` puts first at the loop header and
+    /// closes the extra-`imul` gap `MISSING-n4Zwq` measured.
+    ///
+    /// So each `alloca` chains in right after the *previous* one this
+    /// function hoisted (`alloca_after`), preserving declaration order among
+    /// them, and only the very first one falls back to the block's start.
+    /// Chaining after a real instruction (rather than "the end") is what
+    /// keeps this valid once the block gains a terminator: the previous
+    /// `alloca` was always inserted before any terminator existed, and
+    /// inserting right after it is still before that terminator, however
+    /// much later it is added. This is the same technique Clang's own `-O0`
+    /// codegen uses for the same reason (a tracked `AllocaInsertPt` new
+    /// entry-block allocas chain after), not a trick invented for this one
+    /// benchmark.
+    fn alloca(&mut self, ty: &Ty, name: &str) -> Result<Value<'a>, String> {
         let lty = self.lty(ty)?;
-        self.g.builder.position_at_start(self.entry);
+        match self.alloca_after {
+            Some(prev) => self.g.builder.position_after(prev, self.entry),
+            None => self.g.builder.position_at_start(self.entry),
+        }
         let slot = self.g.builder.build_alloca(lty, name);
+        self.alloca_after = Some(slot);
         self.g.builder.position_at_end(self.cur);
         Ok(slot)
     }
