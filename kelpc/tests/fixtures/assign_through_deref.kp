@@ -1,0 +1,34 @@
+// roadmap open item 15, case 2: an assignment through a dereferenced borrow
+// (`*p = value`) used to leak the value it overwrote, because the drop plan
+// only recorded a drop for a plain binding (`DropPlan::at_assign`), and a
+// `Deref` assignment target is not one — there is no declaration to key a
+// `DropTarget` to, only a place. Fixed by giving `at_assign` a second shape,
+// keyed by nothing (`binding: None`), that both backends resolve by
+// recomputing the target's own place expression instead of looking up a
+// binding.
+//
+// `overwrite` writes through a `mut String` parameter, which lowers to
+// exactly `*p = value`; `overwrite_field` does the same one projection
+// deeper, through a `mut Holder` parameter's owned field, which is the same
+// underlying gap reached via a field write instead of a bare `*p =` (the
+// `assign_owned_field.kp` fixture pins the case where the field's base is a
+// directly-owned local rather than a borrow).
+datac Holder(var name: String)
+
+fun overwrite(p: mut String, value: move String) {
+    *p = value
+}
+
+fun overwrite_field(p: mut Holder, value: move String) {
+    p.name = value
+}
+
+fun main() {
+    var s = String.from_str("first")
+    overwrite(s, String.from_str("second"))
+    print(s)
+
+    var h = Holder(name = String.from_str("alpha"))
+    overwrite_field(h, String.from_str("beta"))
+    print(h.name)
+}

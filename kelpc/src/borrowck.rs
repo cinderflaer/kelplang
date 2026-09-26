@@ -64,10 +64,16 @@
 //! still live there — moved out, and its new owner is responsible for it.
 //! Every `return` first drops the frame's live owned locals (the value being
 //! returned was itself checked before that, so a returned local is already
-//! marked moved and is not in the set). Assignment to an owned `var`
-//! re-arms the drop rather than freeing the old value, which leaks it: v1
-//! has no user-defined destructors, so nothing can observe the difference
-//! except memory use.
+//! marked moved and is not in the set). Assignment to an owned `var` frees
+//! the old value before the new one is stored (`DropPlan::at_assign`),
+//! except for `b = b` (the value being stored *is* the old value) and
+//! except when the value expression already moved the binding out
+//! (`x = f(x)`, where `f` takes `x` by value) — there the free belongs to
+//! whichever path still holds the old value, not to this assignment. The
+//! same freeing now also covers an assignment through a dereferenced borrow
+//! (`*p = value`) and to an owned field (`h.name = value`), which have no
+//! binding to key a `DropTarget` to at all (roadmap open item 15, cases 2
+//! and 3) — see `DropTarget::binding`'s doc.
 //!
 //! One owned entry is kept per *binding*, not per spelling: two `var a`
 //! declarations in one block own two values, so each declaration keeps its own
@@ -121,15 +127,23 @@ use crate::lexer::Span;
 use crate::tir;
 use crate::types::{EnumDef, Ty};
 
-/// One owned local that has to be freed at a particular point.
+/// One owned local (or, for `at_assign`, one owned *place*) that has to be
+/// freed at a particular point.
 #[derive(Debug, Clone)]
 pub struct DropTarget {
     /// The binding whose value this frees. It is what codegen resolves the
     /// drop to, so a spelling that names several bindings (a rebound `var`, or
     /// a local shadowing a `move` parameter) frees the value the plan decided
     /// about rather than the newest binding of that spelling (BUG-n7Wq3).
-    /// `None` only for a target with no tracked binding at all: an assignment
-    /// to a `pd`'s storage, which name resolution reaches like any global.
+    ///
+    /// `None` in two different shapes, both without a declaration to key to:
+    /// an assignment to a `pd`'s storage, which name resolution reaches like
+    /// any global (`name` is still that global's spelling then); and an
+    /// `at_assign` entry for a `*p = value` or `p.field = value` /
+    /// `h.name = value` target (`FieldAccess`/`Deref` — roadmap open item 15,
+    /// cases 2 and 3), where `name` is empty and there is no binding *or*
+    /// global to fall back to at all — codegen has to recompute the target's
+    /// own place expression a second time instead of resolving a name.
     pub binding: Option<BindingId>,
     pub name: String,
     pub ty: Ty,
@@ -286,10 +300,17 @@ impl DropPlan {
             .unwrap_or(&[])
     }
 
-    /// The old value of an owned binding, freed by the assignment at `span`
-    /// *after* the new value has been read but *before* it is stored. `b = b`
-    /// is deliberately not one of these: the value being stored *is* the old
+    /// The old value overwritten by the assignment at `span`, freed *after*
+    /// the new value has been read but *before* it is stored. `b = b` is
+    /// deliberately not one of these: the value being stored *is* the old
     /// value, so freeing it first would leave the binding dangling.
+    ///
+    /// Two shapes: an `Ident` target's entry names a `binding` codegen
+    /// resolves the usual way, and a `FieldAccess`/`Deref` target's entry
+    /// (`*p = value`, `p.field = value`, `h.name = value`; roadmap open item
+    /// 15, cases 2 and 3) has `binding: None` and an empty `name` — there is
+    /// no declaration to key to, only a place, so codegen recomputes the
+    /// target expression's own address again rather than looking one up.
     pub fn at_assign(&self, function: &str, span: Span) -> &[DropTarget] {
         self.functions
             .get(function)
@@ -1869,6 +1890,47 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                         }],
                     );
                 }
+            }
+            // Roadmap open item 15, cases 2 and 3: an assignment through a
+            // dereferenced borrow (`*p = value`, or `p.field = value` where
+            // `p` is a borrow — `FieldAccess`'s base need not be a local this
+            // frame owns) or to an owned field of a directly-owned local
+            // (`h.name = s`) overwrites a place the drop plan cannot express
+            // as a `BindingId` at all — there is no declaration to key it to,
+            // only an address. `binding: None` here is exactly that: codegen
+            // reads the target's own place expression again (its address is
+            // idempotent to recompute — nothing between the two evaluations
+            // writes it) rather than resolving a binding.
+            //
+            // No `self_assign`/`moved_by_value` guard is needed here the way
+            // the `Ident` arm above needs one. A `Deref` target's pointee can
+            // never be read out by whole value when it is non-Copy in the
+            // first place (`check_value`'s `Deref` arm refuses that outright),
+            // so `value` can never alias `*p` itself. A `FieldAccess` target
+            // whose `value` reads that very same field (`h.name = h.name`, or
+            // `h.name = wrap(h.name)`) is a partial move of that field, and a
+            // partial move's slot is *unconditionally* zeroed at the read
+            // (`field_move_sites`/`at_clear` keeps every field move, not only
+            // the ones a branch merge left ambiguous — contrast `at_move`,
+            // which is why *that* arm needs the guard). So by the time this
+            // drop runs, the place holds either the genuine old value or the
+            // zero a move already left there, and freeing zero is the same
+            // no-op the rest of this plan already relies on throughout (see
+            // the module doc's "a move clears its source").
+            match &target.kind {
+                tir::ExprKind::FieldAccess { .. } | tir::ExprKind::Deref { .. } => {
+                    if crate::types::needs_drop(&target.ty, &ctx.owned_structs) {
+                        ctx.plan.at_assign.insert(
+                            expr.span,
+                            vec![DropTarget {
+                                binding: None,
+                                name: String::new(),
+                                ty: target.ty.clone(),
+                            }],
+                        );
+                    }
+                }
+                _ => {}
             }
             Ok(())
         }
