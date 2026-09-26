@@ -71,7 +71,8 @@ use llvm_sys::core::{
     LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
     LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstInstruction,
-    LLVMGetIntTypeWidth, LLVMGetNamedFunction, LLVMGetParam, LLVMGetTarget, LLVMGetTypeKind,
+    LLVMGetIntTypeWidth, LLVMGetNamedFunction, LLVMGetNextInstruction, LLVMGetParam,
+    LLVMGetTarget, LLVMGetTypeKind,
     LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
     LLVMInt64TypeInContext,
     LLVMInt8TypeInContext, LLVMMetadataAsValue, LLVMModuleCreateWithNameInContext,
@@ -1181,6 +1182,31 @@ impl<'ctx> Builder<'ctx> {
             // SAFETY: the builder is live and `first` is an instruction of the
             // block, which is the contract `LLVMPositionBuilderBefore` wants.
             unsafe { LLVMPositionBuilderBefore(self.raw, first) };
+        }
+    }
+
+    /// Emit subsequent instructions immediately after `instr`, which must be
+    /// an instruction of `block` (`LLVMGetNextInstruction` +
+    /// `LLVMPositionBuilderBefore`, or `LLVMPositionBuilderAtEnd` when `instr`
+    /// is currently the block's last instruction).
+    ///
+    /// This is what chains a run of entry-block `alloca`s in declaration
+    /// order: inserting each one right after the previous one, rather than
+    /// always at the block's absolute start, keeps their order stable no
+    /// matter how many more are hoisted in later, while remaining valid even
+    /// after the block gains a terminator (the terminator, if any, is always
+    /// after `instr`, never `instr` itself).
+    pub fn position_after(&self, instr: Value<'ctx>, block: BasicBlock<'ctx>) {
+        // SAFETY: `instr` is live and belongs to `block`.
+        let next = unsafe { LLVMGetNextInstruction(instr.as_raw()) };
+        if next.is_null() {
+            // SAFETY: `instr` is the block's last instruction, so appending at
+            // the block's end places the new instruction right after it.
+            unsafe { LLVMPositionBuilderAtEnd(self.raw, block.as_raw()) };
+        } else {
+            // SAFETY: the builder is live and `next` is an instruction of
+            // `block`, which is the contract `LLVMPositionBuilderBefore` wants.
+            unsafe { LLVMPositionBuilderBefore(self.raw, next) };
         }
     }
 
