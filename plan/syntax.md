@@ -1482,6 +1482,9 @@ print(counts.keys().len())
 var runs: Map<i32, i64> = Map.new()        // a scalar key
 runs.insert(key = 7, v = 3)
 print(runs.get(key = 7))
+
+var big: Map<i32, i64> = Map.with_capacity(100000)   // both buffers sized up front
+big.insert(key = 1, v = 1)
 ```
 
 - **`Map<V>` written with one argument means `Map<String, V>`.** That is the shorthand every program written before keys were generic uses, and the two spellings are the same type.
@@ -1492,6 +1495,7 @@ print(runs.get(key = 7))
 | Method | Takes | Returns |
 | --- | --- | --- |
 | `Map.new()` / `Map.empty()` | nothing | empty map, key and value types from the binding or from the first `insert` |
+| `Map.with_capacity(n)` | `usize` or `i64` | an empty map sized for `n` entries, from the binding; a hint, not a fence |
 | `len()` / `is_empty()` | shared | `usize` / `bool` |
 | `has(key)` | shared | `bool` |
 | `get(key)` | shared | the value, or a borrow of it; panics when absent |
