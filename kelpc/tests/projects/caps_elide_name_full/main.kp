@@ -1,0 +1,11 @@
+// The name-domain counterpart of `caps_elide_full_grant`: the grant on the
+// `impl "std/env"` line is the domain's whole-resource `*`, so the runtime
+// name check at `std/env`'s own forwarding calls (`has` over `has_raw`, and
+// the three beside it) is provably going to pass and `cap_plan` drops it. The
+// entry module's own check at the call site below stays: it is the one that
+// still refuses a name with a `/` in it, since `*` crosses no `/`.
+impl "std/env" caps(env = ["*"])
+
+fun main() {
+    print(env.has(name = "PATH") || true)
+}

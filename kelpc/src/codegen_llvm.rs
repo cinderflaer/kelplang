@@ -1228,9 +1228,11 @@ impl<'a> Gen<'a> {
     /// that names no resource (`time.now_unix`, `rand.below`, `process.exit`)
     /// needs none, exactly as it gets none from the C backend.
     ///
-    /// A gated stdlib module calling its own item is not a checked call site:
-    /// the declaring module holds no grant, so it never appears in
-    /// `program.caps` for that domain.
+    /// A gated stdlib module calling its own item is a checked call site only
+    /// when something handed that module patterns for its own domain (an
+    /// `impl "std/env" caps(env = [...])` line): with no such grant the
+    /// module never appears in `program.caps` for that domain and the `?`
+    /// below returns `None`.
     fn cap_plan(
         &self,
         module: &str,
@@ -1259,13 +1261,30 @@ impl<'a> Gen<'a> {
         // module's own grant for this domain holds that literal pattern, a
         // `CapCheck::Path` here is provably always going to pass and is
         // dropped before codegen rather than emitted as a runtime call. Name
-        // domains (`env`, `net`) are never elided this way: their
+        // domains (`env`, `net`) are not elided by this rule: their
         // whole-resource pattern is a lone `*`, which does not cross a `/`
         // byte in `glob_match` and so is not a true unconditional match.
         if crate::stdlib::patterns_are_paths(domain)
             && grant.patterns.iter().any(|p| p == crate::stdlib::whole_resource(domain))
         {
             checks.retain(|c| !matches!(c, crate::stdlib::CapCheck::Path(_)));
+        }
+        // Mirror of the name-domain elision in `codegen_c.rs::Gen::cap_plan`,
+        // field for field: a domain-declaring module's own forwarding call (the
+        // thin wrapper over its `extern fun`) needs no `CapCheck::Name` when its
+        // own list for the domain is exactly the whole-resource `*`, because an
+        // `env` grant can never name a `/` and `*` crosses none, so the caller's
+        // own check has already admitted a name the whole-resource list admits.
+        // A narrower list is the effective gate and keeps its check; a caller
+        // that is not the domain's defining module is never elided, so an
+        // ordinary `*` holder keeps its own check and its own slashy-name
+        // denial.
+        if !crate::stdlib::patterns_are_paths(domain)
+            && crate::stdlib::domain_of(module) == Some(domain.as_str())
+            && grant.patterns.len() == 1
+            && grant.patterns[0] == crate::stdlib::whole_resource(domain)
+        {
+            checks.retain(|c| !matches!(c, crate::stdlib::CapCheck::Name(_)));
         }
         if checks.is_empty() {
             return None;

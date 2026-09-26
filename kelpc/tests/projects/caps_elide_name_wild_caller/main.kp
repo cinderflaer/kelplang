@@ -1,0 +1,10 @@
+// The safety boundary of the elision, in one program: `std/env` holds `*`, so
+// its own internal checks are elided, while `util` holds `*` too but is not
+// the domain's defining module, so `util`'s own check is emitted and its own
+// `*`-does-not-cross-`/` rule is what denies the slashy name below.
+impl "std/env" caps(env = ["*"])
+impl "util" caps(env = ["*"])
+
+fun main() {
+    print(util.probe())
+}

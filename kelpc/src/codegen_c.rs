@@ -3727,11 +3727,37 @@ impl<'a> Gen<'a> {
         // generated. This is NOT done for name domains (`env`, `net`), whose
         // whole-resource pattern is a single `*`: unlike `/**`, a lone `*`
         // does not cross a `/` byte in `glob_match`, so it is not a true
-        // unconditional match and `CapCheck::Name` is never elided here.
+        // unconditional match and this rule never touches `CapCheck::Name`
+        // (the name-domain elision below has its own, stricter condition).
         if crate::stdlib::patterns_are_paths(domain)
             && patterns.iter().any(|p| p == crate::stdlib::whole_resource(domain))
         {
             checked.retain(|c| !matches!(c, CapCheck::Path(_)));
+        }
+        // The counterpart for a name domain (`env`): the module that declares
+        // a domain's gated `extern fun` also *calls* it, from its own thin
+        // wrapper (`std/env`'s `has` forwarding to `has_raw`), and when that
+        // module's own compiled-in list for the domain is exactly the
+        // whole-resource `*` (what `impl "std/env" caps(env = ["*"])` or
+        // `caps(*)` hands it), the `CapCheck::Name` at that internal call is
+        // provably going to pass whenever the caller's own check did, so
+        // dropping it cannot admit a name the caller could not already reach.
+        //
+        // The proof is the domain's own grant vocabulary: an `env` pattern
+        // may not contain a `/` (`resolve.rs::validate_cap_pattern` refuses
+        // one), and `*` crosses no `/`, so no caller's grant admits a slashy
+        // name either. Only a *whole-resource* list qualifies: a narrower one
+        // (`caps(env = ["PATH"])`) is the effective gate for what the domain
+        // module may read, and eliding that would let any caller of the domain
+        // module name everything its own `*` covers. A caller that is not the
+        // domain's defining module is never elided, so an ordinary holder of
+        // `*` keeps its own check and its own slashy-name denial.
+        if !crate::stdlib::patterns_are_paths(domain)
+            && crate::stdlib::domain_of(&self.module) == Some(domain.as_str())
+            && patterns.len() == 1
+            && patterns[0] == crate::stdlib::whole_resource(domain)
+        {
+            checked.retain(|c| !matches!(c, CapCheck::Name(_)));
         }
         if checked.is_empty() {
             return None;

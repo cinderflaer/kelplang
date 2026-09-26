@@ -1,0 +1,9 @@
+// The scenario that motivated the elision, pinned as a refusal: an `env`
+// pattern that names a `/` cannot be written at all, so no caller can ever
+// hold the exact slashy grant that would (before the elision) have been
+// refused by `std/env`'s own wildcard and (after it) succeed.
+impl "util" caps(env = ["has/slash"])
+
+fun main() {
+    print(util.probe())
+}
