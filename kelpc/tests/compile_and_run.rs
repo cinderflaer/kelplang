@@ -2333,6 +2333,64 @@ fn an_ungranted_env_name_is_denied_before_the_call() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// perf-cap-llvm-inline: `CapCheck::Name`'s two fast paths, hand-built as
+// inline LLVM IR in `codegen_llvm.rs::emit_cap_checks` instead of a call into
+// `cap_glue.c`'s separately-compiled `kelp_cap_check_name`. These are
+// functional tests (allow and deny, run through the default `llvm` backend);
+// the generated-IR shape itself (no `call ... @kelp_cap_check_name` left at
+// the specialized call site) is inspected by hand, not asserted here, the
+// same way `a_full_grant_elides_the_runtime_path_check_but_a_narrow_one_keeps_it`
+// reads generated text only for the C-backend elision it is about.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_lone_wildcard_name_grant_admits_a_slash_free_name() {
+    // `env = ["*"]` is the domain's whole-resource pattern. `cap_glue.c`'s own
+    // fast path (and now the LLVM backend's inline IR) reads it as "the name
+    // has no `/`", so a plain name passes.
+    assert_project_runs(
+        "caps_name_wildcard_allowed",
+        &project("caps_name_wildcard_allowed").join("main.kp"),
+        "true\n",
+    );
+}
+
+#[test]
+fn the_lone_wildcard_name_grant_denies_a_name_with_a_slash() {
+    // The same `*` grant does not cross a `/` byte: a name that has one is
+    // denied even though `*` is the whole-resource pattern for the domain.
+    assert_project_denied_at_runtime(
+        "caps_name_wildcard_denied",
+        &project("caps_name_wildcard_denied").join("main.kp"),
+        "'has/nested' is outside the env capability granted to module 'util'",
+    );
+}
+
+#[test]
+fn a_single_literal_name_grant_admits_the_exact_granted_name() {
+    // One pattern, no `*` anywhere: the fast path is a direct byte compare
+    // against the granted text, and the exact name it names passes.
+    assert_project_runs(
+        "caps_name_literal_allowed",
+        &project("caps_name_literal_allowed").join("main.kp"),
+        "true\n",
+    );
+}
+
+#[test]
+fn a_single_literal_name_grant_denies_a_name_that_is_only_a_prefix_match() {
+    // `PATH` granted, `PATHX` asked for: a naive prefix compare would let
+    // this through. The fast path compares the full length AND confirms
+    // `name[pattern.len()]` is the terminator, so a longer name sharing the
+    // pattern as a prefix is still denied, not silently admitted.
+    assert_project_denied_at_runtime(
+        "caps_name_literal_prefix_denied",
+        &project("caps_name_literal_prefix_denied").join("main.kp"),
+        "'PATHX' is outside the env capability granted to module 'util'",
+    );
+}
+
 #[test]
 fn time_and_rand_are_gated_domains_with_no_named_resource() {
     assert_compiles_and_runs(

@@ -1,0 +1,7 @@
+// The check runs before the call and passes for any name without a `/`.
+// `|| true` forces the call while keeping the result deterministic across
+// whatever machine runs the suite: the check's pass/fail, not the OS
+// environment's actual content, is what this fixture proves.
+impl "std/env"
+
+pub fun probe().R: bool = env.has("SIMPLE_NAME") || true

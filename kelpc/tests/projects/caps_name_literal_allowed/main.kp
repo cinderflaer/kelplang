@@ -1,0 +1,8 @@
+// A single literal pattern (no `*` anywhere): the LLVM backend hand-builds a
+// direct byte-for-byte comparison instead of calling `kelp_cap_check_name`
+// (perf-cap-llvm-inline). The exact granted name passes.
+impl "util" caps(env = ["PATH"])
+
+fun main() {
+    print(util.probe())
+}

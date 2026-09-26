@@ -1,0 +1,6 @@
+// `|| true` forces the call while keeping the result deterministic: the
+// check's pass/fail is what this fixture proves, not the OS environment's
+// actual content.
+impl "std/env"
+
+pub fun probe().R: bool = env.has("PATH") || true
