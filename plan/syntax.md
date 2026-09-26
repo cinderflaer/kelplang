@@ -78,7 +78,7 @@ What a project buys you, concretely:
 - **`impl` paths and module ids are relative to `src/`**, not to the working directory or to the importing file. `impl "shapes/circle"` is always `<root>/src/shapes/circle.kp`, however deep the importer sits (§13.3).
 - **The entry module can be somewhere other than `src/main.kp`**, and it is the only module whose top-level names are unprefixed. A non-entry module's items are reached only as `alias.Item`, and only the ones that module exports with `pub` (§13.3, §13.4).
 - **A `alias.kpconf` at the project root** (beside `coral.toml`, not in `src/`).
-- **The program-level settings** in the manifest — today `http_pool`.
+- **The program-level settings** in the manifest — today `http_pool`, `naming_case` (19), and the entry module's own `[caps]` grant (1.4, C-2).
 
 ### 1.4 `coral.toml`
 
@@ -108,7 +108,7 @@ How it is used, end to end:
 
 1. `kelpc build myproject/` reads `myproject/coral.toml`, resolves `entry` against that directory, and requires the file to exist.
 2. Everything reachable from the entry file's `impl` lines is loaded from `<root>/src/`. A path that leaves `src/`, names a missing file, or forms a cycle is a diagnostic (§13.1).
-3. `http_pool` is **spliced into the shipped `std/http` source** before it is compiled, so it changes the connection ceiling for the whole program rather than for one call site. Nothing else in the manifest reaches the compiler.
+3. `http_pool` is **spliced into the shipped `std/http` source** before it is compiled, so it changes the connection ceiling for the whole program rather than for one call site. The only other manifest content that reaches the compiler is `naming_case` (19) and `[caps]` (1.4.1, below); nothing else in the manifest does.
 4. `name` and `version` are parsed and recorded; no pass reads them today. Coral owns what they mean.
 
 Rules and errors:
@@ -122,13 +122,33 @@ Rules and errors:
 | `entry = "src/nope.kp"` | `cannot read the manifest's entry point 'src/nope.kp': <os error>` |
 | `kelpc build <dir>` where the directory has no manifest | `'<dir>' is a directory but has no coral.toml (pass a .kp file, or add a manifest)` |
 | a `.kp` file under a project but outside `src/` | `entry file '<path>' is not inside '<root>/src'` — the layout is not advisory |
-| `[tasks]` and anything after it | ignored by `kelpc` (Coral's surface); the four keys above must come **before** the first `[` |
+| any section other than `[caps]` | ignored by `kelpc` (Coral's surface); the flat keys above must come **before** the first `[` |
 
 Blank lines and `#` comments are free, keys may appear in any order, and a manifest with only `entry` is a complete manifest. `kelpc build` and `kelpc run` both take a project directory or a `.kp` file; `kelpc run <dir>` compiles and runs it in one step.
 
+#### 1.4.1 `[caps]`: the entry module's own grant
+
+The entry module (`main`) cannot write a `caps(...)` clause on itself — a clause on one of its own `impl` lines grants the *imported* module, never `main` (15.2) — so restricting what `main` itself may touch has no home on an `impl` line at all. `[caps]` is that home (C-2, the fix for the roadmap's open item 18): a section in `coral.toml`, read by `kelpc` rather than skipped over for Coral, that sets the entry module's own capability set instead of the implicit "holds everything" default.
+
+```toml
+# myproject/coral.toml
+name = "myproject"
+entry = "src/main.kp"
+
+[caps]
+fs = ["/var/lib/myproject/**"]
+net = ["api.example.com:443"]
+```
+
+- **One line per domain**, `domain = [patterns...]`, in exactly the vocabulary a `caps(domain = [...])` clause on an `impl` line uses (15.1, 15.2): `fs` and `process` patterns are absolute, glob paths; `net` is `host`, `host:port`, `*.host`, `*:port` or `*`; `env` is a variable name or `*`; `time` and `rand` take no pattern (an empty list, `time = []`, still holds the domain). An unknown domain or a pattern the domain's own vocabulary refuses is the same error `caps(...)` gives on an `impl` line, at the manifest instead.
+- **No `[caps]` section at all is the old default**: `main` holds the whole resource of every domain (`/**` for a path domain, `*` for a name domain), exactly as before this existed. This is what keeps a `coral.toml` written before `[caps]` shipped, or one that simply has no reason to restrict its own entry point, behaving exactly as it always did — the section is opt-in, not a breaking change to every program compiled up to now.
+- **A `[caps]` section that omits a domain grants `main` nothing for it**: the same "referencing a gated namespace is a resolution error" rule that governs an ungranted imported module (15.2) governs `main` too, once `[caps]` exists at all. A project that wants `main` to keep everything simply does not write the section.
+- **The runtime pattern check (15.3) uses this same grant** for any gated call whose call site is textually inside `main`'s own body, precisely as it uses any other module's own held patterns for a call site inside that module — `[caps]`'s patterns are not merely a resolution-time yes/no, they are the actual boundary a denial panics against, and the panic names `main` the way it names any other module.
+- **`[caps]` does not change what `main` may *delegate*.** An `impl "std/fs" caps(fs = [pattern])` line in `main.kp` is still checked against what `[caps]` grants `main`: the no-escalation rule ("a module can delegate less than it has, never more", 15.2) now has a real ceiling to check `main`'s own delegations against, instead of the wildcard always satisfying it.
+
 #### Coral's own sections
 
-Everything from the first `[section]` on is the project-layer tool's surface (Coral), and `kelpc` reads none of it. The one that changes how *this* compiler is chosen is the per-project toolchain pin:
+Everything from the first `[section]` on is the project-layer tool's surface (Coral), except `[caps]` (1.4.1, above), which `kelpc` itself reads. The one Coral section that changes how *this* compiler is chosen is the per-project toolchain pin:
 
 ```toml
 name = "jsonlibary"          # the flat keys kelpc reads
@@ -1827,7 +1847,7 @@ impl "std/http" caps(net = ["api.example.com:443", "127.0.0.1:*"])
 impl "logger" caps(fs = ["/var/log/myapp/**"], env = ["LOG_*"])
 ```
 
-- The entry module holds the wildcard for every domain (`/**` for path domains, `*` for name domains), so a single-file program needs no grant for its own calls.
+- The entry module holds the wildcard for every domain (`/**` for path domains, `*` for name domains) by default, so a single-file program needs no grant for its own calls. A project's `coral.toml` can narrow this with a `[caps]` section (1.4.1), which is the only way to give `main` itself less than everything: a clause on one of `main`'s own `impl` lines still grants the *imported* module, never `main`.
 - Every other module holds exactly what its importers grant it, and nothing else.
 - `caps(*)` is that whole set in one clause: `impl "helper" caps(*)` delegates `/**` for the path domains and `*` for the name domains, the same set the entry module holds. It is for a caller that hands a library everything it may reach without enumerating domains one by one, and it is not a way to acquire authority: it grants exactly what the delegating module holds, never more.
 - `caps(*)` on a gated import is refused when the delegating module does not hold the wildcard itself. A module that holds only `net = ["api.example.com:443"]` and writes `caps(*)` is refused, and the message names the wildcard it claimed rather than a pattern. A module that received `caps(*)` holds it, so it can delegate it onward exactly as it can delegate a pattern it was given.
@@ -2833,7 +2853,7 @@ impl "std/fs" caps(fs = ["/project/out/**", "/project/data/**"])
 - A module gets nothing it did not `impl`, and the checker knows each module's authority statically.
 - `caps(*)` is the one-line form of the grant: it delegates the whole resource of every domain the importing module holds, for a caller that hands a library everything without listing domains one by one. It acquires no authority, because the set it hands over is the delegator's own.
 - Every path passed to a gated call is matched against the patterns, so it must be absolute and must not contain `..`.
-- `main` in the entry module holds the whole resource for its domain, which is why the interesting module sits behind one level of delegation when the point is to *test* a restriction.
+- `main` in the entry module holds the whole resource for its domain by default, which is why the interesting module sits behind one level of delegation when the point is to *test* a restriction. `coral.toml`'s `[caps]` section (1.4.1) can restrict `main` itself instead.
 - The grant is the ceiling for the whole module, so a helper that reads a file needs the module holding the `impl` to have been granted it.
 
 ### 22.8 A complete scanner

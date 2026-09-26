@@ -1,0 +1,13 @@
+// C-2: main calls a gated 'fs' function directly, with no imported module
+// standing between it and the resource. Before this project's coral.toml
+// [caps] section existed, main held every domain implicitly ("/**"/"*") and
+// this would have compiled; the manifest's [caps] here grants only 'env', so
+// 'fs' is not held at all, and the reference is a resolution error — the same
+// error, at the same point in the pipeline (infer.rs::check_capability), that
+// an imported module's ungranted reference gets (an_ungranted_module_cannot_
+// name_the_gated_namespace, above).
+impl "std/fs"
+
+fun main() {
+    print(fs.exists("/tmp"))
+}

@@ -150,82 +150,86 @@ pub fn load(
         )
     })?;
 
-    let (entry_file, root, src_dir, source_name, source_version, http_pool) = if given.is_dir() {
-        let manifest_path = given.join(MANIFEST_NAME);
-        let text = fs::read_to_string(&manifest_path).map_err(|_| {
-            Diagnostic::new(
-                format!(
-                    "'{}' is a directory but has no {} (pass a .{} file, or add a manifest)",
-                    given.display(),
-                    MANIFEST_NAME,
-                    EXT
-                ),
-                Span::new(0, 0),
-                "",
+    let (entry_file, root, src_dir, source_name, source_version, http_pool, manifest_caps) =
+        if given.is_dir() {
+            let manifest_path = given.join(MANIFEST_NAME);
+            let text = fs::read_to_string(&manifest_path).map_err(|_| {
+                Diagnostic::new(
+                    format!(
+                        "'{}' is a directory but has no {} (pass a .{} file, or add a manifest)",
+                        given.display(),
+                        MANIFEST_NAME,
+                        EXT
+                    ),
+                    Span::new(0, 0),
+                    "",
+                )
+            })?;
+            let manifest = parse_manifest(&text, &manifest_path)?;
+            let entry_file = fs::canonicalize(given.join(&manifest.entry)).map_err(|e| {
+                Diagnostic::new(
+                    format!(
+                        "cannot read the manifest's entry point '{}': {e}",
+                        manifest.entry
+                    ),
+                    Span::new(0, 0),
+                    "",
+                )
+            })?;
+            (
+                entry_file,
+                Some(given.clone()),
+                given.join("src"),
+                manifest.name,
+                manifest.version,
+                manifest.http_pool,
+                manifest.caps,
             )
-        })?;
-        let manifest = parse_manifest(&text, &manifest_path)?;
-        let entry_file = fs::canonicalize(given.join(&manifest.entry)).map_err(|e| {
-            Diagnostic::new(
-                format!(
-                    "cannot read the manifest's entry point '{}': {e}",
-                    manifest.entry
-                ),
-                Span::new(0, 0),
-                "",
-            )
-        })?;
-        (
-            entry_file,
-            Some(given.clone()),
-            given.join("src"),
-            manifest.name,
-            manifest.version,
-            manifest.http_pool,
-        )
-    } else {
-        match find_manifest_root(&given) {
-            Some(root) => {
-                let manifest_path = root.join(MANIFEST_NAME);
-                let text = fs::read_to_string(&manifest_path).unwrap_or_default();
-                let manifest = parse_manifest(&text, &manifest_path)?;
-                let src_dir = root.join("src");
-                if !given.starts_with(&src_dir) {
-                    return Err(Diagnostic::new(
-                        format!(
-                            "entry file '{}' is not inside '{}'",
-                            given.display(),
-                            src_dir.display()
-                        ),
-                        Span::new(0, 0),
-                        "",
-                    ));
+        } else {
+            match find_manifest_root(&given) {
+                Some(root) => {
+                    let manifest_path = root.join(MANIFEST_NAME);
+                    let text = fs::read_to_string(&manifest_path).unwrap_or_default();
+                    let manifest = parse_manifest(&text, &manifest_path)?;
+                    let src_dir = root.join("src");
+                    if !given.starts_with(&src_dir) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "entry file '{}' is not inside '{}'",
+                                given.display(),
+                                src_dir.display()
+                            ),
+                            Span::new(0, 0),
+                            "",
+                        ));
+                    }
+                    (
+                        given,
+                        Some(root),
+                        src_dir,
+                        manifest.name,
+                        manifest.version,
+                        manifest.http_pool,
+                        manifest.caps,
+                    )
                 }
-                (
-                    given,
-                    Some(root),
-                    src_dir,
-                    manifest.name,
-                    manifest.version,
-                    manifest.http_pool,
-                )
+                None => {
+                    let dir = given
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    (
+                        given,
+                        None,
+                        dir,
+                        None,
+                        None,
+                        crate::stdlib::DEFAULT_HTTP_POOL,
+                        None,
+                    )
+                }
             }
-            None => {
-                let dir = given
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."));
-                (
-                    given,
-                    None,
-                    dir,
-                    None,
-                    None,
-                    crate::stdlib::DEFAULT_HTTP_POOL,
-                )
-            }
-        }
-    };
+        };
 
     let entry = module_id_of(&entry_file, &src_dir)?;
 
@@ -353,19 +357,29 @@ pub fn load(
 
     // ---- M7: capability sets -------------------------------------------
     //
-    // A module's set is *received*, never self-declared: the entry module
-    // holds everything (`/**`), and every other module holds exactly what its
-    // importers granted it. That makes the no-escalation rule checkable —
-    // a module can delegate less than it has, never more — and is what keeps
-    // an ungranted `fs.read` a resolution error instead of a runtime check.
+    // A module's set is *received*, never self-declared, with one exception:
+    // the entry module's set. By default it still holds everything (`/**`/
+    // `*`, every domain), but `coral.toml`'s `[caps]` section (C-2) lets a
+    // project restrict it to exactly what is declared there — the natural
+    // fix for open item 18, since `main` cannot write a `caps(...)` clause on
+    // itself. `manifest_caps` is `None` whenever the section is absent (no
+    // manifest at all, or a manifest that does not have one), which is what
+    // keeps every `coral.toml` written before this existed behaving exactly
+    // as before. Every other module holds exactly what its importers granted
+    // it. That makes the no-escalation rule checkable — a module can
+    // delegate less than it has, never more — and is what keeps an ungranted
+    // `fs.read` a resolution error instead of a runtime check.
     let mut caps: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
-    let mut entry_caps = HashMap::new();
-    for domain in crate::stdlib::DOMAINS {
-        entry_caps.insert(
-            domain.to_string(),
-            vec![crate::stdlib::whole_resource(domain).to_string()],
-        );
-    }
+    let entry_caps = manifest_caps.unwrap_or_else(|| {
+        let mut whole = HashMap::new();
+        for domain in crate::stdlib::DOMAINS {
+            whole.insert(
+                domain.to_string(),
+                vec![crate::stdlib::whole_resource(domain).to_string()],
+            );
+        }
+        whole
+    });
     caps.insert(entry.clone(), entry_caps);
     for g in &loader.grants {
         let slot = caps
@@ -940,20 +954,35 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         entry: format!("src/main.{EXT}"),
         http_pool: crate::stdlib::DEFAULT_HTTP_POOL,
         naming_case: None,
+        caps: None,
     };
     let at = Span::new(0, 0);
+    // `None` until the first `[section]` header; `Some("caps")` while inside
+    // `[caps]`, `Some(<anything else>)` while inside a section that is
+    // Coral's, not the compiler's, to read.
+    let mut section: Option<String> = None;
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
         }
-        // A `[section]` header hands the rest of the file to Coral: `name`,
-        // `version`, `entry` and `http_pool` must appear before the first
-        // one, but everything from here to EOF (`[tasks]`, `[dependencies]`,
-        // …) is Coral's manifest surface, not the compiler's, so kelpc reads
-        // it no further rather than rejecting it.
+        // A `[section]` header hands the rest of that section to Coral:
+        // `name`, `version`, `entry`, `http_pool` and `naming_case` must
+        // appear before the first one. `[caps]` (C-2) is the one section
+        // kelpc itself reads — the entry module's own capability grant — so
+        // it does not simply stop here; every other section (`[tasks]`,
+        // `[dependencies]`, …) is Coral's manifest surface, and this loop
+        // skips its lines rather than rejecting them.
         if line.starts_with('[') {
-            break;
+            let name = line.trim_start_matches('[').trim_end_matches(']').trim();
+            section = Some(name.to_string());
+            continue;
+        }
+        if let Some(name) = &section {
+            if name == "caps" {
+                parse_caps_line(&mut manifest, line, at)?;
+            }
+            continue;
         }
         let Some((key, value)) = line.split_once('=') else {
             return Err(Diagnostic::new(
@@ -1059,6 +1088,82 @@ struct Manifest {
     /// names to be written in (`syntax.md` 19). `None` means the manifest
     /// says nothing about it, which the lint reads as the option's default.
     naming_case: Option<usize>,
+    /// `[caps]` (C-2): the entry module's own capability grant, domain ->
+    /// patterns, in the same vocabulary a `caps(domain = [...])` clause on an
+    /// `impl` line uses. `None` means the section is absent, which keeps the
+    /// long-standing default — the entry module holds the whole resource of
+    /// every domain (`/**`/`*`) — so a `coral.toml` written before this
+    /// section existed, or one that simply omits it, behaves exactly as
+    /// before. `Some(map)` may still omit a domain entirely: that domain is
+    /// then *not* granted to the entry module at all, a resolution error at
+    /// any reference to it, the same as an ordinary ungranted module.
+    caps: Option<HashMap<String, Vec<String>>>,
+}
+
+/// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
+/// section (C-2). Reuses `stdlib::is_domain` and `validate_cap_pattern`, the
+/// same vocabulary an `impl "..." caps(domain = [...])` clause validates its
+/// grants against, so a pattern that would be refused on an `impl` line is
+/// refused here too, for the same reason and with the same wording.
+fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let Some((domain, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!(
+                "expected 'domain = [\"pattern\", ...]' in {MANIFEST_NAME}'s [caps] section, found '{line}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let domain = domain.trim();
+    let value = value.trim();
+    if !crate::stdlib::is_domain(domain) {
+        return Err(Diagnostic::new(
+            format!(
+                "'{domain}' is not a capability domain — v1 has {}",
+                crate::stdlib::DOMAINS.join(", ")
+            ),
+            at,
+            "",
+        ));
+    }
+    let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME} value for '[caps] {domain}' must be a bracketed list of double-quoted patterns, found '{value}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let mut patterns = Vec::new();
+    let inner = inner.trim();
+    if !inner.is_empty() {
+        for part in inner.split(',') {
+            let part = part.trim();
+            let Some(pattern) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} pattern for '[caps] {domain}' must be double-quoted, found '{part}'"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            validate_cap_pattern(domain, pattern, at, "")?;
+            patterns.push(pattern.to_string());
+        }
+    }
+    let caps = manifest.caps.get_or_insert_with(HashMap::new);
+    if caps.contains_key(domain) {
+        return Err(Diagnostic::new(
+            format!("domain '{domain}' appears more than once in {MANIFEST_NAME}'s [caps] section"),
+            at,
+            "",
+        ));
+    }
+    caps.insert(domain.to_string(), patterns);
+    Ok(())
 }
 
 /// The project's `naming_case`, for `kelpc lint` (`syntax.md` 19, roadmap

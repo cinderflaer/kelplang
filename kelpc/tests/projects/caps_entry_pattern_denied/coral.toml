@@ -1,0 +1,7 @@
+name = "capsentrypatterndenied"
+
+# C-2: main holds the 'fs' domain, but only for this scratch directory, so a
+# reference to a path outside it is a runtime denial rather than a resolution
+# error — resolution only asks whether main holds the domain at all.
+[caps]
+fs = ["/tmp/kelp_caps_entry_pattern_denied/**"]

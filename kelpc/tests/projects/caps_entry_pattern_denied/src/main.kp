@@ -1,0 +1,11 @@
+// C-2: main's own [caps] grant covers only this scratch directory (this
+// project's coral.toml); a direct reference to a path outside it is denied
+// at runtime, through the same kelp_cap_check_path an imported module's
+// out-of-grant call goes through (a_path_outside_the_grant_is_denied_at_
+// runtime pins that one; this pins the same boundary when the caller is main
+// itself, restricted by [caps], rather than a delegated module).
+impl "std/fs"
+
+fun main() {
+    print(fs.exists("/tmp"))
+}
