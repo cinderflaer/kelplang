@@ -53,6 +53,31 @@ datac Header(val name: String, val value: String)
 
 datac Response(val status: i32, val headers: List<Header>, val body: Bytes, val reusable: bool)
 
+// The `X-RateLimit-*` bucket headers, bundled (MISSING-p5Xtr). Discord is the
+// worked example the issue names, and its five headers — `Limit`,
+// `Remaining`, `Reset`, `Reset-After`, `Bucket` — are also what GitHub and
+// Twitch send under the same names, so those are the names this module uses
+// rather than inventing its own vocabulary. `Global` and `Scope`, which
+// Discord sends only on some `429`s and nowhere else, are left out: this is a
+// bucket reader, not the whole of Discord's rate-limit protocol.
+//
+// Every field is an `Option` because no server is required to send all five
+// (`Limit`/`Remaining` are the two nearly everyone sends; a per-route
+// `Bucket` hash is closer to Discord's own scheme), and a response that sends
+// none of them is not a parse failure — `Response.rate_limit()` on a plain
+// `200` returns a `RateLimit` of five `None`s.
+//
+// `reset` and `reset_after` are `f64`, not `u64`: Discord's own docs give
+// them with fractional seconds (`"X-RateLimit-Reset-After": "0.253"`), and a
+// caller that only wants whole seconds can round.
+datac RateLimit(
+    val limit: option.Option<u64>,
+    val remaining: option.Option<u64>,
+    val reset: option.Option<f64>,
+    val reset_after: option.Option<f64>,
+    val bucket: option.Option<String>,
+)
+
 datac Request(val method: String, val url: String, val headers: List<Header>, val body: Bytes)
 
 // `timeout_ms = 0` is "no timeout" (that is what `SO_RCVTIMEO` of zero means),
@@ -237,6 +262,39 @@ fun Response.is_ok().R: bool = status >= 200 && status < 300
 // (`String.from_bytes` validates). The body is cloned first because the
 // response is borrowed here, and a field of a borrow cannot be moved out.
 fun Response.text().R: String = String.from_bytes(body.clone())
+
+// The `Retry-After` header, in seconds — `None` when it is absent, or when it
+// names an HTTP-date instead of a delay (MISSING-p5Xtr). The date form
+// (`Retry-After: Fri, 31 Dec 1999 23:59:59 GMT`) needs a calendar parser this
+// module does not have: `std/time` (M7) is the gated clock namespace, and
+// turning a date into a delay needs `now()` from it, which would put a second
+// capability on every `std/http` program on the strength of a header real
+// APIs rarely send that way (Discord, the worked example, always sends the
+// seconds form). So the date form is read like any other malformed value: to
+// `None`, the same answer as no header at all.
+fun Response.retry_after().R: option.Option<u64> {
+    val text = header_value(headers, "retry-after")
+    if str.is_empty(text.as_str()) {
+        return option.Option.None
+    }
+    val parsed = str.parse_u64(text.as_str())
+    return when parsed {
+        Ok(seconds) -> option.Option.Some(value = seconds)
+        Err(_) -> option.Option.None
+    }
+}
+
+// The `X-RateLimit-*` bucket headers, bundled: a caller reading one after a
+// `429` (or checking ahead of one) wants what all five have to say in one
+// read, not five separate scans of `headers` — see `RateLimit`'s own comment
+// for why these are the five and why each is an `Option`.
+fun Response.rate_limit().R: RateLimit = RateLimit(
+    limit = header_u64(headers, "x-ratelimit-limit"),
+    remaining = header_u64(headers, "x-ratelimit-remaining"),
+    reset = header_f64(headers, "x-ratelimit-reset"),
+    reset_after = header_f64(headers, "x-ratelimit-reset-after"),
+    bucket = header_opt(headers, "x-ratelimit-bucket"),
+)
 
 // ----- request text -----
 
@@ -569,6 +627,50 @@ fun header_value(hs: List<Header>, name: &str).R: String {
         i = i + 1
     }
     return String.empty()
+}
+
+// A header's value as `u64`, or `None`. Absent and malformed are the same
+// answer here: there is nothing to distinguish "the server didn't send this"
+// from "the server sent something that isn't a number", and a caller only
+// cares that it has no number to use either way (used for `Retry-After` and
+// the integer `X-RateLimit-*` fields, MISSING-p5Xtr).
+fun header_u64(hs: List<Header>, name: &str).R: option.Option<u64> {
+    val text = header_value(hs, name)
+    if str.is_empty(text.as_str()) {
+        return option.Option.None
+    }
+    val parsed = str.parse_u64(text.as_str())
+    return when parsed {
+        Ok(v) -> option.Option.Some(value = v)
+        Err(_) -> option.Option.None
+    }
+}
+
+// As `header_u64`, but `f64` — for `X-RateLimit-Reset` and
+// `X-RateLimit-Reset-After`, which carry fractional seconds on the API this
+// module was designed against.
+fun header_f64(hs: List<Header>, name: &str).R: option.Option<f64> {
+    val text = header_value(hs, name)
+    if str.is_empty(text.as_str()) {
+        return option.Option.None
+    }
+    val parsed = str.parse_f64(text.as_str())
+    return when parsed {
+        Ok(v) -> option.Option.Some(value = v)
+        Err(_) -> option.Option.None
+    }
+}
+
+// A header's value as an owned `String`, or `None` for an absent header —
+// unlike `Response.header`, which answers "" either way, this is for a caller
+// that needs to tell "absent" apart from "present and empty" (used for
+// `X-RateLimit-Bucket`, an opaque string with no numeric fallback).
+fun header_opt(hs: List<Header>, name: &str).R: option.Option<String> {
+    val text = header_value(hs, name)
+    if str.is_empty(text.as_str()) {
+        return option.Option.None
+    }
+    return option.Option.Some(value = text)
 }
 
 // `-1` for absent, which is not a legal `Content-Length` — an absent header is

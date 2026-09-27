@@ -4988,6 +4988,10 @@ const CHUNKED_200: &[u8] =
 
 const STATUS_404: &[u8] = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
 
+/// MISSING-p5Xtr: a `429` naming a delay and a spent per-route bucket, in the
+/// shape Discord (the issue's worked example) sends it.
+const STATUS_429_RATE_LIMITED: &[u8] = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 2\r\nX-RateLimit-Limit: 10\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 1719796939\r\nX-RateLimit-Reset-After: 0.500\r\nX-RateLimit-Bucket: abcd1234\r\nContent-Length: 0\r\n\r\n";
+
 /// The answer the `ws.try_connect` gate serves: a peer that is not a WebSocket
 /// server, which is the `Handshake` half of that call's error type.
 const STATUS_403: &[u8] = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
@@ -5249,6 +5253,24 @@ fn a_relative_redirect_is_followed_on_the_pooled_connection() {
         ],
         2,
         "200\nhello\n1\n200\ngot:payload\n",
+    );
+}
+
+#[test]
+fn rate_limit_headers_parse_and_absence_reads_as_none() {
+    // MISSING-p5Xtr: a `429` naming `Retry-After` and the five
+    // `X-RateLimit-*` bucket headers, then a plain `200` naming none of
+    // them — the second response is the "absent, not a panic" half, and it
+    // also exercises `remaining = 0` on the first response reading as
+    // `Some(0)` rather than being confused with "absent". Neither response
+    // asks to close, so both ride the one connection `BODY_200_HELLO`'s
+    // sibling tests already rely on for keep-alive.
+    assert_project_served(
+        "http_rate_limit",
+        &project("http_rate_limit"),
+        one_connection(&[STATUS_429_RATE_LIMITED, BODY_200_HELLO]),
+        1,
+        "429\n2\n10\n0\n1719796939.000000\n0.500000\nabcd1234\n200\nnone\nnone\nnone\nnone\nnone\nnone\n",
     );
 }
 
