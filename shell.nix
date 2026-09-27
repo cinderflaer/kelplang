@@ -28,7 +28,11 @@ let
   };
 in
 pkgs.mkShell {
-  packages = [ llvm.dev llvm.lib pkgs.openssl ];
+  # `pkg-config` itself, so `openssl-sys` (the `openssl` crate's test
+  # dependency for MK5-S4b-M1's TLS test server) can find `openssl.pc` under
+  # `pkgs.openssl.dev` the way its build script expects, rather than needing
+  # `OPENSSL_DIR` set by hand.
+  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config ];
 
   LLVM_SYS_211_PREFIX = llvmPrefix;
 }

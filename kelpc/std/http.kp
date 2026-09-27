@@ -1,5 +1,6 @@
 impl "std/mem"
 impl "std/net"
+impl "std/tls"
 impl "std/str"
 impl "std/fmt"
 impl "std/option"
@@ -32,12 +33,24 @@ impl "std/result"
    release is a compile error. That is the reason to have the pool in Kelp rather
    than in C: the ownership check is the borrow checker's, and it is free.
 
+   **`https` (MK5-S4b-M1, open item 37)**: on the system OpenSSL, via
+   `std/tls`. Every place that used to hold a `net.Socket` now holds a `Conn`
+   (below) instead, which is a plain socket or a TLS session over one — the
+   dial, the pool, the redirect follower and the framing reader do not care
+   which, because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close`
+   dispatch on it once. This module still does the dialing and the closing
+   (`net.connect`, `net.close`): `std/tls`'s own header comment explains why
+   it cannot do either itself, and why a program's existing
+   `impl "std/http" caps(net = [...])` line, unchanged, is what covers an
+   `https://` URL too — `https` is network access under the same grant, not
+   a second capability to ask for.
+
    Not here, deliberately: gzip, HTTP/2, cookies, proxies,
-   `Expect: 100-continue`, idle reaping, and `https` (TLS is S4b, and
-   `parse_url` refuses it by name rather than pretending). */
+   `Expect: 100-continue`, idle reaping, and serving TLS (client only). */
 
 const DEFAULT_SCHEME: str = "http"
 const DEFAULT_PORT: u16 = 80
+const DEFAULT_HTTPS_PORT: u16 = 443
 const DEFAULT_TIMEOUT_MS: u64 = 30000
 const DEFAULT_MAX_REDIRECTS: i32 = 5
 
@@ -76,27 +89,117 @@ datac Pool(
     val port: u16,
     val size: usize,
     val timeout_ms: u64,
-    var idle: List<i32>,
+    var idle: List<Conn>,
 )
 
-// Permission to use one pooled connection for one exchange. The descriptor *is*
-// the number the pool hands out (`fd`), and `reused` says whether the
+// Permission to use one pooled connection for one exchange. `fd`/`tls_handle`
+// *are* the pair the pool hands out (a `Lease` and a `Conn` carry the same
+// two fields; `Lease.conn` is the conversion), and `reused` says whether the
 // connection was already open. Nothing here is owned, and `release` takes the
 // lease by value, so the value is gone afterwards: releasing twice, or using a
 // lease after release, does not compile. That check is the reason to have the
 // pool in Kelp rather than in C — it is the borrow checker's, and it is free.
-datac Lease(val fd: i32, val reused: bool)
+datac Lease(val fd: i32, val tls_handle: usize, val reused: bool)
+
+// One open connection, plain or TLS. `tls_handle` is the OpenSSL `SSL*` from
+// `tls.handshake`, carried the same way `std/tls` carries it (`usize`,
+// because v1 has no pointer type); `0` is never a handshake's real result
+// (every failure path there panics before one is returned), so it doubles as
+// "this is not TLS" with no separate flag needed.
+//
+// Everywhere this module used to hold a `net.Socket` it holds a `Conn`
+// instead: the dial, the pool, redirect-following and the framing reader
+// (`Cursor`) do not need to know which kind of connection they were handed,
+// because `conn_send_all`/`conn_recv`/`conn_recv_into`/`conn_close` below are
+// the one place that dispatches on it.
+datac Conn(val fd: i32, val tls_handle: usize)
+
+fun Conn.is_tls().R: bool = tls_handle != 0
+
+// Panics: as `tls.write_all`/`net.send_all`.
+fun conn_send_all(c: Conn, data: Bytes).R: usize {
+    if c.is_tls() {
+        return tls.write_all(tls.TlsStream(fd = c.fd, handle = c.tls_handle), data)
+    }
+    return net.send_all(net.Socket(fd = c.fd), data)
+}
+
+// Panics: as `tls.read`/`net.recv`.
+fun conn_recv(c: Conn, max: usize).R: Bytes {
+    if c.is_tls() {
+        return tls.read(tls.TlsStream(fd = c.fd, handle = c.tls_handle), max)
+    }
+    return net.recv(net.Socket(fd = c.fd), max)
+}
+
+// Panics: as `tls.read_into`/`net.recv_into`.
+fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
+    if c.is_tls() {
+        return tls.read_into(tls.TlsStream(fd = c.fd, handle = c.tls_handle), buf, at)
+    }
+    return net.recv_into(net.Socket(fd = c.fd), buf, at)
+}
+
+// Ends the TLS session first (so the peer sees a clean `close_notify`, not a
+// bare TCP reset) and then closes the socket. A plain connection just closes
+// the socket. Panics: as `net.close`.
+fun conn_close(c: Conn) {
+    if c.is_tls() {
+        tls.shutdown(tls.TlsStream(fd = c.fd, handle = c.tls_handle))
+    }
+    net.close(net.Socket(fd = c.fd))
+}
+
+// Dials `host:port` and, for `https`, performs the TLS handshake — the one
+// place a connection is actually made, called from a fresh exchange and from
+// a pool's checkout alike.
+//
+// Panics: if the connection fails, the capability denies the host, or (for
+// `https`) the handshake fails.
+fun connect_configured(host: &str, port: u16, timeout_ms: u64, use_tls: bool).R: Conn {
+    var s = net.connect(host, port)
+    if timeout_ms > 0 {
+        s.set_timeout(timeout_ms)
+    }
+    if use_tls {
+        val t = tls.handshake(s, host)
+        return Conn(fd = t.fd, tls_handle = t.handle)
+    }
+    return Conn(fd = s.fd, tls_handle = 0)
+}
 
 // The read cursor for one response: bytes already received, and how far into
-// them we are. It refills from the socket when it runs dry. It holds an fd
-// rather than a `Socket` because a `Socket` is owned, and a parameter is
-// always a borrow — there is no way to move one into a struct field.
-datac Cursor(val fd: i32, var buf: Bytes, var start: usize)
+// them we are. It refills from the connection when it runs dry. It holds the
+// connection's plain scalar fields rather than a `Conn` itself — the same
+// reason `net.Socket` used to be unpacked to `fd: i32` here — because no
+// `datac` is `Copy`, and a parameter is always a borrow: `Cursor(conn = c,
+// ...)` would need to move `c`'s referent out of that borrow to store it,
+// which does not compile. `fd`/`tls_handle` are `i32`/`usize`, both `Copy`,
+// so reading them off the borrow and rebuilding a `Conn` locally in each
+// method below (`Conn(fd = fd, tls_handle = tls_handle)`) costs nothing and
+// needs no move.
+datac Cursor(val fd: i32, val tls_handle: usize, var buf: Bytes, var start: usize)
+
+fun Cursor.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
 // ----- URLs -----
 
-// Parses an absolute `http://` URL. Panics: if there is no scheme, no host, or
-// the scheme is anything but `http` (`https` gets its own message naming S4b).
+// The default port for a scheme this module knows: 80 for `http`, 443 for
+// `https`. Panics: never — `parse_url` has already rejected anything else by
+// the time this is called.
+fun default_port_for(scheme: &str).R: u16 {
+    if str.eq(scheme, "https") {
+        return DEFAULT_HTTPS_PORT
+    }
+    return DEFAULT_PORT
+}
+
+// Whether `u` is an `https` URL — the one place that question is asked as a
+// named call instead of a `str.eq` scattered at each site that needs it.
+fun url_is_https(u: Url).R: bool = str.eq(u.scheme.as_str(), "https")
+
+// Parses an absolute `http://` or `https://` URL. Panics: if there is no
+// scheme, no host, or the scheme is anything else.
 //
 // The port is split at the *first* `:`, so an IPv6 literal is not expressible
 // here either — the same rule `net`'s capability patterns follow, for the same
@@ -104,23 +207,20 @@ datac Cursor(val fd: i32, var buf: Bytes, var start: usize)
 fun parse_url(s: &str).R: Url {
     val sep = option.expect(
         o = str.index_of(s, "://"),
-        message = "http.parse_url: URL must start with 'http://' (no scheme found)",
+        message = "http.parse_url: URL must start with 'http://' or 'https://' (no scheme found)",
     )
     val scheme = str.prefix(s, sep)
-    if !str.eq(scheme.as_str(), "http") {
-        if str.eq(scheme.as_str(), "https") {
-            panic("http.parse_url: 'https' is not supported yet (TLS is S4b) — use 'http://'")
-        }
-        panic("http.parse_url: only 'http' is supported")
+    if !str.eq(scheme.as_str(), "http") && !str.eq(scheme.as_str(), "https") {
+        panic("http.parse_url: only 'http' and 'https' are supported")
     }
     val rest = str.substring(s, sep + 3)
-    return split_authority(rest)
+    return split_authority(rest, scheme.as_str())
 }
 
 // Splits `host[:port][/path]` — the part after `://`. The path is everything
 // from the first `/`, so a query string without a path (`host?a=b`) parses as
 // part of the authority and fails there rather than silently losing the query.
-fun split_authority(rest: &str).R: Url {
+fun split_authority(rest: &str, scheme: &str).R: Url {
     if str.is_empty(rest) {
         panic("http.parse_url: URL has no host")
     }
@@ -128,13 +228,13 @@ fun split_authority(rest: &str).R: Url {
     if let Some(at) = slash {
         val authority = str.prefix(rest, at)
         val path = str.substring(rest, at)
-        return make_url(authority, path)
+        return make_url(authority, path, scheme)
     }
     val whole = str.prefix(rest, str.len(rest))
-    return make_url(whole, "/")
+    return make_url(whole, "/", scheme)
 }
 
-fun make_url(authority: String, path: &str).R: Url {
+fun make_url(authority: String, path: &str, scheme: &str).R: Url {
     if str.is_empty(authority.as_str()) {
         panic("http.parse_url: URL has no host")
     }
@@ -147,16 +247,16 @@ fun make_url(authority: String, path: &str).R: Url {
         val host = str.prefix(text, at)
         val port_text = str.substring(text, at + 1)
         return Url(
-            scheme = String.from_str(DEFAULT_SCHEME),
+            scheme = String.from_str(scheme),
             host = host,
             port = parse_port(port_text),
             path = String.from_str(path),
         )
     }
     return Url(
-        scheme = String.from_str(DEFAULT_SCHEME),
+        scheme = String.from_str(scheme),
         host = authority.clone(),
-        port = DEFAULT_PORT,
+        port = default_port_for(scheme),
         path = String.from_str(path),
     )
 }
@@ -254,7 +354,7 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize).R: 
     out.push_str(u.path.as_str())
     out.push_str(" HTTP/1.1\r\nHost: ")
     out.push_str(u.host.as_str())
-    if u.port != DEFAULT_PORT {
+    if u.port != default_port_for(u.scheme.as_str()) {
         out.push_str(":")
         // A formatted number is an owned temporary, so its `&str` view has to
         // be bound before it can be used: `fmt.uint(n).as_str()` taken as an
@@ -288,7 +388,7 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize).R: 
 // Panics: if the peer closed instead of sending the rest of the body.
 fun mut Cursor.ensure() {
     if start >= buf.len() {
-        val chunk = net.recv(net.Socket(fd = fd), 4096)
+        val chunk = conn_recv(self.conn(), 4096)
         if chunk.is_empty() {
             panic("http: the connection closed inside the response body")
         }
@@ -359,7 +459,7 @@ fun mut Cursor.read_exact(n: usize).R: Bytes {
         start = 0
     }
     while got < n {
-        val k = net.recv_into(net.Socket(fd = fd), out, got)
+        val k = conn_recv_into(self.conn(), out, got)
         if k == 0 {
             panic("http: the connection closed before the whole body arrived")
         }
@@ -385,7 +485,7 @@ fun mut Cursor.read_to_end().R: Bytes {
     start = 0
     var going = true
     while going {
-        val chunk = net.recv(net.Socket(fd = fd), 4096)
+        val chunk = conn_recv(self.conn(), 4096)
         if chunk.is_empty() {
             going = false
         } else {
@@ -610,12 +710,12 @@ fun wants_close(hs: List<Header>).R: bool {
 //
 // Panics: on a peer that closes early, a malformed status line, a
 // non-numeric `Content-Length`, a malformed chunk, or a read failure.
-fun read_response(s: net.Socket).R: Response {
+fun read_response(c: Conn).R: Response {
     var buf = Bytes.empty()
     var end: usize = 0
     var eof = false
     while end == 0 && !eof {
-        val chunk = net.recv(s, 4096)
+        val chunk = conn_recv(c, 4096)
         if chunk.is_empty() {
             eof = true
         } else {
@@ -637,15 +737,15 @@ fun read_response(s: net.Socket).R: Response {
     val chunked = is_chunked(hs)
     val len = content_length_of(hs)
     val close = wants_close(hs)
-    var c = Cursor(fd = s.fd, buf = buf, start = end)
+    var cursor = Cursor(fd = c.fd, tls_handle = c.tls_handle, buf = buf, start = end)
     var body = Bytes.empty()
     if chunked {
-        body = c.read_chunked()
+        body = cursor.read_chunked()
     } else {
         if len >= 0 {
-            body = c.read_exact(len.to_usize())
+            body = cursor.read_exact(len.to_usize())
         } else {
-            body = c.read_to_end()
+            body = cursor.read_to_end()
         }
     }
     // Reusable means: the body was completely framed (so the next byte on the
@@ -662,13 +762,13 @@ fun read_response(s: net.Socket).R: Response {
 // connection is configured once on connect rather than on every request.
 //
 // Panics: if the send or the response read fails.
-fun one_exchange(s: net.Socket, method: &str, u: Url, headers: List<Header>, body: Bytes).R: Response {
+fun one_exchange(c: Conn, method: &str, u: Url, headers: List<Header>, body: Bytes).R: Response {
     val head = build_head(method, u, headers, body.len())
-    net.send_all(s, head.into_bytes())
+    conn_send_all(c, head.into_bytes())
     // Unconditional: `send_all` of an empty buffer writes nothing, and this
     // avoids an `if` without an `else` whose body is a `usize` expression.
-    net.send_all(s, body)
-    return read_response(s)
+    conn_send_all(c, body)
+    return read_response(c)
 }
 
 // 301/302/303 become `GET` with no body (the historical behavior every browser
@@ -681,15 +781,19 @@ fun is_redirect(status: i32).R: bool {
 }
 
 // A `Location` that is not absolute is resolved against the URL that produced
-// the redirect. Only the host and port are inherited; the pool key and the
-// capability check both use the resulting URL's own host, so a redirect to
-// another name is a *different* connection needing its own grant.
+// the redirect. Only the scheme, host and port are inherited; the pool key
+// and the capability check both use the resulting URL's own host, so a
+// redirect to another name is a *different* connection needing its own
+// grant. Inheriting `base.scheme` (not always `http`) is what keeps a
+// relative redirect on an `https` connection from silently downgrading to
+// plain `http` — an *absolute* `Location`, returned unchanged just above,
+// is the only way a redirect actually crosses schemes.
 fun absolute_url(base: Url, loc: &str).R: String {
     if str.starts_with(loc, "http://") || str.starts_with(loc, "https://") {
         return String.from_str(loc)
     }
     var out = String.with_capacity(64)
-    out.push_str(DEFAULT_SCHEME)
+    out.push_str(base.scheme.as_str())
     out.push_str("://")
     out.push_str(base.host.as_str())
     out.push_str(":")
@@ -761,9 +865,9 @@ fun send_fresh(
     hops: i32,
 ).R: Response {
     val u = parse_url(url_text.as_str())
-    val s = connect_configured(u.host.as_str(), u.port, client.timeout_ms)
+    val s = connect_configured(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))
     val resp = one_exchange(s, method.as_str(), u, headers, body)
-    net.close(s)
+    conn_close(s)
     // The redirect decision is one helper; the *tail* is written here because
     // `resp` is an owned local here and a returned borrow cannot leave. With no
     // function values in v1, that tail is written at each call site.
@@ -777,15 +881,15 @@ fun send_fresh(
     return send_fresh(client, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
 }
 
-// A single exchange on a socket the caller already holds: parse the URL, send,
-// read. This is the concurrency-ready primitive — no pool and no client are
-// named while it runs — and `Client.send`/`Pool.send` are the redirect loops
-// built on top of it.
+// A single exchange on a connection the caller already holds: parse the URL,
+// send, read. This is the concurrency-ready primitive — no pool and no client
+// are named while it runs — and `Client.send`/`Pool.send` are the redirect
+// loops built on top of it.
 //
 // Panics: as `one_exchange`, plus a malformed URL.
-fun exchange(s: net.Socket, req: Request).R: Response {
+fun exchange(c: Conn, req: Request).R: Response {
     val u = parse_url(req.url.as_str())
-    return one_exchange(s, req.method.as_str(), u, req.headers, req.body)
+    return one_exchange(c, req.method.as_str(), u, req.headers, req.body)
 }
 
 // ----- the pool -----
@@ -801,24 +905,9 @@ fun pool(host: &str, port: u16).R: Pool = Pool(
     idle = empty_idle(),
 )
 
-fun empty_idle().R: List<i32> {
-    var l: List<i32> = List.empty()
+fun empty_idle().R: List<Conn> {
+    var l: List<Conn> = List.empty()
     return l
-}
-
-// A configured connection: the one place the timeout is applied, so a pooled
-// socket and a fresh one behave the same. It takes parameters instead of a pool
-// because reading `self.host` as a `&str` would leave a borrow of the pool
-// alive to the end of the calling block, which would then conflict with the
-// `idle.push` that follows.
-//
-// Panics: if the connection fails or the grant denies the host.
-fun connect_configured(host: &str, port: u16, timeout_ms: u64).R: net.Socket {
-    var s = net.connect(host, port)
-    if timeout_ms > 0 {
-        s.set_timeout(timeout_ms)
-    }
-    return s
 }
 
 fun Pool.size().R: usize = size
@@ -826,11 +915,14 @@ fun Pool.size().R: usize = size
 // How many connections the pool is keeping right now.
 fun Pool.len().R: usize = idle.len()
 
-fun Lease.socket().R: net.Socket = net.Socket(fd = fd)
+fun Lease.conn().R: Conn = Conn(fd = fd, tls_handle = tls_handle)
 
 // Opens up to `size` connections now, so the first request does not pay for
 // them. Optional by design: eager connecting is what makes a pool hurt startup,
-// so it is a call a program makes rather than the default.
+// so it is a call a program makes rather than the default. `use_tls` has to be
+// given here because a `Pool` is not itself keyed on a scheme — only on
+// `host:port` — so warming has no request to read it from the way `checkout`
+// does; the caller says how it means to use the pool.
 //
 // The pool's fields are copied into locals first and the idle count is read
 // inside a block. That is not decoration: a shared borrow created in a *binding
@@ -838,7 +930,7 @@ fun Lease.socket().R: net.Socket = net.Socket(fd = fd)
 // item 30 records), and `idle.push` needs the pool exclusively a line later.
 //
 // Panics: if a connection fails.
-fun mut Pool.warm() {
+fun mut Pool.warm(use_tls: bool) {
     val h = host.clone()
     val p = port
     val t = timeout_ms
@@ -848,8 +940,8 @@ fun mut Pool.warm() {
         i = idle.len()
     }
     while i < cap {
-        val s = connect_configured(h.as_str(), p, t)
-        idle.push(s.fd)
+        val c = connect_configured(h.as_str(), p, t, use_tls)
+        idle.push(c)
         i = i + 1
     }
 }
@@ -857,19 +949,21 @@ fun mut Pool.warm() {
 // Hands out a connection: an idle one if there is one, a fresh one if there is
 // not. The pool never refuses — the ceiling governs how many connections are
 // *kept*, not how many may be in flight — so a caller holding two leases simply
-// gets two connections, and only one of them is kept on release.
+// gets two connections, and only one of them is kept on release. `use_tls`
+// only matters for a fresh connection; a reused one keeps whatever it already
+// was, on the assumption (unchecked in v1) that one `host:port` is one scheme.
 //
 // Panics: if connecting fails.
-fun mut Pool.checkout().R: Lease {
+fun mut Pool.checkout(use_tls: bool).R: Lease {
     if idle.is_empty() {
         val h = host.clone()
         val p = port
         val t = timeout_ms
-        val s = connect_configured(h.as_str(), p, t)
-        return Lease(fd = s.fd, reused = false)
+        val c = connect_configured(h.as_str(), p, t, use_tls)
+        return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false)
     }
-    val fd = idle.pop()
-    return Lease(fd = fd, reused = true)
+    val c = idle.pop()
+    return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true)
 }
 
 // Gives a connection back. `release` consumes the lease, so this cannot happen
@@ -880,10 +974,9 @@ fun mut Pool.checkout().R: Lease {
 // Panics: if closing a connection fails.
 fun mut Pool.release(lease: Lease, reusable: bool) {
     if reusable && idle.len() < size {
-        idle.push(lease.fd)
+        idle.push(lease.conn())
     } else {
-        val s = lease.socket()
-        net.close(s)
+        conn_close(lease.conn())
     }
 }
 
@@ -894,8 +987,8 @@ fun mut Pool.close_all() {
         if idle.is_empty() {
             going = false
         } else {
-            val fd = idle.pop()
-            net.close(net.Socket(fd = fd))
+            val c = idle.pop()
+            conn_close(c)
         }
     }
 }
@@ -931,9 +1024,9 @@ fun pooled_hop(
 ).R: Response {
     val u = parse_url(url_text.as_str())
     if pool_matches(p, u) {
-        val lease = p.checkout()
-        val sock = lease.socket()
-        val resp = one_exchange(sock, method.as_str(), u, headers, body)
+        val lease = p.checkout(url_is_https(u))
+        val c = lease.conn()
+        val resp = one_exchange(c, method.as_str(), u, headers, body)
         p.release(lease, resp.reusable)
         val next = follow_url(client, u, resp, hops)
         if str.is_empty(next.as_str()) {
@@ -952,9 +1045,9 @@ fun pooled_hop(
             hops - 1,
         )
     }
-    val s = connect_configured(u.host.as_str(), u.port, client.timeout_ms)
+    val s = connect_configured(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))
     val resp = one_exchange(s, method.as_str(), u, headers, body)
-    net.close(s)
+    conn_close(s)
     val next = follow_url(client, u, resp, hops)
     if str.is_empty(next.as_str()) {
         return resp

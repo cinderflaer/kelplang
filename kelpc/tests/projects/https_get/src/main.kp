@@ -1,0 +1,41 @@
+// MK5-S4b-M1 (open item 37): the same `https://` URL that used to panic in
+// `parse_url` ("'https' is not supported yet") now runs the TLS handshake
+// (via `std/tls`) and reads a real response. One request on a fresh
+// connection through `http.get`, which is `Client.send`'s one-liner — the
+// pooled path (`http.pool`, `Pool.checkout`'s `use_tls`) already has its own
+// coverage in `http_get`, for plain `http`.
+//
+// The grant names the host as the URL spells it, exactly as it does for
+// plain `http` (S3's rule): `127.0.0.1` covers every port, and `https` needs
+// nothing beyond the same `net` grant `http` already used.
+impl "std/http" caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+// The harness passes the TLS server's port as the first argument.
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "server_port: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("https://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+fun main() {
+    val url = url_for("/a")
+    val r = http.get(url.as_str())
+    print(r.status)
+    print(r.body.as_str())
+    print(r.is_ok())
+}
