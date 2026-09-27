@@ -1,0 +1,7 @@
+// `util` receives no capabilities at all (see main.kp): its reference to
+// `sys.getpid` is a resolution error, the same shape `caps_ungranted` pins
+// for a stdlib module. MK9-S1-M1's point is that a manifest-assigned user
+// domain is gated exactly the same way.
+impl "sys"
+
+pub fun read_pid().R: i32 = sys.getpid()

@@ -1,0 +1,9 @@
+name = "ffibadsymbol"
+
+# MK9-S1-M1: the manifest allowlists "not_getpid", but sys.kp declares
+# "extern fun getpid" — a name outside its own module's symbol allowlist, so
+# `infer.rs` refuses the declaration instead of accepting an unaudited bind.
+[extern."sys"]
+domain = "process"
+library = "c"
+symbols = ["not_getpid"]

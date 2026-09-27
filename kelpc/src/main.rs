@@ -325,7 +325,8 @@ fn build(
     match backend {
         Backend::C => {
             let c_source = codegen_c::generate(&typed, &drops, &sources);
-            if let Err(e) = driver::compile_c(&c_source, out_path, opt) {
+            let link_libs = loaded.project.extern_libraries();
+            if let Err(e) = driver::compile_c(&c_source, out_path, opt, &link_libs) {
                 eprintln!("error: {}", e.message);
                 return false;
             }
@@ -334,7 +335,10 @@ fn build(
             // The LLVM backend builds its own module, writes the textual IR
             // beside the binary, and links the object itself; the C source
             // string the arm above writes has no counterpart here.
-            if let Err(message) = codegen_llvm::compile(&typed, &drops, &sources, out_path, opt) {
+            let link_libs = loaded.project.extern_libraries();
+            if let Err(message) =
+                codegen_llvm::compile(&typed, &drops, &sources, out_path, opt, &link_libs)
+            {
                 eprintln!("error: {message}");
                 return false;
             }

@@ -37,13 +37,15 @@ pub fn compile_c(
     c_source: &str,
     out_path: &Path,
     opt: OptLevel,
+    link_libs: &[String],
 ) -> Result<(), CompileError> {
     let c_path = out_path.with_extension("c");
     std::fs::write(&c_path, c_source).map_err(|e| CompileError {
         message: format!("could not write generated C to '{}': {e}", c_path.display()),
     })?;
 
-    let output = Command::new("cc")
+    let mut command = Command::new("cc");
+    command
         .arg(opt.cc_flag())
         .arg("-o")
         .arg(out_path)
@@ -55,11 +57,18 @@ pub fn compile_c(
         // runtime half is part of the generated C (MK9-S3-M1 stage C1).
         .arg("-fwrapv")
         .arg("-pthread")
-        .arg("-lm")
-        .output()
-        .map_err(|e| CompileError {
-            message: format!("could not invoke 'cc': {e}"),
-        })?;
+        .arg("-lm");
+    // `-l<name>` for every native library a `coral.toml` `[extern."<module
+    // id>"]` section named (MK9-S1-M1, roadmap B-1): a user FFI module's
+    // trampoline calls straight into it, and this is the one place that
+    // makes the symbol actually resolve at link time rather than relying on
+    // whatever the compiler's own default flags happen to already cover.
+    for lib in link_libs {
+        command.arg(format!("-l{lib}"));
+    }
+    let output = command.output().map_err(|e| CompileError {
+        message: format!("could not invoke 'cc': {e}"),
+    })?;
 
     if !output.status.success() {
         return Err(CompileError {
@@ -148,6 +157,7 @@ pub fn link_llvm_object(
     externs_object: Option<&Path>,
     out_path: &Path,
     opt: OptLevel,
+    link_libs: &[String],
 ) -> Result<(), CompileError> {
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
@@ -173,12 +183,17 @@ pub fn link_llvm_object(
     if let Some(externs) = externs_object {
         command.arg(externs);
     }
-    let output = command
-        .arg("-lm")
-        .output()
-        .map_err(|e| CompileError {
-            message: format!("could not invoke 'cc': {e}"),
-        })?;
+    command.arg("-lm");
+    // See `compile_c`'s matching loop: a `coral.toml` `[extern."<module
+    // id>"]` section's `library` (MK9-S1-M1) has to be on this link line too,
+    // not only the C backend's, or an LLVM-backend build of the same program
+    // would fail with an undefined symbol the C backend resolves.
+    for lib in link_libs {
+        command.arg(format!("-l{lib}"));
+    }
+    let output = command.output().map_err(|e| CompileError {
+        message: format!("could not invoke 'cc': {e}"),
+    })?;
     // The object is embedded in `kelpc`; the file was only a place for `cc` to
     // read from, and leaving one per compile behind would be litter.
     let _ = std::fs::remove_file(&runtime_path);

@@ -1,0 +1,9 @@
+name = "ffibaddomain"
+
+# MK9-S1-M1: "disk" is not one of stdlib.rs's six capability domains, so this
+# section is refused at manifest-parse time, the same shape [caps]'s own
+# unknown-domain check (`caps_bad_domain`) refuses on an `impl` line.
+[extern."sys"]
+domain = "disk"
+library = "c"
+symbols = ["getpid"]

@@ -84,6 +84,92 @@ pub struct Project {
     /// it, for the gated modules only. `infer.rs` gates resolution on it and
     /// `codegen_c.rs` inserts the runtime check because of it.
     gated: HashMap<String, String>,
+    /// Per module: its `coral.toml` `[extern."<module id>"]` entry (MK9-S1-M1,
+    /// roadmap B-1), when it has one. This is what lets a *user* module's own
+    /// `extern fun` declarations exist at all: `domain_of` below folds this
+    /// table in beside `stdlib::domain_of`'s stdlib-only table, so a module
+    /// named here is gated exactly like a stdlib module is, and `infer.rs`
+    /// checks a declared `extern fun`'s bare name against the entry's
+    /// `symbols` allowlist instead of refusing every non-stdlib extern
+    /// outright.
+    extern_modules: HashMap<String, ExternModuleDecl>,
+}
+
+impl Project {
+    /// The capability domain a module is gated on: a stdlib module's fixed
+    /// domain (`stdlib::domain_of`), or, when there is none, this project's
+    /// own `[extern."<module id>"]` assignment. Both tables are consulted the
+    /// same way at every call site that used to read `stdlib::domain_of`
+    /// alone (M7's `gated` map, the RT-module injection, the `caps(*)`
+    /// reachability walk), which is the point of MK9-S1-M1's design: a user
+    /// module's domain behaves exactly like a stdlib one downstream, because
+    /// it is the same table with one more source.
+    pub fn domain_of(&self, module: &str) -> Option<String> {
+        domain_of_with_extern(module, &self.extern_modules)
+    }
+
+    /// The native library and symbol allowlist a `[extern."<module id>"]`
+    /// section declared for `module`, if it has one. `infer.rs` checks a
+    /// declared `extern fun`'s bare name against `symbols`;
+    /// `codegen_c.rs`/`codegen_llvm.rs` use it to write the direct-call
+    /// trampoline instead of looking the body up in `externs.rs`.
+    pub fn extern_ffi_of(&self, module: &str) -> Option<&ExternModuleDecl> {
+        self.extern_modules.get(module)
+    }
+
+    /// Every native library named across the project's `[extern.*]`
+    /// sections, deduplicated: `driver.rs`'s link line adds `-l<name>` for
+    /// each one.
+    pub fn extern_libraries(&self) -> Vec<String> {
+        let mut libs: Vec<String> = self
+            .extern_modules
+            .values()
+            .map(|e| e.library().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        libs.sort();
+        libs.dedup();
+        libs
+    }
+}
+
+/// One `[extern."<module id>"]` section's contents (MK9-S1-M1, roadmap B-1):
+/// the native library and exact symbol set a user module's `extern fun`
+/// declarations may bind to, once `domain` has also assigned it one of
+/// `stdlib::DOMAINS`. `domain`/`library` are `Option` only while parsing —
+/// `parse_manifest` refuses a section that finishes with either still unset,
+/// so every entry a caller sees has both.
+#[derive(Debug, Clone, Default)]
+pub struct ExternModuleDecl {
+    domain: Option<String>,
+    /// The library `-l<name>` names on the link line.
+    library: Option<String>,
+    /// The exact native symbol names this module's `extern fun` declarations
+    /// may bind to. MK9-S1-M1 keeps user FFI to a 1:1 name mapping: the bare
+    /// Kelp function name a declaration writes *is* the symbol
+    /// `codegen_c.rs` calls, so a rename is not this pass's problem to solve.
+    pub symbols: Vec<String>,
+}
+
+impl ExternModuleDecl {
+    /// The native library this module's symbols are declared to live in.
+    pub fn library(&self) -> &str {
+        self.library.as_deref().unwrap_or_default()
+    }
+}
+
+/// `stdlib::domain_of`, folded with a project's own `[extern.*]` table
+/// (MK9-S1-M1). Shared by `Project::domain_of` and by the loader's own three
+/// domain checks (the `gated` map, the RT-module import injection, and
+/// `caps(*)`'s reachability walk), so a user module is gated exactly like a
+/// stdlib one at every one of them, not just some.
+fn domain_of_with_extern(
+    module: &str,
+    extern_modules: &HashMap<String, ExternModuleDecl>,
+) -> Option<String> {
+    crate::stdlib::domain_of(module)
+        .map(|d| d.to_string())
+        .or_else(|| extern_modules.get(module).and_then(|e| e.domain.clone()))
 }
 
 impl Project {
@@ -150,8 +236,16 @@ pub fn load(
         )
     })?;
 
-    let (entry_file, root, src_dir, source_name, source_version, http_pool, manifest_caps) =
-        if given.is_dir() {
+    let (
+        entry_file,
+        root,
+        src_dir,
+        source_name,
+        source_version,
+        http_pool,
+        manifest_caps,
+        manifest_extern,
+    ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
                 Diagnostic::new(
@@ -184,6 +278,7 @@ pub fn load(
                 manifest.version,
                 manifest.http_pool,
                 manifest.caps,
+                manifest.extern_modules,
             )
         } else {
             match find_manifest_root(&given) {
@@ -211,6 +306,7 @@ pub fn load(
                         manifest.version,
                         manifest.http_pool,
                         manifest.caps,
+                        manifest.extern_modules,
                     )
                 }
                 None => {
@@ -226,6 +322,7 @@ pub fn load(
                         None,
                         crate::stdlib::DEFAULT_HTTP_POOL,
                         None,
+                        HashMap::new(),
                     )
                 }
             }
@@ -257,6 +354,7 @@ pub fn load(
         grants: Vec::new(),
         all_grants: Vec::new(),
         deprecations: Vec::new(),
+        extern_modules: manifest_extern,
     };
     loader.load_project()?;
 
@@ -414,7 +512,7 @@ pub fn load(
         // worst. Refusing it by name is the same refusal the ungranted-
         // namespace error is: the clause and the module disagree about what
         // there is to hand over.
-        if !reaches_a_domain(&loader.modules, &g.target) {
+        if !reaches_a_domain(&loader.modules, &g.target, &loader.extern_modules) {
             return Err(Diagnostic::new(
                 format!(
                     "module '{}' is ungated: it reaches no capability domain, so `caps(*)` would grant it nothing; drop the clause",
@@ -523,7 +621,7 @@ pub fn load(
     // `std/math`, which is ungated, so the plain key is enough.)
     let mut gated = HashMap::new();
     for m in &loader.modules {
-        let Some(domain) = crate::stdlib::domain_of(&m.id) else {
+        let Some(domain) = domain_of_with_extern(&m.id, &loader.extern_modules) else {
             continue;
         };
         let parsed = &loader.parsed[&m.id];
@@ -535,7 +633,7 @@ pub fn load(
                 Some(r) => format!("{}{}#{}", m.prefix, r.type_name, f.name),
                 None => format!("{}{}", m.prefix, f.name),
             };
-            gated.insert(key, domain.to_string());
+            gated.insert(key, domain.clone());
         }
     }
 
@@ -550,6 +648,7 @@ pub fn load(
         alias_prefixes,
         caps,
         gated,
+        extern_modules: loader.extern_modules,
     };
     Ok(Loaded {
         program,
@@ -599,6 +698,11 @@ struct Loader<'a> {
     all_grants: Vec<AllGrantEdge>,
     /// Outdated syntax found while loading, in load order (`deprecated.rs`).
     deprecations: Vec<Diagnostic>,
+    /// `coral.toml`'s `[extern."<module id>"]` sections (MK9-S1-M1), read once
+    /// up front the same way `manifest_caps` is. Consulted beside
+    /// `stdlib::domain_of` at every one of this loader's own domain checks,
+    /// so a user module named here is gated exactly like a stdlib one.
+    extern_modules: HashMap<String, ExternModuleDecl>,
 }
 
 /// One `impl "target" caps(domain = [patterns])` from `importer` (M7).
@@ -873,7 +977,7 @@ impl Loader<'_> {
             // conditions as the calls themselves — is what keeps the runtime out
             // of programs that use neither, and what makes the module the
             // emitted C calls into always present.
-            if crate::stdlib::domain_of(&target).is_some() || target == "std/path" {
+            if domain_of_with_extern(&target, &self.extern_modules).is_some() || target == "std/path" {
                 self.visit(crate::stdlib::RT_MODULE, imp.span, id, strict)?;
             }
         }
@@ -955,11 +1059,13 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         http_pool: crate::stdlib::DEFAULT_HTTP_POOL,
         naming_case: None,
         caps: None,
+        extern_modules: HashMap::new(),
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
-    // `[caps]`, `Some(<anything else>)` while inside a section that is
-    // Coral's, not the compiler's, to read.
+    // `[caps]`, `Some("extern.\"<module id>\"")` while inside a
+    // `[extern."<module id>"]` section (MK9-S1-M1), `Some(<anything else>)`
+    // while inside a section that is Coral's, not the compiler's, to read.
     let mut section: Option<String> = None;
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
@@ -968,19 +1074,49 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         }
         // A `[section]` header hands the rest of that section to Coral:
         // `name`, `version`, `entry`, `http_pool` and `naming_case` must
-        // appear before the first one. `[caps]` (C-2) is the one section
-        // kelpc itself reads — the entry module's own capability grant — so
-        // it does not simply stop here; every other section (`[tasks]`,
-        // `[dependencies]`, …) is Coral's manifest surface, and this loop
-        // skips its lines rather than rejecting them.
+        // appear before the first one. `[caps]` (C-2) and `[extern."<module
+        // id>"]` (MK9-S1-M1, roadmap B-1) are the sections kelpc itself
+        // reads — the entry module's own capability grant, and a user
+        // module's own domain/library/symbol assignment — so they do not
+        // simply stop here; every other section (`[tasks]`, `[dependencies]`,
+        // …) is Coral's manifest surface, and this loop skips its lines
+        // rather than rejecting them.
         if line.starts_with('[') {
             let name = line.trim_start_matches('[').trim_end_matches(']').trim();
+            if let Some(rest) = name.strip_prefix("extern.") {
+                let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+                else {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "{MANIFEST_NAME} section header must be '[extern.\"<module id>\"]', found '[{name}]'"
+                        ),
+                        at,
+                        "",
+                    ));
+                };
+                if manifest.extern_modules.contains_key(module_id) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "module '{module_id}' appears more than once in {MANIFEST_NAME}'s '[extern.*]' sections"
+                        ),
+                        at,
+                        "",
+                    ));
+                }
+                manifest
+                    .extern_modules
+                    .insert(module_id.to_string(), ExternModuleDecl::default());
+            }
             section = Some(name.to_string());
             continue;
         }
         if let Some(name) = &section {
             if name == "caps" {
                 parse_caps_line(&mut manifest, line, at)?;
+            } else if let Some(rest) = name.strip_prefix("extern.") {
+                if let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                    parse_extern_line(&mut manifest, module_id, line, at)?;
+                }
             }
             continue;
         }
@@ -1072,6 +1208,33 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             }
         }
     }
+    // A `[extern."<module id>"]` section that never set `domain` or
+    // `library` is half-written: `domain_of_with_extern` would either not
+    // gate the module at all (silently missing the whole point of B-1's
+    // design) or gate it with no library to link its symbols against.
+    // Refusing it here, once, is cheaper than teaching every later reader of
+    // `extern_modules` to handle an incomplete entry.
+    for (module_id, decl) in &manifest.extern_modules {
+        if decl.domain.is_none() {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME}'s '[extern.\"{module_id}\"]' section is missing 'domain = \"<domain>\"' — v1 has {}",
+                    crate::stdlib::DOMAINS.join(", ")
+                ),
+                at,
+                "",
+            ));
+        }
+        if decl.library.is_none() {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME}'s '[extern.\"{module_id}\"]' section is missing 'library = \"<name>\"'"
+                ),
+                at,
+                "",
+            ));
+        }
+    }
     Ok(manifest)
 }
 
@@ -1098,6 +1261,12 @@ struct Manifest {
     /// then *not* granted to the entry module at all, a resolution error at
     /// any reference to it, the same as an ordinary ungranted module.
     caps: Option<HashMap<String, Vec<String>>>,
+    /// `[extern."<module id>"]` (MK9-S1-M1, roadmap B-1): every user module
+    /// this manifest assigns a domain, native library and symbol allowlist
+    /// to. Empty when the manifest has none, which behaves exactly as before
+    /// this feature existed: a module with no entry here gets no domain from
+    /// it, and its `extern fun` declarations stay refused as before.
+    extern_modules: HashMap<String, ExternModuleDecl>,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -1163,6 +1332,112 @@ fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), 
         ));
     }
     caps.insert(domain.to_string(), patterns);
+    Ok(())
+}
+
+/// One `key = value` line inside `coral.toml`'s `[extern."<module_id>"]`
+/// section (MK9-S1-M1, roadmap B-1): `domain = "<one of stdlib::DOMAINS>"`,
+/// `library = "<native library name>"`, or `symbols = ["<name>", ...]`. The
+/// header line already inserted a default `ExternModuleDecl` for
+/// `module_id` (mirrors `[caps]`'s duplicate-domain check, but at the
+/// section level since a module gets at most one `[extern.*]` entry), so
+/// this only ever updates it.
+fn parse_extern_line(
+    manifest: &mut Manifest,
+    module_id: &str,
+    line: &str,
+    at: Span,
+) -> Result<(), Diagnostic> {
+    let Some((key, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!(
+                "expected 'key = value' in {MANIFEST_NAME}'s '[extern.\"{module_id}\"]' section, found '{line}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let key = key.trim();
+    let value = value.trim();
+    let entry = manifest
+        .extern_modules
+        .get_mut(module_id)
+        .expect("the '[extern.\"...\"]' header always inserts its entry first");
+    match key {
+        "domain" => {
+            let Some(domain) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] domain' must be a double-quoted string"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            if !crate::stdlib::is_domain(domain) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{domain}' is not a capability domain — v1 has {}",
+                        crate::stdlib::DOMAINS.join(", ")
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            entry.domain = Some(domain.to_string());
+        }
+        "library" => {
+            let Some(library) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] library' must be a double-quoted string"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            entry.library = Some(library.to_string());
+        }
+        "symbols" => {
+            let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] symbols' must be a bracketed list of double-quoted names, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            let inner = inner.trim();
+            let mut symbols = Vec::new();
+            if !inner.is_empty() {
+                for part in inner.split(',') {
+                    let part = part.trim();
+                    let Some(sym) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"'))
+                    else {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME} symbol for '[extern.\"{module_id}\"] symbols' must be double-quoted, found '{part}'"
+                            ),
+                            at,
+                            "",
+                        ));
+                    };
+                    symbols.push(sym.to_string());
+                }
+            }
+            entry.symbols = symbols;
+        }
+        other => {
+            return Err(Diagnostic::new(
+                format!(
+                    "unknown key '{other}' in {MANIFEST_NAME}'s '[extern.\"{module_id}\"]' section"
+                ),
+                at,
+                "",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1258,7 +1533,11 @@ fn pattern_covered(held: &str, granted: &str, domain: &str) -> bool {
 /// closure is over `impl` targets, so an ungated wrapper counts as reaching a
 /// domain through what it imports (`std/http` holds `net`), while a module made
 /// of arithmetic and byte shuffling (`std/str`, `std/math`) does not.
-fn reaches_a_domain(modules: &[ModuleInfo], module: &str) -> bool {
+fn reaches_a_domain(
+    modules: &[ModuleInfo],
+    module: &str,
+    extern_modules: &HashMap<String, ExternModuleDecl>,
+) -> bool {
     let by_id: HashMap<&str, &ModuleInfo> = modules.iter().map(|m| (m.id.as_str(), m)).collect();
     let mut queue = vec![module.to_string()];
     let mut seen: HashSet<String> = HashSet::new();
@@ -1266,7 +1545,7 @@ fn reaches_a_domain(modules: &[ModuleInfo], module: &str) -> bool {
         if !seen.insert(id.clone()) {
             continue;
         }
-        if crate::stdlib::domain_of(&id).is_some() {
+        if domain_of_with_extern(&id, extern_modules).is_some() {
             return true;
         }
         if let Some(m) = by_id.get(id.as_str()) {

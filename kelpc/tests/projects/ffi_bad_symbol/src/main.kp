@@ -1,0 +1,8 @@
+// MK9-S1-M1: main delegates the "process" domain coral.toml assigned "sys"
+// to it, exactly as it would delegate a stdlib module's domain, then calls
+// the FFI-bound `getpid()` through it. A real PID is always > 0.
+impl "sys" caps(process = ["/**"])
+
+fun main() {
+    print(sys.getpid() > 0)
+}
