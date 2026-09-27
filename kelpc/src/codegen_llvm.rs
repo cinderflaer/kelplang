@@ -10780,6 +10780,7 @@ mod layout_tests {
             structs: Vec::new(),
             enums: Vec::new(),
             pds: Vec::new(),
+            extern_ffi_symbols: std::collections::HashMap::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -11204,6 +11205,7 @@ mod layout_tests {
             structs: vec![point, segment],
             enums: vec![order, shape],
             pds: Vec::new(),
+            extern_ffi_symbols: std::collections::HashMap::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -11340,6 +11342,7 @@ mod layout_tests {
             structs: vec![point],
             enums: vec![shape],
             pds: Vec::new(),
+            extern_ffi_symbols: std::collections::HashMap::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),
