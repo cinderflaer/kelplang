@@ -29,3 +29,13 @@ path = "src/main.rs"
 # §4.4 requires the release notes to name (a `kelpc` built this way does not
 # start without it, the same way the system `clang` does not).
 llvm-sys = { version = "211.1", features = ["prefer-dynamic"] }
+
+[dev-dependencies]
+# `std/tls`'s own test coverage (MK5-S4b-M1, open item 37) needs a TLS server
+# to test the client against, the same way the plain HTTP fixtures in
+# `tests/compile_and_run.rs` use a canned `TcpListener`. This wraps the system
+# OpenSSL kelpc itself links against (`driver.rs`'s `-lssl -lcrypto`), so the
+# test server and the compiled program under test always negotiate against
+# the same library, and generating a throwaway self-signed certificate needs
+# no `openssl` CLI subprocess.
+openssl = "0.10"

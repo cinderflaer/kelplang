@@ -543,6 +543,46 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "resolve_raw",
         "    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo* list = NULL;\n    int rc = getaddrinfo(kelp_host, NULL, &hints, &list);\n    if (rc != 0) {\n        kelp_panic_gai(\"net.resolve: cannot resolve host\", rc);\n    }\n    /* One address per line, in the order `getaddrinfo` reported them, with\n       duplicates dropped — an address literal resolves to itself, so this\n       is also the honest way to see what `connect` would try first. */\n    char out[4096];\n    size_t at = 0;\n    out[0] = 0;\n    char seen[16][INET6_ADDRSTRLEN];\n    size_t seen_n = 0;\n    for (struct addrinfo* a = list; a != NULL; a = a->ai_next) {\n        void* src = NULL;\n        if (a->ai_family == AF_INET) {\n            src = &((struct sockaddr_in*)a->ai_addr)->sin_addr;\n        } else if (a->ai_family == AF_INET6) {\n            src = &((struct sockaddr_in6*)a->ai_addr)->sin6_addr;\n        } else {\n            continue;\n        }\n        char host[INET6_ADDRSTRLEN];\n        if (inet_ntop(a->ai_family, src, host, sizeof host) == NULL) {\n            continue;\n        }\n        bool dup = false;\n        for (size_t i = 0; i < seen_n; i++) {\n            if (strcmp(seen[i], host) == 0) {\n                dup = true;\n                break;\n            }\n        }\n        if (dup) {\n            continue;\n        }\n        if (seen_n < 16) {\n            snprintf(seen[seen_n], sizeof seen[seen_n], \"%s\", host);\n            seen_n++;\n        }\n        size_t hl = strlen(host);\n        if (at + hl + 1 >= sizeof out) {\n            break;\n        }\n        if (at > 0) {\n            out[at++] = '\\n';\n        }\n        memcpy(out + at, host, hl);\n        at += hl;\n        out[at] = 0;\n    }\n    freeaddrinfo(list);\n    return kelp_String__from_str(out);\n",
     ),
+    // ---- std/tls (MK5-S4b-M1, open item 37) --------------------------------
+    //
+    // The only OpenSSL-touching code in the compiler. `std/tls` never dials a
+    // socket itself (see the module's header comment for why: a capability
+    // grant is resolved one hop from the importing program's `impl` line, and
+    // a `net.connect` written here would be checked against this module's own
+    // — always-empty — grant instead). Every body below operates on an `fd`
+    // the caller already connected, or on the `SSL*` `handshake_raw` handed
+    // back, carried as `usize` because v1 has no pointer type at the Kelp
+    // level (the same reason a socket crosses as a plain `fd: i32`).
+    (
+        "std/tls",
+        "handshake_raw",
+        "    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());\n    if (ctx == NULL) {\n        kelp_panic(\"tls.handshake: cannot create an SSL context\");\n    }\n    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);\n    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);\n    if (SSL_CTX_set_default_verify_paths(ctx) != 1) {\n        SSL_CTX_free(ctx);\n        kelp_panic(\"tls.handshake: cannot load the system trust store\");\n    }\n    SSL* ssl = SSL_new(ctx);\n    /* `ssl` keeps its own reference to `ctx`, so freeing this reference now\n       leaves exactly one object (`ssl`) for every failure path below to\n       free — the same one-thing-to-clean-up shape `net.connect_raw` has\n       with its `fd`. */\n    SSL_CTX_free(ctx);\n    if (ssl == NULL) {\n        kelp_panic(\"tls.handshake: cannot create an SSL handle\");\n    }\n    if (SSL_set_fd(ssl, kelp_fd) != 1) {\n        SSL_free(ssl);\n        kelp_panic(\"tls.handshake: cannot bind the socket to the TLS handle\");\n    }\n    /* SNI and the certificate's hostname check both use the name the caller\n       wrote — the same name `std/http.kp`'s capability check ran against,\n       not whatever the socket resolved to. */\n    SSL_set_tlsext_host_name(ssl, kelp_host);\n    if (SSL_set1_host(ssl, kelp_host) != 1) {\n        SSL_free(ssl);\n        kelp_panic(\"tls.handshake: cannot set the verification hostname\");\n    }\n    for (;;) {\n        int rc = SSL_connect(ssl);\n        if (rc == 1) {\n            break;\n        }\n        int err = SSL_get_error(ssl, rc);\n        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {\n            continue;\n        }\n        char text[256];\n        ERR_error_string_n(ERR_get_error(), text, sizeof text);\n        SSL_free(ssl);\n        kelp_panic_tls(\"tls.handshake: the TLS handshake failed\", text);\n    }\n    long verify = SSL_get_verify_result(ssl);\n    if (verify != X509_V_OK) {\n        const char* reason = X509_verify_cert_error_string(verify);\n        SSL_free(ssl);\n        kelp_panic_tls(\"tls.handshake: certificate verification failed\", reason);\n    }\n    return (size_t)(uintptr_t)ssl;\n",
+    ),
+    (
+        "std/tls",
+        "write_raw",
+        "    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    int n = SSL_write(ssl, kelp_data->data, (int)kelp_data->len);\n    if (n <= 0) {\n        int err = SSL_get_error(ssl, n);\n        if (err == SSL_ERROR_ZERO_RETURN) {\n            kelp_panic(\"tls.write: the peer closed the connection\");\n        }\n        char text[256];\n        ERR_error_string_n(ERR_get_error(), text, sizeof text);\n        kelp_panic_tls(\"tls.write: write failed\", text);\n    }\n    return (size_t)n;\n",
+    ),
+    (
+        "std/tls",
+        "write_all_raw",
+        "    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    size_t off = 0;\n    while (off < kelp_data->len) {\n        int n = SSL_write(ssl, kelp_data->data + off, (int)(kelp_data->len - off));\n        if (n <= 0) {\n            int err = SSL_get_error(ssl, n);\n            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {\n                continue;\n            }\n            if (err == SSL_ERROR_ZERO_RETURN) {\n                kelp_panic(\"tls.write: the peer closed the connection\");\n            }\n            char text[256];\n            ERR_error_string_n(ERR_get_error(), text, sizeof text);\n            kelp_panic_tls(\"tls.write: write failed\", text);\n        }\n        off += (size_t)n;\n    }\n    return off;\n",
+    ),
+    (
+        "std/tls",
+        "read_raw",
+        "    /* Mirrors `net.recv_raw`'s zero-length short-circuit: a `max` of 0\n       needs no `SSL_read` call, whose own return of 0 is ambiguous with a\n       clean close. */\n    if (kelp_max == 0) {\n        return kelp_bytes_alloc_raw(0);\n    }\n    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    int n = SSL_read(ssl, b.data, (int)kelp_max);\n    if (n <= 0) {\n        int err = SSL_get_error(ssl, n);\n        if (err == SSL_ERROR_ZERO_RETURN) {\n            b.len = 0;\n            b.data[0] = 0;\n            return b;\n        }\n        char text[256];\n        ERR_error_string_n(ERR_get_error(), text, sizeof text);\n        kelp_panic_tls(\"tls.read: read failed\", text);\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+    ),
+    (
+        "std/tls",
+        "read_into_raw",
+        "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    int n = SSL_read(ssl, kelp_buf->data + kelp_at, (int)room);\n    if (n <= 0) {\n        int err = SSL_get_error(ssl, n);\n        if (err == SSL_ERROR_ZERO_RETURN) {\n            return 0;\n        }\n        char text[256];\n        ERR_error_string_n(ERR_get_error(), text, sizeof text);\n        kelp_panic_tls(\"tls.read_into: read failed\", text);\n    }\n    kelp_buf->data[kelp_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/tls",
+        "shutdown_raw",
+        "    /* Not fatal on failure, unlike `net.close_raw`: a peer that has already\n       gone away without waiting for `close_notify` is the common case here,\n       not an error worth ending the process over — the socket close that\n       follows in `tls.close` still happens either way. */\n    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    SSL_shutdown(ssl);\n    SSL_free(ssl);\n",
+    ),
 ];
 
 /// The C body for an `extern fun` in `module`, or `None` when the compiler

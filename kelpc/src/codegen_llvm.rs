@@ -9969,6 +9969,7 @@ fn program_c_source(program: &Program) -> Option<String> {
          void kelp_panic_at(const char* msg, int p);\n\
          void kelp_panic_errno(const char* msg);\n\
          void kelp_panic_gai(const char* msg, int rc);\n\
+         void kelp_panic_tls(const char* msg, const char* reason);\n\
          void kelp_io_flush_stdio(int fd);\n\
          bool kelp_utf8_valid(const unsigned char* p, size_t n);\n\
          kelp_Bytes kelp_bytes_alloc_raw(size_t n);\n\
@@ -10829,6 +10830,7 @@ mod layout_tests {
             "void kelp_panic_at(const char* msg, int p);",
             "void kelp_panic_errno(const char* msg);",
             "void kelp_panic_gai(const char* msg, int rc);",
+            "void kelp_panic_tls(const char* msg, const char* reason);",
             "void kelp_io_flush_stdio(int fd);",
             "bool kelp_utf8_valid(const unsigned char* p, size_t n);",
             "kelp_Bytes kelp_bytes_alloc_raw(size_t n);",

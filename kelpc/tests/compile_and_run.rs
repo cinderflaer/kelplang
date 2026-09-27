@@ -866,14 +866,15 @@ fn an_exported_signature_may_name_every_type_its_module_exports() {
 
 #[test]
 fn unshipped_stdlib_module_is_rejected() {
-    // `std/tls` is the next module in the roadmap (S4b, behind open item 37)
-    // and is deliberately absent; the error names what *is* shipped so the
-    // reservation stays useful. `std/http` shipped in S4 and is no longer the
-    // example here.
+    // `std/tls` shipped in MK5-S4b-M1 (open item 37) and is no longer the
+    // example here; `std/zzz_unshipped` is a placeholder name reserved by
+    // this fixture alone (never a real module), so this test needs no
+    // updating the next time a real one ships. The error names what *is*
+    // shipped so the reservation stays useful.
     assert_project_rejected(
         "stdlib_import",
         &project("stdlib_import").join("main.kp"),
-        "stdlib module 'tls' is not implemented yet (shipped today: std/mem",
+        "stdlib module 'zzz_unshipped' is not implemented yet (shipped today: std/mem",
     );
 }
 
@@ -5097,8 +5098,11 @@ impl CannedServer {
 }
 
 /// Reads one request: the head, plus the `Content-Length` bytes of body. Returns
-/// false when the peer closed before a request arrived.
-fn read_http_request(stream: &mut TcpStream) -> bool {
+/// false when the peer closed before a request arrived. Generic over `Read`
+/// rather than `TcpStream` specifically, so the TLS server below
+/// (`CannedTlsServer`) can run the identical request-framing logic over an
+/// `SslStream<TcpStream>` instead of duplicating it.
+fn read_http_request<S: Read>(stream: &mut S) -> bool {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
@@ -5176,6 +5180,304 @@ fn serve(
         // connection the server has closed sees end of file, exactly as it
         // would against a real peer that timed the connection out.
     }
+}
+
+// ---------------------------------------------------------------------------
+// MK5-S4b-M1 (open item 37): `std/tls`'s and `https`'s own test server. Same
+// canned-connections shape as `CannedServer` above, except every accepted
+// `TcpStream` goes through an `SslAcceptor`'s handshake first, using a
+// throwaway self-signed certificate generated once per server (the `openssl`
+// crate, not a CLI subprocess — see `Cargo.toml`'s `[dev-dependencies]`
+// comment). The compiled `.kp` binary under test is started with
+// `SSL_CERT_FILE` pointing at that certificate's own PEM file, which is what
+// lets `std/tls`'s unconditional `SSL_CTX_set_default_verify_paths()`
+// (there is no `insecure` flag in v1, on purpose) accept it: OpenSSL reads
+// that variable as an override of the compiled-in trust store, so this needs
+// no write to the machine's real one.
+// ---------------------------------------------------------------------------
+
+/// A throwaway self-signed certificate and key for one test server, PEM-encoded
+/// on disk (`openssl::ssl::SslAcceptor::set_certificate_file` and the
+/// `SSL_CERT_FILE` env var both want a path, not bytes in memory). Subject
+/// and SAN are both `127.0.0.1`, since every fixture that uses this dials
+/// that literal.
+struct TestCert {
+    cert_path: PathBuf,
+    key_path: PathBuf,
+    // Kept alive only so the temp directory is not removed while the paths
+    // above are still in use; nothing reads it.
+    _dir: tempfile_dir::TempDir,
+}
+
+/// A tiny drop-cleaned temp directory, written by hand rather than pulling in
+/// a `tempfile` dependency for one struct: `std::env::temp_dir()` plus the
+/// test's own pid and an atomic counter (two TLS fixtures in one process
+/// would otherwise collide on one directory), removed on `Drop`.
+mod tempfile_dir {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    pub struct TempDir(PathBuf);
+
+    impl TempDir {
+        pub fn new(label: &str) -> TempDir {
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = std::env::temp_dir()
+                .join(format!("kelpc_{label}_{}_{n}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("failed to create a scratch directory");
+            TempDir(dir)
+        }
+
+        pub fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+fn generate_test_cert() -> TestCert {
+    use openssl::asn1::Asn1Time;
+    use openssl::bn::{BigNum, MsbOption};
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::extension::{BasicConstraints, SubjectAlternativeName};
+    use openssl::x509::{X509, X509NameBuilder};
+
+    let rsa = Rsa::generate(2048).expect("failed to generate an RSA key for the test cert");
+    let key = PKey::from_rsa(rsa).expect("failed to wrap the RSA key");
+
+    let mut name = X509NameBuilder::new().expect("failed to start a name builder");
+    name.append_entry_by_text("CN", "127.0.0.1").expect("failed to set CN");
+    let name = name.build();
+
+    let mut serial = BigNum::new().expect("failed to allocate a serial number");
+    serial
+        .rand(64, MsbOption::MAYBE_ZERO, false)
+        .expect("failed to randomize the serial number");
+
+    let mut builder = X509::builder().expect("failed to start a certificate builder");
+    builder.set_version(2).expect("failed to set the certificate version");
+    builder
+        .set_serial_number(&serial.to_asn1_integer().expect("serial as an ASN.1 integer"))
+        .expect("failed to set the serial number");
+    builder.set_subject_name(&name).expect("failed to set the subject name");
+    builder.set_issuer_name(&name).expect("failed to set the issuer name (self-signed)");
+    builder.set_pubkey(&key).expect("failed to set the public key");
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).expect("not-before time"))
+        .expect("failed to set not-before");
+    builder
+        .set_not_after(&Asn1Time::days_from_now(1).expect("not-after time"))
+        .expect("failed to set not-after");
+    builder
+        .append_extension(BasicConstraints::new().critical().build().expect("basic constraints"))
+        .expect("failed to append basic constraints");
+    builder
+        .append_extension(
+            SubjectAlternativeName::new()
+                .ip("127.0.0.1")
+                .build(&builder.x509v3_context(None, None))
+                .expect("subject alternative name"),
+        )
+        .expect("failed to append the subject alternative name");
+    builder
+        .sign(&key, MessageDigest::sha256())
+        .expect("failed to self-sign the test certificate");
+    let cert = builder.build();
+
+    let dir = tempfile_dir::TempDir::new("tls_test_cert");
+    let cert_path = dir.path().join("cert.pem");
+    let key_path = dir.path().join("key.pem");
+    std::fs::write(&cert_path, cert.to_pem().expect("certificate as PEM"))
+        .expect("failed to write the test certificate");
+    std::fs::write(&key_path, key.private_key_to_pem_pkcs8().expect("private key as PEM"))
+        .expect("failed to write the test private key");
+    TestCert { cert_path, key_path, _dir: dir }
+}
+
+/// As `CannedServer`, but every accepted connection is a TLS server socket
+/// (`SslAcceptor::accept`) before the same canned request/response loop runs
+/// over it.
+struct CannedTlsServer {
+    port: u16,
+    accepted: Arc<AtomicUsize>,
+    handle: Option<thread::JoinHandle<()>>,
+    cert: TestCert,
+}
+
+impl CannedTlsServer {
+    fn start(connections: Vec<Vec<Vec<u8>>>) -> CannedTlsServer {
+        use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+
+        let cert = generate_test_cert();
+        let mut acceptor_builder =
+            SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())
+                .expect("failed to start an SslAcceptor");
+        acceptor_builder
+            .set_private_key_file(&cert.key_path, SslFiletype::PEM)
+            .expect("failed to load the test private key");
+        acceptor_builder
+            .set_certificate_file(&cert.cert_path, SslFiletype::PEM)
+            .expect("failed to load the test certificate");
+        let acceptor = acceptor_builder.build();
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        let handle = thread::spawn(move || serve_tls(listener, acceptor, connections, counter));
+        CannedTlsServer { port, accepted, handle: Some(handle), cert }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn serve_tls(
+    listener: TcpListener,
+    acceptor: openssl::ssl::SslAcceptor,
+    connections: Vec<Vec<Vec<u8>>>,
+    accepted: Arc<AtomicUsize>,
+) {
+    let _ = listener.set_nonblocking(true);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for responses in connections {
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break Some(stream),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() > deadline {
+                        break None;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => break None,
+            }
+        };
+        let Some(stream) = stream.take() else { return };
+        let _ = stream.set_nonblocking(false);
+        let mut tls = match acceptor.accept(stream) {
+            Ok(tls) => tls,
+            // A client that never completes the handshake (the denial
+            // fixtures: the capability check panics before dialing at all)
+            // just means this connection is never accepted, which the
+            // caller's `accepted()` assertion already covers.
+            Err(_) => continue,
+        };
+        accepted.fetch_add(1, Ordering::SeqCst);
+        for response in &responses {
+            if !read_http_request(&mut tls) {
+                break;
+            }
+            if tls.write_all(response).is_err() {
+                break;
+            }
+        }
+        let _ = tls.shutdown();
+    }
+}
+
+/// As `assert_project_served`, but the server is `CannedTlsServer` and the
+/// compiled binary is started with `SSL_CERT_FILE` pointing at the server's
+/// own self-signed certificate, so `std/tls`'s ordinary (non-optional)
+/// certificate verification accepts it.
+fn assert_project_served_tls(
+    name: &str,
+    target: &Path,
+    connections: Vec<Vec<Vec<u8>>>,
+    expected_connections: usize,
+    expected: &str,
+) {
+    let mut server = CannedTlsServer::start(connections);
+    let bin = out_path(name);
+    let build = kelpc()
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected project '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .env("SSL_CERT_FILE", &server.cert.cert_path)
+        .output()
+        .expect("failed to run the compiled binary");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the binary for '{name}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for '{name}'"
+    );
+    assert_eq!(
+        server.accepted(),
+        expected_connections,
+        "'{name}' made an unexpected number of TLS connections"
+    );
+}
+
+/// As `assert_project_served_denied`, for the TLS server: the capability
+/// check runs before any connection, TLS or otherwise, so this needs no
+/// `SSL_CERT_FILE` — the denial happens before a handshake could use it.
+fn assert_project_served_tls_denied(
+    name: &str,
+    target: &Path,
+    connections: Vec<Vec<Vec<u8>>>,
+    needle: &str,
+) {
+    let mut server = CannedTlsServer::start(connections);
+    let bin = out_path(name);
+    let build = kelpc()
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected project '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .env("SSL_CERT_FILE", &server.cert.cert_path)
+        .output()
+        .expect("failed to run the compiled binary");
+    server.finish();
+    assert!(
+        !run.status.success(),
+        "expected '{name}' to be denied at runtime, but it exited successfully"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains(needle),
+        "expected the denial for '{name}' to mention '{needle}', got:\n{stderr}"
+    );
 }
 
 /// Compiles a project, runs it with the canned server's port as `argv[1]`,
@@ -5338,6 +5640,39 @@ fn a_redirect_to_a_host_the_grant_does_not_name_is_denied() {
         "http_redirect_denied",
         &project("http_redirect_denied"),
         one_connection(&[REDIRECT_ELSEWHERE]),
+        "outside the net capability granted to module 'std/http'",
+    );
+}
+
+#[test]
+fn an_https_get_completes_the_tls_handshake_and_reads_the_body() {
+    // MK5-S4b-M1 (open item 37): `parse_url` no longer panics on `https`, and
+    // the same `Client.send` path that plain `http_get` exercises now goes
+    // through `std/tls`'s handshake first. One connection, one request: the
+    // point is the handshake and the certificate check succeeding against the
+    // server's self-signed cert (via `SSL_CERT_FILE`), not keep-alive, which
+    // `a_pooled_client_reuses_one_connection_for_five_requests` already covers
+    // for plain `http`.
+    assert_project_served_tls(
+        "https_get",
+        &project("https_get"),
+        one_connection(&[BODY_200_HELLO]),
+        1,
+        "200\nhello\ntrue\n",
+    );
+}
+
+#[test]
+fn https_to_a_host_the_grant_does_not_name_is_denied() {
+    // Same shape as `a_redirect_to_a_host_the_grant_does_not_name_is_denied`,
+    // but for `https` directly: the grant names `127.0.0.1:80`\
+    // (the `http` default port), the URL asks for `127.0.0.1:<TLS port>`, and
+    // the capability check denies it before a socket is ever opened — so the
+    // server here accepts nothing, and `SSL_CERT_FILE` is never consulted.
+    assert_project_served_tls_denied(
+        "https_get_denied",
+        &project("https_get_denied"),
+        one_connection(&[BODY_200_HELLO]),
         "outside the net capability granted to module 'std/http'",
     );
 }

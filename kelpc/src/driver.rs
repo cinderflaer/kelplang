@@ -54,10 +54,15 @@ pub fn compile_c(
         // what the plan's arithmetic-overflow section promises. `-lm` is for
         // `std/math`'s externs (an unused library is free to link). `-pthread`
         // is for the generated program's `thread.spawn`/`thread.join`, whose
-        // runtime half is part of the generated C (MK9-S3-M1 stage C1).
+        // runtime half is part of the generated C (MK9-S3-M1 stage C1). `-lssl
+        // -lcrypto` are for `std/tls`'s externs (MK5-S4b-M1, open item 37): the
+        // system OpenSSL is linked unconditionally, the same "an unused library
+        // is free to link" reasoning as `-lm`.
         .arg("-fwrapv")
         .arg("-pthread")
-        .arg("-lm");
+        .arg("-lm")
+        .arg("-lssl")
+        .arg("-lcrypto");
     // `-l<name>` for every native library a `coral.toml` `[extern."<module
     // id>"]` section named (MK9-S1-M1, roadmap B-1): a user FFI module's
     // trampoline calls straight into it, and this is the one place that
@@ -183,7 +188,12 @@ pub fn link_llvm_object(
     if let Some(externs) = externs_object {
         command.arg(externs);
     }
-    command.arg("-lm");
+    command
+        .arg("-lm")
+        // `std/tls`'s externs need the system OpenSSL (MK5-S4b-M1, open item
+        // 37); an unused library is free to link, the same as `-lm` above.
+        .arg("-lssl")
+        .arg("-lcrypto");
     // See `compile_c`'s matching loop: a `coral.toml` `[extern."<module
     // id>"]` section's `library` (MK9-S1-M1) has to be on this link line too,
     // not only the C backend's, or an LLVM-backend build of the same program

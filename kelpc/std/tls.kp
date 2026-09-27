@@ -1,0 +1,127 @@
+impl "std/net"
+
+/* std/tls — TLS for `https` (MK5-S4b-M1, open item 37, decided 2026-09-26:
+   link the system OpenSSL rather than vendor one). Client side only in v1:
+   this module wraps an outbound connection after it is already open: it
+   never dials one itself. Serving TLS is a later question.
+
+   Gated on `net`, the existing domain — not a new one. `https` is still
+   network access, so a program that already writes
+   `impl "std/http" caps(net = ["api.example.com:443"])` needs nothing new
+   to reach an `https://` URL; the grant it already holds is the one that
+   covers it, exactly as it covers `http://`. `stdlib.rs`'s `domain_of` maps
+   this module to `"net"` the same way it maps `std/net` and `std/http`.
+
+   **Why this module never calls `net.connect` itself.** A capability grant
+   is resolved one hop from the program's own `impl` line: `net.connect`
+   inside `std/http.kp` is checked against `caps_of("std/http")`, which is
+   populated by whatever `impl "std/http" caps(net = [...])` the *importing
+   program* wrote. If a `net.connect` were written here instead, it would be
+   checked against `caps_of("std/tls")` — a slot only this module's own
+   `impl "std/tls"` line (with no `caps()` clause, so empty) could ever
+   populate, never the program's real grant. So the dial stays in
+   `std/http.kp`, where the check already works today for plain `http`, and
+   this module's `handshake` takes the socket *after* it is connected. That
+   is also why this module's own `impl "std/net"` line above carries no
+   `caps()` clause: it exists only so `TlsStream.close` can call
+   `net.close`, a call this module's checker never gates because
+   `caps_of("std/tls")` is consulted for it and a call under a domain with no
+   grant simply denies at that one call site — the same shape `std/ws` and
+   `std/http` already use for their own bare `impl "std/net"` lines. Nothing
+   here dials, listens, or resolves a name, so nothing here needs a grant. It
+   is the same reason `shutdown` below never calls `net.close`: that call
+   would need `net` too, from the same always-empty slot. `impl "std/net"`
+   is kept only so `net.Socket`'s *type* can be named in `handshake`'s
+   signature — naming a type needs no grant, only calling one of its gated
+   functions does.
+
+   **Certificate verification is on by default and not optional in v1.** The
+   system trust store (`SSL_CTX_set_default_verify_paths`), `SSL_VERIFY_PEER`,
+   and hostname verification against the name the caller wrote
+   (`SSL_set1_host`) — the same name `parse_url` split out and the same name
+   the `net` grant was checked against, not whatever `getaddrinfo` resolved.
+   A self-signed or mismatched certificate is a handshake failure, not a
+   silent connection: there is no `insecure` flag, on purpose, because v1 has
+   nowhere reviewable to put one that would not look like a footgun left lying
+   around. The minimum negotiated version is TLS 1.2.
+
+   `TlsStream` pairs a plain `fd` with the OpenSSL handle bound to it — not a
+   `net.Socket`, because a `net.Socket` and its `TlsStream` would then be two
+   owners of one descriptor. `shutdown` ends only the TLS session (so the
+   peer sees a clean `close_notify` where the connection allows it) and frees
+   the OpenSSL handle; it does not close `fd`. The caller closes the socket
+   itself afterward with `net.close(net.Socket(fd = t.fd))`, exactly as it
+   would for a plain connection — the module import that holds the real `net`
+   grant is the one that must make that call, per the note above, and that is
+   never this module. Nothing here closes on drop either, the same rule
+   `net.Socket`/`net.Listener` follow. */
+
+extern fun handshake_raw(fd: i32, host: &str).R: usize
+extern fun write_raw(handle: usize, data: Bytes).R: usize
+extern fun write_all_raw(handle: usize, data: Bytes).R: usize
+extern fun read_raw(handle: usize, max: usize).R: Bytes
+extern fun read_into_raw(handle: usize, buf: mut Bytes, at: usize).R: usize
+extern fun shutdown_raw(handle: usize)
+
+// A TLS session bound to a connected file descriptor. `handle` is the
+// OpenSSL `SSL*`, carried as `usize` because v1 has no pointer type at the
+// Kelp level — the same reason a socket is carried as a plain `fd: i32`.
+// Not `Copy`, so passing one around is a borrow and there is never a silent
+// second free of the `SSL*`.
+datac TlsStream(val fd: i32, val handle: usize)
+
+// Performs the TLS client handshake over an already-connected socket. `host`
+// is used for SNI and for the certificate's hostname check — it should be
+// exactly the host the caller dialed, the same string `net.connect` and the
+// capability check both saw, not an address `getaddrinfo` produced.
+//
+// The socket is consumed by value (as `net.Socket` always is passed), and
+// its descriptor lives on inside the returned `TlsStream`; there is no
+// remaining `Socket` to close separately afterward, only the `TlsStream`.
+//
+// Panics: if the handshake fails, including a certificate the system trust
+// store does not vouch for or a name mismatch.
+fun handshake(s: net.Socket, host: &str).R: TlsStream {
+    val handle = handshake_raw(s.fd, host)
+    return TlsStream(fd = s.fd, handle = handle)
+}
+
+// One `SSL_write`: like `net.send`, it may write fewer bytes than given.
+//
+// Panics: if the write fails or the peer has closed.
+fun write(t: TlsStream, data: Bytes).R: usize = write_raw(t.handle, data)
+
+// The whole buffer, looping over short writes — the TLS twin of
+// `net.send_all`.
+//
+// Panics: as `write`.
+fun write_all(t: TlsStream, data: Bytes).R: usize = write_all_raw(t.handle, data)
+
+// One `SSL_read`: up to `max` bytes, whatever is available. Empty means the
+// peer sent a clean `close_notify` (or the underlying connection closed).
+//
+// Panics: if the read fails.
+fun read(t: TlsStream, max: usize).R: Bytes = read_raw(t.handle, max)
+
+// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
+// a clean close) — the TLS twin of `net.recv_into`, for a message of known
+// size.
+//
+// Panics: if the read fails.
+fun read_into(t: TlsStream, buf: mut Bytes, at: usize).R: usize = read_into_raw(t.handle, buf, at)
+
+// Ends the TLS session (sending `close_notify` when the connection allows
+// it) and frees the OpenSSL handle. It does not close `t.fd`: this module
+// cannot call `net.close` (see the header comment), so the caller closes the
+// socket itself right after, exactly as it does for a plain `net.Socket`:
+//
+//     tls.shutdown(t)
+//     net.close(net.Socket(fd = t.fd))
+//
+// Never panics: a failure to send `close_notify` is not surfaced, because a
+// peer that has already gone away without waiting for it is the common case,
+// not an error worth ending the process over, and there is nothing else here
+// that can fail.
+fun shutdown(t: TlsStream) {
+    shutdown_raw(t.handle)
+}

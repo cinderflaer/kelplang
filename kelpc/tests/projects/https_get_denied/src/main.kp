@@ -1,0 +1,36 @@
+// MK5-S4b-M1 (open item 37): `https` is still network access under the
+// existing `net` capability, not a separate one to grant — so a program that
+// asks for a host:port its grant does not name is denied for `https` exactly
+// the way it already is for `http` (see `caps_net_denied`, `http_redirect_denied`).
+//
+// The grant below names only port 80 on `127.0.0.1`; the harness's TLS server
+// is bound to a different (dynamically assigned) port, so the request is
+// denied before a socket is ever opened, and the TLS server accepts nothing.
+impl "std/http" caps(net = ["127.0.0.1:80"])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "server_port: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("https://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+fun main() {
+    val url = url_for("/a")
+    val r = http.get(url.as_str())
+    print(r.status)
+}

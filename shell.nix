@@ -6,6 +6,15 @@
 # `include/llvm-c`, the C API headers the wrapper at `kelpc/src/llvm_ffi.rs`
 # declares against. The system config installs the runtime output only, so this
 # shell is where the build half comes from.
+#
+# `std/tls`'s externs (MK5-S4b-M1, open item 37) need OpenSSL's headers the
+# same way: `driver.rs` already links `-lssl -lcrypto` against whatever the
+# system carries at runtime, but compiling a program that reaches
+# `openssl/ssl.h` (every program does, unconditionally, per `C_HEADERS`) needs
+# the *dev* output's `include/openssl` on the search path, which the bare
+# system install does not provide. `pkgs.openssl` in `packages` is enough:
+# `mkShell` runs every package's setup hook, the same way it does for `llvm`
+# above, so this needs no explicit `NIX_CFLAGS_COMPILE`/`NIX_LDFLAGS`.
 { pkgs ? import <nixpkgs> { } }:
 
 let
@@ -19,7 +28,11 @@ let
   };
 in
 pkgs.mkShell {
-  packages = [ llvm.dev llvm.lib ];
+  # `pkg-config` itself, so `openssl-sys` (the `openssl` crate's test
+  # dependency for MK5-S4b-M1's TLS test server) can find `openssl.pc` under
+  # `pkgs.openssl.dev` the way its build script expects, rather than needing
+  # `OPENSSL_DIR` set by hand.
+  packages = [ llvm.dev llvm.lib pkgs.openssl pkgs.pkg-config ];
 
   LLVM_SYS_211_PREFIX = llvmPrefix;
 }

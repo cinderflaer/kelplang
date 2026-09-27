@@ -109,6 +109,29 @@ _Noreturn static void kelp_panic_gai(const char* msg, int rc) {
     exit(1);
 }
 
+/* `std/tls`'s own failures (MK5-S4b-M1, open item 37) report through
+   OpenSSL's error queue or `X509_verify_cert_error_string`, neither of which
+   is `errno`, so this pairs with `kelp_panic_gai` the same way that one
+   pairs with `kelp_panic_errno`: a syscall failure gets `errno`, a DNS
+   failure gets `gai_strerror`, and a TLS failure gets whatever OpenSSL
+   already rendered to text. `reason` is resolved by the caller, at the
+   failing call (`ERR_error_string_n` on the code `ERR_get_error()` just
+   returned, or the static string `X509_verify_cert_error_string` returns),
+   because draining or re-deriving it here would report a different error
+   than the one that actually failed. */
+_Noreturn static void kelp_panic_tls(const char* msg, const char* reason) {
+    if (kelp_thread_self != NULL) {
+        char detail[288];
+        snprintf(detail, sizeof detail, "\n  openssl: %s", reason);
+        kelp_thread_self->panicked = 1;
+        kelp_thread_self->message = kelp_thread_panic_text(msg, detail);
+        pthread_exit(NULL);
+    }
+    fprintf(stderr, "panic: %s\n", msg);
+    fprintf(stderr, "  openssl: %s\n", reason);
+    exit(1);
+}
+
 /* The process's own argv, saved by the emitted `main` (S2). Both live for
    the whole process, so a `&str` view of `kelp_argv[i]` stays valid for as long
    as any Kelp value can hold it — which is what `process.arg_at` hands out. */

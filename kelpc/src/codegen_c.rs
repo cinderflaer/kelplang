@@ -116,7 +116,14 @@ pub(crate) const C_HEADERS: &str = "\
 #include <stddef.h>\n\
 #include <stdio.h>\n\
 #include <stdlib.h>\n\
-#include <string.h>\n\n";
+#include <string.h>\n\
+// `std/tls`'s externs (MK5-S4b-M1, open item 37) are the only OpenSSL-touching\n\
+// code in the compiler, but the declarations are unconditional here, the same\n\
+// as `math.h` above: an unused declaration costs nothing, and `driver.rs`\n\
+// already links `-lssl -lcrypto` unconditionally for the same reason.\n\
+#include <openssl/err.h>\n\
+#include <openssl/ssl.h>\n\
+#include <openssl/x509v3.h>\n\n";
 
 /// Which function keys are gated, and each module's patterns per domain.
 /// Built once per program in `generate`; `Gen` carries a reference to it so

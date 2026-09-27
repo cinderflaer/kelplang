@@ -138,6 +138,7 @@ fn raw_source(id: &str) -> Option<&'static str> {
         "std/io" => include_str!("../std/io.kp"),
         "std/process" => include_str!("../std/process.kp"),
         "std/net" => include_str!("../std/net.kp"),
+        "std/tls" => include_str!("../std/tls.kp"),
         "std/http" => include_str!("../std/http.kp"),
         "std/ws" => include_str!("../std/ws.kp"),
         "std/encoding" => include_str!("../std/encoding.kp"),
@@ -161,8 +162,8 @@ fn raw_source(id: &str) -> Option<&'static str> {
 pub fn shipped() -> &'static [&'static str] {
     &[
         "std/mem", "std/str", "std/path", "std/math", "std/fs", "std/time", "std/rand", "std/env",
-        "std/fmt", "std/io", "std/process", "std/net", "std/http", "std/ws", "std/encoding",
-        "std/list", "std/option", "std/result", "std/atomic", "std/thread",
+        "std/fmt", "std/io", "std/process", "std/net", "std/tls", "std/http", "std/ws",
+        "std/encoding", "std/list", "std/option", "std/result", "std/atomic", "std/thread",
     ]
 }
 
@@ -189,6 +190,7 @@ pub fn domain_of(module: &str) -> Option<&'static str> {
     Some(match module {
         "std/fs" => "fs",
         "std/net" => "net",
+        "std/tls" => "net",
         "std/ws" => "net",
         "std/process" => "process",
         "std/env" => "env",
