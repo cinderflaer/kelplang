@@ -365,6 +365,7 @@ pub fn compile(
     sources: &SourceMap,
     out_path: &Path,
     opt: OptLevel,
+    link_libs: &[String],
 ) -> Result<(), String> {
     llvm_ffi::initialize_native_target()?;
     let triple = llvm_ffi::default_target_triple();
@@ -470,7 +471,7 @@ pub fn compile(
         None => None,
     };
 
-    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path, opt)
+    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path, opt, link_libs)
         .map_err(|e| e.message)
 }
 
@@ -9997,7 +9998,7 @@ fn program_c_source(program: &Program) -> Option<String> {
 
     for f in &externs {
         out.push('\n');
-        crate::codegen_c::write_extern(&mut out, f);
+        crate::codegen_c::write_extern(&mut out, f, &program.extern_ffi_symbols);
     }
 
     if cap_glue {

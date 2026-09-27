@@ -36,6 +36,14 @@ pub struct Program {
     /// of the derived `kelp_hash_<T>`/`kelp_eq_<T>` pair it does not emit for
     /// them.
     pub declared_keys: std::collections::HashSet<String>,
+    /// Full (prefixed) function name -> the bare native symbol it binds to,
+    /// for a *user*-declared `extern fun` (MK9-S1-M1, roadmap B-1) —
+    /// `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
+    /// function's module has no compiler-supplied body, and writes a
+    /// direct-call trampoline to the symbol rather than looking up compiled-in
+    /// C text. Empty for a program that declares no user FFI, which behaves
+    /// exactly as before this feature existed.
+    pub extern_ffi_symbols: std::collections::HashMap<String, String>,
 }
 
 /// One module's patterns for one capability domain.

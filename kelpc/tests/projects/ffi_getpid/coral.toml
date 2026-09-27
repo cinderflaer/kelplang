@@ -1,0 +1,12 @@
+name = "ffigetpid"
+
+# MK9-S1-M1 (roadmap B-1): assigns "sys" the "process" domain, gated the
+# same way a stdlib module is (`stdlib::domain_of`, extended by this section),
+# and allowlists the one native symbol its "extern fun" declarations may bind
+# to. "c" needs no extra link flag beyond what every build already links, but
+# the manifest still names it, which is the point: the native surface is
+# declared, not inferred from the link succeeding.
+[extern."sys"]
+domain = "process"
+library = "c"
+symbols = ["getpid"]

@@ -5847,6 +5847,27 @@ fn check_program_pass(
     // functions from here on — borrowck drops their owned parameters and
     // codegen emits them with a prototype like any other.
     functions.extend(fns.instances.borrow_mut().literals.drain(..));
+    // The bare native symbol each user-declared `extern fun` binds to
+    // (MK9-S1-M1, roadmap B-1), keyed by the function's full, prefixed name —
+    // `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
+    // function's module has no compiler-supplied body, and writes a
+    // direct-call trampoline to the symbol. Only a function whose extern was
+    // actually *accepted* on this manifest path reaches this map: the
+    // `FunctionBody::Extern` arm above already refused every other extern
+    // this pass would otherwise have to re-validate here.
+    let mut extern_ffi_symbols = HashMap::new();
+    for f in &functions {
+        if !f.extern_ {
+            continue;
+        }
+        let bare = bare_name(&f.name, project.prefix_of(&f.module));
+        if crate::externs::has_body(&f.module, bare) {
+            continue;
+        }
+        if project.extern_ffi_of(&f.module).is_some() {
+            extern_ffi_symbols.insert(f.name.clone(), bare.to_string());
+        }
+    }
     Ok(tir::Program {
         structs: records,
         enums: sums,
@@ -5855,6 +5876,7 @@ fn check_program_pass(
         caps,
         gated: project.gated().clone(),
         declared_keys: (*declared_keys).clone(),
+        extern_ffi_symbols,
     })
 }
 
@@ -6752,19 +6774,42 @@ fn check_function(
             }
         }
         ast::FunctionBody::Extern => {
-            // No `.kp` body: `codegen_c.rs` writes the compiler-supplied C
-            // (see `externs.rs`). Confirm there *is* one before accepting
-            // the declaration — otherwise the failure would surface as a
-            // `cc` error at best, or as a silently missing symbol.
+            // No `.kp` body. Either `codegen_c.rs` writes the
+            // compiler-supplied C (see `externs.rs`, stdlib modules only), or
+            // — MK9-S1-M1, roadmap B-1 — this module has its own
+            // `coral.toml` `[extern."<module id>"]` entry, in which case
+            // `codegen_c.rs` writes a direct-call trampoline to the native
+            // symbol instead, gated the same way a stdlib extern is (see
+            // `resolve.rs::domain_of_with_extern` and the `gated` map it
+            // feeds). Confirm one of the two actually admits this
+            // declaration before accepting it — otherwise the failure would
+            // surface as a `cc` error at best, or as a silently missing
+            // symbol, or (worse, for the manifest case) as a user extern
+            // that reaches a native symbol its own manifest never
+            // allowlisted.
             let prefix = project.prefix_of(&f.module);
             let bare = f.name.strip_prefix(prefix).unwrap_or(&f.name);
             if !crate::externs::has_body(&f.module, bare) {
-                return Err(TypeError {
-                    message: format!(
-                        "extern function '{bare}' has no compiler-supplied body — only compiler-shipped stdlib modules may declare 'extern fun'"
-                    ),
-                    span: f.span,
-                });
+                match project.extern_ffi_of(&f.module) {
+                    Some(decl) if decl.symbols.iter().any(|s| s == bare) => {}
+                    Some(_) => {
+                        return Err(TypeError {
+                            message: format!(
+                                "extern function '{bare}' is not in this module's coral.toml '[extern.\"{}\"]' symbol allowlist — add it there before declaring 'extern fun {bare}'",
+                                f.module
+                            ),
+                            span: f.span,
+                        });
+                    }
+                    None => {
+                        return Err(TypeError {
+                            message: format!(
+                                "extern function '{bare}' has no compiler-supplied body — only compiler-shipped stdlib modules may declare 'extern fun', unless this module has its own coral.toml '[extern.\"{}\"]' section naming '{bare}' in its 'symbols' allowlist", f.module
+                            ),
+                            span: f.span,
+                        });
+                    }
+                }
             }
             tir::Block {
                 stmts: vec![],

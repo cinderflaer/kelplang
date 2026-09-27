@@ -2294,6 +2294,47 @@ fn an_unknown_capability_domain_is_rejected() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// MK9-S1-M1 (roadmap B-1): a user module's own `extern fun`, bound to a
+// native symbol through coral.toml's `[extern."<module id>"]` section instead
+// of a compiler-supplied body from `externs.rs`. Gated exactly like a stdlib
+// module's domain (same `gated` map, same resolution-time refusal), plus two
+// manifest-shape checks the stdlib path has no equivalent for: an unknown
+// domain, and a symbol outside the module's own allowlist.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_manifest_assigned_ffi_module_calls_its_allowlisted_native_symbol() {
+    assert_project_runs("ffi_getpid", &project("ffi_getpid"), "true\n");
+}
+
+#[test]
+fn an_ungranted_ffi_module_cannot_name_the_gated_namespace() {
+    assert_project_rejected(
+        "ffi_denied",
+        &project("ffi_denied"),
+        "needs the 'process' capability, which module 'util' was not granted",
+    );
+}
+
+#[test]
+fn an_extern_manifest_section_with_an_unknown_domain_is_rejected() {
+    assert_project_rejected(
+        "ffi_bad_domain",
+        &project("ffi_bad_domain"),
+        "'disk' is not a capability domain",
+    );
+}
+
+#[test]
+fn an_extern_fun_outside_its_manifest_symbol_allowlist_is_rejected() {
+    assert_project_rejected(
+        "ffi_bad_symbol",
+        &project("ffi_bad_symbol"),
+        "is not in this module's coral.toml",
+    );
+}
+
 #[test]
 fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");

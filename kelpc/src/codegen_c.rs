@@ -520,7 +520,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 
     for f in &program.functions {
         if f.extern_ {
-            write_extern(&mut out, f);
+            write_extern(&mut out, f, &program.extern_ffi_symbols);
             out.push('\n');
             continue;
         }
@@ -541,11 +541,23 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     out
 }
 
-/// Emits an `extern` declaration's body, which comes from the compiler rather
-/// than from `.kp` source (see `externs.rs`). `infer.rs` has already rejected
-/// an `extern` with no known body, so reaching the `expect` here would mean
-/// the table and the checker disagreed.
-pub(crate) fn write_extern(out: &mut String, f: &Function) {
+/// Emits an `extern` declaration's body: either the compiler-supplied C text
+/// from `externs.rs` (a stdlib module), or — MK9-S1-M1, roadmap B-1 — a
+/// direct-call trampoline to the native symbol a *user* module's own
+/// `coral.toml` `[extern."<module id>"]` section allowlisted, when
+/// `extern_ffi_symbols` (`infer.rs::check_program_pass`) names one for this
+/// function. `infer.rs` has already rejected an `extern` that is neither, so
+/// reaching the `expect` in the stdlib branch would mean the table and the
+/// checker disagreed.
+pub(crate) fn write_extern(
+    out: &mut String,
+    f: &Function,
+    extern_ffi_symbols: &std::collections::HashMap<String, String>,
+) {
+    if let Some(symbol) = extern_ffi_symbols.get(&f.name) {
+        write_user_extern(out, f, symbol);
+        return;
+    }
     let body = crate::externs::body(&f.module, &f.name)
         .unwrap_or_else(|| panic!("no compiler-supplied body for extern '{}'", f.name));
     // The C signature renames every parameter (`n` -> `kelp_n`), so a body's C
@@ -562,6 +574,38 @@ pub(crate) fn write_extern(out: &mut String, f: &Function) {
     write_signature(out, f);
     out.push_str(" {\n");
     out.push_str(body);
+    out.push_str("}\n");
+}
+
+/// A user-declared `extern fun`'s whole body (MK9-S1-M1, roadmap B-1): a
+/// single call to the native `symbol` its module's manifest allowlisted,
+/// forwarding every parameter and returning whatever it returns. There is
+/// nothing else to write — the "compiler-supplied body" that `write_extern`'s
+/// stdlib branch looks up in `externs.rs` exists to hand-write a primitive
+/// `.kp` cannot express at all (a raw syscall, a `malloc`); a user FFI
+/// binding has no such primitive to hand-write, since the whole point is
+/// that the native symbol already *is* the primitive.
+///
+/// MK9-S1-M1 keeps user FFI to a 1:1 name mapping (`symbol` is the bare Kelp
+/// name `infer.rs` validated against the allowlist), so this never needs a
+/// `#include` of its own: every header the generated program might need for
+/// an arbitrary native symbol is out of scope for this pass (see the
+/// project's final report) — the fixtures this lane ships call a libc/libm
+/// symbol the runtime's own fixed preamble already declares.
+fn write_user_extern(out: &mut String, f: &Function, symbol: &str) {
+    write_signature(out, f);
+    out.push_str(" {\n");
+    let args: Vec<String> = f
+        .params
+        .iter()
+        .filter(|(_, ty)| *ty != Ty::Unit)
+        .map(|(name, _)| c_name(name))
+        .collect();
+    if f.ret == Ty::Unit {
+        writeln!(out, "    {}({});", symbol, args.join(", ")).unwrap();
+    } else {
+        writeln!(out, "    return {}({});", symbol, args.join(", ")).unwrap();
+    }
     out.push_str("}\n");
 }
 
