@@ -48,7 +48,6 @@ impl "std/result"
    Not here, deliberately: gzip, HTTP/2, cookies, proxies,
    `Expect: 100-continue`, idle reaping, and serving TLS (client only). */
 
-const DEFAULT_SCHEME: str = "http"
 const DEFAULT_PORT: u16 = 80
 const DEFAULT_HTTPS_PORT: u16 = 443
 const DEFAULT_TIMEOUT_MS: u64 = 30000
