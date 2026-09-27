@@ -52,10 +52,15 @@ pub fn compile_c(
         // what the plan's arithmetic-overflow section promises. `-lm` is for
         // `std/math`'s externs (an unused library is free to link). `-pthread`
         // is for the generated program's `thread.spawn`/`thread.join`, whose
-        // runtime half is part of the generated C (MK9-S3-M1 stage C1).
+        // runtime half is part of the generated C (MK9-S3-M1 stage C1). `-lssl
+        // -lcrypto` are for `std/tls`'s externs (MK5-S4b-M1, open item 37): the
+        // system OpenSSL is linked unconditionally, the same "an unused library
+        // is free to link" reasoning as `-lm`.
         .arg("-fwrapv")
         .arg("-pthread")
         .arg("-lm")
+        .arg("-lssl")
+        .arg("-lcrypto")
         .output()
         .map_err(|e| CompileError {
             message: format!("could not invoke 'cc': {e}"),
@@ -175,6 +180,10 @@ pub fn link_llvm_object(
     }
     let output = command
         .arg("-lm")
+        // `std/tls`'s externs need the system OpenSSL (MK5-S4b-M1, open item
+        // 37); an unused library is free to link, the same as `-lm` above.
+        .arg("-lssl")
+        .arg("-lcrypto")
         .output()
         .map_err(|e| CompileError {
             message: format!("could not invoke 'cc': {e}"),
