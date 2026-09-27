@@ -1,0 +1,4 @@
+name = "http_rate_limit"
+# One kept-alive connection is enough: both requests in this fixture go to
+# the same host and neither response asks to close.
+http_pool = 2
