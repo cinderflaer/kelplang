@@ -200,12 +200,15 @@ static void kelp_assert(bool cond) {
        process's actual environment (and anything a spawned child inherits)
        is always correct regardless of caching, and the rebuild's scan of
        `environ` can never overlap another thread's mutation of it. The
-       table a rebuild replaces is deliberately never freed: a concurrent
-       reader may still hold a pointer to it that it loaded (lock-free)
-       before the swap, and there is no way to know when the last such
-       reader is done with it. Leaking on `set`/`unset` (rare; nothing like
-       a hot loop in a real program) is the accepted price for lock-free
-       reads, which are not rare.
+       table a rebuild replaces is freed, but only once no reader can still
+       hold it: a lookup registers itself in one of two reader counters
+       (chosen by the parity of `kelp_env_epoch`) for the length of its probe,
+       and the rebuild, after publishing the new table, flips the epoch and
+       waits for the counter of the old parity to drain before freeing what
+       it replaced. A reader that registers after the flip loads the new
+       table, since the flip follows the publish. So the hot path stays free
+       of any lock (two atomic adds around a short probe), and `set`/`unset`
+       pay for the wait, which is the length of one probe.
 
    Both the very first build and every rebuild after a `set`/`unset` go
    through the same `kelp_env_build`, so there is one code path for "how a
@@ -217,6 +220,12 @@ typedef struct {
 } kelp_EnvTable;
 
 static _Atomic(kelp_EnvTable*) kelp_env_table = NULL;
+
+/* The reader accounting that lets a rebuild free the table it replaces (see
+   the comment above `kelp_EnvTable`). `kelp_env_epoch`'s parity picks which of
+   the two counters a lookup registers in. */
+static _Atomic unsigned long kelp_env_epoch = 0;
+static _Atomic long kelp_env_readers[2];
 
 /* Guards every read of `environ` this cache does (`kelp_env_build`) and
    every write to it (the real `setenv`/`unsetenv` inside `kelp_env_set` and
@@ -291,14 +300,26 @@ static kelp_EnvTable* kelp_env_ensure(void) {
     return t;
 }
 
-/* Rebuilds the table from the current `environ` and publishes it. Called
-   only from `kelp_env_set`/`kelp_env_unset`, which already hold
-   `kelp_env_mutex` and have just finished mutating `environ` themselves; the
-   table this replaces is deliberately leaked (see the comment above
-   `kelp_EnvTable`). */
+/* Rebuilds the table from the current `environ`, publishes it, and frees the
+   one it replaced once every lookup that could still be probing it is done.
+   Called only from `kelp_env_set`/`kelp_env_unset`, which already hold
+   `kelp_env_mutex` and have just finished mutating `environ` themselves.
+   The order matters: the new table is stored first, then the epoch flips, so
+   a lookup that registers under the new epoch can only load the new table,
+   and the lookups registered under the old parity are exactly the ones that
+   may hold the old table. */
 static void kelp_env_publish(void) {
     kelp_EnvTable* built = kelp_env_build();
-    atomic_store_explicit(&kelp_env_table, built, memory_order_release);
+    kelp_EnvTable* old = atomic_exchange(&kelp_env_table, built);
+    unsigned long e = atomic_fetch_add(&kelp_env_epoch, 1);
+    if (old == NULL) {
+        return;
+    }
+    while (atomic_load(&kelp_env_readers[e & 1]) != 0) {
+        sched_yield();
+    }
+    free(old->slots);
+    free(old);
 }
 
 /* The real `setenv`, and the rebuild that follows it, as one critical
@@ -332,20 +353,39 @@ static int kelp_env_unset(const char* name) {
    like `getenv` compares up to it, so a name that is a prefix of a longer one
    is never mistaken for it. */
 static const char* kelp_env_lookup(const char* name) {
-    kelp_EnvTable* t = kelp_env_ensure();
+    /* Builds the first table if there is none; after this the pointer is never
+       NULL again, so the load below needs no check. */
+    (void)kelp_env_ensure();
+    /* Register in the counter of the current epoch's parity, and confirm the
+       epoch did not flip in between: a flip that raced the registration may
+       already have finished waiting on this parity, so an unconfirmed
+       registration could probe a table that is about to be freed. */
+    unsigned long e;
+    for (;;) {
+        e = atomic_load(&kelp_env_epoch);
+        atomic_fetch_add(&kelp_env_readers[e & 1], 1);
+        if (atomic_load(&kelp_env_epoch) == e) {
+            break;
+        }
+        atomic_fetch_sub(&kelp_env_readers[e & 1], 1);
+    }
+    kelp_EnvTable* t = atomic_load(&kelp_env_table);
+    const char* found = NULL;
     size_t name_len = strlen(name);
     size_t idx = (size_t)(kelp_env_hash(name, name_len) & (uint64_t)(t->cap - 1));
     for (size_t probes = 0; probes < t->cap; probes++) {
         const char* entry = t->slots[idx];
         if (entry == NULL) {
-            return NULL;
+            break;
         }
         if (strncmp(entry, name, name_len) == 0 && entry[name_len] == '=') {
-            return entry + name_len + 1;
+            found = entry + name_len + 1;
+            break;
         }
         idx = (idx + 1) & (t->cap - 1);
     }
-    return NULL;
+    atomic_fetch_sub(&kelp_env_readers[e & 1], 1);
+    return found;
 }
 
 /* ---- the dial (MISSING-w9Kda) ------------------------------------------------
