@@ -1,0 +1,11 @@
+// A trailing block that names a binding from the enclosing scope is a
+// capturing literal, so the callback parameter is a `closure()`.
+fun twice(f: closure()) {
+    f()
+    f()
+}
+
+fun main() {
+    val n = 3
+    twice { print(n) }
+}

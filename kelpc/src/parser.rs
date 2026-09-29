@@ -10,6 +10,10 @@ pub struct Parser {
     /// How many `for` loops have been desugared, for the same reason
     /// (`parser::FOR_PREFIX`).
     fors: usize,
+    /// True while parsing the head of an `if`/`elif`/`while`/`for`/`when`, where
+    /// a `{` after an expression opens the body and not a trailing block
+    /// (`plan/trailing-closure.md`). A call's argument list and a block reset it.
+    no_trailing_block: bool,
 }
 
 #[derive(Debug)]
@@ -52,7 +56,40 @@ impl Parser {
             pos: 0,
             if_lets: 0,
             fors: 0,
+            no_trailing_block: false,
         }
+    }
+
+    /// Parses the expression in an `if`/`while`/`for`/`when` head, where a
+    /// following `{` is the body and never a trailing block.
+    fn parse_head_expr(&mut self) -> PResult<Expr> {
+        let saved = std::mem::replace(&mut self.no_trailing_block, true);
+        let e = self.parse_expr();
+        self.no_trailing_block = saved;
+        e
+    }
+
+    /// A `{ ... }` on the same line as the end of a call is that call's last
+    /// argument: a zero-parameter `fun` literal returning Unit, exactly what
+    /// `f(fun() { ... })` writes. Nothing else follows a call on the same line
+    /// with a `{`, so this only ever accepts text that was a parse error.
+    fn parse_trailing_block(&mut self, args: &mut Vec<CallArg>, end: &mut Span) -> PResult<()> {
+        if self.no_trailing_block || !self.check(&TokenKind::LBrace) {
+            return Ok(());
+        }
+        let block = self.parse_block()?;
+        let span = block.span;
+        *end = span;
+        args.push(CallArg {
+            name: None,
+            value: Expr::FnLit {
+                params: Vec::new(),
+                return_type: None,
+                body: Box::new(FunctionBody::Block(block)),
+                span,
+            },
+        });
+        Ok(())
     }
 
     fn peek(&self) -> &Token {
@@ -1020,6 +1057,7 @@ impl Parser {
 
     fn parse_block(&mut self) -> PResult<Block> {
         let start = self.expect(TokenKind::LBrace, "'{'")?.span;
+        let saved = std::mem::replace(&mut self.no_trailing_block, false);
         self.skip_newlines();
         let mut stmts = Vec::new();
         while !self.check(&TokenKind::RBrace) {
@@ -1039,6 +1077,7 @@ impl Parser {
             }
         }
         let end = self.expect(TokenKind::RBrace, "'}'")?.span;
+        self.no_trailing_block = saved;
         Ok(Block {
             stmts,
             span: start.to(end),
@@ -1157,7 +1196,7 @@ impl Parser {
 
     fn parse_while_stmt(&mut self) -> PResult<Stmt> {
         let start = self.expect(TokenKind::While, "'while'")?.span;
-        let cond = self.parse_expr()?;
+        let cond = self.parse_head_expr()?;
         let body = self.parse_block()?;
         let span = start.to(body.span);
         Ok(Stmt::While { cond, body, span })
@@ -1212,7 +1251,7 @@ impl Parser {
                 span: word_span,
             });
         }
-        let iterable = self.parse_expr()?;
+        let iterable = self.parse_head_expr()?;
         let body = self.parse_block()?;
         let span = start.to(body.span);
 
@@ -1564,8 +1603,15 @@ impl Parser {
                 // generic `enum`'s variant (A-2). Recognized only in the
                 // adjacent form, so `a.b < c > (d)` stays a comparison.
                 let type_args = self.try_explicit_type_args()?.unwrap_or_default();
-                if self.check(&TokenKind::LParen) {
-                    let (args, end) = self.parse_call_args()?;
+                if self.check(&TokenKind::LParen)
+                    || (!self.no_trailing_block && self.check(&TokenKind::LBrace))
+                {
+                    let (mut args, mut end) = if self.check(&TokenKind::LParen) {
+                        self.parse_call_args()?
+                    } else {
+                        (Vec::new(), nspan)
+                    };
+                    self.parse_trailing_block(&mut args, &mut end)?;
                     let span = expr.span().to(end);
                     expr = Expr::MethodCall {
                         receiver: Box::new(expr),
@@ -1594,6 +1640,7 @@ impl Parser {
     /// plain calls (`f(...)`) and method calls (`recv.m(...)`).
     fn parse_call_args(&mut self) -> PResult<(Vec<CallArg>, Span)> {
         self.expect(TokenKind::LParen, "'('")?;
+        let saved = std::mem::replace(&mut self.no_trailing_block, false);
         let mut args = Vec::new();
         while !self.check(&TokenKind::RParen) {
             // A named argument is exactly `ident =` (not `==`); parens
@@ -1614,6 +1661,7 @@ impl Parser {
             }
         }
         let end = self.expect(TokenKind::RParen, "')'")?.span;
+        self.no_trailing_block = saved;
         Ok((args, end))
     }
 
@@ -1655,7 +1703,18 @@ impl Parser {
                 self.advance();
                 let type_args = self.try_explicit_type_args()?.unwrap_or_default();
                 if self.check(&TokenKind::LParen) {
-                    let (args, end) = self.parse_call_args()?;
+                    let (mut args, mut end) = self.parse_call_args()?;
+                    self.parse_trailing_block(&mut args, &mut end)?;
+                    Ok(Expr::Call {
+                        callee: name,
+                        type_args,
+                        args,
+                        span: tok.span.to(end),
+                    })
+                } else if !self.no_trailing_block && self.check(&TokenKind::LBrace) {
+                    // `name { ... }`: a call whose only argument is the block.
+                    let (mut args, mut end) = (Vec::new(), tok.span);
+                    self.parse_trailing_block(&mut args, &mut end)?;
                     Ok(Expr::Call {
                         callee: name,
                         type_args,
@@ -1820,7 +1879,7 @@ impl Parser {
         if matches!(self.peek_kind(), TokenKind::Ident(word) if word == "let") {
             return self.parse_if_let(start);
         }
-        let cond = self.parse_expr()?;
+        let cond = self.parse_head_expr()?;
         let then_block = self.parse_block()?;
         let mut span = start.to(then_block.span);
         let else_block = if self.check(&TokenKind::Else) {
@@ -1884,7 +1943,7 @@ impl Parser {
             span: vspan,
         };
         self.expect(TokenKind::Eq, "'=' after the pattern")?;
-        let scrutinee = self.parse_expr()?;
+        let scrutinee = self.parse_head_expr()?;
         let scrutinee_span = scrutinee.span();
         let then_block = self.parse_block()?;
         let mut span = start.to(then_block.span);
@@ -2075,7 +2134,7 @@ impl Parser {
     /// heads are *shapes*, not expressions: a variant name with an optional
     /// `(bind, ...)` list, where each bind is an identifier or `_`.
     fn parse_when_patterns(&mut self, start: Span) -> PResult<Expr> {
-        let scrutinee = self.parse_expr()?;
+        let scrutinee = self.parse_head_expr()?;
         self.expect(TokenKind::LBrace, "'{'")?;
         self.skip_newlines();
 
@@ -3195,5 +3254,55 @@ mod tests {
             "got: {}",
             e.message
         );
+    }
+
+    fn body_stmts(p: &Program) -> &Vec<Stmt> {
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => &b.stmts,
+            _ => panic!("expected block body"),
+        }
+    }
+
+    fn first_call_args(src: &str) -> Vec<CallArg> {
+        let p = parse(src);
+        match &body_stmts(&p)[0] {
+            Stmt::Expr { expr: Expr::Call { args, .. } | Expr::MethodCall { args, .. }, .. } => args.clone(),
+            other => panic!("expected a call statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_trailing_block_is_the_last_argument_as_a_unit_fun_literal() {
+        let args = first_call_args("fun main() {\n    run(1) { work() }\n}");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args[1].value, Expr::FnLit { ref params, return_type: None, .. } if params.is_empty()));
+        assert!(args[1].name.is_none());
+    }
+
+    #[test]
+    fn a_trailing_block_needs_no_parentheses_when_it_is_the_only_argument() {
+        let args = first_call_args("fun main() {\n    column { work() }\n}");
+        assert_eq!(args.len(), 1);
+        let args = first_call_args("fun main() {\n    ui.column { work() }\n}");
+        assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn a_block_on_the_next_line_is_not_a_trailing_block() {
+        // Two statements: the call with one argument, then a block of its own.
+        let p = parse("fun main() {\n    run(1)\n    { work() }\n}");
+        assert_eq!(body_stmts(&p).len(), 2);
+    }
+
+    #[test]
+    fn a_control_flow_head_keeps_its_brace_as_the_body() {
+        // `f(x)` and `xs.len()` are calls ending a head: the `{` is the body.
+        parse("fun main() {\n    if f(x) { work() }\n    while g() { work() }\n    for a in xs.items() { work() }\n}");
+        parse("fun main() {\n    if cond { work() } else { other() }\n    val v = when x.pick() { A -> 1 }\n}");
+    }
+
+    #[test]
+    fn parentheses_and_blocks_reenable_a_trailing_block_inside_a_head() {
+        parse("fun main() {\n    if f(run { work() }) { work() }\n    if cond { run { work() } }\n}");
     }
 }
