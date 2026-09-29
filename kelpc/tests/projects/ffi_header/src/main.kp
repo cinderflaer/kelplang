@@ -1,0 +1,10 @@
+// MK9-S1-M1 (roadmap B-1): main delegates the "env" domain coral.toml
+// assigned "ctype" to it, then calls the FFI-bound `toupper()` through it.
+// In the C locale `toupper(97)` ("a") is 65 ("A"), so the program prints
+// true. The `header` key in the manifest is what makes `toupper` a declared
+// function in the generated C rather than an implicit one.
+impl "ctype" caps(env = ["*"])
+
+fun main() {
+    print(ctype.toupper(97) == 65)
+}

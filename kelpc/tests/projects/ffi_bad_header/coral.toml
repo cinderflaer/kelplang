@@ -1,0 +1,10 @@
+name = "ffibadheader"
+
+# MK9-S1-M1 (roadmap B-1): `header` is a path that gets spliced into an
+# `#include <...>` line, so an empty one is refused at manifest-parse time,
+# the same shape the missing-domain/missing-library checks use.
+[extern."ctype"]
+domain = "env"
+library = "c"
+symbols = ["toupper"]
+header = ""

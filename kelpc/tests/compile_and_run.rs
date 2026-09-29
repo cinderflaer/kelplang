@@ -2337,6 +2337,29 @@ fn an_extern_fun_outside_its_manifest_symbol_allowlist_is_rejected() {
 }
 
 #[test]
+fn a_manifest_ffi_header_key_includes_the_native_symbols_header() {
+    assert_project_runs("ffi_header", &project("ffi_header"), "true\n");
+}
+
+#[test]
+fn an_empty_ffi_header_key_is_rejected() {
+    assert_project_rejected(
+        "ffi_bad_header",
+        &project("ffi_bad_header"),
+        "header' must not be empty",
+    );
+}
+
+#[test]
+fn an_ffi_header_key_with_a_parent_segment_is_rejected() {
+    assert_project_rejected(
+        "ffi_bad_header_dotdot",
+        &project("ffi_bad_header_dotdot"),
+        "header' must not contain",
+    );
+}
+
+#[test]
 fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");
     assert_project_runs(

@@ -1,0 +1,5 @@
+impl "ctype" caps(env = ["*"])
+
+fun main() {
+    print(ctype.toupper(97) == 65)
+}
