@@ -326,7 +326,7 @@ fn build(
         Backend::C => {
             let c_source = codegen_c::generate(&typed, &drops, &sources);
             let link_libs = loaded.project.extern_libraries();
-            if let Err(e) = driver::compile_c(&c_source, out_path, opt, &link_libs) {
+            if let Err(e) = driver::compile_c(&c_source, out_path, opt, &link_libs, codegen_c::uses_tls(&typed)) {
                 eprintln!("error: {}", e.message);
                 return false;
             }

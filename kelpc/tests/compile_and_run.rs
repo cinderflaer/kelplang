@@ -8114,3 +8114,92 @@ fn the_tuple_surface_is_refused_where_its_rules_refuse_it() {
         assert_rejected_with(&format!("tests/fixtures/{fixture}.kp"), needle);
     }
 }
+
+/// Builds `source` with a `cc` shim first on `PATH` that records every
+/// invocation's arguments, and returns the recorded lines. The build itself is
+/// done by the real `cc` the shim forwards to.
+fn build_recording_cc_lines(source: &str) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_cc = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v cc"])
+            .output()
+            .expect("failed to look up cc")
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert!(!real_cc.is_empty(), "no cc on PATH");
+
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let dir = bin.with_extension("shim");
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("cc.log");
+    let _ = std::fs::remove_file(&log);
+    let shim = dir.join("cc");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\nexec '{real_cc}' \"$@\"\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default());
+
+    let build = kelpc()
+        .env("PATH", path)
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    std::fs::read_to_string(&log)
+        .expect("the cc shim was never called")
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// BUG-x7Qmd: a program that does not reach `std/tls` neither links OpenSSL nor
+/// includes its headers, so it builds on a host with no OpenSSL development
+/// files. A program that does reach it links both libraries.
+#[test]
+fn only_a_tls_program_links_openssl() {
+    let plain = build_recording_cc_lines("tests/fixtures/fs_path_family.kp");
+    assert!(!plain.is_empty());
+    for line in &plain {
+        assert!(
+            !line.contains("-lssl") && !line.contains("-lcrypto"),
+            "a program without std/tls linked OpenSSL: {line}"
+        );
+    }
+    let name = "fs_path_family";
+    let generated = out_path(name);
+    let source = std::fs::read_to_string(if backend() == "c" {
+        generated.with_extension("c")
+    } else {
+        generated.with_extension("externs.c")
+    })
+    .expect("the generated C source");
+    assert!(
+        !source.contains("#include <openssl/"),
+        "a program without std/tls includes OpenSSL's headers"
+    );
+
+    let tls = build_recording_cc_lines("tests/fixtures/https_try_dial.kp");
+    assert!(
+        tls.iter().any(|l| l.contains("-lssl") && l.contains("-lcrypto")),
+        "a program that reaches std/tls did not link OpenSSL: {tls:?}"
+    );
+}
