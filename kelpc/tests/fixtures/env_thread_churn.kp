@@ -1,0 +1,68 @@
+// BUG-fY3nQ: two writers rebuild the env lookup table many times while two
+// readers probe it, so a rebuild has to free the table it replaced without a
+// reader still probing it, and without leaking one per rebuild. The readers
+// look up a name that stays set for the whole run, so every answer is known
+// no matter how the threads interleave; the writers use disjoint names.
+impl "std/env"
+impl "std/thread"
+impl "std/result"
+impl "std/str"
+
+fun reader(rounds: move i64).R: i64 {
+    var seen: i64 = 0
+    var i: i64 = 0
+    while i < rounds {
+        if env.has("KELP_ENV_CHURN_STABLE") {
+            seen = seen + 1
+        }
+        if env.has("KELP_ENV_CHURN_NEVER") {
+            seen = seen - 1000000
+        }
+        i = i + 1
+    }
+    seen
+}
+
+fun writer_a(rounds: move i64).R: i64 {
+    var i: i64 = 0
+    while i < rounds {
+        env.set("KELP_ENV_CHURN_A", "a")
+        env.unset("KELP_ENV_CHURN_A")
+        i = i + 1
+    }
+    rounds
+}
+
+fun writer_b(rounds: move i64).R: i64 {
+    var i: i64 = 0
+    while i < rounds {
+        env.set("KELP_ENV_CHURN_B", "b")
+        env.unset("KELP_ENV_CHURN_B")
+        i = i + 1
+    }
+    rounds
+}
+
+fun main() {
+    env.set("KELP_ENV_CHURN_STABLE", "yes")
+    val r0 = thread.spawn(reader, 200000)
+    val r1 = thread.spawn(reader, 200000)
+    val w0 = thread.spawn(writer_a, 3000)
+    val w1 = thread.spawn(writer_b, 3000)
+    when thread.join(r0) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(r1) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(w0) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    when thread.join(w1) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+}
