@@ -1,0 +1,23 @@
+// Open item 75 prototype: a `{ ... }` on the same line as a call is that
+// call's last argument, a zero-parameter `fun` literal returning Unit.
+fun twice(f: fun()) {
+    f()
+    f()
+}
+
+fun labelled(name: str, f: fun()) {
+    print(name)
+    f()
+}
+
+fun show() {
+    print("show")
+}
+
+fun main() {
+    twice { print("a") }
+    labelled("b") { print("c") }
+    if true {
+        twice { show() }
+    }
+}

@@ -7898,3 +7898,15 @@ fn the_tuple_surface_is_refused_where_its_rules_refuse_it() {
         assert_rejected_with(&format!("tests/fixtures/{fixture}.kp"), needle);
     }
 }
+
+// Open item 75 prototype (`plan/trailing-closure.md`): a `{ ... }` on the same
+// line as a call is that call's last argument, a zero-parameter Unit `fun`.
+#[test]
+fn a_trailing_block_is_the_calls_last_argument() {
+    assert_compiles_and_runs("tests/fixtures/trailing_block.kp", "a\na\nb\nc\nshow\nshow\n");
+}
+
+#[test]
+fn a_trailing_block_can_capture_into_a_closure_parameter() {
+    assert_compiles_and_runs("tests/fixtures/trailing_block_capture.kp", "3\n3\n");
+}
