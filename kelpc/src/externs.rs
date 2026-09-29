@@ -30,7 +30,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/str",
         "byte_at_raw",
-        "    if (kelp_i >= strlen(kelp_s)) {\n        kelp_panic(\"str.byte: index out of bounds\");\n    }\n    return (uint8_t)kelp_s[kelp_i];\n",
+        "    /* `i` is in bounds exactly when no NUL sits in `s[0..=i]`, so the check\n       scans `i + 1` bytes rather than the whole string: a read near the start\n       of a long `str` costs what it reads. */\n    if (kelp_i == SIZE_MAX || memchr(kelp_s, 0, kelp_i + 1) != NULL) {\n        kelp_panic(\"str.byte: index out of bounds\");\n    }\n    return (uint8_t)kelp_s[kelp_i];\n",
     ),
     (
         "std/str",
