@@ -7997,6 +7997,8 @@ fn str_byte_keeps_its_answers_and_bounds_at_the_edges() {
     assert_compiles_and_runs("tests/fixtures/str_byte_edges.kp", "104\n111\n5\n0\n");
     assert_fixture_panics("str_byte_at_len", "str.byte: index out of bounds");
     assert_fixture_panics("str_byte_empty", "str.byte: index out of bounds");
+}
+
 /// BUG-fY3nQ: rebuilds free the table they replace while readers keep probing.
 /// The readers' answers do not depend on the interleaving (one name stays set,
 /// one is never set); the leak half of the fix is gated by `memory_gate.rs`,
