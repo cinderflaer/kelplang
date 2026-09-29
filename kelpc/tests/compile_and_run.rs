@@ -5303,6 +5303,22 @@ fn generate_test_cert() -> TestCert {
     TestCert { cert_path, key_path, _dir: dir }
 }
 
+/// A TLS server configuration presenting `cert`, shared by the canned HTTPS
+/// server and the `wss` gate.
+fn tls_acceptor(cert: &TestCert) -> openssl::ssl::SslAcceptor {
+    use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+
+    let mut acceptor_builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())
+        .expect("failed to start an SslAcceptor");
+    acceptor_builder
+        .set_private_key_file(&cert.key_path, SslFiletype::PEM)
+        .expect("failed to load the test private key");
+    acceptor_builder
+        .set_certificate_file(&cert.cert_path, SslFiletype::PEM)
+        .expect("failed to load the test certificate");
+    acceptor_builder.build()
+}
+
 /// As `CannedServer`, but every accepted connection is a TLS server socket
 /// (`SslAcceptor::accept`) before the same canned request/response loop runs
 /// over it.
@@ -5315,25 +5331,22 @@ struct CannedTlsServer {
 
 impl CannedTlsServer {
     fn start(connections: Vec<Vec<Vec<u8>>>) -> CannedTlsServer {
-        use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+        CannedTlsServer::start_closing(connections, true)
+    }
 
+    /// `clean_close: false` drops each connection without a `close_notify`,
+    /// as a proxy or load balancer that resets the TCP connection does.
+    fn start_closing(connections: Vec<Vec<Vec<u8>>>, clean_close: bool) -> CannedTlsServer {
         let cert = generate_test_cert();
-        let mut acceptor_builder =
-            SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())
-                .expect("failed to start an SslAcceptor");
-        acceptor_builder
-            .set_private_key_file(&cert.key_path, SslFiletype::PEM)
-            .expect("failed to load the test private key");
-        acceptor_builder
-            .set_certificate_file(&cert.cert_path, SslFiletype::PEM)
-            .expect("failed to load the test certificate");
-        let acceptor = acceptor_builder.build();
+        let acceptor = tls_acceptor(&cert);
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
         let port = listener.local_addr().expect("local address").port();
         let accepted = Arc::new(AtomicUsize::new(0));
         let counter = accepted.clone();
-        let handle = thread::spawn(move || serve_tls(listener, acceptor, connections, counter));
+        let handle = thread::spawn(move || {
+            serve_tls(listener, acceptor, connections, counter, clean_close)
+        });
         CannedTlsServer { port, accepted, handle: Some(handle), cert }
     }
 
@@ -5353,6 +5366,7 @@ fn serve_tls(
     acceptor: openssl::ssl::SslAcceptor,
     connections: Vec<Vec<Vec<u8>>>,
     accepted: Arc<AtomicUsize>,
+    clean_close: bool,
 ) {
     let _ = listener.set_nonblocking(true);
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -5388,7 +5402,9 @@ fn serve_tls(
                 break;
             }
         }
-        let _ = tls.shutdown();
+        if clean_close {
+            let _ = tls.shutdown();
+        }
     }
 }
 
@@ -5403,7 +5419,20 @@ fn assert_project_served_tls(
     expected_connections: usize,
     expected: &str,
 ) {
-    let mut server = CannedTlsServer::start(connections);
+    assert_project_served_tls_closing(name, target, connections, true, expected_connections, expected);
+}
+
+/// As `assert_project_served_tls`, with the server's close behaviour chosen:
+/// `clean_close: false` drops the connection without a `close_notify`.
+fn assert_project_served_tls_closing(
+    name: &str,
+    target: &Path,
+    connections: Vec<Vec<Vec<u8>>>,
+    clean_close: bool,
+    expected_connections: usize,
+    expected: &str,
+) {
+    let mut server = CannedTlsServer::start_closing(connections, clean_close);
     let bin = out_path(name);
     let build = kelpc()
         .arg("build")
@@ -5663,6 +5692,21 @@ fn an_https_get_completes_the_tls_handshake_and_reads_the_body() {
 }
 
 #[test]
+fn an_https_body_ended_by_an_unclean_tls_close_is_read_to_its_end() {
+    // MISSING-Rn5vY: a peer that drops the connection without `close_notify`
+    // (a proxy or load balancer resetting TCP) is end of stream for a
+    // close-delimited body, not a `tls.read` panic.
+    assert_project_served_tls_closing(
+        "https_get_unclean_close",
+        &project("https_get"),
+        one_connection(&[BODY_200_CLOSE]),
+        false,
+        1,
+        "200\nbyebye\ntrue\n",
+    );
+}
+
+#[test]
 fn https_to_a_host_the_grant_does_not_name_is_denied() {
     // Same shape as `a_redirect_to_a_host_the_grant_does_not_name_is_denied`,
     // but for `https` directly: the grant names `127.0.0.1:80`\
@@ -5780,7 +5824,7 @@ fn test_base64(data: &[u8]) -> String {
 }
 
 /// The client's handshake head, up to (not including) the blank line.
-fn read_ws_head(stream: &mut TcpStream) -> String {
+fn read_ws_head<S: Read>(stream: &mut S) -> String {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
@@ -5818,7 +5862,7 @@ fn ws_frame(opcode: u8, fin: bool, payload: &[u8]) -> Vec<u8> {
 /// One frame from the client: its opcode and its unmasked payload. The mask
 /// bit is required (RFC 6455 5.1), which is the half of the framing a client
 /// can get wrong without the server noticing anything else.
-fn read_ws_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+fn read_ws_frame<S: Read>(stream: &mut S) -> (u8, Vec<u8>) {
     let mut header = [0u8; 2];
     stream
         .read_exact(&mut header)
@@ -5875,8 +5919,13 @@ fn serve_ws(listener: TcpListener, accepted: Arc<AtomicUsize>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(20)));
     accepted.fetch_add(1, Ordering::SeqCst);
+    ws_gate_exchange(&mut stream);
+}
 
-    let head = read_ws_head(&mut stream);
+/// The gate's scripted exchange over any byte stream: plain TCP for `ws`, a
+/// TLS server stream for `wss`.
+fn ws_gate_exchange<S: Read + Write>(stream: &mut S) {
+    let head = read_ws_head(stream);
     assert!(
         head.starts_with("GET /gateway HTTP/1.1"),
         "the request line was not the gate's own path:\n{head}"
@@ -5911,7 +5960,7 @@ fn serve_ws(listener: TcpListener, accepted: Arc<AtomicUsize>) {
     stream.write_all(&ws_frame(0x0, true, b"ment")).expect("continuation");
     stream.write_all(&ws_frame(0x9, true, b"ping?")).expect("ping frame");
 
-    let (opcode, payload) = read_ws_frame(&mut stream);
+    let (opcode, payload) = read_ws_frame(stream);
     assert_eq!(
         opcode, 0xA,
         "the client answered the ping with opcode {opcode:#x}, not a pong"
@@ -5922,7 +5971,7 @@ fn serve_ws(listener: TcpListener, accepted: Arc<AtomicUsize>) {
     close.extend_from_slice(b"done");
     stream.write_all(&ws_frame(0x8, true, &close)).expect("close frame");
 
-    let (opcode, payload) = read_ws_frame(&mut stream);
+    let (opcode, payload) = read_ws_frame(stream);
     assert_eq!(
         opcode, 0x8,
         "the client's closing frame was opcode {opcode:#x}, not a close"
@@ -6006,6 +6055,71 @@ fn a_websocket_client_speaks_the_handshake_and_every_frame_kind() {
 }
 
 #[test]
+fn a_secure_websocket_client_runs_the_same_exchange_over_tls() {
+    // MISSING-wV4tg: `wss://` parses and `connect_secure` wraps the socket in
+    // `std/tls` before the handshake. The server is the same scripted gate,
+    // run over a TLS stream with the test's self-signed certificate
+    // (`SSL_CERT_FILE`), so certificate verification is the ordinary one.
+    let cert = generate_test_cert();
+    let acceptor = tls_acceptor(&cert);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+    let port = listener.local_addr().expect("local address").port();
+    let server = thread::spawn(move || {
+        let _ = listener.set_nonblocking(true);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "the wss client never connected");
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(e) => panic!("accept failed: {e}"),
+            }
+        };
+        let _ = stream.set_nonblocking(false);
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(20)));
+        let mut tls = acceptor.accept(stream).expect("the TLS handshake failed");
+        ws_gate_exchange(&mut tls);
+    });
+
+    let bin = out_path("ws_gate_tls");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/ws_gate_tls.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the ws_gate_tls fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(port.to_string())
+        .env("SSL_CERT_FILE", &cert.cert_path)
+        .output()
+        .expect("failed to run the client");
+    server.join().expect("the wss gate thread failed; see its message");
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let expected = format!(
+        "url 127.0.0.1 {port} /gateway\nsecure true\nconnected\ntext hello\n\
+         frag fragment\nping ping?\nclose 1000 done\nclosed\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for 'ws_gate_tls'"
+    );
+}
+
+#[test]
 fn a_ws_try_connect_tells_a_refused_dial_from_a_non_101_answer() {
     // Two ports, two failures. The refused half dials a port this test
     // released (bind 0, learn the port, drop the listener), so nothing is
@@ -6057,10 +6171,12 @@ fn a_ws_try_connect_tells_a_refused_dial_from_a_non_101_answer() {
 }
 
 #[test]
-fn wss_is_refused_by_name_because_v1_has_no_tls() {
-    // The scheme is the whole refusal: the URL is otherwise well formed and
-    // the grant covers the host it names.
-    assert_fixture_panics("ws_wss_refused", "v1 has no TLS");
+fn a_wss_url_parses_with_its_scheme_and_default_port() {
+    assert_fixture_runs_with_stdin(
+        "ws_wss_parse",
+        "",
+        "gateway.discord.gg 443 /?v=10&encoding=json true\n8443 true\n80 false\n",
+    );
 }
 
 #[test]

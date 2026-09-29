@@ -1,0 +1,86 @@
+// MISSING-wV4tg: `ws_gate` over `wss://`. The harness runs the same scripted
+// gate behind a TLS server with a self-signed certificate that
+// `SSL_CERT_FILE` names, so the client verifies it the ordinary way.
+// The script is `ws_gate`'s: the `std/ws` client
+// against the loopback gate in `compile_and_run.rs`. The harness binds
+// `127.0.0.1:0`, checks the handshake against the key this client sends,
+// answers `101`, and then runs one scripted exchange: one text frame, one
+// message split across two continuation frames, one ping, and a close
+// handshake.
+//
+// The grant names the host and every port on it, because the harness binds
+// port 0 and the kernel picks the number: the check matches the host and port
+// as *written*, and a grant cannot name a port that is only known at run time.
+// The denial is a project of its own (`ws_net_denied`), which asks for a host
+// its grant does not cover.
+//
+// `rand` is granted because this module draws the handshake key and every
+// masking key from `std/rand`: `std/ws` holds nothing it was not given, and a
+// program that leaves `rand` off does not build (`ws_rand_denied`).
+impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "server_port: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+// The URL is built as text and parsed by the module, which is the path a real
+// caller takes: `parse_url` is what checks the scheme and splits the
+// authority, and the port is the harness's own.
+fun url_for(port: u16).R: String {
+    val port_text = str.from_u64(port.to_u64())
+    val rest = str.concat(port_text.as_str(), "/gateway")
+    return str.concat("wss://127.0.0.1:", rest.as_str())
+}
+
+fun main() {
+    val url = url_for(server_port())
+    val u = ws.parse_url(url.as_str())
+    print("url ${u.host} ${u.port} ${u.path}")
+    print("secure ${ws.url_is_secure(u)}")
+
+    var c = ws.connect_secure(u.host.as_str(), u.port, u.path.as_str(), ws.url_is_secure(u))
+    print("connected")
+
+    val m1 = c.recv()
+    when m1 {
+        Text(t) -> print("text $t")
+        else -> print("unexpected 1")
+    }
+
+    // One message in two frames: `recv` assembles it, so the caller sees one
+    // message and never half of one.
+    val m2 = c.recv()
+    when m2 {
+        Text(t) -> print("frag $t")
+        else -> print("unexpected 2")
+    }
+
+    // A ping is returned rather than answered inside `recv` (the module
+    // header says so); the caller answers it, and the gate reads the pong back.
+    val m3 = c.recv()
+    when m3 {
+        Ping(d) -> {
+            print("ping $d")
+            c.pong(d)
+        }
+        else -> print("unexpected 3")
+    }
+
+    val m4 = c.recv()
+    when m4 {
+        Close(code, reason) -> {
+            print("close $code $reason")
+            c.close(1000, "bye")
+        }
+        else -> print("unexpected 4")
+    }
+    print("closed")
+}

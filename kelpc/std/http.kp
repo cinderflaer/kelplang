@@ -1050,21 +1050,26 @@ fun mut Pool.warm(use_tls: bool) {
 // Hands out a connection: an idle one if there is one, a fresh one if there is
 // not. The pool never refuses — the ceiling governs how many connections are
 // *kept*, not how many may be in flight — so a caller holding two leases simply
-// gets two connections, and only one of them is kept on release. `use_tls`
-// only matters for a fresh connection; a reused one keeps whatever it already
-// was, on the assumption (unchecked in v1) that one `host:port` is one scheme.
+// gets two connections, and only one of them is kept on release. An idle
+// connection is reused only when its scheme is the one asked for: a kept
+// connection of the other scheme (one `host:port` answering both `http` and
+// `https`) is closed and replaced by a fresh one, so an `https` request is
+// never sent over a plain connection and the reverse.
 //
 // Panics: if connecting fails.
 fun mut Pool.checkout(use_tls: bool).R: Lease {
-    if idle.is_empty() {
-        val h = host.clone()
-        val p = port
-        val t = timeout_ms
-        val c = connect_configured(h.as_str(), p, t, use_tls)
-        return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false)
+    if !idle.is_empty() {
+        val c = idle.pop()
+        if c.is_tls() == use_tls {
+            return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true)
+        }
+        conn_close(c)
     }
-    val c = idle.pop()
-    return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true)
+    val h = host.clone()
+    val p = port
+    val t = timeout_ms
+    val c = connect_configured(h.as_str(), p, t, use_tls)
+    return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false)
 }
 
 // Gives a connection back. `release` consumes the lease, so this cannot happen

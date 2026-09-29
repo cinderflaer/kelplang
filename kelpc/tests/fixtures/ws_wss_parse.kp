@@ -1,0 +1,13 @@
+// MISSING-wV4tg: `wss://` parses now that `std/ws` speaks TLS. The scheme is
+// kept on the `Url`, the default port is 443, and an explicit port wins. No
+// socket is opened, so the grant is only there to admit the program.
+impl "std/ws" caps(net = ["gateway.discord.gg:443"], rand = [])
+
+fun main() {
+    val u = ws.parse_url("wss://gateway.discord.gg/?v=10&encoding=json")
+    print("${u.host} ${u.port} ${u.path} ${ws.url_is_secure(u)}")
+    val v = ws.parse_url("wss://gateway.discord.gg:8443/x")
+    print("${v.port} ${ws.url_is_secure(v)}")
+    val w = ws.parse_url("ws://gateway.discord.gg/x")
+    print("${w.port} ${ws.url_is_secure(w)}")
+}
