@@ -9918,6 +9918,7 @@ fn program_c_source(program: &Program) -> Option<String> {
          copy of the same functions. */\n",
     );
     out.push_str(crate::codegen_c::C_HEADERS);
+    out.push_str(&crate::codegen_c::extern_header_includes(&program.extern_headers));
 
     // The builtin layouts, field for field the structs `runtime/kelp_rt.c`
     // defines (MK7 §3.3). Only the types an extern signature names are
@@ -10782,6 +10783,7 @@ mod layout_tests {
             enums: Vec::new(),
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
+            extern_headers: Vec::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -11208,6 +11210,7 @@ mod layout_tests {
             enums: vec![order, shape],
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
+            extern_headers: Vec::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -11345,6 +11348,7 @@ mod layout_tests {
             enums: vec![shape],
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
+            extern_headers: Vec::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),

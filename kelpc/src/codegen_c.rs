@@ -125,6 +125,22 @@ pub(crate) const C_HEADERS: &str = "\
 #include <openssl/ssl.h>\n\
 #include <openssl/x509v3.h>\n\n";
 
+/// The `#include <...>` lines a project's `[extern.*] header` keys ask for,
+/// written after `C_HEADERS`. Empty when no section names a header, so a
+/// project without the key emits exactly the C text it did before (MK9-S1-M1,
+/// roadmap B-1).
+pub(crate) fn extern_header_includes(headers: &[String]) -> String {
+    if headers.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for header in headers {
+        writeln!(out, "#include <{header}>").unwrap();
+    }
+    out.push('\n');
+    out
+}
+
 /// Which function keys are gated, and each module's patterns per domain.
 /// Built once per program in `generate`; `Gen` carries a reference to it so
 /// every call site can decide whether a check is needed without threading
@@ -210,6 +226,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let cap_needed = !program.gated.is_empty();
     let mut out = String::new();
     out.push_str(C_HEADERS);
+    out.push_str(&extern_header_includes(&program.extern_headers));
     out.push_str(RUNTIME);
     out.push('\n');
     if path_loaded || cap_needed {
@@ -594,11 +611,11 @@ pub(crate) fn write_extern(
 /// that the native symbol already *is* the primitive.
 ///
 /// MK9-S1-M1 keeps user FFI to a 1:1 name mapping (`symbol` is the bare Kelp
-/// name `infer.rs` validated against the allowlist), so this never needs a
-/// `#include` of its own: every header the generated program might need for
-/// an arbitrary native symbol is out of scope for this pass (see the
-/// project's final report) — the fixtures this lane ships call a libc/libm
-/// symbol the runtime's own fixed preamble already declares.
+/// name `infer.rs` validated against the allowlist). The native symbol's
+/// prototype comes from the `[extern.*] header` key, when the module names
+/// one: `generate` emits one `#include <header>` line per project header
+/// after the fixed preamble, so a symbol the runtime does not already declare
+/// is not an implicit declaration.
 fn write_user_extern(out: &mut String, f: &Function, symbol: &str) {
     write_signature(out, f);
     out.push_str(" {\n");
