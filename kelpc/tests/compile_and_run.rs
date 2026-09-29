@@ -7989,6 +7989,16 @@ fn env_reads_and_writes_from_several_threads_at_once_are_safe() {
     assert_compiles_and_runs("tests/fixtures/env_thread_stress.kp", "true\ntrue\ntrue\n");
 }
 
+/// BUG-hT3wK: `str.byte` bounds-checks with a scan of `index + 1` bytes instead
+/// of a `strlen`; the answers at the edges, and the panics one past them, are
+/// unchanged.
+#[test]
+fn str_byte_keeps_its_answers_and_bounds_at_the_edges() {
+    assert_compiles_and_runs("tests/fixtures/str_byte_edges.kp", "104\n111\n5\n0\n");
+    assert_fixture_panics("str_byte_at_len", "str.byte: index out of bounds");
+    assert_fixture_panics("str_byte_empty", "str.byte: index out of bounds");
+}
+
 /// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
 /// thing `thread.spawn` makes.
 #[test]

@@ -1,0 +1,6 @@
+impl "std/str"
+
+fun main() {
+    val s = ""
+    print(str.byte(s, 0))
+}
