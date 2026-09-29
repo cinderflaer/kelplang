@@ -1,4 +1,5 @@
 impl "std/net"
+impl "std/result"
 
 /* std/tls — TLS for `https` (MK5-S4b-M1, open item 37, decided 2026-09-26:
    link the system OpenSSL rather than vendor one). Client side only in v1:
@@ -57,6 +58,10 @@ impl "std/net"
    `net.Socket`/`net.Listener` follow. */
 
 extern fun handshake_raw(fd: i32, host: &str).R: usize
+extern fun handshake_try_raw(fd: i32, host: &str, reason: mut String).R: usize
+extern fun write_all_try_raw(handle: usize, data: Bytes, reason: mut String).R: i32
+extern fun read_try_raw(handle: usize, max: usize, reason: mut String).R: Bytes
+extern fun read_into_try_raw(handle: usize, buf: mut Bytes, at: usize, reason: mut String).R: usize
 extern fun write_raw(handle: usize, data: Bytes).R: usize
 extern fun write_all_raw(handle: usize, data: Bytes).R: usize
 extern fun read_raw(handle: usize, max: usize).R: Bytes
@@ -84,6 +89,53 @@ datac TlsStream(val fd: i32, val handle: usize)
 fun handshake(s: net.Socket, host: &str).R: TlsStream {
     val handle = handshake_raw(s.fd, host)
     return TlsStream(fd = s.fd, handle = handle)
+}
+
+// Why a fallible TLS call failed. `reason` is the text the panicking form
+// would have panicked with.
+datac TlsErr(val reason: String)
+
+// `handshake`, with a failed handshake (an untrusted certificate, a name
+// mismatch, a peer that is not speaking TLS) as an `Err`. On failure the
+// socket is not closed: it is still the caller's descriptor (`s.fd`) to close.
+fun try_handshake(s: net.Socket, host: &str).R: result.Result<TlsStream, TlsErr> {
+    var reason = String.empty()
+    val handle = handshake_try_raw(s.fd, host, &mut reason)
+    if handle == 0 {
+        return result.Result.Err(error = TlsErr(reason = reason))
+    }
+    return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
+}
+
+// `write_all`, with a failed write as an `Err`.
+fun try_write_all(t: TlsStream, data: Bytes).R: result.Result<usize, TlsErr> {
+    var reason = String.empty()
+    val rc = write_all_try_raw(t.handle, data, &mut reason)
+    if rc < 0 {
+        return result.Result.Err(error = TlsErr(reason = reason))
+    }
+    return result.Result.Ok(value = data.len())
+}
+
+// `read`, with a failed read as an `Err`. An empty `Ok` is end of stream, clean
+// or not (see `read`).
+fun try_read(t: TlsStream, max: usize).R: result.Result<Bytes, TlsErr> {
+    var reason = String.empty()
+    val b = read_try_raw(t.handle, max, &mut reason)
+    if !reason.is_empty() {
+        return result.Result.Err(error = TlsErr(reason = reason))
+    }
+    return result.Result.Ok(value = b)
+}
+
+// `read_into`, with a failed read as an `Err`. `Ok(0)` is end of stream.
+fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize).R: result.Result<usize, TlsErr> {
+    var reason = String.empty()
+    val n = read_into_try_raw(t.handle, buf, at, &mut reason)
+    if !reason.is_empty() {
+        return result.Result.Err(error = TlsErr(reason = reason))
+    }
+    return result.Result.Ok(value = n)
 }
 
 // One `SSL_write`: like `net.send`, it may write fewer bytes than given.

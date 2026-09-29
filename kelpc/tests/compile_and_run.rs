@@ -5706,6 +5706,106 @@ fn an_https_body_ended_by_an_unclean_tls_close_is_read_to_its_end() {
     );
 }
 
+const TRUNCATED_200: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
+const LOOP_302: &[u8] = b"HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n";
+
+#[test]
+fn a_fallible_send_reports_a_dial_an_early_close_and_a_redirect_loop_as_values() {
+    // MISSING-p7Kdm. Three connections on the canned server, in the order the
+    // program makes them: a fresh `try_get` whose body stops after 3 of 10
+    // bytes, a pooled request that does the same (the pool must not keep that
+    // half-read connection), and a pooled redirect loop followed by a good
+    // response on the same kept connection (six `302`s to one `Location`
+    // exhaust the client's five hops; the seventh response answers the request
+    // after it). The refused half dials a port this test released.
+    let mut loop_then_hello: Vec<Vec<u8>> = vec![LOOP_302.to_vec(); 6];
+    loop_then_hello.push(BODY_200_HELLO.to_vec());
+    let mut server = CannedServer::start(vec![
+        vec![TRUNCATED_200.to_vec()],
+        vec![TRUNCATED_200.to_vec()],
+        loop_then_hello,
+    ]);
+    let dead = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+    let dead_port = dead.local_addr().expect("local address").port();
+    drop(dead);
+
+    let bin = out_path("http_try_send");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/http_try_send.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the http_try_send fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(dead_port.to_string())
+        .arg(server.port.to_string())
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let cut = "exchange http: the connection closed before the whole body arrived";
+    let expected = format!(
+        "refused dial\nfresh {cut}\npool-cut {cut}\npool kept 0\n\
+         pool-loop redirects http: too many redirects\npool kept 1\n\
+         pool-hello ok 200 hello\npool kept 1\nsurvived\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for 'http_try_send'"
+    );
+    assert_eq!(server.accepted(), 3, "the client opened an unexpected number of connections");
+}
+
+#[test]
+fn a_failed_tls_handshake_is_a_dial_error_value() {
+    // MISSING-p7Kdm: the server presents a self-signed certificate and the
+    // client is not told to trust it (no `SSL_CERT_FILE`), so the handshake
+    // fails. That is `HttpErr.Dial` (nothing was sent), not a panic.
+    let mut server = CannedTlsServer::start(one_connection(&[]));
+    let bin = out_path("https_try_dial");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/https_try_dial.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the https_try_dial fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    // Trust store pinned away from the test cert, so it cannot vouch for it.
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .env("SSL_CERT_FILE", "/dev/null")
+        .env("SSL_CERT_DIR", "/dev/null")
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "dial true\nsurvived\n",
+        "unexpected stdout for 'https_try_dial'"
+    );
+}
+
 #[test]
 fn https_to_a_host_the_grant_does_not_name_is_denied() {
     // Same shape as `a_redirect_to_a_host_the_grant_does_not_name_is_denied`,

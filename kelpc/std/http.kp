@@ -96,6 +96,45 @@ datac Request(val method: String, val url: String, val headers: List<Header>, va
 // which is deliberate: a program that wants to wait forever can say so.
 datac Client(val timeout_ms: u64, val max_redirects: i32, val follow_redirects: bool)
 
+// Why a fallible request failed, as a value a caller can branch on
+// (MISSING-p7Kdm). The variants split on the one question a retry needs
+// answered: **could the server have seen the request?**
+//
+// `Dial`: nothing was sent. The name did not resolve, the connection was
+// refused, or (for `https`) the TLS handshake failed, so retrying any method
+// is safe. `Exchange`: the connection was open and the request may have
+// reached the server: a send failed, the peer reset or closed before the
+// response was complete, a read timed out, or the response was malformed (a bad
+// status line, a bad `Content-Length` or chunk). Retrying an idempotent
+// request is the caller's call, and a `POST` is not safe to repeat without
+// knowing more. `Redirects`: the chain was longer than the client allows; the
+// requests before it did complete.
+//
+// Every `reason` is the text the panicking form panics with, so a caller that
+// logs it prints what `send` would have printed on stderr.
+enum HttpErr {
+    Dial(val reason: String)
+    Exchange(val reason: String)
+    Redirects(val reason: String)
+}
+
+fun http_err_reason(e: move HttpErr).R: String = when e {
+    Dial(reason) -> reason
+    Exchange(reason) -> reason
+    Redirects(reason) -> reason
+}
+
+// The panicking end of every fallible call below: one `panic` over the reason,
+// so the two forms cannot report different causes.
+fun fail_http<T>(e: move HttpErr).R: T {
+    val reason = http_err_reason(e)
+    panic(reason.as_str())
+}
+
+fun exchange_failed<T>(text: &str).R: result.Result<T, HttpErr> {
+    return result.Result.Err(error = HttpErr.Exchange(reason = String.from_str(text)))
+}
+
 // A set of kept-alive connections to one `host:port`, keyed on the host **as
 // written** — never on a resolved address, because the capability check
 // matches the string the author wrote (S3's rule), and two spellings of one
@@ -164,6 +203,47 @@ fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
     return net.recv_into(net.Socket(fd = c.fd), buf, at)
 }
 
+// The fallible twins of the three calls above. A failure is `Exchange`: the
+// connection was open, so the request may have reached the server.
+fun conn_send_all_try(c: Conn, data: Bytes).R: result.Result<usize, HttpErr> {
+    if c.is_tls() {
+        return when tls.try_write_all(tls.TlsStream(fd = c.fd, handle = c.tls_handle), data) {
+            Ok(n) -> result.Result.Ok(value = n)
+            Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+        }
+    }
+    return when net.try_send_all(net.Socket(fd = c.fd), data) {
+        Ok(n) -> result.Result.Ok(value = n)
+        Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+    }
+}
+
+fun conn_recv_try(c: Conn, max: usize).R: result.Result<Bytes, HttpErr> {
+    if c.is_tls() {
+        return when tls.try_read(tls.TlsStream(fd = c.fd, handle = c.tls_handle), max) {
+            Ok(b) -> result.Result.Ok(value = b)
+            Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+        }
+    }
+    return when net.try_recv(net.Socket(fd = c.fd), max) {
+        Ok(b) -> result.Result.Ok(value = b)
+        Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+    }
+}
+
+fun conn_recv_into_try(c: Conn, buf: mut Bytes, at: usize).R: result.Result<usize, HttpErr> {
+    if c.is_tls() {
+        return when tls.try_read_into(tls.TlsStream(fd = c.fd, handle = c.tls_handle), buf, at) {
+            Ok(n) -> result.Result.Ok(value = n)
+            Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+        }
+    }
+    return when net.try_recv_into(net.Socket(fd = c.fd), buf, at) {
+        Ok(n) -> result.Result.Ok(value = n)
+        Err(e) -> result.Result.Err(error = HttpErr.Exchange(reason = e.reason))
+    }
+}
+
 // Ends the TLS session first (so the peer sees a clean `close_notify`, not a
 // bare TCP reset) and then closes the socket. A plain connection just closes
 // the socket. Panics: as `net.close`.
@@ -181,15 +261,42 @@ fun conn_close(c: Conn) {
 // Panics: if the connection fails, the capability denies the host, or (for
 // `https`) the handshake fails.
 fun connect_configured(host: &str, port: u16, timeout_ms: u64, use_tls: bool).R: Conn {
-    var s = net.connect(host, port)
+    val up = when connect_configured_try(host, port, timeout_ms, use_tls) {
+        Ok(c) -> c
+        Err(e) -> fail_http(e)
+    }
+    return up
+}
+
+// The fallible dial: a refused or unresolvable dial, or a failed TLS handshake
+// (the socket is closed first), is `HttpErr.Dial`, because nothing has been
+// sent yet.
+//
+// Panics: if the capability denies the host. That check is compiled into the
+// caller and has no value-returning form, exactly as `net.try_connect`'s.
+fun connect_configured_try(host: &str, port: u16, timeout_ms: u64, use_tls: bool).R: result.Result<Conn, HttpErr> {
+    val dialed = net.try_connect(host, port)
+    return when dialed {
+        Ok(sock) -> finish_dial(sock, host, timeout_ms, use_tls)
+        Err(e) -> result.Result.Err(error = HttpErr.Dial(reason = e.reason))
+    }
+}
+
+fun finish_dial(sock: net.Socket, host: &str, timeout_ms: u64, use_tls: bool).R: result.Result<Conn, HttpErr> {
+    var s = net.Socket(fd = sock.fd)
     if timeout_ms > 0 {
         s.set_timeout(timeout_ms)
     }
     if use_tls {
-        val t = tls.handshake(s, host)
-        return Conn(fd = t.fd, tls_handle = t.handle)
+        return when tls.try_handshake(s, host) {
+            Ok(t) -> result.Result.Ok(value = Conn(fd = t.fd, tls_handle = t.handle))
+            Err(e) -> {
+                net.close(s)
+                result.Result.Err(error = HttpErr.Dial(reason = e.reason))
+            }
+        }
     }
-    return Conn(fd = s.fd, tls_handle = 0)
+    return result.Result.Ok(value = Conn(fd = s.fd, tls_handle = 0))
 }
 
 // The read cursor for one response: bytes already received, and how far into
@@ -442,16 +549,26 @@ fun build_head(method: &str, u: Url, headers: List<Header>, body_len: usize).R: 
 
 // Makes at least one byte available, refilling from the socket if needed.
 //
-// Panics: if the peer closed instead of sending the rest of the body.
-fun mut Cursor.ensure() {
+// Fallible core; `ensure` is the panicking form. The `usize` is always 0: a
+// `Result<unit, E>` has no success value to write (MISSING-n6Bsc).
+fun mut Cursor.try_ensure().R: result.Result<usize, HttpErr> {
     if start >= buf.len() {
-        val chunk = conn_recv(self.conn(), 4096)
+        val chunk = conn_recv_try(self.conn(), 4096)?
         if chunk.is_empty() {
-            panic("http: the connection closed inside the response body")
+            return exchange_failed("http: the connection closed inside the response body")
         }
         buf.clear()
         start = 0
         buf.append(chunk)
+    }
+    return result.Result.Ok(value = 0)
+}
+
+// Panics: if the peer closed instead of sending the rest of the body.
+fun mut Cursor.ensure() {
+    val done = when self.try_ensure() {
+        Ok(n) -> n
+        Err(e) -> fail_http(e)
     }
 }
 
@@ -459,13 +576,11 @@ fun mut Cursor.ensure() {
 // dropped. Dropping every `CR` rather than only a trailing one is safe here
 // because neither a chunk size nor a header value may contain one — and it
 // avoids a `String` truncation that does not exist yet.
-//
-// Panics: as `ensure`.
-fun mut Cursor.read_line().R: String {
+fun mut Cursor.try_read_line().R: result.Result<String, HttpErr> {
     var out = String.empty()
     var going = true
     while going {
-        self.ensure()
+        self.try_ensure()?
         val c = buf.get(start)
         start = start + 1
         if c == 10 {
@@ -476,24 +591,40 @@ fun mut Cursor.read_line().R: String {
             }
         }
     }
-    return out
+    return result.Result.Ok(value = out)
 }
 
-// Consumes one line and discards it — the `CRLF` after a chunk's data. This
+// Panics: as `ensure`.
+fun mut Cursor.read_line().R: String {
+    val line = when self.try_read_line() {
+        Ok(l) -> l
+        Err(e) -> fail_http(e)
+    }
+    return line
+}
+
+// Consumes one line and discards it: the `CRLF` after a chunk's data. This
 // exists because discarding an owned `String` in statement position is
 // rejected ("a non-tail statement that produces an owned value"), and there is
 // no `_ =` to say "drop this".
-//
-// Panics: as `ensure`.
-fun mut Cursor.skip_line() {
+fun mut Cursor.try_skip_line().R: result.Result<usize, HttpErr> {
     var going = true
     while going {
-        self.ensure()
+        self.try_ensure()?
         val c = buf.get(start)
         start = start + 1
         if c == 10 {
             going = false
         }
+    }
+    return result.Result.Ok(value = 0)
+}
+
+// Panics: as `ensure`.
+fun mut Cursor.skip_line() {
+    val done = when self.try_skip_line() {
+        Ok(n) -> n
+        Err(e) -> fail_http(e)
     }
 }
 
@@ -501,9 +632,7 @@ fun mut Cursor.skip_line() {
 // a buffer sized for the whole thing. Reading straight into the destination
 // means the socket can never over-read past the body, which is what makes a
 // pooled connection safe to reuse afterwards.
-//
-// Panics: if the peer closes before `n` bytes have arrived.
-fun mut Cursor.read_exact(n: usize).R: Bytes {
+fun mut Cursor.try_read_exact(n: usize).R: result.Result<Bytes, HttpErr> {
     var out = mem.alloc(n)
     var got: usize = 0
     while got < n && start < buf.len() {
@@ -516,23 +645,30 @@ fun mut Cursor.read_exact(n: usize).R: Bytes {
         start = 0
     }
     while got < n {
-        val k = conn_recv_into(self.conn(), out, got)
+        val k = conn_recv_into_try(self.conn(), out, got)?
         if k == 0 {
-            panic("http: the connection closed before the whole body arrived")
+            return exchange_failed("http: the connection closed before the whole body arrived")
         }
         got = got + k
     }
-    return out
+    return result.Result.Ok(value = out)
+}
+
+// Panics: if the peer closes before `n` bytes have arrived.
+fun mut Cursor.read_exact(n: usize).R: Bytes {
+    val body = when self.try_read_exact(n) {
+        Ok(b) -> b
+        Err(e) -> fail_http(e)
+    }
+    return body
 }
 
 // Everything up to end of file. Only for a response with no framing at all,
 // which is also the case that cannot be pooled: the connection is spent
 // finding the end of the body. With a timeout set, a peer that keeps the
-// connection open turns this into `net.recv`'s "timed out" panic rather than a
-// hang, which is the documented cost of an unframed response.
-//
-// Panics: if a read fails.
-fun mut Cursor.read_to_end().R: Bytes {
+// connection open turns this into `net.recv`'s "timed out" failure rather than
+// a hang, which is the documented cost of an unframed response.
+fun mut Cursor.try_read_to_end().R: result.Result<Bytes, HttpErr> {
     var out = Bytes.empty()
     while start < buf.len() {
         out.push(buf.get(start))
@@ -542,38 +678,53 @@ fun mut Cursor.read_to_end().R: Bytes {
     start = 0
     var going = true
     while going {
-        val chunk = conn_recv(self.conn(), 4096)
+        val chunk = conn_recv_try(self.conn(), 4096)?
         if chunk.is_empty() {
             going = false
         } else {
             out.append(chunk)
         }
     }
-    return out
+    return result.Result.Ok(value = out)
+}
+
+// Panics: if a read fails.
+fun mut Cursor.read_to_end().R: Bytes {
+    val body = when self.try_read_to_end() {
+        Ok(b) -> b
+        Err(e) -> fail_http(e)
+    }
+    return body
+}
+
+// One hex digit, or -1 when the byte is not one.
+fun hex_value(c: u8).R: i64 {
+    if str.is_digit(c) {
+        return (c - 48).to_i64()
+    }
+    if c >= 97 && c <= 102 {
+        return (c - 87).to_i64()
+    }
+    if c >= 65 && c <= 70 {
+        return (c - 55).to_i64()
+    }
+    return -1
 }
 
 // One hex digit. Panics: if the byte is not one.
 fun hex_digit(c: u8).R: u32 {
-    if str.is_digit(c) {
-        return (c - 48).to_u32()
+    val v = hex_value(c)
+    if v < 0 {
+        panic("http: chunk size is not a hexadecimal number")
     }
-    if c >= 97 && c <= 102 {
-        return (c - 87).to_u32()
-    }
-    if c >= 65 && c <= 70 {
-        return (c - 55).to_u32()
-    }
-    panic("http: chunk size is not a hexadecimal number")
-    // Unreachable, but a `.R: u32` function has to end with a `return`:
-    // `panic` is typed `Unit`, not "never".
-    return 0
+    return v.to_u32()
 }
 
 // A chunk size: hex digits, optionally followed by `;extension`, which is
-// ignored. Panics: if there are no digits, or a digit is not hexadecimal.
-fun parse_hex(text: &str).R: usize {
+// ignored. A malformed size is an `Exchange` failure: the response is broken.
+fun parse_hex_try(text: &str).R: result.Result<usize, HttpErr> {
     if str.is_empty(text) {
-        panic("http: empty chunk size")
+        return exchange_failed("http: empty chunk size")
     }
     var value: usize = 0
     var digits: usize = 0
@@ -585,46 +736,66 @@ fun parse_hex(text: &str).R: usize {
         if c == 59 {
             i = n
         } else {
-            value = value * 16 + hex_digit(c).to_usize()
+            val d = hex_value(c)
+            if d < 0 {
+                return exchange_failed("http: chunk size is not a hexadecimal number")
+            }
+            value = value * 16 + d.to_usize()
             digits = digits + 1
             i = i + 1
         }
     }
     if digits == 0 {
-        panic("http: chunk size has no digits")
+        return exchange_failed("http: chunk size has no digits")
     }
-    return value
+    return result.Result.Ok(value = value)
+}
+
+// Panics: if there are no digits, or a digit is not hexadecimal.
+fun parse_hex(text: &str).R: usize {
+    val v = when parse_hex_try(text) {
+        Ok(n) -> n
+        Err(e) -> fail_http(e)
+    }
+    return v
 }
 
 // Decodes a chunked body: a hex size line, that many bytes, a `CRLF`, repeated
 // until a zero size, then trailers until a blank line. This is what keep-alive
-// makes mandatory — with a persistent connection there is no other way to find
+// makes mandatory: with a persistent connection there is no other way to find
 // where a chunked body stops, and reading to end of file would block until the
 // server closed a connection it intends to keep.
-//
-// Panics: on a malformed chunk or a peer that closes early.
-fun mut Cursor.read_chunked().R: Bytes {
+fun mut Cursor.try_read_chunked().R: result.Result<Bytes, HttpErr> {
     var out = Bytes.empty()
     var going = true
     while going {
-        val size_text = self.read_line()
-        val size = parse_hex(size_text.as_str())
+        val size_text = self.try_read_line()?
+        val size = parse_hex_try(size_text.as_str())?
         if size == 0 {
             going = false
         } else {
-            val piece = self.read_exact(size)
+            val piece = self.try_read_exact(size)?
             out.append(piece)
-            self.skip_line()
+            val skipped = self.try_skip_line()?
         }
     }
     var trailing = true
     while trailing {
-        val line = self.read_line()
+        val line = self.try_read_line()?
         if str.is_empty(line.as_str()) {
             trailing = false
         }
     }
-    return out
+    return result.Result.Ok(value = out)
+}
+
+// Panics: on a malformed chunk or a peer that closes early.
+fun mut Cursor.read_chunked().R: Bytes {
+    val body = when self.try_read_chunked() {
+        Ok(b) -> b
+        Err(e) -> fail_http(e)
+    }
+    return body
 }
 
 // ----- response reading -----
@@ -668,32 +839,48 @@ fun head_text(b: Bytes, end: usize).R: String {
 }
 
 // The status line: `HTTP/1.1 200 OK`. Only the code matters here; the reason
-// phrase may be absent or anything at all.
-//
+// phrase may be absent or anything at all. A line with no code, or a code that
+// is not a number, is an `Exchange` failure: the response is malformed.
+fun parse_status_line_try(line: &str).R: result.Result<i32, HttpErr> {
+    val sp = str.index_of(line, " ")
+    if let Some(first) = sp {
+        val rest = str.substring(line, first + 1)
+        val sp2 = str.index_of(rest, " ")
+        if let Some(at) = sp2 {
+            val code_text = str.prefix(rest, at)
+            return status_code_try(code_text.as_str())
+        }
+        return status_code_try(rest)
+    }
+    return exchange_failed("http: malformed status line (no status code)")
+}
+
 // Panics: if the line has no code, or the code is not a number.
 fun parse_status_line(line: &str).R: i32 {
-    val sp = option.expect(
-        o = str.index_of(line, " "),
-        message = "http: malformed status line (no status code)",
-    )
-    val rest = str.substring(line, sp + 1)
-    val sp2 = str.index_of(rest, " ")
-    if let Some(at) = sp2 {
-        val code_text = str.prefix(rest, at)
-        return status_code(code_text.as_str())
+    val code = when parse_status_line_try(line) {
+        Ok(c) -> c
+        Err(e) -> fail_http(e)
     }
-    return status_code(rest)
+    return code
+}
+
+fun status_code_try(text: &str).R: result.Result<i32, HttpErr> {
+    val parsed = str.parse_u64(text)
+    if let Ok(p) = parsed {
+        if p > 999 {
+            return exchange_failed("http: the status code is out of range")
+        }
+        return result.Result.Ok(value = p.to_i32())
+    }
+    return exchange_failed("http: the status code is not a number")
 }
 
 fun status_code(text: &str).R: i32 {
-    val p = result.expect(
-        r = str.parse_u64(text),
-        message = "http: the status code is not a number",
-    )
-    if p > 999 {
-        panic("http: the status code is out of range")
+    val code = when status_code_try(text) {
+        Ok(c) -> c
+        Err(e) -> fail_http(e)
     }
-    return p.to_i32()
+    return code
 }
 
 // Every header line after the status line, name and value split at the first
@@ -774,19 +961,27 @@ fun header_opt(hs: List<Header>, name: &str).R: option.Option<String> {
 
 // `-1` for absent, which is not a legal `Content-Length` — an absent header is
 // not a parse failure, and the value is a count whose every non-negative value
-// is meaningful, so there is nothing for an `Option` to add here.
-//
-// Panics: if the header is present and not a number.
-fun content_length_of(hs: List<Header>).R: i64 {
+// is meaningful, so there is nothing for an `Option` to add here. A header that
+// is present and not a number is an `Exchange` failure.
+fun content_length_try(hs: List<Header>).R: result.Result<i64, HttpErr> {
     val text = header_value(hs, "content-length")
     if str.is_empty(text.as_str()) {
-        return -1
+        return result.Result.Ok(value = -1)
     }
-    val p = result.expect(
-        r = str.parse_u64(text.as_str()),
-        message = "http: Content-Length is not a number",
-    )
-    return p.to_i64()
+    val parsed = str.parse_u64(text.as_str())
+    if let Ok(p) = parsed {
+        return result.Result.Ok(value = p.to_i64())
+    }
+    return exchange_failed("http: Content-Length is not a number")
+}
+
+// Panics: if the header is present and not a number.
+fun content_length_of(hs: List<Header>).R: i64 {
+    val n = when content_length_try(hs) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return n
 }
 
 fun is_chunked(hs: List<Header>).R: bool {
@@ -809,14 +1004,13 @@ fun wants_close(hs: List<Header>).R: bool {
 // and the parsing lives in the helpers above, while the assembly of the
 // `Response` happens here, where every piece is still a plain binding.
 //
-// Panics: on a peer that closes early, a malformed status line, a
-// non-numeric `Content-Length`, a malformed chunk, or a read failure.
-fun read_response(c: Conn).R: Response {
+// Fallible core: every failure is an `HttpErr.Exchange`.
+fun read_response_try(c: Conn).R: result.Result<Response, HttpErr> {
     var buf = Bytes.empty()
     var end: usize = 0
     var eof = false
     while end == 0 && !eof {
-        val chunk = conn_recv(c, 4096)
+        val chunk = conn_recv_try(c, 4096)?
         if chunk.is_empty() {
             eof = true
         } else {
@@ -825,35 +1019,45 @@ fun read_response(c: Conn).R: Response {
         }
     }
     if end == 0 {
-        panic("http: the connection closed before the response headers arrived")
+        return exchange_failed("http: the connection closed before the response headers arrived")
     }
     var status: i32 = 0
     var hs: List<Header> = List.empty()
     {
         val head_only = head_text(buf, end)
         val lines = str.split(head_only.as_str(), "\r\n")
-        status = parse_status_line(lines.get(0).as_str())
+        status = parse_status_line_try(lines.get(0).as_str())?
         hs = parse_headers(lines)
     }
     val chunked = is_chunked(hs)
-    val len = content_length_of(hs)
+    val len = content_length_try(hs)?
     val close = wants_close(hs)
     var cursor = Cursor(fd = c.fd, tls_handle = c.tls_handle, buf = buf, start = end)
     var body = Bytes.empty()
     if chunked {
-        body = cursor.read_chunked()
+        body = cursor.try_read_chunked()?
     } else {
         if len >= 0 {
-            body = cursor.read_exact(len.to_usize())
+            body = cursor.try_read_exact(len.to_usize())?
         } else {
-            body = cursor.read_to_end()
+            body = cursor.try_read_to_end()?
         }
     }
     // Reusable means: the body was completely framed (so the next byte on the
     // wire is the start of the next response) and the server did not ask to
     // close. Anything else and the connection is spent.
     val reusable = !close && (chunked || len >= 0)
-    return Response(status = status, headers = hs, body = body, reusable = reusable)
+    return result.Result.Ok(value = Response(status = status, headers = hs, body = body, reusable = reusable))
+}
+
+// Panics: on a peer that closes early, a malformed status line, a
+// non-numeric `Content-Length`, a malformed chunk, or a read failure.
+fun read_response(c: Conn).R: Response {
+    val r = when read_response_try(c) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
 }
 
 // ----- one exchange, and redirects -----
@@ -862,14 +1066,23 @@ fun read_response(c: Conn).R: Response {
 // The socket's timeout is set by whoever opened it, not here, because a pooled
 // connection is configured once on connect rather than on every request.
 //
-// Panics: if the send or the response read fails.
-fun one_exchange(c: Conn, method: &str, u: Url, headers: List<Header>, body: Bytes).R: Response {
+// Fallible core: a failed send or response read is an `HttpErr.Exchange`.
+fun one_exchange_try(c: Conn, method: &str, u: Url, headers: List<Header>, body: Bytes).R: result.Result<Response, HttpErr> {
     val head = build_head(method, u, headers, body.len())
-    conn_send_all(c, head.into_bytes())
+    conn_send_all_try(c, head.into_bytes())?
     // Unconditional: `send_all` of an empty buffer writes nothing, and this
     // avoids an `if` without an `else` whose body is a `usize` expression.
-    conn_send_all(c, body)
-    return read_response(c)
+    conn_send_all_try(c, body)?
+    return read_response_try(c)
+}
+
+// Panics: if the send or the response read fails.
+fun one_exchange(c: Conn, method: &str, u: Url, headers: List<Header>, body: Bytes).R: Response {
+    val r = when one_exchange_try(c, method, u, headers, body) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
 }
 
 // 301/302/303 become `GET` with no body (the historical behavior every browser
@@ -920,20 +1133,30 @@ fun absolute_url(base: Url, loc: &str).R: String {
 //
 // Panics: if the chain is longer than the client allows.
 fun follow_url(client: Client, base: Url, resp: Response, hops: i32).R: String {
+    val next = when follow_url_try(client, base, resp, hops) {
+        Ok(u) -> u
+        Err(e) -> fail_http(e)
+    }
+    return next
+}
+
+// The fallible core of `follow_url`: a chain longer than the client allows is
+// `HttpErr.Redirects`.
+fun follow_url_try(client: Client, base: Url, resp: Response, hops: i32).R: result.Result<String, HttpErr> {
     if !client.follow_redirects {
-        return String.empty()
+        return result.Result.Ok(value = String.empty())
     }
     if !is_redirect(resp.status) {
-        return String.empty()
+        return result.Result.Ok(value = String.empty())
     }
     val loc = resp.header("location")
     if str.is_empty(loc.as_str()) {
-        return String.empty()
+        return result.Result.Ok(value = String.empty())
     }
     if hops <= 0 {
-        panic("http: too many redirects")
+        return result.Result.Err(error = HttpErr.Redirects(reason = String.from_str("http: too many redirects")))
     }
-    return absolute_url(base, loc.as_str())
+    return result.Result.Ok(value = absolute_url(base, loc.as_str()))
 }
 
 fun default_client().R: Client = Client(
@@ -947,8 +1170,24 @@ fun default_client().R: Client = Client(
 // the only option without a pool to consult.
 //
 // Panics: if the connection fails, the capability denies the host, the
-// response is malformed, or the redirect chain is too long.
-fun Client.send(req: Request).R: Response = send_fresh(
+// response is malformed, or the redirect chain is too long. `try_send` is the
+// same call with every one of those but the capability denial as a value.
+fun Client.send(req: Request).R: Response {
+    val r = when self.try_send(req) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
+}
+
+// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm): `Dial` when nothing
+// was sent, `Exchange` when the request may have reached the server, `Redirects`
+// for a chain that is too long.
+//
+// Panics: if the capability denies the host, or the URL is malformed. Both are
+// mistakes in the program rather than conditions of the network, and the
+// capability check has no value-returning form.
+fun Client.try_send(req: Request).R: result.Result<Response, HttpErr> = send_fresh_try(
     self,
     req.method.clone(),
     req.url.clone(),
@@ -965,21 +1204,37 @@ fun send_fresh(
     body: Bytes,
     hops: i32,
 ).R: Response {
+    val r = when send_fresh_try(client, method, url_text, headers, body, hops) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
+}
+
+fun send_fresh_try(
+    client: Client,
+    method: String,
+    url_text: String,
+    headers: List<Header>,
+    body: Bytes,
+    hops: i32,
+).R: result.Result<Response, HttpErr> {
     val u = parse_url(url_text.as_str())
-    val s = connect_configured(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))
-    val resp = one_exchange(s, method.as_str(), u, headers, body)
+    val s = connect_configured_try(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))?
+    val got = one_exchange_try(s, method.as_str(), u, headers, body)
     conn_close(s)
+    val resp = got?
     // The redirect decision is one helper; the *tail* is written here because
     // `resp` is an owned local here and a returned borrow cannot leave. With no
     // function values in v1, that tail is written at each call site.
-    val next = follow_url(client, u, resp, hops)
+    val next = follow_url_try(client, u, resp, hops)?
     if str.is_empty(next.as_str()) {
-        return resp
+        return result.Result.Ok(value = resp)
     }
     if keep_body_on(resp.status) {
-        return send_fresh(client, method, next, headers, body, hops - 1)
+        return send_fresh_try(client, method, next, headers, body, hops - 1)
     }
-    return send_fresh(client, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
+    return send_fresh_try(client, String.from_str("GET"), next, headers, Bytes.empty(), hops - 1)
 }
 
 // A single exchange on a connection the caller already holds: parse the URL,
@@ -991,6 +1246,14 @@ fun send_fresh(
 fun exchange(c: Conn, req: Request).R: Response {
     val u = parse_url(req.url.as_str())
     return one_exchange(c, req.method.as_str(), u, req.headers, req.body)
+}
+
+// `exchange`, with a failed send or response read as an `HttpErr.Exchange`.
+//
+// Panics: on a malformed URL.
+fun exchange_try(c: Conn, req: Request).R: result.Result<Response, HttpErr> {
+    val u = parse_url(req.url.as_str())
+    return one_exchange_try(c, req.method.as_str(), u, req.headers, req.body)
 }
 
 // ----- the pool -----
@@ -1058,18 +1321,29 @@ fun mut Pool.warm(use_tls: bool) {
 //
 // Panics: if connecting fails.
 fun mut Pool.checkout(use_tls: bool).R: Lease {
+    val l = when self.try_checkout(use_tls) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return l
+}
+
+// `checkout`, with a failed dial as `HttpErr.Dial`.
+//
+// Panics: if the capability denies the host.
+fun mut Pool.try_checkout(use_tls: bool).R: result.Result<Lease, HttpErr> {
     if !idle.is_empty() {
         val c = idle.pop()
         if c.is_tls() == use_tls {
-            return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true)
+            return result.Result.Ok(value = Lease(fd = c.fd, tls_handle = c.tls_handle, reused = true))
         }
         conn_close(c)
     }
     val h = host.clone()
     val p = port
     val t = timeout_ms
-    val c = connect_configured(h.as_str(), p, t, use_tls)
-    return Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false)
+    val c = connect_configured_try(h.as_str(), p, t, use_tls)?
+    return result.Result.Ok(value = Lease(fd = c.fd, tls_handle = c.tls_handle, reused = false))
 }
 
 // Gives a connection back. `release` consumes the lease, so this cannot happen
@@ -1107,8 +1381,25 @@ fun pool_matches(p: Pool, u: Url).R: bool {
 }
 
 fun mut Pool.send(req: Request).R: Response {
+    val r = when self.try_send(req) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
+}
+
+// `send`, with the failures as an `HttpErr` (MISSING-p7Kdm), as `Client.try_send`
+// reports them. A connection that failed mid-exchange is closed and not put
+// back, so a pool never hands out a connection a failure left half read. An
+// `Exchange` failure on a *reused* connection is the classic stale keep-alive
+// (the server closed an idle connection before this request reached it), which
+// is why a caller that retries an idempotent request once on `Exchange` is
+// doing the ordinary thing.
+//
+// Panics: as `Client.try_send`.
+fun mut Pool.try_send(req: Request).R: result.Result<Response, HttpErr> {
     val c = default_client()
-    return pooled_hop(
+    return pooled_hop_try(
         self,
         c,
         req.method.clone(),
@@ -1128,20 +1419,41 @@ fun pooled_hop(
     body: Bytes,
     hops: i32,
 ).R: Response {
+    val r = when pooled_hop_try(p, client, method, url_text, headers, body, hops) {
+        Ok(v) -> v
+        Err(e) -> fail_http(e)
+    }
+    return r
+}
+
+fun pooled_hop_try(
+    p: mut Pool,
+    client: Client,
+    method: String,
+    url_text: String,
+    headers: List<Header>,
+    body: Bytes,
+    hops: i32,
+).R: result.Result<Response, HttpErr> {
     val u = parse_url(url_text.as_str())
     if pool_matches(p, u) {
-        val lease = p.checkout(url_is_https(u))
+        val lease = p.try_checkout(url_is_https(u))?
         val c = lease.conn()
-        val resp = one_exchange(c, method.as_str(), u, headers, body)
+        val got = one_exchange_try(c, method.as_str(), u, headers, body)
+        if result.is_err(got) {
+            p.release(lease, false)
+            return got
+        }
+        val resp = got?
         p.release(lease, resp.reusable)
-        val next = follow_url(client, u, resp, hops)
+        val next = follow_url_try(client, u, resp, hops)?
         if str.is_empty(next.as_str()) {
-            return resp
+            return result.Result.Ok(value = resp)
         }
         if keep_body_on(resp.status) {
-            return pooled_hop(p, client, method, next, headers, body, hops - 1)
+            return pooled_hop_try(p, client, method, next, headers, body, hops - 1)
         }
-        return pooled_hop(
+        return pooled_hop_try(
             p,
             client,
             String.from_str("GET"),
@@ -1151,17 +1463,18 @@ fun pooled_hop(
             hops - 1,
         )
     }
-    val s = connect_configured(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))
-    val resp = one_exchange(s, method.as_str(), u, headers, body)
+    val s = connect_configured_try(u.host.as_str(), u.port, client.timeout_ms, url_is_https(u))?
+    val got = one_exchange_try(s, method.as_str(), u, headers, body)
     conn_close(s)
-    val next = follow_url(client, u, resp, hops)
+    val resp = got?
+    val next = follow_url_try(client, u, resp, hops)?
     if str.is_empty(next.as_str()) {
-        return resp
+        return result.Result.Ok(value = resp)
     }
     if keep_body_on(resp.status) {
-        return pooled_hop(p, client, method, next, headers, body, hops - 1)
+        return pooled_hop_try(p, client, method, next, headers, body, hops - 1)
     }
-    return pooled_hop(
+    return pooled_hop_try(
         p,
         client,
         String.from_str("GET"),
@@ -1184,6 +1497,12 @@ fun pooled_hop(
 fun get(url: &str).R: Response {
     val c = default_client()
     return c.send(make_get(url))
+}
+
+// `get`, with the failures as an `HttpErr` (`Client.try_send`).
+fun try_get(url: &str).R: result.Result<Response, HttpErr> {
+    val c = default_client()
+    return c.try_send(make_get(url))
 }
 
 fun make_get(url: &str).R: Request = Request(

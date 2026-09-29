@@ -525,6 +525,21 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/net",
+        "send_all_try_raw",
+        "    size_t off = 0;\n    while (off < kelp_data->len) {\n        ssize_t n = send(kelp_fd, kelp_data->data + off, kelp_data->len - off, MSG_NOSIGNAL);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            char text[256];\n            snprintf(text, sizeof text, \"net.send: send failed (the peer may have closed)\\n  errno %d: %s\", errno, strerror(errno));\n            free(kelp_reason->data);\n            *kelp_reason = kelp_String__from_str(text);\n            return -1;\n        }\n        off += (size_t)n;\n    }\n    return 0;\n",
+    ),
+    (
+        "std/net",
+        "recv_try_raw",
+        "    if (kelp_max == 0) {\n        return kelp_bytes_alloc_raw(0);\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, b.data, kelp_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.recv: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.recv: receive failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        b.len = 0;\n        b.data[0] = 0;\n        return b;\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+    ),
+    (
+        "std/net",
+        "recv_into_try_raw",
+        "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, kelp_buf->data + kelp_at, room, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.recv_into: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.recv_into: receive failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return 0;\n    }\n    kelp_buf->data[kelp_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/net",
         "set_timeout_raw",
         "    struct timeval tv;\n    tv.tv_sec = (time_t)(kelp_ms / 1000);\n    tv.tv_usec = (suseconds_t)((kelp_ms % 1000) * 1000);\n    if (setsockopt(kelp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"net.set_timeout: cannot set the receive timeout\");\n    }\n    if (setsockopt(kelp_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"net.set_timeout: cannot set the send timeout\");\n    }\n",
     ),
@@ -577,6 +592,26 @@ static EXTERNS: &[(&str, &str, &str)] = &[
         "std/tls",
         "read_into_raw",
         "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    int n = SSL_read(ssl, kelp_buf->data + kelp_at, (int)room);\n    if (n <= 0) {\n        int err = SSL_get_error(ssl, n);\n        /* End of stream: a clean close_notify, or a peer that dropped the TCP connection without one (OpenSSL 3 reports that as SSL_R_UNEXPECTED_EOF_WHILE_READING, older builds as a SYSCALL error with errno 0 or a reset). */\n        if (err == SSL_ERROR_ZERO_RETURN || (err == SSL_ERROR_SYSCALL && (errno == 0 || errno == ECONNRESET || errno == EPIPE)) || (err == SSL_ERROR_SSL && ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING)) {\n            ERR_clear_error();\n            return 0;\n        }\n        char text[256];\n        ERR_error_string_n(ERR_get_error(), text, sizeof text);\n        kelp_panic_tls(\"tls.read_into: read failed\", text);\n    }\n    kelp_buf->data[kelp_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/tls",
+        "handshake_try_raw",
+        "    char text[320];\n    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());\n    SSL* ssl = NULL;\n    if (ctx == NULL) {\n        snprintf(text, sizeof text, \"tls.handshake: cannot create an SSL context\");\n        goto fail;\n    }\n    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);\n    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);\n    if (SSL_CTX_set_default_verify_paths(ctx) != 1) {\n        snprintf(text, sizeof text, \"tls.handshake: cannot load the system trust store\");\n        goto fail;\n    }\n    ssl = SSL_new(ctx);\n    SSL_CTX_free(ctx);\n    ctx = NULL;\n    if (ssl == NULL) {\n        snprintf(text, sizeof text, \"tls.handshake: cannot create an SSL handle\");\n        goto fail;\n    }\n    if (SSL_set_fd(ssl, kelp_fd) != 1) {\n        snprintf(text, sizeof text, \"tls.handshake: cannot bind the socket to the TLS handle\");\n        goto fail;\n    }\n    SSL_set_tlsext_host_name(ssl, kelp_host);\n    if (SSL_set1_host(ssl, kelp_host) != 1) {\n        snprintf(text, sizeof text, \"tls.handshake: cannot set the verification hostname\");\n        goto fail;\n    }\n    for (;;) {\n        int rc = SSL_connect(ssl);\n        if (rc == 1) {\n            break;\n        }\n        int err = SSL_get_error(ssl, rc);\n        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {\n            continue;\n        }\n        char detail[256];\n        ERR_error_string_n(ERR_get_error(), detail, sizeof detail);\n        snprintf(text, sizeof text, \"tls.handshake: the TLS handshake failed\\n  %s\", detail);\n        goto fail;\n    }\n    long verify = SSL_get_verify_result(ssl);\n    if (verify != X509_V_OK) {\n        snprintf(text, sizeof text, \"tls.handshake: certificate verification failed\\n  %s\", X509_verify_cert_error_string(verify));\n        goto fail;\n    }\n    return (size_t)(uintptr_t)ssl;\nfail:\n    if (ctx != NULL) {\n        SSL_CTX_free(ctx);\n    }\n    if (ssl != NULL) {\n        SSL_free(ssl);\n    }\n    free(kelp_reason->data);\n    *kelp_reason = kelp_String__from_str(text);\n    return 0;\n",
+    ),
+    (
+        "std/tls",
+        "write_all_try_raw",
+        "    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    size_t off = 0;\n    while (off < kelp_data->len) {\n        int n = SSL_write(ssl, kelp_data->data + off, (int)(kelp_data->len - off));\n        if (n <= 0) {\n            int err = SSL_get_error(ssl, n);\n            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {\n                continue;\n            }\n            char text[320];\n            if (err == SSL_ERROR_ZERO_RETURN) {\n                snprintf(text, sizeof text, \"tls.write: the peer closed the connection\");\n            } else {\n                char detail[256];\n                ERR_error_string_n(ERR_get_error(), detail, sizeof detail);\n                snprintf(text, sizeof text, \"tls.write: write failed\\n  %s\", detail);\n            }\n            free(kelp_reason->data);\n            *kelp_reason = kelp_String__from_str(text);\n            return -1;\n        }\n        off += (size_t)n;\n    }\n    return 0;\n",
+    ),
+    (
+        "std/tls",
+        "read_try_raw",
+        "    if (kelp_max == 0) {\n        return kelp_bytes_alloc_raw(0);\n    }\n    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    int n = SSL_read(ssl, b.data, (int)kelp_max);\n    if (n <= 0) {\n        int err = SSL_get_error(ssl, n);\n        b.len = 0;\n        b.data[0] = 0;\n        if (err == SSL_ERROR_ZERO_RETURN || (err == SSL_ERROR_SYSCALL && (errno == 0 || errno == ECONNRESET || errno == EPIPE)) || (err == SSL_ERROR_SSL && ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING)) {\n            ERR_clear_error();\n            return b;\n        }\n        char text[320];\n        char detail[256];\n        ERR_error_string_n(ERR_get_error(), detail, sizeof detail);\n        snprintf(text, sizeof text, \"tls.read: read failed\\n  %s\", detail);\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return b;\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+    ),
+    (
+        "std/tls",
+        "read_into_try_raw",
+        "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    SSL* ssl = (SSL*)(uintptr_t)kelp_handle;\n    int n = SSL_read(ssl, kelp_buf->data + kelp_at, (int)room);\n    if (n <= 0) {\n        int err = SSL_get_error(ssl, n);\n        if (err == SSL_ERROR_ZERO_RETURN || (err == SSL_ERROR_SYSCALL && (errno == 0 || errno == ECONNRESET || errno == EPIPE)) || (err == SSL_ERROR_SSL && ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING)) {\n            ERR_clear_error();\n            return 0;\n        }\n        char text[320];\n        char detail[256];\n        ERR_error_string_n(ERR_get_error(), detail, sizeof detail);\n        snprintf(text, sizeof text, \"tls.read_into: read failed\\n  %s\", detail);\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return 0;\n    }\n    kelp_buf->data[kelp_at + (size_t)n] = 0;\n    return (size_t)n;\n",
     ),
     (
         "std/tls",

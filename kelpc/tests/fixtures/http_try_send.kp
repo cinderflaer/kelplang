@@ -1,0 +1,68 @@
+// MISSING-p7Kdm: the fallible send. argv[1] is a port nothing listens on, argv[2]
+// is the harness's canned server. Every failure is a value the program branches
+// on, and the program exits 0:
+//
+//   - a refused dial is `HttpErr.Dial` (nothing was sent);
+//   - a response whose body stops early is `HttpErr.Exchange`, on a fresh
+//     connection and through a pool alike, and the pool does not keep the
+//     half-read connection;
+//   - a redirect loop is `HttpErr.Redirects`, on a pooled connection that stays
+//     usable afterwards (the next request reuses it and succeeds).
+//
+// The grant names the host and every port on it, because one port is chosen by
+// the kernel and a grant cannot name a port only known at run time.
+impl "std/http" caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun arg_port(at: usize).R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(at).as_str()),
+        message = "arg_port: an argument is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun url_for(port: u16, path: &str).R: String {
+    val port_text = str.from_u64(port.to_u64())
+    val head = str.concat("http://127.0.0.1:", port_text.as_str())
+    return str.concat(head.as_str(), path)
+}
+
+fun show(label: &str, r: move result.Result<http.Response, http.HttpErr>) {
+    when r {
+        Ok(resp) -> print("${label} ok ${resp.status} ${resp.body.as_str()}")
+        Err(e) -> {
+            when e {
+                Dial(reason) -> print("${label} dial")
+                Exchange(reason) -> print("${label} exchange ${reason}")
+                Redirects(reason) -> print("${label} redirects ${reason}")
+            }
+        }
+    }
+}
+
+fun main() {
+    val dead = url_for(arg_port(1), "/")
+    show("refused", http.try_get(dead.as_str()))
+
+    val port = arg_port(2)
+    val cut = url_for(port, "/cut")
+    show("fresh", http.try_get(cut.as_str()))
+
+    var pool = http.pool("127.0.0.1", port)
+    show("pool-cut", pool.try_send(http.make_get(cut.as_str())))
+    print("pool kept ${pool.len()}")
+
+    val loop_url = url_for(port, "/loop")
+    show("pool-loop", pool.try_send(http.make_get(loop_url.as_str())))
+    print("pool kept ${pool.len()}")
+
+    val hello = url_for(port, "/hello")
+    show("pool-hello", pool.try_send(http.make_get(hello.as_str())))
+    print("pool kept ${pool.len()}")
+    pool.close_all()
+    print("survived")
+}
