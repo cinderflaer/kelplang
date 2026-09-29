@@ -471,7 +471,14 @@ pub fn compile(
         None => None,
     };
 
-    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path, opt, link_libs)
+    crate::driver::link_llvm_object(
+        &object_path,
+        program_object.as_deref(),
+        out_path,
+        opt,
+        link_libs,
+        crate::codegen_c::uses_tls(program),
+    )
         .map_err(|e| e.message)
 }
 
@@ -9918,6 +9925,9 @@ fn program_c_source(program: &Program) -> Option<String> {
          copy of the same functions. */\n",
     );
     out.push_str(crate::codegen_c::C_HEADERS);
+    if crate::codegen_c::uses_tls(program) {
+        out.push_str(crate::codegen_c::OPENSSL_HEADERS);
+    }
 
     // The builtin layouts, field for field the structs `runtime/kelp_rt.c`
     // defines (MK7 §3.3). Only the types an extern signature names are
