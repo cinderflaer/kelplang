@@ -648,7 +648,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kelp_recv_zero_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory for the harness");
         let bin = dir.join("recv_zero");
-        crate::driver::compile_c(&source, &bin, crate::opt::OptLevel::DEFAULT, &[])
+        crate::driver::compile_c(&source, &bin, crate::opt::OptLevel::DEFAULT, &[], &[], &[])
             .unwrap_or_else(|e| panic!("the recv_raw harness did not compile: {}", e.message));
 
         let out = Command::new(&bin)

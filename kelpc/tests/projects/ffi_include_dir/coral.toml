@@ -1,0 +1,13 @@
+name = "ffiincludedir"
+
+# MK9-S1-M1 (roadmap B-1): like ffi_header, but the helper's declaration
+# lives in a project-local header reached through the new `include_dirs` key.
+# The header defines `kelp_test_double` as `static inline`, so there is no
+# native library to link: the only thing that makes the generated C compile
+# is `-Iinclude`, resolved against this manifest's own directory.
+[extern."helper"]
+domain = "env"
+library = "c"
+symbols = ["kelp_test_double"]
+header = "kelp_test_helper.h"
+include_dirs = ["include"]

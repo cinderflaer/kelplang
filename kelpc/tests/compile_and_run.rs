@@ -2342,6 +2342,11 @@ fn a_manifest_ffi_header_key_includes_the_native_symbols_header() {
 }
 
 #[test]
+fn a_manifest_ffi_include_dir_reaches_the_compiled_c() {
+    assert_project_runs("ffi_include_dir", &project("ffi_include_dir"), "42\n");
+}
+
+#[test]
 fn an_empty_ffi_header_key_is_rejected() {
     assert_project_rejected(
         "ffi_bad_header",
