@@ -1,0 +1,1 @@
+pub extern fun getpid().R: i32

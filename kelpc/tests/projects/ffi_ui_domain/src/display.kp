@@ -1,0 +1,5 @@
+// The `ui` domain's module: an `extern fun` bound to a native symbol through
+// coral.toml's `[extern."display"]` section. The `header` key makes the real
+// prototype visible to the generated C, so the trampoline calls `getpid` with
+// the type `unistd.h` gives it.
+pub extern fun getpid().R: i32

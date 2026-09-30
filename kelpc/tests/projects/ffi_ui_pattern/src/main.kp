@@ -1,0 +1,8 @@
+// Gap 6: `wayland-0` reads as a per-display grant, and nothing at a display
+// call could ever match it, so the `impl` line is refused rather than compiled
+// into an allowlist no call site consults (plan/ffi-display-domain.md).
+impl "display" caps(ui = ["wayland-0"])
+
+fun main() {
+    print(display.getpid() > 0)
+}

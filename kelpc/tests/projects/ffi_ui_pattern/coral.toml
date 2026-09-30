@@ -1,0 +1,9 @@
+name = "ffiuipattern"
+
+# Gap 6: the same `ui` section as `ffi_ui_domain`, so the only difference
+# between the two fixtures is the grant `main.kp` writes.
+[extern."display"]
+domain = "ui"
+library = "c"
+header = "unistd.h"
+symbols = ["getpid"]

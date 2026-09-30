@@ -2319,6 +2319,32 @@ fn an_ungranted_ffi_module_cannot_name_the_gated_namespace() {
 }
 
 #[test]
+fn a_manifest_assigned_ffi_ui_module_is_reached_with_the_wildcard_grant() {
+    assert_project_runs("ffi_ui_domain", &project("ffi_ui_domain"), "true\n");
+}
+
+#[test]
+fn an_ffi_ui_grant_that_names_a_pattern_is_rejected() {
+    // A display call carries no argument to match, so `ui = ["wayland-0"]`
+    // would read as enforced and deny nothing; only the wildcard is accepted
+    // (plan/ffi-display-domain.md).
+    assert_project_rejected(
+        "ffi_ui_pattern",
+        &project("ffi_ui_pattern"),
+        "patterns are not enforceable in the 'ui' domain yet",
+    );
+}
+
+#[test]
+fn an_ungranted_ffi_ui_module_cannot_name_the_gated_namespace() {
+    assert_project_rejected(
+        "ffi_ui_denied",
+        &project("ffi_ui_denied"),
+        "needs the 'ui' capability, which module 'util' was not granted",
+    );
+}
+
+#[test]
 fn an_extern_manifest_section_with_an_unknown_domain_is_rejected() {
     assert_project_rejected(
         "ffi_bad_domain",

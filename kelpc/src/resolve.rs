@@ -1089,9 +1089,7 @@ impl Loader<'_> {
                         id,
                     ));
                 }
-                for pattern in &grant.patterns {
-                    validate_cap_pattern(&grant.domain, pattern, grant.span, id)?;
-                }
+                validate_cap_grant(&grant.domain, &grant.patterns, grant.span, id)?;
                 self.grants.push(GrantEdge {
                     importer: id.to_string(),
                     target: imp.path.clone(),
@@ -1460,10 +1458,10 @@ fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), 
                     "",
                 ));
             };
-            validate_cap_pattern(domain, pattern, at, "")?;
             patterns.push(pattern.to_string());
         }
     }
+    validate_cap_grant(domain, &patterns, at, "")?;
     let caps = manifest.caps.get_or_insert_with(HashMap::new);
     if caps.contains_key(domain) {
         return Err(Diagnostic::new(
@@ -1896,6 +1894,36 @@ fn reaches_a_domain(
         }
     }
     false
+}
+
+/// A whole `caps(<domain> = [...])` grant, an `impl` clause's or a `[caps]`
+/// line's: every pattern through `validate_cap_pattern`, plus the one domain
+/// whose pattern list is not a vocabulary at all.
+///
+/// `ui` is that domain (gap 6, `plan/ffi-display-domain.md`): a display call
+/// carries no argument that names the display server, so no pattern narrower
+/// than `*` could be matched at a call site, and accepting one would read as
+/// an enforced grant while denying nothing. Only `["*"]` is taken, and any
+/// other list is refused here rather than compiled into an allowlist nothing
+/// consults.
+fn validate_cap_grant(
+    domain: &str,
+    patterns: &[String],
+    span: Span,
+    module: &str,
+) -> Result<(), Diagnostic> {
+    if domain == "ui" && !(patterns.len() == 1 && patterns[0] == "*") {
+        return Err(Diagnostic::new(
+            "patterns are not enforceable in the 'ui' domain yet: a display call carries no argument to match a grant against, so only `ui = [\"*\"]` is accepted (see plan/ffi-display-domain.md)"
+                .to_string(),
+            span,
+            module,
+        ));
+    }
+    for pattern in patterns {
+        validate_cap_pattern(domain, pattern, span, module)?;
+    }
+    Ok(())
 }
 
 /// A capability pattern, validated by what the domain actually names.
@@ -2393,6 +2421,24 @@ mod tests {
                 err.message
             );
         }
+    }
+
+    #[test]
+    fn a_ui_pattern_in_the_manifest_caps_section_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[caps]\nui = [\"wayland-0\"]\n");
+        assert!(
+            err.message.contains("patterns are not enforceable in the 'ui' domain yet"),
+            "{}",
+            err.message
+        );
+        // The wildcard is the vocabulary, so the section parses with it.
+        assert_eq!(
+            manifest("name = \"x\"\n[caps]\nui = [\"*\"]\n")
+                .caps
+                .expect("the [caps] section")
+                .get("ui"),
+            Some(&vec!["*".to_string()])
+        );
     }
 
     #[test]
