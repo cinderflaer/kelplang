@@ -1,0 +1,10 @@
+name = "ffihandlenull"
+
+# Gap 1: a null handle. "fopen" returns NULL on failure, which the "File"
+# handle carries as its null value, and "File.null()" is the same value
+# spelled directly. "is_null()" is the one method a handle has.
+[extern."file"]
+domain = "process"
+library = "c"
+header = "stdio.h"
+symbols = ["fopen"]

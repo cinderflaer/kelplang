@@ -1,0 +1,9 @@
+// Gap 1 rejection: "Block" is a "Buffer"'s parent, so a "Block" is *not* a
+// "Buffer". This return is the implicit downcast the language does not have,
+// and no "cast" was written, so it is refused where it is written.
+pub extern type Block
+pub extern type Buffer: Block
+
+pub extern fun malloc(size: usize).R: Buffer
+
+pub fun down(block: Block).R: Buffer = block

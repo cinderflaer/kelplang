@@ -1,0 +1,5 @@
+// Gap 1: the handle type and its one extern binding live here, in the module
+// that owns the "[extern.\"mem\"]" section.
+pub extern type Buffer
+
+pub extern fun malloc(size: usize).R: Buffer

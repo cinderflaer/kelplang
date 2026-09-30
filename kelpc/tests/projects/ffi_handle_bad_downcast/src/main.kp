@@ -1,0 +1,6 @@
+// The import is what loads "mem.kp"; the refusal is the return in "down".
+impl "mem"
+
+fun main() {
+    print("unreachable")
+}

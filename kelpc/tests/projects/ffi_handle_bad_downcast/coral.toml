@@ -1,0 +1,10 @@
+name = "ffihandlebadowncast"
+
+# Gap 1 rejection: only a child converts up to its parent implicitly. A
+# "Block" used where a "Buffer" is expected is a type error; the explicit
+# "Buffer.cast(block)" is the unchecked way down.
+[extern."mem"]
+domain = "process"
+library = "c"
+header = "stdlib.h"
+symbols = ["malloc"]

@@ -2466,6 +2466,46 @@ fn an_ffi_extern_type_outside_an_extern_section_is_rejected() {
 }
 
 #[test]
+fn an_ffi_opaque_handle_upcasts_to_its_parent_and_casts_back_down() {
+    // Gap 1: "Buffer" is a "Block". The "Buffer" from "malloc" converts
+    // implicitly to "Block" at a call argument, at a `val` binding and at a
+    // return, and "Buffer.cast(block)" is the unchecked way back down.
+    assert_project_runs("ffi_handle_upcast", &project("ffi_handle_upcast"), "true\n");
+}
+
+#[test]
+fn an_ffi_opaque_handle_carries_a_null_value() {
+    // Gap 1: "fopen" returns the null handle on failure, and "File.null()"
+    // spells the same value; "is_null()" is true for both and the only method
+    // a handle has.
+    assert_project_runs("ffi_handle_null", &project("ffi_handle_null"), "true\ntrue\n");
+}
+
+#[test]
+fn an_implicit_ffi_handle_downcast_is_rejected() {
+    // Gap 1: only a child converts up to its parent implicitly, so a "Block"
+    // returned where a "Buffer" is expected is a type error, not an implicit
+    // (and unchecked) downcast.
+    assert_project_rejected(
+        "ffi_handle_bad_downcast",
+        &project("ffi_handle_bad_downcast"),
+        "declared to return",
+    );
+}
+
+#[test]
+fn an_ffi_handle_null_outside_an_extern_section_is_rejected() {
+    // Gap 1: a handle operation is legal only where an `[extern.*]` section
+    // exists, even when the handle type itself is imported from an extern
+    // module.
+    assert_project_rejected(
+        "ffi_handle_null_outside",
+        &project("ffi_handle_null_outside"),
+        "is only legal in a module with a coral.toml",
+    );
+}
+
+#[test]
 fn printing_an_ffi_opaque_handle_is_rejected() {
     assert_project_rejected(
         "ffi_handle_print",
