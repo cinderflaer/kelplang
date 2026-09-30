@@ -1459,19 +1459,17 @@ impl<'a> Gen<'a> {
         for (pname, pty) in &f.params {
             let llvm_pty = llvm_type(ctx, &self.structs, &self.containers, pty)?;
             // A `move closure(...)` parameter of a user extern is the
-            // native-callback shape gap 4 adds to the C backend. A closure is
-            // a three-pointer fat pointer, so the C body's expansion has a
-            // thunk to call but this backend has no value to pass it; name
-            // that shortfall rather than the generic boundary rule.
+            // native-callback shape (gap 4). A closure is a three-pointer fat
+            // pointer, 24 bytes, which `rt_arg_value` already passes through a
+            // stack slot; the per-program object's trampoline takes that
+            // pointer (`write_extern`'s `closure_by_ref`) and boxes the
+            // closure for the native side, so the declaration is a plain
+            // pointer, exactly as for any aggregate past two eightbytes.
             if matches!(pty, Ty::Closure { .. })
                 && self.program.extern_ffi_symbols.contains_key(&f.name)
             {
-                return Err(
-                    "callbacks in user externs are not supported on the llvm backend yet; \
-                     build this project with the C backend (KELPC_ORACLE=c), or pass the \
-                     callback to a Kelp function instead"
-                        .to_string(),
-                );
+                params.push(ctx.opaque_ptr());
+                continue;
             }
             if crosses_c_boundary_by_value(pty, llvm_pty, self.layout) {
                 return Err(refuse(
@@ -10045,7 +10043,7 @@ fn program_c_source(program: &Program) -> Option<String> {
 
     for f in &externs {
         out.push('\n');
-        crate::codegen_c::write_extern(&mut out, f, &program.extern_ffi_symbols);
+        crate::codegen_c::write_extern(&mut out, f, &program.extern_ffi_symbols, true);
     }
 
     if cap_glue {
