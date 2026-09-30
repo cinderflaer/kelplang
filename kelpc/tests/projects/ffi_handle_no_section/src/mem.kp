@@ -1,0 +1,4 @@
+// Gap 1 rejection: this module has no coral.toml "[extern.\"mem\"]" section,
+// so "extern type Buffer" is a compile error rather than an opaque handle with
+// nothing behind it.
+pub extern type Buffer

@@ -257,7 +257,10 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// denial projects (`caps_net_try_denied`, `ws_try_net_denied`) are negative
 /// fixtures without manifests and stay outside the corpus, like
 /// `ws_net_denied` before them.
-const LLVM_BUILT_BASELINE: usize = 275;
+/// Raised from 275 by gap 1, the opaque native handle: `ffi_handle` (a
+/// `malloc`/`free` pair over an `extern type` handle) builds with both
+/// backends, and its two rejection projects stay outside the corpus.
+const LLVM_BUILT_BASELINE: usize = 276;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

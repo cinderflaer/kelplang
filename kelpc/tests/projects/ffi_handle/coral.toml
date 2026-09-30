@@ -1,0 +1,12 @@
+name = "ffihandle"
+
+# Gap 1: this module declares an opaque native handle, "Buffer", bound to
+# libc's "malloc"/"free". The "[extern.*]" section is what makes an
+# "extern type" legal here, exactly as it is what lets an "extern fun" bind a
+# native symbol. "process" is the closest of the six capability domains; the
+# handle itself adds no authority.
+[extern."mem"]
+domain = "process"
+library = "c"
+header = "stdlib.h"
+symbols = ["malloc", "free"]

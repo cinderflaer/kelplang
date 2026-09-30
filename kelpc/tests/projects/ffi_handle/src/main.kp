@@ -1,0 +1,10 @@
+// Gap 1: "malloc" hands back an opaque handle, "==" compares two handles of
+// the same type (the pointers), and "free" takes one back. The output is
+// deterministic: the allocation succeeds and the handle equals itself.
+impl "mem" caps(process = ["/**"])
+
+fun main() {
+    val buf: mem.Buffer = mem.malloc(16)
+    print(buf == buf)
+    mem.free(buf)
+}

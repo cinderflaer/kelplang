@@ -1,0 +1,5 @@
+name = "ffihandlenosection"
+
+# No "[extern.\"mem\"]" section: "mem.kp" declares an "extern type", which is
+# legal only where a section gives the module a native surface, so the
+# resolver refuses the declaration by name.

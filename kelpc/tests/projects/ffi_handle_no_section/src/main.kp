@@ -1,0 +1,7 @@
+// The import is what loads "mem.kp"; the refusal is the declaration in it, not
+// anything here.
+impl "mem"
+
+fun main() {
+    print("unreachable")
+}
