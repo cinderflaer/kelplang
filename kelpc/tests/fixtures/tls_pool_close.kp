@@ -1,0 +1,56 @@
+// Release goal 1, hardening: the pooled TLS path, drained with `Pool.close_all`.
+// The pool keeps its connection after the first request; every pooled connection
+// owns an `SSL*`, and nothing frees one on drop (v1 has no `Drop`), so
+// `close_all` is the call that does. This fixture exists for the AddressSanitizer
+// gate: it is the proof that a pooled `https` client that drains its pool frees
+// the handshake's object exactly once.
+impl "std/http" caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/result"
+impl "std/str"
+
+fun hdrs().R: List<http.Header> {
+    var l: List<http.Header> = List.empty()
+    return l
+}
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_pool_close: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("https://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+fun req_for(path: &str).R: http.Request {
+    val url = url_for(path)
+    return http.Request(
+        method = String.from_str("GET"),
+        url = url,
+        headers = hdrs(),
+        body = Bytes.empty(),
+    )
+}
+
+fun main() {
+    var pool = http.pool("127.0.0.1", server_port())
+    val r1 = pool.send(req_for("/a"))
+    print(r1.status)
+    print(r1.reusable)
+    print(pool.len())
+    val r2 = pool.send(req_for("/b"))
+    print(r2.status)
+    print(pool.len())
+    pool.close_all()
+    print(pool.len())
+}

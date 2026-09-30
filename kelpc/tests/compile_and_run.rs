@@ -6794,6 +6794,22 @@ fn tls_handshakes_free_their_openssl_objects_under_address_sanitizer() {
         assert_eq!(stdout, "true\ntrue\ntrue\ntrue\ntrue\n");
     }
 
+    // The pooled path's own free: `Pool.close_all` ends each kept-alive
+    // connection, which is the only thing that frees the `SSL*` a pooled
+    // handshake allocated.
+    {
+        let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO, BODY_200_HELLO]));
+        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+        let stdout = asan_tls_fixture(
+            "tls_pool_close",
+            &[server.port.to_string()],
+            &[("SSL_CERT_FILE", ssl.as_str())],
+        );
+        server.finish();
+        assert_eq!(stdout, "200\ntrue\n1\n200\n1\n0\n");
+        assert_eq!(server.accepted(), 1, "the pooled client opened more than one connection");
+    }
+
     // A handshake that fails halfway: the certificate is not in the store, so
     // `SSL_connect` fails and the object it built has to be freed.
     {
