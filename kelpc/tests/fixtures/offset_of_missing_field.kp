@@ -1,0 +1,6 @@
+// Kernel stage 2: `offset_of` names a field the datac has.
+datac P(val x: i32)
+
+fun main() {
+    print(offset_of<P>("y"))
+}

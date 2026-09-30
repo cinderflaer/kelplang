@@ -1,3 +1,5 @@
+use crate::ast::Repr;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ty {
     I32,
@@ -1387,8 +1389,153 @@ pub fn tuple_struct_def(name: &str, elems: &[Ty]) -> StructDef {
                 mutable: false,
             })
             .collect(),
+        repr: Repr::C,
         order: usize::MAX,
     }
+}
+
+/// The size and alignment of one type, in bytes, as the C compiler lays it out
+/// on the x86-64 target this compiler builds for. It is what `size_of`,
+/// `align_of` and `offset_of` report, and it exists so the LLVM backend and the
+/// C oracle can be checked against the same numbers rather than each assuming
+/// the other agrees (kernel stage 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Layout {
+    pub size: u64,
+    pub align: u64,
+}
+
+fn round_up(value: u64, align: u64) -> u64 {
+    debug_assert!(align.is_power_of_two());
+    (value + align - 1) & !(align - 1)
+}
+
+/// One field's contribution, and the offset it lands at: the C rule, with the
+/// type's own `repr` deciding whether padding is present and whether the
+/// alignment is raised.
+fn record_layout(
+    fields: &[FieldDef],
+    repr: &Repr,
+    structs: &std::collections::HashMap<String, StructDef>,
+    enums: &std::collections::HashMap<String, EnumDef>,
+) -> Option<Layout> {
+    let packed = matches!(repr, Repr::Packed);
+    let mut offset = 0u64;
+    let mut align = 1u64;
+    for f in fields {
+        let l = type_layout(&f.ty, structs, enums)?;
+        if !packed {
+            offset = round_up(offset, l.align);
+            align = align.max(l.align);
+        }
+        offset += l.size;
+    }
+    if let Repr::Align(n) = repr {
+        align = align.max(*n);
+    }
+    Some(Layout {
+        size: round_up(offset, align),
+        align,
+    })
+}
+
+/// The size and alignment of one type, or `None` for a type this compiler does
+/// not lay out by value (which no query may name).
+pub fn type_layout(
+    ty: &Ty,
+    structs: &std::collections::HashMap<String, StructDef>,
+    enums: &std::collections::HashMap<String, EnumDef>,
+) -> Option<Layout> {
+    Some(match ty {
+        Ty::U8 | Ty::Bool => Layout { size: 1, align: 1 },
+        Ty::U16 => Layout { size: 2, align: 2 },
+        Ty::I32 | Ty::U32 | Ty::F32 | Ty::Char => Layout { size: 4, align: 4 },
+        Ty::I64 | Ty::U64 | Ty::F64 | Ty::Usize | Ty::Isize => Layout { size: 8, align: 8 },
+        // `unit` stores nothing; a `unit` field is filtered out of every
+        // aggregate, so the pair below only ever answers a direct query.
+        Ty::Unit => Layout { size: 0, align: 1 },
+        // A pointer, an opaque handle and a function value are one machine
+        // word; `str` is the pointer it borrows.
+        Ty::Str | Ty::Handle(_) | Ty::Ptr(_) | Ty::Fn { .. } | Ty::Ref { .. } | Ty::Thread(_) => {
+            Layout { size: 8, align: 8 }
+        }
+        Ty::View => Layout { size: 16, align: 8 },
+        Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } => {
+            Layout { size: 24, align: 8 }
+        }
+        Ty::Box(_) => Layout { size: 8, align: 8 },
+        // `{ entries, entry_count, entry_cap, len, index, index_cap, index_used }`.
+        Ty::Map(_, _) => Layout { size: 56, align: 8 },
+        // `{ elem v; }`, one machine word of the element.
+        Ty::Atomic(elem) => type_layout(elem, structs, enums)?,
+        Ty::Array(elem, len) => {
+            let l = type_layout(elem, structs, enums)?;
+            Layout {
+                size: l.size.saturating_mul(*len),
+                align: l.align,
+            }
+        }
+        Ty::Struct(name) => {
+            if let Some(e) = enums.get(name) {
+                let (tag_bytes, _) = e.tag_storage();
+                let tag = Layout {
+                    size: tag_bytes,
+                    align: tag_bytes,
+                };
+                let mut union_align = 1u64;
+                let mut union_size = 0u64;
+                for v in &e.variants {
+                    // A payload-less variant is still one `char` in the C
+                    // union (`VariantDef::is_payload_less`), so its member is
+                    // one byte rather than an empty struct.
+                    let p = if v.is_payload_less() {
+                        Layout { size: 1, align: 1 }
+                    } else {
+                        record_layout(&v.fields, &Repr::C, structs, enums)?
+                    };
+                    union_align = union_align.max(p.align);
+                    union_size = union_size.max(p.size);
+                }
+                let union_size = round_up(union_size, union_align);
+                let union_offset = round_up(tag.size, union_align);
+                let align = tag.align.max(union_align);
+                Layout {
+                    size: round_up(union_offset + union_size, align),
+                    align,
+                }
+            } else {
+                let s = structs.get(name)?;
+                record_layout(&s.fields, &s.repr, structs, enums)?
+            }
+        }
+    })
+}
+
+/// The byte offset of one field of one `datac`, or `None` when the type is not
+/// a `datac` this compiler lays out or the field is not one of its own.
+pub fn field_offset(
+    name: &str,
+    field: &str,
+    structs: &std::collections::HashMap<String, StructDef>,
+    enums: &std::collections::HashMap<String, EnumDef>,
+) -> Option<u64> {
+    let s = structs.get(name)?;
+    if enums.contains_key(name) {
+        return None;
+    }
+    let packed = matches!(s.repr, Repr::Packed);
+    let mut offset = 0u64;
+    for f in &s.fields {
+        let l = type_layout(&f.ty, structs, enums)?;
+        if !packed {
+            offset = round_up(offset, l.align);
+        }
+        if f.name == field {
+            return Some(offset);
+        }
+        offset += l.size;
+    }
+    None
 }
 
 /// Mangles an `.kp` top-level name into a valid C identifier.
@@ -1483,6 +1630,10 @@ pub struct FieldDef {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
+    /// The `repr(...)` clause, or `Repr::C` for the default C layout
+    /// (kernel stage 2). It decides the field offsets and the type's own
+    /// alignment, in this backend and in the C oracle alike.
+    pub repr: Repr,
     /// Position in the program's merged declaration order, across every
     /// `datac` *and* `enum` (A-1). A field or payload may only name an
     /// earlier declaration by value, so this order is a valid topological
@@ -1496,6 +1647,10 @@ pub struct StructDef {
 pub struct VariantDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
+    /// `Off = 0`: the explicit discriminant, already resolved to a value. A
+    /// field-less enum's real tag value is [`EnumDef::discriminants`], which
+    /// fills an unwritten discriminant in as the previous value plus one.
+    pub discriminant: Option<i128>,
 }
 
 /// A tagged union (A-1): exactly one variant is live in a value. At the type
@@ -1507,6 +1662,10 @@ pub struct VariantDef {
 pub struct EnumDef {
     pub name: String,
     pub variants: Vec<VariantDef>,
+    /// The `repr(...)` clause, or `Repr::C` for the default C layout and an
+    /// `i32` tag (kernel stage 2). Only `repr(<int>)` changes an enum's
+    /// layout: it picks the tag's storage type.
+    pub repr: Repr,
     /// See `StructDef::order`.
     pub order: usize,
 }
@@ -1514,6 +1673,79 @@ pub struct EnumDef {
 impl EnumDef {
     pub fn variant(&self, name: &str) -> Option<(usize, &VariantDef)> {
         self.variants.iter().enumerate().find(|(_, v)| v.name == name)
+    }
+
+    /// Whether every variant carries no payload. Only a field-less enum may
+    /// spell explicit discriminants and take a `repr(<int>)` tag type, so this
+    /// is the gate for both.
+    pub fn is_field_less(&self) -> bool {
+        self.variants.iter().all(|v| v.is_payload_less())
+    }
+
+    /// The tag's storage, as `(bytes, signed)`, taken from the `repr(<int>)`
+    /// name. It is the width the C typedef and the LLVM struct both use, and
+    /// it is deliberately not a `Ty`: v1 has no `i8`/`i16` *value* type, but
+    /// `repr(i8)`/`repr(i16)` still name a one- or two-byte tag.
+    pub fn tag_storage(&self) -> (u64, bool) {
+        match &self.repr {
+            Repr::Int(name) => match name.as_str() {
+                "u8" => (1, false),
+                "u16" => (2, false),
+                "u32" => (4, false),
+                "u64" => (8, false),
+                "i8" => (1, true),
+                "i16" => (2, true),
+                "i64" => (8, true),
+                _ => (4, true),
+            },
+            _ => (4, true),
+        }
+    }
+
+    /// The C spelling of the tag's storage type, which is what the generated
+    /// `typedef` declares it as.
+    pub fn tag_c_type(&self) -> &'static str {
+        match self.tag_storage() {
+            (1, false) => "uint8_t",
+            (2, false) => "uint16_t",
+            (4, false) => "uint32_t",
+            (8, false) => "uint64_t",
+            (1, true) => "int8_t",
+            (2, true) => "int16_t",
+            (8, true) => "int64_t",
+            _ => "int32_t",
+        }
+    }
+
+    /// The integer `Ty` a tag value crosses the surface as: the narrowest
+    /// Kelp integer that holds the storage. Kelp has no `i8`/`i16`, so those
+    /// two spellings report `i32`; every other one reports itself.
+    pub fn tag_ty(&self) -> Ty {
+        match &self.repr {
+            Repr::Int(name) => match name.as_str() {
+                "u8" => Ty::U8,
+                "u16" => Ty::U16,
+                "u32" => Ty::U32,
+                "u64" => Ty::U64,
+                "i64" => Ty::I64,
+                _ => Ty::I32,
+            },
+            _ => Ty::I32,
+        }
+    }
+
+    /// The tag value of every variant, in declaration order: a written
+    /// discriminant stands, and an unwritten one is the previous value plus
+    /// one, starting at 0 (kernel stage 2).
+    pub fn discriminants(&self) -> Vec<i128> {
+        let mut out = Vec::with_capacity(self.variants.len());
+        let mut next: i128 = 0;
+        for v in &self.variants {
+            let value = v.discriminant.unwrap_or(next);
+            out.push(value);
+            next = value.saturating_add(1);
+        }
+        out
     }
 }
 

@@ -1484,6 +1484,16 @@ mod tests {
         assert_eq!(format(char_lit).unwrap(), char_lit);
     }
 
+    /// Kernel stage 2: a `repr(...)` clause and an enum's explicit
+    /// discriminants are ordinary tokens, so the existing spacing rules already
+    /// put them back exactly as written. This pins that, so a later rule that
+    /// treats `repr(c)` or `= 0` as a new atom kind has to keep the shape.
+    #[test]
+    fn a_repr_clause_and_enum_discriminants_are_formatted_as_written() {
+        let src = "pub repr(packed) datac H(val kind: u8, val length: u32)\n\nrepr(u8) enum Mode {\n    Off = 0\n    On = 1\n    Fast = 10\n}\n\nrepr(align(16)) datac A(val x: u8)\n";
+        assert_eq!(format(src).unwrap(), src);
+    }
+
     #[test]
     fn a_template_run_is_copied_verbatim() {
         let src = "fun main() {\n    val n = 1\n    print(\"sum=${n +  1}\")\n}\n";

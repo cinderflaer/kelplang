@@ -1,0 +1,56 @@
+// Kernel stage 2 (MK9-S1-M2): explicit discriminants on a field-less enum, and
+// `to_int`/`from_int` round-tripping through them. `repr(u8)`/`repr(i16)` pick
+// the tag's storage type; the default is `i32`, and an unwritten discriminant
+// continues from the previous value. `from_int` of a value no variant holds is
+// `None`.
+impl "std/option"
+
+repr(u8) enum Mode {
+    Off = 0
+    On = 1
+    Fast = 10
+}
+
+enum Plain {
+    A
+    B
+    C = 7
+    D
+}
+
+repr(i16) enum Signed {
+    Neg = -5
+    Zero = 0
+}
+
+fun main() {
+    val m = Mode.Fast
+    print(m.to_int())
+    print(size_of<Mode>())
+    print(align_of<Mode>())
+
+    if let Some(x) = Mode.from_int(10) {
+        print(x.to_int())
+    } else {
+        print(99)
+    }
+    if let Some(x) = Mode.from_int(7) {
+        print(x.to_int())
+    } else {
+        print(99)
+    }
+
+    print(Plain.B.to_int())
+    print(Plain.D.to_int())
+    print(size_of<Plain>())
+    print(align_of<Plain>())
+
+    print(Signed.Neg.to_int())
+    if let Some(x) = Signed.from_int(-5) {
+        print(x.to_int())
+    } else {
+        print(98)
+    }
+    print(size_of<Signed>())
+    print(align_of<Signed>())
+}

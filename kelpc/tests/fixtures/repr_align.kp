@@ -1,0 +1,16 @@
+// Kernel stage 2 (MK9-S1-M2): `repr(align(N))` raises a type's alignment, and
+// the offset of a field that *embeds* an aligned type follows it, which is the
+// part packed and aligned struct bodies have to get right in both backends.
+repr(align(16)) datac Aligned(val a: u8, val b: u64)
+datac Holder(val x: u8, val inner: Aligned)
+
+fun main() {
+    print(size_of<Aligned>())
+    print(align_of<Aligned>())
+    print(offset_of<Aligned>("a"))
+    print(offset_of<Aligned>("b"))
+
+    print(size_of<Holder>())
+    print(align_of<Holder>())
+    print(offset_of<Holder>("inner"))
+}

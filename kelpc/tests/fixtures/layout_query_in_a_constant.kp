@@ -1,0 +1,15 @@
+// Kernel stage 2 (MK9-S1-M2): a layout query is an ordinary expression, so it
+// folds in an array length and in a `const` initializer as well as in a body.
+// Canonical order puts every `const` before every `datac`, so a constant can
+// only query a builtin; a body can query a declared type.
+const SIZE: usize = size_of<i64>()
+
+datac Holder(val a: u8, val b: u32)
+
+fun main() {
+    var bytes: [u8; align_of<i32>()] = [0; align_of<i32>()]
+    print(SIZE)
+    print(bytes.len())
+    print(offset_of<Holder>("b"))
+    print(size_of<Holder>())
+}

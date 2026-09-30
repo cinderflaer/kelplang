@@ -1,0 +1,19 @@
+// Kernel stage 2 (MK9-S1-M2): `repr(packed)` gives alignment 1 and no padding,
+// which is `__attribute__((packed))` on the C side and a packed struct body on
+// the LLVM side. The offsets and the total size are the ones a C compiler
+// gives the same fields, and reading the fields back exercises the unaligned
+// accesses the packed body produces.
+repr(packed) datac Header(val kind: u8, val length: u32, val flags: u16)
+
+fun main() {
+    print(size_of<Header>())
+    print(align_of<Header>())
+    print(offset_of<Header>("kind"))
+    print(offset_of<Header>("length"))
+    print(offset_of<Header>("flags"))
+
+    val h = Header(kind = 7, length = 0x11223344, flags = 0x5566)
+    print(h.kind)
+    print(h.length)
+    print(h.flags)
+}

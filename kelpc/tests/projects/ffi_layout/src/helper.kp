@@ -1,0 +1,12 @@
+// Kernel stage 2 (MK9-S1-M2): the project-local C helper's declarations, each
+// one a `static inline` in `include/kelp_layout_helper.h`. `Packed` is the
+// packed datac whose layout both sides have to agree on, so it is declared
+// here beside the helper that reads it, and the helper takes its address as a
+// `Ptr<Packed>`.
+pub repr(packed) datac Packed(val kind: u8, val length: u32, val flags: u16)
+
+pub extern fun kelp_layout_size().R: u64
+pub extern fun kelp_layout_align().R: u64
+pub extern fun kelp_layout_offset_length().R: u64
+pub extern fun kelp_layout_offset_flags().R: u64
+pub extern fun kelp_layout_read(raw: Ptr<Packed>).R: u64

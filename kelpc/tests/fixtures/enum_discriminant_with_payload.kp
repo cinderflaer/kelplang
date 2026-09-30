@@ -1,0 +1,9 @@
+// Kernel stage 2: only a field-less enum has declared integer values.
+enum E {
+    A(val x: i32) = 1
+    B
+}
+
+fun main() {
+    print(E.B.to_int())
+}
