@@ -1085,6 +1085,33 @@ pub fn is_ptr_element(ty: &Ty) -> bool {
     }
 }
 
+/// What a `Bytes.read_*`/`Bytes.write_*` method name says about the field it
+/// moves: the field's byte width, whether the bytes in the buffer are
+/// big-endian, and the Kelp type the value has on either side (kernel stage 3,
+/// MK9-S8). `None` for any other name, which is how both code generators tell
+/// a byte-order access from the older `Bytes` methods (`get`, `set`, ...) that
+/// go through the runtime object.
+///
+/// The name itself carries the whole answer, so the frontend, `codegen_c.rs`
+/// and `codegen_llvm.rs` read one table rather than each parsing the name and
+/// disagreeing about a width.
+pub fn bytes_endian_access(op: &str) -> Option<(usize, bool, Ty)> {
+    let rest = op.strip_prefix("read_").or_else(|| op.strip_prefix("write_"))?;
+    let (value, order) = rest.rsplit_once('_')?;
+    let big_endian = match order {
+        "be" => true,
+        "le" => false,
+        _ => return None,
+    };
+    let width = match value {
+        "u16" => 2,
+        "u32" | "i32" => 4,
+        "u64" | "i64" => 8,
+        _ => return None,
+    };
+    Some((width, big_endian, Ty::from_name(value)?))
+}
+
 /// Why a type cannot be a `Ptr<T>`'s element, in one sentence that names the
 /// reason the type itself has: an owned value the language manages, a borrow,
 /// or a value that is not one machine-level thing.

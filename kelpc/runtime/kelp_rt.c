@@ -8,6 +8,41 @@ typedef struct {
     size_t cap;
 } kelp_Bytes;
 
+/* ---- Byte-order conversion (kernel stage 3, MK9-S8 / roadmap B-10) ----------
+   One swap per width and the two directed conversions the language names,
+   emitted at the call site rather than as functions. `__BYTE_ORDER__` is the C
+   compiler's own report of the target's endianness, so `to_be`/`to_le` collapse
+   to the identity on the little-endian targets this project builds for today
+   and still swap on a big-endian one; a hard-coded direction would simply be
+   wrong on the other target.
+
+   `KELP_SWAP_SIZE` reads the pointer width from `sizeof` rather than assuming
+   eight bytes, so `usize`/`isize` follow the target's own word size. (It is a
+   macro and not a helper function because `build.rs` compiles this same text
+   with `#define static`, which would turn a `static inline` helper into a bare
+   `inline` definition.) */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define KELP_TARGET_BIG_ENDIAN 1
+#else
+#define KELP_TARGET_BIG_ENDIAN 0
+#endif
+
+#define KELP_SWAP_16(v) __builtin_bswap16((uint16_t)(v))
+#define KELP_SWAP_32(v) __builtin_bswap32((uint32_t)(v))
+#define KELP_SWAP_64(v) __builtin_bswap64((uint64_t)(v))
+#define KELP_TO_BE_16(v) (KELP_TARGET_BIG_ENDIAN ? (uint16_t)(v) : KELP_SWAP_16(v))
+#define KELP_TO_BE_32(v) (KELP_TARGET_BIG_ENDIAN ? (uint32_t)(v) : KELP_SWAP_32(v))
+#define KELP_TO_BE_64(v) (KELP_TARGET_BIG_ENDIAN ? (uint64_t)(v) : KELP_SWAP_64(v))
+#define KELP_TO_LE_16(v) (KELP_TARGET_BIG_ENDIAN ? KELP_SWAP_16(v) : (uint16_t)(v))
+#define KELP_TO_LE_32(v) (KELP_TARGET_BIG_ENDIAN ? KELP_SWAP_32(v) : (uint32_t)(v))
+#define KELP_TO_LE_64(v) (KELP_TARGET_BIG_ENDIAN ? KELP_SWAP_64(v) : (uint64_t)(v))
+
+#define KELP_SWAP_SIZE(v) \
+    ((size_t)(sizeof(size_t) == 8 ? __builtin_bswap64((uint64_t)(v)) \
+                                  : __builtin_bswap32((uint32_t)(v))))
+#define KELP_TO_BE_SIZE(v) (KELP_TARGET_BIG_ENDIAN ? (size_t)(v) : KELP_SWAP_SIZE(v))
+#define KELP_TO_LE_SIZE(v) (KELP_TARGET_BIG_ENDIAN ? KELP_SWAP_SIZE(v) : (size_t)(v))
+
 /* ---- kelp_Thread: the worker handle and the per-thread panic policy ---------
    MK9-S3-M1 stage C1. One `thread.spawn` makes one handle: the worker's
    identity, the slot the worker writes its result into, the slot the argument
