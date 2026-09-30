@@ -8270,3 +8270,79 @@ fn a_trailing_block_is_the_calls_last_argument() {
 fn a_trailing_block_can_capture_into_a_closure_parameter() {
     assert_compiles_and_runs("tests/fixtures/trailing_block_capture.kp", "3\n3\n");
 }
+
+// `plan/scoped-blocks.md`: a trailing block declares its parameters by name
+// only and returns its tail where the expected type is non-unit, and a
+// `scoped fun(...)` parameter accepts such a block (or a `fun` literal)
+// written at the call site, capturing the enclosing frame by borrow.
+#[test]
+fn a_scoped_block_takes_its_parameters_and_return_from_the_parameter() {
+    assert_compiles_and_runs(
+        "tests/fixtures/scoped_block_params.kp",
+        "4\n5\n6\n150\n101\n102\n12\n6\n",
+    );
+}
+
+#[test]
+fn a_scoped_block_can_read_a_borrowed_parameter() {
+    assert_compiles_and_runs(
+        "tests/fixtures/scoped_block_borrow.kp",
+        "row\nrow\n203\nrow\n",
+    );
+}
+
+#[test]
+fn a_scoped_block_in_a_loop_sees_the_current_iteration() {
+    assert_compiles_and_runs(
+        "tests/fixtures/scoped_borrow_in_loop.kp",
+        "1\n2\n2\n3\n3\n4\n",
+    );
+}
+
+#[test]
+fn a_scoped_value_cannot_be_stored_in_a_datac() {
+    assert_rejected_with(
+        "tests/fixtures/scoped_param_stored.kp",
+        "scoped function value",
+    );
+}
+
+#[test]
+fn a_scoped_value_cannot_be_returned() {
+    assert_rejected_with(
+        "tests/fixtures/scoped_param_returned.kp",
+        "return type mismatch",
+    );
+}
+
+#[test]
+fn a_scoped_value_cannot_reach_a_plain_function_parameter() {
+    assert_rejected_with(
+        "tests/fixtures/scoped_param_to_plain.kp",
+        "scoped function value",
+    );
+}
+
+#[test]
+fn a_scoped_parameter_rejects_a_stored_value() {
+    assert_rejected_with(
+        "tests/fixtures/scoped_param_not_literal.kp",
+        "never a stored value",
+    );
+}
+
+#[test]
+fn a_scoped_blocks_captured_borrow_cannot_alias_the_same_call() {
+    assert_rejected_with(
+        "tests/fixtures/scoped_escaping_borrow.kp",
+        "already borrowed exclusively",
+    );
+}
+
+#[test]
+fn a_scoped_blocks_captured_borrow_cannot_outlive_a_move_in_the_same_call() {
+    assert_rejected_with(
+        "tests/fixtures/scoped_borrow_escapes_move.kp",
+        "use of moved value",
+    );
+}

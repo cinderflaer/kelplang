@@ -1,0 +1,36 @@
+// A scoped block captures the enclosing frame's *borrowed* parameter: `s` is a
+// `&State` here (a plain `State` parameter is an implicit shared borrow), and
+// the block reads through it. An ordinary closure cannot do this — its
+// environment outlives the frame — which is the limit `plan/scoped-blocks.md`
+// lifts for the stack-environment case.
+datac State(val title: String, val a: i32)
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+}
+
+fun sum(xs: List<i32>, f: scoped fun(i32).R: i32).R: i32 {
+    var total = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += f(xs.get(i))
+        i += 1
+    }
+    return total
+}
+
+fun view(s: State, xs: List<i32>) {
+    each { n -> print(s.title) }
+    print(sum(xs) { n -> n + s.a })
+}
+
+fun main() {
+    val s = State(title = String.from_str("row"), a = 100)
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    view(s, xs)
+    // The borrows released with the call, so `s` is still usable here.
+    print(s.title)
+}

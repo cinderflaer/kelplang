@@ -408,6 +408,12 @@ struct Ctx {
     /// literal finds the *enclosing* literal's captures (indices into the
     /// enclosing environment).
     captures: Vec<(String, Ty)>,
+    /// True while checking a *scoped* literal (`plan/scoped-blocks.md`),
+    /// whose environment is stack and whose captures may be borrows: an
+    /// owned non-`Copy` enclosing binding is captured as a shared borrow
+    /// rather than moved, so `note_capture` records `&T` and the body reads
+    /// the capture through it.
+    borrowed_captures: bool,
     /// The `datac` whose body the literal was written in, when the literal is
     /// inside a receiver-form method (A-4 phase E). Its fields are names the
     /// literal can *see* but cannot capture: reading one out of a borrowed
@@ -644,6 +650,23 @@ impl Ctx {
     /// writes have to agree.
     fn note_capture(&mut self, name: &str) -> Option<Ty> {
         let ty = self.outer_bindings.get(name).cloned()?;
+        // A scoped literal's environment is stack and owns nothing, so an
+        // owned non-`Copy` capture is a *shared borrow* of the enclosing
+        // binding rather than a move of it (`plan/scoped-blocks.md`). The
+        // body then reads `&T`, which is what makes a field read and a method
+        // call through the capture type-check, and what makes a write through
+        // it a borrow error.
+        let ty = if self.borrowed_captures
+            && !ty.is_copy()
+            && !crate::types::is_borrowed_field_ty(&ty)
+        {
+            Ty::Ref {
+                mutable: false,
+                inner: Box::new(ty),
+            }
+        } else {
+            ty
+        };
         if !self.captures.iter().any(|(n, _)| n == name) {
             self.captures.push((name.to_string(), ty.clone()));
         }
@@ -1021,6 +1044,20 @@ impl TypeScope<'_> {
     }
 
     fn resolve_base(&self, ty: &ast::TypeExpr, indirect: bool) -> Result<Ty> {
+        // `scoped` is a *parameter* modifier (`plan/scoped-blocks.md` part 2)
+        // and is handled by `resolve_param_mode`, before this is reached. Any
+        // other position — a return type, a `val` annotation, a `datac`
+        // field, another function type's own parameter — would store the
+        // value, which is exactly what the modifier forbids.
+        if ty.scoped {
+            return Err(TypeError {
+                message: format!(
+                    "'scoped {}' is only legal on a top-level parameter of a declaration, not here: a scoped function value may only live for the call it was written in, so it cannot be stored, returned or nested in another type",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
         // A tuple type (`plan/syntax.md` 3): `(A, B)`. Every element is stored
         // by value, exactly as a `datac` field is, so the element rules are the
         // field rules: an element may not be a borrow, and `unit` cannot be
@@ -1550,6 +1587,9 @@ impl TypeScope<'_> {
     /// site: no new argument-matching rule, and `borrowck.rs` marks the
     /// caller's binding moved exactly as `val q = p` does.
     fn resolve_param_mode(&self, ty: &ast::TypeExpr, mode: ast::ParamMode) -> Result<Ty> {
+        if ty.scoped {
+            return self.resolve_scoped_param(ty, mode);
+        }
         if mode.moves() {
             return self.resolve_move_param(ty);
         }
@@ -1567,6 +1607,65 @@ impl TypeScope<'_> {
             });
         }
         Ok(implicit_borrow_wrap(base, mode.mutable()))
+    }
+
+    /// `scoped fun(T).R: U` — the non-escaping callback type
+    /// (`plan/scoped-blocks.md` part 2). The qualifier is only meaningful as
+    /// written: `mut` needs something to write through and `move` something
+    /// to own, and a scoped value is neither, so both are refused by name
+    /// rather than silently dropped. The parameters and return resolve as a
+    /// `fun` type's do, with `scoped` refused inside them (a scoped value
+    /// nested in another type could be stored as that type).
+    fn resolve_scoped_param(&self, ty: &ast::TypeExpr, mode: ast::ParamMode) -> Result<Ty> {
+        if mode.moves() {
+            return Err(TypeError {
+                message: format!(
+                    "'move' cannot be written on '{}' — a scoped function value is a fat pointer with a stack environment, so there is nothing to own; write it without 'move'",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        if mode.mutable() {
+            return Err(TypeError {
+                message: format!(
+                    "'mut' cannot be written on '{}' — a scoped function value is Copy and has nothing to write through; write it without 'mut'",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        if ty.amp {
+            return Err(TypeError {
+                message: format!(
+                    "'&' cannot be written on '{}' — a scoped function value is already a fat pointer passed by value; write it without '&'",
+                    ty.display()
+                ),
+                span: ty.span,
+            });
+        }
+        let params = ty.fn_params.as_ref().expect("the parser only sets 'scoped' before 'fun'");
+        let mut resolved = Vec::with_capacity(params.len());
+        for p in params {
+            if p.ty.scoped {
+                return Err(TypeError {
+                    message: format!(
+                        "'scoped' cannot be nested inside another function type ('{}'): a value of such a type could be stored, which a scoped function value may not be",
+                        p.ty.display()
+                    ),
+                    span: p.ty.span,
+                });
+            }
+            resolved.push(self.resolve_param_mode(&p.ty, p.mode)?);
+        }
+        let ret = match &ty.fn_ret {
+            Some(r) => self.resolve(r, false)?,
+            None => Ty::Unit,
+        };
+        Ok(Ty::ScopedFn {
+            params: resolved,
+            ret: Box::new(ret),
+        })
     }
 
     /// The type of a `move T` parameter, with the spellings that have nothing
@@ -1620,6 +1719,18 @@ impl TypeScope<'_> {
         }
         let mut resolved = Vec::with_capacity(params.len());
         for p in params {
+            // `scoped` is a parameter modifier of a *declaration*, never of a
+            // parameter inside a function type: such a value could be stored
+            // as the function type, which is the one thing it forbids.
+            if p.ty.scoped {
+                return Err(TypeError {
+                    message: format!(
+                        "'scoped {}' cannot be a parameter of a function type — a function type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
+                        p.ty.display()
+                    ),
+                    span: p.ty.span,
+                });
+            }
             resolved.push(self.resolve_param_mode(&p.ty, p.mode)?);
         }
         if let Some(r) = &ty.fn_ret {
@@ -1662,6 +1773,15 @@ impl TypeScope<'_> {
         }
         let mut resolved = Vec::with_capacity(params.len());
         for p in params {
+            if p.ty.scoped {
+                return Err(TypeError {
+                    message: format!(
+                        "'scoped {}' cannot be a parameter of a closure type — a closure type is a value that can be stored and passed on, and a scoped function value may only live for one call; write it as a top-level parameter of a declaration instead",
+                        p.ty.display()
+                    ),
+                    span: p.ty.span,
+                });
+            }
             resolved.push(self.resolve_param_mode(&p.ty, p.mode)?);
         }
         if let Some(r) = &ty.fn_ret {
@@ -1953,6 +2073,9 @@ fn indirect_callee(
         match ty {
             Ty::Fn { .. } => Some(ty.clone()),
             Ty::Closure { .. } => Some(ty.clone()),
+            // A scoped function value is `Copy`, so a parameter of one is the
+            // fat pointer itself (no borrow is added by the parameter rule).
+            Ty::ScopedFn { .. } => Some(ty.clone()),
             Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => Some(ty.clone()),
             _ => None,
         }
@@ -1976,7 +2099,11 @@ fn indirect_callee(
         // binding, and the call goes through the capture. The capture is
         // registered here, which is why this takes `&mut Ctx`.
         if let Some(ty) = ctx.note_capture(name) {
-            if matches!(ty, Ty::Fn { .. } | Ty::Closure { .. }) {
+            // A scoped literal captures an owned closure by shared borrow, so
+            // a callable capture may arrive as `&closure(...)` as well.
+            let callable = matches!(ty, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. })
+                || matches!(&ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. }));
+            if callable {
                 let index = ctx
                     .captures
                     .iter()
@@ -2042,6 +2169,9 @@ fn check_indirect_call_expr(
     let (params, ret) = match ty {
         Ty::Fn { params, ret } => (params, ret),
         Ty::Closure { params, ret } => (params, ret),
+        // A scoped function value is called exactly as a closure is: the
+        // fat pointer's code member with the environment first.
+        Ty::ScopedFn { params, ret } => (params, ret),
         other => unreachable!(
             "an indirect call is only reached with a function type, found '{}'",
             other.display()
@@ -6438,6 +6568,7 @@ fn base_ctx(
         pd_modes: std::rc::Rc::new(HashMap::new()),
         pd_probe: None,
         in_fn_literal: false,
+        borrowed_captures: false,
         outer_bindings: HashMap::new(),
         captures: Vec::new(),
         outer_receiver: None,
@@ -7637,15 +7768,81 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
 /// will emit it.
 fn check_fn_literal(
     params_ast: &[ast::Param],
+    infer_params: bool,
     return_type: &Option<ast::TypeExpr>,
     body: &ast::FunctionBody,
     span: Span,
     ctx: &mut Ctx,
+    expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
-    // The signature, resolved where the literal was written: a parameter type
-    // resolves against the enclosing module and the enclosing generic
-    // instance's type parameters, exactly as a nested declaration's would.
-    let (params, ret) = {
+    // A literal written at a `scoped fun(...)` parameter is the non-escaping
+    // kind: its captures may be borrows, its environment is stack, and the
+    // value's own type is `Ty::ScopedFn` (`plan/scoped-blocks.md` part 2).
+    let scoped = matches!(expected, Some(Ty::ScopedFn { .. }));
+    // The function signature the *expected* type names, looked through a
+    // borrow because an owned function-typed parameter arrives as
+    // `&closure(...)`. A block literal takes both its parameter types and its
+    // return from it; a written `fun` literal ignores it for the signature
+    // and only uses it to learn whether it is scoped.
+    let expected_sig = expected
+        .map(|t| match t {
+            Ty::Ref { inner, .. } => inner.as_ref(),
+            other => other,
+        })
+        .and_then(|t| match t {
+            Ty::Fn { params, ret }
+            | Ty::Closure { params, ret }
+            | Ty::ScopedFn { params, ret } => Some((params, ret)),
+            _ => None,
+        });
+    // The signature: resolved where the literal was written for a `fun(...)`
+    // literal (a parameter type resolves against the enclosing module and the
+    // enclosing generic instance's type parameters, exactly as a nested
+    // declaration's would), and taken from the expected function type for a
+    // block header, which writes names only.
+    let (params, ret) = if infer_params {
+        match expected_sig {
+            Some((want_params, want_ret)) => {
+                if want_params.len() != params_ast.len() {
+                    return Err(TypeError {
+                        message: format!(
+                            "this block declares {} parameter(s), but the parameter it is passed to expects a function of {}",
+                            params_ast.len(),
+                            want_params.len()
+                        ),
+                        span,
+                    });
+                }
+                let params: Vec<(String, Ty)> = params_ast
+                    .iter()
+                    .zip(want_params)
+                    .map(|(p, ty)| (p.name.clone(), ty.clone()))
+                    .collect();
+                (params, (**want_ret).clone())
+            }
+            // No function type to take types from. A headerless block keeps
+            // the prototype's zero-parameter, unit-returning literal, so the
+            // caller's own type comparison reports the mismatch; a block
+            // that declares parameters has nothing to resolve them with, so
+            // it is refused by name.
+            None => {
+                if !params_ast.is_empty() {
+                    return Err(TypeError {
+                        message: format!(
+                            "this block declares parameter(s) ({}), but there is no function type at this position to take their types from — a block header is typed by the closure point it is passed to; write the parameter types on a 'fun(...)' literal instead",
+                            params_ast
+                                .iter()
+                                .map(|p| p.name.clone())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        span,
+                    });
+                }
+                (Vec::new(), Ty::Unit)
+            }
+        }
+    } else {
         let scope = ctx.type_scope();
         let mut params = Vec::with_capacity(params_ast.len());
         for p in params_ast {
@@ -7712,6 +7909,7 @@ fn check_fn_literal(
     inner.receiver_struct = None;
     inner.init_state = None;
     inner.in_fn_literal = true;
+    inner.borrowed_captures = scoped;
     let mut tir_params = Vec::with_capacity(params.len());
     for (name, ty) in &params {
         inner.define(name, ty.clone(), false);
@@ -7757,7 +7955,23 @@ fn check_fn_literal(
     let mut captures = Vec::with_capacity(capture_list.len());
     let mut env_fields: Vec<(String, Ty)> = Vec::with_capacity(capture_list.len());
     for (i, (name, ty)) in capture_list.iter().enumerate() {
-        if crate::types::is_borrowed_field_ty(&ty) {
+        // A scoped function value lives only for the call it was written in,
+        // so an ordinary closure's environment — which can be returned — may
+        // not hold one (`plan/scoped-blocks.md` part 2).
+        if !scoped && matches!(ty, Ty::ScopedFn { .. }) {
+            return Err(TypeError {
+                message: format!(
+                    "a closure cannot capture the scoped function value '{name}': a scoped value may only live for the call it was written in, and a closure's environment can outlive that call; pass it on to another 'scoped fun(...)' parameter instead"
+                ),
+                span,
+            });
+        }
+        // A borrow cannot be captured by an ordinary closure (its environment
+        // outlives the frame), but a scoped literal's environment is stack and
+        // lives only for the call, so a borrowed *value* (a `&T` parameter, a
+        // `str` view) is simply copied in — it is a pointer, and the borrow it
+        // carries is already live in the enclosing frame.
+        if crate::types::is_borrowed_field_ty(&ty) && !scoped {
             return Err(TypeError {
                 message: format!(
                     "a 'fun' literal cannot capture '{name}': it is a borrow ('{}'), and the environment it would be stored in outlives the frame the borrow points into — capture an owned value, or pass it as a parameter of the literal",
@@ -7766,14 +7980,40 @@ fn check_fn_literal(
                 span,
             });
         }
+        // The environment field's own type is the capture's recorded type,
+        // which `note_capture` already turned into `&T` for a scoped literal's
+        // owned capture. Such a capture's *initializer* is the one thing left
+        // to decide: `&name` for the owned binding that `note_capture`
+        // borrowed, a plain read for a value that is already a pointer.
+        let outer_owned = ctx
+            .lookup(name)
+            .map(|i| i.ty.clone())
+            .filter(|t| !crate::types::is_borrowed_field_ty(t) && !t.is_copy());
+        let field_ty = ty.clone();
         let init = if ctx.lookup(name).is_some() {
-            // A binding of the frame the literal was written in: the value
-            // moves (or, for `Copy`, copies) into the environment, and the
-            // enclosing binding is marked moved by `borrowck.rs`.
-            tir::Expr {
-                kind: tir::ExprKind::Ident(name.clone()),
-                ty: ty.clone(),
-                span,
+            if scoped && outer_owned.is_some() {
+                let place = tir::Expr {
+                    kind: tir::ExprKind::Ident(name.clone()),
+                    ty: outer_owned.expect("checked above"),
+                    span,
+                };
+                tir::Expr {
+                    kind: tir::ExprKind::Ref {
+                        mutable: false,
+                        expr: Box::new(place),
+                    },
+                    ty: field_ty.clone(),
+                    span,
+                }
+            } else {
+                // Otherwise the value moves (or, for `Copy`, copies) into the
+                // environment, and the enclosing binding is marked moved by
+                // `borrowck.rs`.
+                tir::Expr {
+                    kind: tir::ExprKind::Ident(name.clone()),
+                    ty: ty.clone(),
+                    span,
+                }
             }
         } else if ctx.note_capture(name).is_some() {
             // The name belongs to the environment of the literal this one was
@@ -7802,15 +8042,23 @@ fn check_fn_literal(
         } else {
             unreachable!("a capture is always an enclosing local or an enclosing capture")
         };
-        env_fields.push((crate::types::capture_field(i), ty.clone()));
+        env_fields.push((crate::types::capture_field(i), field_ty));
         captures.push(init);
     }
     let fn_ty = if env_fields.is_empty() {
         // Nothing captured: this is a plain function value, exactly the value
         // phase C produced. Keeping the two apart is what keeps every
         // existing `fun(...)` placement (a `datac` field, a container
-        // element's absence, a `Copy` binding) meaning what it did.
+        // element's absence, a `Copy` binding) meaning what it did. A scoped
+        // literal with nothing captured is widened into its fat pointer at
+        // the call site, exactly as a plain function value used where a
+        // closure is expected is.
         Ty::Fn {
+            params: params.iter().map(|(_, t)| t.clone()).collect(),
+            ret: Box::new(ret.clone()),
+        }
+    } else if scoped {
+        Ty::ScopedFn {
             params: params.iter().map(|(_, t)| t.clone()).collect(),
             ret: Box::new(ret.clone()),
         }
@@ -7843,6 +8091,10 @@ fn check_fn_literal(
     });
     let kind = match captures.is_empty() {
         true => tir::ExprKind::FnRef(key),
+        // A scoped literal's environment is stack and its drop is `NULL`
+        // (`plan/scoped-blocks.md`), which is a node of its own so neither
+        // backend ever mallocs it or frees it.
+        false if scoped => tir::ExprKind::ScopedClosureLit { key, captures },
         false => tir::ExprKind::ClosureLit { key, captures },
     };
     Ok(tir::Expr {
@@ -7933,6 +8185,30 @@ fn coerce_str_to_string(value: tir::Expr, expected: Option<&Ty>) -> tir::Expr {
 }
 
 fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
+    // A `fun` literal is checked first, with its expected type in hand: a
+    // block literal (`{ x -> ... }`) takes its parameters' and its return's
+    // types from the expected function type, and a scoped literal needs the
+    // expectation to know that borrow captures are allowed
+    // (`plan/scoped-blocks.md`).
+    if let ast::Expr::FnLit {
+        params,
+        infer_params,
+        return_type,
+        body,
+        span,
+    } = expr
+    {
+        let value = check_fn_literal(params, *infer_params, return_type, body, *span, ctx, expected)?;
+        if let Some(want) = expected {
+            if matches!(want, Ty::Closure { .. }) {
+                return Ok(coerce_fn_to_closure(want.clone(), value));
+            }
+            if matches!(want, Ty::ScopedFn { .. }) {
+                return Ok(coerce_fn_to_scoped(want.clone(), value));
+            }
+        }
+        return Ok(value);
+    }
     // A plain function value where a closure is expected (A-4 phase E): the
     // one widening in this phase, handled here so that every site which knows
     // the expected type gets it — a call argument, a `val` with a written
@@ -7945,14 +8221,8 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
         return Ok(coerce_fn_to_closure(expected.clone(), value));
     }
     match expr {
-        // A `fun` literal (A-4): one synthesized top-level function per
-        // literal, and the expression's value is a reference to it.
-        ast::Expr::FnLit {
-            params,
-            return_type,
-            body,
-            span,
-        } => check_fn_literal(params, return_type, body, *span, ctx),
+        // Handled above, before the closure widening.
+        ast::Expr::FnLit { .. } => unreachable!("a 'fun' literal is checked before this match"),
         ast::Expr::IntLit(v, span) => {
             let (ty, defaulted) = int_lit_ty(expected);
             check_int_literal(*v as i128, &ty, defaulted, *span)?;
@@ -8965,7 +9235,9 @@ fn bind_type_params(
     // callback written as `f: closure(&T).R: U` infer `U` from a literal.
     if let Some(written_params) = &written.fn_params {
         let implied = match actual {
-            Ty::Fn { params, ret } | Ty::Closure { params, ret } => Some((params, ret)),
+            Ty::Fn { params, ret }
+            | Ty::Closure { params, ret }
+            | Ty::ScopedFn { params, ret } => Some((params, ret)),
             _ => None,
         };
         if let Some((actual_params, actual_ret)) = implied {
@@ -10294,6 +10566,35 @@ fn require_place_for_borrowed_arg(
 /// declared parameter, `1` for the position in a call through a function value
 /// (a function *type* has no parameter names).
 fn check_call_arg(pname: &str, pty: &Ty, arg_expr: &ast::Expr, ctx: &mut Ctx) -> Result<tir::Expr> {
+    // A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
+    // block written at this call site (`plan/scoped-blocks.md`), never a
+    // stored value. The one exception is forwarding a scoped value that is
+    // already in hand — a `scoped fun(...)` parameter of this frame, or a
+    // `val` bound to one — which is still inside the call.
+    if matches!(pty, Ty::ScopedFn { .. }) && !matches!(arg_expr, ast::Expr::FnLit { .. }) {
+        let checked = check_expr(arg_expr, ctx, None)?;
+        if !matches!(checked.ty, Ty::ScopedFn { .. }) {
+            return Err(TypeError {
+                message: format!(
+                    "argument {pname} has type '{}', expected '{}': a scoped parameter accepts only a function literal or a trailing block written at this call site, never a stored value",
+                    checked.ty.display(),
+                    pty.display()
+                ),
+                span: arg_expr.span(),
+            });
+        }
+        if checked.ty != *pty {
+            return Err(TypeError {
+                message: format!(
+                    "argument {pname} has type '{}', expected '{}'",
+                    checked.ty.display(),
+                    pty.display()
+                ),
+                span: arg_expr.span(),
+            });
+        }
+        return Ok(checked);
+    }
     let Ty::Ref { mutable, inner } = pty else {
         let checked = check_expr(arg_expr, ctx, Some(pty))?;
         refuse_open_arg(&checked.ty, arg_expr)?;
@@ -10414,6 +10715,32 @@ fn coerce_fn_to_closure(expected: Ty, value: tir::Expr) -> tir::Expr {
     }
 }
 
+/// The same widening for a scoped function value: a literal that captured
+/// nothing is a plain `fun` pointer, and the `scoped fun(...)` parameter takes
+/// the fat pointer, so it is wrapped with `env = NULL` (the shim path) exactly
+/// as a plain function value widened into a closure is. Every other scoped
+/// value already has the fat-pointer type, because `check_fn_literal` builds a
+/// `ScopedClosureLit` for one that captured.
+fn coerce_fn_to_scoped(expected: Ty, value: tir::Expr) -> tir::Expr {
+    let Ty::ScopedFn { params, ret } = &expected else {
+        return value;
+    };
+    let Ty::Fn { params: actual_params, ret: actual_ret } = &value.ty else {
+        return value;
+    };
+    if actual_params != params || actual_ret != ret {
+        return value;
+    }
+    let span = value.span;
+    tir::Expr {
+        kind: tir::ExprKind::FnToClosure {
+            func: Box::new(value),
+        },
+        ty: expected.clone(),
+        span,
+    }
+}
+
 /// The one sentence that explains why a plain function value and a closure are
 /// different types, when one is passed where the other is expected (A-4 phase
 /// E). The two are the same shape of value and are called identically, so a
@@ -10431,6 +10758,12 @@ fn closure_kind_mismatch(expected: &Ty, actual: &Ty) -> Option<String> {
         ),
         (Ty::Fn { .. }, Ty::Closure { .. }) => Some(
             "this is a closure: its body captured a binding from the enclosing scope, so it carries an environment a plain function value has no room for — write the expected type as 'closure(...)' (the same parameter list and '.R:'), or pass a declared function instead".to_string(),
+        ),
+        (Ty::Fn { .. } | Ty::Closure { .. }, Ty::ScopedFn { .. }) => Some(
+            "this is a scoped function value: it may only be passed to another 'scoped fun(...)' parameter, because it may not outlive the call it was written in — a plain function or closure parameter could store it or return it".to_string(),
+        ),
+        (Ty::ScopedFn { .. }, Ty::Fn { .. } | Ty::Closure { .. }) => Some(
+            "this parameter takes a plain function or closure value, and what was passed is a scoped one: a scoped literal may only be written at the call site of a 'scoped fun(...)' parameter".to_string(),
         ),
         _ => None,
     }
@@ -11862,7 +12195,7 @@ fn check_method_call(
         if let Some(fn_ty) = fn_field_ty(&probe.ty, method, ctx) {
             // A field holding a closure is callable the same way (A-4 phase
             // E): the call goes through the pair the field holds.
-            if matches!(fn_ty, Ty::Fn { .. } | Ty::Closure { .. }) {
+            if matches!(fn_ty, Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. }) {
                 let callee = tir::Expr {
                     kind: tir::ExprKind::FieldAccess {
                         base: Box::new(probe),

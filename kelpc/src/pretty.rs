@@ -199,6 +199,7 @@ fn print_expr(out: &mut String, expr: &Expr) {
     match expr {
         Expr::FnLit {
             params,
+            infer_params,
             return_type,
             body,
             ..
@@ -208,7 +209,14 @@ fn print_expr(out: &mut String, expr: &Expr) {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                write!(out, "{}: {}{}", p.name, p.mode.keyword(), p.ty.display()).unwrap();
+                // A block literal ("infer_params") declares names only: their
+                // types are not written anywhere, so there is nothing to
+                // print but the name.
+                if *infer_params {
+                    out.push_str(&p.name);
+                } else {
+                    write!(out, "{}: {}{}", p.name, p.mode.keyword(), p.ty.display()).unwrap();
+                }
             }
             out.push(')');
             if let Some(rt) = return_type {

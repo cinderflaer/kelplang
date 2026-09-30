@@ -1,0 +1,13 @@
+// A `scoped fun(...)` parameter accepts only a `fun` literal or a trailing
+// block written at the call site, never a stored value: a binding could be
+// read after the call it was written in.
+fun each(f: scoped fun(i32)) {
+    f(1)
+}
+
+fun main() {
+    val g = fun(x: i32) {
+        print(x)
+    }
+    each(g)
+}

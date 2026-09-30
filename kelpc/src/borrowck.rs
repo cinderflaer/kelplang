@@ -1718,6 +1718,12 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
+        // A scoped literal's environment is stack and owns nothing
+        // (`plan/scoped-blocks.md`): every capture is a `Copy` value or a
+        // shared borrow, so nothing moves and nothing drops. The captured
+        // borrows themselves are started by `take_call_arguments`, which is
+        // the only place a scoped literal can be written.
+        tir::ExprKind::ScopedClosureLit { .. } => Ok(()),
         // A plain function value widened into a closure (A-4 phase E): the
         // value being wrapped is read as a whole value — a `fun` is `Copy`, so
         // that moves nothing, and the wrapper itself is an owned temporary
@@ -2107,6 +2113,23 @@ fn take_call_arguments(
                 }
             }
         } else {
+            // A scoped literal captures by borrow (`plan/scoped-blocks.md`),
+            // and the borrow lives exactly as long as the call it was written
+            // in, so its captured `Ref`s join the same `taken` list a direct
+            // borrow argument does: a same-call aliasing `g(&mut s, { k ->
+            // use(s) })` is refused here, and every borrow releases together
+            // after the call.
+            if let tir::ExprKind::ScopedClosureLit { captures, .. } = &a.kind {
+                for c in captures {
+                    if let tir::ExprKind::Ref { mutable, expr: inner } = &c.kind {
+                        check_place(inner, ctx)?;
+                        if let Some(root) = tir_root_ident(inner) {
+                            ctx.start_borrow(root, *mutable, c.span)?;
+                            taken.push(root.to_string());
+                        }
+                    }
+                }
+            }
             check_value(a, ctx)?;
         }
     }

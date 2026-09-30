@@ -283,6 +283,17 @@ pub enum ExprKind {
         key: String,
         captures: Vec<Expr>,
     },
+    /// A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the same fat
+    /// pointer as `ClosureLit`, but the environment is written to the
+    /// *enclosing function's stack* and the value's `drop` member is `NULL`,
+    /// because a scoped literal's captures are copies or shared borrows and
+    /// the environment owns nothing. A node of its own so neither backend
+    /// mallocs the environment or plans a drop for it. `key` and `captures`
+    /// mean exactly what they do on `ClosureLit`.
+    ScopedClosureLit {
+        key: String,
+        captures: Vec<Expr>,
+    },
     /// A read of one field of the enclosing closure's environment (A-4 phase
     /// E), inside the generated function that literal became. It is a *place*
     /// (the environment owns the value), which is what lets an owned capture

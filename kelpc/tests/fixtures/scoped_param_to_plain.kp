@@ -1,0 +1,11 @@
+// Passing a scoped parameter on to a parameter that may store or return it:
+// the callee is not scoped, so nothing keeps the value inside this call.
+fun plain(f: fun(i32)) {
+    f(1)
+}
+
+fun run(f: scoped fun(i32)) {
+    plain(f)
+}
+
+fun main() {}
