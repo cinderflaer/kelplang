@@ -1,0 +1,6 @@
+// Kernel stage 2: `repr(align(N))` needs a power of two.
+repr(align(3)) datac Bad(val a: u8)
+
+fun main() {
+    print(size_of<Bad>())
+}

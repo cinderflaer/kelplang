@@ -1,0 +1,9 @@
+// Kernel stage 2: every variant of a field-less enum has its own discriminant.
+enum E {
+    A = 1
+    B = 1
+}
+
+fun main() {
+    print(E.A.to_int())
+}

@@ -2353,6 +2353,98 @@ fn a_pointer_to_an_owned_type_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// Kernel stage 2 (MK9-S1-M2, roadmap B-2): layout control. `repr(c)` (the
+// default, now guaranteed), `repr(packed)`, `repr(align(N))`, the compile-time
+// queries `size_of`/`align_of`/`offset_of`, and explicit discriminants on a
+// field-less enum with `to_int`/`from_int`. Every fixture here runs on the
+// default (LLVM) backend and on the C oracle, because the suite is run twice.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_packed_datac_has_the_c_layout_of_its_fields() {
+    assert_compiles_and_runs(
+        "tests/fixtures/repr_packed.kp",
+        "7\n1\n0\n1\n5\n7\n287454020\n21862\n",
+    );
+}
+
+#[test]
+fn a_repr_c_datac_keeps_the_default_padded_layout() {
+    assert_compiles_and_runs(
+        "tests/fixtures/repr_c_padded.kp",
+        "12\n4\n0\n4\n8\n10\n8\n4\n4\n4\n8\n8\n8\n",
+    );
+}
+
+#[test]
+fn a_layout_query_folds_in_an_array_length_and_a_constant() {
+    assert_compiles_and_runs(
+        "tests/fixtures/layout_query_in_a_constant.kp",
+        "8\n4\n4\n8\n",
+    );
+}
+
+#[test]
+fn a_repr_align_datac_raises_its_own_and_an_embedded_type_s_alignment() {
+    assert_compiles_and_runs("tests/fixtures/repr_align.kp", "16\n16\n0\n8\n32\n16\n16\n");
+}
+
+#[test]
+fn an_enum_round_trips_its_discriminants_through_to_int_and_from_int() {
+    assert_compiles_and_runs(
+        "tests/fixtures/enum_discriminant.kp",
+        "10\n2\n1\n10\n99\n1\n8\n8\n4\n-5\n-5\n4\n2\n",
+    );
+}
+
+#[test]
+fn a_repr_align_that_is_not_a_power_of_two_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/repr_align_not_power_of_two.kp",
+        "power of two",
+    );
+}
+
+#[test]
+fn a_duplicate_enum_discriminant_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/enum_discriminant_duplicate.kp",
+        "repeats the discriminant",
+    );
+}
+
+#[test]
+fn an_enum_with_a_payload_cannot_have_a_discriminant() {
+    assert_rejected_with(
+        "tests/fixtures/enum_discriminant_with_payload.kp",
+        "may have an explicit discriminant",
+    );
+}
+
+#[test]
+fn offset_of_a_field_the_datac_does_not_have_is_rejected() {
+    assert_rejected_with(
+        "tests/fixtures/offset_of_missing_field.kp",
+        "has no field 'y'",
+    );
+}
+
+/// The same stage, end to end against a real C compiler: a packed datac is
+/// handed to a project-local C helper through a user `extern fun`, and the C
+/// helper's `sizeof`/`_Alignof`/`offsetof` are printed beside Kelp's own
+/// `size_of`/`align_of`/`offset_of`. The last line is the helper reading three
+/// fields at C's own offsets, so a backend whose struct body is not byte for
+/// byte the C layout prints a different number.
+#[test]
+fn a_packed_datac_crosses_to_a_c_helper_and_the_two_layouts_agree() {
+    assert_project_runs(
+        "ffi_layout",
+        &project("ffi_layout"),
+        "7\n7\n1\n1\n1\n1\n5\n5\n24037596794668035\n",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // MK9-S1-M1 (roadmap B-1): a user module's own `extern fun`, bound to a
 // native symbol through coral.toml's `[extern."<module id>"]` section instead
 // of a compiler-supplied body from `externs.rs`. Gated exactly like a stdlib

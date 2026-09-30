@@ -1,0 +1,25 @@
+// Kernel stage 2 (MK9-S1-M2): the default layout *is* `repr(c)`, and this
+// fixture pins that with the padding the C rules insert. `size_of`,
+// `align_of` and `offset_of` also take a scalar and a `Ptr<U>`, which are the
+// other two shapes the queries are defined for.
+datac Padded(val a: u8, val b: u32, val c: u8, val d: u16)
+repr(c) datac Explicit(val a: u8, val b: u32)
+
+fun main() {
+    print(size_of<Padded>())
+    print(align_of<Padded>())
+    print(offset_of<Padded>("a"))
+    print(offset_of<Padded>("b"))
+    print(offset_of<Padded>("c"))
+    print(offset_of<Padded>("d"))
+
+    // The written `repr(c)` and the omitted clause agree field for field.
+    print(size_of<Explicit>())
+    print(align_of<Explicit>())
+    print(offset_of<Explicit>("b"))
+
+    print(size_of<i32>())
+    print(size_of<u64>())
+    print(size_of<usize>())
+    print(size_of<Ptr<u8>>())
+}
