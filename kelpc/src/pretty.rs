@@ -92,6 +92,12 @@ fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
         }
         write!(out, "{}: {}{}", p.name, p.mode.keyword(), p.ty.display()).unwrap();
     }
+    if f.variadic {
+        if !f.params.is_empty() {
+            out.push_str(", ");
+        }
+        out.push_str("...");
+    }
     out.push(')');
     if let Some(rt) = &f.return_type {
         write!(out, ".R: {}", rt.display()).unwrap();

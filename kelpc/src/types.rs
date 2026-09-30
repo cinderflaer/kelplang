@@ -1301,6 +1301,33 @@ pub fn tuple_struct_def(name: &str, elems: &[Ty]) -> StructDef {
     }
 }
 
+/// The C identifier of a *fixed-arity* wrapper around a variadic user
+/// `extern fun` (gap 7), from the extern's own key and the extra-argument
+/// types one call passes. Deterministic, so two call sites that pass the same
+/// types share one wrapper, and the typechecker and a backend cannot disagree
+/// about which one a call names. The `c_name`/`symbol_name` prefix a backend
+/// adds turns this into `kelp_va_<mangled fn>_<mangled types>`.
+pub fn variadic_wrapper_name(extern_key: &str, extra: &[Ty]) -> String {
+    let mut name = format!("va_{}", c_ident(extern_key));
+    for ty in extra {
+        name.push('_');
+        name.push_str(&c_ident(&ty.display()));
+    }
+    name
+}
+
+/// Whether `ty` may be passed as an *extra* argument of a variadic user
+/// `extern fun` (gap 7): an integer, `bool`, `f32`/`f64`, `str` or an opaque
+/// handle. A `char` is not here: it is a code point, not an integer the
+/// native side could read back from a `va_arg` of any fixed width. There is
+/// no implicit conversion either way, so a type outside this set is a compile
+/// error rather than a cast.
+pub fn is_variadic_abi_ty(ty: &Ty) -> bool {
+    ty.is_integer()
+        || matches!(ty, Ty::Bool | Ty::F32 | Ty::F64 | Ty::Str | Ty::Handle(_))
+        || matches!(ty, Ty::Ref { inner, .. } if matches!(**inner, Ty::Str))
+}
+
 /// Mangles an `.kp` top-level name into a valid C identifier.
 ///
 /// M5 prefixes every module's items with their module path
@@ -1487,6 +1514,42 @@ mod tests {
                 "{name:?} mangled to {:?}",
                 c_ident(name)
             );
+        }
+    }
+
+    /// Gap 7's allowed set: every integer, `bool`, `f32`/`f64`, `str` (owned
+    /// or borrowed) and an opaque handle. A `char`, an owned buffer, a
+    /// container and an aggregate are not, and neither is a borrow of any of
+    /// those, because a native `va_arg` cannot read one back.
+    #[test]
+    fn the_variadic_extra_argument_types_are_the_ones_a_va_arg_can_read() {
+        for ty in [
+            Ty::I32,
+            Ty::I64,
+            Ty::U32,
+            Ty::U64,
+            Ty::U8,
+            Ty::U16,
+            Ty::Usize,
+            Ty::Isize,
+            Ty::Bool,
+            Ty::F32,
+            Ty::F64,
+            Ty::Str,
+            Ty::Ref { mutable: false, inner: Box::new(Ty::Str) },
+            Ty::Handle("helper.Widget".to_string()),
+        ] {
+            assert!(is_variadic_abi_ty(&ty), "{}", ty.display());
+        }
+        for ty in [
+            Ty::Char,
+            Ty::Unit,
+            Ty::String,
+            Ty::Bytes,
+            Ty::List(Box::new(Ty::I32)),
+            Ty::Ref { mutable: false, inner: Box::new(Ty::I32) },
+        ] {
+            assert!(!is_variadic_abi_ty(&ty), "{}", ty.display());
         }
     }
 }

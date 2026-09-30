@@ -192,6 +192,13 @@ pub struct FunctionDecl {
     /// `extern fun ...` — the body is supplied by the compiler (M6.2), so
     /// `body` is always `FunctionBody::Extern` here.
     pub extern_: bool,
+    /// `extern fun g(a: T, ...)` — a *user* extern whose last parameter is the
+    /// `...` variadic marker (gap 7). A call passes the fixed arguments and
+    /// then any number of extra arguments, each of a scalar, `bool`, `str` or
+    /// opaque-handle type. Only a module with a `coral.toml`
+    /// `[extern."<module id>"]` section may write one; `infer.rs` is where
+    /// that is enforced.
+    pub variadic: bool,
     /// `Some` for `fun Type.name(...)` / `fun mut Type.name(...)` —
     /// receiver-form methods. The receiver is *not* one of `params`; it's
     /// a separate implicit first argument, matching how the surface syntax

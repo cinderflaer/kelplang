@@ -113,6 +113,11 @@ struct TypeEnv {
     /// for the whole program, exactly as `handles` is, so the implicit upcast
     /// answers the same in every scope.
     handle_parents: std::rc::Rc<HashMap<String, String>>,
+    /// The canonical keys of the program's variadic user `extern fun`s
+    /// (gap 7) -> the module each was declared in. One answer for the whole
+    /// program, so a call site knows both that a callee takes extra arguments
+    /// and which module the generated wrapper belongs to.
+    variadic_externs: std::rc::Rc<HashMap<String, String>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -162,6 +167,13 @@ struct FunctionState {
     literals: Vec<tir::Function>,
     /// How many literals have been synthesized, for the next one's name.
     literal_count: usize,
+    /// The fixed-arity C wrappers one variadic user `extern fun` call site
+    /// needs (gap 7), keyed by the wrapper's own name so two call sites that
+    /// pass the same list of extra types share one. Each entry carries the
+    /// extern's key so the pass that assembles the program can point the
+    /// wrapper at the same native symbol the extern binds.
+    variadic_wrappers: Vec<(String, tir::Function)>,
+    variadic_wrappers_seen: std::collections::HashSet<String>,
 }
 
 /// The program's function templates and their instances (A-2), shared between
@@ -304,6 +316,10 @@ struct Ctx {
     /// only where one exists, even when the handle type is imported from an
     /// extern module.
     has_extern_section: bool,
+    /// The program's variadic user `extern fun`s (gap 7): canonical key ->
+    /// declaring module. A call site reads it to know a callee takes extra
+    /// arguments and which wrapper to name.
+    variadic_externs: std::rc::Rc<HashMap<String, String>>,
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
     /// Symbol prefix of the module being checked (`""` for the entry
@@ -5345,6 +5361,14 @@ fn check_program_pass(
                 .collect(),
         ),
         handle_parents: std::rc::Rc::new(build_handle_parents(program, project)?),
+        variadic_externs: std::rc::Rc::new(
+            program
+                .functions
+                .iter()
+                .filter(|f| f.extern_ && f.variadic)
+                .map(|f| (f.name.clone(), f.module.clone()))
+                .collect(),
+        ),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -6053,6 +6077,14 @@ fn check_program_pass(
     // functions from here on — borrowck drops their owned parameters and
     // codegen emits them with a prototype like any other.
     functions.extend(fns.instances.borrow_mut().literals.drain(..));
+    // Gap 7: the fixed-arity wrappers the program's variadic user externs
+    // need. They are ordinary `extern fun`s to every later pass — an LLVM
+    // declaration and a C body that forwards to the native symbol — so they
+    // join the same list, and `extern_ffi_symbols` below points each one at
+    // the extern's own native symbol.
+    let variadic_wrappers: Vec<(String, tir::Function)> =
+        fns.instances.borrow_mut().variadic_wrappers.drain(..).collect();
+    functions.extend(variadic_wrappers.iter().map(|(_, f)| f.clone()));
     // The native symbol each user-declared `extern fun` binds to
     // (MK9-S1-M1, roadmap B-1), keyed by the function's full, prefixed name —
     // `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
@@ -6073,6 +6105,12 @@ fn check_program_pass(
         }
         if let Some(symbol) = project.extern_ffi_of(&f.module).and_then(|d| d.symbol_of(bare)) {
             extern_ffi_symbols.insert(f.name.clone(), symbol.to_string());
+        }
+    }
+    // Each wrapper calls the same native symbol as the extern it wraps.
+    for (extern_key, wrapper) in &variadic_wrappers {
+        if let Some(symbol) = extern_ffi_symbols.get(extern_key) {
+            extern_ffi_symbols.insert(wrapper.name.clone(), symbol.clone());
         }
     }
     Ok(tir::Program {
@@ -6382,6 +6420,7 @@ fn base_ctx(
         caps: project.caps_of(module),
         gated: project.gated().clone(),
         has_extern_section: project.extern_ffi_of(module).is_some(),
+        variadic_externs: env.variadic_externs.clone(),
         ret_ty: Ty::Unit,
         scopes: vec![HashMap::new()],
         prefix: project.prefix_of(module).to_string(),
@@ -6996,6 +7035,43 @@ fn check_function(
     env: &TypeEnv,
     fns: &FuncEnv,
 ) -> Result<tir::Function> {
+    // The `...` variadic marker (gap 7) is legal in exactly one place: a
+    // *user* `extern fun`, meaning one whose module a `coral.toml`
+    // `[extern."<module id>"]` section names. A compiler-shipped `extern
+    // fun` cannot carry one (its fixed C body has no way to read extras), a
+    // plain function cannot (there is no C call to pass them to), and a
+    // generic one cannot, because the wrapper a call site names is fixed by
+    // the instantiation and nothing here would specialize it.
+    if f.variadic {
+        if !f.extern_ {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' writes '...', which is only legal on a user 'extern fun': a plain function has no native call to pass the extra arguments to",
+                    display_name(f)
+                ),
+                span: f.span,
+            });
+        }
+        if project.extern_ffi_of(&f.module).is_none() {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' writes '...', but only a user 'extern fun' — one whose module has a coral.toml '[extern.\"{}\"]' section — may be variadic",
+                    display_name(f),
+                    f.module
+                ),
+                span: f.span,
+            });
+        }
+        if !decl_type_params(f).is_empty() {
+            return Err(TypeError {
+                message: format!(
+                    "'{}' is variadic and generic: a variadic user 'extern fun' cannot have type parameters",
+                    display_name(f)
+                ),
+                span: f.span,
+            });
+        }
+    }
     let receiver_struct = f
         .receiver
         .as_ref()
@@ -10096,7 +10172,25 @@ fn match_args(
     span: Span,
     ctx: &mut Ctx,
 ) -> Result<Vec<tir::Expr>> {
-    if args.len() != params.len() {
+    let (fixed, extra) = match_args_split(what, params, args, span, ctx, false)?;
+    debug_assert!(extra.is_empty(), "a non-variadic call cannot have extra arguments");
+    Ok(fixed)
+}
+
+/// `match_args`'s body. When `variadic` is set, trailing *positional*
+/// arguments after the declared parameters are returned unchecked instead of
+/// being refused: the caller of a variadic user `extern fun` (gap 7) checks
+/// and appends them itself. A named argument that matches no parameter is
+/// still refused, whatever `variadic` says.
+fn match_args_split<'a>(
+    what: &str,
+    params: &[(String, Ty)],
+    args: &'a [ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    variadic: bool,
+) -> Result<(Vec<tir::Expr>, Vec<&'a ast::CallArg>)> {
+    if args.len() != params.len() && !(variadic && args.len() > params.len()) {
         return Err(TypeError {
             message: format!("{what} expects {} argument(s), found {}", params.len(), args.len()),
             span,
@@ -10137,7 +10231,10 @@ fn match_args(
         });
     }
 
-    Ok(result)
+    // A variadic call's extra arguments have no name to be matched by, so
+    // anything left is by definition positional and in order.
+    let extra: Vec<&ast::CallArg> = positional.collect();
+    Ok((result, extra))
 }
 
 /// Checks one call-site argument against its matched parameter type. When
@@ -10919,24 +11016,110 @@ fn check_call(
             .edges
             .insert((ctx.fn_key.clone(), callee_key));
     }
-    let mut checked = match_args(
-        &format!("function '{}'", display_callee(&key)),
-        &sig.params,
-        args,
-        span,
-        ctx,
-    )?;
+    // A user `extern fun` whose last parameter is `...` (gap 7) accepts any
+    // number of extra arguments after the declared ones. Each extra argument
+    // is checked here: its type has to be one a native `va_arg` can read back
+    // (an integer, `bool`, `f32`/`f64`, `str` or an opaque handle), with no
+    // implicit conversion, and the call names one generated fixed-arity C
+    // wrapper that forwards the fixed and the extra arguments to the native
+    // symbol. The wrapper is created once per distinct list of extra types,
+    // so two call sites that pass the same types share one.
+    let variadic = ctx.variadic_externs.contains_key(&key);
+    let what = format!("function '{}'", display_callee(&key));
+    let (mut checked, extra_args) = if variadic {
+        match_args_split(&what, &sig.params, args, span, ctx, true)?
+    } else {
+        (match_args(&what, &sig.params, args, span, ctx)?, Vec::new())
+    };
     require_place_for_borrowed_arg(&sig.params, &sig.ret, &checked, span)?;
+    let wrapper = if variadic {
+        let mut extra_tys = Vec::with_capacity(extra_args.len());
+        let mut extra_exprs = Vec::with_capacity(extra_args.len());
+        for (i, a) in extra_args.iter().enumerate() {
+            let extra = check_expr(&a.value, ctx, None)?;
+            if !crate::types::is_variadic_abi_ty(&extra.ty) {
+                return Err(TypeError {
+                    message: format!(
+                        "extra argument {} of '{}' has type '{}', which a variadic 'extern fun' cannot pass: use an integer, 'bool', 'f32', 'f64', 'str' or an opaque handle",
+                        i + 1,
+                        display_callee(&key),
+                        extra.ty.display()
+                    ),
+                    span: a.value.span(),
+                });
+            }
+            extra_tys.push(extra.ty.clone());
+            extra_exprs.push(extra);
+        }
+        checked.extend(extra_exprs);
+        Some(register_variadic_wrapper(ctx, &key, &sig, &extra_tys, span))
+    } else {
+        None
+    };
     checked.extend(hidden_args(&key, span, ctx)?);
 
     Ok(tir::Expr {
-        kind: tir::ExprKind::Call {
-            callee: key,
-            args: checked,
+        kind: match wrapper {
+            Some(wrapper) => tir::ExprKind::VariadicCall {
+                callee: key,
+                wrapper,
+                args: checked,
+            },
+            None => tir::ExprKind::Call {
+                callee: key,
+                args: checked,
+            },
         },
         ty: sig.ret,
         span,
     })
+}
+
+/// Records the fixed-arity wrapper one variadic call site needs (gap 7), and
+/// returns its name. Idempotent: the wrapper is created the first time a call
+/// passes a given list of extra-argument types, and every later call with the
+/// same list names the same one. The wrapper's own parameters are the extern's
+/// declared parameters followed by one per extra argument, so
+/// `codegen_c.rs::write_user_extern` forwards all of them to the native symbol
+/// unchanged — the C compiler then applies the default argument promotions a
+/// real variadic call gets.
+fn register_variadic_wrapper(
+    ctx: &mut Ctx,
+    extern_key: &str,
+    sig: &FnSig,
+    extra_tys: &[Ty],
+    span: Span,
+) -> String {
+    let name = crate::types::variadic_wrapper_name(extern_key, extra_tys);
+    let module = ctx
+        .variadic_externs
+        .get(extern_key)
+        .cloned()
+        .unwrap_or_else(|| ctx.module.clone());
+    let mut state = ctx.fns.instances.borrow_mut();
+    if state.variadic_wrappers_seen.insert(name.clone()) {
+        let mut params = sig.params.clone();
+        for (i, ty) in extra_tys.iter().enumerate() {
+            params.push((format!("#va{i}"), ty.clone()));
+        }
+        state.variadic_wrappers.push((
+            extern_key.to_string(),
+            tir::Function {
+                name: name.clone(),
+                params,
+                ret: sig.ret.clone(),
+                body: tir::Block {
+                    stmts: Vec::new(),
+                    tail: None,
+                },
+                span,
+                module,
+                extern_: true,
+                env: None,
+            },
+        ));
+    }
+    name
 }
 
 /// The key of the generic *function* template `name` or `owned` names, if

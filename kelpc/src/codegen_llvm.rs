@@ -2468,6 +2468,15 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 Ok(Some(self.emit_binary(*op, lhs, rhs)?))
             }
             ExprKind::Call { callee, args } => self.emit_call(callee, args, &e.ty, e.span),
+            // A variadic user `extern fun` call (gap 7): the call goes to the
+            // generated fixed-arity wrapper, whose declaration and per-program
+            // C body are the same text the C backend compiles, while the
+            // capability check reads the extern's own key.
+            ExprKind::VariadicCall {
+                callee,
+                wrapper,
+                args,
+            } => self.emit_variadic_call(callee, wrapper, args, e.span),
             // `[a, b, c]`: the array struct is built field by field in order,
             // the same value the C compound literal is.
             ExprKind::ArrayLit(elems) => Ok(Some(self.emit_array_lit(elems, &e.ty)?)),
@@ -4753,41 +4762,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // the hidden pointer takes the destination as its explicit first
         // argument, which is the same call clang would emit.
         if let Some(rt) = self.g.runtime.get(&symbol_name(callee)).copied() {
-            let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
-            if rt.sret {
-                let ret_ty = rt
-                    .ret
-                    .ok_or_else(|| no_value("the return type of an sret helper"))?;
-                let slot = self.temp_alloca(ret_ty, "sret.out");
-                let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len() + 1);
-                values.push(slot);
-                for (index, a) in args.iter().enumerate() {
-                    match prepared.get(&index) {
-                        Some(v) => values.push(*v),
-                        None => values.push(self.rt_arg_value(a, &mut held)?),
-                    }
-                }
-                self.emit_cap_checks(plan.as_ref(), &prepared)?;
-                self.g.builder.build_call(rt.func, rt.ty, &values, "");
-                for (slot, ty) in held {
-                    self.g.call_drop(slot, &ty)?;
-                }
-                return Ok(Some(self.g.builder.build_load(ret_ty, slot, "sret.val")));
-            }
-            let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
-            for (index, a) in args.iter().enumerate() {
-                match prepared.get(&index) {
-                    Some(v) => values.push(*v),
-                    None => values.push(self.rt_arg_value(a, &mut held)?),
-                }
-            }
-            self.emit_cap_checks(plan.as_ref(), &prepared)?;
-            let name = if rt.yields { "call" } else { "" };
-            let v = self.g.builder.build_call(rt.func, rt.ty, &values, name);
-            for (slot, ty) in held {
-                self.g.call_drop(slot, &ty)?;
-            }
-            return Ok(if rt.yields { Some(v) } else { None });
+            return self.call_runtime_entry(rt, args, &prepared, plan.as_ref());
         }
 
         // A builtin container method: the monomorphized function this slice
@@ -4829,6 +4804,78 @@ impl<'g, 'a> FnGen<'g, 'a> {
             "S2B"
         };
         Err(refuse(&format!("the call to '{callee}'"), stage))
+    }
+
+    /// The call one variadic user `extern fun` call site makes (gap 7): the
+    /// generated fixed-arity wrapper, never the native symbol itself. The
+    /// wrapper is declared like any other extern (`declare_extern`), so its
+    /// `RtFn` is in the runtime table under the wrapper's own symbol, and the
+    /// capability plan still reads the extern's key — that is what carries the
+    /// domain and the argument positions the grant governs.
+    fn emit_variadic_call(
+        &mut self,
+        callee: &str,
+        wrapper: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Option<Value<'a>>, String> {
+        let plan = self.g.cap_plan(&self.module, callee, args, span);
+        let prepared = self.prepare_checked_args(args, plan.as_ref())?;
+        let rt = self
+            .g
+            .runtime
+            .get(&symbol_name(wrapper))
+            .copied()
+            .ok_or_else(|| no_value(&format!("the variadic wrapper '{wrapper}'")))?;
+        self.call_runtime_entry(rt, args, &prepared, plan.as_ref())
+    }
+
+    /// The runtime-table call itself: one extern body compiled into the
+    /// per-program C object, or one `kelp_rt.c` helper. Shared by a plain
+    /// extern call and a variadic wrapper call, so the two cannot disagree
+    /// about how a 24-byte return or a checked argument crosses.
+    fn call_runtime_entry(
+        &mut self,
+        rt: RtFn<'a>,
+        args: &[Expr],
+        prepared: &HashMap<usize, Value<'a>>,
+        plan: Option<&CapPlan>,
+    ) -> Result<Option<Value<'a>>, String> {
+        let mut held: Vec<(Value<'a>, Ty)> = Vec::new();
+        if rt.sret {
+            let ret_ty = rt
+                .ret
+                .ok_or_else(|| no_value("the return type of an sret helper"))?;
+            let slot = self.temp_alloca(ret_ty, "sret.out");
+            let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len() + 1);
+            values.push(slot);
+            for (index, a) in args.iter().enumerate() {
+                match prepared.get(&index) {
+                    Some(v) => values.push(*v),
+                    None => values.push(self.rt_arg_value(a, &mut held)?),
+                }
+            }
+            self.emit_cap_checks(plan, prepared)?;
+            self.g.builder.build_call(rt.func, rt.ty, &values, "");
+            for (slot, ty) in held {
+                self.g.call_drop(slot, &ty)?;
+            }
+            return Ok(Some(self.g.builder.build_load(ret_ty, slot, "sret.val")));
+        }
+        let mut values: Vec<Value<'a>> = Vec::with_capacity(args.len());
+        for (index, a) in args.iter().enumerate() {
+            match prepared.get(&index) {
+                Some(v) => values.push(*v),
+                None => values.push(self.rt_arg_value(a, &mut held)?),
+            }
+        }
+        self.emit_cap_checks(plan, prepared)?;
+        let name = if rt.yields { "call" } else { "" };
+        let v = self.g.builder.build_call(rt.func, rt.ty, &values, name);
+        for (slot, ty) in held {
+            self.g.call_drop(slot, &ty)?;
+        }
+        Ok(if rt.yields { Some(v) } else { None })
     }
 
     fn emit_conversion(
@@ -5338,6 +5385,13 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                         out.spawns.insert(entry.ty.clone());
                     }
                 }
+                for a in args {
+                    note_expr(a, out);
+                }
+            }
+            // A variadic user `extern fun` call (gap 7) has no `thread.spawn`
+            // shape, so it only walks its arguments.
+            ExprKind::VariadicCall { args, .. } => {
                 for a in args {
                     note_expr(a, out);
                 }
