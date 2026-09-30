@@ -32,9 +32,9 @@ fix (or why it was left).
 
 The handshake-leak gate is `tls_handshakes_free_everything_under_address_sanitizer`, which rebuilds the C
 backend's generated `.c` with `cc -fsanitize=address` (there is no valgrind on this machine; `memory_gate.rs`
-is the same idea for a machine that has it) and runs one success and every failure path against the servers.
-It is the one place a fixture is built through `KELPC_ORACLE=c` explicitly, because AddressSanitizer only
-sees the backend that emits C.
+is the same idea for a machine that has it) and runs one success and every failure path against the servers,
+including the pooled path drained with `Pool.close_all`. It is the one place a fixture is built through
+`KELPC_ORACLE=c` explicitly, because AddressSanitizer only sees the backend that emits C.
 
 ## Findings
 
@@ -91,3 +91,11 @@ against keep-alive, and the 100 KiB header block all behave as documented, and t
 1 MiB `write_all` against a dribbling peer and the 64 concurrent clients all preserve every byte with
 no descriptor delta. `try_handshake` failing halfway (untrusted, timeout, reset, bad record) frees the
 `SSL_CTX` and the `SSL*` on every branch, which is what the AddressSanitizer gate now pins.
+
+### Left as a documented contract, not fixed
+
+- **A pooled connection nobody drains.** Nothing frees a `Conn`'s `SSL*` on drop, so a program that exits
+  with idle pooled connections leaves them to process teardown; `Pool.close_all` is the call that ends them,
+  and `tls_pool_close.kp` is the leak gate's proof that draining works. This is the same "nothing closes on
+  drop" rule `std/tls`, `std/http` and `std/ws` all state, and the typed handle plus `Drop` (release goal 3)
+  is what would make it unrepresentable.
