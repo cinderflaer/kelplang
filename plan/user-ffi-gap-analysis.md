@@ -80,3 +80,12 @@ Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `
   per-program C object (`write_extern(..., closure_by_ref = true)`) reads through it, and the native call is cast to the
   expansion's types. Fixtures `ffi_callback` (run on both backends), `ffi_callback_move_param`, `ffi_callback_two`.
 - **In progress:** nothing on this list.
+
+## What stage n (MK9-S2) changed for this list
+
+Nothing here is closed by it, and one gap is now reachable from a different angle. `Ptr<T>` (MK9-S2,
+`plan/unsafe-and-pointers.md`) is a raw pointer type a binding could use in place of the opaque handle
+of gap 1, but it is not a substitute: a `Ptr<T>` is usable only in a module `coral.toml` lists under
+`[unsafe] modules`, has no type safety between two handle kinds, and `Ptr<Widget>` needs an
+`extern type Widget` to exist first. Gap 1 stays the right answer for a GObject pointer, and gap 4's
+callback machinery is unchanged.

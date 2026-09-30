@@ -42,6 +42,11 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
+**Status: stage 1 (MK9-S2 unsafe and pointers) is done.** `unsafe` blocks and `unsafe fun`, the raw
+pointer type `Ptr<T>`, `offset`/`byte_offset`/`cast`/`addr`/`is_null`, `read`/`write` and their
+volatile twins, `Ptr.alloc`/`free`, and the `coral.toml` `[unsafe] modules` audit list all work on
+both backends (`plan/unsafe-and-pointers.md`).
+
 ## Two rules that keep the language honest
 
 1. **`unsafe` is auditable, not ambient.** A module may contain `unsafe` only if `coral.toml` lists it
