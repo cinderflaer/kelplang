@@ -29,6 +29,7 @@ fun main() {
             when e {
                 Dial(reason) -> print("dial refused ${reason}")
                 Handshake(status, _) -> print("dial unexpected handshake ${status}")
+                Tls(reason) -> print("dial unexpected tls ${reason}")
             }
         }
         else -> print("dial connected, so something was listening after all")
@@ -40,6 +41,7 @@ fun main() {
             when e {
                 Dial(reason) -> print("handshake unexpected dial ${reason}")
                 Handshake(status, reason) -> print("handshake ${status} ${reason}")
+                Tls(reason) -> print("handshake unexpected tls ${reason}")
             }
         }
         else -> print("handshake connected, so the server answered 101")

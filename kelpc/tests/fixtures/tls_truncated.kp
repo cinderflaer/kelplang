@@ -1,0 +1,37 @@
+// Release goal 1: a peer that completes the handshake and then closes the
+// socket with no `close_notify`. The read that reaches end of stream must be
+// `TlsError.PeerClosedUncleanly`, never a clean empty read: that difference is
+// what stops a truncated response from looking like a complete one.
+impl "std/net"
+impl "std/tls"
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+fun main() {
+    val args = process.args()
+    val parsed = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_truncated: argv[1] is not a port number",
+    )
+    var s = net.connect("127.0.0.1", parsed.to_u16())
+    s.set_timeout(4000)
+    val t = tls.handshake(s, "127.0.0.1")
+    val r = tls.try_read(t, 64)
+    when r {
+        Ok(_) -> print("ok")
+        Err(e) -> print(err_name(e))
+    }
+    net.close(s)
+}

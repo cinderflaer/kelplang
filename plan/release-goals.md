@@ -48,3 +48,15 @@ than kernel 0, so the release is done when, on top of stages 1-5, the following 
 
 Not required for the release: a particular kernel design, a filesystem, a network stack, a userland. The
 language and toolchain have to make writing them possible.
+
+## Follow-ups
+
+- **A typed `extern type` handle for `std/tls`.** `TlsStream` still carries the `SSL*` as a `usize`. An
+  `extern type` is legal only in a module with its own `coral.toml` `[extern."<module id>"]` section
+  (`resolve.rs`), and a compiler-shipped std module has no manifest, so `std/tls` cannot declare one. The
+  smallest change is one condition in `resolve.rs`: admit a module that is compiler-shipped (`stdlib.rs`'s
+  source table already tells a std module from a project one), since the extern bodies such a module may
+  declare already come from `externs.rs` and the handle's C (`void*`) and LLVM (`ptr`) lowering is
+  module-independent. The second half is in the callers: `std/http` and `std/ws` use `0` in a
+  `tls_handle: usize` to mean "not TLS", and an opaque handle has no integer value to compare against, so
+  both would carry `Option<tls.TlsHandle>` instead and test that.

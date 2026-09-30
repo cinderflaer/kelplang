@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -5593,7 +5593,30 @@ mod tempfile_dir {
     }
 }
 
+/// Which names the throwaway certificate carries. `LoopbackIp` is the server
+/// every trusted fixture dials as `127.0.0.1`; `DnsLocalhost` is the same key
+/// with only a DNS SAN, so dialing `127.0.0.1` is a name mismatch.
+enum CertSubject {
+    LoopbackIp,
+    DnsLocalhost,
+}
+
 fn generate_test_cert() -> TestCert {
+    generate_test_cert_with(CertSubject::LoopbackIp, true)
+}
+
+/// As `generate_test_cert`, with `notBefore`/`notAfter` in the past: the
+/// certificate a machine's clock has run past, which verification must refuse.
+fn generate_expired_test_cert() -> TestCert {
+    generate_test_cert_with(CertSubject::LoopbackIp, false)
+}
+
+/// As `generate_test_cert`, with `localhost` as its only SAN.
+fn generate_mismatched_test_cert() -> TestCert {
+    generate_test_cert_with(CertSubject::DnsLocalhost, true)
+}
+
+fn generate_test_cert_with(subject: CertSubject, valid: bool) -> TestCert {
     use openssl::asn1::Asn1Time;
     use openssl::bn::{BigNum, MsbOption};
     use openssl::hash::MessageDigest;
@@ -5614,6 +5637,22 @@ fn generate_test_cert() -> TestCert {
         .rand(64, MsbOption::MAYBE_ZERO, false)
         .expect("failed to randomize the serial number");
 
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_secs() as i64;
+    let (not_before, not_after) = if valid {
+        (
+            Asn1Time::days_from_now(0).expect("not-before time"),
+            Asn1Time::days_from_now(1).expect("not-after time"),
+        )
+    } else {
+        (
+            Asn1Time::from_unix(now - 3 * 86400).expect("past not-before time"),
+            Asn1Time::from_unix(now - 2 * 86400).expect("past not-after time"),
+        )
+    };
+
     let mut builder = X509::builder().expect("failed to start a certificate builder");
     builder.set_version(2).expect("failed to set the certificate version");
     builder
@@ -5623,21 +5662,25 @@ fn generate_test_cert() -> TestCert {
     builder.set_issuer_name(&name).expect("failed to set the issuer name (self-signed)");
     builder.set_pubkey(&key).expect("failed to set the public key");
     builder
-        .set_not_before(&Asn1Time::days_from_now(0).expect("not-before time"))
+        .set_not_before(&not_before)
         .expect("failed to set not-before");
     builder
-        .set_not_after(&Asn1Time::days_from_now(1).expect("not-after time"))
+        .set_not_after(&not_after)
         .expect("failed to set not-after");
     builder
         .append_extension(BasicConstraints::new().critical().build().expect("basic constraints"))
         .expect("failed to append basic constraints");
+    let mut san = SubjectAlternativeName::new();
+    match subject {
+        CertSubject::LoopbackIp => {
+            san.ip("127.0.0.1");
+        }
+        CertSubject::DnsLocalhost => {
+            san.dns("localhost");
+        }
+    }
     builder
-        .append_extension(
-            SubjectAlternativeName::new()
-                .ip("127.0.0.1")
-                .build(&builder.x509v3_context(None, None))
-                .expect("subject alternative name"),
-        )
+        .append_extension(san.build(&builder.x509v3_context(None, None)).expect("subject alternative name"))
         .expect("failed to append the subject alternative name");
     builder
         .sign(&key, MessageDigest::sha256())
@@ -5666,20 +5709,22 @@ struct CannedTlsServer {
 
 impl CannedTlsServer {
     fn start(connections: Vec<Vec<Vec<u8>>>) -> CannedTlsServer {
-        use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+        CannedTlsServer::start_with_cert(generate_test_cert(), connections)
+    }
 
-        let cert = generate_test_cert();
-        let mut acceptor_builder =
-            SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())
-                .expect("failed to start an SslAcceptor");
-        acceptor_builder
-            .set_private_key_file(&cert.key_path, SslFiletype::PEM)
-            .expect("failed to load the test private key");
-        acceptor_builder
-            .set_certificate_file(&cert.cert_path, SslFiletype::PEM)
-            .expect("failed to load the test certificate");
-        let acceptor = acceptor_builder.build();
+    /// The same server over a caller-supplied certificate (the expired and
+    /// host-mismatch fixtures mint their own) and, for the TLS-1.1 case, a
+    /// caller-supplied protocol window.
+    fn start_with_cert(cert: TestCert, connections: Vec<Vec<Vec<u8>>>) -> CannedTlsServer {
+        CannedTlsServer::start_with(cert, connections, None)
+    }
 
+    fn start_with(
+        cert: TestCert,
+        connections: Vec<Vec<Vec<u8>>>,
+        version: Option<openssl::ssl::SslVersion>,
+    ) -> CannedTlsServer {
+        let acceptor = tls_acceptor(&cert, version);
         let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
         let port = listener.local_addr().expect("local address").port();
         let accepted = Arc::new(AtomicUsize::new(0));
@@ -5697,6 +5742,29 @@ impl CannedTlsServer {
             let _ = handle.join();
         }
     }
+}
+
+/// An `SslAcceptor` for `cert`, optionally pinned to one protocol version.
+/// `Some(TLS1_1)` needs security level 0, because OpenSSL 3 refuses to
+/// negotiate TLS 1.1 at the default level; the point of that server is the
+/// protocol alert, not a working connection.
+fn tls_acceptor(cert: &TestCert, version: Option<openssl::ssl::SslVersion>) -> openssl::ssl::SslAcceptor {
+    use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+
+    let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())
+        .expect("failed to start an SslAcceptor");
+    builder
+        .set_private_key_file(&cert.key_path, SslFiletype::PEM)
+        .expect("failed to load the test private key");
+    builder
+        .set_certificate_file(&cert.cert_path, SslFiletype::PEM)
+        .expect("failed to load the test certificate");
+    if let Some(v) = version {
+        builder.set_min_proto_version(Some(v)).expect("failed to set the minimum version");
+        builder.set_max_proto_version(Some(v)).expect("failed to set the maximum version");
+        builder.set_security_level(0);
+    }
+    builder.build()
 }
 
 fn serve_tls(
@@ -5829,6 +5897,279 @@ fn assert_project_served_tls_denied(
         stderr.contains(needle),
         "expected the denial for '{name}' to mention '{needle}', got:\n{stderr}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Release goal 1 (stable TLS): the local failure matrix. Every fixture dials
+// `127.0.0.1` only. The certificate is minted per server, so no machine store
+// is touched: a trusted case points `SSL_CERT_FILE` at the server's own PEM,
+// an untrusted one removes that variable, and the private-CA case passes the
+// PEM path as an argument and leaves the store alone.
+// ---------------------------------------------------------------------------
+
+/// What a one-connection TLS server does after `accept`.
+enum TlsBehavior {
+    /// Never answer the ClientHello, so the client's handshake times out.
+    NeverHandshake,
+    /// Complete the handshake, then close the raw socket with no
+    /// `close_notify`: the truncation case.
+    Truncate,
+    /// Complete the handshake, then stay silent until the test says stop.
+    Silent,
+}
+
+/// A one-connection server for the failure cases `CannedTlsServer`'s
+/// request/response loop cannot express: a peer that never speaks, a peer that
+/// speaks and then truncates, and a peer that speaks and then goes quiet.
+struct RudeTlsServer {
+    port: u16,
+    accepted: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+    cert: TestCert,
+}
+
+impl RudeTlsServer {
+    fn start(behavior: TlsBehavior) -> RudeTlsServer {
+        let cert = generate_test_cert();
+        let acceptor = tls_acceptor(&cert, None);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let counter = accepted.clone();
+        let stop_flag = stop.clone();
+        let handle = thread::spawn(move || {
+            let _ = listener.set_nonblocking(true);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break Some(stream),
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() > deadline {
+                            break None;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(_) => break None,
+                }
+            };
+            let Some(stream) = stream else { return };
+            let _ = stream.set_nonblocking(false);
+            counter.fetch_add(1, Ordering::SeqCst);
+            match behavior {
+                TlsBehavior::NeverHandshake => {
+                    while !stop_flag.load(Ordering::SeqCst) && Instant::now() < deadline {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                TlsBehavior::Truncate => {
+                    if let Ok(tls) = acceptor.accept(stream) {
+                        // Dropping the SslStream frees the SSL object but runs
+                        // no SSL_shutdown, so the TcpStream closes with no
+                        // close_notify: the truncation a client must detect.
+                        drop(tls);
+                    }
+                }
+                TlsBehavior::Silent => {
+                    if let Ok(tls) = acceptor.accept(stream) {
+                        while !stop_flag.load(Ordering::SeqCst) && Instant::now() < deadline {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        drop(tls);
+                    }
+                }
+            }
+        });
+        RudeTlsServer { port, accepted, stop, handle: Some(handle), cert }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Builds `tests/fixtures/<name>.kp` and runs it with `args`, `SSL_CERT_FILE`
+/// and `SSL_CERT_DIR` removed unless `env` sets them. The removal is what makes
+/// the untrusted fixtures deterministic: a developer's own `SSL_CERT_FILE` must
+/// not stand in for the test CA.
+fn run_tls_fixture(name: &str, args: &[String], env: &[(&str, &str)]) -> std::process::Output {
+    let bin = out_path(name);
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(&format!("tests/fixtures/{name}.kp")))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected '{name}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut cmd = Command::new(&bin);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.env_remove("SSL_CERT_FILE");
+    cmd.env_remove("SSL_CERT_DIR");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("failed to run the compiled binary")
+}
+
+/// `run_tls_fixture` for a fixture that must exit zero, returning its stdout.
+fn tls_fixture_stdout(name: &str, args: &[String], env: &[(&str, &str)]) -> String {
+    let out = run_tls_fixture(name, args, env);
+    assert!(
+        out.status.success(),
+        "expected '{name}' to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn every_try_tls_operation_succeeds_against_a_local_server() {
+    // The Ok path of `try_handshake`, `try_write`, `try_write_all`,
+    // `try_read`, `try_read_into` and `try_shutdown`. `SSL_CERT_FILE` is the
+    // server's own certificate, which is exactly the default store `std/tls`
+    // reads on NixOS and every other machine.
+    let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO, BODY_200_HELLO]));
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_try_ok",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "true\ntrue\ntrue\ntrue\ntrue\n");
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn a_certificate_outside_the_store_is_untrusted() {
+    // No `SSL_CERT_FILE`: the minted certificate is the only chain, and the
+    // machine's store does not vouch for it.
+    let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO]));
+    let stdout = tls_fixture_stdout(
+        "tls_error",
+        &[server.port.to_string(), "127.0.0.1".to_string()],
+        &[],
+    );
+    server.finish();
+    assert_eq!(stdout, "untrusted\n");
+}
+
+#[test]
+fn an_expired_certificate_is_reported_as_expired() {
+    let mut server = CannedTlsServer::start_with_cert(
+        generate_expired_test_cert(),
+        one_connection(&[BODY_200_HELLO]),
+    );
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_error",
+        &[server.port.to_string(), "127.0.0.1".to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "expired\n");
+}
+
+#[test]
+fn a_certificate_that_names_another_host_is_refused() {
+    // The certificate's only SAN is `localhost`; the client dials and verifies
+    // against `127.0.0.1`, so the name check refuses it even though the store
+    // trusts the certificate.
+    let mut server = CannedTlsServer::start_with_cert(
+        generate_mismatched_test_cert(),
+        one_connection(&[BODY_200_HELLO]),
+    );
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_error",
+        &[server.port.to_string(), "127.0.0.1".to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "host_mismatch\n");
+}
+
+#[test]
+fn a_tls_1_1_only_server_is_reported_as_protocol_too_old() {
+    use openssl::ssl::SslVersion;
+
+    let mut server = CannedTlsServer::start_with(
+        generate_test_cert(),
+        one_connection(&[BODY_200_HELLO]),
+        Some(SslVersion::TLS1_1),
+    );
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_error",
+        &[server.port.to_string(), "127.0.0.1".to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "protocol_too_old\n");
+}
+
+#[test]
+fn a_stream_that_ends_without_a_close_notify_is_a_truncation() {
+    let mut server = RudeTlsServer::start(TlsBehavior::Truncate);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_truncated",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "peer_closed_uncleanly\n");
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn a_silent_peer_times_out_the_handshake() {
+    let mut server = RudeTlsServer::start(TlsBehavior::NeverHandshake);
+    let stdout = tls_fixture_stdout("tls_timeout_handshake", &[server.port.to_string()], &[]);
+    server.finish();
+    assert_eq!(stdout, "timeout\n");
+}
+
+#[test]
+fn a_silent_peer_times_out_a_read() {
+    // The handshake completes, and then the server says nothing: the read
+    // deadline `set_timeout` applies is what turns that into `Timeout`.
+    let mut server = RudeTlsServer::start(TlsBehavior::Silent);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_timeout_read",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "timeout\n");
+}
+
+#[test]
+fn a_private_ca_file_is_added_to_the_roots() {
+    // No `SSL_CERT_FILE`: the certificate is trusted only because
+    // `handshake_with`'s `TlsOptions.ca_file` names it.
+    let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO]));
+    let ca = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout("tls_ca_file", &[server.port.to_string(), ca], &[]);
+    server.finish();
+    assert_eq!(stdout, "ok\n");
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
 }
 
 /// Compiles a project, runs it with the canned server's port as `argv[1]`,
@@ -6131,7 +6472,7 @@ fn test_base64(data: &[u8]) -> String {
 }
 
 /// The client's handshake head, up to (not including) the blank line.
-fn read_ws_head(stream: &mut TcpStream) -> String {
+fn read_ws_head<S: Read>(stream: &mut S) -> String {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
@@ -6169,7 +6510,7 @@ fn ws_frame(opcode: u8, fin: bool, payload: &[u8]) -> Vec<u8> {
 /// One frame from the client: its opcode and its unmasked payload. The mask
 /// bit is required (RFC 6455 5.1), which is the half of the framing a client
 /// can get wrong without the server noticing anything else.
-fn read_ws_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+fn read_ws_frame<S: Read>(stream: &mut S) -> (u8, Vec<u8>) {
     let mut header = [0u8; 2];
     stream
         .read_exact(&mut header)
@@ -6199,10 +6540,6 @@ fn read_ws_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
     (opcode, payload)
 }
 
-/// The scripted exchange, on one accepted connection. Every expectation here
-/// is an assertion rather than a return value: a client that gets a step
-/// wrong fails the test in this thread, and `WsServer::finish` turns that into
-/// the test's own failure.
 fn serve_ws(listener: TcpListener, accepted: Arc<AtomicUsize>) {
     let _ = listener.set_nonblocking(true);
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -6218,13 +6555,51 @@ fn serve_ws(listener: TcpListener, accepted: Arc<AtomicUsize>) {
             Err(_) => break None,
         }
     };
-    let Some(mut stream) = stream.take() else { return };
+    let Some(stream) = stream.take() else { return };
     // Non-blocking was only for the accept loop; an accepted socket inherits
     // the listener's mode on Linux. The timeouts are what stop a client that
     // stalls mid-handshake from hanging the suite.
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(20)));
+    serve_ws_conn(stream, &accepted);
+}
+
+/// The `wss` gate: the same exchange, after the TLS handshake, so the client's
+/// own `std/tls` path is what carries the WebSocket framing.
+fn serve_ws_tls(
+    listener: TcpListener,
+    acceptor: openssl::ssl::SslAcceptor,
+    accepted: Arc<AtomicUsize>,
+) {
+    let _ = listener.set_nonblocking(true);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break Some(stream),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() > deadline {
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(_) => break None,
+        }
+    };
+    let Some(stream) = stream.take() else { return };
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(20)));
+    if let Ok(tls) = acceptor.accept(stream) {
+        serve_ws_conn(tls, &accepted);
+    }
+}
+
+/// The scripted exchange, on one accepted connection. Every expectation here
+/// is an assertion rather than a return value: a client that gets a step
+/// wrong fails the test in this thread, and `WsServer::finish` turns that into
+/// the test's own failure.
+fn serve_ws_conn<S: Read + Write>(mut stream: S, accepted: &AtomicUsize) {
     accepted.fetch_add(1, Ordering::SeqCst);
 
     let head = read_ws_head(&mut stream);
@@ -6317,6 +6692,39 @@ impl WsServer {
     }
 }
 
+/// The `wss` twin of `WsServer`: a TLS acceptor in front of the same scripted
+/// exchange, so the client's own `std/tls` handshake and encrypted framing are
+/// what the test exercises.
+struct WsTlsServer {
+    port: u16,
+    accepted: Arc<AtomicUsize>,
+    handle: Option<thread::JoinHandle<()>>,
+    cert: TestCert,
+}
+
+impl WsTlsServer {
+    fn start() -> WsTlsServer {
+        let cert = generate_test_cert();
+        let acceptor = tls_acceptor(&cert, None);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        let handle = thread::spawn(move || serve_ws_tls(listener, acceptor, counter));
+        WsTlsServer { port, accepted, handle: Some(handle), cert }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.join().expect("the wss gate thread failed; see its message");
+        }
+    }
+}
+
 #[test]
 fn a_websocket_client_speaks_the_handshake_and_every_frame_kind() {
     let mut server = WsServer::start();
@@ -6352,6 +6760,54 @@ fn a_websocket_client_speaks_the_handshake_and_every_frame_kind() {
         String::from_utf8_lossy(&run.stdout),
         expected,
         "unexpected stdout for 'ws_gate'"
+    );
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn a_wss_client_runs_the_websocket_framing_over_tls() {
+    // The replacement for the old `wss_is_refused_by_name_because_v1_has_no_tls`
+    // test: `wss` now parses, the handshake verifies the server's certificate
+    // through the default store (`SSL_CERT_FILE`, which is what the harness
+    // points at the server's own PEM), and the same scripted exchange the plain
+    // `ws` gate runs happens over the TLS stream.
+    let mut server = WsTlsServer::start();
+    let bin = out_path("ws_wss");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/ws_wss.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the ws_wss fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .env_remove("SSL_CERT_FILE")
+        .env_remove("SSL_CERT_DIR")
+        .env("SSL_CERT_FILE", ssl)
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the wss client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let expected = format!(
+        "url 127.0.0.1 {} wss\nconnected\ntext hello\nfrag fragment\n\
+         ping ping?\nclose 1000 done\nclosed\n",
+        server.port
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for 'ws_wss'"
     );
     assert_eq!(server.accepted(), 1, "the client opened more than one connection");
 }
@@ -6405,13 +6861,6 @@ fn a_ws_try_connect_tells_a_refused_dial_from_a_non_101_answer() {
         "unexpected stdout for 'ws_try_connect'"
     );
     assert_eq!(server.accepted(), 1, "the client opened more than one connection");
-}
-
-#[test]
-fn wss_is_refused_by_name_because_v1_has_no_tls() {
-    // The scheme is the whole refusal: the URL is otherwise well formed and
-    // the grant covers the host it names.
-    assert_fixture_panics("ws_wss_refused", "v1 has no TLS");
 }
 
 #[test]

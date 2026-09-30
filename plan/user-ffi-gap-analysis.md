@@ -76,6 +76,8 @@ Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `
   `Widget.null()`/`w.is_null()`/`Window.cast(w)` are the null handle, the null test and the unchecked downcast,
   legal only in an extern module. Fixtures `ffi_handle_upcast`, `ffi_handle_null`, `ffi_handle_bad_downcast`,
   `ffi_handle_null_outside`, on both backends.
+  A compiler-shipped std module still cannot declare one (it has no manifest), so `std/tls` carries its `SSL*` as a
+  `usize`; the one-condition change that would lift that is in `plan/release-goals.md` under Follow-ups.
 - **Gap 3, prototype generation: not planned.** The `header` key makes the real declaration visible, so generating
   a prototype from the Kelp signature would only risk a second, conflicting declaration.
 - **Gap 6 (domain):** **closed.** Option 2 of `plan/ffi-display-domain.md` is implemented: `ui` is the

@@ -1,0 +1,46 @@
+// Release goal 1: a private CA file, added to the verification roots with no
+// insecure switch. The harness removes `SSL_CERT_FILE` and passes the server's
+// certificate path as `argv[2]`, so the only reason this handshake succeeds is
+// `handshake_with`'s `TlsOptions.ca_file`; verification, the hostname check and
+// the TLS 1.2 floor all stay on.
+impl "std/net"
+impl "std/tls"
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+fun main() {
+    val args = process.args()
+    val parsed = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_ca_file: argv[1] is not a port number",
+    )
+    val ca = args.get(2)
+    var s = net.connect("127.0.0.1", parsed.to_u16())
+    s.set_timeout(5000)
+    val opts = tls.TlsOptions(
+        ca_file = String.from_str(ca.as_str()),
+        ca_dir = String.empty(),
+        timeout_ms = 0,
+    )
+    val hs = tls.try_handshake_with(s, "127.0.0.1", opts)
+    when hs {
+        Ok(t) -> {
+            print("ok")
+            val sd = tls.try_shutdown(t)
+        }
+        Err(e) -> print(err_name(e))
+    }
+    net.close(s)
+}

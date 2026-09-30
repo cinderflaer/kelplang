@@ -123,7 +123,79 @@ pub(crate) const C_HEADERS: &str = "\
 // already links `-lssl -lcrypto` unconditionally for the same reason.\n\
 #include <openssl/err.h>\n\
 #include <openssl/ssl.h>\n\
-#include <openssl/x509v3.h>\n\n";
+#include <openssl/x509v3.h>\n\
+// The two classifiers `std/tls`'s fallible externs share. They are here\n\
+// rather than in each body because every failing SSL call needs the same\n\
+// translation, and a copy per call site is how the answers drift apart. The\n\
+// integer each one returns is the code `std/tls`'s `ERR_*` constants name.\n\
+static inline int kelp_tls_classify_verify(long v, char* text, size_t text_len) {\n\
+    snprintf(text, text_len, \"certificate verification failed: %s\", X509_verify_cert_error_string(v));\n\
+    switch (v) {\n\
+#ifdef X509_V_ERR_HOSTNAME_MISMATCH\n\
+        case X509_V_ERR_HOSTNAME_MISMATCH:\n\
+#endif\n\
+#ifdef X509_V_ERR_IP_ADDRESS_MISMATCH\n\
+        case X509_V_ERR_IP_ADDRESS_MISMATCH:\n\
+#endif\n\
+            return 3;\n\
+        case X509_V_ERR_CERT_HAS_EXPIRED:\n\
+        case X509_V_ERR_CERT_NOT_YET_VALID:\n\
+        case X509_V_ERR_CRL_HAS_EXPIRED:\n\
+        case X509_V_ERR_CRL_NOT_YET_VALID:\n\
+            return 2;\n\
+        default:\n\
+            return 1;\n\
+    }\n\
+}\n\
+static inline int kelp_tls_classify_error(SSL* ssl, int err, char* text, size_t text_len) {\n\
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {\n\
+        // A blocking socket whose SO_RCVTIMEO/SO_SNDTIMEO fired: OpenSSL\n\
+        // reports the EAGAIN as a retry, but there is nothing to retry.\n\
+        snprintf(text, text_len, \"the operation timed out\");\n\
+        return 7;\n\
+    }\n\
+    if (err == SSL_ERROR_ZERO_RETURN) {\n\
+        snprintf(text, text_len, \"the peer closed the connection\");\n\
+        return 6;\n\
+    }\n\
+    if (err == SSL_ERROR_SYSCALL) {\n\
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n\
+            snprintf(text, text_len, \"the operation timed out\");\n\
+            return 7;\n\
+        }\n\
+        if (errno == 0) {\n\
+            snprintf(text, text_len, \"the peer closed the connection without a close_notify\");\n\
+            return 6;\n\
+        }\n\
+        snprintf(text, text_len, \"socket error: %s\", strerror(errno));\n\
+        return 8;\n\
+    }\n\
+    unsigned long e = ERR_get_error();\n\
+    if (err == SSL_ERROR_SSL) {\n\
+        int reason = (int)ERR_GET_REASON(e);\n\
+        if (reason == SSL_R_TLSV1_ALERT_PROTOCOL_VERSION\n\
+            || reason == SSL_R_UNSUPPORTED_PROTOCOL\n\
+            || reason == SSL_R_NO_PROTOCOLS_AVAILABLE\n\
+            || reason == SSL_R_WRONG_VERSION_NUMBER) {\n\
+            ERR_error_string_n(e, text, text_len);\n\
+            return 4;\n\
+        }\n\
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING\n\
+        if (reason == SSL_R_UNEXPECTED_EOF_WHILE_READING) {\n\
+            snprintf(text, text_len, \"the peer closed the connection without a close_notify\");\n\
+            return 6;\n\
+        }\n\
+#endif\n\
+        ERR_error_string_n(e, text, text_len);\n\
+        return 8;\n\
+    }\n\
+    if (e != 0) {\n\
+        ERR_error_string_n(e, text, text_len);\n\
+        return 8;\n\
+    }\n\
+    snprintf(text, text_len, \"TLS operation failed (SSL_get_error returned %d)\", err);\n\
+    return 8;\n\
+}\n\n";
 
 /// The `#include <...>` lines a project's `[extern.*] header` keys ask for,
 /// written after `C_HEADERS`. Empty when no section names a header, so a
