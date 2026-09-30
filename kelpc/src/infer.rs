@@ -5847,14 +5847,15 @@ fn check_program_pass(
     // functions from here on — borrowck drops their owned parameters and
     // codegen emits them with a prototype like any other.
     functions.extend(fns.instances.borrow_mut().literals.drain(..));
-    // The bare native symbol each user-declared `extern fun` binds to
+    // The native symbol each user-declared `extern fun` binds to
     // (MK9-S1-M1, roadmap B-1), keyed by the function's full, prefixed name —
     // `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
     // function's module has no compiler-supplied body, and writes a
-    // direct-call trampoline to the symbol. Only a function whose extern was
-    // actually *accepted* on this manifest path reaches this map: the
-    // `FunctionBody::Extern` arm above already refused every other extern
-    // this pass would otherwise have to re-validate here.
+    // direct-call trampoline to the symbol. The map holds the renamed C
+    // symbol when the manifest entry is `"kelp_name=c_symbol"`. Only a
+    // function whose extern was actually *accepted* on this manifest path
+    // reaches this map: the `FunctionBody::Extern` arm above already refused
+    // every other extern this pass would otherwise have to re-validate here.
     let mut extern_ffi_symbols = HashMap::new();
     for f in &functions {
         if !f.extern_ {
@@ -5864,8 +5865,8 @@ fn check_program_pass(
         if crate::externs::has_body(&f.module, bare) {
             continue;
         }
-        if project.extern_ffi_of(&f.module).is_some() {
-            extern_ffi_symbols.insert(f.name.clone(), bare.to_string());
+        if let Some(symbol) = project.extern_ffi_of(&f.module).and_then(|d| d.symbol_of(bare)) {
+            extern_ffi_symbols.insert(f.name.clone(), symbol.to_string());
         }
     }
     Ok(tir::Program {
@@ -6792,7 +6793,7 @@ fn check_function(
             let bare = f.name.strip_prefix(prefix).unwrap_or(&f.name);
             if !crate::externs::has_body(&f.module, bare) {
                 match project.extern_ffi_of(&f.module) {
-                    Some(decl) if decl.symbols.iter().any(|s| s == bare) => {}
+                    Some(decl) if decl.symbol_of(bare).is_some() => {}
                     Some(_) => {
                         return Err(TypeError {
                             message: format!(
