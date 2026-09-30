@@ -260,7 +260,17 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// Raised from 275 by gap 1, the opaque native handle: `ffi_handle` (a
 /// `malloc`/`free` pair over an `extern type` handle) builds with both
 /// backends, and its two rejection projects stay outside the corpus.
-const LLVM_BUILT_BASELINE: usize = 276;
+/// Raised from 276 by kernel stage 3 (MK9-S8 data formats, `plan/data-formats.md`):
+/// six fixtures land with the slice and both backends build all six:
+/// `endian_scalars` (every integer byte-order conversion), `bytes_endian` (a
+/// 10-byte header read in both orders and rebuilt with `write_*`),
+/// `bytes_read_oob`, `bytes_write_oob` and `bytes_read_wrapped_oob` (a panic,
+/// not a build failure, so each is a target here), and the
+/// `unsafe_unaligned` project (`Ptr.read_unaligned`/`write_unaligned` at odd
+/// offsets). The corpus had grown to 305 buildable targets since the value
+/// above was last written down (a growth the one-sided ratchet reports rather
+/// than fails), so this records the live 311 rather than 282.
+const LLVM_BUILT_BASELINE: usize = 311;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

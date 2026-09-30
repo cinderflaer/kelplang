@@ -1,0 +1,61 @@
+// Kernel stage 3 (MK9-S8, roadmap B-10): the integer byte-order conversions.
+// `swap_bytes` reverses a value's bytes; `to_be`/`to_le` convert a value to a
+// byte order, and the static `u32.from_be(x)`/`u32.from_le(x)` convert one
+// back. Every expected line below is hand-computed from the literals.
+//
+// `fmt.hex` rather than decimal: the whole point of the fixture is the byte
+// order, and `0x78563412` reads as the reversal of `0x12345678` in a way that
+// `2018915346` does not. `to_u64` is the widening conversion the formatter
+// wants, and every value fed to it is non-negative.
+impl "std/fmt"
+
+fun main() {
+    // One width at a time, unsigned and signed.
+    val w16: u16 = 0x1234
+    print(fmt.hex(w16.swap_bytes().to_u64())) // 3412
+    val w32: u32 = 0x12345678
+    print(fmt.hex(w32.swap_bytes().to_u64())) // 78563412
+    val w64: u64 = 0x0102030405060708
+    print(fmt.hex(w64.swap_bytes())) // 807060504030201
+
+    val s32: i32 = 0x12345678
+    print(fmt.hex(s32.swap_bytes().to_u64())) // 78563412
+    val s64: i64 = 0x0102030405060708
+    print(fmt.hex(s64.swap_bytes().to_u64())) // 807060504030201
+
+    // A negative value swaps to another negative one: -2 is 0xFFFFFFFE, so the
+    // reversal is 0xFEFFFFFF, which is -16777217.
+    val neg: i32 = 0 - 2
+    print(neg.swap_bytes()) // -16777217
+
+    // The two directions and the two static forms. The target is little-endian,
+    // so `to_le` is the identity and `to_be` swaps.
+    print(fmt.hex(w32.to_be().to_u64())) // 78563412
+    print(fmt.hex(w32.to_le().to_u64())) // 12345678
+    print(fmt.hex(u32.from_be(w32).to_u64())) // 78563412
+    print(fmt.hex(u32.from_le(w32).to_u64())) // 12345678
+
+    print(fmt.hex(w16.to_be().to_u64())) // 3412
+    print(fmt.hex(w16.to_le().to_u64())) // 1234
+    print(fmt.hex(u16.from_be(w16).to_u64())) // 3412
+    print(fmt.hex(u16.from_le(w16).to_u64())) // 1234
+
+    print(fmt.hex(w64.to_be())) // 807060504030201
+    print(fmt.hex(w64.to_le())) // 102030405060708
+    print(fmt.hex(u64.from_be(w64))) // 807060504030201
+    print(fmt.hex(u64.from_le(w64))) // 102030405060708
+
+    // `usize`/`isize` are the target's own word, so their swap follows its
+    // width rather than a fixed one; on this 64-bit target that is the same
+    // reversal a `u64` gets.
+    val uw: usize = 0x0102030405060708
+    print(fmt.hex(uw.swap_bytes().to_u64())) // 807060504030201
+    print(fmt.hex(uw.to_le().to_u64())) // 102030405060708
+    print(fmt.hex(usize.from_be(uw).to_u64())) // 807060504030201
+    val sw: isize = 0x0102030405060708
+    print(fmt.hex(sw.to_be().to_u64())) // 807060504030201
+
+    // Swapping twice is the identity, which is the one property that would
+    // catch a bswap that dropped or duplicated a byte.
+    print(fmt.hex(uw.swap_bytes().swap_bytes().to_u64())) // 102030405060708
+}

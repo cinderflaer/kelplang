@@ -1,0 +1,7 @@
+// Kernel stage 3 (MK9-S8, roadmap B-10): a write past the end of a `Bytes`
+// panics before storing anything, so a two-byte buffer cannot be extended by a
+// two-byte field at offset 1.
+fun main() {
+    var h = Bytes.from_str("ab")
+    h.write_u16_be(1, 0)
+}
