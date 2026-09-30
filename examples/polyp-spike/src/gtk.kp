@@ -5,17 +5,23 @@
 //
 // GTK spells every `GtkWidget*` as one C type. Kelp's opaque handles are
 // nominal, so the shapes the program actually needs are named after what they
-// are: `Application`, `Window` and `Widget`. The C ABI is the same pointer
-// either way, and `gtk_application_window_new` is declared as returning the
-// `Window` it really is (GTK4 has no `gtk_window_new`: the application window
-// is how a top-level window is made now).
-pub extern type Application
-pub extern type Window
-pub extern type Widget
+// are, and their parent chains say how they relate: a `Window` is a `Widget`,
+// and both are `Object`s, so either converts up to `Object` for
+// `g_object_unref`. The C ABI is the same pointer either way, and
+// `gtk_application_window_new` is declared as returning the `Window` it really
+// is (GTK4 has no `gtk_window_new`: the application window is how a top-level
+// window is made now).
+pub extern type Object
+pub extern type Widget: Object
+pub extern type Window: Widget
+pub extern type Application: Object
 
 // `gchar**` for `g_application_run`'s argv. No Kelp type can spell it, so it is
 // an opaque handle too, filled in by `g_strsplit`.
 pub extern type Argv
+
+// `GMainContext*`, whose null value is the default context.
+pub extern type MainContext
 
 pub extern fun gtk_application_new(application_id: str, flags: i32).R: Application
 pub extern fun gtk_application_window_new(app: Application).R: Window
@@ -24,13 +30,18 @@ pub extern fun gtk_window_present(win: Window)
 pub extern fun gtk_button_new_with_label(label: str).R: Widget
 pub extern fun gtk_window_set_child(win: Window, child: Widget)
 
-// `g_object_unref` takes a `gpointer`. A handle type is not generic, so the one
-// C symbol is bound twice: the plain name for a widget, and a manifest rename
-// for the application. Both trampolines call `g_object_unref`.
-pub extern fun g_object_unref(obj: Widget)
-pub extern fun application_unref(app: Application)
+// `g_object_unref` takes a `gpointer`, so the one binding takes the base
+// `Object` and every widget and application converts up to it.
+pub extern fun g_object_unref(obj: Object)
 
 pub extern fun g_application_run(app: Application, argc: i32, argv: Argv).R: i32
+
+// `g_main_context_iteration(context, may_block)`: a null `GMainContext*` means
+// the default context, and `null_main_context` is how the module spells that
+// null handle (a handle operation is legal only here, where the
+// `[extern."gtk"]` section is).
+pub extern fun g_main_context_iteration(context: MainContext, may_block: i32).R: i32
+pub fun null_main_context().R: MainContext = MainContext.null()
 
 // `g_application_run` wants a real `char**`. `g_strsplit` is the GLib call that
 // hands one back, NULL-terminated, from a string the program already has.
