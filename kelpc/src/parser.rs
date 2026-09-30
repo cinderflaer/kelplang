@@ -223,7 +223,11 @@ impl Parser {
             {
                 extern_types.push(self.parse_extern_type_decl(is_pub)?);
             } else {
-                functions.push(self.parse_function(is_pub)?);
+                // `unsafe fun ...` (MK9-S2 stage 1). `unsafe` is a contextual
+                // word everywhere, so it is an identifier token and the lookahead
+                // is what makes it a declaration marker here.
+                let unsafe_ = self.check_unsafe_fun();
+                functions.push(self.parse_function(is_pub, unsafe_)?);
             }
             self.skip_newlines();
         }
@@ -238,6 +242,19 @@ impl Parser {
         })
     }
 
+    /// Whether the `unsafe` word at the cursor begins an `unsafe fun`
+    /// declaration and should be consumed (MK9-S2 stage 1). `unsafe` is not a
+    /// keyword, so it is only a marker when the token after it is `fun`.
+    fn check_unsafe_fun(&mut self) -> bool {
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe")
+            && matches!(self.peek2_kind(), TokenKind::Fun)
+        {
+            self.advance();
+            return true;
+        }
+        false
+    }
+
     /// The item a leading `pub` must be followed by (A-13). `pub` on anything
     /// else is refused where it is written, naming what it applies to, rather
     /// than read as a no-op or as something else. A `pd` gets its own message
@@ -250,6 +267,13 @@ impl Parser {
             | TokenKind::Datac
             | TokenKind::Enum
             | TokenKind::Const => Ok(()),
+            // `pub unsafe fun ...`: `unsafe` is a contextual word, so it is only
+            // a marker when `fun` follows it.
+            TokenKind::Ident(n)
+                if n == "unsafe" && matches!(self.peek2_kind(), TokenKind::Fun) =>
+            {
+                Ok(())
+            }
             TokenKind::Pd => Err(ParseError {
                 message: "a 'pd' cannot be 'pub': a passdown is module-scoped by design, so another module cannot reach it; a 'fun' that reads it can be exported instead".to_string(),
                 span: pub_span.to(self.peek().span),
@@ -611,7 +635,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, is_pub: bool) -> PResult<FunctionDecl> {
+    fn parse_function(&mut self, is_pub: bool, unsafe_: bool) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -746,6 +770,7 @@ impl Parser {
             is_pub,
             type_params,
             extern_,
+            unsafe_,
             receiver,
             params,
             return_type,
@@ -1740,6 +1765,15 @@ impl Parser {
             }
             TokenKind::Ident(ref name) => {
                 let name = name.clone();
+                // `unsafe { ... }` (MK9-S2 stage 1): the contextual word is a
+                // block introducer exactly when the next token is `{`, so
+                // `unsafe` stays usable as an ordinary name everywhere else.
+                if name == "unsafe" && matches!(self.peek2_kind(), TokenKind::LBrace) {
+                    self.advance();
+                    let block = self.parse_block()?;
+                    let span = tok.span.to(block.span);
+                    return Ok(Expr::Unsafe { block, span });
+                }
                 self.advance();
                 let type_args = self.try_explicit_type_args()?.unwrap_or_default();
                 if self.check(&TokenKind::LParen) {
@@ -3368,5 +3402,43 @@ mod tests {
     #[test]
     fn parentheses_and_blocks_reenable_a_trailing_block_inside_a_head() {
         parse("fun main() {\n    if f(run { work() }) { work() }\n    if cond { run { work() } }\n}");
+    }
+
+    #[test]
+    fn an_unsafe_block_is_an_expression_and_a_statement() {
+        // Stage n (MK9-S2): `unsafe` is a contextual word, a block introducer
+        // exactly when a `{` follows it.
+        let p = parse("fun main() {\n    unsafe {\n        p.write(1)\n    }\n}");
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => match &b.stmts[0] {
+                Stmt::Expr { expr: Expr::Unsafe { block, .. }, .. } => {
+                    assert_eq!(block.stmts.len(), 1);
+                }
+                other => panic!("expected an unsafe block statement, got {other:?}"),
+            },
+            other => panic!("expected a block body, got {other:?}"),
+        }
+        // As an expression, with a value.
+        parse("fun main() {\n    val v = unsafe { p.read() }\n}");
+    }
+
+    #[test]
+    fn unsafe_is_still_an_ordinary_name_away_from_a_brace() {
+        let p = parse("fun main() {\n    val unsafe = 1\n    print(unsafe)\n}");
+        match &p.functions[0].body {
+            FunctionBody::Block(b) => match &b.stmts[0] {
+                Stmt::Let { name, .. } => assert_eq!(name, "unsafe"),
+                other => panic!("expected a let, got {other:?}"),
+            },
+            other => panic!("expected a block body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unsafe_fun_declaration_sets_its_flag() {
+        let p = parse("unsafe fun poke(p: Ptr<i32>, v: i32) {\n    p.write(v)\n}\nfun main() {}");
+        assert!(p.functions[0].unsafe_);
+        assert!(!p.functions[1].unsafe_);
+        assert_eq!(p.functions[0].params[0].ty.display(), "Ptr<i32>");
     }
 }

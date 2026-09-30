@@ -183,6 +183,20 @@ pub enum Ty {
     /// `void*` behind a per-type typedef, it crosses an `extern fun` boundary
     /// unchanged on both backends.
     Handle(String),
+    /// A **raw pointer** (MK9-S2 stage 1, roadmap B-3): `Ptr<T>`, a machine
+    /// address with no borrow tracking and no ownership.
+    ///
+    /// It is `Copy`, owns nothing, needs no drop and may be null, which is
+    /// what a device register, a page table or memory the runtime did not
+    /// allocate has to be reachable through. The representation is one
+    /// machine pointer on both backends, so a `Ptr<T>` crosses an `extern
+    /// fun` boundary unchanged.
+    ///
+    /// The element set is closed (`is_ptr_element`): a scalar, `bool`,
+    /// `char`, a `datac`/`enum`, a fixed-size array, a handle or another
+    /// `Ptr`. The owned and borrowed types are refused because none of them
+    /// is one machine-level value.
+    Ptr(Box<Ty>),
 }
 
 /// The element type one of the `Atomic*` names stands for, or `None` when
@@ -363,6 +377,10 @@ impl Ty {
             Ty::Atomic(elem) => atomic_c_type(elem),
             Ty::Thread(_) => thread_c_type(),
             Ty::Handle(name) => handle_c_type(name),
+            // A pointer is the C pointer to whatever type it addresses. An
+            // array's generated struct name and a datac's `struct_` name are
+            // both ordinary C types, so the element spells itself.
+            Ty::Ptr(elem) => format!("{}*", elem.c_type()),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -417,6 +435,7 @@ impl Ty {
             Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
             Ty::Thread(elem) => format!("Thread<{}>", elem.display()),
             Ty::Handle(name) => name.clone(),
+            Ty::Ptr(elem) => format!("Ptr<{}>", elem.display()),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
@@ -804,6 +823,9 @@ pub fn is_list_element(ty: &Ty) -> bool {
         // does.
         Ty::Handle(_) => true,
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Map(..) => false,
+        // A raw pointer is pointer-sized and `Copy`, so it lives inline in a
+        // list's buffer and needs no element drop, exactly as a handle does.
+        Ty::Ptr(_) => true,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
 }
@@ -845,6 +867,9 @@ pub fn is_map_element(ty: &Ty) -> bool {
 fn is_plain_element(ty: &Ty) -> bool {
     match ty {
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
+        // A pointer is one machine word, so it is a plain element on the same
+        // footing a handle is.
+        Ty::Ptr(_) => true,
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::List(_) | Ty::Box(_) | Ty::Map(..) => {
             false
         }
@@ -914,7 +939,10 @@ pub fn is_box_element(ty: &Ty) -> bool {
         | Ty::Array(..)
         // A handle is a pointer, so a box of one is a pointer to a pointer:
         // `Box<Widget>` is the owned spelling of "an optional handle".
-        | Ty::Handle(_) => {
+        | Ty::Handle(_)
+        // A raw pointer is the same shape: `Box<Ptr<i32>>` is a pointer to a
+        // pointer, held on the heap.
+        | Ty::Ptr(_) => {
             true
         }
         // A `Box` holds a pointer, so its own element slot may hold another
@@ -950,6 +978,9 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // through the same mangling every other generated symbol uses rather
         // than straight into a C identifier.
         Ty::Handle(name) => format!("Handle__{}", c_ident(name)),
+        // A `Ptr<T>` type argument names the same C type `c_type` does, under
+        // the mangling every other generated symbol uses.
+        Ty::Ptr(elem) => format!("Ptr__{}", ty_mangle(elem)),
         // A function type never reaches a container or a type argument (both
         // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
         // unreachable arm and by diagnostics, so it gets an identifier-shaped
@@ -1041,6 +1072,65 @@ pub fn handle_c_type(name: &str) -> String {
 /// own `Ty::Handle`; `is_null` carries the handle as its one argument.
 pub const HANDLE_NULL_KEY: &str = "$handle$null";
 pub const HANDLE_IS_NULL_KEY: &str = "$handle$is_null";
+
+/// Whether `ty` may be a `Ptr<T>`'s element: any type with a C/LLVM layout
+/// that is one machine-level value, which is what a raw address can point at.
+///
+/// The owned heap types (`String`, `Bytes`, `List`, `Box`, `Map`), the borrowed
+/// ones (`str`, `View`, a reference), a closure, a function value and the
+/// builtin fixed-address `Atomic<T>` are all refused: none of them is one
+/// machine value, and a pointer to one would be a pointer into a structure whose
+/// shape the language has not promised.
+pub fn is_ptr_element(ty: &Ty) -> bool {
+    match ty {
+        Ty::Struct(_) | Ty::Handle(_) | Ty::Ptr(_) => true,
+        // An array is inline storage with a fixed size, so a pointer to one is
+        // an ordinary pointer to a block.
+        Ty::Array(elem, _) => is_ptr_element(elem),
+        other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
+    }
+}
+
+/// Why a type cannot be a `Ptr<T>`'s element, in one sentence that names the
+/// reason the type itself has: an owned value the language manages, a borrow,
+/// or a value that is not one machine-level thing.
+pub fn ptr_element_error(ty: &Ty) -> String {
+    match ty {
+        Ty::Str => "'str' is a borrowed view, not an address a pointer can hold".to_string(),
+        Ty::View => "'View' is a borrowed view, not an address a pointer can hold".to_string(),
+        Ty::Ref { mutable, inner } => format!(
+            "'{}' is a borrow: take the address of the *value* with 'Ptr.from_ref'/'Ptr.from_mut' instead",
+            Ty::Ref { mutable: *mutable, inner: inner.clone() }.display()
+        ),
+        Ty::String | Ty::Bytes | Ty::List(_) | Ty::Box(_) | Ty::Map(..) => format!(
+            "'{}' is an owned heap value, which is not one machine-level value a raw pointer can address",
+            ty.display()
+        ),
+        Ty::Closure { .. } | Ty::Fn { .. } => format!(
+            "'{}' is a function value, not data a pointer can address",
+            ty.display()
+        ),
+        Ty::Atomic(_) => format!(
+            "'{}' is an atomic cell, whose operations the language controls; point at the plain value it holds instead",
+            ty.display()
+        ),
+        Ty::Unit => "'unit' is not a value".to_string(),
+        other => format!(
+            "'{}' is not a type a raw pointer can address: a 'Ptr<T>' element is a scalar, 'bool', 'char', a 'datac'/'enum', a fixed-size array, an 'extern type' handle or another 'Ptr'",
+            other.display()
+        ),
+    }
+}
+
+/// The element type of a `Ptr<T>`, looking through a borrow — `p.read()` arrives
+/// with the receiver typed `&Ptr<T>` (the receiver may be a borrow of a place).
+pub fn ptr_elem_of(ty: &Ty) -> Option<&Ty> {
+    match ty {
+        Ty::Ptr(elem) => Some(elem),
+        Ty::Ref { inner, .. } => ptr_elem_of(inner),
+        _ => None,
+    }
+}
 
 /// Whether `ty` may be a `Thread<T>`'s element: anything a worker may hand back
 /// to its joiner, which is anything that can be moved through the boundary.

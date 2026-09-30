@@ -1,0 +1,4 @@
+name = "unsafefnoutside"
+
+[unsafe]
+modules = ["main"]

@@ -1,0 +1,14 @@
+// Stage n (MK9-S2): an `unsafe fun` is callable only from an unsafe context,
+// so `poke` writes through a pointer without a block of its own.
+unsafe fun poke(p: Ptr<i32>, v: i32) {
+    p.write(v)
+}
+
+fun main() {
+    unsafe {
+        val base: Ptr<i32> = Ptr.alloc<i32>(1)
+        poke(base, 77)
+        print(base.read())
+        base.free()
+    }
+}

@@ -1,0 +1,6 @@
+// Stage n (MK9-S2): a raw pointer's element has to be one machine-level value.
+// `String` owns a buffer the language manages, so `Ptr<String>` is refused.
+fun main() {
+    val p: Ptr<String> = Ptr.null()
+    print(p.is_null())
+}

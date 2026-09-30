@@ -192,6 +192,10 @@ pub struct FunctionDecl {
     /// `extern fun ...` — the body is supplied by the compiler (M6.2), so
     /// `body` is always `FunctionBody::Extern` here.
     pub extern_: bool,
+    /// `unsafe fun ...` (MK9-S2 stage 1): the function may be called only from
+    /// an `unsafe { ... }` block or from another `unsafe fun`. It is legal only
+    /// in a module the project's `coral.toml` lists under `[unsafe] modules`.
+    pub unsafe_: bool,
     /// `Some` for `fun Type.name(...)` / `fun mut Type.name(...)` —
     /// receiver-form methods. The receiver is *not* one of `params`; it's
     /// a separate implicit first argument, matching how the surface syntax
@@ -698,6 +702,13 @@ pub enum Expr {
         parts: Vec<TemplatePart>,
         span: Span,
     },
+    /// `unsafe { ... }` (MK9-S2 stage 1): a block whose body may call the
+    /// unsafe operations. It is an expression like any `{ ... }` block, with
+    /// the same value, and the checker tracks the nesting while it walks it.
+    Unsafe {
+        block: Block,
+        span: Span,
+    },
     /// `when expr { Variant(bind) -> value ... }` — pattern matching over an
     /// `enum` scrutinee (A-1, `plan/syntax.md` §6.3). Distinct from the
     /// boolean `when`, which has no scrutinee and is desugared by the parser
@@ -790,6 +801,7 @@ impl Expr {
             | Expr::ArrayRepeat { span: s, .. }
             | Expr::TupleLit { span: s, .. } => *s,
             Expr::Block(b) => b.span,
+            Expr::Unsafe { span, .. } => *span,
         }
     }
 
@@ -846,5 +858,100 @@ impl Expr {
             Expr::Call { callee, .. } => format!("{callee}(...)"),
             _ => "...".to_string(),
         }
+    }
+}
+
+/// The first `unsafe` construct in a parsed module, if it has one, as
+/// `(span, what)`: an `unsafe fun` declaration or an `unsafe { ... }` block.
+///
+/// `resolve.rs` uses this to enforce the manifest's `[unsafe] modules` list:
+/// a module may contain `unsafe` only if `coral.toml` names it, and the
+/// diagnostic points at the first construct rather than at the file.
+pub fn first_unsafe(program: &Program) -> Option<(Span, &'static str)> {
+    for f in &program.functions {
+        if f.unsafe_ {
+            return Some((f.span, "fun"));
+        }
+        if let FunctionBody::Block(b) = &f.body {
+            if let Some(span) = first_unsafe_in_block(b) {
+                return Some((span, "block"));
+            }
+        }
+        if let FunctionBody::Expr(e) = &f.body {
+            if let Some(span) = first_unsafe_in_expr(e) {
+                return Some((span, "block"));
+            }
+        }
+    }
+    for p in &program.pds {
+        if let Some(span) = first_unsafe_in_expr(&p.init) {
+            return Some((span, "block"));
+        }
+    }
+    for c in &program.consts {
+        if let Some(span) = first_unsafe_in_expr(&c.init) {
+            return Some((span, "block"));
+        }
+    }
+    None
+}
+
+fn first_unsafe_in_block(block: &Block) -> Option<Span> {
+    block.stmts.iter().find_map(|s| match s {
+        Stmt::Let { init, .. } => first_unsafe_in_expr(init),
+        Stmt::LetTuple { init, .. } => first_unsafe_in_expr(init),
+        Stmt::While { cond, body, .. } => {
+            first_unsafe_in_expr(cond).or_else(|| first_unsafe_in_block(body))
+        }
+        Stmt::Return { value, .. } => value.as_ref().and_then(first_unsafe_in_expr),
+        Stmt::Expr { expr, .. } => first_unsafe_in_expr(expr),
+    })
+}
+
+fn first_unsafe_in_expr(expr: &Expr) -> Option<Span> {
+    match expr {
+        Expr::Unsafe { span, .. } => Some(*span),
+        Expr::Unary { expr, .. } | Expr::Ref { expr, .. } | Expr::Try { expr, .. } | Expr::Deref { expr, .. } => {
+            first_unsafe_in_expr(expr)
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            first_unsafe_in_expr(lhs).or_else(|| first_unsafe_in_expr(rhs))
+        }
+        Expr::Call { args, .. } | Expr::MethodCall { args, .. } => args
+            .iter()
+            .find_map(|a| first_unsafe_in_expr(&a.value))
+            .or_else(|| match expr {
+                Expr::MethodCall { receiver, .. } => first_unsafe_in_expr(receiver),
+                _ => None,
+            }),
+        Expr::FieldAccess { base, .. } => first_unsafe_in_expr(base),
+        Expr::Assign { target, value, .. } => {
+            first_unsafe_in_expr(target).or_else(|| first_unsafe_in_expr(value))
+        }
+        Expr::If { cond, then_block, else_block, .. } => first_unsafe_in_expr(cond)
+            .or_else(|| first_unsafe_in_block(then_block))
+            .or_else(|| match else_block.as_deref() {
+                Some(ElseBranch::Block(b)) => first_unsafe_in_block(b),
+                Some(ElseBranch::If(e)) => first_unsafe_in_expr(e),
+                None => None,
+            }),
+        Expr::Block(b) => first_unsafe_in_block(b),
+        Expr::FnLit { body, .. } => match body.as_ref() {
+            FunctionBody::Block(b) => first_unsafe_in_block(b),
+            FunctionBody::Expr(e) => first_unsafe_in_expr(e),
+            FunctionBody::Extern => None,
+        },
+        Expr::Template { parts, .. } => parts.iter().find_map(|p| match p {
+            TemplatePart::Text(_) => None,
+            TemplatePart::Expr(e) => first_unsafe_in_expr(e),
+        }),
+        Expr::When { scrutinee, arms, .. } => first_unsafe_in_expr(scrutinee)
+            .or_else(|| arms.iter().find_map(|a| first_unsafe_in_expr(&a.body))),
+        Expr::ArrayLit { elems, .. } => elems.iter().find_map(first_unsafe_in_expr),
+        Expr::ArrayRepeat { value, len, .. } => {
+            first_unsafe_in_expr(value).or_else(|| first_unsafe_in_expr(len))
+        }
+        Expr::TupleLit { elems, .. } => elems.iter().find_map(first_unsafe_in_expr),
+        _ => None,
     }
 }

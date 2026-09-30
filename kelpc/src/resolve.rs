@@ -93,6 +93,10 @@ pub struct Project {
     /// `symbols` allowlist instead of refusing every non-stdlib extern
     /// outright.
     extern_modules: HashMap<String, ExternModuleDecl>,
+    /// The functions written `unsafe fun` (MK9-S2 stage 1), by canonical key:
+    /// the set `infer.rs` requires an `unsafe` context to call. Empty for a
+    /// program that declares none.
+    unsafe_fns: std::collections::HashSet<String>,
 }
 
 impl Project {
@@ -115,6 +119,11 @@ impl Project {
     /// trampoline instead of looking the body up in `externs.rs`.
     pub fn extern_ffi_of(&self, module: &str) -> Option<&ExternModuleDecl> {
         self.extern_modules.get(module)
+    }
+
+    /// The functions declared `unsafe fun` (MK9-S2 stage 1), by canonical key.
+    pub fn unsafe_fns(&self) -> &std::collections::HashSet<String> {
+        &self.unsafe_fns
     }
 
     /// Every native library named across the project's `[extern.*]`
@@ -365,6 +374,7 @@ pub fn load(
         http_pool,
         manifest_caps,
         manifest_extern,
+        manifest_unsafe,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -399,6 +409,7 @@ pub fn load(
                 manifest.http_pool,
                 manifest.caps,
                 manifest.extern_modules,
+                manifest.unsafe_modules,
             )
         } else {
             match find_manifest_root(&given) {
@@ -427,6 +438,7 @@ pub fn load(
                         manifest.http_pool,
                         manifest.caps,
                         manifest.extern_modules,
+                        manifest.unsafe_modules,
                     )
                 }
                 None => {
@@ -443,6 +455,7 @@ pub fn load(
                         crate::stdlib::DEFAULT_HTTP_POOL,
                         None,
                         HashMap::new(),
+                        Vec::new(),
                     )
                 }
             }
@@ -475,6 +488,7 @@ pub fn load(
         all_grants: Vec::new(),
         deprecations: Vec::new(),
         extern_modules: manifest_extern,
+        unsafe_modules: manifest_unsafe,
     };
     loader.load_project()?;
 
@@ -489,6 +503,23 @@ pub fn load(
     };
     for m in &loader.modules {
         let parsed = &loader.parsed[&m.id];
+        // `unsafe` is auditable, not ambient (kernel-path rule 1): a module may
+        // contain an `unsafe` block or an `unsafe fun` only if `coral.toml`
+        // lists it, the same shape `[extern.*]` takes. A project with no
+        // `[unsafe]` section lists nothing, so it cannot contain `unsafe` at
+        // all and behaves exactly as before this stage.
+        if let Some((span, _)) = ast::first_unsafe(parsed) {
+            if !loader.unsafe_modules.contains(&m.id) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "module '{}' is not listed in coral.toml [unsafe] modules",
+                        m.id
+                    ),
+                    span,
+                    m.id.clone(),
+                ));
+            }
+        }
         for c in &parsed.consts {
             let mut c = c.clone();
             c.name = format!("{}{}", m.prefix, c.name);
@@ -761,6 +792,23 @@ pub fn load(
     // module wrap its own primitive. (Overloaded names only exist in
     // `std/math`, which is ungated, so the plain key is enough.)
     let mut gated = HashMap::new();
+    // The functions an `unsafe` context is required to call, by canonical key
+    // (MK9-S2 stage 1). `infer.rs` consults this at every call site, and the
+    // list is exactly the modules the manifest listed under `[unsafe]`,
+    // because `resolve.rs` refused any `unsafe` elsewhere above.
+    let mut unsafe_fns = std::collections::HashSet::new();
+    for m in &loader.modules {
+        let parsed = &loader.parsed[&m.id];
+        for f in &parsed.functions {
+            if f.unsafe_ {
+                let key = match &f.receiver {
+                    Some(r) => format!("{}{}#{}", m.prefix, r.type_name, f.name),
+                    None => format!("{}{}", m.prefix, f.name),
+                };
+                unsafe_fns.insert(key);
+            }
+        }
+    }
     for m in &loader.modules {
         let Some(domain) = domain_of_with_extern(&m.id, &loader.extern_modules) else {
             continue;
@@ -790,6 +838,7 @@ pub fn load(
         caps,
         gated,
         extern_modules: loader.extern_modules,
+        unsafe_fns,
     };
     Ok(Loaded {
         program,
@@ -844,6 +893,10 @@ struct Loader<'a> {
     /// `stdlib::domain_of` at every one of this loader's own domain checks,
     /// so a user module named here is gated exactly like a stdlib one.
     extern_modules: HashMap<String, ExternModuleDecl>,
+    /// `coral.toml`'s `[unsafe] modules` list (MK9-S2 stage 1): the module ids
+    /// allowed to contain `unsafe`. Empty when the section is absent, which
+    /// keeps a project that never writes `unsafe` behaving as before.
+    unsafe_modules: Vec<String>,
 }
 
 /// One `impl "target" caps(domain = [patterns])` from `importer` (M7).
@@ -1199,6 +1252,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         naming_case: None,
         caps: None,
         extern_modules: HashMap::new(),
+        unsafe_modules: Vec::new(),
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1256,6 +1310,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 if let Some(module_id) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
                     parse_extern_line(&mut manifest, module_id, line, at)?;
                 }
+            } else if name == "unsafe" {
+                parse_unsafe_line(&mut manifest, line, at)?;
             }
             continue;
         }
@@ -1406,6 +1462,10 @@ struct Manifest {
     /// this feature existed: a module with no entry here gets no domain from
     /// it, and its `extern fun` declarations stay refused as before.
     extern_modules: HashMap<String, ExternModuleDecl>,
+    /// `[unsafe] modules = ["<module id>", ...]` (MK9-S2 stage 1): the modules
+    /// allowed to contain `unsafe`. Empty when the section is absent, which
+    /// keeps a project that never writes `unsafe` behaving exactly as before.
+    unsafe_modules: Vec<String>,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -1471,6 +1531,67 @@ fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), 
         ));
     }
     caps.insert(domain.to_string(), patterns);
+    Ok(())
+}
+
+/// One `modules = ["<module id>", ...]` line inside `coral.toml`'s `[unsafe]`
+/// section (MK9-S2 stage 1). The list is the set of modules allowed to contain
+/// `unsafe`, spelled by the same module ids the `[extern.*]` sections use.
+fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let Some((key, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!(
+                "expected 'modules = [\"<module id>\", ...]' in {MANIFEST_NAME}'s [unsafe] section, found '{line}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    if key.trim() != "modules" {
+        return Err(Diagnostic::new(
+            format!(
+                "unknown key '{}' in {MANIFEST_NAME}'s [unsafe] section: the section has one key, 'modules'",
+                key.trim()
+            ),
+            at,
+            "",
+        ));
+    }
+    let value = value.trim();
+    let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME} value for '[unsafe] modules' must be a bracketed list of double-quoted module ids, found '{value}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let inner = inner.trim();
+    if !inner.is_empty() {
+        for part in inner.split(',') {
+            let part = part.trim();
+            let Some(module) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} module id in '[unsafe] modules' must be double-quoted, found '{part}'"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            if manifest.unsafe_modules.iter().any(|m| m == module) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "module '{module}' appears more than once in {MANIFEST_NAME}'s '[unsafe] modules' list"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            manifest.unsafe_modules.push(module.to_string());
+        }
+    }
     Ok(())
 }
 
@@ -2452,5 +2573,27 @@ mod tests {
             .to_string();
         let err = manifest_err(&text);
         assert!(err.message.contains("pkg_config' is set more than once"), "{}", err.message);
+    }
+
+    #[test]
+    fn the_unsafe_section_lists_modules_in_order() {
+        let m = manifest("name = \"x\"\n[unsafe]\nmodules = [\"kernel/mmio\", \"main\"]\n");
+        assert_eq!(m.unsafe_modules, ["kernel/mmio".to_string(), "main".to_string()]);
+        // No section means no module may contain `unsafe`.
+        assert!(manifest("name = \"x\"\n").unsafe_modules.is_empty());
+    }
+
+    #[test]
+    fn a_malformed_unsafe_section_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[unsafe]\nmodules = \"main\"\n");
+        assert!(
+            err.message.contains("bracketed list of double-quoted module ids"),
+            "{}",
+            err.message
+        );
+        let err = manifest_err("name = \"x\"\n[unsafe]\nmods = [\"main\"]\n");
+        assert!(err.message.contains("the section has one key, 'modules'"), "{}", err.message);
+        let err = manifest_err("name = \"x\"\n[unsafe]\nmodules = [\"main\", \"main\"]\n");
+        assert!(err.message.contains("appears more than once"), "{}", err.message);
     }
 }

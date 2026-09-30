@@ -4234,6 +4234,124 @@ impl<'g, 'a> FnGen<'g, 'a> {
     /// the value actually found on failure. One `cmpxchg` therefore supplies
     /// both halves of both variants with no second access, which is the point of
     /// `Result` over a `bool` plus a reload.
+    /// A `Ptr<T>` operation (MK9-S2 stage 1), as LLVM IR: one instruction per
+    /// operation, except `alloc`, which is the runtime's allocator plus the
+    /// same NULL check every generated allocation makes.
+    ///
+    /// The volatile pair loads and stores through the same instructions and
+    /// then sets the volatile flag, which is what forbids the optimizer to
+    /// merge it, reorder it against another volatile access, or elide it.
+    fn emit_ptr_call(
+        &mut self,
+        op: &str,
+        args: &[Expr],
+        ret: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        let ptr = self.g.pty();
+        let result_elem = || {
+            crate::types::ptr_elem_of(ret)
+                .cloned()
+                .ok_or_else(|| no_value("the element type of a Ptr operation's result"))
+        };
+        let recv_elem = || {
+            crate::types::ptr_elem_of(&args[0].ty)
+                .cloned()
+                .ok_or_else(|| no_value("the element type of a Ptr operation's receiver"))
+        };
+        match op {
+            "null" => {
+                // The element type is only in the Kelp type: a null pointer is
+                // a null pointer whatever it addresses.
+                result_elem()?;
+                Ok(Some(self.g.ctx.const_null(ptr)))
+            }
+            "from_addr" => {
+                result_elem()?;
+                let addr = self.value_of(&args[0])?;
+                Ok(Some(self.g.builder.build_inttoptr(addr, ptr)))
+            }
+            "from_ref" | "from_mut" => {
+                result_elem()?;
+                // The borrow argument already evaluated to the place's address.
+                Ok(Some(self.value_of(&args[0])?))
+            }
+            "alloc" => {
+                let elem = result_elem()?;
+                let lty = self.lty(&elem)?;
+                let size = self.g.layout.abi_size_of(lty);
+                let count = self.value_of(&args[0])?;
+                let bytes = self.g.builder.build_int_binop(
+                    IntBinOp::Mul,
+                    count,
+                    self.g.v_i64(size),
+                    "ptr.bytes",
+                );
+                let (func, fty) = self.g.libc_fn("malloc")?;
+                let heap = self.g.builder.build_call(func, fty, &[bytes], "ptr.heap");
+                self.cur = self.g.check_alloc(heap, self.cur_fn)?;
+                Ok(Some(heap))
+            }
+            "addr" => {
+                let v = self.value_of(&args[0])?;
+                let i64t = self.g.ctx.i64();
+                Ok(Some(self.g.builder.build_ptrtoint(v, i64t)))
+            }
+            "is_null" => {
+                let v = self.value_of(&args[0])?;
+                let null = self.g.ctx.const_null(ptr);
+                Ok(Some(self.g.builder.build_icmp(IntCmp::Eq, v, null, "isnull")))
+            }
+            "offset" => {
+                let elem = recv_elem()?;
+                let lty = self.lty(&elem)?;
+                let v = self.value_of(&args[0])?;
+                let n = self.value_of(&args[1])?;
+                Ok(Some(self.g.builder.build_gep(lty, v, n, "ptr.offset")))
+            }
+            "byte_offset" => {
+                recv_elem()?;
+                let v = self.value_of(&args[0])?;
+                let n = self.value_of(&args[1])?;
+                let byte = self.g.ctx.i8();
+                Ok(Some(self.g.builder.build_gep(byte, v, n, "ptr.byte")))
+            }
+            // A cast reinterprets: with opaque pointers the value does not
+            // change at all, and only the Kelp type records the new element.
+            "cast" => {
+                result_elem()?;
+                Ok(Some(self.value_of(&args[0])?))
+            }
+            "read" | "read_volatile" => {
+                let elem = recv_elem()?;
+                let lty = self.lty(&elem)?;
+                let place = self.value_of(&args[0])?;
+                let v = self.g.builder.build_load(lty, place, "ptr.read");
+                if op == "read_volatile" {
+                    self.g.builder.set_volatile(v);
+                }
+                Ok(Some(v))
+            }
+            "write" | "write_volatile" => {
+                recv_elem()?;
+                let place = self.value_of(&args[0])?;
+                let value = self.value_of(&args[1])?;
+                let store = self.g.builder.build_store(value, place);
+                if op == "write_volatile" {
+                    self.g.builder.set_volatile(store);
+                }
+                Ok(None)
+            }
+            "free" => {
+                recv_elem()?;
+                let v = self.value_of(&args[0])?;
+                let (func, fty) = self.g.libc_fn("free")?;
+                self.g.builder.build_call(func, fty, &[v], "");
+                Ok(None)
+            }
+            other => Err(no_value(&format!("the pointer operation '{other}'"))),
+        }
+    }
+
     fn emit_atomic_call(
         &mut self,
         op: &str,
@@ -4677,6 +4795,13 @@ impl<'g, 'a> FnGen<'g, 'a> {
         // the instruction *is* the operation.
         if let Some(op) = callee.strip_prefix("Atomic#") {
             return self.emit_atomic_call(op, args, ret);
+        }
+
+        // A `Ptr<T>` operation (MK9-S2 stage 1): one instruction, or one libc
+        // allocation, per operation. `codegen_c.rs::ptr_call` writes the same
+        // operations as C.
+        if let Some(op) = callee.strip_prefix("Ptr#") {
+            return self.emit_ptr_call(op, args, ret);
         }
 
         // `thread.fence` (MK9-S3-M1 stage A2): one `fence seq_cst` instruction,
@@ -10397,6 +10522,11 @@ fn llvm_type<'a>(
         // agree without a layout table: the C backend's `void*` typedef and
         // this `ptr` are the same value at the ABI.
         Ty::Handle(_) => ctx.opaque_ptr(),
+        // A raw pointer (MK9-S2 stage 1) is the same plain `ptr`: LLVM 21's
+        // opaque pointer carries no pointee type, so the element type is
+        // information only the Kelp type keeps (it decides the load/store and
+        // the GEP width, which the call sites name themselves).
+        Ty::Ptr(_) => ctx.opaque_ptr(),
         // The builtin heap types, in the same field order `runtime/kelp_rt.c`
         // defines them (MK7 §3.3). `View` is the borrowed pair.
         Ty::Bytes => *structs
