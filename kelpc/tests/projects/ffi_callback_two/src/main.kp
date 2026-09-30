@@ -1,0 +1,5 @@
+impl "helper" caps(env = ["*"])
+
+fun main() {
+    print(1)
+}

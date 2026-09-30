@@ -1,0 +1,6 @@
+name = "fficallbacktwo"
+
+[extern."helper"]
+domain = "env"
+library = "c"
+symbols = ["kelp_call_twice"]

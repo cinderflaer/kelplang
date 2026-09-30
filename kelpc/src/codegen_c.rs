@@ -494,6 +494,18 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         out.push('\n');
     }
 
+    // The native-callback glue (gap 4): the reordering thunk and the
+    // destructor every user `extern fun`'s `move closure(...)` parameter
+    // expands into. One definition per closure signature, so two externs that
+    // share a signature share the pair.
+    let callback_sigs = callback_signatures(program);
+    if !callback_sigs.is_empty() {
+        for sig in &callback_sigs {
+            write_callback_glue(&mut out, sig);
+        }
+        out.push('\n');
+    }
+
     // Each `fun` literal that captured something has an environment struct and
     // a drop function (A-4 phase E). They go here — after every typedef, since
     // a field holds its captured value by value, and before every function, so
@@ -613,8 +625,12 @@ pub(crate) fn write_extern(
 
 /// A user-declared `extern fun`'s whole body (MK9-S1-M1, roadmap B-1): a
 /// single call to the native `symbol` its module's manifest allowlisted,
-/// forwarding every parameter and returning whatever it returns. There is
-/// nothing else to write — the "compiler-supplied body" that `write_extern`'s
+/// forwarding every parameter and returning whatever it returns. A
+/// `move closure(...)` parameter is the one parameter not forwarded as
+/// itself (gap 4): it expands in place into the `(func, user_data,
+/// destroy_notify)` triple the native side expects, which the body below
+/// spells and `write_callback_glue` defines. There is nothing else to
+/// write — the "compiler-supplied body" that `write_extern`'s
 /// stdlib branch looks up in `externs.rs` exists to hand-write a primitive
 /// `.kp` cannot express at all (a raw syscall, a `malloc`); a user FFI
 /// binding has no such primitive to hand-write, since the whole point is
@@ -629,12 +645,35 @@ pub(crate) fn write_extern(
 fn write_user_extern(out: &mut String, f: &Function, symbol: &str) {
     write_signature(out, f);
     out.push_str(" {\n");
-    let args: Vec<String> = f
-        .params
-        .iter()
-        .filter(|(_, ty)| *ty != Ty::Unit)
-        .map(|(name, _)| c_name(name))
-        .collect();
+    // A `move closure(...)` parameter expands in place into the GLib
+    // `(func, user_data, destroy_notify)` triple the native side expects: the
+    // boxed closure is `user_data`, the generated thunk reorders the native
+    // arguments into the closure's own calling convention, and the generated
+    // destructor frees the environment when the native side is done with it.
+    // The box (not the stack parameter) is what crosses because the native
+    // side may retain `user_data` past this call.
+    let mut args: Vec<String> = Vec::new();
+    for (name, ty) in f.params.iter().filter(|(_, ty)| *ty != Ty::Unit) {
+        if let Ty::Closure { params, ret } = ty {
+            let c_ty = ty.c_type();
+            writeln!(
+                out,
+                "    {c_ty}* kelp_extern_cb = ({c_ty}*)malloc(sizeof({c_ty}));"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    if (kelp_extern_cb == NULL) {{ kelp_panic(\"out of memory\"); }}"
+            )
+            .unwrap();
+            writeln!(out, "    *kelp_extern_cb = {};", c_name(name)).unwrap();
+            args.push(callback_thunk_name(params, ret));
+            args.push("kelp_extern_cb".to_string());
+            args.push(callback_destroy_name(params, ret));
+        } else {
+            args.push(c_name(name));
+        }
+    }
     if f.ret == Ty::Unit {
         writeln!(out, "    {}({});", symbol, args.join(", ")).unwrap();
     } else {
@@ -1455,6 +1494,100 @@ fn write_closure(out: &mut String, ty: &Ty) {
     writeln!(
         out,
         "static void {drop}({name}* c) {{\n    if (c->env != NULL) {{\n        c->drop(c->env);\n        c->env = NULL;\n    }}\n}}\n"
+    )
+    .unwrap();
+}
+
+/// The generated C name of one closure signature's native-callback thunk
+/// (gap 4). The thunk is the `func` half of the `(func, user_data,
+/// destroy_notify)` triple a user `extern fun`'s `move closure(...)` parameter
+/// expands into. One per signature, not per call site, because what it does is
+/// the same for every closure of that shape.
+fn callback_thunk_name(params: &[Ty], ret: &Ty) -> String {
+    format!("kelp_cb_thunk__{}", crate::types::closure_mangle(params, ret))
+}
+
+/// The generated C name of one closure signature's callback destructor
+/// (gap 4): the `destroy_notify` half of the triple, which runs the closure's
+/// drop on its environment and frees the box that carried it.
+fn callback_destroy_name(params: &[Ty], ret: &Ty) -> String {
+    format!(
+        "kelp_cb_destroy__{}",
+        crate::types::closure_mangle(params, ret)
+    )
+}
+
+/// The closure signatures a program's user `extern fun`s take as native
+/// callbacks (gap 4), one per signature, sorted for a deterministic emitted
+/// order. A stdlib extern is not a user binding and expands nothing, so it is
+/// left out by the same `extern_ffi_symbols` test `write_extern` uses.
+pub(crate) fn callback_signatures(program: &Program) -> Vec<Ty> {
+    let mut sigs: Vec<Ty> = Vec::new();
+    for f in &program.functions {
+        if !f.extern_ || !program.extern_ffi_symbols.contains_key(&f.name) {
+            continue;
+        }
+        for (_, ty) in &f.params {
+            if matches!(ty, Ty::Closure { .. }) && !sigs.contains(ty) {
+                sigs.push(ty.clone());
+            }
+        }
+    }
+    sigs.sort_by_key(|t| container_name(t));
+    sigs
+}
+
+/// One closure signature's native-callback glue (gap 4): the thunk a native
+/// `(func, user_data, destroy_notify)` triple takes as `func`, and the
+/// destructor it takes as `destroy_notify`.
+///
+/// GLib's convention (and GTK's signal handlers) put `user_data` last, while a
+/// Kelp closure's `fn` member takes its environment first, so the thunk is
+/// what reorders the two: the native call's `user_data` is the boxed closure
+/// `write_user_extern` handed over, and `c->fn(c->env, a0, ...)` is the
+/// closure's own calling convention. The destructor runs the closure's `drop`
+/// on the environment and frees the box; `c->env` is `NULL` exactly when the
+/// closure was widened from a plain function value, and then there is nothing
+/// to drop.
+///
+/// This is emitted once per signature by both backends (`generate` here, and
+/// `codegen_llvm.rs::program_c_source` in the per-program C object), so the
+/// two agree on the glue text by construction.
+pub(crate) fn write_callback_glue(out: &mut String, sig: &Ty) {
+    let Ty::Closure { params, ret } = sig else {
+        unreachable!("callback glue is emitted per closure signature");
+    };
+    let name = sig.c_type();
+    let thunk = callback_thunk_name(params, ret);
+    let destroy = callback_destroy_name(params, ret);
+    // A `unit` argument has no C value, so it takes no place in the thunk,
+    // exactly as it takes none in any other generated signature.
+    let real: Vec<&Ty> = params.iter().filter(|p| **p != Ty::Unit).collect();
+    let names: Vec<String> = (0..real.len()).map(|i| format!("a{i}")).collect();
+    let decls = if real.is_empty() {
+        "void* user_data".to_string()
+    } else {
+        real.iter()
+            .zip(&names)
+            .map(|(p, n)| format!("{} {n}", crate::types::container_elem_c_type(p)))
+            .chain(std::iter::once("void* user_data".to_string()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    writeln!(out, "// ---- {thunk} (gap 4) {}", "-".repeat(30)).unwrap();
+    writeln!(out, "static {} {thunk}({decls}) {{", ret.c_type()).unwrap();
+    writeln!(out, "    {name}* c = ({name}*)user_data;").unwrap();
+    let mut forwarded = vec!["c->env".to_string()];
+    forwarded.extend(names.iter().cloned());
+    let call = format!("c->fn({})", forwarded.join(", "));
+    if **ret == Ty::Unit {
+        writeln!(out, "    {call};").unwrap();
+    } else {
+        writeln!(out, "    return {call};").unwrap();
+    }
+    writeln!(
+        out,
+        "}}\nstatic void {destroy}(void* user_data) {{\n    {name}* c = ({name}*)user_data;\n    if (c->env != NULL) {{\n        c->drop(c->env);\n        c->env = NULL;\n    }}\n    free(c);\n}}\n"
     )
     .unwrap();
 }

@@ -6773,6 +6773,93 @@ fn display_name(f: &ast::FunctionDecl) -> String {
     }
 }
 
+/// Checks the native-callback parameters of a user `extern fun` (gap 4).
+///
+/// A `move closure(...)` parameter is the one shape the C backend expands in
+/// place into a `(thunk, env, destroy)` triple, so the closure's own signature
+/// must be one the generated thunk can forward by value: every parameter and
+/// the return are a scalar, `bool`, `str`, an opaque handle or `unit`, no
+/// parameter takes ownership or an exclusive borrow, and the function has at
+/// most one such parameter. A plain `closure(...)` parameter is refused by
+/// name: the native side has to own the closure, or the `destroy` notify has
+/// nothing safe to free.
+fn check_extern_callback_params(f: &ast::FunctionDecl, sig: &FnSig) -> Result<()> {
+    let declared = if f.receiver.is_some() {
+        &sig.params[1..]
+    } else {
+        &sig.params[..]
+    };
+    let mut callbacks = 0usize;
+    for (p, (_, ty)) in f.params.iter().zip(declared.iter()) {
+        match ty {
+            Ty::Closure { params, ret } => {
+                callbacks += 1;
+                let written = p.ty.display();
+                if let Some(written_params) = &p.ty.fn_params {
+                    for (wp, resolved) in written_params.iter().zip(params.iter()) {
+                        if wp.mode != ast::ParamMode::Borrow {
+                            return Err(TypeError {
+                                message: format!(
+                                    "the callback closure type '{written}' takes '{}' by ownership or an exclusive borrow, but a native callback thunk forwards every argument by value: write the closure parameter as a scalar, 'bool', 'str', an opaque handle or 'unit'",
+                                    wp.display()
+                                ),
+                                span: p.ty.span,
+                            });
+                        }
+                        if !is_callback_abi_ty(resolved) {
+                            return Err(TypeError {
+                                message: format!(
+                                    "the callback closure type '{written}' passes '{}' by value, which a native callback thunk cannot forward: write the closure parameter as a scalar, 'bool', 'str', an opaque handle or 'unit'",
+                                    wp.ty.display()
+                                ),
+                                span: p.ty.span,
+                            });
+                        }
+                    }
+                }
+                if !is_callback_abi_ty(ret) {
+                    return Err(TypeError {
+                        message: format!(
+                            "the callback closure type '{written}' returns '{}', which a native callback thunk cannot forward: a callback closure must return a scalar, 'bool', 'str', an opaque handle or 'unit'",
+                            ret.display()
+                        ),
+                        span: p.ty.span,
+                    });
+                }
+            }
+            Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => {
+                return Err(TypeError {
+                    message: format!(
+                        "the parameter '{}' of an 'extern fun' is a closure handed to native code, which must own it: write the type 'move {}' so the destroy notify has an environment to free",
+                        p.name,
+                        p.ty.display()
+                    ),
+                    span: p.ty.span,
+                });
+            }
+            _ => {}
+        }
+    }
+    if callbacks > 1 {
+        return Err(TypeError {
+            message: format!(
+                "'{}' takes {callbacks} callback closures, but a user 'extern fun' can expand at most one 'move closure(...)' parameter in this pass",
+                f.name
+            ),
+            span: f.span,
+        });
+    }
+    Ok(())
+}
+
+/// The types a native callback thunk forwards by value (gap 4): the scalars,
+/// `bool`, `str`, an opaque handle and `unit`. Everything else would need a
+/// pointer the language cannot spell yet.
+fn is_callback_abi_ty(ty: &Ty) -> bool {
+    ty.is_numeric()
+        || matches!(ty, Ty::Bool | Ty::Char | Ty::Str | Ty::Unit | Ty::Handle(_))
+}
+
 fn check_function(
     f: &ast::FunctionDecl,
     key: &str,
@@ -6889,7 +6976,9 @@ fn check_function(
             let bare = f.name.strip_prefix(prefix).unwrap_or(&f.name);
             if !crate::externs::has_body(&f.module, bare) {
                 match project.extern_ffi_of(&f.module) {
-                    Some(decl) if decl.symbol_of(bare).is_some() => {}
+                    Some(decl) if decl.symbol_of(bare).is_some() => {
+                        check_extern_callback_params(f, sig)?;
+                    }
                     Some(_) => {
                         return Err(TypeError {
                             message: format!(

@@ -1458,6 +1458,21 @@ impl<'a> Gen<'a> {
         }
         for (pname, pty) in &f.params {
             let llvm_pty = llvm_type(ctx, &self.structs, &self.containers, pty)?;
+            // A `move closure(...)` parameter of a user extern is the
+            // native-callback shape gap 4 adds to the C backend. A closure is
+            // a three-pointer fat pointer, so the C body's expansion has a
+            // thunk to call but this backend has no value to pass it; name
+            // that shortfall rather than the generic boundary rule.
+            if matches!(pty, Ty::Closure { .. })
+                && self.program.extern_ffi_symbols.contains_key(&f.name)
+            {
+                return Err(
+                    "callbacks in user externs are not supported on the llvm backend yet; \
+                     build this project with the C backend (KELPC_ORACLE=c), or pass the \
+                     callback to a Kelp function instead"
+                        .to_string(),
+                );
+            }
             if crosses_c_boundary_by_value(pty, llvm_pty, self.layout) {
                 return Err(refuse(
                     &format!("the extern '{}' taking '{}' by value", f.name, pname),
@@ -10014,6 +10029,18 @@ fn program_c_source(program: &Program) -> Option<String> {
     if !prototypes.is_empty() {
         out.push('\n');
         out.push_str(&prototypes);
+    }
+
+    // The native-callback glue (gap 4) for the user externs' `move
+    // closure(...)` parameters: the same thunk and destructor text the C
+    // backend emits, compiled into this same object. Emitted before the
+    // bodies because `write_user_extern` names both.
+    let callback_sigs = crate::codegen_c::callback_signatures(program);
+    if !callback_sigs.is_empty() {
+        out.push_str("\n/* native-callback glue (gap 4) */\n");
+        for sig in &callback_sigs {
+            crate::codegen_c::write_callback_glue(&mut out, sig);
+        }
     }
 
     for f in &externs {

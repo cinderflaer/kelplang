@@ -2448,6 +2448,114 @@ fn printing_an_ffi_opaque_handle_is_rejected() {
     );
 }
 
+/// Gap 4: a user `extern fun`'s `move closure(...)` parameter expands into the
+/// native `(func, user_data, destroy_notify)` triple. The C backend is the one
+/// that emits the expansion, so this pins `KELPC_ORACLE=c` and runs it even
+/// when the suite's backend is LLVM (which refuses the shape by name, see the
+/// test below). The helper calls the callback twice and then its `destroy`
+/// notify, so the printed order proves the thunk reordered the arguments, and
+/// the AddressSanitizer rebuild proves the environment was freed exactly once.
+#[test]
+fn an_ffi_callback_closure_crosses_to_native_code() {
+    let target = project("ffi_callback");
+    let bin = out_path("ffi_callback");
+    let build = Command::new(kelpc_bin())
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'ffi_callback' to compile on the C backend, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the 'ffi_callback' binary to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "2\n3\n2\n4\n2\n8\n9\n2\n",
+        "unexpected stdout for 'ffi_callback'"
+    );
+
+    // The callback's boxed environment is the one allocation the fixture makes,
+    // so a missed `destroy` is a leak and a double one is a use-after-free.
+    // Rebuild the generated C with AddressSanitizer, which reports both at
+    // exit; the project's own include dir is what finds the helper.
+    let asan_bin = out_path("ffi_callback_asan");
+    let cc = Command::new("cc")
+        .arg("-fsanitize=address")
+        .arg("-O1")
+        .arg("-I")
+        .arg(target.join("include"))
+        .arg("-o")
+        .arg(&asan_bin)
+        .arg(bin.with_extension("c"))
+        .output()
+        .expect("failed to spawn cc");
+    if cc.status.success() {
+        let asan_run = Command::new(&asan_bin)
+            .output()
+            .expect("failed to run the instrumented binary");
+        assert!(
+            asan_run.status.success(),
+            "AddressSanitizer flagged 'ffi_callback':\n{}",
+            String::from_utf8_lossy(&asan_run.stderr)
+        );
+    }
+}
+
+#[test]
+fn an_llvm_ffi_callback_closure_is_rejected_by_name() {
+    // The C object's thunk has no counterpart in this backend's own lowering,
+    // so the shape is refused rather than miscompiled. `kelpc()` pins whatever
+    // backend the suite runs, so only assert the refusal when that is LLVM.
+    if backend() != "llvm" {
+        return;
+    }
+    let bin = out_path("ffi_callback_llvm_reject");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("ffi_callback"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected the llvm backend to reject an 'extern fun' callback closure"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("callbacks in user externs are not supported on the llvm backend yet"),
+        "expected the llvm refusal to name the shortfall, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_ffi_callback_closure_parameter_that_moves_is_rejected() {
+    assert_project_rejected(
+        "ffi_callback_move_param",
+        &project("ffi_callback_move_param"),
+        "forwards every argument by value",
+    );
+}
+
+#[test]
+fn an_ffi_extern_fun_with_two_callback_closures_is_rejected() {
+    assert_project_rejected(
+        "ffi_callback_two",
+        &project("ffi_callback_two"),
+        "at most one 'move closure(...)' parameter",
+    );
+}
+
 #[test]
 fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");
