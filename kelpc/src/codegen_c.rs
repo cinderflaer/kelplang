@@ -2883,6 +2883,13 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                     note_expr(a, out);
                 }
             }
+            // A variadic user `extern fun` call (gap 7) has no `thread.spawn`
+            // shape, so it only walks its arguments.
+            ExprKind::VariadicCall { args, .. } => {
+                for a in args {
+                    note_expr(a, out);
+                }
+            }
             ExprKind::IndirectCall { callee, args } => {
                 note_expr(callee, out);
                 for a in args {
@@ -3702,6 +3709,14 @@ impl<'a> Gen<'a> {
                 format!("({l} {sym} {r})")
             }
             ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span, &expr.ty),
+            // A variadic user `extern fun` call (gap 7): the call goes to the
+            // generated fixed-arity wrapper, while the capability check still
+            // reads the extern's own key.
+            ExprKind::VariadicCall {
+                callee,
+                wrapper,
+                args,
+            } => self.variadic_call_value(callee, wrapper, args, expr.span, &expr.ty),
             // A function *reference* is the C function itself (A-4): the
             // value carries no environment, so there is nothing to build.
             // Every function in the program is emitted with a prototype, so
@@ -4917,6 +4932,30 @@ impl<'a> Gen<'a> {
             }
         }
         let call = self.cap_checked_call(plan, s, &args_text);
+        self.hoisted_call(prelude, call, &hoisted, ret)
+    }
+
+    /// A variadic user `extern fun` call (gap 7), as C: the same argument
+    /// rendering and capability check a plain call gets, but the callee is the
+    /// generated fixed-arity wrapper, never the native symbol itself. `plan`
+    /// still reads the extern's own key, because that is what carries the
+    /// domain and the argument positions the grant governs.
+    fn variadic_call_value(
+        &self,
+        callee: &str,
+        wrapper: &str,
+        args: &[Expr],
+        span: Span,
+        ret: &Ty,
+    ) -> String {
+        let plan = self.cap_plan(callee, args, span);
+        let hoist: Vec<bool> = plan
+            .as_ref()
+            .map(|(_, _, _, checked)| checked_arg_flags(checked, args.len()))
+            .unwrap_or_default();
+        let (prelude, args_text, hoisted) = self.render_arguments(args, &hoist);
+        let call = format!("{}({})", c_name(wrapper), args_text.join(", "));
+        let call = self.cap_checked_call(plan, call, &args_text);
         self.hoisted_call(prelude, call, &hoisted, ret)
     }
 

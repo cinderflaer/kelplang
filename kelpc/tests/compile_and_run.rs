@@ -2779,6 +2779,72 @@ fn an_ffi_extern_fun_with_two_callback_closures_is_rejected() {
     );
 }
 
+/// Gap 7: a user `extern fun` whose last parameter is `...` accepts any number
+/// of extra arguments after the fixed ones. Each distinct list of extra types
+/// gets one generated fixed-arity C wrapper, the call goes through it, and the
+/// C compiler applies the default argument promotions, so neither backend ever
+/// emits a variadic call itself. The fixture calls with 0, 1 and 3 extra `i32`s
+/// and once through a second helper that reads a promoted `f32` as a `double`
+/// and a `str` as a `const char*`.
+#[test]
+fn an_ffi_variadic_extern_accepts_extra_arguments() {
+    assert_project_runs("ffi_variadic", &project("ffi_variadic"), "0\n7\n6\n11\n");
+}
+
+/// The same project on the default (LLVM) backend, whose per-program C object
+/// carries the wrappers that the generated C calls. It must print exactly what
+/// the C backend prints; pinning LLVM here keeps the wrappers covered even
+/// when the suite is pointed at the oracle.
+#[test]
+fn an_llvm_ffi_variadic_extern_accepts_extra_arguments() {
+    let target = project("ffi_variadic");
+    let bin = out_path("ffi_variadic_llvm");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'ffi_variadic' to compile on the default backend, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run compiled binary");
+    assert!(
+        run.status.success(),
+        "expected the llvm 'ffi_variadic' binary to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "0\n7\n6\n11\n",
+        "the llvm build must print what the C build prints"
+    );
+}
+
+#[test]
+fn an_ffi_variadic_marker_that_is_not_last_is_rejected() {
+    // A fixture, not a project: `...` followed by another parameter is a
+    // syntax error, and the fixtures are where the suite keeps programs that
+    // do not parse (the formatter is right to refuse one).
+    assert_rejected_with(
+        "tests/fixtures/ffi_variadic_not_last.kp",
+        "must be the last parameter of an 'extern fun'",
+    );
+}
+
+#[test]
+fn an_ffi_variadic_extra_argument_of_a_c_unsafe_type_is_rejected() {
+    assert_project_rejected(
+        "ffi_variadic_bad_arg",
+        &project("ffi_variadic_bad_arg"),
+        "extra argument 1 of 'helper.kelp_va_sum' has type 'String'",
+    );
+}
+
 #[test]
 fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");

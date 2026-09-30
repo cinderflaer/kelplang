@@ -843,7 +843,7 @@ impl Parser {
             });
         }
 
-        let params = self.parse_params()?;
+        let (params, variadic) = self.parse_params()?;
 
         if extern_ && receiver.is_some() {
             return Err(ParseError {
@@ -910,6 +910,7 @@ impl Parser {
             type_params,
             extern_,
             unsafe_,
+            variadic,
             receiver,
             params,
             return_type,
@@ -1056,10 +1057,25 @@ impl Parser {
 
     /// `( name: T, ... )` — one parameter list, shared by a declaration and a
     /// `fun` literal (A-4), since the two take exactly the same parameters.
-    fn parse_params(&mut self) -> PResult<Vec<Param>> {
+    /// The flag is `true` for a declaration whose last parameter is the `...`
+    /// variadic marker (gap 7); a `fun` literal refuses one at its own call
+    /// site, because only a user `extern fun` can be variadic.
+    fn parse_params(&mut self) -> PResult<(Vec<Param>, bool)> {
         self.expect(TokenKind::LParen, "'('")?;
         let mut params = Vec::new();
+        let mut variadic = false;
         while !self.check(&TokenKind::RParen) {
+            if self.check(&TokenKind::DotDotDot) {
+                self.advance();
+                if !self.check(&TokenKind::RParen) {
+                    return Err(ParseError {
+                        message: "'...' must be the last parameter of an 'extern fun': nothing may follow it".to_string(),
+                        span: self.peek().span,
+                    });
+                }
+                variadic = true;
+                break;
+            }
             let (pname, pspan) = self.expect_ident()?;
             self.expect(TokenKind::Colon, "':'")?;
             // `mut T` requests an exclusive borrow and `move T` takes
@@ -1082,7 +1098,7 @@ impl Parser {
             }
         }
         self.expect(TokenKind::RParen, "')'")?;
-        Ok(params)
+        Ok((params, variadic))
     }
 
     /// `fun(x: i32).R: i32 = x * 2` in expression position — an anonymous
@@ -1091,7 +1107,14 @@ impl Parser {
     /// the same parameter list, the same optional `.R: T`.
     fn parse_fn_literal(&mut self) -> PResult<Expr> {
         let start = self.expect(TokenKind::Fun, "'fun'")?.span;
-        let params = self.parse_params()?;
+        let (params, variadic) = self.parse_params()?;
+        if variadic {
+            return Err(ParseError {
+                message: "a 'fun' literal cannot be variadic: '...' is only legal on a user 'extern fun'"
+                    .to_string(),
+                span: start,
+            });
+        }
         let return_type = if self.check(&TokenKind::Dot) {
             self.advance();
             let (marker, mspan) = self.expect_ident()?;

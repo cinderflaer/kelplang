@@ -148,6 +148,10 @@ pub enum TokenKind {
     Semi,
     Colon,
     Dot,
+    /// `...` — the variadic marker a user `extern fun` may write as its last
+    /// parameter (gap 7). Nothing follows it, and it is not a value: it only
+    /// ever appears in a declaration's parameter list.
+    DotDotDot,
     Arrow, // -> (reserved for `when` arms)
     Newline,
 
@@ -517,7 +521,18 @@ impl<'a> Lexer<'a> {
                 }
                 b'.' => {
                     self.advance();
-                    TokenKind::Dot
+                    // `...` is one token: the variadic marker in a user
+                    // `extern fun`'s parameter list. A lone `.` (a field or
+                    // method access) and the `..` a `caps` pattern hides
+                    // inside a string literal are unchanged, so the three
+                    // dots are read together and one or two are left alone.
+                    if self.peek() == Some(b'.') && self.peek_at(1) == Some(b'.') {
+                        self.advance();
+                        self.advance();
+                        TokenKind::DotDotDot
+                    } else {
+                        TokenKind::Dot
+                    }
                 }
                 b'+' => {
                     self.advance();
@@ -1398,6 +1413,25 @@ mod tests {
                 TokenKind::IntLit(15),
                 TokenKind::Dot,
                 TokenKind::Ident("a".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    /// `...` is one token (the variadic marker, gap 7), while a lone `.` stays
+    /// the field-access token and `..` stays two of them: only three dots in a
+    /// row are read together.
+    #[test]
+    fn lexes_three_dots_as_one_variadic_token() {
+        assert_eq!(
+            kinds("... a.b .."),
+            vec![
+                TokenKind::DotDotDot,
+                TokenKind::Ident("a".to_string()),
+                TokenKind::Dot,
+                TokenKind::Ident("b".to_string()),
+                TokenKind::Dot,
+                TokenKind::Dot,
                 TokenKind::Eof,
             ]
         );

@@ -1,0 +1,6 @@
+// Gap 7: the "..." marker must be the last parameter of a user "extern fun".
+// Nothing may follow it, so this declaration is a parse error rather than a
+// signature that silently ignores what comes after. It lives here, in the
+// directory of programs that are deliberately not valid Kelp, so the formatter
+// is right to refuse it.
+pub extern fun kelp_va_sum(count: i32, ..., extra: i32).R: i32

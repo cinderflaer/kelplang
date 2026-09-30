@@ -195,6 +195,19 @@ pub enum ExprKind {
         callee: String,
         args: Vec<Expr>,
     },
+    /// A call to a *user* `extern fun` whose last parameter is `...` (gap 7).
+    /// `callee` is still the extern's own key, because everything the call
+    /// needs from it (the capability domain, the diagnostic name) is keyed by
+    /// that name; `args` holds the fixed arguments and then the extra ones.
+    /// `wrapper` is the key of the generated fixed-arity C function the call
+    /// actually makes, one per distinct list of extra-argument types — the
+    /// typechecker picks it, so neither backend ever emits a variadic call
+    /// itself and the C compiler's default promotions do the rest.
+    VariadicCall {
+        callee: String,
+        wrapper: String,
+        args: Vec<Expr>,
+    },
     FieldAccess {
         base: Box<Expr>,
         field: String,

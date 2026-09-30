@@ -1275,7 +1275,8 @@ fn borrow_root(expr: &tir::Expr, ctx: &Ctx) -> Option<String> {
         | tir::ExprKind::EnumField { base, .. }
         | tir::ExprKind::Ref { expr: base, .. }
         | tir::ExprKind::Deref { expr: base } => borrow_root(base, ctx),
-        tir::ExprKind::Call { callee, args } => {
+        tir::ExprKind::Call { callee, args }
+        | tir::ExprKind::VariadicCall { callee, args, .. } => {
             let idx = ctx.borrow_root_param_of(callee)?;
             borrow_root(args.get(idx)?, ctx)
         }
@@ -1737,7 +1738,7 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
             }
             Ok(())
         }
-        tir::ExprKind::Call { .. } => check_call(expr, ctx),
+        tir::ExprKind::Call { .. } | tir::ExprKind::VariadicCall { .. } => check_call(expr, ctx),
         // A call through a function value (A-4): the callee is read as a
         // *place*, not as a whole value — a function value is `Copy`, and a
         // closure is called through a borrow of the binding that holds it, so
@@ -2026,7 +2027,9 @@ fn check_assign_target(target: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
 /// the elided lifetime binds to is left borrowed for the enclosing scope, so
 /// the caller cannot move or free the owner while the view lives.
 fn check_call(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
-    let tir::ExprKind::Call { callee, args } = &expr.kind else {
+    let (tir::ExprKind::Call { callee, args }
+    | tir::ExprKind::VariadicCall { callee, args, .. }) = &expr.kind
+    else {
         unreachable!("check_call is only called on a Call node")
     };
     // A method call's receiver is borrowed exclusively *before* its own
