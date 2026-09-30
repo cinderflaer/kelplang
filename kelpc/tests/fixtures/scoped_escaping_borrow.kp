@@ -1,0 +1,14 @@
+// The block captures `s` by shared borrow for the length of the call, and the
+// same call takes `s` exclusively: the two cannot overlap.
+datac State(var a: i32)
+
+fun both(s: mut State, f: scoped fun(i32)) {
+    f(1)
+}
+
+fun run() {
+    var s = State(a = 0)
+    both(s) { n -> print(n + s.a) }
+}
+
+fun main() {}

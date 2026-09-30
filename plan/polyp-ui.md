@@ -33,13 +33,18 @@ polyp.column {
 ```
 
 This does not compile today, and not only because Polyp does not exist: the trailing block is
-trailing-closure syntax, which the language does not have. Written in Kelp as it stands, the same view
-hands the callback over as an ordinary argument, `f = fun() { state.count += 1 }`, and the sugar is what
-the example above is asking for.
+trailing-closure syntax, which the language does not have yet in that shape. Written in Kelp as it
+stands, the same view hands the callback over as an ordinary argument, `f = fun() { state.count += 1 }`,
+and the sugar is what the example above is asking for.
 
-**That is a prerequisite, and it is not scoped.** It is recorded as open item 75 in `roadmap.md` and it
-depends on nothing else. Polyp cannot start before it exists, and the syntax question is a language
-decision rather than a UI one.
+**The prerequisite is now in.** Open item 75 landed as two pieces: `plan/trailing-closure.md` (a
+same-line `{ ... }` is the call's last argument) and `plan/scoped-blocks.md` (a block header
+`{ k -> ... }`, a value-returning block, and a `scoped fun(...)` parameter that accepts only a literal
+or trailing block written at the call site and may capture the enclosing frame **by shared borrow**).
+So `polyp.column { k -> k.text(s.title) }` reads a borrowed `s` with a borrow that is checked and
+released with the call, which is what the borrow-checked-callback claim below needs. What is still
+missing for the `state.count += 1` shape is an *exclusive* capture, which the scoped design refuses
+for now.
 
 ## What sets it apart, concretely
 
@@ -51,7 +56,10 @@ one is a consequence of a language property Kelp already has, not a feature Poly
    runtime one: the handler runs, reads its captured snapshot, and does the wrong thing. Kelp's checker
    asks whether the borrow is still valid at the point the callback runs, so a callback whose lifetime
    does not check is a compile error. That turns a whole class of UI defects, the stale closure and the
-   use of an outdated captured value, into compiler-caught ones.
+   use of an outdated captured value, into compiler-caught ones. **True for scoped blocks** as of
+   `plan/scoped-blocks.md`: a `scoped fun(...)` literal's captures are borrows whose lifetime is the
+   call, so a view that reads `s.title` reads the live value, and a capture that would escape is a
+   compile error (`scoped_param_stored`, `scoped_param_returned`, `scoped_param_to_plain`).
 2. **No garbage collector.** Kelp is ownership and drop, with no GC, so there is no collector to pause
    during an animation or an interaction. Compose Multiplatform runs on the JVM, where a GC pause during
    a frame is a real and measurable event. This is a structural difference in the runtime, not a claim
@@ -69,9 +77,12 @@ one is a consequence of a language property Kelp already has, not a feature Poly
 - Whether it wraps GTK directly or through an abstraction layer of its own. That is a design decision
   for whoever starts it, and it interacts with the widget-wrapping choice above.
 - The trailing-closure syntax design itself, which is open item 75 and a language question first.
+  **Landed** as `plan/trailing-closure.md` plus `plan/scoped-blocks.md`; the `state.count += 1`
+  (exclusive-capture) shape is the part still open.
 
 ## Status
 
 **Far later in Kelp's development, after the current critical path (threads, FFI).** It blocks nothing
-and nothing blocks it except trailing-closure syntax existing first. It is not a Mark, it has no stages,
-and promoting it is a decision to take when a real UI program is wanted rather than a plan to run now.
+and nothing blocks it except trailing-closure syntax existing first, which now does (in the
+call-site-literal, borrow-capturing `scoped fun(...)` form). It is not a Mark, it has no stages, and
+promoting it is a decision to take when a real UI program is wanted rather than a plan to run now.

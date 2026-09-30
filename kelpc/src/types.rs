@@ -124,6 +124,27 @@ pub enum Ty {
     /// this type is made, so a program cannot build a closure without
     /// something to capture.
     Closure { params: Vec<Ty>, ret: Box<Ty> },
+    /// A **scoped** function value (`plan/scoped-blocks.md`): a parameter
+    /// written `scoped fun(T).R: U`, which accepts only a `fun` literal or a
+    /// trailing block written at the call site and may not outlive the call.
+    ///
+    /// It is closure-shaped at the ABI level (`{ fn, env, drop }`, `fn`
+    /// taking the environment first), and the environment is the enclosing
+    /// function's stack with a `NULL` drop, because nothing is heap and
+    /// nothing is owned. It is a **type of its own** rather than a flag: the
+    /// list of places a scoped value must not go (a `datac` field, a return,
+    /// a container, a non-scoped parameter, another closure's environment) is
+    /// a list of type positions, so every one of them is an ordinary mismatch
+    /// and no side table can fall out of date.
+    ///
+    /// Legal only as a top-level parameter of a declaration. It owns nothing,
+    /// so it needs no drop, and it never reaches a container element or a
+    /// type argument. **`Copy`**, deliberately: the value is a code pointer
+    /// plus a pointer to a stack environment that is alive for the call, so
+    /// copying it inside the callee is copying two pointers, and the one
+    /// entry point a parameter rule would otherwise add (an implicit `&`) is
+    /// not wanted — the callee holds the fat pointer itself.
+    ScopedFn { params: Vec<Ty>, ret: Box<Ty> },
     /// A **fixed-size array** (A-18): `[T; N]`, with `N` a compile-time
     /// constant. The storage is inline: one `N`-element block on whatever
     /// stack frame holds it, with no allocator in the path. That is the whole
@@ -399,8 +420,12 @@ impl Ty {
             // A closure is an ordinary C struct (a fat pointer), so it is
             // named by its typedef and never needs the declarator trick
             // above — including in a return position, which is why a
-            // function may return a closure but not a bare function value.
-            Ty::Closure { params, ret } => closure_c_type(params, ret),
+            // function may return a closure but not a bare function value. A
+            // scoped function value has the same fat-pointer shape, so it is
+            // spelled by the same typedef.
+            Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
+                closure_c_type(params, ret)
+            }
             Ty::Struct(name) => format!("struct_{}", c_ident(name)),
             Ty::Ref { mutable, inner } => {
                 if *mutable {
@@ -457,6 +482,13 @@ impl Ty {
                 // one keyword apart, because the two are called identically
                 // and differ only in what the value owns.
                 let mut s = format!("closure({})", join_types(params));
+                if **ret != Ty::Unit {
+                    s.push_str(&format!(".R: {}", ret.display()));
+                }
+                s
+            }
+            Ty::ScopedFn { params, ret } => {
+                let mut s = format!("scoped fun({})", join_types(params));
                 if **ret != Ty::Unit {
                     s.push_str(&format!(".R: {}", ret.display()));
                 }
@@ -799,6 +831,8 @@ pub fn drop_fn_name(ty: &Ty) -> String {
         Ty::Closure { params, ret } => {
             format!("kelp_closure_drop__{}", closure_mangle(params, ret))
         }
+        // A scoped function value owns nothing (its environment is stack and
+        // its drop is NULL), so it has no drop function to name.
         other => unreachable!("no drop rule for type '{}'", other.display()),
     }
 }
@@ -997,6 +1031,9 @@ pub fn ty_mangle(ty: &Ty) -> String {
         // types — which is the point: one is a pointer, the other owns an
         // environment.
         Ty::Closure { params, ret } => closure_mangle(params, ret),
+        // A scoped signature is the same fat pointer, so it shares the
+        // closure's C type rather than getting a second, identical typedef.
+        Ty::ScopedFn { params, ret } => closure_mangle(params, ret),
         // Everything else is a scalar, `View`/`unit`, or a borrow. A scalar's
         // written form is already an identifier; a borrow's is `&T` or
         // `mut T`, and `&T` is spelled `refT` here. What that spelling could

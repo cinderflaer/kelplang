@@ -1,0 +1,14 @@
+// Closing over a scoped parameter into a `datac` field: the field would let
+// the value outlive the call it was written in, which is exactly what the
+// `scoped fun(...)` type forbids.
+datac Holder(val cb: fun(i32))
+
+fun take(h: Holder) {
+    h.cb(1)
+}
+
+fun run(f: scoped fun(i32)) {
+    take(Holder(cb = f))
+}
+
+fun main() {}

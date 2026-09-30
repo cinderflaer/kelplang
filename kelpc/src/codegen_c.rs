@@ -471,7 +471,13 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             writeln!(out, "typedef struct {name} {name};").unwrap();
         }
         out.push('\n');
+        // A scoped function value and a closure with the same signature are
+        // two `Ty`s but one C typedef, so a name is emitted once.
+        let mut emitted_typedefs: std::collections::HashSet<String> = std::collections::HashSet::new();
         for ty in &containers {
+            if !emitted_typedefs.insert(crate::types::ty_mangle(ty)) {
+                continue;
+            }
             write_container_typedef(&mut out, ty);
         }
         out.push('\n');
@@ -487,6 +493,12 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             }
         }
         for ty in &containers {
+            // A scoped function value owns nothing (stack environment, `NULL`
+            // drop), so it has no drop function to declare
+            // (`plan/scoped-blocks.md`).
+            if matches!(ty, Ty::ScopedFn { .. }) {
+                continue;
+            }
             writeln!(
                 out,
                 "static void {}({}* v);",
@@ -585,6 +597,9 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             // the environment is dropped through the pointer stored beside
             // it, so nothing else here depends on the signature.
             Ty::Closure { .. } => write_closure(&mut out, ty),
+            // A scoped function value is the same fat pointer but owns
+            // nothing, so there is no per-signature drop to write.
+            Ty::ScopedFn { .. } => {}
             other => unreachable!("not a container: {}", other.display()),
         }
     }
@@ -1370,7 +1385,9 @@ fn write_map_entry_body(out: &mut String, key: &Ty, value: &Ty) {
 /// in both backends.
 fn write_container_typedef(out: &mut String, ty: &Ty) {
     match ty {
-        Ty::Closure { params, ret } => {
+        // A scoped function value is the same fat pointer, so it is the same
+        // typedef rather than a second, identical one.
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
             write_closure_typedef(out, params, ret);
         }
         Ty::List(elem) => {
@@ -1471,7 +1488,9 @@ fn coerce_thunk_name(ty: &Ty) -> String {
 
 fn coerce_mangle(ty: &Ty) -> String {
     match ty {
-        Ty::Closure { params, ret } => crate::types::closure_mangle(params, ret),
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
+            crate::types::closure_mangle(params, ret)
+        }
         other => unreachable!("not a closure: {}", other.display()),
     }
 }
@@ -1485,8 +1504,9 @@ fn coerce_mangle(ty: &Ty) -> String {
 /// value is a closure like any other and an indirect call needs no special
 /// case for it.
 fn write_coerce_env(out: &mut String, ty: &Ty) {
-    let Ty::Closure { params, ret } = ty else {
-        unreachable!("not a closure: {}", ty.display())
+    let (params, ret) = match ty {
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => (params, ret),
+        other => unreachable!("not a closure: {}", other.display()),
     };
     let env = coerce_env_c_type(ty);
     let param_types = params
@@ -1510,8 +1530,9 @@ fn write_coerce_env(out: &mut String, ty: &Ty) {
 /// a pointer, which a forward-declared `datac` tag satisfies, while the thunk
 /// returns it by value and so comes after the `datac` typedefs.
 fn write_coerce_thunk(out: &mut String, ty: &Ty) {
-    let Ty::Closure { params, ret } = ty else {
-        unreachable!("not a closure: {}", ty.display())
+    let (params, ret) = match ty {
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => (params, ret),
+        other => unreachable!("not a closure: {}", other.display()),
     };
     let env = coerce_env_c_type(ty);
     let param_types = params
@@ -1563,8 +1584,9 @@ fn write_coerce_thunk(out: &mut String, ty: &Ty) {
 /// not have had, and only a widening of a function value whose identity is not
 /// statically known needs the heap wrapper.
 fn write_shim(out: &mut String, key: &str, ty: &Ty) {
-    let Ty::Closure { params, ret } = ty else {
-        unreachable!("not a closure: {}", ty.display())
+    let (params, ret) = match ty {
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => (params, ret),
+        other => unreachable!("not a closure: {}", other.display()),
     };
     let param_types = params
         .iter()
@@ -1880,7 +1902,13 @@ pub(crate) fn write_referenced_type_layouts(
             writeln!(out, "typedef struct {name} {name};").unwrap();
         }
         out.push('\n');
+        // A scoped function value and a closure with the same signature are
+        // two `Ty`s but one C typedef, so a name is emitted once.
+        let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
         for ty in &containers {
+            if !emitted.insert(crate::types::ty_mangle(ty)) {
+                continue;
+            }
             write_container_typedef(out, ty);
         }
         out.push('\n');
@@ -1992,7 +2020,7 @@ fn collect_layout_tys(
             collect_layout_tys(key, structs, enums, named, containers, arrays, atomics, handles);
             collect_layout_tys(value, structs, enums, named, containers, arrays, atomics, handles);
         }
-        Ty::Closure { params, ret } => {
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
             if !containers.contains(ty) {
                 containers.push(ty.clone());
             }
@@ -2039,7 +2067,7 @@ fn container_name(ty: &Ty) -> String {
         Ty::List(elem) => crate::types::list_c_type(elem),
         Ty::Box(elem) => crate::types::box_c_type(elem),
         Ty::Map(key, value) => crate::types::map_c_type(key, value),
-        Ty::Closure { .. } => ty.c_type(),
+        Ty::Closure { .. } | Ty::ScopedFn { .. } => ty.c_type(),
         Ty::Array(elem, len) => crate::types::array_c_type(elem, *len),
         other => unreachable!("not a container: {}", other.display()),
     }
@@ -2127,7 +2155,7 @@ fn container_depth(ty: &Ty) -> usize {
         // A `Map<V>` value is never a container (`is_map_element` refuses
         // one), so a map is always one level deep.
         Ty::Map(..) => 1,
-        Ty::Closure { params, ret } => {
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
             1 + params
                 .iter()
                 .map(container_depth)
@@ -2873,8 +2901,9 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                 note_ty(value, out);
             }
             // A closure is emitted once per signature, and its parameters and
-            // return type may name another closure or a container.
-            Ty::Closure { params, ret } => {
+            // return type may name another closure or a container. A scoped
+            // function value is the same fat pointer, so it shares the entry.
+            Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
                 out.closures.insert(ty.clone());
                 for p in params {
                     note_ty(p, out);
@@ -2945,8 +2974,10 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
             }
             // A closure literal's initializers are expressions in the
             // *enclosing* function, so their types need the same walk as any
-            // other value's.
-            ExprKind::ClosureLit { captures, .. } => {
+            // other value's. A scoped literal's are the same, with a stack
+            // environment.
+            ExprKind::ClosureLit { captures, .. }
+            | ExprKind::ScopedClosureLit { captures, .. } => {
                 for c in captures {
                     note_expr(c, out);
                 }
@@ -3781,6 +3812,30 @@ impl<'a> Gen<'a> {
                     c_name(key)
                 ));
                 code
+            }
+            // A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the
+            // environment is a *local* of this function rather than a heap
+            // box, and the value's `drop` is `NULL` because every field is a
+            // `Copy` value or a shared borrow, so nothing has to be freed.
+            // The whole thing is a statement expression, so the captures are
+            // evaluated once, in field order, at the point the literal is.
+            ExprKind::ScopedClosureLit { key, captures } => {
+                let env_ty = crate::types::env_struct_name(key);
+                let closure_ty = expr.ty.c_type();
+                let value_tmp = fresh_temp();
+                // The environment is a *compound literal*, whose automatic
+                // storage lasts until the end of the enclosing block: the
+                // value is only ever used during this call, and a statement
+                // expression's own locals would die before the call ran.
+                let fields = captures
+                    .iter()
+                    .map(|init| self.expr_value(init))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "({{ {closure_ty} {value_tmp}; {value_tmp}.fn = {}; {value_tmp}.env = &({env_ty}){{ {fields} }}; {value_tmp}.drop = NULL; {value_tmp}; }})",
+                    c_name(key)
+                )
             }
             // A read of one field of the enclosing closure's environment
             // (A-4 phase E). `env` is the pointer the generated function's
@@ -5142,6 +5197,38 @@ impl<'a> Gen<'a> {
     /// text. Nothing drops that temporary: the callee takes the value itself,
     /// exactly as it did when the argument was the expression.
     fn stage_argument(&self, arg: &Expr, hoist: bool) -> (String, String, Vec<(String, Ty)>) {
+        // A scoped `fun` literal (`plan/scoped-blocks.md`): its environment has
+        // to live in the *enclosing block*, which is what the call's own
+        // prelude is, so the literal is staged here rather than rendered as a
+        // statement expression of its own. Staged inside the statement
+        // expression `call_value` builds, the environment would die before the
+        // call ran.
+        if let ExprKind::ScopedClosureLit { key, captures } = &arg.kind {
+            let env_ty = crate::types::env_struct_name(key);
+            let env_tmp = fresh_temp();
+            let value_tmp = fresh_temp();
+            let mut prelude = format!("{} {};\n", env_ty, env_tmp);
+            for (i, init) in captures.iter().enumerate() {
+                prelude.push_str(&format!(
+                    "{}.{} = {};\n",
+                    env_tmp,
+                    crate::types::capture_field(i),
+                    self.expr_value(init)
+                ));
+            }
+            prelude.push_str(&format!(
+                "{}; {}.fn = {}; {}.env = &{}; {}.drop = NULL;\n",
+                arg.ty.c_decl(&value_tmp),
+                value_tmp,
+                c_name(key),
+                value_tmp,
+                env_tmp,
+                value_tmp
+            ));
+            // The environment owns nothing (every field is a `Copy` value or a
+            // shared borrow), so there is no temporary to free after the call.
+            return (prelude, value_tmp, Vec::new());
+        }
         let ExprKind::Ref { expr: sub, .. } = &arg.kind else {
             if hoist {
                 let tmp = fresh_temp();
@@ -5368,6 +5455,7 @@ impl<'a> Gen<'a> {
             Ty::Fn { .. } => unreachable!("a function value cannot be printed"),
             // Same, for a closure: `infer.rs` refuses one in `print` too.
             Ty::Closure { .. } => unreachable!("a closure cannot be printed"),
+            Ty::ScopedFn { .. } => unreachable!("a scoped function value cannot be printed"),
             // An opaque handle has no readable value, so `infer.rs` refuses
             // one in `print` before codegen sees it.
             Ty::Handle(_) => unreachable!("an opaque handle cannot be printed"),
@@ -5528,8 +5616,12 @@ fn member_access(base_text: &str, base_ty: &Ty, suffix: &str) -> String {
 /// for a plain function value, which is the pointer itself (A-4 phase E).
 fn closure_access(ty: &Ty) -> Option<(&'static str, &'static str)> {
     match ty {
-        Ty::Closure { .. } => Some((".fn", ".env")),
-        Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => Some(("->fn", "->env")),
+        Ty::Closure { .. } | Ty::ScopedFn { .. } => Some((".fn", ".env")),
+        Ty::Ref { inner, .. }
+            if matches!(**inner, Ty::Closure { .. } | Ty::ScopedFn { .. }) =>
+        {
+            Some(("->fn", "->env"))
+        }
         _ => None,
     }
 }

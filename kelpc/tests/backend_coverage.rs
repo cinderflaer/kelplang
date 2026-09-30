@@ -265,7 +265,11 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// backend's own C text), and its two rejection fixtures stay outside the
 /// corpus (one is a parse error in `tests/fixtures/`, the other a typecheck
 /// error whose project can never build on either backend).
-const LLVM_BUILT_BASELINE: usize = 277;
+/// Raised from 277 by scoped blocks (`plan/scoped-blocks.md`): the four run
+/// fixtures (`scoped_block_params`, `scoped_block_borrow`, `scoped_block_captures`,
+/// `scoped_borrow_in_loop`) build with both backends, and the six rejection
+/// fixtures are refused before codegen so the C backend skips them too.
+const LLVM_BUILT_BASELINE: usize = 281;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

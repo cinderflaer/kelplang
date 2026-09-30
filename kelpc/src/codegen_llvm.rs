@@ -2627,6 +2627,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::ClosureLit { key, captures } => {
                 Ok(Some(self.emit_closure_lit(key, captures, &e.ty)?))
             }
+            // A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the
+            // same fat pointer, but the environment is an `alloca` of this
+            // function and the `drop` member is `null`.
+            ExprKind::ScopedClosureLit { key, captures } => {
+                Ok(Some(self.emit_scoped_closure_lit(key, captures, &e.ty)?))
+            }
             // One field of the enclosing closure's environment. It is a
             // *place* (the environment owns the value), so the read is the
             // field's own type loaded out of that address.
@@ -2807,6 +2813,48 @@ impl<'g, 'a> FnGen<'g, 'a> {
         agg = self.g.builder.build_insert_value(agg, func.func.as_value(), 0, "fn");
         agg = self.g.builder.build_insert_value(agg, env, 1, "env");
         agg = self.g.builder.build_insert_value(agg, drop.as_value(), 2, "drop");
+        Ok(agg)
+    }
+
+    /// A scoped `fun` literal (`plan/scoped-blocks.md` part 2): the same fat
+    /// pointer `emit_closure_lit` builds, but the environment is an `alloca`
+    /// of the enclosing function — it cannot outlive the call the literal was
+    /// written in — and the `drop` member is `null`, because every field is a
+    /// `Copy` value or a shared borrow and the environment owns nothing.
+    fn emit_scoped_closure_lit(
+        &mut self,
+        key: &str,
+        captures: &[Expr],
+        sig: &Ty,
+    ) -> Result<Value<'a>, String> {
+        let func = self
+            .g
+            .funcs
+            .get(key)
+            .cloned()
+            .ok_or_else(|| no_value(&format!("the literal '{key}'")))?;
+        let closure_ty = self.g.closure_value_ty(sig)?;
+        let env_ty = *self
+            .g
+            .env_types
+            .get(key)
+            .ok_or_else(|| no_value(&format!("the environment of '{key}'")))?;
+        let env = self.temp_alloca(env_ty, "scoped.env");
+        for (index, init) in captures.iter().enumerate() {
+            let value = self.value_of(init)?;
+            let field = self.g.builder.build_struct_gep(
+                env_ty,
+                env,
+                index as u32,
+                &capture_field(index),
+            );
+            self.g.builder.build_store(value, field);
+        }
+        let null = self.g.ctx.const_null(self.g.pty());
+        let mut agg = self.g.ctx.undef(closure_ty);
+        agg = self.g.builder.build_insert_value(agg, func.func.as_value(), 0, "fn");
+        agg = self.g.builder.build_insert_value(agg, env, 1, "env");
+        agg = self.g.builder.build_insert_value(agg, null, 2, "drop");
         Ok(agg)
     }
 
@@ -3379,8 +3427,21 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 field,
             } => self.enum_field_place(base, *variant, *field),
             // A field of the enclosing closure's environment (S2E): the
-            // environment owns the capture, so the field is its address.
-            ExprKind::Capture { index } => self.capture_place(*index),
+            // environment owns the capture, so the field is its address. A
+            // *borrowed* capture is an exception: the field holds the pointer,
+            // so the place is the pointee it names, exactly as a borrow-typed
+            // local's place is (`plan/scoped-blocks.md`).
+            ExprKind::Capture { index } => {
+                let slot = self.capture_place(*index)?;
+                if is_borrow_ty(&e.ty) {
+                    Ok(self
+                        .g
+                        .builder
+                        .build_load(self.g.ctx.opaque_ptr(), slot, "capture.ptr"))
+                } else {
+                    Ok(slot)
+                }
+            }
             // A borrow in a place position is already an address.
             ExprKind::Ref { expr: sub, .. } => self.place_of(sub),
             ExprKind::Deref { expr: sub } => self.value_of(sub),
@@ -5477,8 +5538,10 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 note_ty(elem, out);
             }
             // A closure is emitted once per signature, and its parameters and
-            // return type may name another closure or a container.
-            Ty::Closure { params, ret } => {
+            // return type may name another closure or a container. A scoped
+            // function value is the same fat pointer, so it shares the same
+            // container entry and the same closure set.
+            Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => {
                 out.closures.insert(ty.clone());
                 for p in params {
                     note_ty(p, out);
@@ -5586,7 +5649,8 @@ fn collect_instantiations(program: &Program) -> Instantiations {
                 }
             }
             ExprKind::Block(block) => note_block(block, out),
-            ExprKind::ClosureLit { captures, .. } => {
+            ExprKind::ClosureLit { captures, .. }
+            | ExprKind::ScopedClosureLit { captures, .. } => {
                 for c in captures {
                     note_expr(c, out);
                 }
@@ -5912,8 +5976,9 @@ impl<'a> Gen<'a> {
         let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
         closures.sort_by_key(|t| (container_depth(t), container_sort_name(t)));
         for sig in &closures {
-            let Ty::Closure { params, ret } = sig else {
-                continue;
+            let (params, ret) = match sig {
+                Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => (params, ret),
+                _ => continue,
             };
             let ty = self.ctx.struct_type(&closure_c_type(params, ret));
             self.containers.insert(sig.clone(), ty);
@@ -5974,7 +6039,10 @@ impl<'a> Gen<'a> {
                 // The closure's fat pointer, field for field
                 // `write_closure_typedef`'s three members (S2E): the code
                 // pointer, the environment and the environment's destructor.
-                Ty::Closure { .. } => self.ctx.struct_set_body(*lty, &[ptr, ptr, ptr]),
+                // A scoped function value is the same three members.
+                Ty::Closure { .. } | Ty::ScopedFn { .. } => {
+                    self.ctx.struct_set_body(*lty, &[ptr, ptr, ptr])
+                }
                 Ty::Map(_, _) => self.ctx.struct_set_body(
                     *lty,
                     &[ptr, i64t, i64t, i64t, ptr, i64t, i64t],
@@ -6078,8 +6146,9 @@ impl<'a> Gen<'a> {
     /// return, with `unit` becoming `void`. The fat pointer's own struct type is
     /// in `containers`, keyed by the `tir` closure type.
     fn closure_sig_types(&self, ty: &Ty) -> Result<(Vec<Type<'a>>, Type<'a>), String> {
-        let Ty::Closure { params, ret } = ty else {
-            return Err(no_value("a closure signature"));
+        let (params, ret) = match ty {
+            Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => (params, ret),
+            _ => return Err(no_value("a closure signature")),
         };
         let params = params
             .iter()
@@ -6110,7 +6179,7 @@ impl<'a> Gen<'a> {
     fn closure_value_ty(&self, ty: &Ty) -> Result<Type<'a>, String> {
         match ty {
             Ty::Ref { inner, .. } => self.closure_value_ty(inner),
-            Ty::Closure { .. } => self.cty(ty),
+            Ty::Closure { .. } | Ty::ScopedFn { .. } => self.cty(ty),
             other => Err(refuse_type(other)),
         }
     }
@@ -6186,6 +6255,11 @@ impl<'a> Gen<'a> {
         let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
         closures.sort_by_key(container_sort_name);
         for sig in &closures {
+            // A scoped function value owns nothing (stack environment, `NULL`
+            // drop), so it has no per-signature drop to declare.
+            if matches!(sig, Ty::ScopedFn { .. }) {
+                continue;
+            }
             let symbol = drop_fn_name(sig);
             let ty = self.ctx.fn_type(void, &[ptr], false);
             let func = self.module.add_function(&symbol, ty);
@@ -6257,11 +6331,20 @@ impl<'a> Gen<'a> {
         let mut closures: Vec<Ty> = inst.closures.iter().cloned().collect();
         closures.sort_by_key(container_sort_name);
         for sig in &closures {
+            if matches!(sig, Ty::ScopedFn { .. }) {
+                continue;
+            }
             self.emit_closure_drop(sig)?;
         }
         let mut coerced: Vec<Ty> = inst.coerced.iter().cloned().collect();
         coerced.sort_by_key(container_sort_name);
         for sig in &coerced {
+            // A scoped widening is only the *shim* (the wrapped value always
+            // names a function, and its environment is `null`), so neither the
+            // heap thunk nor the drop is reachable for it.
+            if matches!(sig, Ty::ScopedFn { .. }) {
+                continue;
+            }
             self.emit_coerce_drop(sig)?;
             self.emit_coerce_thunk(sig)?;
         }
@@ -6460,7 +6543,7 @@ impl<'a> Gen<'a> {
 /// and so no machinery of its own.
 fn closure_mangle_of(ty: &Ty) -> String {
     match ty {
-        Ty::Closure { params, ret } => closure_mangle(params, ret),
+        Ty::Closure { params, ret } | Ty::ScopedFn { params, ret } => closure_mangle(params, ret),
         other => unreachable!("not a closure signature: {}", other.display()),
     }
 }
@@ -6491,8 +6574,12 @@ fn thread_body_symbol(sig: &Ty) -> String {
 /// the pointer itself.
 fn closure_callee_sig(ty: &Ty) -> Option<Ty> {
     match ty {
-        Ty::Closure { .. } => Some(ty.clone()),
-        Ty::Ref { inner, .. } if matches!(**inner, Ty::Closure { .. }) => Some((**inner).clone()),
+        Ty::Closure { .. } | Ty::ScopedFn { .. } => Some(ty.clone()),
+        Ty::Ref { inner, .. }
+            if matches!(**inner, Ty::Closure { .. } | Ty::ScopedFn { .. }) =>
+        {
+            Some((**inner).clone())
+        }
         _ => None,
     }
 }
@@ -6500,7 +6587,7 @@ fn closure_callee_sig(ty: &Ty) -> Option<Ty> {
 /// Whether one closure signature returns `unit`, which decides between `ret`
 /// and `ret void` in the three functions that are declared with it.
 fn closure_is_unit(sig: &Ty) -> bool {
-    matches!(sig, Ty::Closure { ret, .. } if **ret == Ty::Unit)
+    matches!(sig, Ty::Closure { ret, .. } | Ty::ScopedFn { ret, .. } if **ret == Ty::Unit)
 }
 
 /// How deeply containers nest, used to emit a container after the containers it
@@ -10343,6 +10430,7 @@ fn is_aggregate_ty(ty: &Ty) -> bool {
             | Ty::Map(..)
             | Ty::Array(..)
             | Ty::Closure { .. }
+            | Ty::ScopedFn { .. }
     )
 }
 
@@ -10710,7 +10798,7 @@ fn llvm_type<'a>(
         // A closure is the fat pointer `{ fn, env, drop }`, one identified
         // struct per signature and so a named type here like a container
         // (S2E).
-        Ty::Closure { .. } => *containers
+        Ty::Closure { .. } | Ty::ScopedFn { .. } => *containers
             .get(ty)
             .ok_or_else(|| no_value(&format!("the closure '{}'", ty.display())))?,
         Ty::Struct(name) => *structs
@@ -11019,7 +11107,7 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         Ty::Ref { .. } => Err(refuse("'a reference field'", "S2F")),
         // A function value is a `ptr` field and a closure is the fat pointer's
         // struct, laid out by the container pass before this one (S2E).
-        Ty::Fn { .. } | Ty::Closure { .. } => Ok(()),
+        Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. } => Ok(()),
         Ty::Struct(_) => Ok(()),
         other if llvm_scalar_type(other) => Ok(()),
         other => Err(refuse_type(other)),
@@ -11060,7 +11148,7 @@ fn refuse_type(ty: &Ty) -> String {
         Ty::Box(_) => ("'Box'", "S2D"),
         Ty::Map(..) => ("'Map'", "S2D"),
         Ty::Array(..) => ("'an array'", "S2D"),
-        Ty::Ref { .. } | Ty::Fn { .. } | Ty::Closure { .. } => {
+        Ty::Ref { .. } | Ty::Fn { .. } | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
             return no_value(&format!("the type '{}'", ty.display()))
         }
         Ty::Str | Ty::View => ("a borrowed view", "S2D"),

@@ -1,0 +1,14 @@
+// The block's captured borrow has to live through the whole call, so a `move`
+// argument cannot take the same value away before the call starts.
+datac State(val a: i32)
+
+fun both(other: move State, f: scoped fun(i32)) {
+    f(1)
+}
+
+fun run() {
+    val s = State(a = 0)
+    both(s) { n -> print(n + s.a) }
+}
+
+fun main() {}

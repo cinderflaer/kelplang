@@ -358,6 +358,14 @@ pub struct TypeExpr {
     /// under the elision rule, whereas a parameter's `&str` is what `str`
     /// already is (a borrowed view passed by value).
     pub amp: bool,
+    /// `scoped fun(T).R: U` — a *contextual* modifier (`scoped` is not a
+    /// keyword, and is only a modifier when the next token is `fun`). A
+    /// scoped function value may only be written at a call site and may not
+    /// outlive the call (`plan/scoped-blocks.md`). Legal only on a top-level
+    /// parameter of a declaration, which `infer.rs` enforces: nested in
+    /// another function type it could be stored as that type, which is the
+    /// one thing the modifier forbids.
+    pub scoped: bool,
     /// `fun(i32, String).R: bool` — the parameters, when this is a function
     /// type (A-4). `Some`, even when empty (`fun()`), is what marks it as one;
     /// `None` for every ordinary type. `name` is `"fun"` in that case, or
@@ -381,6 +389,7 @@ impl TypeExpr {
             array_elem: None,
             array_len: None,
             amp: false,
+            scoped: false,
             fn_params: None,
             fn_ret: None,
             span,
@@ -415,7 +424,8 @@ impl TypeExpr {
             // nothing else, so the keyword written is the keyword shown
             // (A-4 phase E).
             let args: Vec<String> = params.iter().map(|p| p.display()).collect();
-            format!("{}({})", self.name, args.join(", "))
+            let modifier = if self.scoped { "scoped " } else { "" };
+            format!("{}{}({})", modifier, self.name, args.join(", "))
         } else if self.args.is_empty() {
             self.name.clone()
         } else {
@@ -717,9 +727,18 @@ pub enum Expr {
     /// environment holding what it captured) when it did.
     FnLit {
         params: Vec<Param>,
+        /// A block header (`{ x, y -> ... }`) writes the parameter *names*
+        /// only: their types come from the expected function type of the
+        /// parameter the block is passed to (`plan/scoped-blocks.md` part 1).
+        /// `false` for a `fun(...)` literal, whose parameters are always
+        /// typed by hand. A literal with this set and no expected function
+        /// type is refused rather than guessed at.
+        infer_params: bool,
         /// The `.R: T`. `None` means `Unit`, exactly as on a declaration —
         /// there is no return-type inference, because a literal's type *is*
-        /// its signature.
+        /// its signature. A block literal with `infer_params` takes the return
+        /// from the expected type instead: a non-unit expected return makes
+        /// the block's tail its value, a unit one discards it as today.
         return_type: Option<TypeExpr>,
         /// `= expr` or `{ ... }`. Never `FunctionBody::Extern`: the parser
         /// requires a body. Boxed because the body holds expressions and a

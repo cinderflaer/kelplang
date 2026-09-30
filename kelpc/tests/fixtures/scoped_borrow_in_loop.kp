@@ -1,0 +1,16 @@
+// A scoped literal written inside a loop: the environment is one stack slot
+// reused per iteration, and the call finishes before the next one overwrites
+// it. The captured `k` changes between iterations, so a stale environment
+// would show here.
+fun each(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+}
+
+fun main() {
+    var k = 0
+    while k < 3 {
+        each { n -> print(n + k) }
+        k += 1
+    }
+}

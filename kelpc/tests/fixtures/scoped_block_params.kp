@@ -1,0 +1,42 @@
+// `plan/scoped-blocks.md` part 1 and part 2: a trailing block declares its
+// parameters by name only, takes their types from the `scoped fun(...)` the
+// block is passed to, and returns its tail when that type's return is
+// non-unit. The callee calls it during the call and only during the call.
+fun each(xs: List<i32>, f: scoped fun(i32)) {
+    var i: usize = 0
+    while i < xs.len() {
+        f(xs.get(i))
+        i += 1
+    }
+}
+
+fun sum(xs: List<i32>, f: scoped fun(i32).R: i32).R: i32 {
+    var total = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += f(xs.get(i))
+        i += 1
+    }
+    return total
+}
+
+// One scoped parameter forwarded to another: the value stays inside the call.
+fun twice(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(4)
+    xs.push(5)
+    xs.push(6)
+
+    each(xs) { n -> print(n) }
+    print(sum(xs) { n -> n * 10 })
+    twice { n -> print(n + 100) }
+
+    // A value-returning block, and one whose tail is an `if` expression.
+    print(sum(xs) { n -> n - 1 })
+    print(sum(xs) { n -> if n > 5 { n } else { 0 } })
+}

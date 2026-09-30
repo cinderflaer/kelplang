@@ -70,26 +70,76 @@ impl Parser {
     }
 
     /// A `{ ... }` on the same line as the end of a call is that call's last
-    /// argument: a zero-parameter `fun` literal returning Unit, exactly what
-    /// `f(fun() { ... })` writes. Nothing else follows a call on the same line
-    /// with a `{`, so this only ever accepts text that was a parse error.
+    /// argument, exactly what `f(fun() { ... })` writes. Nothing else follows
+    /// a call on the same line with a `{`, so this only ever accepts text that
+    /// was a parse error.
+    ///
+    /// A `{ x, y -> ... }` header declares the block's parameters by *name*
+    /// only; their types come from the expected function type of the parameter
+    /// the block is passed to (`plan/scoped-blocks.md` part 1), so the literal
+    /// is marked `infer_params`. The header is read only when the first tokens
+    /// are identifiers, comma separated, followed by `->`, which appears
+    /// nowhere else at the start of a block.
     fn parse_trailing_block(&mut self, args: &mut Vec<CallArg>, end: &mut Span) -> PResult<()> {
         if self.no_trailing_block || !self.check(&TokenKind::LBrace) {
             return Ok(());
         }
-        let block = self.parse_block()?;
+        let start = self.advance().span;
+        let mut params = Vec::new();
+        if self.block_header_starts_params() {
+            loop {
+                let (name, span) = self.expect_ident()?;
+                params.push(Param {
+                    name,
+                    ty: TypeExpr::named("", span),
+                    mode: ParamMode::Borrow,
+                    span,
+                });
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
+            self.expect(TokenKind::Arrow, "'->' after the block's parameters")?;
+        }
+        let block = self.parse_block_body(start)?;
         let span = block.span;
         *end = span;
         args.push(CallArg {
             name: None,
             value: Expr::FnLit {
-                params: Vec::new(),
+                params,
+                infer_params: true,
                 return_type: None,
                 body: Box::new(FunctionBody::Block(block)),
                 span,
             },
         });
         Ok(())
+    }
+
+    /// Whether the `{` the parser has already consumed opens a block whose
+    /// first tokens are a parameter header: one or more identifiers, comma
+    /// separated, then `->`. A lookahead only — nothing is consumed.
+    fn block_header_starts_params(&self) -> bool {
+        let mut i = self.pos;
+        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
+            return false;
+        }
+        loop {
+            i += 1;
+            match self.tokens.get(i).map(|t| &t.kind) {
+                Some(TokenKind::Arrow) => return true,
+                Some(TokenKind::Comma) => {
+                    i += 1;
+                    if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
     }
 
     fn peek(&self) -> &Token {
@@ -953,6 +1003,7 @@ impl Parser {
                 array_elem: Some(Box::new(elem)),
                 array_len: Some(Box::new(len)),
                 amp: amp_start.is_some(),
+                scoped: false,
                 fn_params: None,
                 fn_ret: None,
                 span: amp_start.map(|a| a.to(close)).unwrap_or_else(|| open.to(close)),
@@ -997,6 +1048,7 @@ impl Parser {
                 array_elem: None,
                 array_len: None,
                 amp: amp_start.is_some(),
+                scoped: false,
                 fn_params: None,
                 fn_ret: None,
                 span,
@@ -1004,11 +1056,22 @@ impl Parser {
         }
         if self.check(&TokenKind::Fun) {
             let start = self.advance().span;
-            return self.parse_fn_type(start, amp_start, "fun");
+            return self.parse_fn_type(start, amp_start, "fun", false);
+        }
+        // `scoped fun(T).R: U` — a *contextual* modifier. `scoped` is read as
+        // one only when the next token is `fun`, so an ordinary type or
+        // binding named `scoped` is untouched, and the modifier never has a
+        // keyword that could break an existing program.
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "scoped")
+            && matches!(self.peek2_kind(), TokenKind::Fun)
+        {
+            let start = self.advance().span;
+            self.advance();
+            return self.parse_fn_type(start, amp_start, "fun", true);
         }
         if self.check(&TokenKind::Closure) {
             let start = self.advance().span;
-            return self.parse_fn_type(start, amp_start, "closure");
+            return self.parse_fn_type(start, amp_start, "closure", false);
         }
         let (first, first_span) = self.expect_ident()?;
         // A dotted name is a module-qualified reference to an imported item
@@ -1037,6 +1100,7 @@ impl Parser {
                 array_elem: None,
                 array_len: None,
                 amp: amp_start.is_some(),
+                scoped: false,
                 fn_params: None,
                 fn_ret: None,
                 span: amp_start.map(|a| a.to(span)).unwrap_or(span),
@@ -1049,6 +1113,7 @@ impl Parser {
             array_elem: None,
             array_len: None,
             amp: amp_start.is_some(),
+            scoped: false,
             fn_params: None,
             fn_ret: None,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
@@ -1146,6 +1211,7 @@ impl Parser {
         };
         Ok(Expr::FnLit {
             params,
+            infer_params: false,
             return_type,
             body: Box::new(body),
             span: start.to(end),
@@ -1187,6 +1253,7 @@ impl Parser {
         start: Span,
         amp_start: Option<Span>,
         name: &str,
+        scoped: bool,
     ) -> PResult<TypeExpr> {
         self.expect(TokenKind::LParen, "'('")?;
         let mut params = Vec::new();
@@ -1225,6 +1292,7 @@ impl Parser {
             array_elem: None,
             array_len: None,
             amp: amp_start.is_some(),
+            scoped,
             fn_params: Some(params),
             fn_ret: ret,
             span: amp_start.map(|a| a.to(span)).unwrap_or(span),
@@ -1284,6 +1352,12 @@ impl Parser {
 
     fn parse_block(&mut self) -> PResult<Block> {
         let start = self.expect(TokenKind::LBrace, "'{'")?.span;
+        self.parse_block_body(start)
+    }
+
+    /// The statements and closing `}` of a block whose `{` (and, for a block
+    /// with parameters, whose `{ x, y ->` header) the caller has consumed.
+    fn parse_block_body(&mut self, start: Span) -> PResult<Block> {
         let saved = std::mem::replace(&mut self.no_trailing_block, false);
         self.skip_newlines();
         let mut stmts = Vec::new();
@@ -3645,10 +3719,44 @@ mod tests {
     }
 
     #[test]
+    fn a_block_header_declares_its_parameters_by_name() {
+        let args = first_call_args("fun main() {\n    column { x, y -> f(x, y) }\n}");
+        assert_eq!(args.len(), 1);
+        match &args[0].value {
+            Expr::FnLit { params, infer_params, return_type: None, .. } => {
+                assert!(*infer_params);
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].name, "x");
+                assert_eq!(params[1].name, "y");
+                // No type is written on a block header: it comes from the
+                // function type the block is passed to.
+                assert_eq!(params[0].ty.name, "");
+            }
+            other => panic!("expected a block literal, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn an_unsafe_fun_declaration_sets_its_flag() {
         let p = parse("unsafe fun poke(p: Ptr<i32>, v: i32) {\n    p.write(v)\n}\nfun main() {}");
         assert!(p.functions[0].unsafe_);
         assert!(!p.functions[1].unsafe_);
         assert_eq!(p.functions[0].params[0].ty.display(), "Ptr<i32>");
+    }
+
+    #[test]
+    fn a_block_whose_first_tokens_are_not_a_header_is_an_ordinary_block() {
+        // `x` alone, and `x + 1`, are expressions, not parameter headers.
+        let args = first_call_args("fun main() {\n    run { x }\n}");
+        assert!(matches!(&args[0].value, Expr::FnLit { params, .. } if params.is_empty()));
+        parse("fun main() {\n    run { x + 1 }\n}");
+    }
+
+    #[test]
+    fn a_scoped_function_parameter_type_parses_as_a_modifier() {
+        parse("fun each(f: scoped fun(i32)) {}\n");
+        parse("fun each(f: scoped fun(i32).R: i32) {}\n");
+        // `scoped` is contextual: as an ordinary type name it is untouched.
+        parse("datac scoped(val n: i32)\nfun f(x: scoped) {}\n");
     }
 }
