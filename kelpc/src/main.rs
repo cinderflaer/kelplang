@@ -318,6 +318,19 @@ fn build(
         }
     };
 
+    // One `pkg-config` invocation for every package the manifest's `[extern.*]`
+    // sections named (MK9-S1-M1), shared by both backends. It runs before the
+    // backend seam because a package that cannot be resolved is a build error,
+    // not a per-backend one, and the same flags have to reach both.
+    let pkg_config_flags =
+        match driver::pkg_config_flags(&loaded.project.extern_pkg_config_packages()) {
+            Ok(flags) => flags,
+            Err(e) => {
+                eprintln!("error: {}", e.message);
+                return false;
+            }
+        };
+
     // The backend seam, and the only place a code generator is named. Both arms
     // are live: `llvm` is what every build gets, and `c` is reached only through
     // the project's oracle switch (`backend::ORACLE_ENV`), which is how the
@@ -335,6 +348,7 @@ fn build(
                 &link_libs,
                 &include_dirs,
                 &library_dirs,
+                &pkg_config_flags,
             ) {
                 eprintln!("error: {}", e.message);
                 return false;
@@ -356,6 +370,7 @@ fn build(
                 &link_libs,
                 &include_dirs,
                 &library_dirs,
+                &pkg_config_flags,
             ) {
                 eprintln!("error: {message}");
                 return false;

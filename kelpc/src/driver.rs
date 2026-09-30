@@ -40,6 +40,7 @@ pub fn compile_c(
     link_libs: &[String],
     include_dirs: &[String],
     library_dirs: &[String],
+    pkg_config_flags: &[String],
 ) -> Result<(), CompileError> {
     let c_path = out_path.with_extension("c");
     std::fs::write(&c_path, c_source).map_err(|e| CompileError {
@@ -66,6 +67,13 @@ pub fn compile_c(
         .arg("-lssl")
         .arg("-lcrypto");
     for flag in dir_flags(include_dirs, library_dirs) {
+        command.arg(flag);
+    }
+    // The flags one `pkg-config --cflags --libs` produced for every package a
+    // `coral.toml` `[extern."<module id>"]` section named (MK9-S1-M1): the
+    // `-I`/`-L`/`-l` a package supplies reach the compile and the link, which
+    // on this backend are the same `cc` invocation.
+    for flag in pkg_config_flags {
         command.arg(flag);
     }
     // `-l<name>` for every native library a `coral.toml` `[extern."<module
@@ -111,6 +119,7 @@ pub fn compile_c_object(
     obj_path: &Path,
     opt: OptLevel,
     include_dirs: &[String],
+    pkg_config_flags: &[String],
 ) -> Result<(), CompileError> {
     std::fs::write(c_path, c_source).map_err(|e| CompileError {
         message: format!("could not write generated C to '{}': {e}", c_path.display()),
@@ -125,6 +134,12 @@ pub fn compile_c_object(
         .arg("-pthread")
         .arg("-Werror=implicit-function-declaration");
     for flag in dir_flags(include_dirs, &[]) {
+        command.arg(flag);
+    }
+    // The LLVM backend compiles the generated C for a program's `extern fun`
+    // bodies here, so a package's `-I` has to reach this invocation as well
+    // (MK9-S1-M1).
+    for flag in pkg_config_flags {
         command.arg(flag);
     }
     let output = command
@@ -175,6 +190,7 @@ pub fn link_llvm_object(
     opt: OptLevel,
     link_libs: &[String],
     library_dirs: &[String],
+    pkg_config_flags: &[String],
 ) -> Result<(), CompileError> {
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
@@ -207,6 +223,12 @@ pub fn link_llvm_object(
         .arg("-lssl")
         .arg("-lcrypto");
     for flag in dir_flags(&[], library_dirs) {
+        command.arg(flag);
+    }
+    // See `compile_c`'s matching loop: a package's `-L`/`-l` has to be on the
+    // LLVM backend's link line too, or its build would miss a library the C
+    // backend resolves (MK9-S1-M1).
+    for flag in pkg_config_flags {
         command.arg(flag);
     }
     // See `compile_c`'s matching loop: a `coral.toml` `[extern."<module
@@ -246,6 +268,55 @@ pub fn dir_flags(include_dirs: &[String], library_dirs: &[String]) -> Vec<String
         .collect()
 }
 
+/// The argument list for one `pkg-config` invocation over `packages`: the
+/// `--cflags --libs` request first, then the packages themselves, sorted and
+/// deduplicated so the same set of manifests always runs the same command.
+/// Pure, so the flag shape is tested without running `pkg-config`.
+pub fn pkg_config_args(packages: &[String]) -> Vec<String> {
+    let mut sorted: Vec<&String> = packages.iter().collect();
+    sorted.sort();
+    sorted.dedup();
+    let mut args = vec!["--cflags".to_string(), "--libs".to_string()];
+    args.extend(sorted.into_iter().cloned());
+    args
+}
+
+/// Splits one `pkg-config` stdout into individual flags, in the order it
+/// printed them. `pkg-config` separates them with whitespace (`-I/x -L/y
+/// -lfoo -pthread -DBAR=1`), so whitespace is the separator. Pure.
+pub fn split_pkg_config_output(output: &str) -> Vec<String> {
+    output.split_whitespace().map(str::to_string).collect()
+}
+
+/// Runs one `pkg-config --cflags --libs` over `packages` and returns the flags
+/// split from its stdout (MK9-S1-M1). A missing `pkg-config` or a non-zero
+/// exit is an error naming the packages and carrying `pkg-config`'s stderr;
+/// the build never silently links without the requested packages.
+pub fn pkg_config_flags(packages: &[String]) -> Result<Vec<String>, CompileError> {
+    if packages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let output = Command::new("pkg-config")
+        .args(pkg_config_args(packages))
+        .output()
+        .map_err(|e| CompileError {
+            message: format!(
+                "could not invoke 'pkg-config' for {}: {e}",
+                packages.join(", ")
+            ),
+        })?;
+    if !output.status.success() {
+        return Err(CompileError {
+            message: format!(
+                "pkg-config failed for {}:\n{}",
+                packages.join(", "),
+                String::from_utf8_lossy(&output.stderr).trim_end()
+            ),
+        });
+    }
+    Ok(split_pkg_config_output(&String::from_utf8_lossy(&output.stdout)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +333,27 @@ mod tests {
     #[test]
     fn no_dirs_yield_no_flags() {
         assert!(dir_flags(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn pkg_config_args_request_flags_then_sorted_packages() {
+        let args = pkg_config_args(&["zlib".to_string(), "gtk4".to_string(), "zlib".to_string()]);
+        assert_eq!(args, ["--cflags", "--libs", "gtk4", "zlib"]);
+    }
+
+    #[test]
+    fn pkg_config_output_splits_on_whitespace_in_order() {
+        assert_eq!(
+            split_pkg_config_output("-I/x -L/y -lfoo -pthread -DBAR=1\n"),
+            ["-I/x", "-L/y", "-lfoo", "-pthread", "-DBAR=1"]
+        );
+        assert!(split_pkg_config_output("").is_empty());
+    }
+
+    #[test]
+    fn no_packages_never_runs_pkg_config() {
+        let flags = pkg_config_flags(&[])
+            .unwrap_or_else(|e| panic!("no invocation needed: {}", e.message));
+        assert!(flags.is_empty());
     }
 }

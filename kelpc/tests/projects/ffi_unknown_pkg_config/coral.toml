@@ -1,0 +1,11 @@
+name = "ffiunknownpkgconfig"
+
+# MK9-S1-M1 (roadmap B-1): names a package no `.pc` file can provide, so
+# `kelpc build` has to fail with `pkg-config`'s own error rather than link
+# without it.
+[extern."helper"]
+domain = "env"
+library = "c"
+symbols = ["kelp_pkg_triple"]
+header = "kelp_pkg_helper.h"
+pkg_config = "kelp-nonexistent-pkg-9zz"

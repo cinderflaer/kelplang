@@ -368,6 +368,7 @@ pub fn compile(
     link_libs: &[String],
     include_dirs: &[String],
     library_dirs: &[String],
+    pkg_config_flags: &[String],
 ) -> Result<(), String> {
     llvm_ffi::initialize_native_target()?;
     let triple = llvm_ffi::default_target_triple();
@@ -466,8 +467,15 @@ pub fn compile(
         Some(source) => {
             let c_path = out_path.with_extension("externs.c");
             let obj_path = out_path.with_extension("externs.o");
-            crate::driver::compile_c_object(&source, &c_path, &obj_path, opt, include_dirs)
-                .map_err(|e| e.message)?;
+            crate::driver::compile_c_object(
+                &source,
+                &c_path,
+                &obj_path,
+                opt,
+                include_dirs,
+                pkg_config_flags,
+            )
+            .map_err(|e| e.message)?;
             Some(obj_path)
         }
         None => None,
@@ -480,6 +488,7 @@ pub fn compile(
         opt,
         link_libs,
         library_dirs,
+        pkg_config_flags,
     )
     .map_err(|e| e.message)
 }
@@ -10980,6 +10989,7 @@ mod layout_tests {
             &dir.join("all.externs.o"),
             crate::opt::OptLevel::DEFAULT,
             &[],
+            &[],
         ) {
             panic!(
                 "a shipped extern body does not compile against the prelude: {}",
@@ -11312,6 +11322,7 @@ mod layout_tests {
             &dir.join("types.externs.c"),
             &dir.join("types.externs.o"),
             crate::opt::OptLevel::DEFAULT,
+            &[],
             &[],
         ) {
             panic!(

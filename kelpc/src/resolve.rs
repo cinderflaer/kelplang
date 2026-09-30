@@ -153,6 +153,23 @@ impl Project {
     pub fn extern_library_dirs(&self) -> Vec<String> {
         collect_extern_dirs(&self.extern_modules, self.root.as_deref(), |e| e.library_dirs())
     }
+
+    /// Every `pkg-config` package named across the project's `[extern.*]`
+    /// sections, deduplicated and sorted. `driver.rs` runs one
+    /// `pkg-config --cflags --libs` invocation over the whole list.
+    pub fn extern_pkg_config_packages(&self) -> Vec<String> {
+        collect_extern_pkg_config(&self.extern_modules)
+    }
+}
+
+fn collect_extern_pkg_config(extern_modules: &HashMap<String, ExternModuleDecl>) -> Vec<String> {
+    let mut packages: Vec<String> = extern_modules
+        .values()
+        .filter_map(|e| e.pkg_config().map(str::to_string))
+        .collect();
+    packages.sort();
+    packages.dedup();
+    packages
 }
 
 fn collect_extern_headers(extern_modules: &HashMap<String, ExternModuleDecl>) -> Vec<String> {
@@ -216,6 +233,10 @@ pub struct ExternModuleDecl {
     /// The directories `-L<dir>` names on the link line, resolved the same
     /// way.
     library_dirs: Vec<String>,
+    /// The `pkg-config` package this section names, when it names one.
+    /// `driver.rs` asks `pkg-config` for its flags and passes them to `cc`
+    /// on both the compile and the link line.
+    pkg_config: Option<String>,
 }
 
 impl ExternModuleDecl {
@@ -238,6 +259,11 @@ impl ExternModuleDecl {
     /// The library directories this section named, as written.
     pub fn library_dirs(&self) -> &[String] {
         &self.library_dirs
+    }
+
+    /// The `pkg-config` package this section named, if it named one.
+    pub fn pkg_config(&self) -> Option<&str> {
+        self.pkg_config.as_deref()
     }
 
     /// The C symbol the `extern fun` whose bare Kelp name is `kelp` binds to,
@@ -1539,6 +1565,50 @@ fn parse_extern_line(
         "library_dirs" => {
             entry.library_dirs = parse_dir_list(value, module_id, "library_dirs", at)?;
         }
+        "pkg_config" => {
+            if entry.pkg_config.is_some() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] pkg_config' is set more than once"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            let Some(package) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] pkg_config' must be a double-quoted string"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            if package.is_empty() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] pkg_config' must not be empty"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            // The name is passed as one `pkg-config` argument, so only the
+            // characters a `.pc` package name uses are accepted.
+            if !package
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+            {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] pkg_config' must contain only letters, digits and '._+-'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            entry.pkg_config = Some(package.to_string());
+        }
         "symbols" => {
             let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
                 return Err(Diagnostic::new(
@@ -2249,5 +2319,71 @@ mod tests {
             |e| e.library_dirs(),
         );
         assert_eq!(dirs, ["/proj/lib".to_string()].as_slice());
+    }
+
+    #[test]
+    fn pkg_config_packages_are_deduplicated_and_sorted() {
+        let text = format!(
+            "{}{}{}",
+            extern_dirs_section("b", "pkg_config", "\"zlib\""),
+            extern_dirs_section("a", "pkg_config", "\"gtk4\""),
+            extern_dirs_section("c", "pkg_config", "\"zlib\""),
+        );
+        let parsed = manifest(&text);
+        assert_eq!(
+            collect_extern_pkg_config(&parsed.extern_modules),
+            ["gtk4".to_string(), "zlib".to_string()].as_slice()
+        );
+    }
+
+    #[test]
+    fn a_section_without_a_pkg_config_key_names_none() {
+        let manifest = manifest(
+            "name = \"x\"\n[extern.\"a\"]\n\
+             domain = \"time\"\n\
+             library = \"c\"\n\
+             symbols = []\n",
+        );
+        assert!(collect_extern_pkg_config(&manifest.extern_modules).is_empty());
+    }
+
+    #[test]
+    fn a_pkg_config_that_is_not_a_quoted_string_is_rejected() {
+        let text = format!("name = \"x\"\n{}", extern_dirs_section("a", "pkg_config", "zlib"));
+        let err = manifest_err(&text);
+        assert!(err.message.contains("pkg_config' must be a double-quoted string"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_empty_pkg_config_is_rejected() {
+        let text = format!("name = \"x\"\n{}", extern_dirs_section("a", "pkg_config", "\"\""));
+        let err = manifest_err(&text);
+        assert!(err.message.contains("pkg_config' must not be empty"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_pkg_config_name_with_a_forbidden_character_is_rejected() {
+        for bad in ["\"z lib\"", "\"zlib;rm\"", "\"z/lib\"", "\"zli\"b\""] {
+            let text = format!("name = \"x\"\n{}", extern_dirs_section("a", "pkg_config", bad));
+            let err = manifest_err(&text);
+            assert!(
+                err.message.contains("pkg_config' must contain only letters, digits and '._+-'"),
+                "expected '{bad}' to be refused, got: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn a_pkg_config_key_set_twice_is_rejected() {
+        let text = "name = \"x\"\n[extern.\"a\"]\n\
+                    domain = \"time\"\n\
+                    library = \"c\"\n\
+                    symbols = []\n\
+                    pkg_config = \"zlib\"\n\
+                    pkg_config = \"gtk4\"\n"
+            .to_string();
+        let err = manifest_err(&text);
+        assert!(err.message.contains("pkg_config' is set more than once"), "{}", err.message);
     }
 }

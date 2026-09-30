@@ -2347,6 +2347,50 @@ fn a_manifest_ffi_include_dir_reaches_the_compiled_c() {
 }
 
 #[test]
+fn a_manifest_ffi_pkg_config_supplies_the_compile_flags() {
+    let target = project("ffi_pkg_config");
+    let bin = out_path("ffi_pkg_config");
+    let build = kelpc()
+        .env("PKG_CONFIG_PATH", target.join("pkgconfig"))
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'ffi_pkg_config' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run compiled binary");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+}
+
+#[test]
+fn an_unknown_ffi_pkg_config_package_fails_the_build() {
+    let target = project("ffi_unknown_pkg_config");
+    let bin = out_path("ffi_unknown_pkg_config");
+    let build = kelpc()
+        .env_remove("PKG_CONFIG_PATH")
+        .arg("build")
+        .arg(&target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "expected 'ffi_unknown_pkg_config' to be rejected, but it built successfully"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("pkg-config failed") && stderr.contains("kelp-nonexistent-pkg-9zz"),
+        "expected the error to name pkg-config and the package, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn an_empty_ffi_header_key_is_rejected() {
     assert_project_rejected(
         "ffi_bad_header",
