@@ -12,20 +12,27 @@ ambient-runtime assumption stays the default: freestanding is a mode a project o
 
 ## The driver: "kernel 0"
 
-A kernel that boots under QEMU (`qemu-system-x86_64 -nographic -kernel kernel.elf`, headless), sets up a stack,
-writes a line to the serial port (0x3F8), and halts, **written in Kelp with no C and no libc**. Every stage
-below is justified by the piece of kernel 0 it unlocks. The acceptance test is a script that boots the image
-under QEMU with a timeout and compares the serial output.
+A kernel that boots under QEMU's RISC-V `virt` machine (`qemu-system-riscv64 -machine virt -bios none
+-nographic -kernel kernel.elf`, headless), sets up a stack, writes a line to the NS16550 UART at
+`0x10000000`, and halts, **written in Kelp with no C and no libc**. Every stage below is justified by the
+piece of kernel 0 it unlocks. The acceptance test is a script that boots the image under QEMU with a timeout
+and compares the serial output.
+
+**Why RISC-V `virt` and not x86-64 first.** QEMU's `-kernel` loads a 64-bit RISC-V ELF directly and starts it
+at its entry point in a clean machine mode, and the UART is plain memory-mapped I/O, so kernel 0 exercises
+raw pointers and `volatile` honestly. The x86-64 equivalent would need a 32-bit Multiboot stub that enters
+long mode before any Kelp runs: real work, but it is bootstrapping, not language. LLVM 21 (the one the
+compiler already links) builds the RISCV target, `lld` links it, and all three are in nixpkgs.
 
 ## Order, and why
 
 | # | Stage (roadmap id) | What it adds | Unlocks in kernel 0 |
 | --- | --- | --- | --- |
 | 1 | **MK9-S2 unsafe and pointers** (B-3) | `unsafe` blocks, raw pointer type `ptr<T>`, offset/cast/addr, `read`/`write`, `read_volatile`/`write_volatile` | Talking to a device register and to memory the language did not allocate |
-| 2 | **MK9-S1-M2 layout** (B-2) | `repr(C)`, `packed`, alignment, `size_of`/`align_of`/`offset_of`, explicit enum discriminants | Descriptor tables, page-table entries, the multiboot header |
+| 2 | **MK9-S1-M2 layout** (B-2) | `repr(C)`, `packed`, alignment, `size_of`/`align_of`/`offset_of`, explicit enum discriminants | Page-table entries, trap frames, device-register blocks |
 | 3 | **MK9-S8 data formats** (B-10) | endianness conversion, unaligned load/store | Reading a boot-info structure, later a disk format |
-| 4 | **MK9-S4-M1/M2 freestanding** (B-6) | a `freestanding` project mode: no libc, no runtime preamble, custom entry point, custom panic handler, linker script, section control, target triple, static ELF | A binary QEMU can load |
-| 5 | **MK9-S7-M1/M3 ISA surface** (B-9, B-16) | inline asm with operands and clobbers, naked functions, interrupt/calling-convention attributes | `out`/`in` for the serial port, `hlt`, loading the GDT/IDT, the first context switch |
+| 4 | **MK9-S4-M1/M2 freestanding** (B-6) | a `freestanding` project mode: no libc, no runtime preamble, custom entry point, custom panic handler, linker script, section control, target triple, static ELF | An ELF QEMU can load and start |
+| 5 | **MK9-S7-M1/M3 ISA surface** (B-9, B-16) | inline asm with operands and clobbers, naked functions, interrupt/calling-convention attributes | `wfi`, setting the stack pointer, CSR reads and writes, the trap vector, the first context switch |
 | 6 | **MK9-S6-M1 `defer`, `Drop`** (B-8) | deterministic cleanup a kernel can point at | Releasing locks and frames on every exit path |
 | 7 | **MK9-S5 allocators** (B-7) | a global allocator hook, arenas, alignment, fallible allocation | The first frame allocator and a kernel heap |
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
@@ -47,6 +54,7 @@ Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one 
 ## What is deliberately not here
 
 - A specific kernel design (scheduler, filesystem, drivers). The language work above is what they would sit on.
-- Non-x86-64 targets. The target triple is a parameter of stage 4, but kernel 0 is x86-64 only.
+- x86-64 and aarch64 kernels. The target triple is a parameter of stage 4; kernel 0 is riscv64 only, and an x86-64
+  kernel follows once the stages are in.
 - Memory-safety proofs about `unsafe` code. D-1/D-2/D-3 stay open; the UB catalogue has to grow a section per
   stage, and each stage's design note says what it adds to it.
