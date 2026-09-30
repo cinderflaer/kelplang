@@ -176,13 +176,35 @@ impl Parser {
         // lists (A-1).
         let mut type_order = 0usize;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
-            // `pub` is an optional leading token on the item forms that can
-            // carry one (A-13). It is read here, before the dispatch below,
-            // because a public item is otherwise the same declaration.
+            // `repr(...)` is an optional leading clause on a `datac`/`enum`
+            // (kernel stage 2), and `pub` is an optional leading token on the
+            // item forms that can carry one (A-13). The two are read here,
+            // before the dispatch below, in either order, because a modified
+            // item is otherwise the same declaration.
+            let leading_repr = self.parse_repr_clause()?;
             let is_pub = self.check(&TokenKind::Pub);
             if is_pub {
                 let pub_span = self.advance().span;
                 self.check_pub_target(pub_span)?;
+            }
+            let repr = match (leading_repr, self.parse_repr_clause()?) {
+                (None, after_pub) => after_pub,
+                (before_pub, None) => before_pub,
+                (Some(_), Some(_)) => {
+                    return Err(ParseError {
+                        message: "a 'repr(...)' clause is written once, before or after 'pub', not both".to_string(),
+                        span: self.peek().span,
+                    })
+                }
+            };
+            if repr.is_some() && !self.check(&TokenKind::Datac) && !self.check(&TokenKind::Enum) {
+                return Err(ParseError {
+                    message: format!(
+                        "'repr(...)' applies to a 'datac' or an 'enum', found {:?}",
+                        self.peek_kind()
+                    ),
+                    span: self.peek().span,
+                });
             }
             if self.check(&TokenKind::Impl) {
                 if !consts.is_empty() || !pds.is_empty() || !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
@@ -209,12 +231,12 @@ impl Parser {
                 }
                 pds.push(self.parse_pd_decl()?);
             } else if self.check(&TokenKind::Datac) {
-                let mut d = self.parse_datac_decl(is_pub)?;
+                let mut d = self.parse_datac_decl(is_pub, repr)?;
                 d.order = type_order;
                 type_order += 1;
                 datacs.push(d);
             } else if self.check(&TokenKind::Enum) {
-                let mut e = self.parse_enum_decl(is_pub)?;
+                let mut e = self.parse_enum_decl(is_pub, repr)?;
                 e.order = type_order;
                 type_order += 1;
                 enums.push(e);
@@ -271,6 +293,14 @@ impl Parser {
             // a marker when `fun` follows it.
             TokenKind::Ident(n)
                 if n == "unsafe" && matches!(self.peek2_kind(), TokenKind::Fun) =>
+            {
+                Ok(())
+            }
+            // `pub repr(c) datac ...`: a `repr(...)` clause may sit between
+            // `pub` and the type declaration; the dispatch after it is what
+            // requires a 'datac' or an 'enum'.
+            TokenKind::Ident(n)
+                if n == "repr" && matches!(self.peek2_kind(), TokenKind::LParen) =>
             {
                 Ok(())
             }
@@ -464,7 +494,7 @@ impl Parser {
         })
     }
 
-    fn parse_datac_decl(&mut self, is_pub: bool) -> PResult<DatacDecl> {
+    fn parse_datac_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<DatacDecl> {
         let start = self.expect(TokenKind::Datac, "'datac'")?.span;
         let (name, _) = self.expect_ident()?;
         let type_params = self.parse_type_params()?;
@@ -476,10 +506,88 @@ impl Parser {
             is_pub,
             type_params,
             fields,
+            repr,
             order: 0,
             module: String::new(),
             span: start.to(end),
         })
+    }
+
+    /// A `repr(c)` / `repr(packed)` / `repr(align(N))` / `repr(u8)` clause, or
+    /// `None` when the cursor is not at one (kernel stage 2). `repr` is a
+    /// contextual word, so it only counts when a `(` touches it, exactly as
+    /// `unsafe` only counts when `fun` follows.
+    fn parse_repr_clause(&mut self) -> PResult<Option<Repr>> {
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "repr")
+            || !matches!(self.peek2_kind(), TokenKind::LParen)
+        {
+            return Ok(None);
+        }
+        self.advance();
+        self.expect(TokenKind::LParen, "'(' after 'repr'")?;
+        let (word, word_span) = self.expect_ident()?;
+        let repr = match word.as_str() {
+            "c" => Repr::C,
+            "packed" => Repr::Packed,
+            "align" => {
+                self.expect(TokenKind::LParen, "'(' after 'repr(align'")?;
+                let (n, n_span) = match self.peek_kind().clone() {
+                    TokenKind::IntLit(n) => {
+                        self.advance();
+                        (n, self.tokens[self.pos - 1].span)
+                    }
+                    other => {
+                        return Err(ParseError {
+                            message: format!(
+                                "expected an integer literal alignment in 'repr(align(N))', found {other:?}"
+                            ),
+                            span: self.peek().span,
+                        })
+                    }
+                };
+                self.expect(TokenKind::RParen, "')' after 'repr(align(N)'")?;
+                if !n.is_power_of_two() {
+                    return Err(ParseError {
+                        message: format!(
+                            "'repr(align({n}))' needs a power of two: 1, 2, 4, 8, 16, ... are the alignments a type can have"
+                        ),
+                        span: n_span,
+                    });
+                }
+                // The bound is the C compilers': GCC and Clang refuse an
+                // `aligned` above 2^28, and the LLVM alignment anchor is a
+                // vector of `N` bytes, so a value that does not fit is a
+                // refusal here rather than a nonsense type later.
+                if n > 1 << 28 {
+                    return Err(ParseError {
+                        message: format!(
+                            "'repr(align({n}))' is too large: the largest alignment is 268435456"
+                        ),
+                        span: n_span,
+                    });
+                }
+                Repr::Align(n)
+            }
+            // `repr(u8)` and its siblings: an integer storage type for an
+            // enum tag. Any other word is not a repr this language has.
+            other => {
+                let is_int = matches!(
+                    other,
+                    "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
+                );
+                if !is_int {
+                    return Err(ParseError {
+                        message: format!(
+                            "unknown 'repr({other})': the clause is 'c', 'packed', 'align(N)' or an integer type ('u8', 'i8', 'u16', 'i16', 'u32', 'i32', 'u64', 'i64')"
+                        ),
+                        span: word_span,
+                    });
+                }
+                Repr::Int(other.to_string())
+            }
+        };
+        self.expect(TokenKind::RParen, "')' to close 'repr(...)'")?;
+        Ok(Some(repr))
     }
 
     /// `extern type Widget`: an opaque native handle (gap 1). `type` is not a
@@ -565,7 +673,7 @@ impl Parser {
     /// `enum Shape { Circle(val r: f64) Rect(val w: f64, val h: f64) Empty }`
     /// — variants are newline-separated, and a variant's payload list is the
     /// same one a `datac` uses (`plan/syntax.md` §9.2).
-    fn parse_enum_decl(&mut self, is_pub: bool) -> PResult<EnumDecl> {
+    fn parse_enum_decl(&mut self, is_pub: bool, repr: Option<Repr>) -> PResult<EnumDecl> {
         let start = self.expect(TokenKind::Enum, "'enum'")?.span;
         let (name, _) = self.expect_ident()?;
         let type_params = self.parse_type_params()?;
@@ -580,9 +688,39 @@ impl Parser {
                 fields = self.parse_field_list()?;
                 self.expect(TokenKind::RParen, "')'")?;
             }
+            // `Off = 0`: an explicit discriminant on a field-less variant.
+            // Whether the enum has any payload at all is checked in
+            // `infer.rs`, where the whole declaration is in view.
+            let discriminant = if self.check(&TokenKind::Eq) {
+                self.advance();
+                let negative = if self.check(&TokenKind::Minus) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                match self.peek_kind().clone() {
+                    TokenKind::IntLit(n) => {
+                        self.advance();
+                        let value = i128::from(n);
+                        Some(if negative { -value } else { value })
+                    }
+                    other => {
+                        return Err(ParseError {
+                            message: format!(
+                                "expected an integer literal discriminant after '=', found {other:?}"
+                            ),
+                            span: self.peek().span,
+                        })
+                    }
+                }
+            } else {
+                None
+            };
             variants.push(VariantDecl {
                 name: vname,
                 fields,
+                discriminant,
                 span: vspan,
             });
             if !self.check(&TokenKind::RBrace) {
@@ -610,6 +748,7 @@ impl Parser {
             is_pub,
             type_params,
             variants,
+            repr,
             order: 0,
             module: String::new(),
             span: start.to(end),
@@ -2272,6 +2411,54 @@ mod tests {
     fn parse_err(src: &str) -> ParseError {
         let tokens = Lexer::new(src).tokenize().expect("lex failed");
         Parser::new(tokens).parse_program().expect_err("expected a parse error")
+    }
+
+    /// Kernel stage 2: a `repr(...)` clause before a `datac` or an `enum`, the
+    /// two spellings of its position relative to `pub`, and the parse-time
+    /// refusal of an alignment that is not a power of two.
+    #[test]
+    fn parses_a_repr_clause_before_a_datac_and_an_enum() {
+        let p = parse(
+            "repr(c) datac A(val x: i32)\nrepr(packed) datac B(val x: i32)\nrepr(align(16)) datac C(val x: i32)\npub repr(align(8)) datac D(val x: i32)\nrepr(packed) pub datac E(val x: i32)\nrepr(u8) enum M {\n    Off = 0\n    On = 1\n}\nfun main() {}",
+        );
+        assert_eq!(p.datacs[0].repr, Some(Repr::C));
+        assert_eq!(p.datacs[1].repr, Some(Repr::Packed));
+        assert_eq!(p.datacs[2].repr, Some(Repr::Align(16)));
+        assert_eq!(p.datacs[3].repr, Some(Repr::Align(8)));
+        assert!(p.datacs[3].is_pub);
+        assert_eq!(p.datacs[4].repr, Some(Repr::Packed));
+        assert!(p.datacs[4].is_pub);
+        assert_eq!(p.enums[0].repr, Some(Repr::Int("u8".to_string())));
+        assert_eq!(p.enums[0].variants[0].discriminant, Some(0));
+        assert_eq!(p.enums[0].variants[1].discriminant, Some(1));
+    }
+
+    #[test]
+    fn parses_enum_discriminants_including_a_negative_one() {
+        let p = parse("enum E {\n    A = -5\n    B\n    C = 7\n    D\n}\nfun main() {}");
+        let e = &p.enums[0];
+        assert_eq!(e.variants[0].discriminant, Some(-5));
+        assert_eq!(e.variants[1].discriminant, None);
+        assert_eq!(e.variants[2].discriminant, Some(7));
+        assert_eq!(e.variants[3].discriminant, None);
+    }
+
+    #[test]
+    fn an_alignment_that_is_not_a_power_of_two_does_not_parse() {
+        let err = parse_err("repr(align(3)) datac A(val x: i32)\nfun main() {}");
+        assert!(err.message.contains("power of two"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_unknown_repr_does_not_parse() {
+        let err = parse_err("repr(weird) datac A(val x: i32)\nfun main() {}");
+        assert!(err.message.contains("unknown 'repr(weird)'"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_repr_clause_on_a_non_type_item_does_not_parse() {
+        let err = parse_err("repr(c) fun main() {}");
+        assert!(err.message.contains("applies to a 'datac' or an 'enum'"), "{}", err.message);
     }
 
     #[test]

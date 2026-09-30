@@ -581,8 +581,16 @@ fn name_fast_path(patterns: &[String]) -> Option<NameFastPath<'_>> {
 /// `codegen_c.rs::write_enum` emits (MK7 §3.1).
 #[derive(Clone)]
 struct EnumInfo<'a> {
-    /// The outer struct: field 0 is the `i32` tag, field 1 the union.
+    /// The outer struct: field 0 is the tag, field 1 the union.
     llvm_ty: Type<'a>,
+    /// The tag's LLVM type: `i32` by default, or the integer type a
+    /// `repr(u8)`-style clause names (kernel stage 2). Every tag load, store
+    /// and comparison uses it, so a narrower tag is the same object the C
+    /// typedef declares.
+    tag_ty: Type<'a>,
+    /// Whether that tag type is signed, so the hash's widening extension
+    /// matches the C backend's `(uint64_t)` cast of a signed or unsigned tag.
+    tag_signed: bool,
     /// The union type. It is a struct anchored on the widest payload's own
     /// alignment type, sized to the widest payload; the anchor field is what
     /// makes LLVM place it where the C `union` sits (`enum_union_body`).
@@ -622,6 +630,11 @@ impl<'a> EnumVariant<'a> {
 /// indices are named once rather than spelled at each projection.
 const ENUM_TAG_FIELD: u32 = 0;
 const ENUM_UNION_FIELD: u32 = 1;
+
+/// The synthetic first field a `repr(align(N))` datac's LLVM body carries. A
+/// `#` cannot begin a source identifier, so it can never collide with a real
+/// field name.
+const DATAC_ALIGN_FIELD: &str = "#align";
 
 /// Module-level state: the context, the module, the builder, and the runtime
 /// symbols every function shares. Per-function state lives in [`FnGen`].
@@ -1556,15 +1569,22 @@ impl<'a> Gen<'a> {
         for s in &program.structs {
             let ty = ctx.struct_type(&struct_tag(&s.name));
             self.structs.insert(s.name.clone(), ty);
-            self.field_index.insert(
-                s.name.clone(),
-                s.fields.iter().map(|f| f.name.clone()).collect(),
-            );
+            // A `repr(align(N))` body carries a hidden zero-length alignment
+            // anchor as its first field, which shifts every real field's index
+            // by one; the name table is what `field_slot` reads an index from,
+            // so the shift lives here and nowhere else.
+            let mut names: Vec<String> = s.fields.iter().map(|f| f.name.clone()).collect();
+            if matches!(s.repr, crate::ast::Repr::Align(_)) {
+                names.insert(0, DATAC_ALIGN_FIELD.to_string());
+            }
+            self.field_index.insert(s.name.clone(), names);
         }
         for e in &program.enums {
             let llvm_ty = ctx.struct_type(&struct_tag(&e.name));
             self.structs.insert(e.name.clone(), llvm_ty);
             let union_ty = ctx.struct_type(&enum_union_name(&e.name));
+            let (tag_bytes, tag_signed) = e.tag_storage();
+            let tag_ty = enum_tag_llvm_type(ctx, tag_bytes);
             let variants = e
                 .variants
                 .iter()
@@ -1590,6 +1610,8 @@ impl<'a> Gen<'a> {
                 e.name.clone(),
                 EnumInfo {
                     llvm_ty,
+                    tag_ty,
+                    tag_signed,
                     union_ty,
                     variants,
                 },
@@ -1632,12 +1654,25 @@ impl<'a> Gen<'a> {
                         .structs
                         .get(&s.name)
                         .expect("every datac got a type above");
-                    let fields = s
-                        .fields
-                        .iter()
-                        .map(|f| llvm_type(ctx, &self.structs, &self.containers, &f.ty))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    ctx.struct_set_body(ty, &fields);
+                    let mut fields = Vec::new();
+                    // The anchor is field 0, so LLVM gives the type the
+                    // alignment `repr(align(N))` asked for, exactly as the C
+                    // `__attribute__((aligned(N)))` does. It is zero bytes, so
+                    // it never moves a real field.
+                    if let crate::ast::Repr::Align(n) = s.repr {
+                        fields.push(alignment_anchor(ctx, n));
+                    }
+                    fields.extend(
+                        s.fields
+                            .iter()
+                            .map(|f| llvm_type(ctx, &self.structs, &self.containers, &f.ty))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                    ctx.struct_set_body_packed(
+                        ty,
+                        &fields,
+                        matches!(s.repr, crate::ast::Repr::Packed),
+                    );
                 }
                 Decl::Sum(e) => self.declare_enum_body(e)?,
             }
@@ -1683,7 +1718,7 @@ impl<'a> Gen<'a> {
         }
         let body = self.enum_union_body(&info);
         ctx.struct_set_body(info.union_ty, &body);
-        ctx.struct_set_body(info.llvm_ty, &[ctx.i32(), info.union_ty]);
+        ctx.struct_set_body(info.llvm_ty, &[info.tag_ty, info.union_ty]);
         Ok(())
     }
 
@@ -1814,7 +1849,7 @@ impl<'a> Gen<'a> {
         let tag_ptr = self
             .builder
             .build_struct_gep(info.llvm_ty, self_ptr, ENUM_TAG_FIELD, "tag");
-        let tag = self.builder.build_load(self.ctx.i32(), tag_ptr, "tag");
+        let tag = self.builder.build_load(info.tag_ty, tag_ptr, "tag");
 
         let done = func.append_block("drop.end");
         let cases: Vec<(usize, BasicBlock<'a>)> = e
@@ -1826,7 +1861,7 @@ impl<'a> Gen<'a> {
             .collect();
         let switch = self.builder.build_switch(tag, done, cases.len() as u32);
         for (index, block) in &cases {
-            let on = self.ctx.const_int(self.ctx.i32(), *index as u64, false);
+            let on = self.ctx.const_int(info.tag_ty, *index as u64, false);
             self.builder.add_case(switch, on, *block);
         }
         for (index, block) in &cases {
@@ -2964,8 +2999,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .g
             .builder
             .build_struct_gep(info.llvm_ty, ptr, ENUM_TAG_FIELD, "tag");
-        let tag = self.g.builder.build_load(self.g.ctx.i32(), tag_ptr, "tag");
-        let want = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
+        let tag = self.g.builder.build_load(info.tag_ty, tag_ptr, "tag");
+        let want = self.g.ctx.const_int(info.tag_ty, variant as u64, false);
         Ok(self
             .g
             .builder
@@ -3078,7 +3113,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .g
             .builder
             .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
-        let tag = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
+        let tag = self.g.ctx.const_int(info.tag_ty, variant as u64, false);
         self.g.builder.build_store(tag, tag_ptr);
         // A `unit` field is never stored (`VariantDef::is_payload_less` gives
         // an all-`unit` variant the bare `i8` placeholder rather than a
@@ -3177,8 +3212,8 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .g
             .builder
             .build_struct_gep(src_ty, src_slot, ENUM_TAG_FIELD, "tag");
-        let tag = self.g.builder.build_load(self.g.ctx.i32(), tag_ptr, "tag");
-        let want = self.g.ctx.const_int(self.g.ctx.i32(), err_variant as u64, false);
+        let tag = self.g.builder.build_load(src.tag_ty, tag_ptr, "tag");
+        let want = self.g.ctx.const_int(src.tag_ty, err_variant as u64, false);
         let failed = self.g.builder.build_icmp(IntCmp::Eq, tag, want, "iserr");
 
         let fail_bb = self.cur_fn.append_block("try.err");
@@ -3202,7 +3237,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
         let dst_tag = self
             .g
             .ctx
-            .const_int(self.g.ctx.i32(), target_err_variant as u64, false);
+            .const_int(dst.tag_ty, target_err_variant as u64, false);
         self.g.builder.build_store(dst_tag, dst_tag_ptr);
         // `err_has_payload` is arity, not type: an `Err` field typed `unit`
         // has one declared field and no payload struct
@@ -4464,7 +4499,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .g
             .builder
             .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
-        let i32t = self.g.ctx.i32();
+        let i32t = info.tag_ty;
         let ok_tag = self.g.ctx.const_int(i32t, ok_index as u64, false);
         let err_tag = self.g.ctx.const_int(i32t, err_index as u64, false);
         let tag = self.g.builder.build_select(ok, ok_tag, err_tag, "atomic.tag");
@@ -4672,7 +4707,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             .g
             .builder
             .build_struct_gep(info.llvm_ty, slot, ENUM_TAG_FIELD, "tag");
-        let tag = self.g.ctx.const_int(self.g.ctx.i32(), variant as u64, false);
+        let tag = self.g.ctx.const_int(info.tag_ty, variant as u64, false);
         self.g.builder.build_store(tag, tag_ptr);
         if fields.is_empty() {
             return Ok(());
@@ -7004,7 +7039,7 @@ impl<'a> Gen<'a> {
         let src = func.get_param(0);
         let dst = func.get_param(1);
         let tag_ptr = self.fld(info.llvm_ty, src, ENUM_TAG_FIELD, "tag");
-        let tag = self.ld(self.ctx.i32(), tag_ptr, "tag");
+        let tag = self.ld(info.tag_ty, tag_ptr, "tag");
         self.st(tag, self.fld(info.llvm_ty, dst, ENUM_TAG_FIELD, "tag"));
         let mut cont = entry;
         for (i, v) in e.variants.iter().enumerate() {
@@ -7012,9 +7047,12 @@ impl<'a> Gen<'a> {
                 continue;
             }
             self.builder.position_at_end(cont);
-            let is_i = self
-                .builder
-                .build_icmp(IntCmp::Eq, tag, self.v_i32(i as u64), "isvar");
+            let is_i = self.builder.build_icmp(
+                IntCmp::Eq,
+                tag,
+                self.ctx.const_int(info.tag_ty, i as u64, false),
+                "isvar",
+            );
             let then_bb = func.append_block("clone.v");
             let next = func.append_block("clone.next");
             self.builder.build_cond_br(is_i, then_bb, next);
@@ -7058,23 +7096,33 @@ impl<'a> Gen<'a> {
         let a = func.get_param(0);
         let b = func.get_param(1);
         let ta = self.ld(
-            self.ctx.i32(),
+            info.tag_ty,
             self.fld(info.llvm_ty, a, ENUM_TAG_FIELD, "tag"),
             "ta",
         );
         let tb = self.ld(
-            self.ctx.i32(),
+            info.tag_ty,
             self.fld(info.llvm_ty, b, ENUM_TAG_FIELD, "tag"),
             "tb",
         );
         // A different tag orders first, so every value of one variant sorts
-        // together.
+        // together. The comparison is the tag type's own signedness, which is
+        // what the C `a->kelp_tag < b->kelp_tag` compiles to.
         let ne = self.builder.build_icmp(IntCmp::Ne, ta, tb, "tagdiff");
         let diff = func.append_block("cmp.tag");
         let cont0 = func.append_block("cmp.variants");
         self.builder.build_cond_br(ne, diff, cont0);
         self.builder.position_at_end(diff);
-        let lt = self.builder.build_icmp(IntCmp::Slt, ta, tb, "lt");
+        let lt = self.builder.build_icmp(
+            if info.tag_signed {
+                IntCmp::Slt
+            } else {
+                IntCmp::Ult
+            },
+            ta,
+            tb,
+            "lt",
+        );
         let sign = self.builder.build_select(lt, self.v_i32(u64::MAX), self.v_i32(1), "sign");
         self.builder.build_ret(sign);
 
@@ -7334,16 +7382,18 @@ impl<'a> Gen<'a> {
         self.builder.position_at_end(entry);
         let v = func.get_param(0);
         let tag = self.ld(
-            self.ctx.i32(),
+            info.tag_ty,
             self.fld(info.llvm_ty, v, ENUM_TAG_FIELD, "tag"),
             "tag",
         );
         let h_slot = self.builder.build_alloca(self.ctx.i64(), "h");
         // The tag folds first, so two variants never share a hash of the same
-        // payload shape; the C backend writes the same fold from its tag.
+        // payload shape; the C backend writes the same fold from its tag. The
+        // widening extension follows the tag's signedness, which is what the
+        // C `(uint64_t)` cast of a signed or unsigned tag does.
         let wide = self
             .builder
-            .build_int_cast(false, true, tag, self.ctx.i64(), "tagw");
+            .build_int_cast(info.tag_signed, true, tag, self.ctx.i64(), "tagw");
         let tag_hash = self.emit_map_mix(wide);
         let h0 = self.hash_combine(self.v_i64(0), tag_hash)?;
         self.st(h0, h_slot);
@@ -7353,9 +7403,12 @@ impl<'a> Gen<'a> {
                 continue;
             }
             self.builder.position_at_end(cont);
-            let is_i = self
-                .builder
-                .build_icmp(IntCmp::Eq, tag, self.v_i32(i as u64), "isvar");
+            let is_i = self.builder.build_icmp(
+                IntCmp::Eq,
+                tag,
+                self.ctx.const_int(info.tag_ty, i as u64, false),
+                "isvar",
+            );
             let then_bb = func.append_block("hash.v");
             let next = func.append_block("hash.next");
             self.builder.build_cond_br(is_i, then_bb, next);
@@ -7392,12 +7445,12 @@ impl<'a> Gen<'a> {
         let a = func.get_param(0);
         let b = func.get_param(1);
         let ta = self.ld(
-            self.ctx.i32(),
+            info.tag_ty,
             self.fld(info.llvm_ty, a, ENUM_TAG_FIELD, "tag"),
             "ta",
         );
         let tb = self.ld(
-            self.ctx.i32(),
+            info.tag_ty,
             self.fld(info.llvm_ty, b, ENUM_TAG_FIELD, "tag"),
             "tb",
         );
@@ -7412,9 +7465,12 @@ impl<'a> Gen<'a> {
                 continue;
             }
             self.builder.position_at_end(cont);
-            let is_i = self
-                .builder
-                .build_icmp(IntCmp::Eq, ta, self.v_i32(i as u64), "isvar");
+            let is_i = self.builder.build_icmp(
+                IntCmp::Eq,
+                ta,
+                self.ctx.const_int(info.tag_ty, i as u64, false),
+                "isvar",
+            );
             let then_bb = func.append_block("eq.v");
             let next = func.append_block("eq.next");
             self.builder.build_cond_br(is_i, then_bb, next);
@@ -10472,6 +10528,32 @@ fn declare_runtime<'a>(
 /// Map a `tir` type to its LLVM type. The scalar subset, the builtin heap types,
 /// `str`, a `datac` `structs` holds a type for, and a container `containers`
 /// holds a named struct for.
+/// The LLVM type an enum's tag is stored in: the C typedef's width, taken from
+/// the `repr(<int>)` clause (kernel stage 2). The width is all LLVM needs; the
+/// signedness lives beside it in `EnumInfo::tag_signed`, where the comparison
+/// and the hash's widening read it.
+fn enum_tag_llvm_type<'a>(ctx: &'a Context, bytes: u64) -> Type<'a> {
+    match bytes {
+        1 => ctx.i8(),
+        2 => ctx.i16(),
+        8 => ctx.i64(),
+        _ => ctx.i32(),
+    }
+}
+
+/// A zero-length array whose element type has ABI alignment `n`, for the first
+/// field of a `repr(align(N))` datac's LLVM body. LLVM's array alignment is its
+/// element's, and its size is zero, so it raises the struct's own alignment
+/// without moving any field. An integer type carries the alignment up to 16
+/// bytes; above that a vector of `n` bytes is the type whose alignment is `n`.
+fn alignment_anchor<'a>(ctx: &'a Context, n: u64) -> Type<'a> {
+    if n <= 16 {
+        ctx.array_type(ctx.int((n * 8) as u32), 0)
+    } else {
+        ctx.array_type(ctx.vector_type(ctx.i8(), n as u32), 0)
+    }
+}
+
 fn llvm_type<'a>(
     ctx: &'a Context,
     structs: &HashMap<String, Type<'a>>,
@@ -11340,7 +11422,9 @@ mod layout_tests {
             variants: vec![VariantDef {
                 name: "SeqCst".to_string(),
                 fields: Vec::new(),
+                discriminant: None,
             }],
+            repr: crate::ast::Repr::C,
             order: 2,
         };
         // A payload-carrying variant whose payload is a `datac` declared
@@ -11352,17 +11436,21 @@ mod layout_tests {
                 VariantDef {
                     name: "Dot".to_string(),
                     fields: Vec::new(),
+                    discriminant: None,
                 },
                 VariantDef {
                     name: "Circle".to_string(),
                     fields: vec![field("center", Ty::Struct("Point".to_string()))],
+                    discriminant: None,
                 },
             ],
+            repr: crate::ast::Repr::C,
             order: 3,
         };
         let point = StructDef {
             name: "Point".to_string(),
             fields: vec![field("x", Ty::I32), field("y", Ty::I32)],
+            repr: crate::ast::Repr::C,
             order: 0,
         };
         // A `datac` field names an earlier `datac` by value and a container by
@@ -11373,6 +11461,7 @@ mod layout_tests {
                 field("head", Ty::Struct("Point".to_string())),
                 field("tags", Ty::List(Box::new(Ty::String))),
             ],
+            repr: crate::ast::Repr::C,
             order: 1,
         };
 
@@ -11520,6 +11609,7 @@ mod layout_tests {
                 ty: Ty::Struct("Shape".to_string()),
                 mutable: false,
             }],
+            repr: crate::ast::Repr::C,
             order: 1,
         };
         let shape = crate::types::EnumDef {
@@ -11527,7 +11617,9 @@ mod layout_tests {
             variants: vec![VariantDef {
                 name: "Dot".to_string(),
                 fields: Vec::new(),
+                discriminant: None,
             }],
+            repr: crate::ast::Repr::C,
             order: 0,
         };
         let program = Program {

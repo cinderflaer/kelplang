@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{self, BinOp, UnOp};
+use crate::ast::{self, BinOp, Repr, UnOp};
 use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::resolve::Project;
@@ -50,6 +50,9 @@ struct GenericTemplate {
     name: String,
     params: Vec<String>,
     kind: GenericKind,
+    /// The `repr(...)` clause of the declaration, so an instantiation keeps
+    /// the layout its template asked for (kernel stage 2).
+    repr: Repr,
     /// The declaring module's symbol prefix and alias table: a field type
     /// written inside the template resolves exactly where it was written.
     prefix: String,
@@ -1438,6 +1441,7 @@ impl TypeScope<'_> {
                 Ok(Instance::Record(StructDef {
                     name: key.to_string(),
                     fields: out,
+                    repr: tmpl.repr.clone(),
                     // Reassigned by `order_declarations` once every
                     // instantiation is known; the value here is a sentinel.
                     order: usize::MAX,
@@ -1486,11 +1490,13 @@ impl TypeScope<'_> {
                     out.push(crate::types::VariantDef {
                         name: v.name.clone(),
                         fields,
+                        discriminant: v.discriminant,
                     });
                 }
                 Ok(Instance::Sum(EnumDef {
                     name: key.to_string(),
                     variants: out,
+                    repr: tmpl.repr.clone(),
                     order: usize::MAX,
                 }))
             }
@@ -4614,7 +4620,18 @@ impl<'a> ConstEvaluator<'a> {
                 args,
                 span,
             } => {
+                // A layout query is foldable wherever it is written, including
+                // an array length and a `const` that names a builtin
+                // (kernel stage 2). It is resolved here as well as in
+                // `check_layout_query`, because those two positions fold
+                // through this evaluator rather than through the expression
+                // checker.
                 if !type_args.is_empty() {
+                    if matches!(callee.as_str(), "size_of" | "align_of" | "offset_of")
+                        && !callee.contains('.')
+                    {
+                        return self.layout_query(callee, type_args, args, *span, scope);
+                    }
                     return Err(self.unsupported(expr.span(), "a call with explicit type arguments"));
                 }
                 let key = format!("{}{}", scope.prefix, callee);
@@ -4665,6 +4682,69 @@ impl<'a> ConstEvaluator<'a> {
             ast::Expr::Ref { .. } => Err(self.unsupported(expr.span(), "a borrow")),
             ast::Expr::Unsafe { .. } => Err(self.unsupported(expr.span(), "an 'unsafe' block")),
         }
+    }
+
+    /// Folds `size_of<T>()`, `align_of<T>()` or `offset_of<T>("field")` while
+    /// a `const` initializer or an array length is being evaluated. The type
+    /// tables are the same ones the expression checker reads, so the two
+    /// answer identically whenever both can answer at all; a `const` is folded
+    /// before any `datac` exists, so a query there can only name a builtin.
+    fn layout_query(
+        &self,
+        callee: &str,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::CallArg],
+        span: Span,
+        scope: &ConstScope,
+    ) -> Result<(ConstValue, Ty)> {
+        self.tick(span)?;
+        if type_args.len() != 1 {
+            return Err(TypeError {
+                message: format!(
+                    "'{callee}' takes exactly one type argument, written '{callee}<T>()'"
+                ),
+                span,
+            });
+        }
+        let ty = self
+            .type_scope(&scope.prefix, &scope.aliases)
+            .resolve(&type_args[0], true)?;
+        let field = if callee == "offset_of" {
+            if args.len() != 1 {
+                return Err(TypeError {
+                    message: "'offset_of' takes exactly one field name, written 'offset_of<T>(\"field\")'"
+                        .to_string(),
+                    span,
+                });
+            }
+            match &args[0].value {
+                ast::Expr::StringLit(field, _) if args[0].name.is_none() => Some(field.clone()),
+                _ => {
+                    return Err(TypeError {
+                        message: "'offset_of' takes the field name as a string literal, written 'offset_of<T>(\"field\")'"
+                            .to_string(),
+                        span,
+                    })
+                }
+            }
+        } else {
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'{callee}' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            None
+        };
+        let value = layout_query_value(
+            callee,
+            &ty,
+            field.as_deref(),
+            self.structs,
+            self.enums,
+            span,
+        )?;
+        Ok((ConstValue::Int(value as i128), Ty::Usize))
     }
 
     /// The message every out-of-reach construct shares: it names the construct
@@ -5221,15 +5301,23 @@ fn collect_templates(
                 module.clone(),
             ));
         }
-        let (params, kind) = if let Some(d) = program.datacs.iter().find(|d| &d.name == name) {
-            (d.type_params.clone(), GenericKind::Record(d.fields.clone()))
+        let (params, kind, repr) = if let Some(d) = program.datacs.iter().find(|d| &d.name == name) {
+            (
+                d.type_params.clone(),
+                GenericKind::Record(d.fields.clone()),
+                d.repr.clone().unwrap_or(Repr::C),
+            )
         } else {
             let e = program
                 .enums
                 .iter()
                 .find(|e| &e.name == name)
                 .expect("the declaration lists name only declared types");
-            (e.type_params.clone(), GenericKind::Sum(e.variants.clone()))
+            (
+                e.type_params.clone(),
+                GenericKind::Sum(e.variants.clone()),
+                e.repr.clone().unwrap_or(Repr::C),
+            )
         };
         for p in &params {
             if Ty::from_name(p).is_some() {
@@ -5241,6 +5329,17 @@ fn collect_templates(
                     module.clone(),
                 ));
             }
+        }
+        // `repr(...)` on a template is not threaded through an instantiation
+        // yet; a generic type keeps the default C layout and says so rather
+        // than silently ignoring the clause.
+        if !matches!(repr, Repr::C) {
+            return Err(Diagnostic::new(
+                "'repr(...)' on a generic datac/enum is not supported yet: an instantiation takes the default 'repr(c)' layout"
+                    .to_string(),
+                *span,
+                module.clone(),
+            ));
         }
         // The declaring module's own prefix/alias table, so a field type
         // written inside the template resolves exactly where it was written.
@@ -5254,6 +5353,7 @@ fn collect_templates(
                 name: name.clone(),
                 params,
                 kind,
+                repr,
                 prefix,
                 aliases,
             },
@@ -5597,6 +5697,7 @@ fn check_program_pass(
                 StructDef {
                     name: e.name.clone(),
                     fields: Vec::new(),
+                    repr: Repr::C,
                     order: *order,
                 },
             );
@@ -5670,17 +5771,18 @@ fn check_program_pass(
                 variants.push(crate::types::VariantDef {
                     name: v.name.clone(),
                     fields,
+                    discriminant: v.discriminant,
                 });
             }
             enum_order.push(e.name.clone());
-            enums.insert(
-                e.name.clone(),
-                EnumDef {
-                    name: e.name.clone(),
-                    variants,
-                    order: *order,
-                },
-            );
+            let edef = EnumDef {
+                name: e.name.clone(),
+                variants,
+                repr: e.repr.clone().unwrap_or(Repr::C),
+                order: *order,
+            };
+            validate_enum_layout(&edef, e.span, &e.module)?;
+            enums.insert(e.name.clone(), edef);
             // The placeholder inserted above stays: an enum name is a type
             // name like any other, so one name-resolution path covers it.
             // Reading a field off an enum is caught explicitly in
@@ -5726,6 +5828,7 @@ fn check_program_pass(
             StructDef {
                 name: d.name.clone(),
                 fields: Vec::new(),
+                repr: Repr::C,
                 order: *order,
             },
         );
@@ -5774,6 +5877,15 @@ fn check_program_pass(
                 mutable: f.mutable,
             });
         }
+        if let Some(Repr::Int(name)) = &d.repr {
+            return Err(Diagnostic::new(
+                format!(
+                    "'repr({name})' names the integer type an enum tag is stored in: a 'datac' takes 'repr(c)', 'repr(packed)' or 'repr(align(N))'"
+                ),
+                d.span,
+                d.module.clone(),
+            ));
+        }
         struct_order.push(d.name.clone());
         // Replaces the placeholder with the real definition. Order is kept
         // (same key, same position in `struct_order`), so codegen's emission
@@ -5783,6 +5895,7 @@ fn check_program_pass(
             StructDef {
                 name: d.name.clone(),
                 fields,
+                repr: d.repr.clone().unwrap_or(Repr::C),
                 order: *order,
             },
         );
@@ -8608,7 +8721,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                     span: *span,
                 });
             }
-            check_method_call_enum_guard(receiver, *span, ctx)?;
+            check_method_call_enum_guard(receiver, method, *span, ctx)?;
             check_method_call(receiver, method, type_args, args, *span, ctx, expected)
         }
         ast::Expr::When {
@@ -9552,6 +9665,13 @@ fn check_enum_construction(
         .get(ename)
         .cloned()
         .expect("enum_path only returns known enums");
+    // `Mode.from_int(n)` shares the `Type.member(...)` spelling with a variant
+    // construction but is the enum's own associated conversion (kernel stage
+    // 2), so it is resolved before the variant lookup refuses it as one. A
+    // variant actually named `from_int` still wins.
+    if variant == "from_int" && edef.variant("from_int").is_none() {
+        return lower_enum_from_int(ename, args, span, ctx);
+    }
     let Some((vidx, vdef)) = edef.variant(variant) else {
         let names: Vec<String> = edef
             .variants
@@ -10774,6 +10894,214 @@ fn reachable_mut_path(
     }
 }
 
+/// A compile-time layout query (kernel stage 2): `size_of<T>()`,
+/// `align_of<T>()` and `offset_of<T>("field")`. Each folds to a `usize`
+/// literal here, so both backends see an ordinary integer and no code
+/// generator has anything layout-specific to lower. `T` is a scalar, an
+/// opaque handle, a `Ptr<U>`, a `datac` or an `enum`: the types that have a
+/// machine-level layout and no heap representation to reason about.
+fn check_layout_query(
+    callee: &str,
+    explicit: &[Ty],
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &Ctx,
+) -> Result<tir::Expr> {
+    if explicit.len() != 1 {
+        return Err(TypeError {
+            message: format!(
+                "'{callee}' takes exactly one type argument, written '{callee}<T>()'"
+            ),
+            span,
+        });
+    }
+    let field = if callee == "offset_of" {
+        if args.len() != 1 {
+            return Err(TypeError {
+                message: "'offset_of' takes exactly one field name, written 'offset_of<T>(\"field\")'"
+                    .to_string(),
+                span,
+            });
+        }
+        match &args[0].value {
+            ast::Expr::StringLit(field, _) if args[0].name.is_none() => Some(field.as_str()),
+            _ => {
+                return Err(TypeError {
+                    message: "'offset_of' takes the field name as a string literal, written 'offset_of<T>(\"field\")'"
+                        .to_string(),
+                    span,
+                })
+            }
+        }
+    } else {
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'{callee}' takes no arguments, found {}", args.len()),
+                span,
+            });
+        }
+        None
+    };
+    let value = layout_query_value(
+        callee,
+        &explicit[0],
+        field,
+        &ctx.structs,
+        &ctx.enums,
+        span,
+    )?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::IntLit(value as i128),
+        ty: Ty::Usize,
+        span,
+    })
+}
+
+/// The value one layout query folds to, shared by the expression checker and
+/// the compile-time evaluator so both refuse the same things with the same
+/// words.
+fn layout_query_value(
+    callee: &str,
+    t: &Ty,
+    field: Option<&str>,
+    structs: &HashMap<String, StructDef>,
+    enums: &HashMap<String, EnumDef>,
+    span: Span,
+) -> Result<u64> {
+    let allowed = matches!(
+        t,
+        Ty::U8
+            | Ty::U16
+            | Ty::I32
+            | Ty::I64
+            | Ty::U32
+            | Ty::U64
+            | Ty::Usize
+            | Ty::Isize
+            | Ty::F32
+            | Ty::F64
+            | Ty::Bool
+            | Ty::Char
+            | Ty::Handle(_)
+            | Ty::Ptr(_)
+            | Ty::Struct(_)
+    );
+    if !allowed {
+        return Err(TypeError {
+            message: format!(
+                "'{callee}' cannot be asked about '{}': the queried type is a scalar, an 'extern type' handle, a 'Ptr<U>', a 'datac' or an 'enum'"
+                , t.display()
+            ),
+            span,
+        });
+    }
+    match callee {
+        "size_of" | "align_of" => {
+            let l = crate::types::type_layout(t, structs, enums).ok_or_else(|| TypeError {
+                message: format!("'{}' has no layout this compiler can compute", t.display()),
+                span,
+            })?;
+            Ok(if callee == "size_of" { l.size } else { l.align })
+        }
+        "offset_of" => {
+            let Ty::Struct(name) = t else {
+                return Err(TypeError {
+                    message: format!("'offset_of' needs a 'datac': '{}' is not one", t.display()),
+                    span,
+                });
+            };
+            let Some(field) = field else {
+                return Err(TypeError {
+                    message: "'offset_of' takes the field name as a string literal, written 'offset_of<T>(\"field\")'"
+                        .to_string(),
+                    span,
+                });
+            };
+            crate::types::field_offset(name, field, structs, enums).ok_or_else(|| TypeError {
+                message: format!("'{}' has no field '{field}'", t.display()),
+                span,
+            })
+        }
+        _ => unreachable!("only the three layout queries reach here"),
+    }
+}
+
+/// The layout rules an enum's discriminants and `repr` have to obey (kernel
+/// stage 2): `repr(packed)`/`repr(align(N))` are not an enum's to ask for, a
+/// written discriminant is legal only on a field-less enum, the resolved tag
+/// values are unique, and each fits the tag type `repr(<int>)` names.
+fn validate_enum_layout(
+    e: &EnumDef,
+    span: Span,
+    module: &str,
+) -> std::result::Result<(), Diagnostic> {
+    if let Repr::Packed | Repr::Align(_) = &e.repr {
+        return Err(Diagnostic::new(
+            "'repr(packed)' and 'repr(align(N))' are not supported on an enum: an enum's layout knob is the tag's integer type, written 'repr(u8)', 'repr(i16)', ..."
+                .to_string(),
+            span,
+            module.to_string(),
+        ));
+    }
+    if !e.variants.iter().any(|v| v.discriminant.is_some()) {
+        return Ok(());
+    }
+    if !e.is_field_less() {
+        return Err(Diagnostic::new(
+            format!(
+                "enum '{}' has a variant with a payload, so no variant may have an explicit discriminant: a discriminant is a value with no data beside it, so it is written only on a field-less enum",
+                e.name
+            ),
+            span,
+            module.to_string(),
+        ));
+    }
+    let (min, max): (i128, i128) = match &e.repr {
+        Repr::Int(name) => match name.as_str() {
+            "u8" => (0, u8::MAX as i128),
+            "u16" => (0, u16::MAX as i128),
+            "u32" => (0, u32::MAX as i128),
+            "u64" => (0, u64::MAX as i128),
+            "i8" => (i8::MIN as i128, i8::MAX as i128),
+            "i16" => (i16::MIN as i128, i16::MAX as i128),
+            "i32" => (i32::MIN as i128, i32::MAX as i128),
+            _ => (i64::MIN as i128, i64::MAX as i128),
+        },
+        _ => (i32::MIN as i128, i32::MAX as i128),
+    };
+    let values = e.discriminants();
+    for (i, value) in values.iter().enumerate() {
+        let holder = e
+            .variants
+            .iter()
+            .find(|v| v.discriminant == Some(*value))
+            .map(|v| v.name.clone())
+            .unwrap_or_else(|| e.variants[i].name.clone());
+        if values[..i].contains(value) {
+            return Err(Diagnostic::new(
+                format!(
+                    "variant '{holder}' of enum '{}' repeats the discriminant {value}: every variant of a field-less enum has its own value",
+                    e.name
+                ),
+                span,
+                module.to_string(),
+            ));
+        }
+        if *value < min || *value > max {
+            let tag = e.tag_ty().display();
+            return Err(Diagnostic::new(
+                format!(
+                    "variant '{holder}' of enum '{}' has discriminant {value}, which does not fit its tag type '{tag}'"
+                    , e.name
+                ),
+                span,
+                module.to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check_call(
     callee: &str,
     type_args: &[ast::TypeExpr],
@@ -10787,6 +11115,12 @@ fn check_call(
     // refuses it, because a call that is not generic has nothing to
     // instantiate.
     let explicit = resolve_explicit_args(type_args, ctx)?;
+    // The compile-time layout queries (kernel stage 2). They are resolved
+    // before the program's own declarations, like `print` and `panic`, so a
+    // program cannot shadow one and get a different `size_of` than the ABI.
+    if matches!(callee, "size_of" | "align_of" | "offset_of") && !callee.contains('.') {
+        return check_layout_query(callee, &explicit, args, span, ctx);
+    }
     if callee == "main" {
         // `main` is the program entry point; it takes no arguments, so there
         // is no way to hand it the passdowns it may reference, and its own
@@ -11573,7 +11907,17 @@ fn refuse_open_arg(ty: &Ty, arg: &ast::Expr) -> Result<()> {
 /// rather than about a variant of the wrong arity; a value of enum type
 /// reached any other way (`val e = E.A` then `e.tag()`) reaches the method
 /// tables like any other receiver.
-fn check_method_call_enum_guard(receiver: &ast::Expr, span: Span, ctx: &Ctx) -> Result<()> {
+fn check_method_call_enum_guard(
+    receiver: &ast::Expr,
+    method: &str,
+    span: Span,
+    ctx: &Ctx,
+) -> Result<()> {
+    // `E.A.to_int()` is a read of the variant's value, so it is reached on the
+    // variant path itself; only a *declared* method needs a binding first.
+    if method == "to_int" {
+        return Ok(());
+    }
     if let ast::Expr::FieldAccess { base, .. } = receiver {
         if enum_path(base, ctx).is_some() {
             return Err(TypeError {
@@ -11669,6 +12013,17 @@ fn check_method_call(
     // static builtin table. The receiver is a place, so it goes through the same
     // `check_call_arg` a declared method's does, which is what makes `store`
     // and the `fetch_*` require a `mut` binding, since they write the location.
+    // `m.to_int()` (kernel stage 2): a field-less enum's compile-time
+    // discriminant, read as the repr integer type. Resolved before the method
+    // tables because an enum has no declaration to search and no method of
+    // that name in the builtin table either; a method the enum declares under
+    // that name still wins.
+    if method == "to_int"
+        && ctx.is_enum(&owner)
+        && ctx.sig_of(&format!("{owner}#to_int")).is_none()
+    {
+        return lower_enum_to_int(probe.ty.clone(), receiver, span, ctx);
+    }
     if let Some(elem) = crate::types::atomic_elem_of(&probe.ty).cloned() {
         let key = format!("Atomic#{method}");
         if let Some(sig) = atomic_sig(&key, &elem, ctx, span)? {
@@ -12065,6 +12420,235 @@ fn lower_try_to(src: &Ty, dst: &Ty, value: tir::Expr, span: Span, ctx: &Ctx) -> 
                 init: value,
             }],
             tail: Some(Box::new(arms)),
+        }),
+        ty: opt_ty,
+        span,
+    })
+}
+
+/// `m.to_int()` (kernel stage 2): the declared discriminant of the variant
+/// the value holds, as the enum's `repr(<int>)` type (default `i32`). Lowered
+/// to the shape `when` already lowers to: a `EnumTag` test per variant, each
+/// arm an integer literal, with the receiver read once through a hidden local,
+/// so `f().to_int()` calls `f` once. Only a field-less enum has declared
+/// values to report.
+fn lower_enum_to_int(
+    mode_ty: Ty,
+    receiver: &ast::Expr,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let ename = struct_name_of(&mode_ty)
+        .expect("an enum receiver names a struct type")
+        .to_string();
+    let edef = ctx
+        .enum_def(&ename)
+        .expect("the receiver was checked against a declared enum");
+    if !edef.is_field_less() {
+        return Err(TypeError {
+            message: format!(
+                "enum '{ename}' has a variant with a payload, so it has no declared integer value: 'to_int' is on a field-less enum"
+            ),
+            span,
+        });
+    }
+    let tag = edef.tag_ty();
+    // The receiver is read through its address for each tag test. A place has
+    // one already and is read repeatedly, which is what an `EnumTag` does; an
+    // rvalue (`E.A`, a call) is moved into a local of its own first, because a
+    // borrow of a bare rvalue does not outlive the statement that made it.
+    let probe = check_expr(receiver, ctx, Some(&mode_ty))?;
+    let (base, stage) = if is_durable_place(&probe) {
+        (probe, None)
+    } else {
+        // The name carries a `.`, which no source identifier can contain, so
+        // it cannot shadow a binding the program wrote.
+        let held = format!("__to_int.{}", span.start);
+        (
+            tir::Expr {
+                kind: tir::ExprKind::Ident(held.clone()),
+                ty: mode_ty.clone(),
+                span,
+            },
+            Some(tir::Stmt::Let {
+                name: held,
+                ty: mode_ty.clone(),
+                init: probe,
+            }),
+        )
+    };
+    let values = edef.discriminants();
+    let int = |v: i128| tir::Expr {
+        kind: tir::ExprKind::IntLit(v),
+        ty: tag.clone(),
+        span,
+    };
+    let last = values.len() - 1;
+    let mut chain = int(values[last]);
+    for i in (0..last).rev() {
+        chain = tir::Expr {
+            kind: tir::ExprKind::If {
+                cond: Box::new(tir::Expr {
+                    kind: tir::ExprKind::EnumTag {
+                        expr: Box::new(base.clone()),
+                        variant: i,
+                    },
+                    ty: Ty::Bool,
+                    span,
+                }),
+                then_block: tir::Block {
+                    stmts: Vec::new(),
+                    tail: Some(Box::new(int(values[i]))),
+                },
+                else_block: Some(tir::Block {
+                    stmts: Vec::new(),
+                    tail: Some(Box::new(chain)),
+                }),
+            },
+            ty: tag.clone(),
+            span,
+        };
+    }
+    let stmts: Vec<tir::Stmt> = stage.into_iter().collect();
+    if stmts.is_empty() {
+        return Ok(chain);
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Block(tir::Block {
+            stmts,
+            tail: Some(Box::new(chain)),
+        }),
+        ty: tag,
+        span,
+    })
+}
+
+/// `Mode.from_int(n)` (kernel stage 2): the variant whose discriminant is `n`,
+/// or `None`. Lowered like [`lower_try_to`]: the argument is bound once into a
+/// hidden local and the result is one `if n == value { Some(variant) }` arm
+/// per variant, falling through to `None`. Requires the `Option` the
+/// stdlib declares, exactly as the fallible conversions do.
+fn lower_enum_from_int(
+    ename: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let edef = ctx
+        .enum_def(ename)
+        .expect("enum_path only returns known enums");
+    if !edef.is_field_less() {
+        return Err(TypeError {
+            message: format!(
+                "enum '{ename}' has a variant with a payload, so it has no declared integer value: 'from_int' is on a field-less enum"
+            ),
+            span,
+        });
+    }
+    let tag = edef.tag_ty();
+    let checked = match_args(
+        &format!("'{ename}.from_int'"),
+        &[("n".to_string(), tag.clone())],
+        args,
+        span,
+        ctx,
+    )?;
+    let option_key = format!(
+        "{}Option",
+        crate::stdlib::key_prefix(crate::stdlib::OPTION_MODULE)
+    );
+    if !ctx.env.generics.contains_key(&option_key) {
+        return Err(TypeError {
+            message: format!(
+                "'{ename}.from_int' hands back 'Option<{ename}>', which '{}' declares: add `impl \"{}\"` to the file that writes the call",
+                option_key,
+                crate::stdlib::OPTION_MODULE
+            ),
+            span,
+        });
+    }
+    let mode_ty = Ty::Struct(ename.to_string());
+    let opt_ty = ctx.instantiate_type(&option_key, &[mode_ty.clone()], span)?;
+    let opt_name = struct_name_of(&opt_ty)
+        .expect("an instantiation is a struct type")
+        .to_string();
+    let odef = ctx.enum_def(&opt_name).expect("just instantiated");
+    let Some(shape) = try_shape(&odef).filter(|s| !s.err_has_payload) else {
+        return Err(TypeError {
+            message: format!(
+                "'{}' declares '{option_key}', and it is not the two-variant 'Some'/'None' shape this conversion hands back",
+                crate::stdlib::OPTION_MODULE
+            ),
+            span,
+        });
+    };
+    let held = format!("__from_int.{}", span.start);
+    let read = || tir::Expr {
+        kind: tir::ExprKind::Ident(held.clone()),
+        ty: tag.clone(),
+        span,
+    };
+    let variant = |variant: usize, fields: Vec<tir::Expr>| tir::Expr {
+        kind: tir::ExprKind::EnumLit {
+            enum_name: opt_name.clone(),
+            variant,
+            fields,
+        },
+        ty: opt_ty.clone(),
+        span,
+    };
+    let none = variant(shape.err, Vec::new());
+    let values = edef.discriminants();
+    let mut chain = none;
+    for i in (0..values.len()).rev() {
+        let arm = variant(
+            shape.ok,
+            vec![tir::Expr {
+                kind: tir::ExprKind::EnumLit {
+                    enum_name: ename.to_string(),
+                    variant: i,
+                    fields: Vec::new(),
+                },
+                ty: mode_ty.clone(),
+                span,
+            }],
+        );
+        chain = tir::Expr {
+            kind: tir::ExprKind::If {
+                cond: Box::new(tir::Expr {
+                    kind: tir::ExprKind::Binary {
+                        op: BinOp::Eq,
+                        lhs: Box::new(read()),
+                        rhs: Box::new(tir::Expr {
+                            kind: tir::ExprKind::IntLit(values[i]),
+                            ty: tag.clone(),
+                            span,
+                        }),
+                    },
+                    ty: Ty::Bool,
+                    span,
+                }),
+                then_block: tir::Block {
+                    stmts: Vec::new(),
+                    tail: Some(Box::new(arm)),
+                },
+                else_block: Some(tir::Block {
+                    stmts: Vec::new(),
+                    tail: Some(Box::new(chain)),
+                }),
+            },
+            ty: opt_ty.clone(),
+            span,
+        };
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Block(tir::Block {
+            stmts: vec![tir::Stmt::Let {
+                name: held,
+                ty: tag,
+                init: checked[0].clone(),
+            }],
+            tail: Some(Box::new(chain)),
         }),
         ty: opt_ty,
         span,

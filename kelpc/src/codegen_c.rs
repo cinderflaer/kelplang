@@ -932,12 +932,28 @@ fn write_struct(
     // Tagged (M8), because a container typedef emitted *earlier* may hold a
     // pointer to this struct (`Box<Node>` inside `Node` itself), and a
     // forward declaration of the tag is what makes that legal C.
-    write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&s.name)).unwrap();
+    //
+    // `repr(packed)` and `repr(align(N))` (kernel stage 2) are the GNU C
+    // attributes with those names; the LLVM body carries the same two facts
+    // (`codegen_llvm.rs::declare_aggregates`), which is what keeps the two
+    // backends byte-for-byte identical.
+    let packed = matches!(s.repr, crate::ast::Repr::Packed);
+    write!(
+        out,
+        "typedef struct {}{} {{\n",
+        if packed { "__attribute__((packed)) " } else { "" },
+        crate::types::struct_tag(&s.name)
+    )
+    .unwrap();
     for f in &s.fields {
         write!(out, "    {};\n", f.ty.c_decl(&field_name(&f.name))).unwrap();
     }
     let ty = Ty::Struct(s.name.clone());
-    write!(out, "}} {};\n", ty.c_type()).unwrap();
+    let align = match s.repr {
+        crate::ast::Repr::Align(n) => format!(" __attribute__((aligned({n})))"),
+        _ => String::new(),
+    };
+    write!(out, "}}{align} {};\n", ty.c_type()).unwrap();
     if needs_drop(&ty, owned) {
         writeln!(
             out,
@@ -1063,7 +1079,10 @@ fn write_enum(
     keyable: &HashSet<String>,
 ) {
     write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&e.name)).unwrap();
-    out.push_str("    int32_t kelp_tag;\n");
+    // The tag's width is the `repr(<int>)` clause's, `i32` by default
+    // (kernel stage 2); every tag read, write and comparison in this file is
+    // written against `kelp_tag`, so only this declaration changes.
+    writeln!(out, "    {} kelp_tag;", e.tag_c_type()).unwrap();
     out.push_str("    union {\n");
     for v in &e.variants {
         writeln!(out, "        struct {{").unwrap();
@@ -1890,6 +1909,12 @@ fn collect_layout_tys(
         }
         Ty::Ref { inner, .. } => collect_layout_tys(
             inner, structs, enums, named, containers, arrays, atomics, handles,
+        ),
+        // A raw pointer's C spelling is `<elem>*`, so an extern signature that
+        // names `Ptr<Packed>` needs `Packed`'s typedef just as a bare `Packed`
+        // parameter would (kernel stage 2).
+        Ty::Ptr(elem) => collect_layout_tys(
+            elem, structs, enums, named, containers, arrays, atomics, handles,
         ),
         Ty::Fn { params, ret } => {
             for p in params {

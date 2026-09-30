@@ -83,7 +83,8 @@ use llvm_sys::core::{
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage,
     LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget, LLVMSetVolatile,
-    LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVoidTypeInContext,
+    LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
+    LLVMVoidTypeInContext,
 };
 use llvm_sys::debuginfo::{
     LLVMCreateDIBuilder, LLVMDIBuilderCreateCompileUnit, LLVMDIBuilderCreateDebugLocation,
@@ -450,11 +451,37 @@ impl Context {
     /// (MK7 §3.1). Calling this twice on one type is legal in the C API but
     /// replaces the body, so the lowering does it once per declaration.
     pub fn struct_set_body(&self, ty: Type<'_>, fields: &[Type<'_>]) {
+        self.struct_set_body_packed(ty, fields, false);
+    }
+
+    /// Set a named aggregate's body with the `packed` flag: `packed = 1` gives
+    /// every field alignment 1 and inserts no padding, which is exactly the C
+    /// `__attribute__((packed))` layout `repr(packed)` asks for (kernel stage
+    /// 2). The two backends must agree byte for byte, so the flag is threaded
+    /// to the one C API call that decides it.
+    pub fn struct_set_body_packed(&self, ty: Type<'_>, fields: &[Type<'_>], packed: bool) {
         let mut raw: Vec<LLVMTypeRef> = fields.iter().map(|f| f.raw).collect();
         // SAFETY: the type is a named struct owned by this context, the field
-        // vector is live for the call, and 0 is `packed = false`.
+        // vector is live for the call, and `packed` is a valid LLVMBool.
         unsafe {
-            LLVMStructSetBody(ty.raw, raw.as_mut_ptr(), raw.len() as c_uint, 0)
+            LLVMStructSetBody(
+                ty.raw,
+                raw.as_mut_ptr(),
+                raw.len() as c_uint,
+                packed as LLVMBool,
+            )
+        }
+    }
+
+    /// The vector type `<count x elem>` (`LLVMVectorType`). The one caller is
+    /// the alignment anchor a `repr(align(N))` struct body carries: for an `N`
+    /// wider than an `i128`, a vector of `N` bytes is the only LLVM type whose
+    /// ABI alignment is `N`.
+    pub fn vector_type(&self, elem: Type<'_>, count: u32) -> Type<'_> {
+        Type {
+            // SAFETY: the element type is live and owned by this context.
+            raw: unsafe { LLVMVectorType(elem.as_raw(), count) },
+            context: PhantomData,
         }
     }
 

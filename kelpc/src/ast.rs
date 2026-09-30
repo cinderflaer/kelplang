@@ -101,6 +101,24 @@ pub struct CapGrant {
     pub span: Span,
 }
 
+/// A `repr(...)` clause written before a `datac` or an `enum` (kernel stage 2,
+/// MK9-S1-M2 / B-2). The absence of one is [`Repr::C`]: declaration order with
+/// the C alignment and padding rules, which is what the default layout already
+/// was and is now guaranteed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Repr {
+    /// `repr(c)`, and every declaration with no clause at all.
+    C,
+    /// `repr(packed)`: alignment 1 and no padding between fields.
+    Packed,
+    /// `repr(align(N))`: the natural (C) field layout with the type's alignment
+    /// raised to `N`, a power of two. `N` is a literal, checked at parse time.
+    Align(u64),
+    /// `repr(u8)` and its siblings: the integer type a field-less `enum`'s tag
+    /// is stored in. Not legal on a `datac`.
+    Int(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct DatacDecl {
     pub name: String,
@@ -115,6 +133,8 @@ pub struct DatacDecl {
     /// instantiation supplies concrete arguments for them.
     pub type_params: Vec<String>,
     pub fields: Vec<FieldDecl>,
+    /// The `repr(...)` clause, or `None` for the default C layout.
+    pub repr: Option<Repr>,
     /// Declaration index within this file, across `datac`s *and* `enum`s, so
     /// `resolve.rs` can rebuild one merged declaration order out of two
     /// lists (A-1). A field may only name an earlier type by value, and
@@ -141,6 +161,9 @@ pub struct EnumDecl {
     /// `DatacDecl::type_params`.
     pub type_params: Vec<String>,
     pub variants: Vec<VariantDecl>,
+    /// The `repr(...)` clause, or `None` for the default C layout and an `i32`
+    /// tag.
+    pub repr: Option<Repr>,
     /// Declaration index within this file, across `datac`s *and* `enum`s, so
     /// `resolve.rs` can rebuild one merged declaration order out of two
     /// lists (A-1). A field or payload may only name an earlier type by
@@ -156,6 +179,10 @@ pub struct EnumDecl {
 pub struct VariantDecl {
     pub name: String,
     pub fields: Vec<FieldDecl>,
+    /// `Off = 0`: the value `to_int`/`from_int` use for this variant. Legal
+    /// only on a field-less enum; `infer.rs` checks that. `None` means the
+    /// previous variant's value plus one, starting at 0.
+    pub discriminant: Option<i128>,
     pub span: Span,
 }
 
