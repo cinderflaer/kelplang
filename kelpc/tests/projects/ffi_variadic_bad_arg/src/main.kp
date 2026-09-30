@@ -1,0 +1,6 @@
+impl "helper" caps(env = ["*"])
+
+fun main() {
+    val owned = String.from_str("seven")
+    print(helper.kelp_va_sum(1, owned))
+}

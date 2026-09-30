@@ -1,0 +1,17 @@
+// Gap 7: calls with 0, 1 and 3 extra i32 arguments, plus one mixed call whose
+// first extra is an "f32" (the wrapper passes a C "float", which the variadic
+// call promotes to a "double" the helper reads back) and whose second is a
+// "str" ("const char*"). Every result is deterministic:
+//   0            kelp_va_sum(0)
+//   7            kelp_va_sum(1, 7)
+//   6            kelp_va_sum(3, 1, 2, 3)
+//   11           kelp_va_mix(2, 3.5, "abcd") = (int)(3.5 * 2) + strlen("abcd")
+impl "helper" caps(env = ["*"])
+
+fun main() {
+    print(helper.kelp_va_sum(0))
+    print(helper.kelp_va_sum(1, 7))
+    print(helper.kelp_va_sum(3, 1, 2, 3))
+    val scale: f32 = 3.5
+    print(helper.kelp_va_mix(2, scale, "abcd"))
+}

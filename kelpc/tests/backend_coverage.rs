@@ -260,7 +260,12 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// Raised from 275 by gap 1, the opaque native handle: `ffi_handle` (a
 /// `malloc`/`free` pair over an `extern type` handle) builds with both
 /// backends, and its two rejection projects stay outside the corpus.
-const LLVM_BUILT_BASELINE: usize = 276;
+/// Raised from 276 by gap 7, the variadic user extern: `ffi_variadic` builds
+/// with both backends (the fixed-arity wrapper is generated into each
+/// backend's own C text), and its two rejection fixtures stay outside the
+/// corpus (one is a parse error in `tests/fixtures/`, the other a typecheck
+/// error whose project can never build on either backend).
+const LLVM_BUILT_BASELINE: usize = 277;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.

@@ -1,0 +1,13 @@
+name = "ffivariadic"
+
+# Gap 7: a user "extern fun" whose last parameter is "...", bound to a real
+# variadic C function in a project-local header. The header's bodies are
+# "static inline", so there is no library to link: "include_dirs" is what lets
+# the generated C (and the LLVM backend's per-program object) find the
+# declaration.
+[extern."helper"]
+domain = "env"
+library = "c"
+symbols = ["kelp_va_sum", "kelp_va_mix"]
+header = "kelp_va_helper.h"
+include_dirs = ["include"]
