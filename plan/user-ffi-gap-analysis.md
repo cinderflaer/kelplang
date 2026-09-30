@@ -7,7 +7,7 @@
 `roadmap.md` B-1 still opens with "`extern fun` exists but is compiler-only". That is out of date:
 the first slice of MK9-S1-M1 is in the tree.
 
-- A project's `coral.toml` may carry `[extern."<module id>"]` with `domain` (one of the six
+- A project's `coral.toml` may carry `[extern."<module id>"]` with `domain` (one of the
   capability domains), `library`, `symbols` (`resolve.rs`, `ExternModuleDecl`), and an optional
   `header` (a C header; see gap 3 below).
 - `infer.rs` accepts a user `extern fun` only when its bare Kelp name is in that module's
@@ -28,7 +28,7 @@ the first slice of MK9-S1-M1 is in the tree.
 | 3 | **No declaration of the native symbol.** ~~The trampoline calls it with no prototype and no `#include`; the fixtures only use libc symbols the runtime preamble already declares.~~ **Include half done:** a `header = "gtk/gtk.h"` key in `[extern.*]` is validated and emitted as `#include <...>` after the preamble, deduplicated and sorted (`resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs`). The prototype-generation half stays open: A GTK call still relies on the header for its signature, which cannot express `const char*` versus `char*` or `gpointer`. | `resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs` | GTK needs the header; a generated prototype needs the pointer types of gap 1. |
 | 4 | ~~**Callbacks.**~~ **Closed on both backends.** A user `extern fun` parameter written `move closure(P0, P1, ...).R: T` expands in place to three C arguments `(thunk, env, destroy)`, GLib's `(func, user_data, destroy_notify)`. `thunk` is a generated `T thunk(P0, ..., void* user_data)` that calls `c->fn(c->env, ...)`; `env` is a heap box holding the closure value; `destroy` runs the closure's `drop` on that environment and frees the box. The closure is moved into the native side, so `destroy` is the only thing that frees the environment, and a native side that never calls it leaks. The closure's parameters and return must be scalars, `bool`, `str`, an opaque handle or `unit`, with no `move`/`mut` parameter, and an extern takes at most one. The native call is made through a function pointer of the expansion's own type, so `GCallback`/`GClosureNotify` parameters need no cast in Kelp. On the LLVM backend the closure crosses as a pointer to the caller's stack slot (24 bytes, like any aggregate past two eightbytes) and the per-program C object's trampoline boxes it. | `infer.rs`, `codegen_c.rs::write_user_extern`, `codegen_llvm.rs::program_c_source` | `g_signal_connect_data`'s destroy-notify argument maps onto the closure's `drop`. |
 | 5 | **Link flags are only `-l<name>`.** ~~No `-L`, no `-I`~~ **Closed:** `include_dirs`/`library_dirs` in `[extern.*]` are validated, resolved against the `coral.toml` directory, deduplicated, sorted, and emitted as `-I`/`-L` on both backends (`resolve.rs`, `driver.rs`, fixture `ffi_include_dir`). A `pkg_config = "<package>"` key runs one `pkg-config --cflags --libs` over every package the sections name (sorted, deduplicated) and puts the flags on the compile and the link line of both backends (`resolve.rs`, `driver.rs`, fixture `ffi_pkg_config`; an unresolvable package fails the build). `driver.rs` also always links `-lssl -lcrypto`. | `resolve.rs`, `driver.rs` | GTK needs many include and library paths that `pkg-config gtk4` supplies. On NixOS they also have to be in `shell.nix`. `gtk4` is not present on this machine (`pkg-config --modversion gtk4` fails). |
-| 6 | **Capability domain.** Only `fs`, `net`, `process`, `env`, `time`, `rand`; the design pass explicitly forbids new names in this pass. | `stdlib.rs::DOMAINS`, roadmap B-1 | A window is authority over a display server (X11/Wayland socket), which fits none of them. Using `net` would work mechanically but would mislabel what the module can do. This needs a decision, not code (roadmap C-1/C-3). |
+| 6 | ~~**Capability domain.** Only `fs`, `net`, `process`, `env`, `time`, `rand`; the design pass explicitly forbids new names in this pass.~~ **Closed.** `ui` is the seventh domain in `stdlib.rs::DOMAINS`, decided as option 2 of `plan/ffi-display-domain.md`. A `ui`-assigned module is gated like any other; no display call carries an argument that names the display, so the only accepted grant is `ui = ["*"]` and `resolve.rs::validate_cap_grant` refuses every other pattern list. Fixtures `ffi_ui_domain`, `ffi_ui_pattern`, `ffi_ui_denied`. | `stdlib.rs::DOMAINS`, `resolve.rs`, roadmap B-1 | A window is authority over a display server (X11/Wayland socket), which fits none of the other six. Using `net` would work mechanically but would mislabel what the module can do, and a per-display name needs runtime-derived authority (roadmap C-1), which is not built. |
 | 7 | **Variadics.** Not supported. | `codegen_c.rs`, roadmap B-1 | `g_signal_connect` is a macro over the non-variadic `g_signal_connect_data`, and `gtk_init` and `g_application_run` are not variadic, so a minimal window avoids this; `g_object_set` and `printf` do not. |
 | 8 | **Test coverage is one scalar fixture.** `ffi_getpid` takes no arguments and returns `i32`; `ffi_handle` now passes a pointer-shaped opaque handle. | `tests/projects/` | No test passes a string or a callback, and I found no fixture that exercises a user extern on the LLVM backend specifically (C is covered). |
 | 9 | **Layout (B-2).** No `repr(C)`. | roadmap B-2 | Not needed for a minimal window (handles are opaque), but needed as soon as a struct crosses by value (`GdkRGBA`, `GtkAllocation`). |
@@ -53,9 +53,10 @@ the first slice of MK9-S1-M1 is in the tree.
 3. ~~**Opaque handle type** (item 1)~~ **Done:** `extern type Widget`, `Copy`, no arithmetic, no null.
 4. ~~**C-ABI callback with `user_data`** (item 4)~~ **Done on both backends:** the `move closure(...)` expansion above.
 5. ~~**`pkg-config` in the manifest** (item 5)~~ **Done.**
-6. **Domain decision** (item 6), taken with the owner of C-1/C-3, before anything ships.
+6. ~~**Domain decision** (item 6), taken with the owner of C-1/C-3, before anything ships.~~
+   **Done:** option 2, the `ui` domain, in `plan/ffi-display-domain.md`.
 
-Trailing blocks (`plan/trailing-closure.md`) are independent of all six.
+Trailing blocks (`plan/trailing-closure.md`) are independent of all of them.
 
 ## Status update (2026-09-30)
 
@@ -65,7 +66,10 @@ Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `
   it `void*` behind a per-type typedef, LLVM spells it `ptr`.
 - **Gap 3, prototype generation: not planned.** The `header` key makes the real declaration visible, so generating
   a prototype from the Kelp signature would only risk a second, conflicting declaration.
-- **Gap 6 (domain):** options and a recommendation are in `plan/ffi-display-domain.md`; it needs a decision.
+- **Gap 6 (domain):** **closed.** Option 2 of `plan/ffi-display-domain.md` is implemented: `ui` is the
+  seventh domain, the gate is the domain gate alone, and `ui = ["*"]` is the only accepted grant
+  because a call in this domain carries no argument to match. No-grant and any other pattern list are
+  compile errors. `examples/polyp-spike` is switched to it.
 - **Gap 4 (C-ABI callbacks), both backends:** a user `extern fun` parameter `move closure(P0, P1, ...).R: T` expands in place to
   `(thunk, env, destroy)`. `thunk` reorders the native `(P0, ..., void* user_data)` into the closure's own `(void* env, P0, ...)`;
   `env` is a heap box holding the closure value; `destroy` runs the closure's drop on its environment and frees the box. The
