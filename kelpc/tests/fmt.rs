@@ -589,7 +589,19 @@ fn collect_kp(dir: &Path, out: &mut Vec<PathBuf>) {
         Err(_) => return,
     };
     for entry in entries {
-        let path = entry.expect("a directory entry").path();
+        let entry = entry.expect("a directory entry");
+        // A symbolic link is not followed, whether it names a file or a
+        // directory: `mirror_tree` does not copy one, so a file reached
+        // through a link has no counterpart in the mirror and the properties
+        // below would be asserted against a path that does not exist. The
+        // link's target is collected under its own name when it is inside the
+        // tree, which is the copy this corpus formats. `kelpc lint`'s own walk
+        // (`main.rs::collect_kp_into`) skips links for its own version of this
+        // reason.
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
+            continue;
+        }
+        let path = entry.path();
         if path.is_dir() {
             collect_kp(&path, out);
         } else if path.extension().and_then(|s| s.to_str()) == Some("kp") {
