@@ -43,3 +43,39 @@ emitted as volatile access on both backends.
 provenance, its lifetime, or whether it is still allocated. There is no
 provenance model and no aliasing model yet (roadmap D-1); this stage is the
 first thing those have to describe.
+
+## Stage 2: MK9-S1-M2 layout
+
+**New ways to reach UB.** Layout control makes the address arithmetic stage 1
+already allowed easier to get wrong, and adds one promise about an address:
+
+- `repr(packed)` puts a field at an offset its own type is not aligned for.
+  The language has no pointer-to-field that escapes, so reading the field
+  through the value is fine, but `offset_of<Packed>("field")` plus `Ptr`
+  arithmetic can build a misaligned `Ptr<T>`; `read`/`write` there is UB for
+  the same reason it always was, and the packed clause is what makes it easy.
+- `repr(align(N))` is a **promise** that a value of the type is `N`-aligned.
+  The compiler aligns every alloca and global it creates (the C attribute and
+  the LLVM alignment anchor are the same fact), but a value reached through a
+  `Ptr` it did not create (`Ptr.from_addr`, a cast, a `byte_offset`) carries no
+  such guarantee, and reading or writing it as the aligned type is UB.
+- A `repr(packed)` type read through a `Ptr` to a *different* type is the same
+  type-punning UB as before, now more tempting because the packed bytes are easy
+  to reinterpret.
+- A read of an address built from `offset_of` and `Ptr` arithmetic is UB when
+the offset does not land inside the same allocated object, exactly the stage 1
+rule; `offset_of` only reports the offset, it does not make the address valid.
+
+**What the compiler does check.** That a `repr` clause is one of `c`, `packed`,
+`align(N)` or an integer type in the right position; that `N` is a power of two;
+that an explicit discriminant is written only on a field-less enum, is unique,
+and fits the tag's storage type; that a layout query names a type with a
+machine-level layout and, for `offset_of`, a field the type has. `size_of`,
+`align_of` and `offset_of` are compile-time constants, so they add no runtime
+behaviour at all; they only let a program compute an address the compiler still
+does not validate.
+
+**What it does not check.** The alignment of any address a program builds, or
+that memory reached through a `Ptr` holds a value of the type it is read as.
+There is still no provenance model (roadmap D-1); `repr` makes the alignment
+part of D-1's description rather than adding a check.

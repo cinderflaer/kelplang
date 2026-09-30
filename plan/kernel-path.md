@@ -42,10 +42,19 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
-**Status: stage 1 (MK9-S2 unsafe and pointers) is done.** `unsafe` blocks and `unsafe fun`, the raw
-pointer type `Ptr<T>`, `offset`/`byte_offset`/`cast`/`addr`/`is_null`, `read`/`write` and their
-volatile twins, `Ptr.alloc`/`free`, and the `coral.toml` `[unsafe] modules` audit list all work on
-both backends (`plan/unsafe-and-pointers.md`).
+**Status: stage 2 (MK9-S1-M2 layout control) is done.** Stage 1 (MK9-S2 unsafe and pointers) is
+also done: `unsafe` blocks and `unsafe fun`, the raw pointer type `Ptr<T>`,
+`offset`/`byte_offset`/`cast`/`addr`/`is_null`, `read`/`write` and their volatile twins,
+`Ptr.alloc`/`free`, and the `coral.toml` `[unsafe] modules` audit list all work on both backends
+(`plan/unsafe-and-pointers.md`).
+
+Stage 2 adds `repr(c)` (the default, now guaranteed), `repr(packed)` and `repr(align(N))`, the
+compile-time queries `size_of<T>()`/`align_of<T>()`/`offset_of<T>("field")`, and explicit
+discriminants on a field-less enum with `repr(u8|u16|u32|u64|i8|i16|i32|i64)` storage and
+`to_int`/`from_int`. Both backends write the same layout (`__attribute__((packed))`/`aligned(N)`
+and a packed struct body or an alignment anchor), and the C helper in `tests/projects/ffi_layout`
+checks the packed byte layout against a real C compiler
+(`plan/layout-control.md`).
 
 ## Two rules that keep the language honest
 
