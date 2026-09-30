@@ -52,6 +52,11 @@ pub struct Program {
     /// when no section names a header, which leaves the generated C text
     /// byte-for-byte what it was before the key existed.
     pub extern_headers: Vec<String>,
+    /// The canonical names of the program's `extern type` handles (gap 1),
+    /// sorted so both backends emit the same order. Each one is `void*`
+    /// behind its own C typedef, emitted with the other type definitions; a
+    /// program that declares none leaves the generated output unchanged.
+    pub handles: Vec<String>,
 }
 
 /// One module's patterns for one capability domain.

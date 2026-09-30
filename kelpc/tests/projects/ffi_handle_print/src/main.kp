@@ -1,0 +1,8 @@
+// Gap 1 rejection: a handle is opaque, so "print" refuses it by name instead
+// of printing a pointer.
+impl "mem" caps(process = ["/**"])
+
+fun main() {
+    val buf: mem.Buffer = mem.malloc(16)
+    print(buf)
+}

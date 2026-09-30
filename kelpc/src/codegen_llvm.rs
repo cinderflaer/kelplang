@@ -10349,6 +10349,10 @@ fn llvm_type<'a>(
         // `Result<T, ThreadErr>` a join builds, both of which the call sites
         // name themselves.
         Ty::Thread(_) => ctx.opaque_ptr(),
+        // An opaque handle (gap 1) is a plain pointer, so the two backends
+        // agree without a layout table: the C backend's `void*` typedef and
+        // this `ptr` are the same value at the ABI.
+        Ty::Handle(_) => ctx.opaque_ptr(),
         // The builtin heap types, in the same field order `runtime/kelp_rt.c`
         // defines them (MK7 §3.3). `View` is the borrowed pair.
         Ty::Bytes => *structs
@@ -10692,6 +10696,9 @@ fn refuse_field(ty: &Ty) -> Result<(), String> {
         // frontend accepts a handle as a field and refuses it as a container
         // element, and the pointer is what both backends lay out.
         Ty::Thread(_) => Ok(()),
+        // An opaque handle field (gap 1) is one pointer; the frontend allows
+        // it as a field, a local, a parameter and a return.
+        Ty::Handle(_) => Ok(()),
         // A borrowed field never reaches codegen at all: the frontend refuses
         // one first (`types::is_borrowed_field_ty`, which names `&str`, `View`
         // and a reference). These three rows are therefore unreachable, and are
@@ -10747,6 +10754,7 @@ fn refuse_type(ty: &Ty) -> String {
             return no_value(&format!("the type '{}'", ty.display()))
         }
         Ty::Str | Ty::View => ("a borrowed view", "S2D"),
+        Ty::Handle(_) => ("an opaque handle", "S1"),
         Ty::Unit => ("'unit'", "S1"),
         other => return refuse(&format!("the type '{}'", other.display()), "S1"),
     };
@@ -10802,6 +10810,7 @@ mod layout_tests {
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
+            handles: Vec::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -11231,6 +11240,7 @@ mod layout_tests {
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
+            handles: Vec::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -11371,6 +11381,7 @@ mod layout_tests {
             pds: Vec::new(),
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
+            handles: Vec::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),

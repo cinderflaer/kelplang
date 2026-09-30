@@ -484,6 +484,7 @@ pub fn load(
         pds: Vec::new(),
         datacs: Vec::new(),
         enums: Vec::new(),
+        extern_types: Vec::new(),
         functions: Vec::new(),
     };
     for m in &loader.modules {
@@ -515,6 +516,26 @@ pub fn load(
             e.name = format!("{}{}", m.prefix, e.name);
             e.module = m.id.clone();
             program.enums.push(e);
+        }
+        // An opaque handle is a module's own type, prefixed and exported like
+        // a `datac`. It is legal only where the manifest has an `[extern.*]`
+        // section to reach a native symbol with, so the refusal is here, next
+        // to the name resolution that would otherwise let it cross modules.
+        for e in &parsed.extern_types {
+            if !loader.extern_modules.contains_key(&m.id) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'extern type {}' is only legal in a module with a coral.toml '[extern.\"{}\"]' section",
+                        e.name, m.id
+                    ),
+                    e.span,
+                    m.id.clone(),
+                ));
+            }
+            let mut e = e.clone();
+            e.name = format!("{}{}", m.prefix, e.name);
+            e.module = m.id.clone();
+            program.extern_types.push(e);
         }
         for f in &parsed.functions {
             let mut f = f.clone();

@@ -103,6 +103,11 @@ struct TypeEnv {
     /// `Ctx` clone and every `TypeScope` see, since it is one answer for the
     /// whole program.
     exported: std::rc::Rc<std::collections::HashSet<String>>,
+    /// The canonical names of the program's `extern type` handles (gap 1). One
+    /// answer for the whole program, like `exported`: a handle declared in one
+    /// module is named through an alias in another, and its name has to mean
+    /// the same thing in every scope.
+    handles: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -687,6 +692,7 @@ impl Ctx {
             in_progress: None,
             consts: Some(&self.consts),
             const_fns: Some(&self.const_fns),
+            handles: &self.env.handles,
         }
     }
 
@@ -910,6 +916,10 @@ struct TypeScope<'a> {
     /// diagnostic instead of a wrong answer.
     consts: Option<&'a HashMap<String, ConstInfo>>,
     const_fns: Option<&'a ConstFns>,
+    /// The canonical names of the program's opaque handles (gap 1), so a
+    /// written `Widget` or `ffi.Widget` resolves to `Ty::Handle` instead of
+    /// falling through to "unknown type".
+    handles: &'a std::collections::HashSet<String>,
 }
 
 impl TypeScope<'_> {
@@ -1175,7 +1185,20 @@ impl TypeScope<'_> {
             return Ok(Ty::Struct(ty.name.clone()));
         }
         let qualified = self.qualify(&ty.name, ty.span)?;
-        if self.structs.contains_key(&qualified) {
+        if self.handles.contains(&qualified) {
+            check_type_exported(
+                &ty.name,
+                self.structs,
+                self.enums,
+                self.aliases,
+                &self.env,
+                ty.span,
+            )?;
+            // Always a pointer, so `indirect` has nothing to decide: a handle
+            // is complete the moment it is declared, and naming one by value
+            // is naming a pointer.
+            Ok(Ty::Handle(qualified))
+        } else if self.structs.contains_key(&qualified) {
             check_type_exported(
                 &ty.name,
                 self.structs,
@@ -1336,6 +1359,7 @@ impl TypeScope<'_> {
             in_progress: Some(&key),
             consts: self.consts,
             const_fns: self.const_fns,
+            handles: self.handles,
         };
         let built = scope.build_instance(&tmpl, &key);
         self.env.instances.borrow_mut().in_progress.remove(&key);
@@ -2076,6 +2100,9 @@ fn collect_exports(program: &ast::Program) -> std::collections::HashSet<String> 
     for e in &program.enums {
         export(&e.module, &e.name, e.is_pub);
     }
+    for t in &program.extern_types {
+        export(&t.module, &t.name, t.is_pub);
+    }
     for c in &program.consts {
         export(&c.module, &c.name, c.is_pub);
     }
@@ -2114,6 +2141,7 @@ fn private_item_error(alias: &str, item: &str, span: Span) -> TypeError {
 fn declares(key: &str, ctx: &Ctx) -> bool {
     ctx.structs.contains_key(key)
         || ctx.enums.contains_key(key)
+        || ctx.env.handles.contains(key)
         || ctx.consts.contains_key(key)
         || ctx.sigs.contains_key(key)
         || ctx.env.generics.contains_key(key)
@@ -2140,9 +2168,53 @@ fn check_type_exported(
         return Ok(());
     };
     let key = format!("{prefix}{item}");
-    let known = structs.contains_key(&key) || enums.contains_key(&key) || env.generics.contains_key(&key);
+    let known = structs.contains_key(&key)
+        || enums.contains_key(&key)
+        || env.generics.contains_key(&key)
+        || env.handles.contains(&key);
     if known && !exported(&key, env) {
         return Err(private_item_error(alias, item, span));
+    }
+    Ok(())
+}
+
+/// The names an `extern type` may take (gap 1). A handle is a type name like
+/// any other, so it must be unique in the program and must not collide with a
+/// `datac`, an `enum` or a builtin: `Ty::Handle` and `Ty::Struct` are separate
+/// variants, and a collision would make one of the two silently unreachable
+/// rather than a diagnostic.
+fn check_extern_type_names(program: &ast::Program) -> std::result::Result<(), Diagnostic> {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for t in &program.extern_types {
+        if !seen.insert(t.name.as_str()) {
+            return Err(Diagnostic::new(
+                format!("extern type '{}' is declared more than once", t.name),
+                t.span,
+                t.module.clone(),
+            ));
+        }
+        if program.datacs.iter().any(|d| d.name == t.name)
+            || program.enums.iter().any(|e| e.name == t.name)
+        {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{}' is used for both an 'extern type' and a datac or enum",
+                    t.name
+                ),
+                t.span,
+                t.module.clone(),
+            ));
+        }
+        if Ty::from_name(&t.name).is_some() {
+            return Err(Diagnostic::new(
+                format!(
+                    "'{}' is a builtin type and cannot be redeclared as an 'extern type'",
+                    t.name
+                ),
+                t.span,
+                t.module.clone(),
+            ));
+        }
     }
     Ok(())
 }
@@ -2167,6 +2239,7 @@ fn check_pub_signatures(
         .iter()
         .map(|d| d.name.as_str())
         .chain(program.enums.iter().map(|e| e.name.as_str()))
+        .chain(program.extern_types.iter().map(|t| t.name.as_str()))
         .collect();
     for d in &program.datacs {
         if !exported.contains(&d.name) {
@@ -3751,6 +3824,7 @@ fn collect_consts(
             in_progress: None,
             consts: Some(&out),
             const_fns: Some(const_fns),
+            handles: &env.handles,
         }
         .resolve(&decl.ty, false)
         .map_err(|e| e.in_module(&decl.module))?;
@@ -3996,6 +4070,7 @@ impl<'a> ConstEvaluator<'a> {
             in_progress: None,
             consts: Some(self.consts),
             const_fns: Some(self.const_fns),
+            handles: &self.env.handles,
         }
     }
 
@@ -5101,6 +5176,7 @@ pub fn check_program(
     // A-13: the whole program's export set is known before any body is
     // checked, so the private-in-public rule runs here, once.
     check_pub_signatures(program, project)?;
+    check_extern_type_names(program)?;
     let probe = std::rc::Rc::new(std::cell::RefCell::new(PdProbe::default()));
     let probe_wiring = PdWiring {
         modes: std::rc::Rc::new(HashMap::new()),
@@ -5142,6 +5218,17 @@ fn check_program_pass(
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
         declared_keys: declared_keys.clone(),
         exported: std::rc::Rc::new(collect_exports(program)),
+        // `resolve.rs` has prefixed every handle name, so the set is already
+        // canonical. A handle is a type like any other and is known before any
+        // body is checked, which is why a module may name another module's
+        // handle in a signature as freely as a `datac`.
+        handles: std::rc::Rc::new(
+            program
+                .extern_types
+                .iter()
+                .map(|e| e.name.clone())
+                .collect(),
+        ),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -5304,6 +5391,7 @@ fn check_program_pass(
                         in_progress: in_progress.as_deref(),
                         consts: Some(&consts),
                         const_fns: Some(&const_fns),
+                        handles: &env.handles,
                     }
                     .resolve(&f.ty, false)
                     .map_err(|err| err.in_module(&e.module))?;
@@ -5407,6 +5495,7 @@ fn check_program_pass(
                 in_progress: in_progress.as_deref(),
                 consts: Some(&consts),
                 const_fns: Some(&const_fns),
+                handles: &env.handles,
             }
             .resolve(&f.ty, false)
             .map_err(|e| e.in_module(&d.module))?;
@@ -5516,6 +5605,7 @@ fn check_program_pass(
             in_progress: None,
             consts: Some(&consts),
             const_fns: Some(&const_fns),
+            handles: &env.handles,
         };
         let mut params = Vec::new();
         if let Some(r) = &f.receiver {
@@ -5879,6 +5969,11 @@ fn check_program_pass(
         declared_keys: (*declared_keys).clone(),
         extern_ffi_symbols,
         extern_headers: project.extern_headers(),
+        handles: {
+            let mut names: Vec<String> = program.extern_types.iter().map(|e| e.name.clone()).collect();
+            names.sort();
+            names
+        },
     })
 }
 
@@ -6039,6 +6134,7 @@ fn collect_pds(
                 in_progress: None,
                 consts: Some(consts),
                 const_fns: Some(const_fns),
+                handles: &env.handles,
             }
             .resolve(t, false)
             .map_err(|e| e.in_module(&decl.module))?,
@@ -8694,6 +8790,7 @@ fn field_hint(
         in_progress: None,
         consts: Some(&ctx.consts),
         const_fns: Some(&ctx.const_fns),
+        handles: &ctx.env.handles,
     };
     scope.resolve(written, false).ok()
 }
@@ -9700,7 +9797,13 @@ fn check_binary(
                     span,
                 });
             }
-            if !comparable(&l.ty) {
+            // An opaque handle has equality and nothing else: `==`/`!=`
+            // compare the two pointers, which is cheap and is the only
+            // thing the operator could mean for a value with no readable
+            // contents. An order (`<`, `<=`, `>`, `>=`) is still refused.
+            let comparable = comparable(&l.ty)
+                || (matches!(l.ty, Ty::Handle(_)) && matches!(op, BinOp::Eq | BinOp::NotEq));
+            if !comparable {
                 return Err(TypeError {
                     message: comparison_error(&l.ty, op),
                     span,
@@ -10342,6 +10445,16 @@ fn check_call(
         }
         let arg = check_expr(&args[0].value, ctx, None)?;
         let arg = borrow_for_print(arg, callee, ctx)?;
+        // An opaque handle has no readable value, so there is nothing to
+        // format: name it rather than fall through to the generic refusal.
+        if let Ty::Handle(name) = &arg.ty {
+            return Err(TypeError {
+                message: format!(
+                    "cannot pass a value of type '{name}' to '{callee}': an 'extern type' is an opaque native handle with no printable value"
+                ),
+                span,
+            });
+        }
         let printable = arg.ty.is_numeric()
             || matches!(arg.ty, Ty::Bool | Ty::Char)
             || is_str_like(&arg.ty)
@@ -10695,6 +10808,7 @@ fn instantiate_function(
         in_progress: None,
         consts: Some(&ctx.consts),
         const_fns: Some(&ctx.const_fns),
+        handles: &ctx.env.handles,
     };
     let mut params = Vec::new();
     if let Some((_, receiver_mutable)) = &tmpl.receiver {
@@ -10886,6 +11000,14 @@ fn check_template(
                 // that rather than spell the marker (`List<unit>`).
                 refuse_open_arg(&value.ty, e)?;
                 let value = borrow_for_print(value, "a string template", ctx)?;
+                if let Ty::Handle(name) = &value.ty {
+                    return Err(TypeError {
+                        message: format!(
+                            "cannot interpolate a value of type '{name}' into a string template: an 'extern type' is an opaque native handle with no printable value"
+                        ),
+                        span: e.span(),
+                    });
+                }
                 let printable = value.ty.is_numeric()
                     || matches!(value.ty, Ty::Bool | Ty::Char)
                     || is_str_like(&value.ty)

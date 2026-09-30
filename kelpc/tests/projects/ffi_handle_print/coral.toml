@@ -1,0 +1,9 @@
+name = "ffihandleprint"
+
+# Same native surface as "ffi_handle": the rejection is at the "print" call,
+# not in the manifest.
+[extern."mem"]
+domain = "process"
+library = "c"
+header = "stdlib.h"
+symbols = ["malloc", "free"]

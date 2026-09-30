@@ -2423,6 +2423,32 @@ fn an_ffi_symbol_rename_to_a_non_identifier_is_rejected() {
 }
 
 #[test]
+fn an_ffi_opaque_handle_allocates_compares_and_frees() {
+    // Gap 1: "malloc" returns an opaque "Buffer", "==" compares two handles
+    // of that type, and "free" takes one back, all straight through the C
+    // trampoline.
+    assert_project_runs("ffi_handle", &project("ffi_handle"), "true\n");
+}
+
+#[test]
+fn an_ffi_extern_type_outside_an_extern_section_is_rejected() {
+    assert_project_rejected(
+        "ffi_handle_no_section",
+        &project("ffi_handle_no_section"),
+        "is only legal in a module with a coral.toml",
+    );
+}
+
+#[test]
+fn printing_an_ffi_opaque_handle_is_rejected() {
+    assert_project_rejected(
+        "ffi_handle_print",
+        &project("ffi_handle_print"),
+        "opaque native handle with no printable value",
+    );
+}
+
+#[test]
 fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");
     assert_project_runs(
