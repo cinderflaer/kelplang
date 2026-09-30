@@ -1,0 +1,38 @@
+// Release goal 1: one refused handshake, named. The harness chooses the
+// server and, for the trusted-but-wrong cases, points `SSL_CERT_FILE` at its
+// certificate; the untrusted case leaves the store alone. The hostname check
+// is always on and the minimum version is always TLS 1.2, so this fixture
+// names whichever typed error the peer provoked.
+impl "std/net"
+impl "std/tls"
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+fun main() {
+    val args = process.args()
+    val parsed = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_error: argv[1] is not a port number",
+    )
+    val host = args.get(2)
+    var s = net.connect(host.as_str(), parsed.to_u16())
+    s.set_timeout(4000)
+    val hs = tls.try_handshake(s, host.as_str())
+    when hs {
+        Ok(_) -> print("ok")
+        Err(e) -> print(err_name(e))
+    }
+    net.close(s)
+}

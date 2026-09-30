@@ -1,0 +1,65 @@
+// Release goal 1: `wss://`, the same client over `std/tls`. The harness runs a
+// TLS WebSocket gate whose certificate it passes through `SSL_CERT_FILE` (the
+// default store), so the handshake verifies and the framing runs over the
+// encrypted stream: one text message, one fragmented message, a ping, and the
+// close handshake. `connect_url` is the spelling that carries the scheme off a
+// parsed URL; the older `connect(host, port, path)` stays the plain `ws` one.
+impl "std/ws" caps(net = ["127.0.0.1:*"], rand = [])
+impl "std/process"
+impl "std/str"
+impl "std/result"
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "server_port: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun url_for(port: u16).R: String {
+    val port_text = str.from_u64(port.to_u64())
+    val rest = str.concat(port_text.as_str(), "/gateway")
+    return str.concat("wss://127.0.0.1:", rest.as_str())
+}
+
+fun main() {
+    val url = url_for(server_port())
+    val u = ws.parse_url(url.as_str())
+    print("url ${u.host} ${u.port} ${u.scheme}")
+
+    var c = ws.connect_url(u)
+    print("connected")
+
+    val m1 = c.recv()
+    when m1 {
+        Text(t) -> print("text $t")
+        else -> print("unexpected 1")
+    }
+
+    val m2 = c.recv()
+    when m2 {
+        Text(t) -> print("frag $t")
+        else -> print("unexpected 2")
+    }
+
+    val m3 = c.recv()
+    when m3 {
+        Ping(d) -> {
+            print("ping $d")
+            c.pong(d)
+        }
+        else -> print("unexpected 3")
+    }
+
+    val m4 = c.recv()
+    when m4 {
+        Close(code, reason) -> {
+            print("close $code $reason")
+            c.close(1000, "bye")
+        }
+        else -> print("unexpected 4")
+    }
+    print("closed")
+}
