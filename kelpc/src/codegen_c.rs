@@ -93,6 +93,7 @@ pub(crate) const C_HEADERS: &str = "\
 #include <netdb.h>\n\
 #include <netinet/in.h>\n\
 #include <poll.h>\n\
+#include <signal.h>\n\
 #include <sys/socket.h>\n\
 #include <sys/sendfile.h>\n\
 #include <sys/stat.h>\n\

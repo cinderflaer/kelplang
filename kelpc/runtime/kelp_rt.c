@@ -348,6 +348,21 @@ static const char* kelp_env_lookup(const char* name) {
     return NULL;
 }
 
+/* ---- SIGPIPE --------------------------------------------------------------
+   A `write()` on a socket whose peer has reset raises SIGPIPE, and the default
+   action takes the process down. `net.send_raw`/`net.send_all_raw` avoid it per
+   call with `MSG_NOSIGNAL`, but OpenSSL's socket BIO writes with a plain
+   `write`, so a TLS write to a reset peer (which the hostile-conditions matrix
+   reaches) would kill the process instead of returning an error the caller can
+   handle. A library call cannot ask for `MSG_NOSIGNAL`, so the signal is
+   ignored once, process-wide: every such write then fails with `EPIPE`, which
+   the typed error paths already read. `thread_current_id`-style runtime
+   startup has no other hook, and a constructor runs before `main` on both
+   backends because they link this same object. */
+__attribute__((constructor)) static void kelp_ignore_sigpipe(void) {
+    signal(SIGPIPE, SIG_IGN);
+}
+
 /* ---- the dial (MISSING-w9Kda) ------------------------------------------------
    One dial, one place. It resolves `host`, tries every address `getaddrinfo`
    reported in order (so a name resolving to both ::1 and 127.0.0.1 works

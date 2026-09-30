@@ -33,5 +33,8 @@ fun main() {
         Ok(_) -> print("ok")
         Err(e) -> print(err_name(e))
     }
+    // The session is ended either way: a stream that failed a read still owns
+    // the `SSL*`, and only `try_shutdown` frees it.
+    val sd = tls.try_shutdown(t)
     net.close(s)
 }

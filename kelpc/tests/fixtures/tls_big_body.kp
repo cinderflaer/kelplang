@@ -1,0 +1,88 @@
+// Release goal 1, hardening (case a): a 10 MiB payload read in small (1 KiB)
+// and large (64 KiB) chunks, hashed and compared byte for byte. The harness
+// starts a TLS server that writes the payload straight onto the stream and then
+// shuts down cleanly, so the end of the body is the stream's own `close_notify`
+// and a chunk boundary that dropped or duplicated a byte is a wrong SHA-1 rather
+// than a wrong length alone. `argv[2]` chooses the chunk size.
+impl "std/encoding"
+impl "std/mem"
+impl "std/net"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/tls"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+fun fail(e: move tls.TlsError).R: tls.TlsStream {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun fail_unit(e: move tls.TlsError) {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun arg_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_big_body: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun chunk_size().R: usize {
+    val args = process.args()
+    if str.eq(args.get(2).as_str(), "large") {
+        return 65536
+    }
+    return 1024
+}
+
+fun main() {
+    var s = net.connect("127.0.0.1", arg_port())
+    s.set_timeout(30000)
+    val hs = tls.try_handshake(s, "127.0.0.1")
+    val t = when hs {
+        Ok(v) -> v
+        Err(e) -> fail(e)
+    }
+    val sent = tls.try_write_all(t, Bytes.from_str("GET /big HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    when sent {
+        Ok(_) -> {}
+        Err(e) -> fail_unit(e)
+    }
+    val chunk = chunk_size()
+    var body = Bytes.empty()
+    var reading = true
+    while reading {
+        val r = tls.try_read(t, chunk)
+        when r {
+            Ok(b) -> {
+                if b.is_empty() {
+                    reading = false
+                } else {
+                    body.append(b)
+                }
+            }
+            Err(e) -> fail_unit(e)
+        }
+    }
+    print(body.len())
+    print(encoding.hex_encode(encoding.sha1(body)))
+    // Ending the session is what frees the `SSL*` the handshake allocated; the
+    // socket close below only closes the descriptor.
+    val sd = tls.try_shutdown(t)
+    net.close(s)
+}

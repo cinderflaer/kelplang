@@ -41,6 +41,7 @@ fn main() {
          #include <pthread.h>\n\
          #include <stdatomic.h>\n\
          #include <stdbool.h>\n\
+         #include <signal.h>\n\
          #include <stddef.h>\n\
          #include <stdint.h>\n\
          #include <stdio.h>\n\
