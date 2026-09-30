@@ -16,7 +16,24 @@ pub struct Program {
     /// the other (a field or payload that names another type by value still
     /// has to name an earlier one).
     pub enums: Vec<EnumDecl>,
+    /// `extern type Widget` declarations, in source order (gap 1).
+    pub extern_types: Vec<ExternTypeDecl>,
     pub functions: Vec<FunctionDecl>,
+}
+
+/// One `extern type Widget`: an opaque, pointer-sized native handle. It is a
+/// named type like a `datac` and is exported the same way, but it has no
+/// fields, no methods, no dereference, no arithmetic and no conversion to or
+/// from an integer. It is legal only in a module whose `coral.toml` carries an
+/// `[extern."<module id>"]` section; `resolve.rs` refuses it anywhere else.
+#[derive(Debug, Clone)]
+pub struct ExternTypeDecl {
+    pub name: String,
+    /// `pub extern type ...` (A-13). See `ConstDecl::is_pub`.
+    pub is_pub: bool,
+    /// See `DatacDecl::module`.
+    pub module: String,
+    pub span: Span,
 }
 
 /// One `const NAME: T = expr` — a top-level compile-time constant (M6.3).

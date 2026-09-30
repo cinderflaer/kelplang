@@ -380,7 +380,7 @@ const RULES: &[Rule] = &[
         statement: "Two atoms that share a line get one space between them unless another \
                     rule here removes it, so no pair outside these rules is ever run \
                     together.",
-        pins: &["default_one_space"],
+        pins: &["default_one_space", "extern_type"],
     },
 ];
 

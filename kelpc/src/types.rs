@@ -170,6 +170,19 @@ pub enum Ty {
     /// refusal message gives: joining is a one-shot thing a container's own
     /// copy-and-drop routines would duplicate.
     Thread(Box<Ty>),
+    /// An **opaque native handle** (gap 1): `extern type Widget`, what a
+    /// binding passes around in place of a `GtkWidget*`. The payload is the
+    /// handle's canonical, module-qualified name, exactly as `Ty::Struct`
+    /// carries a `datac`'s.
+    ///
+    /// It is pointer-sized and `Copy`, and it is deliberately inert: no
+    /// dereference, no arithmetic, no null literal and no conversion to or
+    /// from an integer. `==`/`!=` between two handles of the same type are
+    /// allowed and compare the pointers, and nothing else is. It owns
+    /// nothing, so it needs no drop, and because the C spelling is a plain
+    /// `void*` behind a per-type typedef, it crosses an `extern fun` boundary
+    /// unchanged on both backends.
+    Handle(String),
 }
 
 /// The element type one of the `Atomic*` names stands for, or `None` when
@@ -349,6 +362,7 @@ impl Ty {
             Ty::Array(elem, len) => array_c_type(elem, *len),
             Ty::Atomic(elem) => atomic_c_type(elem),
             Ty::Thread(_) => thread_c_type(),
+            Ty::Handle(name) => handle_c_type(name),
             // A `&str` is the same C value as the `str` it points at (both
             // `const char*`): a reference to an already-borrowed view is not
             // a pointer to a pointer. The borrow lives in the type system
@@ -402,6 +416,7 @@ impl Ty {
             Ty::Box(elem) => format!("Box<{}>", elem.display()),
             Ty::Atomic(elem) => format!("Atomic<{}>", elem.display()),
             Ty::Thread(elem) => format!("Thread<{}>", elem.display()),
+            Ty::Handle(name) => name.clone(),
             Ty::Array(elem, len) => format!("[{}; {}]", elem.display(), len),
             Ty::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
             Ty::Ref { mutable: true, inner } => format!("mut {}", inner.display()),
@@ -784,6 +799,10 @@ pub fn is_list_element(ty: &Ty) -> bool {
     match ty {
         Ty::List(_) | Ty::Box(_) => !contains_open_container(ty),
         Ty::Bytes | Ty::String | Ty::Struct(_) => true,
+        // A handle is pointer-sized and `Copy`, so it lives in a list's
+        // buffer as a pointer and needs no element drop, exactly as a scalar
+        // does.
+        Ty::Handle(_) => true,
         Ty::Ref { .. } | Ty::Str | Ty::View | Ty::Unit | Ty::Map(..) => false,
         other => other.is_numeric() || matches!(other, Ty::Bool | Ty::Char),
     }
@@ -892,7 +911,10 @@ pub fn is_box_element(ty: &Ty) -> bool {
         // A fixed-size array is a plain inline struct, so a box can hold one
         // (A-18): `Box<[u8; 4096]>` is a heap allocation of a fixed-size
         // buffer, which is how one is kept alive past its frame.
-        | Ty::Array(..) => {
+        | Ty::Array(..)
+        // A handle is a pointer, so a box of one is a pointer to a pointer:
+        // `Box<Widget>` is the owned spelling of "an optional handle".
+        | Ty::Handle(_) => {
             true
         }
         // A `Box` holds a pointer, so its own element slot may hold another
@@ -924,6 +946,10 @@ pub fn ty_mangle(ty: &Ty) -> String {
         Ty::Array(elem, len) => format!("Array__{}__{}", ty_mangle(elem), len),
         Ty::Atomic(elem) => format!("Atomic__{}", ty_mangle(elem)),
         Ty::Thread(elem) => format!("Thread__{}", ty_mangle(elem)),
+        // The canonical name is module-qualified (`ffi.Widget`), so it goes
+        // through the same mangling every other generated symbol uses rather
+        // than straight into a C identifier.
+        Ty::Handle(name) => format!("Handle__{}", c_ident(name)),
         // A function type never reaches a container or a type argument (both
         // are refused in `infer.rs`), but it is reached by `drop_fn_name`'s
         // unreachable arm and by diagnostics, so it gets an identifier-shaped
@@ -999,6 +1025,13 @@ pub fn atomic_c_type(elem: &Ty) -> String {
 /// is deliberately not part of this name.
 pub fn thread_c_type() -> String {
     "kelp_Thread*".to_string()
+}
+
+/// The generated C typedef for one opaque handle. The typedef is what gives
+/// `void*` a name, so two handles are two distinct C types a reader can trace
+/// back to their declarations.
+pub fn handle_c_type(name: &str) -> String {
+    format!("kelp_Handle__{}", c_ident(name))
 }
 
 /// Whether `ty` may be a `Thread<T>`'s element: anything a worker may hand back

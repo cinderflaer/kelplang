@@ -169,6 +169,7 @@ impl Parser {
         let mut pds = Vec::new();
         let mut datacs = Vec::new();
         let mut enums = Vec::new();
+        let mut extern_types = Vec::new();
         let mut functions = Vec::new();
         // One counter across both type declarations: it is what `resolve.rs`
         // uses to rebuild a single merged declaration order from the two
@@ -217,6 +218,10 @@ impl Parser {
                 e.order = type_order;
                 type_order += 1;
                 enums.push(e);
+            } else if self.check(&TokenKind::Extern)
+                && matches!(self.peek2_kind(), TokenKind::Ident(ref n) if n == "type")
+            {
+                extern_types.push(self.parse_extern_type_decl(is_pub)?);
             } else {
                 functions.push(self.parse_function(is_pub)?);
             }
@@ -228,6 +233,7 @@ impl Parser {
             pds,
             datacs,
             enums,
+            extern_types,
             functions,
         })
     }
@@ -250,7 +256,7 @@ impl Parser {
             }),
             _ => Err(ParseError {
                 message: format!(
-                    "'pub' applies to a top-level 'fun', 'extern fun', 'datac', 'enum' or 'const', found {:?}",
+                    "'pub' applies to a top-level 'fun', 'extern fun', 'extern type', 'datac', 'enum' or 'const', found {:?}",
                     self.peek_kind()
                 ),
                 span: pub_span.to(self.peek().span),
@@ -449,6 +455,21 @@ impl Parser {
             order: 0,
             module: String::new(),
             span: start.to(end),
+        })
+    }
+
+    /// `extern type Widget`: an opaque native handle (gap 1). `type` is not a
+    /// lexer keyword, so the caller has already seen the two tokens and this
+    /// only reads the name; nothing else follows the declaration.
+    fn parse_extern_type_decl(&mut self, is_pub: bool) -> PResult<ExternTypeDecl> {
+        let start = self.expect(TokenKind::Extern, "'extern'")?.span;
+        self.advance();
+        let (name, name_span) = self.expect_ident()?;
+        Ok(ExternTypeDecl {
+            name,
+            is_pub,
+            module: String::new(),
+            span: start.to(name_span),
         })
     }
 
@@ -3212,6 +3233,22 @@ mod tests {
         assert!(p.functions[0].is_pub);
         assert!(p.functions[1].is_pub);
         assert!(p.functions[1].extern_);
+    }
+
+    #[test]
+    fn extern_type_reads_its_name_and_its_pub() {
+        let p = parse("extern type Widget\npub extern type Buffer");
+        assert_eq!(p.extern_types.len(), 2);
+        assert_eq!(p.extern_types[0].name, "Widget");
+        assert!(!p.extern_types[0].is_pub);
+        assert_eq!(p.extern_types[1].name, "Buffer");
+        assert!(p.extern_types[1].is_pub);
+    }
+
+    #[test]
+    fn extern_type_takes_no_body_or_fields() {
+        let e = parse_err("extern type Widget {}");
+        assert!(e.message.contains("expected 'fun'"), "got: {}", e.message);
     }
 
     #[test]

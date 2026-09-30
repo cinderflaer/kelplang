@@ -1,0 +1,2 @@
+// pins default-one-space-between-atoms: two atoms that share a line get one space between them, so a pair the table does not name is never run together.
+extern type Widget

@@ -336,6 +336,16 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     // its typedef, and an unknown type name there is the C compiler's implicit
     // `int`. A `HashSet` has no order, so the sort is only so two runs emit the
     // same text.
+    // An `extern type` handle is a `void*` behind its own typedef (gap 1).
+    // The typedefs come before every container and every `datac`, because a
+    // `List<Widget>` typedef or a `datac` field names the handle's C type and
+    // an unknown type name there is the C compiler's implicit `int`.
+    if !program.handles.is_empty() {
+        for name in &program.handles {
+            writeln!(out, "typedef void* {};", crate::types::handle_c_type(name)).unwrap();
+        }
+        out.push('\n');
+    }
     if !atomic_tys.is_empty() {
         let mut atomics: Vec<&Ty> = atomic_tys.iter().collect();
         atomics.sort_by_key(|t| crate::types::ty_mangle(t));
@@ -1520,6 +1530,7 @@ pub(crate) fn write_referenced_type_layouts(
     let mut containers: Vec<Ty> = Vec::new();
     let mut arrays: Vec<Ty> = Vec::new();
     let mut atomics: Vec<Ty> = Vec::new();
+    let mut handles: HashSet<String> = HashSet::new();
     for ty in roots {
         collect_layout_tys(
             ty,
@@ -1529,12 +1540,25 @@ pub(crate) fn write_referenced_type_layouts(
             &mut containers,
             &mut arrays,
             &mut atomics,
+            &mut handles,
         );
     }
-    if named.is_empty() && containers.is_empty() && arrays.is_empty() && atomics.is_empty() {
+    if named.is_empty()
+        && containers.is_empty()
+        && arrays.is_empty()
+        && atomics.is_empty()
+        && handles.is_empty()
+    {
         return;
     }
     out.push('\n');
+    // An opaque handle is a `void*` typedef, and a container typedef emitted
+    // just below may name one, so the typedefs come first.
+    let mut handles: Vec<&String> = handles.iter().collect();
+    handles.sort();
+    for name in handles {
+        writeln!(out, "typedef void* {};", crate::types::handle_c_type(name)).unwrap();
+    }
     write_tags(
         out,
         structs.iter().filter(|s| named.contains(&s.name)),
@@ -1625,6 +1649,7 @@ fn collect_layout_tys(
     containers: &mut Vec<Ty>,
     arrays: &mut Vec<Ty>,
     atomics: &mut Vec<Ty>,
+    handles: &mut HashSet<String>,
 ) {
     match ty {
         Ty::Struct(name) => {
@@ -1633,61 +1658,66 @@ fn collect_layout_tys(
             }
             if let Some(s) = structs.iter().find(|s| &s.name == name) {
                 for f in &s.fields {
-                    collect_layout_tys(&f.ty, structs, enums, named, containers, arrays, atomics);
+                    collect_layout_tys(
+                        &f.ty, structs, enums, named, containers, arrays, atomics, handles,
+                    );
                 }
             }
             if let Some(e) = enums.iter().find(|e| &e.name == name) {
                 for v in &e.variants {
                     for f in &v.fields {
                         collect_layout_tys(
-                            &f.ty, structs, enums, named, containers, arrays, atomics,
+                            &f.ty, structs, enums, named, containers, arrays, atomics, handles,
                         );
                     }
                 }
             }
         }
+        Ty::Handle(name) => {
+            handles.insert(name.clone());
+        }
         Ty::List(elem) | Ty::Box(elem) => {
             if !containers.contains(ty) {
                 containers.push(ty.clone());
             }
-            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics, handles);
         }
         Ty::Map(key, value) => {
             if !containers.contains(ty) {
                 containers.push(ty.clone());
             }
-            collect_layout_tys(key, structs, enums, named, containers, arrays, atomics);
-            collect_layout_tys(value, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(key, structs, enums, named, containers, arrays, atomics, handles);
+            collect_layout_tys(value, structs, enums, named, containers, arrays, atomics, handles);
         }
         Ty::Closure { params, ret } => {
             if !containers.contains(ty) {
                 containers.push(ty.clone());
             }
             for p in params {
-                collect_layout_tys(p, structs, enums, named, containers, arrays, atomics);
+                collect_layout_tys(p, structs, enums, named, containers, arrays, atomics, handles);
             }
-            collect_layout_tys(ret, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(ret, structs, enums, named, containers, arrays, atomics, handles);
         }
         Ty::Array(elem, _) => {
             if !arrays.contains(ty) {
                 arrays.push(ty.clone());
             }
-            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics, handles);
         }
         Ty::Atomic(elem) => {
             if !atomics.contains(ty) {
                 atomics.push(ty.clone());
             }
-            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(elem, structs, enums, named, containers, arrays, atomics, handles);
         }
-        Ty::Ref { inner, .. } => {
-            collect_layout_tys(inner, structs, enums, named, containers, arrays, atomics)
-        }
+        Ty::Ref { inner, .. } => collect_layout_tys(
+            inner, structs, enums, named, containers, arrays, atomics, handles,
+        ),
         Ty::Fn { params, ret } => {
             for p in params {
-                collect_layout_tys(p, structs, enums, named, containers, arrays, atomics);
+                collect_layout_tys(p, structs, enums, named, containers, arrays, atomics, handles);
             }
-            collect_layout_tys(ret, structs, enums, named, containers, arrays, atomics);
+            collect_layout_tys(ret, structs, enums, named, containers, arrays, atomics, handles);
         }
         _ => {}
     }
@@ -4892,6 +4922,9 @@ impl<'a> Gen<'a> {
             Ty::Fn { .. } => unreachable!("a function value cannot be printed"),
             // Same, for a closure: `infer.rs` refuses one in `print` too.
             Ty::Closure { .. } => unreachable!("a closure cannot be printed"),
+            // An opaque handle has no readable value, so `infer.rs` refuses
+            // one in `print` before codegen sees it.
+            Ty::Handle(_) => unreachable!("an opaque handle cannot be printed"),
             // A borrowed `Bytes`/`String` is the only way `print` sees one —
             // `infer.rs` auto-borrows an owned place — so `->` is the accessor
             // that applies. The length is cast because `%.*s` takes an `int`.
