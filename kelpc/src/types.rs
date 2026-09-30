@@ -1524,7 +1524,7 @@ pub fn type_layout(
             Layout { size: 8, align: 8 }
         }
         Ty::View => Layout { size: 16, align: 8 },
-        Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } => {
+        Ty::Bytes | Ty::String | Ty::List(_) | Ty::Closure { .. } | Ty::ScopedFn { .. } => {
             Layout { size: 24, align: 8 }
         }
         Ty::Box(_) => Layout { size: 8, align: 8 },
