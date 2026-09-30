@@ -15,4 +15,4 @@ domain = "ui"
 library = "gtk-4"
 header = "gtk/gtk.h"
 pkg_config = "gtk4"
-symbols = ["gtk_application_new", "gtk_application_window_new", "gtk_window_set_title", "gtk_window_present", "gtk_button_new_with_label", "gtk_window_set_child", "g_application_run", "g_object_unref", "application_unref=g_object_unref", "g_strsplit", "g_strfreev", "connect=g_signal_connect_data"]
+symbols = ["gtk_application_new", "gtk_application_window_new", "gtk_window_set_title", "gtk_window_present", "gtk_button_new_with_label", "gtk_window_set_child", "g_application_run", "g_object_unref", "g_main_context_iteration", "g_strsplit", "g_strfreev", "connect=g_signal_connect_data"]

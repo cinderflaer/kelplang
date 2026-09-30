@@ -1,0 +1,8 @@
+// Gap 1 rejection: "main" has no "[extern.*]" section, so it may not write
+// "Buffer.null()" even though it can name the imported handle.
+impl "mem"
+
+fun main() {
+    val buf: mem.Buffer = mem.Buffer.null()
+    print("unreachable")
+}

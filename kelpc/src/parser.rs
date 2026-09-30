@@ -458,18 +458,37 @@ impl Parser {
         })
     }
 
-    /// `extern type Widget`: an opaque native handle (gap 1). `type` is not a
-    /// lexer keyword, so the caller has already seen the two tokens and this
-    /// only reads the name; nothing else follows the declaration.
+    /// `extern type Widget` or `extern type Window: Widget`: an opaque native
+    /// handle (gap 1). `type` is not a lexer keyword, so the caller has already
+    /// seen the two tokens and this reads the name and an optional parent.
     fn parse_extern_type_decl(&mut self, is_pub: bool) -> PResult<ExternTypeDecl> {
         let start = self.expect(TokenKind::Extern, "'extern'")?.span;
         self.advance();
         let (name, name_span) = self.expect_ident()?;
+        let mut span = start.to(name_span);
+        let parent = if self.check(&TokenKind::Colon) {
+            self.advance();
+            let (first, first_span) = self.expect_ident()?;
+            let mut parent = first;
+            let mut pend = first_span;
+            while self.check(&TokenKind::Dot) {
+                self.advance();
+                let (part, part_span) = self.expect_ident()?;
+                parent.push('.');
+                parent.push_str(&part);
+                pend = part_span;
+            }
+            span = span.to(pend);
+            Some(parent)
+        } else {
+            None
+        };
         Ok(ExternTypeDecl {
             name,
+            parent,
             is_pub,
             module: String::new(),
-            span: start.to(name_span),
+            span,
         })
     }
 
@@ -3240,9 +3259,17 @@ mod tests {
         let p = parse("extern type Widget\npub extern type Buffer");
         assert_eq!(p.extern_types.len(), 2);
         assert_eq!(p.extern_types[0].name, "Widget");
+        assert!(p.extern_types[0].parent.is_none());
         assert!(!p.extern_types[0].is_pub);
         assert_eq!(p.extern_types[1].name, "Buffer");
         assert!(p.extern_types[1].is_pub);
+    }
+
+    #[test]
+    fn extern_type_reads_an_optional_parent() {
+        let p = parse("extern type Window: Widget\nextern type Dialog: mem.Panel");
+        assert_eq!(p.extern_types[0].parent.as_deref(), Some("Widget"));
+        assert_eq!(p.extern_types[1].parent.as_deref(), Some("mem.Panel"));
     }
 
     #[test]

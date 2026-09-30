@@ -1,0 +1,4 @@
+// pins default-one-space-between-atoms: a parent annotation is spaced atoms around a colon, so a pair the table does not name is never run together.
+extern type Widget
+extern type Window: Widget
+extern type Panel: mem.Panel

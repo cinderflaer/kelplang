@@ -1,0 +1,12 @@
+// Gap 1: the "Buffer" from "malloc" converts up to "Block" at a call
+// argument, at a "val" binding, and at a return ("mem.view"). Equality
+// accepts an ancestor/descendant pair too.
+impl "mem" caps(process = ["/**"])
+
+fun main() {
+    val buf = mem.malloc(16)
+    val block: mem.Block = mem.malloc(8)
+    print(mem.view(block) == block)
+    mem.free(buf)
+    mem.free(block)
+}

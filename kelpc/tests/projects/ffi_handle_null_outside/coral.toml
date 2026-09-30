@@ -1,0 +1,10 @@
+name = "ffihandlenulloutside"
+
+# Gap 1 rejection: the entry module names an imported handle and calls
+# ".null()" on it, but it has no "[extern.*]" section of its own, so the
+# handle operation is refused there.
+[extern."mem"]
+domain = "process"
+library = "c"
+header = "stdlib.h"
+symbols = ["malloc"]

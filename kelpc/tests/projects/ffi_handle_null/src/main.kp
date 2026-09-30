@@ -1,0 +1,10 @@
+// Gap 1: opening a path that does not exist returns the null handle, and the
+// null handle written directly is the same value. The open is "r" mode, so
+// nothing is created and no descriptor is left behind on either path.
+impl "file" caps(process = ["/**"])
+
+fun main() {
+    val f: file.File = file.fopen("/nonexistent-kelp-null-handle", "r")
+    print(file.is_null_file(f))
+    print(file.is_null_file(file.missing()))
+}

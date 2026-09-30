@@ -29,10 +29,16 @@ fun main() {
 
     // argv[0] is the program name and argv[1] is the NULL g_strsplit writes.
     val argv = gtk.g_strsplit("polyp-spike", " ", -1)
+
+    // A null handle is the default GLib main context, which is what a null
+    // `GMainContext*` argument means. The wrapper spells it because the handle
+    // operation is legal only in the `[extern.*]` module.
+    gtk.g_main_context_iteration(gtk.null_main_context(), 0)
+
     val status = gtk.g_application_run(app, 1, argv)
 
     gtk.g_strfreev(argv)
     gtk.g_object_unref(button)
-    gtk.application_unref(app)
+    gtk.g_object_unref(app)
     print(status)
 }

@@ -4513,6 +4513,17 @@ impl<'a> Gen<'a> {
     }
 
     fn call_value(&self, callee: &str, args: &[Expr], span: Span, ret: &Ty) -> String {
+        // `Handle.null()` and `w.is_null()` (gap 1): the C typedef is `void*`,
+        // so the null handle is `NULL` cast to it and the test is a pointer
+        // comparison. Both keys are synthetic (see `types::HANDLE_NULL_KEY`),
+        // so nothing a program can declare reaches here.
+        if callee == crate::types::HANDLE_NULL_KEY {
+            return format!("(({})(NULL))", ret.c_type());
+        }
+        if callee == crate::types::HANDLE_IS_NULL_KEY {
+            let value = self.expr_value(&args[0]);
+            return format!("(({value}) == NULL)");
+        }
         // An atomic operation (MK9-S3-M1 stage A1): one `__atomic_*` builtin,
         // never a plain read or write. The ordering argument is deliberately
         // not rendered: v1 states exactly one ordering, so the builtin's order

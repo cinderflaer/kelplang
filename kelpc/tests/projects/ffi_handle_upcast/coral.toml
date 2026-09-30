@@ -1,0 +1,11 @@
+name = "ffihandleupcast"
+
+# Gap 1: a handle hierarchy. "Buffer" is a "Block", so a "Buffer" value
+# converts implicitly to "Block" wherever one is expected, and "free(Block)"
+# takes the upcast with no runtime cost. The explicit "Buffer.cast(block)" is
+# the unchecked way back down.
+[extern."mem"]
+domain = "process"
+library = "c"
+header = "stdlib.h"
+symbols = ["malloc", "free"]

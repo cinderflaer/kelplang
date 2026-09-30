@@ -108,6 +108,11 @@ struct TypeEnv {
     /// module is named through an alias in another, and its name has to mean
     /// the same thing in every scope.
     handles: std::rc::Rc<std::collections::HashSet<String>>,
+    /// Handle parent relation (gap 1): a canonical child name -> its canonical
+    /// parent name, for the `extern type Name: Parent` declarations. One answer
+    /// for the whole program, exactly as `handles` is, so the implicit upcast
+    /// answers the same in every scope.
+    handle_parents: std::rc::Rc<HashMap<String, String>>,
 }
 
 /// One user-declared generic *function* (A-2): a `fun` with its own type
@@ -294,6 +299,11 @@ struct Ctx {
     caps: HashMap<String, Vec<String>>,
     /// Function key -> gated domain, for the modules that gate one.
     gated: HashMap<String, String>,
+    /// Whether this module's `coral.toml` carries an `[extern."<module id>"]`
+    /// section. A handle operation (`null()`, `is_null()`, `cast()`) is legal
+    /// only where one exists, even when the handle type is imported from an
+    /// extern module.
+    has_extern_section: bool,
     ret_ty: Ty,
     scopes: Vec<HashMap<String, VarInfo>>,
     /// Symbol prefix of the module being checked (`""` for the entry
@@ -556,6 +566,30 @@ impl Ctx {
             }
         }
         None
+    }
+
+    /// Resolves a written type name to a canonical `Ty::Handle` name, or
+    /// `None` when it is not a handle: `Buffer` in the module that declares it,
+    /// `mem.Buffer` through an alias anywhere else. This is the same
+    /// qualification `TypeScope::resolve_base` gives a handle in a signature.
+    fn handle_type_named(&self, name: &str) -> Option<String> {
+        let qualified = qualify_written(name, &self.prefix, &self.aliases);
+        self.env.handles.contains(&qualified).then_some(qualified)
+    }
+
+    /// The gate on `null()`/`is_null()`/`cast()` (gap 1): a handle operation is
+    /// legal only in a module with its own `[extern."<module id>"]` section,
+    /// even when the handle type itself is imported.
+    fn require_extern_section(&self, what: &str, span: Span) -> Result<()> {
+        if self.has_extern_section {
+            return Ok(());
+        }
+        Err(TypeError {
+            message: format!(
+                "'{what}' is only legal in a module with a coral.toml '[extern.\"<module id>\"]' section, because only there can a native handle exist"
+            ),
+            span,
+        })
     }
 
     /// Rewrites a binding's type in the scope that holds it. Used for one
@@ -2217,6 +2251,87 @@ fn check_extern_type_names(program: &ast::Program) -> std::result::Result<(), Di
         }
     }
     Ok(())
+}
+
+/// The parent relation of the program's `extern type`s (gap 1): a canonical
+/// child name -> its canonical parent name. The written parent is qualified
+/// with its declaring module's prefix and alias table, exactly as a field's
+/// type name is, so `extern type Window: Widget` in one module and
+/// `extern type Window: widgets.Widget` in another name the same type.
+///
+/// A parent must be another `extern type`, and the chain must be acyclic: a
+/// value converts implicitly to *any* ancestor, and a cycle would make the
+/// relation meaningless rather than merely deep. `Ok` on a program with no
+/// parented handles, so the map is empty for every program that predates it.
+fn build_handle_parents(
+    program: &ast::Program,
+    project: &Project,
+) -> std::result::Result<HashMap<String, String>, Diagnostic> {
+    let handles: std::collections::HashSet<&str> =
+        program.extern_types.iter().map(|t| t.name.as_str()).collect();
+    let mut parents: HashMap<String, String> = HashMap::new();
+    for t in &program.extern_types {
+        let Some(written) = &t.parent else {
+            continue;
+        };
+        let prefix = project.prefix_of(&t.module);
+        let aliases = project.alias_prefixes_of(&t.module);
+        let key = qualify_written(written, prefix, &aliases);
+        if !handles.contains(key.as_str()) {
+            return Err(Diagnostic::new(
+                format!(
+                    "'extern type {}' names parent '{written}', which is not an 'extern type': a handle's parent must be another handle declared earlier in this module or imported",
+                    bare_name(&t.name, prefix)
+                ),
+                t.span,
+                t.module.clone(),
+            ));
+        }
+        parents.insert(t.name.clone(), key);
+    }
+    for t in &program.extern_types {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut cur = t.name.as_str();
+        loop {
+            if !seen.insert(cur) {
+                let prefix = project.prefix_of(&t.module);
+                return Err(Diagnostic::new(
+                    format!(
+                        "'extern type {}' has a cycle in its parent chain; a handle may only convert up to an ancestor",
+                        bare_name(&t.name, prefix)
+                    ),
+                    t.span,
+                    t.module.clone(),
+                ));
+            }
+            match parents.get(cur) {
+                Some(p) => cur = p.as_str(),
+                None => break,
+            }
+        }
+    }
+    Ok(parents)
+}
+
+/// Whether `ancestor` is `descendant` itself or one of its parent-chain
+/// ancestors. This is the direction the implicit conversion runs: a child
+/// converts to an ancestor, never the other way.
+fn handle_is_same_or_ancestor(
+    parents: &HashMap<String, String>,
+    ancestor: &str,
+    descendant: &str,
+) -> bool {
+    let mut cur = descendant;
+    for _ in 0..=parents.len() {
+        if cur == ancestor {
+            return true;
+        }
+        match parents.get(cur) {
+            Some(p) => cur = p.as_str(),
+            None => return false,
+        }
+    }
+    false
 }
 
 /// The private-in-public rule (A-13, `plan/syntax.md` 13.4): a declaration
@@ -5229,6 +5344,7 @@ fn check_program_pass(
                 .map(|e| e.name.clone())
                 .collect(),
         ),
+        handle_parents: std::rc::Rc::new(build_handle_parents(program, project)?),
     };
     // A-2: the generic *function* templates, collected before signatures are
     // built so a call site can instantiate one on demand.
@@ -6265,6 +6381,7 @@ fn base_ctx(
         module: module.to_string(),
         caps: project.caps_of(module),
         gated: project.gated().clone(),
+        has_extern_section: project.extern_ffi_of(module).is_some(),
         ret_ty: Ty::Unit,
         scopes: vec![HashMap::new()],
         prefix: project.prefix_of(module).to_string(),
@@ -7670,7 +7787,34 @@ fn check_fn_literal(
 /// chances to forget one.
 fn check_expr(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> Result<tir::Expr> {
     let value = check_expr_inner(expr, ctx, expected)?;
-    Ok(coerce_str_to_string(value, expected))
+    let value = coerce_str_to_string(value, expected);
+    Ok(coerce_handle_upcast(value, expected, &ctx.env.handle_parents))
+}
+
+/// A handle value used where one of its ancestors is expected converts with no
+/// runtime cost (gap 1): the C typedef and the LLVM type are both a plain
+/// pointer, so the value is the same bit pattern and only its *type* changes.
+/// Only the child-to-ancestor direction fires; a parent used where a child is
+/// expected is a type mismatch, and `Parent.cast(child)` is the explicit way to
+/// reinterpret one.
+fn coerce_handle_upcast(
+    value: tir::Expr,
+    expected: Option<&Ty>,
+    parents: &HashMap<String, String>,
+) -> tir::Expr {
+    let Some(Ty::Handle(want)) = expected else {
+        return value;
+    };
+    let Ty::Handle(have) = &value.ty else {
+        return value;
+    };
+    if have == want || !handle_is_same_or_ancestor(parents, want, have) {
+        return value;
+    }
+    tir::Expr {
+        ty: Ty::Handle(want.clone()),
+        ..value
+    }
 }
 
 /// A `str` used where a `String` is expected becomes one, by `String.from_str`.
@@ -9876,7 +10020,17 @@ fn check_binary(
         }
         Lt | LtEq | Gt | GtEq | Eq | NotEq => {
             let (l, r) = check_binary_operands(lhs, rhs, ctx, None)?;
-            if l.ty != r.ty {
+            // Two handles of the same type, or of an ancestor/descendant pair,
+            // compare: the pointers are the same width either way, and an
+            // upcast would have produced the ancestor value anyway.
+            let handle_pair = match (&l.ty, &r.ty) {
+                (Ty::Handle(a), Ty::Handle(b)) => {
+                    handle_is_same_or_ancestor(&ctx.env.handle_parents, a, b)
+                        || handle_is_same_or_ancestor(&ctx.env.handle_parents, b, a)
+                }
+                _ => false,
+            };
+            if l.ty != r.ty && !handle_pair {
                 return Err(TypeError {
                     message: format!(
                         "cannot compare '{}' with '{}'",
@@ -9891,7 +10045,8 @@ fn check_binary(
             // thing the operator could mean for a value with no readable
             // contents. An order (`<`, `<=`, `>`, `>=`) is still refused.
             let comparable = comparable(&l.ty)
-                || (matches!(l.ty, Ty::Handle(_)) && matches!(op, BinOp::Eq | BinOp::NotEq));
+                || (matches!((&l.ty, &r.ty), (Ty::Handle(_), Ty::Handle(_)))
+                    && matches!(op, BinOp::Eq | BinOp::NotEq));
             if !comparable {
                 return Err(TypeError {
                     message: comparison_error(&l.ty, op),
@@ -11291,6 +11446,85 @@ fn check_method_call_enum_guard(receiver: &ast::Expr, span: Span, ctx: &Ctx) -> 
     Ok(())
 }
 
+/// `Buffer.null()` and `Window.cast(w)` (gap 1): the two operations written on
+/// a handle's *type name*. `null` is `NULL` (C) / `ptr null` (LLVM) in the
+/// handle's own type; `cast` is a pointer reinterpretation with no runtime
+/// check, so it is the explicit downcast the implicit upcast direction does not
+/// give. Both are legal only where an `[extern.*]` section exists.
+fn check_handle_associated(
+    handle: &str,
+    method: &str,
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    match method {
+        "null" => {
+            ctx.require_extern_section(&format!("{handle}.null()"), span)?;
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'{handle}.null()' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: crate::types::HANDLE_NULL_KEY.to_string(),
+                    args: Vec::new(),
+                },
+                ty: Ty::Handle(handle.to_string()),
+                span,
+            })
+        }
+        "cast" => {
+            ctx.require_extern_section(&format!("{handle}.cast(w)"), span)?;
+            if args.len() != 1 {
+                return Err(TypeError {
+                    message: format!(
+                        "'{handle}.cast(w)' takes exactly 1 argument, found {}",
+                        args.len()
+                    ),
+                    span,
+                });
+            }
+            if args[0].name.is_some() {
+                return Err(TypeError {
+                    message: format!("'{handle}.cast' does not take named arguments"),
+                    span,
+                });
+            }
+            let value = check_expr(&args[0].value, ctx, None)?;
+            let Ty::Handle(from) = &value.ty else {
+                return Err(TypeError {
+                    message: format!(
+                        "'{handle}.cast(w)' requires 'w' to be a handle, found '{}'",
+                        value.ty.display()
+                    ),
+                    span: args[0].value.span(),
+                });
+            };
+            if !handle_is_same_or_ancestor(&ctx.env.handle_parents, from, handle) {
+                return Err(TypeError {
+                    message: format!(
+                        "'{handle}.cast(w)' requires 'w' to be '{handle}' or an ancestor of it, found '{from}'; a child converts up to its parent implicitly, and 'cast' never checks at run time"
+                    ),
+                    span: args[0].value.span(),
+                });
+            }
+            Ok(tir::Expr {
+                ty: Ty::Handle(handle.to_string()),
+                ..value
+            })
+        }
+        other => Err(TypeError {
+            message: format!(
+                "'{handle}.{other}' is not a handle operation: write '{handle}.null()' for the null handle, or call 'is_null()' on a value ('w.is_null()')"
+            ),
+            span,
+        }),
+    }
+}
+
 /// `receiver.method(args)`: resolves `method` against the receiver
 /// expression's `datac` type, then lowers to a plain `tir::ExprKind::Call`
 /// — the receiver becomes the first argument, auto-borrowed through
@@ -11328,6 +11562,11 @@ fn check_method_call(
             if name == "Atomic" || crate::types::atomic_alias_elem(name).is_some() {
                 return check_atomic_associated(name, method, args, span, ctx, expected);
             }
+            // `Widget.null()` and `Window.cast(w)` (gap 1): the two operations
+            // written on a handle's type name rather than on a value.
+            if let Some(handle) = ctx.handle_type_named(name) {
+                return check_handle_associated(&handle, method, args, span, ctx);
+            }
             let key = format!("{name}#{method}");
             if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
                 let params = assoc.params.clone();
@@ -11341,12 +11580,53 @@ fn check_method_call(
             }
         }
     }
+    // The same two operations written through a module alias:
+    // `mem.Buffer.null()` and `mem.Buffer.cast(w)`. The receiver is a dotted
+    // type path, not a value, which is why it is read here before the probe.
+    if !matches!(receiver, ast::Expr::Ident(..)) {
+        if let Some(path) = expr_path(receiver) {
+            if !is_module_alias(&path, ctx) {
+                if let Some(handle) = ctx.handle_type_named(&path) {
+                    return check_handle_associated(&handle, method, args, span, ctx);
+                }
+            }
+        }
+    }
 
     // Type-only probe to learn the receiver's owner name; re-checked for
     // real (with its actual borrow/move effects) via `check_call_arg`
     // below. `check_expr` has no persistent side effects beyond reading
     // `ctx`, so checking the same expression twice here is safe.
     let probe = check_expr(receiver, ctx, None)?;
+    // `w.is_null()` (gap 1): the one method an opaque handle has, comparing
+    // the pointer against the type's null value. Any other name is a method
+    // the handle does not have, which is a better diagnostic than the
+    // generic "non-struct type" below.
+    if let Ty::Handle(handle) = &probe.ty {
+        if method == "is_null" {
+            ctx.require_extern_section(&format!("{handle}.is_null()"), span)?;
+            if !args.is_empty() {
+                return Err(TypeError {
+                    message: format!("'is_null' takes no arguments, found {}", args.len()),
+                    span,
+                });
+            }
+            return Ok(tir::Expr {
+                kind: tir::ExprKind::Call {
+                    callee: crate::types::HANDLE_IS_NULL_KEY.to_string(),
+                    args: vec![probe],
+                },
+                ty: Ty::Bool,
+                span,
+            });
+        }
+        return Err(TypeError {
+            message: format!(
+                "'{handle}' is an opaque native handle with no readable contents: 'is_null()' is its only method"
+            ),
+            span,
+        });
+    }
     let owner = struct_name_of(&probe.ty)
         .map(|s| s.to_string())
         .or_else(|| builtin_type_name(&probe.ty).map(|s| s.to_string()));

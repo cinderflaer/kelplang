@@ -26,9 +26,18 @@ pub struct Program {
 /// fields, no methods, no dereference, no arithmetic and no conversion to or
 /// from an integer. It is legal only in a module whose `coral.toml` carries an
 /// `[extern."<module id>"]` section; `resolve.rs` refuses it anywhere else.
+///
+/// `extern type Window: Widget` adds a parent: a `Window` value converts
+/// implicitly to `Widget` (never the reverse), which is the one relation two
+/// handles can have.
 #[derive(Debug, Clone)]
 pub struct ExternTypeDecl {
     pub name: String,
+    /// The written parent from `extern type Name: Parent`, if any: another
+    /// `extern type` declared earlier in this module or imported. Left as
+    /// written; `infer.rs` qualifies and resolves it, exactly as it does a
+    /// field's type name.
+    pub parent: Option<String>,
     /// `pub extern type ...` (A-13). See `ConstDecl::is_pub`.
     pub is_pub: bool,
     /// See `DatacDecl::module`.
