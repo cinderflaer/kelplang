@@ -408,6 +408,13 @@ struct Ctx {
     /// else an empty container with no type to take its element from is a
     /// declaration-time error, exactly as it always was.
     defer_empty_container: bool,
+    /// How many `unsafe { ... }` blocks enclose the expression being checked
+    /// (MK9-S2 stage 1). Non-zero means the unsafe-only operations are legal;
+    /// the body of an `unsafe fun` starts at 1.
+    unsafe_depth: usize,
+    /// The functions declared `unsafe fun`, by canonical key. Calling one
+    /// requires `unsafe_depth > 0`.
+    unsafe_fns: std::collections::HashSet<String>,
 }
 
 /// One checked passdown (M5.2).
@@ -1060,6 +1067,7 @@ impl TypeScope<'_> {
             || ty.name == "Map"
             || ty.name == "Atomic"
             || ty.name == "Thread"
+            || ty.name == "Ptr"
         {
             // `Map<K, V>` names its key type, and `Map<V>` is the shorthand
             // for a `String` key — which is what every use site written before
@@ -1108,6 +1116,8 @@ impl TypeScope<'_> {
                 (crate::types::is_atomic_element(&elem), atomic_element_error(&elem))
             } else if ty.name == "Thread" {
                 (crate::types::is_thread_element(&elem), thread_element_error(&elem))
+            } else if ty.name == "Ptr" {
+                (crate::types::is_ptr_element(&elem), crate::types::ptr_element_error(&elem))
             } else {
                 (crate::types::is_box_element(&elem), box_element_error(&elem))
             };
@@ -1125,6 +1135,8 @@ impl TypeScope<'_> {
                 Ty::Atomic(Box::new(elem))
             } else if ty.name == "Thread" {
                 Ty::Thread(Box::new(elem))
+            } else if ty.name == "Ptr" {
+                Ty::Ptr(Box::new(elem))
             } else {
                 Ty::Box(Box::new(elem))
             });
@@ -1162,7 +1174,7 @@ impl TypeScope<'_> {
             }
             return Err(TypeError {
                 message: format!(
-                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>' and 'Thread<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
+                    "'{}' does not take type arguments: the compiler's generic types are 'List<T>', 'Box<T>', 'Map<V>', 'Atomic<T>', 'Thread<T>' and 'Ptr<T>', and a user type has to be declared with parameters to take them ('datac {name}<T> ...')",
                     ty.name,
                     name = ty.name
                 ),
@@ -3268,6 +3280,248 @@ fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<Option<FnSi
     }))
 }
 
+/// The `Ptr<T>` operations that need an unsafe context (MK9-S2 stage 1).
+///
+/// `Ptr.alloc`, `read`, `write`, `read_volatile`, `write_volatile` and `free`
+/// touch memory the language did not check: they are the whole reason `unsafe`
+/// exists, so each names itself in the refusal.
+fn ptr_op_is_unsafe(key: &str) -> bool {
+    matches!(
+        key,
+        "Ptr#read"
+            | "Ptr#write"
+            | "Ptr#read_volatile"
+            | "Ptr#write_volatile"
+            | "Ptr#alloc"
+            | "Ptr#free"
+    )
+}
+
+/// The refusal for an unsafe-only pointer operation written where no `unsafe`
+/// encloses it. The operation is named, because "unsafe operation" alone would
+/// leave the reader to find which call in a statement it was.
+fn require_ptr_unsafe(key: &str, span: Span, ctx: &Ctx) -> Result<()> {
+    if ctx.unsafe_depth > 0 || !ptr_op_is_unsafe(key) {
+        return Ok(());
+    }
+    let name = key.strip_prefix("Ptr#").unwrap_or(key);
+    Err(TypeError {
+        message: format!(
+            "'Ptr.{name}' is an unsafe operation: it can only be used inside 'unsafe {{ ... }}' or in a function declared 'unsafe fun'"
+        ),
+        span,
+    })
+}
+
+/// Whether a method call receiver is a `Ptr`: the bare type name (`Ptr.null()`,
+/// which is an *associated* call) or a value whose type is `Ptr<T>` (which is
+/// what lets `p.cast<u8>()` carry a type argument at all).
+fn ptr_receiver(receiver: &ast::Expr, ctx: &mut Ctx) -> bool {
+    if let ast::Expr::Ident(name, _) = receiver {
+        if name == "Ptr" && ctx.lookup(name).is_none() && !is_module_alias(name, ctx) {
+            return true;
+        }
+    }
+    check_expr(receiver, ctx, None)
+        .map(|e| crate::types::ptr_elem_of(&e.ty).is_some())
+        .unwrap_or(false)
+}
+
+/// `Ptr.null()`, `Ptr.from_addr(a)`, `Ptr.from_ref(&x)`, `Ptr.from_mut(x)` and
+/// `Ptr.alloc<T>(count)` (MK9-S2 stage 1).
+///
+/// The element type comes from the call's own `<T>` when it writes one, and
+/// otherwise from the binding's written type or the expected type: a constructor
+/// that produces an `i32` location has nothing else to read it from, so
+/// `val p = Ptr.null()` is refused and the message says where to write it.
+fn check_ptr_associated(
+    method: &str,
+    type_args: &[ast::TypeExpr],
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    let explicit = resolve_explicit_args(type_args, ctx)?;
+    let elem = match explicit.len() {
+        0 => expected.and_then(crate::types::ptr_elem_of).cloned(),
+        1 => Some(explicit[0].clone()),
+        n => {
+            return Err(TypeError {
+                message: format!("'Ptr' takes exactly 1 type argument, found {n}"),
+                span,
+            })
+        }
+    };
+    let Some(elem) = elem else {
+        return Err(TypeError {
+            message: format!(
+                "cannot tell which type 'Ptr.{method}' points at: write it in the call ('Ptr.{method}<i32>(...)' where the operation takes a type argument) or on the binding ('val p: Ptr<i32> = Ptr.null()')"
+            ),
+            span,
+        });
+    };
+    if !crate::types::is_ptr_element(&elem) {
+        return Err(TypeError {
+            message: crate::types::ptr_element_error(&elem),
+            span,
+        });
+    }
+    let ptr = Ty::Ptr(Box::new(elem.clone()));
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    let (key, params, ret) = match method {
+        "null" => ("Ptr#null".to_string(), Vec::new(), ptr),
+        "from_addr" => (
+            "Ptr#from_addr".to_string(),
+            vec![p("addr", Ty::Usize)],
+            ptr,
+        ),
+        "from_ref" => (
+            "Ptr#from_ref".to_string(),
+            vec![p("place", Ty::Ref { mutable: false, inner: Box::new(elem) })],
+            ptr,
+        ),
+        "from_mut" => (
+            "Ptr#from_mut".to_string(),
+            vec![p("place", Ty::Ref { mutable: true, inner: Box::new(elem) })],
+            ptr,
+        ),
+        "alloc" => ("Ptr#alloc".to_string(), vec![p("count", Ty::Usize)], ptr),
+        other => {
+            return Err(TypeError {
+                message: format!(
+                    "'Ptr.{other}' is not a pointer operation: a pointer is made with 'Ptr.null()', 'Ptr.from_addr(a)', 'Ptr.from_ref(&x)', 'Ptr.from_mut(x)' or 'Ptr.alloc<i32>(count)', and read through the value it is bound to"
+                ),
+                span,
+            })
+        }
+    };
+    require_ptr_unsafe(&key, span, ctx)?;
+    let checked = match_args(&format!("'Ptr.{method}'"), &params, args, span, ctx)?;
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: key, args: checked },
+        ty: ret,
+        span,
+    })
+}
+
+/// A method on a `Ptr<T>` value: `addr`, `is_null`, `offset`, `byte_offset`,
+/// `cast<U>`, `read`, `write`, `read_volatile`, `write_volatile` and `free`
+/// (MK9-S2 stage 1).
+fn check_ptr_method(
+    probe: tir::Expr,
+    receiver: &ast::Expr,
+    method: &str,
+    type_args: &[ast::TypeExpr],
+    args: &[ast::CallArg],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Result<tir::Expr> {
+    let elem = crate::types::ptr_elem_of(&probe.ty)
+        .cloned()
+        .expect("the caller matched a Ptr receiver");
+    let explicit = resolve_explicit_args(type_args, ctx)?;
+    let cast_to = if method == "cast" {
+        match explicit.len() {
+            1 => Some(explicit[0].clone()),
+            n => {
+                return Err(TypeError {
+                    message: format!("'Ptr.cast' takes exactly 1 type argument, found {n}"),
+                    span,
+                })
+            }
+        }
+    } else {
+        if !explicit.is_empty() {
+            return Err(TypeError {
+                message: format!(
+                    "'Ptr.{method}' does not take type arguments — a method's type parameters come from its receiver"
+                ),
+                span,
+            });
+        }
+        None
+    };
+    if let Some(target) = &cast_to {
+        if !crate::types::is_ptr_element(target) {
+            return Err(TypeError {
+                message: crate::types::ptr_element_error(target),
+                span,
+            });
+        }
+    }
+    let key = format!("Ptr#{method}");
+    let Some(sig) = ptr_sig(&key, &elem, cast_to.as_ref(), span)? else {
+        return Err(TypeError {
+            message: format!(
+                "'Ptr.{method}' is not a pointer operation: a pointer has addr, is_null, offset, byte_offset, cast<U>, read, write, read_volatile, write_volatile and free"
+            ),
+            span,
+        });
+    };
+    require_ptr_unsafe(&key, span, ctx)?;
+    let mut checked = vec![check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?];
+    checked.extend(match_args(
+        &format!("method 'Ptr.{method}'"),
+        &sig.params[1..],
+        args,
+        span,
+        ctx,
+    )?);
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Call { callee: key, args: checked },
+        ty: sig.ret,
+        span,
+    })
+}
+
+/// The `Ptr<T>` value methods, instantiated for one element type (MK9-S2 stage
+/// 1). Every receiver is written by value: a `Ptr<T>` is `Copy`, so passing one
+/// moves nothing and the borrow checker has nothing to add here.
+///
+/// `read` and `read_volatile` hand back a `T`, which is only sound when `T` is
+/// `Copy`: a read of an owned value would produce a second owner of the same
+/// memory, and `write` would drop nothing, so the two would leak or double-free
+/// depending on which came first. The refusal names that instead of leaving a
+/// type error.
+fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) -> Result<Option<FnSig>> {
+    let ptr = Ty::Ptr(Box::new(elem.clone()));
+    let p = |n: &str, t: Ty| (n.to_string(), t);
+    Ok(Some(match key {
+        "Ptr#addr" => FnSig { params: vec![p("self", ptr)], ret: Ty::Usize },
+        "Ptr#is_null" => FnSig { params: vec![p("self", ptr)], ret: Ty::Bool },
+        "Ptr#offset" | "Ptr#byte_offset" => FnSig {
+            params: vec![p("self", ptr.clone()), p("n", Ty::Isize)],
+            ret: ptr,
+        },
+        "Ptr#cast" => {
+            let target = cast_to.expect("Ptr.cast resolves its target before its signature");
+            FnSig { params: vec![p("self", ptr)], ret: Ty::Ptr(Box::new(target.clone())) }
+        }
+        "Ptr#free" => FnSig { params: vec![p("self", ptr)], ret: Ty::Unit },
+        "Ptr#read" | "Ptr#read_volatile" => {
+            if !elem.is_copy() {
+                let op = key.strip_prefix("Ptr#").unwrap_or(key);
+                return Err(TypeError {
+                    message: format!(
+                        "'Ptr<{}>.{op}' would read a '{}' out of raw memory, and '{}' is not 'Copy': a second owner of the same value would be made, so the memory could be freed twice. Read a 'Copy' element (a scalar, a handle, a pointer) instead",
+                        elem.display(),
+                        elem.display(),
+                        elem.display()
+                    ),
+                    span,
+                });
+            }
+            FnSig { params: vec![p("self", ptr)], ret: elem.clone() }
+        }
+        "Ptr#write" | "Ptr#write_volatile" => FnSig {
+            params: vec![p("self", ptr), p("value", elem.clone())],
+            ret: Ty::Unit,
+        },
+        _ => return Ok(None),
+    }))
+}
+
 /// `sortable`/`clonable` are what `types::value_is_sortable` and
 /// `value_is_clonable` say about `elem` with `ctx`'s own declaration graph, so
 /// a `datac`/`enum` element whose fields are all copyable or all ordered
@@ -4409,6 +4663,7 @@ impl<'a> ConstEvaluator<'a> {
             ast::Expr::Try { .. } => Err(self.unsupported(expr.span(), "the '?' operator")),
             ast::Expr::Deref { .. } => Err(self.unsupported(expr.span(), "a dereference")),
             ast::Expr::Ref { .. } => Err(self.unsupported(expr.span(), "a borrow")),
+            ast::Expr::Unsafe { .. } => Err(self.unsupported(expr.span(), "an 'unsafe' block")),
         }
     }
 
@@ -6289,6 +6544,8 @@ fn base_ctx(
         when_temps: 0,
         tuple_temps: 0,
         defer_empty_container: false,
+        unsafe_depth: 0,
+        unsafe_fns: project.unsafe_fns().clone(),
     }
 }
 
@@ -6484,6 +6741,10 @@ impl PdScan {
             | ast::Expr::FloatLit(..)
             | ast::Expr::StringLit(..)
             | ast::Expr::BoolLit(..) => {}
+            // An `unsafe { ... }` block's body is scanned like any other
+            // block: a passdown named inside one is still a passdown the
+            // enclosing function has to receive.
+            ast::Expr::Unsafe { block, .. } => self.scan_block(block),
         }
     }
 }
@@ -6928,6 +7189,10 @@ fn check_function(
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main";
+    // `unsafe fun` (MK9-S2 stage 1): the whole body is an unsafe context, so
+    // the unsafe-only pointer operations are legal without a block around
+    // them. Every other function starts at zero and needs an `unsafe { ... }`.
+    ctx.unsafe_depth = if f.unsafe_ { 1 } else { 0 };
     ctx.own_hidden = hidden.iter().map(|pd| pd.hidden.clone()).collect();
     let wiring_key = ctx.wiring_key_of(key);
     ctx.fn_key = wiring_key;
@@ -8198,6 +8463,22 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 span: block.span,
             })
         }
+        // `unsafe { ... }` (MK9-S2 stage 1): the same block, checked with the
+        // unsafe nesting raised by one so the operations that need it are
+        // legal inside. Nothing about the lowered block differs, so the two
+        // backends need no new shape for it: the call is the unsafe operation.
+        ast::Expr::Unsafe { block, span } => {
+            ctx.unsafe_depth += 1;
+            let checked = check_block(block, ctx, expected);
+            ctx.unsafe_depth -= 1;
+            let b = checked?;
+            let ty = b.ty();
+            Ok(tir::Expr {
+                kind: tir::ExprKind::Block(b),
+                ty,
+                span: *span,
+            })
+        }
         ast::Expr::Try { expr: sub, span } => check_try(sub, *span, ctx),
         ast::Expr::Ref { mutable, expr: sub, span } => {
             let sub_t = check_expr(sub, ctx, None)?;
@@ -8319,7 +8600,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
             if let Some(ename) = enum_path(receiver, ctx) {
                 return check_enum_construction(&ename, method, args, *span, ctx);
             }
-            if !type_args.is_empty() {
+            if !type_args.is_empty() && !ptr_receiver(receiver, ctx) {
                 return Err(TypeError {
                     message: format!(
                         "'{method}' does not take type arguments — a method's type parameters come from its receiver"
@@ -8328,7 +8609,7 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 });
             }
             check_method_call_enum_guard(receiver, *span, ctx)?;
-            check_method_call(receiver, method, args, *span, ctx, expected)
+            check_method_call(receiver, method, type_args, args, *span, ctx, expected)
         }
         ast::Expr::When {
             scrutinee,
@@ -9891,7 +10172,8 @@ fn check_binary(
             // thing the operator could mean for a value with no readable
             // contents. An order (`<`, `<=`, `>`, `>=`) is still refused.
             let comparable = comparable(&l.ty)
-                || (matches!(l.ty, Ty::Handle(_)) && matches!(op, BinOp::Eq | BinOp::NotEq));
+                || (matches!(l.ty, Ty::Handle(_) | Ty::Ptr(_))
+                    && matches!(op, BinOp::Eq | BinOp::NotEq));
             if !comparable {
                 return Err(TypeError {
                     message: comparison_error(&l.ty, op),
@@ -10753,6 +11035,18 @@ fn check_call(
         },
     };
     ctx.check_capability(&key, span)?;
+    // A function declared `unsafe fun` (MK9-S2 stage 1) is callable only from
+    // an `unsafe { ... }` block or from another `unsafe fun`; the refusal names
+    // the function so the reader knows which call in the statement it was.
+    if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
+        return Err(TypeError {
+            message: format!(
+                "'{}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'",
+                display_callee(&key)
+            ),
+            span,
+        });
+    }
     if let Some(probe) = &ctx.pd_probe {
         // The call graph the borrow-mode closure walks (roadmap item 17):
         // whoever calls a writer writes too, when it holds the passdown
@@ -11307,6 +11601,7 @@ fn check_method_call_enum_guard(receiver: &ast::Expr, span: Span, ctx: &Ctx) -> 
 fn check_method_call(
     receiver: &ast::Expr,
     method: &str,
+    type_args: &[ast::TypeExpr],
     args: &[ast::CallArg],
     span: Span,
     ctx: &mut Ctx,
@@ -11328,6 +11623,11 @@ fn check_method_call(
             if name == "Atomic" || crate::types::atomic_alias_elem(name).is_some() {
                 return check_atomic_associated(name, method, args, span, ctx, expected);
             }
+            // `Ptr.null()`, `Ptr.from_addr(a)`, `Ptr.from_ref(&x)`,
+            // `Ptr.from_mut(x)` and `Ptr.alloc<T>(count)` (MK9-S2 stage 1).
+            if name == "Ptr" {
+                return check_ptr_associated(method, type_args, args, span, ctx, expected);
+            }
             let key = format!("{name}#{method}");
             if let Some(assoc) = BUILTINS.get(&key).filter(|b| b.associated) {
                 let params = assoc.params.clone();
@@ -11347,6 +11647,13 @@ fn check_method_call(
     // below. `check_expr` has no persistent side effects beyond reading
     // `ctx`, so checking the same expression twice here is safe.
     let probe = check_expr(receiver, ctx, None)?;
+    // A method on a `Ptr<T>` (MK9-S2 stage 1). Every signature depends on the
+    // element type, and `cast<U>()` also takes a written target, so none of
+    // them can live in the static builtin table. The receiver is `Copy`, so it
+    // goes through `check_call_arg` as a plain value rather than a borrow.
+    if crate::types::ptr_elem_of(&probe.ty).is_some() {
+        return check_ptr_method(probe, receiver, method, type_args, args, span, ctx);
+    }
     let owner = struct_name_of(&probe.ty)
         .map(|s| s.to_string())
         .or_else(|| builtin_type_name(&probe.ty).map(|s| s.to_string()));
@@ -11564,6 +11871,16 @@ fn check_method_call(
     // free functions (`Child.kill` is `kill_raw` plus an error check), so a
     // call that skipped this check reached the syscall with no grant at all.
     ctx.check_capability(&key, span)?;
+    // An `unsafe fun` receiver method (MK9-S2 stage 1) is callable only from
+    // an `unsafe` context, exactly as a free one is.
+    if ctx.unsafe_fns.contains(&key) && ctx.unsafe_depth == 0 {
+        return Err(TypeError {
+            message: format!(
+                "'{owner}.{method}' is an 'unsafe fun': it can only be called inside 'unsafe {{ ... }}' or from another 'unsafe fun'"
+            ),
+            span,
+        });
+    }
     let mut checked_args = Vec::with_capacity(sig.params.len());
     checked_args.push(check_call_arg("'self'", &sig.params[0].1, receiver, ctx)?);
     checked_args.extend(match_args(&format!("method '{owner}.{method}'"), &sig.params[1..], args, span, ctx)?);

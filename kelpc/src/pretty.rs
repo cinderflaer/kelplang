@@ -75,6 +75,9 @@ fn print_enum(out: &mut String, e: &EnumDecl) {
 fn print_function(out: &mut String, f: &FunctionDecl, depth: usize) {
     indent(out, depth);
     out.push_str(pub_kw(f.is_pub));
+    if f.unsafe_ {
+        out.push_str("unsafe ");
+    }
     if f.extern_ {
         out.push_str("extern ");
     }
@@ -341,6 +344,11 @@ fn print_expr(out: &mut String, expr: &Expr) {
         }
         Expr::Block(block) => {
             out.push_str("{\n");
+            print_block_stmts(out, block, 1);
+            out.push('}');
+        }
+        Expr::Unsafe { block, .. } => {
+            out.push_str("unsafe {\n");
             print_block_stmts(out, block, 1);
             out.push('}');
         }

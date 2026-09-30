@@ -1378,6 +1378,15 @@ mod tests {
     }
 
     #[test]
+    fn an_unsafe_block_and_an_unsafe_fun_round_trip() {
+        // Stage n (MK9-S2): `unsafe` is a contextual word, so the formatter
+        // treats it as one and `unsafe {` keeps its single space.
+        let src = "unsafe fun poke(p: Ptr<i32>, v: i32) {\n    p.write(v)\n}\n\nfun main() {\n    unsafe {\n        p.write(1)\n    }\n    val q = unsafe { p.read() }\n}\n";
+        let out = format(src).expect("the new syntax should format");
+        assert_eq!(out, src);
+    }
+
+    #[test]
     fn a_parse_error_is_refused_and_nothing_is_formatted() {
         let err = format("fun main( {\n    print(\"x\")\n}\n").unwrap_err();
         assert!(!err.message.is_empty());

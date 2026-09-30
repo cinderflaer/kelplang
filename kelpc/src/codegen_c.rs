@@ -4422,6 +4422,86 @@ impl<'a> Gen<'a> {
         }
     }
 
+    /// A `Ptr<T>` operation (MK9-S2 stage 1), as C: one operator or one libc
+    /// call per operation, with the element type read from the result (a
+    /// constructor) or from the receiver (everything else).
+    ///
+    /// The volatile pair is the whole reason this cannot be folded into the
+    /// plain pair: a `volatile`-qualified access is the one C spelling that
+    /// forbids the compiler to merge, reorder against another volatile access,
+    /// or elide it, and that is what an MMIO register needs. `offset` is
+    /// element-scaled because C's pointer arithmetic is, and `byte_offset` is
+    /// the same step in bytes, so the two spellings differ by the cast.
+    fn ptr_call(&self, op: &str, args: &[Expr], ret: &Ty) -> String {
+        let result_elem = || {
+            crate::types::ptr_elem_of(ret)
+                .expect("a Ptr operation's result names its element")
+                .c_type()
+        };
+        let recv_elem = || {
+            crate::types::ptr_elem_of(&args[0].ty)
+                .expect("a Ptr operation's receiver names its element")
+                .c_type()
+        };
+        match op {
+            "null" => format!("(({}*)NULL)", result_elem()),
+            "from_addr" => format!(
+                "(({}*)(uintptr_t)({}))",
+                result_elem(),
+                self.expr_value(&args[0])
+            ),
+            // `from_ref`/`from_mut` take the address of a place, which is
+            // exactly what the borrow argument already rendered as.
+            "from_ref" | "from_mut" => {
+                format!("(({}*)({}))", result_elem(), self.expr_value(&args[0]))
+            }
+            "alloc" => {
+                let elem = result_elem();
+                let tmp = fresh_temp();
+                format!(
+                    "({{ {elem}* {tmp} = ({elem}*)malloc((size_t)({}) * sizeof({elem})); if ({tmp} == NULL) {{ kelp_panic(\"out of memory\"); }} {tmp}; }})",
+                    self.expr_value(&args[0])
+                )
+            }
+            "addr" => format!("((size_t)(uintptr_t)({}))", self.expr_value(&args[0])),
+            "is_null" => format!("(({}) == NULL)", self.expr_value(&args[0])),
+            "offset" => format!(
+                "(({}) + ({}))",
+                self.expr_value(&args[0]),
+                self.expr_value(&args[1])
+            ),
+            "byte_offset" => {
+                let elem = recv_elem();
+                format!(
+                    "(({elem}*)((char*)({}) + ({})))",
+                    self.expr_value(&args[0]),
+                    self.expr_value(&args[1])
+                )
+            }
+            "cast" => format!("(({}*)({}))", result_elem(), self.expr_value(&args[0])),
+            "read" => format!("(*({}))", self.expr_value(&args[0])),
+            "read_volatile" => {
+                let elem = recv_elem();
+                format!("(*((volatile {elem}*)({})))", self.expr_value(&args[0]))
+            }
+            "write" => format!(
+                "((void)(*({}) = ({})))",
+                self.expr_value(&args[0]),
+                self.expr_value(&args[1])
+            ),
+            "write_volatile" => {
+                let elem = recv_elem();
+                format!(
+                    "((void)(*((volatile {elem}*)({})) = ({})))",
+                    self.expr_value(&args[0]),
+                    self.expr_value(&args[1])
+                )
+            }
+            "free" => format!("((void)free((void*)({})))", self.expr_value(&args[0])),
+            other => unreachable!("no C spelling for the pointer operation '{other}'"),
+        }
+    }
+
     /// `thread.spawn(entry, arg)` (MK9-S3-M1 stage C1), as C: allocate the
     /// handle and its two slots, move the argument into the argument slot, and
     /// start the worker with the generated body for this signature. The
@@ -4519,6 +4599,13 @@ impl<'a> Gen<'a> {
         // is spelled `__ATOMIC_SEQ_CST` here rather than threaded through.
         if let Some(op) = callee.strip_prefix("Atomic#") {
             return self.atomic_call(op, args, ret);
+        }
+        // A `Ptr<T>` operation (MK9-S2 stage 1): every one is one C operator or
+        // one libc call, so it is written at the call site rather than as a
+        // generated function. The element type is the pointer's own, which the
+        // result names for the constructors and the receiver names for the rest.
+        if let Some(op) = callee.strip_prefix("Ptr#") {
+            return self.ptr_call(op, args, ret);
         }
         // `thread.fence` (MK9-S3-M1 stage A2): the standalone fence is one
         // `__atomic_thread_fence` builtin, so it needs no place, no cell and no
@@ -5122,9 +5209,10 @@ impl<'a> Gen<'a> {
             | Ty::Array(..)
             | Ty::Atomic(_)
             | Ty::Thread(_)
+            | Ty::Ptr(_)
             | Ty::Ref { .. } => {
                 unreachable!(
-                    "type checker rejects printing unit/struct/container/atomic/thread/reference values"
+                    "type checker rejects printing unit/struct/container/atomic/thread/pointer/reference values"
                 )
             }
         }

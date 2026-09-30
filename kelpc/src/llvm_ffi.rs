@@ -62,7 +62,8 @@ use llvm_sys::core::{
     LLVMBuildFPToSI,
     LLVMBuildFPToUI, LLVMBuildFPTrunc, LLVMBuildFence, LLVMBuildGEP2, LLVMBuildGlobalString,
     LLVMBuildICmp,
-    LLVMBuildInsertValue, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
+    LLVMBuildInsertValue, LLVMBuildIntToPtr, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildOr, LLVMBuildPhi,
+    LLVMBuildPtrToInt,
     LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSExt, LLVMBuildSIToFP, LLVMBuildSRem,
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
     LLVMBuildSub, LLVMBuildSwitch, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
@@ -81,7 +82,7 @@ use llvm_sys::core::{
     LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage,
-    LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget,
+    LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget, LLVMSetVolatile,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVoidTypeInContext,
 };
 use llvm_sys::debuginfo::{
@@ -1594,6 +1595,36 @@ impl<'ctx> Builder<'ctx> {
         // SAFETY: the builder is positioned and there is nothing else to be
         // live; the instruction is inserted where the builder points.
         unsafe { LLVMBuildFence(self.raw, SEQ_CST, 0, cstring("").as_ptr()) };
+    }
+
+    /// Emit `inttoptr value to ty` (`LLVMBuildIntToPtr`): the machine address a
+    /// raw pointer holds, recovered from an integer (MK9-S2 stage 1).
+    pub fn build_inttoptr(&self, value: Value<'ctx>, ty: Type<'ctx>) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and both arguments are live.
+            raw: unsafe { LLVMBuildIntToPtr(self.raw, value.as_raw(), ty.as_raw(), cstring("ptr").as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Emit `ptrtoint value to ty` (`LLVMBuildPtrToInt`): the address of a raw
+    /// pointer as an integer (`p.addr()`).
+    pub fn build_ptrtoint(&self, value: Value<'ctx>, ty: Type<'ctx>) -> Value<'ctx> {
+        Value {
+            // SAFETY: the builder is positioned and both arguments are live.
+            raw: unsafe { LLVMBuildPtrToInt(self.raw, value.as_raw(), ty.as_raw(), cstring("addr").as_ptr()) },
+            context: PhantomData,
+        }
+    }
+
+    /// Mark a load or store volatile (`LLVMSetVolatile`), the flag that forbids
+    /// the optimizer to merge it, reorder it against another volatile access, or
+    /// elide it (MK9-S2 stage 1). `value` must be the load or store this builder
+    /// just emitted.
+    pub fn set_volatile(&self, value: Value<'ctx>) {
+        // SAFETY: the caller passes an instruction this builder just emitted,
+        // which is the one kind `LLVMSetVolatile` accepts.
+        unsafe { LLVMSetVolatile(value.as_raw(), 1) };
     }
 
     /// Emit `extractvalue agg, index` (`LLVMBuildExtractValue`): one field of
