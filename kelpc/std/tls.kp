@@ -1,11 +1,13 @@
 impl "std/net"
+impl "std/result"
+impl "std/str"
 
-/* std/tls — TLS for `https` (MK5-S4b-M1, open item 37, decided 2026-09-26:
+/* std/tls: TLS for `https` (MK5-S4b-M1, open item 37, decided 2026-09-26:
    link the system OpenSSL rather than vendor one). Client side only in v1:
    this module wraps an outbound connection after it is already open: it
    never dials one itself. Serving TLS is a later question.
 
-   Gated on `net`, the existing domain — not a new one. `https` is still
+   Gated on `net`, the existing domain, not a new one. `https` is still
    network access, so a program that already writes
    `impl "std/http" caps(net = ["api.example.com:443"])` needs nothing new
    to reach an `https://` URL; the grant it already holds is the one that
@@ -17,111 +19,382 @@ impl "std/net"
    inside `std/http.kp` is checked against `caps_of("std/http")`, which is
    populated by whatever `impl "std/http" caps(net = [...])` the *importing
    program* wrote. If a `net.connect` were written here instead, it would be
-   checked against `caps_of("std/tls")` — a slot only this module's own
+   checked against `caps_of("std/tls")`, a slot only this module's own
    `impl "std/tls"` line (with no `caps()` clause, so empty) could ever
    populate, never the program's real grant. So the dial stays in
    `std/http.kp`, where the check already works today for plain `http`, and
    this module's `handshake` takes the socket *after* it is connected. That
    is also why this module's own `impl "std/net"` line above carries no
-   `caps()` clause: it exists only so `TlsStream.close` can call
-   `net.close`, a call this module's checker never gates because
-   `caps_of("std/tls")` is consulted for it and a call under a domain with no
-   grant simply denies at that one call site — the same shape `std/ws` and
-   `std/http` already use for their own bare `impl "std/net"` lines. Nothing
-   here dials, listens, or resolves a name, so nothing here needs a grant. It
-   is the same reason `shutdown` below never calls `net.close`: that call
-   would need `net` too, from the same always-empty slot. `impl "std/net"`
-   is kept only so `net.Socket`'s *type* can be named in `handshake`'s
-   signature — naming a type needs no grant, only calling one of its gated
-   functions does.
+   `caps()` clause: it exists only so `TlsStream` can name `net.Socket` in a
+   signature and so `shutdown` can name an fd. Nothing here dials, listens,
+   or resolves a name, so nothing here needs a grant.
 
-   **Certificate verification is on by default and not optional in v1.** The
-   system trust store (`SSL_CTX_set_default_verify_paths`), `SSL_VERIFY_PEER`,
-   and hostname verification against the name the caller wrote
-   (`SSL_set1_host`) — the same name `parse_url` split out and the same name
-   the `net` grant was checked against, not whatever `getaddrinfo` resolved.
-   A self-signed or mismatched certificate is a handshake failure, not a
-   silent connection: there is no `insecure` flag, on purpose, because v1 has
-   nowhere reviewable to put one that would not look like a footgun left lying
-   around. The minimum negotiated version is TLS 1.2.
+   **Certificate verification is on by default and not optional.** The
+   system trust store (`SSL_CTX_set_default_verify_paths`, which honours
+   `SSL_CERT_FILE` and `SSL_CERT_DIR`, the two overrides OpenSSL's compiled
+   paths already read), `SSL_VERIFY_PEER`, and hostname verification against
+   the name the caller wrote (`SSL_set1_host`): the same name `parse_url`
+   split out and the same name the `net` grant was checked against, not
+   whatever `getaddrinfo` resolved. A self-signed or mismatched certificate
+   is a handshake failure, not a silent connection: there is no `insecure`
+   flag, on purpose. `handshake_with` can *add* a private CA file or
+   directory to the roots (`SSL_CTX_load_verify_locations`); it can never
+   remove the requirement to verify, and it does not lower the TLS 1.2
+   minimum. A failure is a value in the `try_` family (`Result<_, TlsError>`)
+   and a panic in the plain family, whose message is the error's own text.
 
-   `TlsStream` pairs a plain `fd` with the OpenSSL handle bound to it — not a
+   `TlsStream` pairs a plain `fd` with the OpenSSL handle bound to it, not a
    `net.Socket`, because a `net.Socket` and its `TlsStream` would then be two
    owners of one descriptor. `shutdown` ends only the TLS session (so the
    peer sees a clean `close_notify` where the connection allows it) and frees
    the OpenSSL handle; it does not close `fd`. The caller closes the socket
    itself afterward with `net.close(net.Socket(fd = t.fd))`, exactly as it
-   would for a plain connection — the module import that holds the real `net`
-   grant is the one that must make that call, per the note above, and that is
-   never this module. Nothing here closes on drop either, the same rule
-   `net.Socket`/`net.Listener` follow. */
+   would for a plain connection, because the module import that holds the
+   real `net` grant is the one that must make that call, per the note above.
+   Nothing here closes on drop either, the same rule `net.Socket` and
+   `net.Listener` follow.
 
-extern fun handshake_raw(fd: i32, host: &str).R: usize
-extern fun write_raw(handle: usize, data: Bytes).R: usize
-extern fun write_all_raw(handle: usize, data: Bytes).R: usize
-extern fun read_raw(handle: usize, max: usize).R: Bytes
-extern fun read_into_raw(handle: usize, buf: mut Bytes, at: usize).R: usize
-extern fun shutdown_raw(handle: usize)
+   `handle` is still a `usize` rather than an `extern type` handle: an
+   `extern type` is legal only in a module with its own `coral.toml`
+   `[extern."<module id>"]` section (`resolve.rs`), and a compiler-shipped
+   std module has no manifest. `plan/release-goals.md` records the smallest
+   compiler change that would lift that, under "Follow-ups". */
+
+// The `TlsError` codes the C classifiers (`codegen_c::C_HEADERS`) write
+// through `err_code`. They are the wire between the extern bodies and
+// `error_from`, so the two have to agree; the names are the mapping.
+const ERR_UNTRUSTED: i32 = 1
+const ERR_EXPIRED: i32 = 2
+const ERR_HOST_MISMATCH: i32 = 3
+const ERR_PROTOCOL_TOO_OLD: i32 = 4
+const ERR_HANDSHAKE: i32 = 5
+const ERR_PEER_CLOSED: i32 = 6
+const ERR_TIMEOUT: i32 = 7
+const ERR_IO: i32 = 8
+
+extern fun handshake_try_raw(fd: i32, host: &str, ca_file: &str, ca_dir: &str, timeout_ms: u64, err_code: mut i32, reason: mut String).R: usize
+extern fun set_timeout_raw(handle: usize, ms: u64)
+extern fun write_try_raw(handle: usize, data: Bytes, err_code: mut i32, reason: mut String).R: usize
+extern fun write_all_try_raw(handle: usize, data: Bytes, err_code: mut i32, reason: mut String).R: usize
+extern fun read_try_raw(handle: usize, max: usize, err_code: mut i32, reason: mut String).R: Bytes
+extern fun read_into_try_raw(handle: usize, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String).R: usize
+extern fun shutdown_try_raw(handle: usize, err_code: mut i32, reason: mut String)
 
 // A TLS session bound to a connected file descriptor. `handle` is the
-// OpenSSL `SSL*`, carried as `usize` because v1 has no pointer type at the
-// Kelp level — the same reason a socket is carried as a plain `fd: i32`.
-// Not `Copy`, so passing one around is a borrow and there is never a silent
-// second free of the `SSL*`.
+// OpenSSL `SSL*`, carried as `usize` because v1 has no pointer type in a
+// std module (see the header comment). Not `Copy`, so passing one around is
+// a borrow and there is never a silent second free of the `SSL*`.
 datac TlsStream(val fd: i32, val handle: usize)
 
-// Performs the TLS client handshake over an already-connected socket. `host`
-// is used for SNI and for the certificate's hostname check — it should be
+// Why a TLS operation failed, as a value a caller can branch on.
+//
+// `HandshakeFailed` and `Io` carry OpenSSL's or the socket's own sentence;
+// the rest are the cases worth naming because a caller acts on them
+// differently (retry after `Timeout`, ask the user to install a CA after
+// `Untrusted`, and so on). `PeerClosedUncleanly` is the truncation case: the
+// stream ended without a `close_notify`.
+pub enum TlsError {
+    Untrusted
+    Expired
+    HostMismatch
+    ProtocolTooOld
+    HandshakeFailed(val reason: String)
+    PeerClosedUncleanly
+    Timeout
+    Io(val reason: String)
+}
+
+// How to trust and how long to wait for one handshake. An empty `ca_file`
+// and `ca_dir` mean "only the system store"; a non-empty one *adds* that
+// file or directory to the roots and cannot weaken verification. A
+// `timeout_ms` of 0 is "no timeout", which is `SO_RCVTIMEO`'s own meaning.
+pub datac TlsOptions(val ca_file: String, val ca_dir: String, val timeout_ms: u64)
+
+// The options `handshake` uses: the system store, no extra CA, no timeout.
+fun default_options().R: TlsOptions = TlsOptions(
+    ca_file = String.empty(),
+    ca_dir = String.empty(),
+    timeout_ms = 0,
+)
+
+// The typed error for one `err_code`/`reason` pair an extern body wrote.
+fun error_from(code: i32, reason: move String).R: TlsError {
+    if code == ERR_UNTRUSTED {
+        return TlsError.Untrusted
+    }
+    if code == ERR_EXPIRED {
+        return TlsError.Expired
+    }
+    if code == ERR_HOST_MISMATCH {
+        return TlsError.HostMismatch
+    }
+    if code == ERR_PROTOCOL_TOO_OLD {
+        return TlsError.ProtocolTooOld
+    }
+    if code == ERR_PEER_CLOSED {
+        return TlsError.PeerClosedUncleanly
+    }
+    if code == ERR_TIMEOUT {
+        return TlsError.Timeout
+    }
+    if code == ERR_HANDSHAKE {
+        return TlsError.HandshakeFailed(reason = reason)
+    }
+    return TlsError.Io(reason = reason)
+}
+
+// The text a `TlsError` is reported with: the panicking wrappers panic with
+// this, and a `try_` caller that only wants to log one gets exactly what
+// they would have printed. `HandshakeFailed` and `Io` return OpenSSL's or
+// the socket's own words, so the detail is not thrown away.
+fun error_text(e: move TlsError).R: String = when e {
+    Untrusted -> String.from_str("tls: the certificate is not trusted by the system store")
+    Expired -> String.from_str("tls: the certificate has expired or is not yet valid")
+    HostMismatch -> String.from_str("tls: the certificate does not match the host name")
+    ProtocolTooOld -> String.from_str("tls: the peer does not speak TLS 1.2 or newer")
+    HandshakeFailed(reason) -> reason
+    PeerClosedUncleanly -> String.from_str("tls: the peer closed the connection without a close_notify")
+    Timeout -> String.from_str("tls: the operation timed out")
+    Io(reason) -> reason
+}
+
+// Performs the TLS client handshake over an already-connected socket, with
+// `opts`' private CA and timeout, or returns why it could not. `host` is
+// used for SNI and for the certificate's hostname check; it should be
 // exactly the host the caller dialed, the same string `net.connect` and the
 // capability check both saw, not an address `getaddrinfo` produced.
 //
-// The socket is consumed by value (as `net.Socket` always is passed), and
+// The socket is consumed by value (as `net.Socket` is always passed), and
 // its descriptor lives on inside the returned `TlsStream`; there is no
 // remaining `Socket` to close separately afterward, only the `TlsStream`.
+fun try_handshake_with(s: net.Socket, host: &str, opts: TlsOptions).R: result.Result<TlsStream, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val handle = handshake_try_raw(
+        s.fd,
+        host,
+        opts.ca_file.as_str(),
+        opts.ca_dir.as_str(),
+        opts.timeout_ms,
+        &mut code,
+        &mut reason,
+    )
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = TlsStream(fd = s.fd, handle = handle))
+}
+
+// The fallible twin of `handshake` with the default options, for a caller
+// that has somewhere to go when the peer's certificate is not trusted.
+fun try_handshake(s: net.Socket, host: &str).R: result.Result<TlsStream, TlsError> = try_handshake_with(
+    s,
+    host,
+    default_options(),
+)
+
+// The fallible handshake with a deadline in milliseconds, applied as
+// `SO_RCVTIMEO`/`SO_SNDTIMEO` before the handshake starts. A silent peer is
+// then `Err(Timeout)` instead of a hang, and the settings stay on the socket
+// for the reads and writes that follow.
+fun try_handshake_timeout(s: net.Socket, host: &str, ms: u64).R: result.Result<TlsStream, TlsError> = try_handshake_with(
+    s,
+    host,
+    TlsOptions(ca_file = String.empty(), ca_dir = String.empty(), timeout_ms = ms),
+)
+
+fun fail_stream(e: move TlsError).R: TlsStream {
+    val text = error_text(e)
+    panic(text.as_str())
+}
+
+// Performs the TLS client handshake, or panics with the error's text.
 //
 // Panics: if the handshake fails, including a certificate the system trust
 // store does not vouch for or a name mismatch.
 fun handshake(s: net.Socket, host: &str).R: TlsStream {
-    val handle = handshake_raw(s.fd, host)
-    return TlsStream(fd = s.fd, handle = handle)
+    val r = try_handshake(s, host)
+    return when r {
+        Ok(t) -> t
+        Err(e) -> fail_stream(e)
+    }
 }
 
-// One `SSL_write`: like `net.send`, it may write fewer bytes than given.
+// The same as `handshake`, with a private CA and/or a timeout.
+//
+// Panics: as `handshake`.
+fun handshake_with(s: net.Socket, host: &str, opts: TlsOptions).R: TlsStream {
+    val r = try_handshake_with(s, host, opts)
+    return when r {
+        Ok(t) -> t
+        Err(e) -> fail_stream(e)
+    }
+}
+
+// The same as `handshake`, with a deadline in milliseconds.
+//
+// Panics: as `handshake`, and `TlsError.Timeout` when the peer stays silent
+// past `ms`.
+fun handshake_timeout(s: net.Socket, host: &str, ms: u64).R: TlsStream {
+    val r = try_handshake_timeout(s, host, ms)
+    return when r {
+        Ok(t) -> t
+        Err(e) -> fail_stream(e)
+    }
+}
+
+// Sets the receive and send timeouts on the stream's socket, so a blocking
+// read on a silent peer gives up instead of hanging forever. `ms` of 0 means
+// "no timeout". The handshake's own timeout is set before it starts; this is
+// the call for the reads and writes that follow.
+//
+// Panics: if the socket options cannot be set.
+fun set_timeout(t: TlsStream, ms: u64) {
+    set_timeout_raw(t.handle, ms)
+}
+
+fun fail_bytes(e: move TlsError).R: Bytes {
+    val text = error_text(e)
+    panic(text.as_str())
+}
+
+fun fail_usize(e: move TlsError).R: usize {
+    val text = error_text(e)
+    panic(text.as_str())
+}
+
+// One `SSL_write`, or why it failed: like `net.send`, it may write fewer
+// bytes than given.
+fun try_write(t: TlsStream, data: Bytes).R: result.Result<usize, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val n = write_try_raw(t.handle, data, &mut code, &mut reason)
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = n)
+}
+
+// The whole buffer, looping over short writes, or why it stopped: the TLS
+// twin of `net.send_all`.
+fun try_write_all(t: TlsStream, data: Bytes).R: result.Result<usize, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val n = write_all_try_raw(t.handle, data, &mut code, &mut reason)
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = n)
+}
+
+// One `SSL_read`: up to `max` bytes, whatever is available. A clean
+// `close_notify` is `Ok` with an empty `Bytes`; a stream that ends without
+// one is `Err(PeerClosedUncleanly)`.
+fun try_read(t: TlsStream, max: usize).R: result.Result<Bytes, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val data = read_try_raw(t.handle, max, &mut code, &mut reason)
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = data)
+}
+
+// Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
+// a clean close), or why the read failed: the TLS twin of
+// `net.recv_into`, for a message of known size.
+fun try_read_into(t: TlsStream, buf: mut Bytes, at: usize).R: result.Result<usize, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    val n = read_into_try_raw(t.handle, buf, at, &mut code, &mut reason)
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = n)
+}
+
+// Ends the TLS session (sending `close_notify` when the connection allows
+// it) and frees the OpenSSL handle, or returns why `close_notify` did not go
+// out. The handle is freed either way. It does not close `t.fd`; see
+// `shutdown` for the closing sequence.
+fun try_shutdown(t: TlsStream).R: result.Result<bool, TlsError> {
+    var code: i32 = 0
+    var reason = String.empty()
+    shutdown_try_raw(t.handle, &mut code, &mut reason)
+    if code != 0 {
+        return result.Result.Err(error = error_from(code, reason))
+    }
+    return result.Result.Ok(value = true)
+}
+
+// One `SSL_write`.
 //
 // Panics: if the write fails or the peer has closed.
-fun write(t: TlsStream, data: Bytes).R: usize = write_raw(t.handle, data)
+fun write(t: TlsStream, data: Bytes).R: usize {
+    val r = try_write(t, data)
+    return when r {
+        Ok(n) -> n
+        Err(e) -> fail_usize(e)
+    }
+}
 
-// The whole buffer, looping over short writes — the TLS twin of
+// The whole buffer, looping over short writes: the TLS twin of
 // `net.send_all`.
 //
 // Panics: as `write`.
-fun write_all(t: TlsStream, data: Bytes).R: usize = write_all_raw(t.handle, data)
+fun write_all(t: TlsStream, data: Bytes).R: usize {
+    val r = try_write_all(t, data)
+    return when r {
+        Ok(n) -> n
+        Err(e) -> fail_usize(e)
+    }
+}
 
 // One `SSL_read`: up to `max` bytes, whatever is available. Empty means the
-// peer sent a clean `close_notify` (or the underlying connection closed).
+// peer sent a clean `close_notify`.
 //
-// Panics: if the read fails.
-fun read(t: TlsStream, max: usize).R: Bytes = read_raw(t.handle, max)
+// Panics: if the read fails, including a stream that ended without a
+// `close_notify` (`TlsError.PeerClosedUncleanly`).
+fun read(t: TlsStream, max: usize).R: Bytes {
+    val r = try_read(t, max)
+    return when r {
+        Ok(b) -> b
+        Err(e) -> fail_bytes(e)
+    }
+}
 
 // Fills `buf` from byte `at` onward, returning how many bytes arrived (0 on
-// a clean close) — the TLS twin of `net.recv_into`, for a message of known
+// a clean close): the TLS twin of `net.recv_into`, for a message of known
 // size.
 //
-// Panics: if the read fails.
-fun read_into(t: TlsStream, buf: mut Bytes, at: usize).R: usize = read_into_raw(t.handle, buf, at)
+// Panics: as `read`.
+fun read_into(t: TlsStream, buf: mut Bytes, at: usize).R: usize {
+    val r = try_read_into(t, buf, at)
+    return when r {
+        Ok(n) -> n
+        Err(e) -> fail_usize(e)
+    }
+}
 
-// Ends the TLS session (sending `close_notify` when the connection allows
-// it) and frees the OpenSSL handle. It does not close `t.fd`: this module
-// cannot call `net.close` (see the header comment), so the caller closes the
-// socket itself right after, exactly as it does for a plain `net.Socket`:
+// Ends the TLS session and frees the OpenSSL handle. It does not close
+// `t.fd`: this module cannot call `net.close` (see the header comment), so
+// the caller closes the socket itself right after, exactly as it does for a
+// plain `net.Socket`:
 //
 //     tls.shutdown(t)
 //     net.close(net.Socket(fd = t.fd))
 //
-// Never panics: a failure to send `close_notify` is not surfaced, because a
-// peer that has already gone away without waiting for it is the common case,
-// not an error worth ending the process over, and there is nothing else here
-// that can fail.
+// Panics: if `close_notify` could not be sent at all. A peer that has
+// already gone away is the common case, and a caller that wants to treat it
+// as routine uses `try_shutdown` and ignores the `Err`, which is what
+// `std/http` does at the end of a connection.
 fun shutdown(t: TlsStream) {
-    shutdown_raw(t.handle)
+    val r = try_shutdown(t)
+    when r {
+        Ok(_) -> {}
+        Err(e) -> {
+            val text = error_text(e)
+            panic(text.as_str())
+        }
+    }
 }

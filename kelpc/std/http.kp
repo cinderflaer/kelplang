@@ -166,10 +166,13 @@ fun conn_recv_into(c: Conn, buf: mut Bytes, at: usize).R: usize {
 
 // Ends the TLS session first (so the peer sees a clean `close_notify`, not a
 // bare TCP reset) and then closes the socket. A plain connection just closes
-// the socket. Panics: as `net.close`.
+// the socket. The shutdown is best effort: a peer that has already gone away
+// is routine at the end of a connection, so the `Err` is dropped rather than
+// panicked, the same contract `std/tls`'s own header gives it. Panics: as
+// `net.close`.
 fun conn_close(c: Conn) {
     if c.is_tls() {
-        tls.shutdown(tls.TlsStream(fd = c.fd, handle = c.tls_handle))
+        val _ended = tls.try_shutdown(tls.TlsStream(fd = c.fd, handle = c.tls_handle))
     }
     net.close(net.Socket(fd = c.fd))
 }
