@@ -63,7 +63,9 @@ Trailing blocks (`plan/trailing-closure.md`) are independent of all of them.
 Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `header` key; see below), gap 5 (`include_dirs`/`library_dirs` and `pkg_config`).
 - **Gap 1 (opaque handle):** `extern type Widget`, an opaque pointer-sized `Copy` value with `==`/`!=` and no
   `print`. It is legal only under an `[extern."<module id>"]` section, exported like a `pub datac`; C spells
-  it `void*` behind a per-type typedef, LLVM spells it `ptr`.
+  it `void*` behind a per-type typedef, LLVM spells it `ptr`. A compiler-shipped std module still cannot
+  declare one (it has no manifest), so `std/tls` carries its `SSL*` as a `usize`; the one-condition change
+  that would lift that is in `plan/release-goals.md` under Follow-ups.
 - **Gap 3, prototype generation: not planned.** The `header` key makes the real declaration visible, so generating
   a prototype from the Kelp signature would only risk a second, conflicting declaration.
 - **Gap 6 (domain):** **closed.** Option 2 of `plan/ffi-display-domain.md` is implemented: `ui` is the
