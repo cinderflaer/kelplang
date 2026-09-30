@@ -1,0 +1,6 @@
+name = "unsafeptr"
+
+# Stage n (MK9-S2): raw pointers and `unsafe`. The one key is the audit list:
+# only a module named here may contain an `unsafe` block or an `unsafe fun`.
+[unsafe]
+modules = ["main"]

@@ -1,0 +1,10 @@
+// Stage n (MK9-S2): `unsafe` is auditable, not ambient. This project's
+// coral.toml has no `[unsafe] modules` list, so the block is refused by name.
+fun main() {
+    unsafe {
+        val p: Ptr<i32> = Ptr.alloc<i32>(1)
+        p.write(1)
+        p.free()
+    }
+    print(0)
+}

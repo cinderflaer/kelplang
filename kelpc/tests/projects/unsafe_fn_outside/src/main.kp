@@ -1,0 +1,11 @@
+// Stage n (MK9-S2): an `unsafe fun` may be called only from an unsafe context,
+// so this call from `main`'s plain body is refused.
+unsafe fun poke(p: Ptr<i32>, v: i32) {
+    p.write(v)
+}
+
+fun main() {
+    val p: Ptr<i32> = Ptr.null()
+    poke(p, 1)
+    print(0)
+}

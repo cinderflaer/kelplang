@@ -2296,6 +2296,63 @@ fn an_unknown_capability_domain_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// Stage n (MK9-S2, roadmap B-3): `unsafe` and raw pointers. `Ptr<T>` is a
+// builtin generic like `Atomic<T>`, its operations are `Ptr#<method>` on both
+// backends, and the manifest's `[unsafe] modules` list is the audit rule: only
+// a module named there may contain an `unsafe` block or an `unsafe fun`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_raw_pointer_allocates_writes_reads_volatile_and_frees() {
+    assert_project_runs(
+        "unsafe_ptr",
+        &project("unsafe_ptr"),
+        "100\n99\n65\n42\n42\ntrue\n4096\n",
+    );
+}
+
+#[test]
+fn an_unsafe_fun_is_callable_from_an_unsafe_block() {
+    assert_project_runs("unsafe_fn", &project("unsafe_fn"), "77\n");
+}
+
+#[test]
+fn a_module_with_unsafe_but_no_manifest_entry_is_rejected() {
+    assert_project_rejected(
+        "unsafe_not_listed",
+        &project("unsafe_not_listed"),
+        "module 'main' is not listed in coral.toml [unsafe] modules",
+    );
+}
+
+#[test]
+fn an_unsafe_pointer_read_outside_a_block_is_rejected() {
+    assert_project_rejected(
+        "unsafe_outside_block",
+        &project("unsafe_outside_block"),
+        "'Ptr.read' is an unsafe operation",
+    );
+}
+
+#[test]
+fn an_unsafe_fun_called_outside_a_block_is_rejected() {
+    assert_project_rejected(
+        "unsafe_fn_outside",
+        &project("unsafe_fn_outside"),
+        "'poke' is an 'unsafe fun'",
+    );
+}
+
+#[test]
+fn a_pointer_to_an_owned_type_is_rejected() {
+    assert_project_rejected(
+        "unsafe_bad_elem",
+        &project("unsafe_bad_elem"),
+        "'String' is an owned heap value",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // MK9-S1-M1 (roadmap B-1): a user module's own `extern fun`, bound to a
 // native symbol through coral.toml's `[extern."<module id>"]` section instead
 // of a compiler-supplied body from `externs.rs`. Gated exactly like a stdlib

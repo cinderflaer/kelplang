@@ -1,0 +1,6 @@
+// Stage n (MK9-S2): `p.read()` is an unsafe operation, and no `unsafe { ... }`
+// or `unsafe fun` encloses it, so the refusal names the operation.
+fun main() {
+    val p: Ptr<i32> = Ptr.null()
+    print(p.read())
+}

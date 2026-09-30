@@ -1,0 +1,43 @@
+// Stage n (MK9-S2): raw pointers and `unsafe`. The last lines show that the
+// *safe* pointer operations are legal outside any `unsafe` block.
+fun main() {
+    var x: i32 = 7
+    val px: Ptr<i32> = Ptr.from_ref(&x)
+
+    unsafe {
+        val base: Ptr<i32> = Ptr.alloc<i32>(4)
+        base.write(10)
+        base.offset(1).write(20)
+        base.offset(2).write(30)
+        base.offset(3).write(40)
+
+        var i: isize = 0
+        var sum: i32 = 0
+        while i < 4 {
+            sum = sum + base.offset(i).read()
+            i = i + 1
+        }
+        print(sum)
+
+        base.offset(0).write_volatile(99)
+        print(base.offset(0).read_volatile())
+        base.offset(0).write(65)
+
+        px.write(42)
+
+        val bytes: Ptr<u8> = base.cast<u8>()
+        print(bytes.read())
+
+        base.free()
+    }
+
+    // The block form is an expression too, and this one's value is the read.
+    val first: i32 = unsafe { px.read() }
+    print(first)
+    print(x)
+
+    val np: Ptr<i32> = Ptr.null()
+    print(np.is_null())
+    val ap: Ptr<i32> = Ptr.from_addr(4096)
+    print(ap.addr())
+}
