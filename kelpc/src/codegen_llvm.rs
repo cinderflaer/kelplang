@@ -366,6 +366,8 @@ pub fn compile(
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
+    include_dirs: &[String],
+    library_dirs: &[String],
 ) -> Result<(), String> {
     llvm_ffi::initialize_native_target()?;
     let triple = llvm_ffi::default_target_triple();
@@ -464,15 +466,22 @@ pub fn compile(
         Some(source) => {
             let c_path = out_path.with_extension("externs.c");
             let obj_path = out_path.with_extension("externs.o");
-            crate::driver::compile_c_object(&source, &c_path, &obj_path, opt)
+            crate::driver::compile_c_object(&source, &c_path, &obj_path, opt, include_dirs)
                 .map_err(|e| e.message)?;
             Some(obj_path)
         }
         None => None,
     };
 
-    crate::driver::link_llvm_object(&object_path, program_object.as_deref(), out_path, opt, link_libs)
-        .map_err(|e| e.message)
+    crate::driver::link_llvm_object(
+        &object_path,
+        program_object.as_deref(),
+        out_path,
+        opt,
+        link_libs,
+        library_dirs,
+    )
+    .map_err(|e| e.message)
 }
 
 /// One declared callable: the LLVM function, its LLVM type, and the `tir` return
@@ -10970,6 +10979,7 @@ mod layout_tests {
             &dir.join("all.externs.c"),
             &dir.join("all.externs.o"),
             crate::opt::OptLevel::DEFAULT,
+            &[],
         ) {
             panic!(
                 "a shipped extern body does not compile against the prelude: {}",
@@ -11302,6 +11312,7 @@ mod layout_tests {
             &dir.join("types.externs.c"),
             &dir.join("types.externs.o"),
             crate::opt::OptLevel::DEFAULT,
+            &[],
         ) {
             panic!(
                 "the extern prelude a signature naming these types needs does not \

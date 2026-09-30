@@ -38,6 +38,8 @@ pub fn compile_c(
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
+    include_dirs: &[String],
+    library_dirs: &[String],
 ) -> Result<(), CompileError> {
     let c_path = out_path.with_extension("c");
     std::fs::write(&c_path, c_source).map_err(|e| CompileError {
@@ -63,6 +65,9 @@ pub fn compile_c(
         .arg("-lm")
         .arg("-lssl")
         .arg("-lcrypto");
+    for flag in dir_flags(include_dirs, library_dirs) {
+        command.arg(flag);
+    }
     // `-l<name>` for every native library a `coral.toml` `[extern."<module
     // id>"]` section named (MK9-S1-M1, roadmap B-1): a user FFI module's
     // trampoline calls straight into it, and this is the one place that
@@ -105,18 +110,24 @@ pub fn compile_c_object(
     c_path: &Path,
     obj_path: &Path,
     opt: OptLevel,
+    include_dirs: &[String],
 ) -> Result<(), CompileError> {
     std::fs::write(c_path, c_source).map_err(|e| CompileError {
         message: format!("could not write generated C to '{}': {e}", c_path.display()),
     })?;
-    let output = Command::new("cc")
+    let mut command = Command::new("cc");
+    command
         .arg("-c")
         .arg(opt.cc_flag())
         .arg("-fwrapv")
         // The same reason the runtime object's own build passes it: an `extern
         // fun` body may reach the thread runtime's helpers (MK9-S3-M1 stage C1).
         .arg("-pthread")
-        .arg("-Werror=implicit-function-declaration")
+        .arg("-Werror=implicit-function-declaration");
+    for flag in dir_flags(include_dirs, &[]) {
+        command.arg(flag);
+    }
+    let output = command
         .arg("-o")
         .arg(obj_path)
         .arg(c_path)
@@ -163,6 +174,7 @@ pub fn link_llvm_object(
     out_path: &Path,
     opt: OptLevel,
     link_libs: &[String],
+    library_dirs: &[String],
 ) -> Result<(), CompileError> {
     let runtime_path = std::env::temp_dir().join(format!(
         "kelp_rt_{}_{}.o",
@@ -194,6 +206,9 @@ pub fn link_llvm_object(
         // 37); an unused library is free to link, the same as `-lm` above.
         .arg("-lssl")
         .arg("-lcrypto");
+    for flag in dir_flags(&[], library_dirs) {
+        command.arg(flag);
+    }
     // See `compile_c`'s matching loop: a `coral.toml` `[extern."<module
     // id>"]` section's `library` (MK9-S1-M1) has to be on this link line too,
     // not only the C backend's, or an LLVM-backend build of the same program
@@ -218,4 +233,34 @@ pub fn link_llvm_object(
     }
 
     Ok(())
+}
+
+/// The `-I<dir>` and `-L<dir>` flags for a project's `[extern.*]` include and
+/// library directories, in that order. Pure, so the flag shape is tested
+/// without invoking `cc`.
+pub fn dir_flags(include_dirs: &[String], library_dirs: &[String]) -> Vec<String> {
+    include_dirs
+        .iter()
+        .map(|dir| format!("-I{dir}"))
+        .chain(library_dirs.iter().map(|dir| format!("-L{dir}")))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dir_flags_name_includes_then_libraries() {
+        let flags = dir_flags(
+            &["/a".to_string(), "/b".to_string()],
+            &["/c".to_string()],
+        );
+        assert_eq!(flags, ["-I/a", "-I/b", "-L/c"]);
+    }
+
+    #[test]
+    fn no_dirs_yield_no_flags() {
+        assert!(dir_flags(&[], &[]).is_empty());
+    }
 }

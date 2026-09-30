@@ -326,7 +326,16 @@ fn build(
         Backend::C => {
             let c_source = codegen_c::generate(&typed, &drops, &sources);
             let link_libs = loaded.project.extern_libraries();
-            if let Err(e) = driver::compile_c(&c_source, out_path, opt, &link_libs) {
+            let include_dirs = loaded.project.extern_include_dirs();
+            let library_dirs = loaded.project.extern_library_dirs();
+            if let Err(e) = driver::compile_c(
+                &c_source,
+                out_path,
+                opt,
+                &link_libs,
+                &include_dirs,
+                &library_dirs,
+            ) {
                 eprintln!("error: {}", e.message);
                 return false;
             }
@@ -336,9 +345,18 @@ fn build(
             // beside the binary, and links the object itself; the C source
             // string the arm above writes has no counterpart here.
             let link_libs = loaded.project.extern_libraries();
-            if let Err(message) =
-                codegen_llvm::compile(&typed, &drops, &sources, out_path, opt, &link_libs)
-            {
+            let include_dirs = loaded.project.extern_include_dirs();
+            let library_dirs = loaded.project.extern_library_dirs();
+            if let Err(message) = codegen_llvm::compile(
+                &typed,
+                &drops,
+                &sources,
+                out_path,
+                opt,
+                &link_libs,
+                &include_dirs,
+                &library_dirs,
+            ) {
                 eprintln!("error: {message}");
                 return false;
             }

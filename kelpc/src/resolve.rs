@@ -139,6 +139,20 @@ impl Project {
     pub fn extern_headers(&self) -> Vec<String> {
         collect_extern_headers(&self.extern_modules)
     }
+
+    /// Every include directory named across the project's `[extern.*]`
+    /// sections, resolved against the manifest's directory, deduplicated and
+    /// sorted. `driver.rs` passes each one to `cc` as `-I<dir>`.
+    pub fn extern_include_dirs(&self) -> Vec<String> {
+        collect_extern_dirs(&self.extern_modules, self.root.as_deref(), |e| e.include_dirs())
+    }
+
+    /// Every library directory named across the project's `[extern.*]`
+    /// sections, resolved like `extern_include_dirs`. `driver.rs` passes each
+    /// one to `cc` as `-L<dir>`.
+    pub fn extern_library_dirs(&self) -> Vec<String> {
+        collect_extern_dirs(&self.extern_modules, self.root.as_deref(), |e| e.library_dirs())
+    }
 }
 
 fn collect_extern_headers(extern_modules: &HashMap<String, ExternModuleDecl>) -> Vec<String> {
@@ -149,6 +163,28 @@ fn collect_extern_headers(extern_modules: &HashMap<String, ExternModuleDecl>) ->
     headers.sort();
     headers.dedup();
     headers
+}
+
+/// The shared body of `extern_include_dirs` and `extern_library_dirs`: each
+/// section's entries are resolved against the directory holding `coral.toml`
+/// (an absolute entry is left as written, since `Path::join` keeps it), then
+/// the union is deduplicated and sorted.
+fn collect_extern_dirs(
+    extern_modules: &HashMap<String, ExternModuleDecl>,
+    root: Option<&Path>,
+    select: impl Fn(&ExternModuleDecl) -> &[String],
+) -> Vec<String> {
+    let mut dirs: Vec<String> = extern_modules
+        .values()
+        .flat_map(|e| select(e).iter())
+        .map(|dir| match root {
+            Some(root) => root.join(dir).to_string_lossy().into_owned(),
+            None => dir.clone(),
+        })
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
 }
 
 /// One `[extern."<module id>"]` section's contents (MK9-S1-M1, roadmap B-1):
@@ -173,6 +209,13 @@ pub struct ExternModuleDecl {
     /// fixed preamble, so a `extern fun` whose native symbol the runtime does
     /// not already declare has a prototype instead of an implicit one.
     header: Option<String>,
+    /// The directories `-I<dir>` names when the generated C is compiled, as
+    /// written: `collect_extern_dirs` resolves each against the manifest's
+    /// own directory when `Project::extern_include_dirs` reads them.
+    include_dirs: Vec<String>,
+    /// The directories `-L<dir>` names on the link line, resolved the same
+    /// way.
+    library_dirs: Vec<String>,
 }
 
 impl ExternModuleDecl {
@@ -185,6 +228,16 @@ impl ExternModuleDecl {
     /// named one.
     pub fn header(&self) -> Option<&str> {
         self.header.as_deref()
+    }
+
+    /// The include directories this section named, as written.
+    pub fn include_dirs(&self) -> &[String] {
+        &self.include_dirs
+    }
+
+    /// The library directories this section named, as written.
+    pub fn library_dirs(&self) -> &[String] {
+        &self.library_dirs
     }
 
     /// The C symbol the `extern fun` whose bare Kelp name is `kelp` binds to,
@@ -1259,7 +1312,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         if decl.domain.is_none() {
             return Err(Diagnostic::new(
                 format!(
-                    "{MANIFEST_NAME}'s '[extern.\"{module_id}\"]' section is missing 'domain = \"<domain>\"' — v1 has {}",
+                    "{MANIFEST_NAME}'s '[extern.\"{module_id}\"]' section is missing 'domain = \"<domain>\"'; v1 has {}",
                     crate::stdlib::DOMAINS.join(", ")
                 ),
                 at,
@@ -1419,7 +1472,7 @@ fn parse_extern_line(
             if !crate::stdlib::is_domain(domain) {
                 return Err(Diagnostic::new(
                     format!(
-                        "'{domain}' is not a capability domain — v1 has {}",
+                        "'{domain}' is not a capability domain; v1 has {}",
                         crate::stdlib::DOMAINS.join(", ")
                     ),
                     at,
@@ -1479,6 +1532,12 @@ fn parse_extern_line(
                 ));
             }
             entry.header = Some(header.to_string());
+        }
+        "include_dirs" => {
+            entry.include_dirs = parse_dir_list(value, module_id, "include_dirs", at)?;
+        }
+        "library_dirs" => {
+            entry.library_dirs = parse_dir_list(value, module_id, "library_dirs", at)?;
         }
         "symbols" => {
             let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
@@ -1563,6 +1622,75 @@ fn parse_extern_line(
         }
     }
     Ok(())
+}
+
+/// The `include_dirs`/`library_dirs` value of a `[extern."<module id>"]`
+/// section: a bracketed list of double-quoted paths, kept as written (the
+/// relative ones are resolved against the manifest's directory when
+/// `collect_extern_dirs` reads them). Each entry becomes a `-I<dir>` or
+/// `-L<dir>` flag, so an empty entry, a quote, a newline or a NUL is refused,
+/// and a leading '-' is refused because it would read as the start of another
+/// flag rather than as a directory.
+fn parse_dir_list(
+    value: &str,
+    module_id: &str,
+    key: &str,
+    at: Span,
+) -> Result<Vec<String>, Diagnostic> {
+    let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] {key}' must be a bracketed list of double-quoted paths, found '{value}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let inner = inner.trim();
+    let mut dirs = Vec::new();
+    if !inner.is_empty() {
+        for part in inner.split(',') {
+            let part = part.trim();
+            let Some(dir) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} path for '[extern.\"{module_id}\"] {key}' must be double-quoted, found '{part}'"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            if dir.is_empty() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} path for '[extern.\"{module_id}\"] {key}' must not be empty"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            if dir.contains('"') || dir.contains('\n') || dir.contains('\r') || dir.contains('\0') {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} path for '[extern.\"{module_id}\"] {key}' must not contain '\"', a newline or NUL, found '{dir}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            if dir.starts_with('-') {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} path for '[extern.\"{module_id}\"] {key}' must not start with '-', found '{dir}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            dirs.push(dir.to_string());
+        }
+    }
+    Ok(dirs)
 }
 
 /// The project's `naming_case`, for `kelpc lint` (`syntax.md` 19, roadmap
@@ -2024,5 +2152,102 @@ mod tests {
     fn a_kelp_name_listed_twice_is_rejected() {
         let err = manifest_err(&extern_symbols_section("[\"getpid\", \"getpid=other_pid\"]"));
         assert!(err.message.contains("'getpid' more than once"), "{}", err.message);
+    }
+
+    fn extern_dirs_section(module: &str, key: &str, value: &str) -> String {
+        format!(
+            "[extern.\"{module}\"]\n\
+             domain = \"time\"\n\
+             library = \"c\"\n\
+             symbols = []\n\
+             {key} = {value}\n"
+        )
+    }
+
+    #[test]
+    fn include_and_library_dirs_are_parsed_as_written() {
+        let parsed = manifest(&extern_dirs_section(
+            "a",
+            "include_dirs",
+            "[\"include\", \"/opt/inc\"]",
+        ));
+        let decl = parsed.extern_modules.get("a").expect("extern section");
+        assert_eq!(
+            decl.include_dirs(),
+            ["include".to_string(), "/opt/inc".to_string()].as_slice()
+        );
+        assert!(decl.library_dirs().is_empty());
+
+        let parsed = manifest(&extern_dirs_section("a", "library_dirs", "[\"lib\"]"));
+        assert_eq!(
+            parsed
+                .extern_modules
+                .get("a")
+                .expect("extern section")
+                .library_dirs(),
+            ["lib".to_string()].as_slice()
+        );
+    }
+
+    #[test]
+    fn a_dir_entry_that_is_not_a_bracketed_list_is_rejected() {
+        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "include"));
+        assert!(err.message.contains("include_dirs' must be a bracketed list"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_dir_entry_that_is_not_double_quoted_is_rejected() {
+        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[include]"));
+        assert!(err.message.contains("include_dirs' must be double-quoted"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_empty_dir_entry_is_rejected() {
+        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[\"\"]"));
+        assert!(err.message.contains("include_dirs' must not be empty"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_dir_entry_with_a_forbidden_character_is_rejected() {
+        for bad in ["\"a\"b\"", "\"a\nb\"", "\"a\0b\""] {
+            let err = parse_dir_list(&format!("[{bad}]"), "a", "include_dirs", Span::new(0, 0))
+                .expect_err("expected a forbidden character to be refused");
+            assert!(err.message.contains("must not contain"), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_dir_entry_starting_with_a_dash_is_rejected() {
+        let err = manifest_err(&extern_dirs_section("a", "include_dirs", "[\"-I/usr/include\"]"));
+        assert!(err.message.contains("include_dirs' must not start with '-'"), "{}", err.message);
+    }
+
+    #[test]
+    fn extern_dirs_are_resolved_deduplicated_and_sorted() {
+        let text = format!(
+            "{}{}",
+            extern_dirs_section("a", "include_dirs", "[\"include\", \"/opt/inc\"]"),
+            extern_dirs_section("b", "include_dirs", "[\"include\"]"),
+        );
+        let parsed = manifest(&text);
+        assert_eq!(
+            collect_extern_dirs(
+                &parsed.extern_modules,
+                Some(Path::new("/proj")),
+                |e| e.include_dirs()
+            ),
+            ["/opt/inc".to_string(), "/proj/include".to_string()].as_slice()
+        );
+    }
+
+    #[test]
+    fn a_relative_dir_is_resolved_against_the_manifest_directory() {
+        let parsed = manifest(&extern_dirs_section("a", "library_dirs", "[\"lib\"]"));
+        let dirs = collect_extern_dirs(
+            &parsed.extern_modules,
+            Some(Path::new("/proj")),
+            |e| e.library_dirs(),
+        );
+        assert_eq!(dirs, ["/proj/lib".to_string()].as_slice());
     }
 }
