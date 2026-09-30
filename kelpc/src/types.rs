@@ -1034,6 +1034,14 @@ pub fn handle_c_type(name: &str) -> String {
     format!("kelp_Handle__{}", c_ident(name))
 }
 
+/// The synthetic callee keys `infer.rs` lowers the two handle operations to.
+/// A call's callee is a string that codegen matches, and these two never come
+/// from a declaration, so they use a spelling no Kelp identifier can have.
+/// `null` carries no argument and codegen reads the handle type off the call's
+/// own `Ty::Handle`; `is_null` carries the handle as its one argument.
+pub const HANDLE_NULL_KEY: &str = "$handle$null";
+pub const HANDLE_IS_NULL_KEY: &str = "$handle$is_null";
+
 /// Whether `ty` may be a `Thread<T>`'s element: anything a worker may hand back
 /// to its joiner, which is anything that can be moved through the boundary.
 ///

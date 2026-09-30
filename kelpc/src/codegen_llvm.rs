@@ -4589,6 +4589,25 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
         span: Span,
     ) -> Result<Option<Value<'a>>, String> {
+        // `Handle.null()` and `w.is_null()` (gap 1): a handle is `ptr`, so the
+        // null handle is `ptr null` and the test is a pointer comparison.
+        // Both keys are synthetic (see `types::HANDLE_NULL_KEY`).
+        if callee == crate::types::HANDLE_NULL_KEY {
+            return Ok(Some(self.g.ctx.const_null(self.g.ctx.opaque_ptr())));
+        }
+        if callee == crate::types::HANDLE_IS_NULL_KEY {
+            let arg = args
+                .first()
+                .ok_or_else(|| no_value("the handle of is_null"))?;
+            let value = self.value_of(arg)?;
+            let null = self.g.ctx.const_null(self.g.ctx.opaque_ptr());
+            return Ok(Some(self.g.builder.build_icmp(
+                IntCmp::Eq,
+                value,
+                null,
+                "is_null",
+            )));
+        }
         // A gated call site the C backend would guard with a runtime allowlist
         // check is checked here the same way: `cap_plan` decides the domain,
         // the arguments matched and the pattern count, and every resource
