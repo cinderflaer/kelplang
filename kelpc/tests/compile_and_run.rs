@@ -2360,6 +2360,20 @@ fn an_ffi_header_key_with_a_parent_segment_is_rejected() {
 }
 
 #[test]
+fn a_manifest_ffi_symbol_rename_binds_the_kelp_name_to_the_c_symbol() {
+    assert_project_runs("ffi_rename", &project("ffi_rename"), "true\n");
+}
+
+#[test]
+fn an_ffi_symbol_rename_to_a_non_identifier_is_rejected() {
+    assert_project_rejected(
+        "ffi_bad_rename",
+        &project("ffi_bad_rename"),
+        "C symbol for '[extern.\"sys\"] symbols' must be a C identifier",
+    );
+}
+
+#[test]
 fn a_granted_module_can_write_rename_size_and_remove_inside_its_grant() {
     let dir = caps_scratch("write");
     assert_project_runs(

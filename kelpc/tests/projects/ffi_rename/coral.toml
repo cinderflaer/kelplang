@@ -1,0 +1,10 @@
+name = "ffirename"
+
+# MK9-S1-M1 (roadmap B-1): like ffi_getpid, but the allowlist entry names two
+# things, "process_id=getpid": the Kelp function `sys.process_id` and the C
+# symbol `getpid` it binds to. The manifest is what makes the two differ; the
+# trampoline calls `getpid`, and nothing in the program spells that name.
+[extern."sys"]
+domain = "process"
+library = "c"
+symbols = ["process_id=getpid"]

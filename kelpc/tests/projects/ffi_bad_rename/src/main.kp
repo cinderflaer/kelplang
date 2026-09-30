@@ -1,0 +1,5 @@
+impl "sys" caps(process = ["/**"])
+
+fun main() {
+    print(sys.process_id() > 0)
+}
