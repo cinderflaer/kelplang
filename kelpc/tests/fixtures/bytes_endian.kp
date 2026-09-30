@@ -78,4 +78,42 @@ fun main() {
     val pushed = fmt.bytes(h.clone())
     val written = fmt.bytes(out.clone())
     print(str.eq(pushed.as_str(), written.as_str())) // true
+
+    // The writers the header above did not use, one per name, plus the one
+    // signed reader it did not reach: `write_u32_le`, both eight-byte orders,
+    // both signed widths in both orders, and `read_i64_be`.
+    var m = Bytes.empty()
+    var k: usize = 0
+    while k < 16 {
+        m.push(0)
+        k = k + 1
+    }
+
+    m.write_u32_le(0, 0x11223344)
+    print(fmt.hex(m.read_u32_le(0).to_u64())) // 11223344
+    print(fmt.hex(m.read_u32_be(0).to_u64())) // 44332211
+
+    m.write_u64_le(4, 0x0102030405060708)
+    print(fmt.hex(m.read_u64_le(4))) // 102030405060708
+    print(fmt.hex(m.read_u64_be(4))) // 807060504030201
+
+    m.write_u64_be(4, 0x0102030405060708)
+    print(fmt.hex(m.read_u64_be(4))) // 102030405060708
+    print(fmt.hex(m.read_u64_le(4))) // 807060504030201
+
+    m.write_i32_le(0, 0 - 2)
+    print(m.read_i32_le(0)) // -2
+    print(fmt.hex(m.read_u32_be(0).to_u64())) // feffffff
+
+    m.write_i32_be(0, 0 - 1)
+    print(m.read_i32_be(0)) // -1
+    print(fmt.hex(m.read_u32_le(0).to_u64())) // ffffffff
+
+    m.write_i64_le(4, 0 - 2)
+    print(m.read_i64_le(4)) // -2
+    print(m.read_i64_be(4)) // -72057594037927937
+
+    m.write_i64_be(4, 0 - 2)
+    print(m.read_i64_be(4)) // -2
+    print(fmt.hex(m.read_u64_le(4))) // feffffffffffffff
 }

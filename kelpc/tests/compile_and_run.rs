@@ -2478,7 +2478,10 @@ fn a_wire_header_round_trips_through_both_byte_orders() {
          -559038737\n-272716322\n\
          807060504030201\n102030405060708\n578437695752307201\n\
          504b0102\n2014b50\n504b0102deadbeef\n1f90\ndeadbeef\n\
-         50 4b 01 02 de ad be ef 90 1f\ntrue\n",
+         50 4b 01 02 de ad be ef 90 1f\ntrue\n\
+         11223344\n44332211\n102030405060708\n807060504030201\n\
+         102030405060708\n807060504030201\n-2\nfeffffff\n-1\nffffffff\n\
+         -2\n-72057594037927937\n-2\nfeffffffffffffff\n",
     );
 }
 
