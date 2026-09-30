@@ -57,3 +57,11 @@ the first slice of MK9-S1-M1 is in the tree.
 6. **Domain decision** (item 6), taken with the owner of C-1/C-3, before anything ships.
 
 Trailing blocks (`plan/trailing-closure.md`) are independent of all six.
+
+## Status update (2026-09-30)
+
+Closed on `main`: gap 2 (symbol rename), gap 3 (the `header` key; see below), gap 5's include/library directory half.
+- **Gap 3, prototype generation: not planned.** The `header` key makes the real declaration visible, so generating
+  a prototype from the Kelp signature would only risk a second, conflicting declaration.
+- **Gap 6 (domain):** options and a recommendation are in `plan/ffi-display-domain.md`; it needs a decision.
+- **In progress:** `pkg_config` (gap 5, second half), an opaque handle type (gap 1), C-ABI callbacks (gap 4).
