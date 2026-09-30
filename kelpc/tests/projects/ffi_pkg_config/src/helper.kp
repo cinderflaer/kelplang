@@ -1,0 +1,5 @@
+// MK9-S1-M1 (roadmap B-1): a user module's own "extern fun", bound to a
+// native symbol through this project's coral.toml '[extern."helper"]'
+// section. The symbol is defined in the project's own header, which the
+// manifest's `pkg_config` key makes findable through the fixture's `.pc` file.
+pub extern fun kelp_pkg_triple(x: i32).R: i32

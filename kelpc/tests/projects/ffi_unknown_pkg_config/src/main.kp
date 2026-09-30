@@ -1,0 +1,5 @@
+impl "helper" caps(env = ["*"])
+
+fun main() {
+    print(helper.kelp_pkg_triple(14))
+}
