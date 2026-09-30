@@ -79,3 +79,38 @@ does not validate.
 that memory reached through a `Ptr` holds a value of the type it is read as.
 There is still no provenance model (roadmap D-1); `repr` makes the alignment
 part of D-1's description rather than adding a check.
+
+## Stage 3: MK9-S8 data formats
+
+**New ways to reach UB.** This stage adds one new promise and one new
+unchecked offset, both in unsafe code or on a caller-controlled one:
+
+- `Ptr.read_unaligned`/`write_unaligned` drop the *alignment* half of what
+  `read`/`write` already required, and nothing else. The address still has to
+  point at a live, initialised `T` inside one allocated object, exactly the
+  stage 1 rule; an unaligned access to a valid object is defined, and an
+  aligned access to a bad address is still UB. There is no provenance model
+  (roadmap D-1), so the compiler cannot tell either case from the other.
+- The `Bytes` byte-order readers and writers take a caller-supplied `usize`
+  offset. The compiler checks nothing about where a `Bytes` came from, but the
+  runtime bounds check (`offset + width <= len`, with the wrapped addition a
+  failure too) means an offset outside the buffer panics instead of reaching
+  the memory, so the offset alone cannot make these two UB.
+
+**What the compiler does check.** That the byte-order methods are written on
+an integer or a `Bytes` (the associated `u32.from_be(x)` forms take a value of
+the same type); that a `Bytes` write has a `mut` receiver, so the borrow
+checker sees the exclusive borrow the mutation needs; that
+`Ptr.read_unaligned` only reads a `Copy` element; and that both unaligned
+operations are inside an `unsafe` block or an `unsafe fun` in a module
+`coral.toml` lists under `[unsafe] modules`. Both backends emit the unaligned
+access as an align-1 load or store (`align 1` on LLVM, `memcpy` on C) and the
+swap as `llvm.bswap.*` / `__builtin_bswap*`, and `to_le`/`to_be` read the
+target's own byte order rather than the host's.
+
+**What it does not check.** The alignment of any address, as before, and
+nothing about a `Bytes` beyond its length: whether the bytes at an offset hold
+the field the program says they do is the program's claim about the format,
+not the type system's. The two APIs are also not bounds-checked against each
+other: a `write_u32_le` may overwrite a field a `read_u16_le` expects, and the
+language has no rule that ties two accesses to one location (roadmap D-1).
