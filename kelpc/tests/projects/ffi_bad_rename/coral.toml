@@ -1,0 +1,9 @@
+name = "ffibadrename"
+
+# MK9-S1-M1 (roadmap B-1): a rename whose C symbol is not a C identifier is
+# refused at manifest-parse time: "get-pid" would be spliced into the generated
+# trampoline verbatim, so it has to be a name the C compiler can see.
+[extern."sys"]
+domain = "process"
+library = "c"
+symbols = ["process_id=get-pid"]

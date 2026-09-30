@@ -1,0 +1,8 @@
+// MK9-S1-M1 (roadmap B-1): main delegates the "process" domain coral.toml
+// assigned "sys" to it, then calls the renamed binding. A real PID is always
+// > 0, so the program prints true.
+impl "sys" caps(process = ["/**"])
+
+fun main() {
+    print(sys.process_id() > 0)
+}

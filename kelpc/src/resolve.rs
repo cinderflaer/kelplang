@@ -162,10 +162,11 @@ pub struct ExternModuleDecl {
     domain: Option<String>,
     /// The library `-l<name>` names on the link line.
     library: Option<String>,
-    /// The exact native symbol names this module's `extern fun` declarations
-    /// may bind to. MK9-S1-M1 keeps user FFI to a 1:1 name mapping: the bare
-    /// Kelp function name a declaration writes *is* the symbol
-    /// `codegen_c.rs` calls, so a rename is not this pass's problem to solve.
+    /// The exact native symbols this module's `extern fun` declarations may
+    /// bind to, each written as it appeared in `symbols`: either
+    /// `"kelp_name"` (the Kelp name *is* the symbol `codegen_c.rs` calls), or
+    /// `"kelp_name=c_symbol"` when the two differ. Every entry's Kelp name is
+    /// unique, so `symbol_of` resolves one unambiguously.
     pub symbols: Vec<String>,
     /// The C header this module's symbols are declared in, when the section
     /// names one. `codegen_c.rs` emits it as `#include <header>` after the
@@ -184,6 +185,17 @@ impl ExternModuleDecl {
     /// named one.
     pub fn header(&self) -> Option<&str> {
         self.header.as_deref()
+    }
+
+    /// The C symbol the `extern fun` whose bare Kelp name is `kelp` binds to,
+    /// or `None` when this module's allowlist does not name it. `infer.rs`
+    /// matches the allowlist on the Kelp name and reads the C symbol from the
+    /// same entry.
+    pub fn symbol_of(&self, kelp: &str) -> Option<&str> {
+        self.symbols.iter().find_map(|entry| {
+            let (kelp_name, symbol) = entry.split_once('=').unwrap_or((entry, entry));
+            (kelp_name == kelp).then_some(symbol)
+        })
     }
 }
 
@@ -1366,8 +1378,9 @@ fn parse_caps_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), 
 
 /// One `key = value` line inside `coral.toml`'s `[extern."<module_id>"]`
 /// section (MK9-S1-M1, roadmap B-1): `domain = "<one of stdlib::DOMAINS>"`,
-/// `library = "<native library name>"`, or `symbols = ["<name>", ...]`. The
-/// header line already inserted a default `ExternModuleDecl` for
+/// `library = "<native library name>"`, or `symbols = ["<name>", ...]`. A
+/// `symbols` entry is `"<kelp name>"` (same native symbol) or
+/// `"<kelp name>=<c symbol>"`. The header line already inserted a default `ExternModuleDecl` for
 /// `module_id` (mirrors `[caps]`'s duplicate-domain check, but at the
 /// section level since a module gets at most one `[extern.*]` entry), so
 /// this only ever updates it.
@@ -1479,6 +1492,7 @@ fn parse_extern_line(
             };
             let inner = inner.trim();
             let mut symbols = Vec::new();
+            let mut kelp_names = Vec::new();
             if !inner.is_empty() {
                 for part in inner.split(',') {
                     let part = part.trim();
@@ -1492,6 +1506,47 @@ fn parse_extern_line(
                             "",
                         ));
                     };
+                    // A plain entry binds the Kelp name to the symbol of the
+                    // same name; `"kelp=c_symbol"` binds one to the other.
+                    let (kelp, symbol) = sym.split_once('=').unwrap_or((sym, sym));
+                    if kelp.is_empty() || symbol.is_empty() {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME} symbol for '[extern.\"{module_id}\"] symbols' must name a Kelp function and a C symbol on either side of '=', found '{sym}'"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                    if kelp.chars().any(char::is_whitespace) || symbol.chars().any(char::is_whitespace)
+                    {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME} symbol for '[extern.\"{module_id}\"] symbols' must not contain whitespace, found '{sym}'"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                    if !is_ident(symbol) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME} C symbol for '[extern.\"{module_id}\"] symbols' must be a C identifier, found '{symbol}'"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                    if kelp_names.contains(&kelp) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME} symbol for '[extern.\"{module_id}\"] symbols' lists the Kelp function '{kelp}' more than once"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                    kelp_names.push(kelp);
                     symbols.push(sym.to_string());
                 }
             }
@@ -1902,5 +1957,72 @@ mod tests {
                 err.message
             );
         }
+    }
+
+    fn extern_symbols_section(symbols: &str) -> String {
+        format!(
+            "name = \"x\"\n[extern.\"a\"]\n\
+             domain = \"time\"\n\
+             library = \"c\"\n\
+             symbols = {symbols}\n"
+        )
+    }
+
+    fn extern_symbol_of(symbols: &str, kelp: &str) -> Option<String> {
+        let manifest = manifest(&extern_symbols_section(symbols));
+        manifest
+            .extern_modules
+            .get("a")
+            .expect("extern section")
+            .symbol_of(kelp)
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn a_plain_symbol_entry_binds_the_kelp_name_to_itself() {
+        assert_eq!(extern_symbol_of("[\"getpid\"]", "getpid"), Some("getpid".into()));
+        assert_eq!(extern_symbol_of("[\"getpid\"]", "other"), None);
+    }
+
+    #[test]
+    fn a_renamed_symbol_entry_binds_the_kelp_name_to_the_c_symbol() {
+        assert_eq!(
+            extern_symbol_of("[\"window_new=gtk_window_new\"]", "window_new"),
+            Some("gtk_window_new".into())
+        );
+        assert_eq!(
+            extern_symbol_of("[\"window_new=gtk_window_new\"]", "gtk_window_new"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_symbol_entry_with_an_empty_side_is_rejected() {
+        for bad in ["[\"=getpid\"]", "[\"getpid=\"]"] {
+            let err = manifest_err(&extern_symbols_section(bad));
+            assert!(err.message.contains("must name a Kelp function and a C symbol"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_symbol_entry_with_whitespace_is_rejected() {
+        for bad in ["[\"get pid\"]", "[\"getpid=gtk window_new\"]"] {
+            let err = manifest_err(&extern_symbols_section(bad));
+            assert!(err.message.contains("must not contain whitespace"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_symbol_entry_whose_c_symbol_is_not_an_identifier_is_rejected() {
+        for bad in ["[\"getpid=a-b\"]", "[\"getpid=7z\"]", "[\"getpid=g(h)\"]"] {
+            let err = manifest_err(&extern_symbols_section(bad));
+            assert!(err.message.contains("must be a C identifier"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_kelp_name_listed_twice_is_rejected() {
+        let err = manifest_err(&extern_symbols_section("[\"getpid\", \"getpid=other_pid\"]"));
+        assert!(err.message.contains("'getpid' more than once"), "{}", err.message);
     }
 }

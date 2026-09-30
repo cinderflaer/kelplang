@@ -10,18 +10,21 @@ the first slice of MK9-S1-M1 is in the tree.
 - A project's `coral.toml` may carry `[extern."<module id>"]` with `domain` (one of the six
   capability domains), `library`, `symbols` (`resolve.rs`, `ExternModuleDecl`), and an optional
   `header` (a C header; see gap 3 below).
-- `infer.rs` accepts a user `extern fun` only when its bare name is in that module's `symbols`.
+- `infer.rs` accepts a user `extern fun` only when its bare Kelp name is in that module's
+  `symbols`, and a `symbols` entry may rename it: `"kelp_name=c_symbol"` (see gap 2).
 - `codegen_c.rs::write_user_extern` emits a trampoline that forwards every parameter to the C
-  symbol of the same name. `driver.rs` adds `-l<library>` for every `[extern.*]` section.
+  symbol the manifest named (the same name, unless the entry renamed it). `driver.rs` adds
+  `-l<library>` for every `[extern.*]` section.
 - The module is gated like a stdlib one: an importer needs `caps(<domain> = [...])`.
-- Tests: `tests/projects/ffi_getpid`, `ffi_denied`, `ffi_bad_domain`, `ffi_bad_symbol`.
+- Tests: `tests/projects/ffi_getpid`, `ffi_denied`, `ffi_bad_domain`, `ffi_bad_symbol`,
+  `ffi_rename`, `ffi_bad_rename`.
 
 ## Gaps, in the order a window would hit them
 
 | # | Gap | Where | Why it blocks GTK |
 |---|-----|-------|-------------------|
 | 1 | **No pointer or opaque-handle type.** `Ty` has scalars, `str`, `Bytes`, `String`, `View`, `Fn`, `Closure`, arrays and user types. | `types.rs` | `gtk_window_new` returns a `GtkWidget*`. `usize` would carry it at the ABI level but gives no type safety between a window and a button. |
-| 2 | **Symbol name is the Kelp name.** "1:1 name mapping" is stated as deliberate. | `resolve.rs`, `codegen_c.rs` | Every call reads `gtk.gtk_window_new`, and two libraries that share a symbol name cannot both be bound. |
+| 2 | ~~**Symbol name is the Kelp name.** "1:1 name mapping" is stated as deliberate.~~ **Closed.** A `symbols` entry may be `"kelp_name=c_symbol"`; `infer.rs` still matches the allowlist on the Kelp name and maps it to the C symbol for `codegen_c.rs` (`resolve.rs::ExternModuleDecl::symbol_of`, tests `ffi_rename`/`ffi_bad_rename`). | `resolve.rs`, `infer.rs` | Every call reads `gtk.gtk_window_new`, and two libraries that share a symbol name cannot both be bound. |
 | 3 | **No declaration of the native symbol.** ~~The trampoline calls it with no prototype and no `#include`; the fixtures only use libc symbols the runtime preamble already declares.~~ **Include half done:** a `header = "gtk/gtk.h"` key in `[extern.*]` is validated and emitted as `#include <...>` after the preamble, deduplicated and sorted (`resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs`). The prototype-generation half stays open: A GTK call still relies on the header for its signature, which cannot express `const char*` versus `char*` or `gpointer`. | `resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs` | GTK needs the header; a generated prototype needs the pointer types of gap 1. |
 | 4 | **Callbacks.** `Ty::Fn` is a plain function pointer with Kelp's signature; `Ty::Closure` is a `{fn, env, drop}` fat pointer. | `types.rs`, `codegen_c.rs::write_closure` | GTK wants a C function pointer plus a `void* user_data`. A closure would need a generated C-ABI thunk that unpacks `env`. `g_signal_connect_data`'s destroy-notify argument maps well onto the closure's `drop`. Nothing generates such a thunk. |
 | 5 | **Link flags are only `-l<name>`.** No `-L`, no `-I`, no `pkg-config`. `driver.rs` also always links `-lssl -lcrypto`. | `driver.rs` | GTK needs many include and library paths that `pkg-config gtk4` supplies. On NixOS they also have to be in `shell.nix`. `gtk4` is not present on this machine (`pkg-config --modversion gtk4` fails). |
@@ -45,8 +48,8 @@ the first slice of MK9-S1-M1 is in the tree.
 1. **Spike (no compiler change):** a `[extern."gtk"]` project that opens a window through
    `usize` handles and `str` titles, with `gtk4` added to `shell.nix`. This shows how far items
    1-3 and 5 can be worked around before any language change.
-2. **Symbol rename + `header` key** in `[extern.*]` (items 2, 3). Small, contained in
-   `resolve.rs` and `codegen_c.rs`.
+2. ~~**Symbol rename + `header` key** in `[extern.*]` (items 2, 3).~~ **Both done:** item 2 in
+   this pass, item 3's include half earlier.
 3. **Opaque handle type** (item 1): `extern type Widget`, a non-`Copy` or `Copy` decision to be
    made, no arithmetic, no null.
 4. **C-ABI callback with `user_data`** (item 4): the real design work.
