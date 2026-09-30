@@ -1,0 +1,9 @@
+name = "ffiuidenied"
+
+# Gap 6: the `ui` section of `ffi_ui_domain`. The point of this fixture is the
+# missing grant, not the domain.
+[extern."display"]
+domain = "ui"
+library = "c"
+header = "unistd.h"
+symbols = ["getpid"]

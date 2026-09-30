@@ -170,7 +170,13 @@ pub fn shipped() -> &'static [&'static str] {
 /// The capability domains of v1 (the plan's "Capability domains"). Each has
 /// a corresponding bare built-in namespace, and the *only* way to reach the
 /// underlying resource is through it.
-pub const DOMAINS: &[&str] = &["fs", "net", "process", "env", "time", "rand"];
+///
+/// `ui` is the one domain whose patterns are not enforced: a display call
+/// (`gtk_window_new`) carries no argument that names the display server, so
+/// the only grant that means anything is the whole-resource `*`, and
+/// `resolve.rs` refuses every other list. `plan/ffi-display-domain.md` owns
+/// that decision and the per-display vocabulary it waits on.
+pub const DOMAINS: &[&str] = &["fs", "net", "process", "env", "time", "rand", "ui"];
 
 pub fn is_domain(name: &str) -> bool {
     DOMAINS.contains(&name)
@@ -210,6 +216,9 @@ pub fn domain_of(module: &str) -> Option<&'static str> {
 /// normalizer that refuses anything without a leading `/`. A `net` pattern is
 /// `host` or `host:port`, matched as a name, and it goes through the host
 /// matcher instead.
+///
+/// `ui` is not a path domain either, and its pattern is never matched against
+/// anything: see `DOMAINS`.
 pub fn patterns_are_paths(domain: &str) -> bool {
     matches!(domain, "fs" | "process")
 }
@@ -220,8 +229,9 @@ pub fn patterns_are_paths(domain: &str) -> bool {
 /// (`syntax.md` 15.2), so both spell it through this one function rather than
 /// repeating the vocabulary.
 ///
-/// `time` and `rand` have no named resource at all, so their whole-resource
-/// pattern is never matched against anything: it is the domain gate alone.
+/// `time`, `rand` and `ui` have no named resource at all, so their
+/// whole-resource pattern is never matched against anything: it is the domain
+/// gate alone. For `ui` it is also the only pattern a grant may name.
 pub fn whole_resource(domain: &str) -> &'static str {
     if patterns_are_paths(domain) {
         "/**"
@@ -274,8 +284,8 @@ pub fn is_str_like_ty(ty: &crate::types::Ty) -> bool {
 /// `env` checks its variable name; `process` checks the program path, which is
 /// not argument 0 for every call (see `process_checked_args`); `net` names its
 /// resources positionally, because its signatures mix resources with ordinary
-/// strings and numbers. `time` and `rand` have no named resource at all, so
-/// there is nothing to match.
+/// strings and numbers. `time`, `rand` and `ui` have no named resource at all,
+/// so there is nothing to match.
 ///
 /// `callee` is the bare function name as written at the call site
 /// (`connect`, not `std.net.connect`).
@@ -373,5 +383,34 @@ fn net_checked_args(callee: &str, _arg_is_str: &[bool]) -> Vec<CapCheck> {
         "listen" | "listen_raw" => vec![CapCheck::Port(0)],
         "resolve" | "resolve_raw" => vec![CapCheck::Host(0)],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_domain_list_names_every_domain_once() {
+        assert_eq!(DOMAINS, &["fs", "net", "process", "env", "time", "rand", "ui"]);
+        let mut sorted = DOMAINS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), DOMAINS.len(), "a domain name appears twice");
+    }
+
+    #[test]
+    fn ui_is_a_name_domain_with_the_whole_resource_wildcard() {
+        assert!(is_domain("ui"));
+        assert!(!patterns_are_paths("ui"));
+        assert_eq!(whole_resource("ui"), "*");
+    }
+
+    #[test]
+    fn a_ui_call_names_no_resource_to_match() {
+        // No argument at a display call names the display server, which is
+        // why `ui` is granted as the wildcard only (plan/ffi-display-domain.md).
+        assert!(checked_args("ui", "gtk_window_new", &[false, false]).is_empty());
+        assert!(checked_args("ui", "gtk_window_set_title", &[false, true]).is_empty());
     }
 }

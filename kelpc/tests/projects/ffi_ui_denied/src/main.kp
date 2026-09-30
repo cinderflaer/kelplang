@@ -1,0 +1,8 @@
+// No `caps(...)`: `util` receives no capabilities at all, so its reference to
+// `display.getpid` inside `read_pid` is a resolution error rather than a
+// runtime check that happens to reject it (mirrors `ffi_denied`).
+impl "util"
+
+fun main() {
+    print(util.read_pid() > 0)
+}
