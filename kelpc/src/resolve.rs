@@ -2424,6 +2424,24 @@ mod tests {
     }
 
     #[test]
+    fn a_ui_pattern_in_the_manifest_caps_section_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[caps]\nui = [\"wayland-0\"]\n");
+        assert!(
+            err.message.contains("patterns are not enforceable in the 'ui' domain yet"),
+            "{}",
+            err.message
+        );
+        // The wildcard is the vocabulary, so the section parses with it.
+        assert_eq!(
+            manifest("name = \"x\"\n[caps]\nui = [\"*\"]\n")
+                .caps
+                .expect("the [caps] section")
+                .get("ui"),
+            Some(&vec!["*".to_string()])
+        );
+    }
+
+    #[test]
     fn a_pkg_config_key_set_twice_is_rejected() {
         let text = "name = \"x\"\n[extern.\"a\"]\n\
                     domain = \"time\"\n\
