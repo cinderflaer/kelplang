@@ -2511,30 +2511,38 @@ fn an_ffi_callback_closure_crosses_to_native_code() {
     }
 }
 
+/// The same project on the default (LLVM) backend, the one a program is built
+/// with unless the oracle switch says otherwise. It must print exactly what the
+/// C backend prints: the closure crosses as a pointer to the caller's slot, the
+/// per-program C object boxes it, and the thunk and destructor are the same
+/// generated text.
 #[test]
-fn an_llvm_ffi_callback_closure_is_rejected_by_name() {
-    // The C object's thunk has no counterpart in this backend's own lowering,
-    // so the shape is refused rather than miscompiled. `kelpc()` pins whatever
-    // backend the suite runs, so only assert the refusal when that is LLVM.
-    if backend() != "llvm" {
-        return;
-    }
-    let bin = out_path("ffi_callback_llvm_reject");
-    let build = kelpc()
+fn an_llvm_ffi_callback_closure_crosses_to_native_code() {
+    let target = project("ffi_callback");
+    let bin = out_path("ffi_callback_llvm");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_ORACLE")
         .arg("build")
-        .arg(project("ffi_callback"))
+        .arg(&target)
         .arg("-o")
         .arg(&bin)
         .output()
         .expect("failed to spawn kelpc");
     assert!(
-        !build.status.success(),
-        "expected the llvm backend to reject an 'extern fun' callback closure"
+        build.status.success(),
+        "expected 'ffi_callback' to compile on the default backend, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
     );
-    let stderr = String::from_utf8_lossy(&build.stderr);
+    let run = Command::new(&bin).output().expect("failed to run compiled binary");
     assert!(
-        stderr.contains("callbacks in user externs are not supported on the llvm backend yet"),
-        "expected the llvm refusal to name the shortfall, got:\n{stderr}"
+        run.status.success(),
+        "expected the llvm 'ffi_callback' binary to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "2\n3\n2\n4\n2\n8\n9\n2\n",
+        "the llvm build must print what the C build prints"
     );
 }
 

@@ -566,7 +566,7 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 
     for f in &program.functions {
         if f.extern_ {
-            write_extern(&mut out, f, &program.extern_ffi_symbols);
+            write_extern(&mut out, f, &program.extern_ffi_symbols, false);
             out.push('\n');
             continue;
         }
@@ -595,13 +595,19 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
 /// function. `infer.rs` has already rejected an `extern` that is neither, so
 /// reaching the `expect` in the stdlib branch would mean the table and the
 /// checker disagreed.
+///
+/// `closure_by_ref` is the LLVM backend's per-program object: a closure is 24
+/// bytes, so the LLVM call site passes it through a stack slot
+/// (`rt_arg_value`), and the trampoline compiled into that object takes a
+/// pointer to it where the C backend's own takes the struct by value.
 pub(crate) fn write_extern(
     out: &mut String,
     f: &Function,
     extern_ffi_symbols: &std::collections::HashMap<String, String>,
+    closure_by_ref: bool,
 ) {
     if let Some(symbol) = extern_ffi_symbols.get(&f.name) {
-        write_user_extern(out, f, symbol);
+        write_user_extern(out, f, symbol, closure_by_ref);
         return;
     }
     let body = crate::externs::body(&f.module, &f.name)
@@ -642,8 +648,24 @@ pub(crate) fn write_extern(
 /// one: `generate` emits one `#include <header>` line per project header
 /// after the fixed preamble, so a symbol the runtime does not already declare
 /// is not an implicit declaration.
-fn write_user_extern(out: &mut String, f: &Function, symbol: &str) {
-    write_signature(out, f);
+fn write_user_extern(out: &mut String, f: &Function, symbol: &str, closure_by_ref: bool) {
+    // In the LLVM backend's object a closure parameter arrives as a pointer to
+    // the caller's stack slot, so the signature is written with that type and
+    // the closure is read through it below.
+    let by_ref_fn;
+    let sig_fn = if closure_by_ref {
+        let mut g = f.clone();
+        for (_, ty) in g.params.iter_mut() {
+            if matches!(ty, Ty::Closure { .. }) {
+                *ty = Ty::Ref { mutable: false, inner: Box::new(ty.clone()) };
+            }
+        }
+        by_ref_fn = g;
+        &by_ref_fn
+    } else {
+        f
+    };
+    write_signature(out, sig_fn);
     out.push_str(" {\n");
     // A `move closure(...)` parameter expands in place into the GLib
     // `(func, user_data, destroy_notify)` triple the native side expects: the
@@ -653,8 +675,13 @@ fn write_user_extern(out: &mut String, f: &Function, symbol: &str) {
     // The box (not the stack parameter) is what crosses because the native
     // side may retain `user_data` past this call.
     let mut args: Vec<String> = Vec::new();
+    // The C type each native argument is passed as, for the call below when a
+    // callback is involved: the thunk and destructor cross as `void*`.
+    let mut native_types: Vec<String> = Vec::new();
+    let mut has_callback = false;
     for (name, ty) in f.params.iter().filter(|(_, ty)| *ty != Ty::Unit) {
         if let Ty::Closure { params, ret } = ty {
+            has_callback = true;
             let c_ty = ty.c_type();
             writeln!(
                 out,
@@ -666,18 +693,36 @@ fn write_user_extern(out: &mut String, f: &Function, symbol: &str) {
                 "    if (kelp_extern_cb == NULL) {{ kelp_panic(\"out of memory\"); }}"
             )
             .unwrap();
-            writeln!(out, "    *kelp_extern_cb = {};", c_name(name)).unwrap();
-            args.push(callback_thunk_name(params, ret));
-            args.push("kelp_extern_cb".to_string());
-            args.push(callback_destroy_name(params, ret));
+            let source = if closure_by_ref {
+                format!("*{}", c_name(name))
+            } else {
+                c_name(name)
+            };
+            writeln!(out, "    *kelp_extern_cb = {source};").unwrap();
+            args.push(format!("(void*){}", callback_thunk_name(params, ret)));
+            args.push("(void*)kelp_extern_cb".to_string());
+            args.push(format!("(void*){}", callback_destroy_name(params, ret)));
+            native_types.extend(["void*".to_string(), "void*".to_string(), "void*".to_string()]);
         } else {
             args.push(c_name(name));
+            native_types.push(ty.c_type());
         }
     }
-    if f.ret == Ty::Unit {
-        writeln!(out, "    {}({});", symbol, args.join(", ")).unwrap();
+    // With a callback the call goes through a function pointer of the type the
+    // expansion actually has. The native prototype (from the `header` key)
+    // spells its callback parameters as `GCallback`, `GClosureNotify` and the
+    // like, which no fixed thunk signature converts to implicitly; the ABI is
+    // the same for every pointer, so the cast is what makes the call
+    // compile. A call with no callback is the plain call it always was.
+    let callee = if has_callback {
+        format!("(({} (*)({})){symbol})", f.ret.c_type(), native_types.join(", "))
     } else {
-        writeln!(out, "    return {}({});", symbol, args.join(", ")).unwrap();
+        symbol.to_string()
+    };
+    if f.ret == Ty::Unit {
+        writeln!(out, "    {callee}({});", args.join(", ")).unwrap();
+    } else {
+        writeln!(out, "    return {callee}({});", args.join(", ")).unwrap();
     }
     out.push_str("}\n");
 }

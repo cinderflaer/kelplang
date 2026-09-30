@@ -6,7 +6,6 @@
 // `process` is the stand-in domain for a display connection (gap 6); the
 // comment in coral.toml and plan/ffi-display-domain.md own that decision.
 impl "gtk" caps(process = ["/**"])
-impl "seam" caps(process = ["/**"])
 impl "std/str"
 
 fun main() {
@@ -23,7 +22,7 @@ fun main() {
     }
 
     val button = gtk.gtk_button_new_with_label("Click")
-    seam.connect_clicked(button, on_click)
+    gtk.connect(button, "clicked", on_click, 0)
     gtk.gtk_window_set_child(window, button)
     gtk.gtk_window_present(window)
 
