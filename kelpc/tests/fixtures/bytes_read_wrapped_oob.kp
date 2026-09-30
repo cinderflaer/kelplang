@@ -1,0 +1,9 @@
+// Kernel stage 3 (MK9-S8, roadmap B-10): an offset near the top of the address
+// space would wrap `offset + width` back under the buffer's length and pass a
+// naive `offset + width <= len` test, so the wrapped addition is a failure too.
+// The offset is `usize`'s maximum, so the field cannot be inside any buffer.
+fun main() {
+    val h = Bytes.from_str("abcd")
+    val huge: usize = 0xFFFFFFFFFFFFFFFF
+    print(h.read_u16_le(huge))
+}

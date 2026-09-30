@@ -2445,6 +2445,79 @@ fn a_packed_datac_crosses_to_a_c_helper_and_the_two_layouts_agree() {
 }
 
 // ---------------------------------------------------------------------------
+// Kernel stage 3 (MK9-S8, roadmap B-10): endianness and unaligned access. The
+// integer byte-order conversions (`swap_bytes`, `to_be`/`to_le` and the static
+// `u32.from_be`/`u32.from_le`), the bounds-checked byte-order readers and
+// writers on a `Bytes`, and `Ptr.read_unaligned`/`write_unaligned`. Every
+// fixture here runs on the default (LLVM) backend and on the C oracle, because
+// the suite is run twice.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integer_byte_order_conversions_reverse_the_right_bytes() {
+    // 23 hand-computed values: `0x12345678u32.swap_bytes()` is `0x78563412`,
+    // `to_le` is the identity on this little-endian target, `to_be` is not, and
+    // swapping twice is the identity.
+    assert_compiles_and_runs(
+        "tests/fixtures/endian_scalars.kp",
+        "3412\n78563412\n807060504030201\n78563412\n807060504030201\n-16777217\n\
+         78563412\n12345678\n78563412\n12345678\n\
+         3412\n1234\n3412\n1234\n\
+         807060504030201\n102030405060708\n807060504030201\n102030405060708\n\
+         807060504030201\n102030405060708\n807060504030201\n807060504030201\n102030405060708\n",
+    );
+}
+
+#[test]
+fn a_wire_header_round_trips_through_both_byte_orders() {
+    // A 10-byte header read field by field in both orders, then rebuilt with
+    // `write_*` and compared byte for byte with the pushed one.
+    assert_compiles_and_runs(
+        "tests/fixtures/bytes_endian.kp",
+        "10\n4b50\n504b\n102\n201\ndeadbeef\nefbeadde\n1f90\n901f\n\
+         -559038737\n-272716322\n\
+         807060504030201\n102030405060708\n578437695752307201\n\
+         504b0102\n2014b50\n504b0102deadbeef\n1f90\ndeadbeef\n\
+         50 4b 01 02 de ad be ef 90 1f\ntrue\n\
+         11223344\n44332211\n102030405060708\n807060504030201\n\
+         102030405060708\n807060504030201\n-2\nfeffffff\n-1\nffffffff\n\
+         -2\n-72057594037927937\n-2\nfeffffffffffffff\n",
+    );
+}
+
+#[test]
+fn an_out_of_bounds_byte_order_read_panics() {
+    assert_fixture_panics("bytes_read_oob", "Bytes.read_u32_le: offset out of bounds");
+}
+
+#[test]
+fn an_out_of_bounds_byte_order_write_panics() {
+    assert_fixture_panics("bytes_write_oob", "Bytes.write_u16_be: offset out of bounds");
+}
+
+/// An offset near `usize`'s maximum wraps `offset + width` back under the
+/// buffer's length, so a naive test would read out of bounds instead of
+/// panicking.
+#[test]
+fn an_offset_that_would_wrap_the_bounds_check_panics() {
+    assert_fixture_panics(
+        "bytes_read_wrapped_oob",
+        "Bytes.read_u16_le: offset out of bounds",
+    );
+}
+
+/// `Ptr.read_unaligned`/`write_unaligned`: every access is at an odd address,
+/// which is exactly what the aligned `read`/`write` are not allowed to do.
+#[test]
+fn an_unaligned_pointer_read_and_write_round_trip() {
+    assert_project_runs(
+        "unsafe_unaligned",
+        &project("unsafe_unaligned"),
+        "12345678\nbeef\n102030405060708\n5060708\nfreed\n",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // MK9-S1-M1 (roadmap B-1): a user module's own `extern fun`, bound to a
 // native symbol through coral.toml's `[extern."<module id>"]` section instead
 // of a compiler-supplied body from `externs.rs`. Gated exactly like a stdlib

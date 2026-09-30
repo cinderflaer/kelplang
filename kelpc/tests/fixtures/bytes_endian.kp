@@ -1,0 +1,119 @@
+// Kernel stage 3 (MK9-S8, roadmap B-10): the byte-order readers and writers on
+// a `Bytes`. A 10-byte header is built byte by byte, every field is read back
+// in both byte orders, and the same header is rebuilt with `write_*` and
+// compared byte for byte.
+//
+// The byte layout under test, one line per field:
+//   offset 0  u16 little-endian  0x4B50  -> 50 4b
+//   offset 2  u16 big-endian     0x0102  -> 01 02
+//   offset 4  u32 big-endian     0xDEADBEEF -> de ad be ef
+//   offset 8  u16 little-endian  0x1F90  -> 90 1f
+impl "std/fmt"
+impl "std/str"
+
+fun main() {
+    var h = Bytes.empty()
+    h.push(0x50)
+    h.push(0x4B)
+    h.push(0x01)
+    h.push(0x02)
+    h.push(0xDE)
+    h.push(0xAD)
+    h.push(0xBE)
+    h.push(0xEF)
+    h.push(0x90)
+    h.push(0x1F)
+    print(h.len()) // 10
+
+    // Every field in both orders. The point of the pair is that only one of
+    // the two is the field's own order, and the other is its reversal.
+    print(fmt.hex(h.read_u16_le(0).to_u64())) // 4b50
+    print(fmt.hex(h.read_u16_be(0).to_u64())) // 504b
+    print(fmt.hex(h.read_u16_be(2).to_u64())) // 102
+    print(fmt.hex(h.read_u16_le(2).to_u64())) // 201
+    print(fmt.hex(h.read_u32_be(4).to_u64())) // deadbeef
+    print(fmt.hex(h.read_u32_le(4).to_u64())) // efbeadde
+    print(fmt.hex(h.read_u16_le(8).to_u64())) // 1f90
+    print(fmt.hex(h.read_u16_be(8).to_u64())) // 901f
+
+    // The signed readers hand back the same bytes as the signed type: the
+    // checksum read big-endian is negative, and little-endian still is.
+    print(h.read_i32_be(4)) // -559038737
+    print(h.read_i32_le(4)) // -272716322
+
+    // An eight-byte field, both orders, and the signed read of it.
+    var w = Bytes.empty()
+    w.push(1)
+    w.push(2)
+    w.push(3)
+    w.push(4)
+    w.push(5)
+    w.push(6)
+    w.push(7)
+    w.push(8)
+    print(fmt.hex(w.read_u64_le(0))) // 807060504030201
+    print(fmt.hex(w.read_u64_be(0))) // 102030405060708
+    print(w.read_i64_le(0)) // 578437695752307201
+
+    // The same header, written this time rather than pushed.
+    var out = Bytes.empty()
+    var i: usize = 0
+    while i < 10 {
+        out.push(0)
+        i = i + 1
+    }
+    out.write_u16_le(0, 0x4B50)
+    out.write_u16_be(2, 0x0102)
+    out.write_u32_be(4, 0xDEADBEEF)
+    out.write_u16_le(8, 0x1F90)
+
+    print(fmt.hex(out.read_u32_be(0).to_u64())) // 504b0102
+    print(fmt.hex(out.read_u32_le(0).to_u64())) // 2014b50
+    print(fmt.hex(out.read_u64_be(0))) // 504b0102deadbeef
+    print(fmt.hex(out.read_u16_le(8).to_u64())) // 1f90
+    print(fmt.hex(out.read_u32_be(4).to_u64())) // deadbeef
+
+    // The two headers are the same ten bytes: one was pushed, one written.
+    print(fmt.bytes(out.clone())) // 50 4b 01 02 de ad be ef 90 1f
+    val pushed = fmt.bytes(h.clone())
+    val written = fmt.bytes(out.clone())
+    print(str.eq(pushed.as_str(), written.as_str())) // true
+
+    // The writers the header above did not use, one per name, plus the one
+    // signed reader it did not reach: `write_u32_le`, both eight-byte orders,
+    // both signed widths in both orders, and `read_i64_be`.
+    var m = Bytes.empty()
+    var k: usize = 0
+    while k < 16 {
+        m.push(0)
+        k = k + 1
+    }
+
+    m.write_u32_le(0, 0x11223344)
+    print(fmt.hex(m.read_u32_le(0).to_u64())) // 11223344
+    print(fmt.hex(m.read_u32_be(0).to_u64())) // 44332211
+
+    m.write_u64_le(4, 0x0102030405060708)
+    print(fmt.hex(m.read_u64_le(4))) // 102030405060708
+    print(fmt.hex(m.read_u64_be(4))) // 807060504030201
+
+    m.write_u64_be(4, 0x0102030405060708)
+    print(fmt.hex(m.read_u64_be(4))) // 102030405060708
+    print(fmt.hex(m.read_u64_le(4))) // 807060504030201
+
+    m.write_i32_le(0, 0 - 2)
+    print(m.read_i32_le(0)) // -2
+    print(fmt.hex(m.read_u32_be(0).to_u64())) // feffffff
+
+    m.write_i32_be(0, 0 - 1)
+    print(m.read_i32_be(0)) // -1
+    print(fmt.hex(m.read_u32_le(0).to_u64())) // ffffffff
+
+    m.write_i64_le(4, 0 - 2)
+    print(m.read_i64_le(4)) // -2
+    print(m.read_i64_be(4)) // -72057594037927937
+
+    m.write_i64_be(4, 0 - 2)
+    print(m.read_i64_be(4)) // -2
+    print(fmt.hex(m.read_u64_le(4))) // feffffffffffffff
+}

@@ -1,0 +1,31 @@
+// Kernel stage 3 (MK9-S8, roadmap B-10): `Ptr.read_unaligned` and
+// `Ptr.write_unaligned`. Every access here is at an odd offset, which is the
+// whole promise the two methods make and the reason the aligned `read`/`write`
+// cannot replace them: a `u32` at an odd address is undefined behaviour for an
+// aligned load, and defined for these.
+impl "std/fmt"
+
+fun main() {
+    unsafe {
+        val raw: Ptr<u8> = Ptr.alloc<u8>(16)
+
+        val p32: Ptr<u32> = raw.byte_offset(1).cast<u32>()
+        p32.write_unaligned(0x12345678)
+        print(fmt.hex(p32.read_unaligned().to_u64())) // 12345678
+
+        val p16: Ptr<u16> = raw.byte_offset(5).cast<u16>()
+        p16.write_unaligned(0xBEEF)
+        print(fmt.hex(p16.read_unaligned().to_u64())) // beef
+
+        // An eight-byte value straddling the region the `u32` wrote. These two
+        // do not convert byte order: an unaligned store writes the value's own
+        // bytes and the read hands them back, exactly as the aligned pair does.
+        val p64: Ptr<u64> = raw.byte_offset(1).cast<u64>()
+        p64.write_unaligned(0x0102030405060708)
+        print(fmt.hex(p64.read_unaligned())) // 102030405060708
+        print(fmt.hex(p32.read_unaligned().to_u64())) // 5060708
+
+        raw.free()
+        print("freed")
+    }
+}

@@ -1,0 +1,8 @@
+name = "unsafeunaligned"
+
+# Kernel stage 3 (MK9-S8, roadmap B-10): `Ptr.read_unaligned` and
+# `Ptr.write_unaligned` are unsafe operations, so the module that writes them
+# has to be in the audit list, like every other module that leaves the checked
+# language.
+[unsafe]
+modules = ["main"]

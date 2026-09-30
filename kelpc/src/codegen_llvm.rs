@@ -653,6 +653,11 @@ struct Gen<'a> {
     /// from the numbers the target reports rather than from an assumption about
     /// x86-64 (`TargetMachine::data_layout`).
     layout: &'a DataLayout,
+    /// Whether that layout is little-endian, asked of the same target the object
+    /// is written for rather than assumed. `to_le` is the identity exactly when
+    /// this is true, so a big-endian triple swaps instead of silently keeping a
+    /// wrong byte order (kernel stage 3, MK9-S8).
+    little_endian: bool,
     /// One identified LLVM struct type per `datac`, keyed by the `tir` name. The
     /// body is set once per declaration in `declare_aggregates`, before any
     /// function signature is built, so a `datac` parameter or return names a
@@ -871,6 +876,7 @@ impl<'a> Gen<'a> {
             panic_fn: panic.func,
             panic_ty: panic.ty,
             layout,
+            little_endian: layout.is_little_endian(),
             structs,
             enums: HashMap::new(),
             field_index: HashMap::new(),
@@ -4426,7 +4432,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 result_elem()?;
                 Ok(Some(self.value_of(&args[0])?))
             }
-            "read" | "read_volatile" => {
+            "read" | "read_volatile" | "read_unaligned" => {
                 let elem = recv_elem()?;
                 let lty = self.lty(&elem)?;
                 let place = self.value_of(&args[0])?;
@@ -4434,15 +4440,24 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 if op == "read_volatile" {
                     self.g.builder.set_volatile(v);
                 }
+                // The unaligned read is the same load with no alignment
+                // requirement: `align 1` is what lets the address be anything
+                // the pointer holds, which is the whole point of the method.
+                if op == "read_unaligned" {
+                    self.g.builder.set_alignment(v, 1);
+                }
                 Ok(Some(v))
             }
-            "write" | "write_volatile" => {
+            "write" | "write_volatile" | "write_unaligned" => {
                 recv_elem()?;
                 let place = self.value_of(&args[0])?;
                 let value = self.value_of(&args[1])?;
                 let store = self.g.builder.build_store(value, place);
                 if op == "write_volatile" {
                     self.g.builder.set_volatile(store);
+                }
+                if op == "write_unaligned" {
+                    self.g.builder.set_alignment(store, 1);
                 }
                 Ok(None)
             }
@@ -4454,6 +4469,138 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 Ok(None)
             }
             other => Err(no_value(&format!("the pointer operation '{other}'"))),
+        }
+    }
+
+    /// Branch to a panic block when `cond` holds, then continue: the shape
+    /// `emit_conversion`'s range check uses, so an out-of-bounds `Bytes.read_*`
+    /// leaves the same unreachable panic block a narrowing conversion does.
+    fn guard_or_panic(&mut self, cond: Value<'a>, msg: &str) -> Result<(), String> {
+        let panic_bb = self.cur_fn.append_block("bounds.panic");
+        let ok_bb = self.cur_fn.append_block("bounds.ok");
+        self.g.builder.build_cond_br(cond, panic_bb, ok_bb);
+
+        self.g.builder.position_at_end(panic_bb);
+        self.cur = panic_bb;
+        self.terminated = false;
+        let msg_ptr = self.string_global(msg)?;
+        self.g
+            .builder
+            .build_call(self.g.panic_fn, self.g.panic_ty, &[msg_ptr], "");
+        self.g.builder.build_unreachable();
+
+        self.g.builder.position_at_end(ok_bb);
+        self.cur = ok_bb;
+        self.terminated = false;
+        Ok(())
+    }
+
+    /// Emit one `llvm.bswap.iN` intrinsic call on `v`. The intrinsic is what
+    /// the C backend's `__builtin_bswap*` lowers to, so both backends run the
+    /// same machine instruction.
+    fn bswap(&mut self, v: Value<'a>, bits: u32) -> Result<Value<'a>, String> {
+        let ty = match bits {
+            16 => self.g.ctx.i16(),
+            32 => self.g.ctx.i32(),
+            64 => self.g.ctx.i64(),
+            _ => return Err(no_value("a byte swap")),
+        };
+        let fty = self.g.ctx.fn_type(ty, &[ty], false);
+        let name = format!("llvm.bswap.i{bits}");
+        // `add_function` would mangle the name of an already-declared intrinsic
+        // (`llvm.bswap.i32.20`), which the verifier rejects as a badly mangled
+        // intrinsic, so the second and later calls reuse the first declaration.
+        let func = match self.g.module.get_function(&name) {
+            Some(existing) => existing,
+            None => self.g.module.add_function(&name, fty),
+        };
+        Ok(self.g.builder.build_call(func, fty, &[v], "bswap"))
+    }
+
+    /// One integer byte-order conversion (kernel stage 3, MK9-S8):
+    /// `x.swap_bytes()`, `x.to_be()`, `x.to_le()` and the static
+    /// `u32.from_be(x)`/`u32.from_le(x)`. `None` for any other `Type#op` key.
+    ///
+    /// `to_le` is the identity exactly on a little-endian target, which is the
+    /// target's own answer (`Gen::little_endian`) rather than an assumption
+    /// about the host.
+    fn emit_endian(
+        &mut self,
+        op: &str,
+        ty: &Ty,
+        args: &[Expr],
+    ) -> Result<Option<Value<'a>>, String> {
+        let swap = match op {
+            "swap_bytes" => true,
+            "to_be" | "from_be" => self.g.little_endian,
+            "to_le" | "from_le" => !self.g.little_endian,
+            _ => return Ok(None),
+        };
+        let Some(bits) = endian_bits(ty) else {
+            return Ok(None);
+        };
+        let v = self.value_of(&args[0])?;
+        Ok(Some(if swap { self.bswap(v, bits)? } else { v }))
+    }
+
+    /// A byte-order read or write on a `Bytes` (kernel stage 3, MK9-S8).
+    ///
+    /// The bounds check is the same wrapped-add test
+    /// `codegen_c.rs::bytes_endian_call` writes, and the access is an `align 1`
+    /// load or store, so the offset needs no alignment. A field whose order is
+    /// not the target's swaps on the way in or out; one whose order already
+    /// matches is a plain load or store.
+    fn emit_bytes_endian(
+        &mut self,
+        op: &str,
+        args: &[Expr],
+    ) -> Result<Option<Value<'a>>, String> {
+        let (width, big, value_ty) = crate::types::bytes_endian_access(op)
+            .ok_or_else(|| no_value("a byte-order access"))?;
+        let bytes = *self
+            .g
+            .structs
+            .get("Bytes")
+            .ok_or_else(|| no_value("the builtin 'Bytes' layout"))?;
+        let bits = endian_bits(&value_ty)
+            .ok_or_else(|| no_value("the width of a byte-order access"))?;
+        let i64t = self.g.ctx.i64();
+        let ptr = self.g.pty();
+
+        let buf = self.value_of(&args[0])?;
+        let offset = self.value_of(&args[1])?;
+        let len = self.g.ld(i64t, self.g.fld(bytes, buf, L_LEN, "len"), "len");
+        let end = self.g.builder.build_int_binop(
+            IntBinOp::Add,
+            offset,
+            self.g.v_i64(width as u64),
+            "end",
+        );
+        // A near-`usize::MAX` offset wraps the addition past `len`, so the wrap
+        // itself is a failure too.
+        let wrapped = self.g.builder.build_icmp(IntCmp::Ult, end, offset, "wrapped");
+        let past = self.g.builder.build_icmp(IntCmp::Ugt, end, len, "past");
+        let oob = self.g.builder.build_int_binop(IntBinOp::Or, wrapped, past, "oob");
+        let msg = format!("Bytes.{op}: offset out of bounds");
+        self.guard_or_panic(oob, &msg)?;
+
+        let data = self.g.ld(ptr, self.g.fld(bytes, buf, L_DATA, "data"), "data");
+        let at = self.g.gep(self.g.ctx.i8(), data, offset, "at");
+        let lty = self.lty(&value_ty)?;
+        // Swap when the field's byte order is not the target's: a big-endian
+        // field on a little-endian target, or the reverse.
+        let target_big_endian = !self.g.little_endian;
+        let swap = big != target_big_endian;
+        if op.starts_with("read_") {
+            let raw = self.g.builder.build_load(lty, at, "read");
+            self.g.builder.set_alignment(raw, 1);
+            Ok(Some(if swap { self.bswap(raw, bits)? } else { raw }))
+        } else {
+            let value = self.value_of(&args[2])?;
+            let value = if swap { self.bswap(value, bits)? } else { value };
+            let store = self.g.builder.build_store(value, at);
+            self.g.builder.set_alignment(store, 1);
+            Ok(None)
         }
     }
 
@@ -4892,6 +5039,28 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     let v = self.emit_conversion(callee, &from, &to, arg)?;
                     return Ok(Some(v));
                 }
+            }
+        }
+
+        // Byte-order conversion (kernel stage 3, MK9-S8): `x.swap_bytes()`,
+        // `x.to_be()`, `x.to_le()` and the static `u32.from_be(x)`/
+        // `u32.from_le(x)`. One `llvm.bswap.*` intrinsic, or nothing when the
+        // direction is the target's own, exactly as `codegen_c.rs::endian_call`
+        // emits one `__builtin_bswap*` or the identity.
+        if let Some((src, op)) = callee.split_once('#') {
+            if let Some(ty) = Ty::from_name(src) {
+                if let Some(v) = self.emit_endian(op, &ty, args)? {
+                    return Ok(Some(v));
+                }
+            }
+        }
+        // A byte-order read or write on a `Bytes` (kernel stage 3, MK9-S8): an
+        // align-1 load or store through the buffer's `data` pointer, with the
+        // swap on the way in or out. The older `Bytes` methods still go through
+        // the runtime table below.
+        if let Some(op) = callee.strip_prefix("Bytes#") {
+            if crate::types::bytes_endian_access(op).is_some() {
+                return self.emit_bytes_endian(op, args);
             }
         }
 
@@ -11050,6 +11219,20 @@ fn int_width(ty: &Ty) -> Option<u32> {
         Ty::U8 => 8,
         Ty::U16 => 16,
         Ty::Bool => 1,
+        _ => return None,
+    })
+}
+
+/// The width in bits of an integer the byte-order conversions cover, or `None`
+/// when `ty` has no such conversion (`bool`, `char`, `u8`, a pointer).
+/// `usize`/`isize` are the target's pointer-width integers, which `llvm_type`
+/// maps to `i64`, so their swap is 64 bits wide; the C backend reads the same
+/// width from `sizeof` in `KELP_SWAP_SIZE`.
+fn endian_bits(ty: &Ty) -> Option<u32> {
+    Some(match ty {
+        Ty::U16 => 16,
+        Ty::U32 | Ty::I32 => 32,
+        Ty::U64 | Ty::I64 | Ty::Usize | Ty::Isize => 64,
         _ => return None,
     })
 }

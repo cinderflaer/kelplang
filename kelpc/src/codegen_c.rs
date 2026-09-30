@@ -4623,6 +4623,75 @@ impl<'a> Gen<'a> {
         }
     }
 
+    /// One integer byte-order conversion (kernel stage 3, MK9-S8):
+    /// `x.swap_bytes()`, `x.to_be()`, `x.to_le()`, and the static
+    /// `u32.from_be(x)`/`u32.from_le(x)`. `None` for any other `Type#op` key.
+    ///
+    /// Each is one `__builtin_bswap*` call or the identity, through the macros
+    /// in the runtime preamble whose direction is the target's own
+    /// `__BYTE_ORDER__`: `to_le` is the identity on the little-endian targets
+    /// this project builds for today and still swaps on a big-endian one. The
+    /// result is cast back to the receiver's own C type, because
+    /// `__builtin_bswap*` returns the unsigned counterpart.
+    fn endian_call(&self, op: &str, ty: &Ty, args: &[Expr]) -> Option<String> {
+        let dir = match op {
+            "swap_bytes" => "KELP_SWAP",
+            "to_be" | "from_be" => "KELP_TO_BE",
+            "to_le" | "from_le" => "KELP_TO_LE",
+            _ => return None,
+        };
+        let width = match ty {
+            Ty::U16 => "16",
+            Ty::U32 | Ty::I32 => "32",
+            Ty::U64 | Ty::I64 => "64",
+            // `usize`/`isize` are the target's pointer-width integers, so the
+            // swap picks its width from `sizeof` rather than a fixed one.
+            Ty::Usize | Ty::Isize => "SIZE",
+            _ => return None,
+        };
+        let value = self.expr_value(&args[0]);
+        Some(format!("(({})({dir}_{width}({value})))", ty.c_type()))
+    }
+
+    /// A byte-order read or write on a `Bytes` (kernel stage 3, MK9-S8).
+    ///
+    /// The bounds check is `offset + width <= len` with the wrapped-add guard
+    /// first, so an offset near the top of the address space cannot wrap past
+    /// the test; the access itself is a `memcpy`, so the offset needs no
+    /// alignment. The panic message names the method, which is what the
+    /// out-of-bounds fixture asserts on.
+    fn bytes_endian_call(&self, op: &str, args: &[Expr]) -> String {
+        let (width, big, value_ty) = crate::types::bytes_endian_access(op)
+            .expect("the caller matched a byte-order access");
+        let dir = if big { "TO_BE" } else { "TO_LE" };
+        let width_macro = match width {
+            2 => "16",
+            4 => "32",
+            _ => "64",
+        };
+        let msg = format!("Bytes.{op}: offset out of bounds");
+        let buf = fresh_temp();
+        let at = fresh_temp();
+        let slot = fresh_temp();
+        let c = value_ty.c_type();
+        let offset = self.expr_value(&args[1]);
+        let guard = format!(
+            "size_t {at} = {offset}; if ({at} + {width} < {at} || {at} + {width} > {buf}->len) {{ kelp_panic(\"{msg}\"); }}"
+        );
+        if op.starts_with("read_") {
+            let recv = self.expr_value(&args[0]);
+            format!(
+                "({{ const kelp_Bytes* {buf} = {recv}; {guard} {c} {slot}; memcpy(&{slot}, {buf}->data + {at}, {width}); ({c})KELP_{dir}_{width_macro}({slot}); }})"
+            )
+        } else {
+            let recv = self.expr_value(&args[0]);
+            let value = self.expr_value(&args[2]);
+            format!(
+                "({{ kelp_Bytes* {buf} = {recv}; {guard} {c} {slot} = ({c})KELP_{dir}_{width_macro}({value}); memcpy({buf}->data + {at}, &{slot}, {width}); (void)0; }})"
+            )
+        }
+    }
+
     /// A `Ptr<T>` operation (MK9-S2 stage 1), as C: one operator or one libc
     /// call per operation, with the element type read from the result (a
     /// constructor) or from the receiver (everything else).
@@ -4685,11 +4754,33 @@ impl<'a> Gen<'a> {
                 let elem = recv_elem();
                 format!("(*((volatile {elem}*)({})))", self.expr_value(&args[0]))
             }
+            // The unaligned pair (kernel stage 3, MK9-S8): the same load and
+            // store as `read`/`write`, through `memcpy` so no alignment is
+            // required of the address. A C compiler folds the fixed-size
+            // `memcpy` back into the load or store, which is exactly the
+            // unaligned access the language asked for.
+            "read_unaligned" => {
+                let elem = recv_elem();
+                let tmp = fresh_temp();
+                format!(
+                    "({{ {elem} {tmp}; memcpy(&{tmp}, {}, sizeof({elem})); {tmp}; }})",
+                    self.expr_value(&args[0])
+                )
+            }
             "write" => format!(
                 "((void)(*({}) = ({})))",
                 self.expr_value(&args[0]),
                 self.expr_value(&args[1])
             ),
+            "write_unaligned" => {
+                let elem = recv_elem();
+                let tmp = fresh_temp();
+                format!(
+                    "({{ {elem} {tmp} = {}; memcpy({}, &{tmp}, sizeof({elem})); (void)0; }})",
+                    self.expr_value(&args[1]),
+                    self.expr_value(&args[0])
+                )
+            }
             "write_volatile" => {
                 let elem = recv_elem();
                 format!(
@@ -4847,6 +4938,26 @@ impl<'a> Gen<'a> {
                     let value = self.expr_value(&args[0]);
                     return numeric_conversion(callee, &from, &to, &value);
                 }
+            }
+        }
+        // Byte-order conversion (kernel stage 3, MK9-S8): `x.swap_bytes()`,
+        // `x.to_be()`, `x.to_le()` and the static `u32.from_be(x)`/
+        // `u32.from_le(x)`. One `__builtin_bswap*` or the identity, emitted
+        // inline exactly as a numeric conversion is, through the macros whose
+        // direction is the target's own `__BYTE_ORDER__`.
+        if let Some((src, op)) = callee.split_once('#') {
+            if let Some(ty) = Ty::from_name(src) {
+                if let Some(text) = self.endian_call(op, &ty, args) {
+                    return text;
+                }
+            }
+        }
+        // A byte-order read or write on a `Bytes` (kernel stage 3, MK9-S8).
+        // The name carries the width and the order, so the frontend, this
+        // backend and `codegen_llvm.rs` all read the one table in `types.rs`.
+        if let Some(op) = callee.strip_prefix("Bytes#") {
+            if crate::types::bytes_endian_access(op).is_some() {
+                return self.bytes_endian_call(op, args);
             }
         }
         // `panic` reaches `kelp_panic`, whose one argument is the

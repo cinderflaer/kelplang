@@ -2813,6 +2813,42 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
         );
         add("Bytes#clear", vec![("self".to_string(), bytes_exclusive)], Ty::Unit, false);
 
+        // Byte-order reads and writes on a byte buffer (kernel stage 3,
+        // MK9-S8): `b.read_u16_le(offset)` and its siblings, one name per
+        // width and byte order, each bounds-checked and with no alignment
+        // requirement. The receiver is `&Bytes` for a read and `mut Bytes` for
+        // a write, so a write goes through the same exclusive borrow `push`
+        // takes; every offset is a `usize`. `u8` needs no reader (`Bytes.get`
+        // is one), `i16` does not exist, and `usize`/`isize` are absent because
+        // a wire format fixes its field widths rather than the host's pointer
+        // width.
+        let bytes_shared = Ty::Ref { mutable: false, inner: Box::new(Ty::Bytes) };
+        let bytes_mut = Ty::Ref { mutable: true, inner: Box::new(Ty::Bytes) };
+        for value in ["u16", "u32", "u64", "i32", "i64"] {
+            let ty = Ty::from_name(value).expect("integer type");
+            for order in ["le", "be"] {
+                add(
+                    &format!("Bytes#read_{value}_{order}"),
+                    vec![
+                        ("self".to_string(), bytes_shared.clone()),
+                        ("offset".to_string(), Ty::Usize),
+                    ],
+                    ty.clone(),
+                    false,
+                );
+                add(
+                    &format!("Bytes#write_{value}_{order}"),
+                    vec![
+                        ("self".to_string(), bytes_mut.clone()),
+                        ("offset".to_string(), Ty::Usize),
+                        ("value".to_string(), ty.clone()),
+                    ],
+                    Ty::Unit,
+                    false,
+                );
+            }
+        }
+
         // The `String` surface (M6.2): construct, measure, copy, and convert
         // to/from `Bytes` with an ownership transfer. `as_str`/`as_bytes`
         // return a borrow of the receiver, which needs the `&str`
@@ -3009,6 +3045,37 @@ static BUILTINS: std::sync::LazyLock<HashMap<String, Builtin>> =
                     vec![("self".to_string(), Ty::from_name(src).expect("integer type"))],
                     Ty::from_name(dst).expect("float type"),
                     false,
+                );
+            }
+        }
+
+        // Byte-order conversion (kernel stage 3, MK9-S8 / roadmap B-10). Every
+        // integer wider than a byte has `swap_bytes`, `to_be` and `to_le`, plus
+        // the two static forms written on the type name
+        // (`u32.from_be(x)`/`u32.from_le(x)`) that the associated-builtin path
+        // above already resolves, the same way `Bytes.empty()` is resolved.
+        //
+        // `u8` is deliberately absent: swapping one byte is the identity, and
+        // `to_be`/`to_le` on a byte are the identity on every target, so the
+        // three names would only invite a reader to wonder which they meant.
+        // `i16` is absent because v1 has no `i16` scalar to be one (the
+        // `repr(i16)` tag storage in kernel stage 2 is a different thing).
+        for src in ["u16", "u32", "u64", "i32", "i64", "usize", "isize"] {
+            let ty = Ty::from_name(src).expect("integer type");
+            for op in ["swap_bytes", "to_be", "to_le"] {
+                add(
+                    &format!("{src}#{op}"),
+                    vec![("self".to_string(), ty.clone())],
+                    ty.clone(),
+                    false,
+                );
+            }
+            for op in ["from_be", "from_le"] {
+                add(
+                    &format!("{src}#{op}"),
+                    vec![("x".to_string(), ty.clone())],
+                    ty.clone(),
+                    true,
                 );
             }
         }
@@ -3559,6 +3626,8 @@ fn ptr_op_is_unsafe(key: &str) -> bool {
             | "Ptr#write"
             | "Ptr#read_volatile"
             | "Ptr#write_volatile"
+            | "Ptr#read_unaligned"
+            | "Ptr#write_unaligned"
             | "Ptr#alloc"
             | "Ptr#free"
     )
@@ -3673,8 +3742,9 @@ fn check_ptr_associated(
 }
 
 /// A method on a `Ptr<T>` value: `addr`, `is_null`, `offset`, `byte_offset`,
-/// `cast<U>`, `read`, `write`, `read_volatile`, `write_volatile` and `free`
-/// (MK9-S2 stage 1).
+/// `cast<U>`, `read`, `write`, `read_volatile`, `write_volatile`,
+/// `read_unaligned`, `write_unaligned` and `free` (MK9-S2 stage 1, with the
+/// two unaligned forms from kernel stage 3).
 fn check_ptr_method(
     probe: tir::Expr,
     receiver: &ast::Expr,
@@ -3721,7 +3791,7 @@ fn check_ptr_method(
     let Some(sig) = ptr_sig(&key, &elem, cast_to.as_ref(), span)? else {
         return Err(TypeError {
             message: format!(
-                "'Ptr.{method}' is not a pointer operation: a pointer has addr, is_null, offset, byte_offset, cast<U>, read, write, read_volatile, write_volatile and free"
+                "'Ptr.{method}' is not a pointer operation: a pointer has addr, is_null, offset, byte_offset, cast<U>, read, write, read_volatile, write_volatile, read_unaligned, write_unaligned and free"
             ),
             span,
         });
@@ -3766,7 +3836,7 @@ fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) -> Result<Opt
             FnSig { params: vec![p("self", ptr)], ret: Ty::Ptr(Box::new(target.clone())) }
         }
         "Ptr#free" => FnSig { params: vec![p("self", ptr)], ret: Ty::Unit },
-        "Ptr#read" | "Ptr#read_volatile" => {
+        "Ptr#read" | "Ptr#read_volatile" | "Ptr#read_unaligned" => {
             if !elem.is_copy() {
                 let op = key.strip_prefix("Ptr#").unwrap_or(key);
                 return Err(TypeError {
@@ -3781,7 +3851,7 @@ fn ptr_sig(key: &str, elem: &Ty, cast_to: Option<&Ty>, span: Span) -> Result<Opt
             }
             FnSig { params: vec![p("self", ptr)], ret: elem.clone() }
         }
-        "Ptr#write" | "Ptr#write_volatile" => FnSig {
+        "Ptr#write" | "Ptr#write_volatile" | "Ptr#write_unaligned" => FnSig {
             params: vec![p("self", ptr), p("value", elem.clone())],
             ret: Ty::Unit,
         },
@@ -12991,7 +13061,7 @@ fn check_method_call(
                     }
                 }
                 (None, _) if probe.ty.is_integer() => format!(
-                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64 and to_f32, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
+                    "type '{}' has no method '{method}': an integer has to_i32, to_i64, to_u32, to_u64, to_u8, to_u16, to_usize, to_isize, to_f64, to_f32, swap_bytes, to_be and to_le, plus a try_to_<T> twin of every conversion that can lose a value (which hands back 'Option<T>'), and no other type converts",
                     probe.ty.display()
                 ),
                 // An `enum` and a `datac` miss the same way, and an enum

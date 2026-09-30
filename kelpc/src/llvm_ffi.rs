@@ -81,8 +81,8 @@ use llvm_sys::core::{
     LLVMModuleCreateWithNameInContext,
     LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
-    LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer, LLVMSetLinkage,
-    LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget, LLVMSetVolatile,
+    LLVMSetAlignment, LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer,
+    LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget, LLVMSetVolatile,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
     LLVMVoidTypeInContext,
 };
@@ -107,8 +107,9 @@ use llvm_sys::prelude::{
     LLVMMetadataRef, LLVMModuleRef, LLVMTypeRef, LLVMValueRef,
 };
 use llvm_sys::target::{
-    LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMDisposeTargetData, LLVMSetModuleDataLayout,
-    LLVMTargetDataRef, LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
+    LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMByteOrder, LLVMByteOrdering,
+    LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVMTargetDataRef,
+    LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
 };
 use llvm_sys::target_machine::{
     LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMCreateTargetDataLayout,
@@ -1654,6 +1655,16 @@ impl<'ctx> Builder<'ctx> {
         unsafe { LLVMSetVolatile(value.as_raw(), 1) };
     }
 
+    /// Set the alignment in bytes of the load or store `value` this builder
+    /// just emitted (`LLVMSetAlignment`): `1` is a legal access at every
+    /// address, which is what an unaligned load or store needs. An instruction
+    /// without this call carries its type's ABI alignment.
+    pub fn set_alignment(&self, value: Value<'ctx>, align: u32) {
+        // SAFETY: the caller passes an instruction this builder just emitted,
+        // which is the one kind `LLVMSetAlignment` accepts.
+        unsafe { LLVMSetAlignment(value.as_raw(), align) };
+    }
+
     /// Emit `extractvalue agg, index` (`LLVMBuildExtractValue`): one field of
     /// an aggregate value, which is how the `cmpxchg` pair's halves are read.
     pub fn build_extract_value(&self, agg: Value<'ctx>, index: u32, name: &str) -> Value<'ctx> {
@@ -2323,6 +2334,15 @@ impl DataLayout {
     pub fn abi_alignment_of(&self, ty: Type<'_>) -> u32 {
         // SAFETY: as above.
         unsafe { LLVMABIAlignmentOfType(self.raw, ty.as_raw()) }
+    }
+
+    /// Whether the target lays a multi-byte value out least-significant byte
+    /// first (`LLVMByteOrder`). The byte-order conversions read this rather
+    /// than assuming the host, so `to_le` is the identity exactly on a
+    /// little-endian target and a swap on a big-endian one.
+    pub fn is_little_endian(&self) -> bool {
+        // SAFETY: the layout is live and `LLVMByteOrder` only reads it.
+        unsafe { LLVMByteOrder(self.raw) == LLVMByteOrdering::LLVMLittleEndian }
     }
 }
 

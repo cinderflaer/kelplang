@@ -132,3 +132,13 @@ callback machinery is unchanged.
   `queue.kp` binds two `static inline` functions, which need no library at all. It builds and runs on
   both backends. Nothing in the compiler changed for it: the gaps this file lists were already
   enough, and gap 7 (variadics) is still not needed for a window.
+
+## What kernel stage 3 (MK9-S8) changed for this list
+
+Nothing is closed. The byte-order primitives (`swap_bytes`/`to_be`/`to_le` and
+`Bytes.read_*_le/be`) and `Ptr.read_unaligned`/`write_unaligned` make a binding
+that has to decode or build a fixed-layout native structure expressible without
+hand-shifted bits, which is where gap 9 (a `datac` crossing an `extern fun`
+boundary) would otherwise force a C helper. `Ptr<T>` unaligned access is also
+the honest way to read a packed native field once gap 3's generated prototype
+lands; today it is still only reachable from a module in `[unsafe] modules`.

@@ -1,0 +1,10 @@
+// Kernel stage 3 (MK9-S8, roadmap B-10): a read that runs off the end of a
+// `Bytes` panics with the method's own name rather than reading a neighbouring
+// allocation. The buffer is four bytes and the field is four bytes wide at
+// offset 1, so one byte of it is past the end.
+impl "std/fmt"
+
+fun main() {
+    val h = Bytes.from_str("abcd")
+    print(fmt.hex(h.read_u32_le(1).to_u64()))
+}
