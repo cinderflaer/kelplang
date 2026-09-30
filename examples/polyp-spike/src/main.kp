@@ -1,0 +1,38 @@
+// A GTK4 window built entirely out of FFI bindings: opaque handles for the
+// GObjects, `str` for the C strings, and one Kelp closure as the button's
+// click handler. Compile-only: there is no display here, and the point is that
+// the binary links.
+//
+// `process` is the stand-in domain for a display connection (gap 6); the
+// comment in coral.toml and plan/ffi-display-domain.md own that decision.
+impl "gtk" caps(process = ["/**"])
+impl "seam" caps(process = ["/**"])
+impl "std/str"
+
+fun main() {
+    val app = gtk.gtk_application_new("dev.xenoo.polyp_spike", 0)
+    val window = gtk.gtk_application_window_new(app)
+    gtk.gtk_window_set_title(window, "polyp-spike")
+
+    // An owned capture, so the closure really carries an environment: the
+    // native side owns it from the call below until GTK runs the destroy
+    // notify, which is the closure's drop.
+    val tag = String.from_str("polyp-spike: button clicked")
+    val on_click = fun (b: gtk.Widget) {
+        print(str.len(tag.as_str()))
+    }
+
+    val button = gtk.gtk_button_new_with_label("Click")
+    seam.connect_clicked(button, on_click)
+    gtk.gtk_window_set_child(window, button)
+    gtk.gtk_window_present(window)
+
+    // argv[0] is the program name and argv[1] is the NULL g_strsplit writes.
+    val argv = gtk.g_strsplit("polyp-spike", " ", -1)
+    val status = gtk.g_application_run(app, 1, argv)
+
+    gtk.g_strfreev(argv)
+    gtk.g_object_unref(button)
+    gtk.application_unref(app)
+    print(status)
+}
