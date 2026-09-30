@@ -1,0 +1,24 @@
+name = "polyp_counter"
+entry = "src/main.kp"
+
+# Everything from here down is pasted from examples/polyp/README.md: Kelp has no
+# manifest for a library, so the consumer carries the library's `[extern.*]`
+# sections itself. The module ids are the `impl` paths the library uses, which
+# is the directory Coral-style dependencies reach it by (`src/deps/polyp/`).
+#
+# `ui` is the display domain (plan/ffi-display-domain.md): a GTK call names no
+# display argument, so the only grant the domain takes is the wildcard.
+
+[extern."deps/polyp/gtk"]
+domain = "ui"
+library = "gtk-4"
+header = "gtk/gtk.h"
+pkg_config = "gtk4"
+symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_button_new_with_label", "g_object_unref", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
+
+[extern."deps/polyp/queue"]
+domain = "ui"
+library = "c"
+header = "polyp_queue.h"
+include_dirs = ["src/deps/polyp/include"]
+symbols = ["polyp_post", "polyp_poll"]

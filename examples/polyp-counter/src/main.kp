@@ -1,0 +1,74 @@
+// A counter: the smallest program that is actually a Polyp program. State is a
+// `datac` with one field, `Msg` is an `enum`, `view` is a function of the state
+// and `update` is a `when` over every variant.
+//
+// `src/deps/polyp/` is a link to examples/polyp/ in this repository; a real
+// consumer copies the library there. See examples/polyp/README.md.
+impl "deps/polyp/lib" caps(ui = ["*"])
+impl "std/env"
+impl "std/fmt"
+impl "std/str"
+
+datac Counter(var count: i32)
+
+enum Msg {
+    Inc
+    Dec
+    Reset
+}
+
+// The buttons are visited in this order, so their ids are 0 (Inc), 1 (Dec) and
+// 2 (Reset). The smoke run below leans on that.
+fun view(state: Counter).R: polyp.Node<Msg> {
+    var kids: List<polyp.Node<Msg>> = List.empty()
+    val shown = fmt.int(state.count.to_i64())
+    kids.push(polyp.text(str.concat("count: ", shown.as_str())))
+    kids.push(polyp.button("+1", Msg.Inc))
+    kids.push(polyp.button("-1", Msg.Dec))
+    kids.push(polyp.button("reset", Msg.Reset))
+    return polyp.column(kids)
+}
+
+fun update(state: mut Counter, msg: Msg) {
+    when msg {
+        Inc -> {
+            state.count += 1
+        }
+        Dec -> {
+            state.count -= 1
+        }
+        Reset -> {
+            state.count = 0
+        }
+    }
+}
+
+fun smoke_enabled().R: bool {
+    val value = env.get("POLYP_SMOKE")
+    return str.eq(value.as_str(), "1")
+}
+
+// With POLYP_SMOKE=1 the program drives itself: +1, +1, -1, then quit, so the
+// final count is 1 and the only thing on stdout is that count. A display is
+// still needed; examples/polyp-counter/smoke.sh supplies a headless one.
+fun arm_smoke() {
+    polyp.schedule_post(delay_ms = 100, id = 0)
+    polyp.schedule_post(delay_ms = 150, id = 0)
+    polyp.schedule_post(delay_ms = 200, id = 1)
+    polyp.schedule_quit(delay_ms = 250)
+}
+
+fun main() {
+    if smoke_enabled() {
+        arm_smoke()
+    }
+    val final = polyp.run(
+        title = "polyp counter",
+        width = 320,
+        height = 200,
+        init = Counter(count = 0),
+        view = view,
+        update = update,
+    )
+    print(final.count)
+}
