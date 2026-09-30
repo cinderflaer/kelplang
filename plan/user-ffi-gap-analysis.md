@@ -39,6 +39,12 @@ the first slice of MK9-S1-M1 is in the tree.
   borrow (`plan/syntax.md` 7.4). `plan/polyp-ui.md` sells "borrow-checked callbacks", but a
   callback cannot borrow `state`; it can only own a copy or a moved value. Several callbacks that
   all update one piece of state need a sharing mechanism I did not find in the language.
+  **Solved for the read-only builder shape** by `plan/scoped-blocks.md`: a `scoped fun(...)`
+  parameter takes a literal or trailing block written at the call site, whose captures are shared
+  borrows released with the call, so a view callback can read a borrowed `state`. An *exclusive*
+  capture (the `state.count += 1` shape) and a callback that outlives the call (the native
+  `extern` shape, gap 4) still need a `move` closure or a shared cell, as the Polyp v0 note below
+  describes.
 - **Event loop.** `g_application_run` blocks and calls back on the main thread. The callback
   thunk must therefore run on that thread, and the closure must stay alive until GTK's
   destroy-notify fires.

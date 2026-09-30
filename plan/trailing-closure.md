@@ -1,6 +1,7 @@
 # Trailing blocks (open item 75): design and prototype
 
-*Design note plus a parser-only prototype. Not a Mark; `roadmap.md` still owns the schedule.*
+*Design note, the parser prototype, and the follow-up in `plan/scoped-blocks.md`. Not a Mark;
+`roadmap.md` still owns the schedule.*
 
 ## The proposal in one rule
 
@@ -42,23 +43,33 @@ last parameter takes the parenthesised form, as it does today.
 
 ## What the prototype does not do
 
-1. **Parameters.** `{ x -> ... }` is not supported, so a callback taking arguments still needs
-   `fun(x: i32) { ... }`. A block header `{ x, y -> ... }` looks unambiguous, since `->` appears
-   only in `when` arms, but the parameter types would have to come from the expected type, which
-   is an `infer.rs` change (a `fun` literal's parameters are typed by hand today).
-2. **Return values.** The literal has no `.R:`, so it returns Unit. A value-returning block
-   (`map { x -> x + 1 }`) needs the return type taken from the expected function type.
+1. ~~**Parameters.**~~ **Addressed** (`plan/scoped-blocks.md` part 1): `{ x, y -> ... }` declares
+   the parameters by name only, and their types come from the expected function type of the
+   parameter the block is passed to. The header is read only when the first tokens are
+   identifiers, comma separated, followed by `->`, which appears nowhere else at the start of a
+   block. Parameter modes follow the expected type, because a Kelp parameter type already carries
+   its mode. Fixture `scoped_block_params.kp`.
+2. ~~**Return values.**~~ **Addressed** (`plan/scoped-blocks.md` part 1): a block whose body ends
+   in an expression returns it when the expected return type is non-unit; with a unit return the
+   tail is discarded exactly as before. `sum(xs) { n -> n * 10 }` and `sum(xs) { n -> if n > 5 {
+   n } else { 0 } }` are both in `scoped_block_params.kp`.
 3. **Named arguments before the block.** `f(x = 1) { ... }` appends an *unnamed* argument after a
    named one. Whether the argument matcher accepts that was not tested.
 4. **Grouping parentheses in a head.** `if (run { w() }) { ... }` is refused, because only call
    argument lists and blocks re-enable the flag, not a parenthesised expression.
 5. **Formatting of long chains.** `fmt.rs` copies tokens and rewrites the whitespace between them;
    the tested cases are single-line. Nested multi-line trailing blocks were not stress-tested.
-6. **Shared mutable state.** Closures here capture by move or copy and own their environment
-   (`plan/syntax.md` 7.4), so `polyp.button("+1") { state.count += 1 }` cannot mutate a `state`
-   that the view also reads. That is a language question for Polyp, not a parsing one.
+6. ~~**Shared mutable state.**~~ **Addressed for call-scoped callbacks** (`plan/scoped-blocks.md`
+   part 2): a parameter written `scoped fun(T).R: U` accepts only a literal or trailing block
+   written at the call site, and such a literal captures an enclosing binding **by shared
+   borrow** into a stack environment. So `polyp.column { k -> k.text(s.title) }` reads a borrowed
+   `s` that the view still owns, and the borrow is released when the call returns. Mutation
+   through the capture (the `state.count += 1` shape) is refused: an exclusive capture is not
+   implemented, so that stays a language question for Polyp.
 
 ## Recommendation
 
-Keep the parser change (it is additive and small), then take (1) and (2) together as the next
-step, because a builder API needs both.
+Done. The parser change stayed (it is additive and small), and (1), (2) and (6) landed together in
+`plan/scoped-blocks.md`, because a builder API needs all three. What is still open there is an
+*exclusive* capture (a block that mutates what it borrowed) and `scoped` anywhere but a top-level
+declaration parameter.

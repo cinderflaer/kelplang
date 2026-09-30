@@ -8292,6 +8292,14 @@ fn a_scoped_block_can_read_a_borrowed_parameter() {
 }
 
 #[test]
+fn a_scoped_block_captures_owned_copy_and_borrowed_values() {
+    assert_compiles_and_runs(
+        "tests/fixtures/scoped_block_captures.kp",
+        "108\n109\n7\n2030\n5\n",
+    );
+}
+
+#[test]
 fn a_scoped_block_in_a_loop_sees_the_current_iteration() {
     assert_compiles_and_runs(
         "tests/fixtures/scoped_borrow_in_loop.kp",

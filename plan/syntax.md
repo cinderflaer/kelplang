@@ -934,7 +934,7 @@ A capture is **move-only**, and `Copy` is what decides what that means:
 
 - A `Copy` binding (a number, `bool`, a function value) is *copied* into the environment; the enclosing binding stays usable.
 - An owned binding (`String`, `Bytes`, `List`, `Box`, `Map`, a `datac`/`enum`, another closure) is *moved* into the environment; the enclosing binding is gone from that point on, exactly as after `val b = a`.
-- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead.
+- A borrow (`str`, `&T`) **cannot** be captured: the environment outlives the frame the borrow points into, and there is no lifetime syntax to say otherwise. Pass it as a parameter of the literal instead. The one exception is a **scoped** literal: a parameter written `scoped fun(T).R: U` takes only a `fun` literal or a trailing block written at the call site, whose environment is the enclosing *stack* with a no-op drop, so an owned capture is a shared borrow that lives exactly as long as the call (`plan/scoped-blocks.md`).
 
 Inside the body a capture is read *through a borrow of the environment*, so an owned capture can be used in place — a method called on it, a field read, passed to a parameter — but cannot be handed out by value. That is a move out of a place this frame does not own, which 9 refuses, and the message says so.
 

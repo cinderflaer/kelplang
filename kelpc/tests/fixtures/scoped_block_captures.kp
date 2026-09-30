@@ -1,0 +1,54 @@
+// Every kind of capture a scoped block allows: an owned non-`Copy` local by
+// shared borrow, a `Copy` local by copy, and a borrowed parameter by copy of
+// the pointer. The borrows end with the call, so the locals stay usable after
+// it — which is the whole difference from an ordinary closure.
+datac State(val a: i32)
+datac Counter(var n: i32)
+
+fun each(f: scoped fun(i32)) {
+    f(1)
+    f(2)
+}
+
+fun sum(xs: List<i32>, f: scoped fun(i32).R: i32).R: i32 {
+    var total = 0
+    var i: usize = 0
+    while i < xs.len() {
+        total += f(xs.get(i))
+        i += 1
+    }
+    return total
+}
+
+// A `mut T` parameter of a scoped function type is an exclusive borrow, so the
+// block may write through the place it is given.
+fun bump(c: mut Counter, f: scoped fun(mut i32)) {
+    f(c.n)
+}
+
+fun owned_capture() {
+    val s = State(a = 7)
+    val k = 100
+    each { n -> print(n + s.a + k) }
+    // The shared borrow of `s` was released with the call.
+    print(s.a)
+}
+
+fun borrowed_capture(s: State, xs: List<i32>) {
+    print(sum(xs) { n -> n + s.a })
+}
+
+fun mut_capture() {
+    var c = Counter(n = 0)
+    bump(c) { x -> *x = *x + 5 }
+    print(c.n)
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(10)
+    xs.push(20)
+    owned_capture()
+    borrowed_capture(State(a = 1000), xs)
+    mut_capture()
+}
