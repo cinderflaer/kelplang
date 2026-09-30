@@ -1,0 +1,10 @@
+// The message queue, bound. `polyp_queue.h` holds the whole thing: a ring of
+// 64 ints and two static inline functions, compiled into whichever translation
+// unit includes the header, so `library` has nothing to link and names libc
+// only because a section must name something.
+//
+// `polyp_poll` answers -1 when the queue is empty, which is why its Kelp return
+// type is `i32` rather than the `usize` an index would be.
+pub extern fun polyp_post(id: i32)
+
+pub extern fun polyp_poll().R: i32

@@ -43,6 +43,13 @@ the first slice of MK9-S1-M1 is in the tree.
   thunk must therefore run on that thread, and the closure must stay alive until GTK's
   destroy-notify fires.
 
+**Both are answered by Polyp v0** (`examples/polyp/`, built on this tree): the sharing mechanism is a
+ring of ints in a C header (`include/polyp_queue.h`) whose two `static inline` functions are bound
+through an `[extern.*]` section exactly like any other symbol (`library = "c"`, so nothing to link),
+and the loop drains it after each `g_main_context_iteration(null, TRUE)`, on the same thread that a
+GTK callback runs on. No callback captures state at all; a callback carries an int. Both backends
+run it: `examples/polyp-counter/smoke.sh` opens a real GTK window under Xvfb and asserts the count.
+
 ## Suggested order
 
 1. **Spike (no compiler change):** a `[extern."gtk"]` project that opens a window through
@@ -94,3 +101,12 @@ of gap 1, but it is not a substitute: a `Ptr<T>` is usable only in a module `cor
 `[unsafe] modules`, has no type safety between two handle kinds, and `Ptr<Widget>` needs an
 `extern type Widget` to exist first. Gap 1 stays the right answer for a GObject pointer, and gap 4's
 callback machinery is unchanged.
+
+## Status update (2026-09-30, later)
+
+- **Polyp v0** (`examples/polyp/`) is the first real consumer of the `ui` domain and of a
+  `header`-only binding: `gtk.kp` binds 15 GTK symbols (two `connect` shapes mapping to one C symbol,
+  with `move closure(...)` callbacks for `clicked`, `close-request` and `g_timeout_add_full`), and
+  `queue.kp` binds two `static inline` functions, which need no library at all. It builds and runs on
+  both backends. Nothing in the compiler changed for it: the gaps this file lists were already
+  enough, and gap 7 (variadics) is still not needed for a window.
