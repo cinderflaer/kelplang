@@ -9664,3 +9664,47 @@ fn a_trailing_block_is_the_calls_last_argument() {
 fn a_trailing_block_can_capture_into_a_closure_parameter() {
     assert_compiles_and_runs("tests/fixtures/trailing_block_capture.kp", "3\n3\n");
 }
+
+/// A program whose reader goes away must be ended by SIGPIPE, as every Unix tool
+/// is. The TLS code blocks the signal only around the OpenSSL calls that can
+/// write, never process-wide: a runtime that ignored it would leave this loop
+/// writing to a closed pipe forever, and `producer | head` would never return.
+#[test]
+fn a_program_is_ended_by_sigpipe_when_its_reader_closes_the_pipe() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::ExitStatusExt;
+    let bin = out_path("pipe_producer");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/pipe_producer.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected 'pipe_producer' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut child = Command::new(&bin)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run compiled binary");
+    let mut reader = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut first = String::new();
+    reader.read_line(&mut first).expect("the producer prints a first line");
+    assert_eq!(first.trim(), "0");
+    drop(reader);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(s) = child.try_wait().expect("wait on the producer") {
+            break s;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the producer kept running after its reader closed the pipe: SIGPIPE is being ignored");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert_eq!(status.signal(), Some(13), "expected death by SIGPIPE, got {status:?}");
+}

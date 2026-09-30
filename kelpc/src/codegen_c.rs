@@ -125,6 +125,39 @@ pub(crate) const C_HEADERS: &str = "\
 #include <openssl/err.h>\n\
 #include <openssl/ssl.h>\n\
 #include <openssl/x509v3.h>\n\
+// SIGPIPE: OpenSSL writes to its socket with a plain `write()`, so a write to a\n\
+// peer that has reset the connection raises SIGPIPE, whose default action ends\n\
+// the process before the call can return the error the typed TLS paths read.\n\
+// It is blocked on the calling thread for the duration of each OpenSSL call\n\
+// that can write, and a SIGPIPE that call itself raised is consumed, so the\n\
+// signal's default action stays in force everywhere else: a program piped into\n\
+// `head` still stops when its reader goes away. `errno` is restored because\n\
+// `SSL_get_error` reads it.\n\
+static inline void kelp_sigpipe_block(sigset_t* old, int* was_pending) {\n\
+    sigset_t one, pend;\n\
+    sigemptyset(&one);\n\
+    sigaddset(&one, SIGPIPE);\n\
+    sigpending(&pend);\n\
+    *was_pending = sigismember(&pend, SIGPIPE);\n\
+    pthread_sigmask(SIG_BLOCK, &one, old);\n\
+}\n\
+static inline void kelp_sigpipe_restore(const sigset_t* old, int was_pending) {\n\
+    if (!was_pending) {\n\
+        sigset_t one, pend;\n\
+        sigemptyset(&one);\n\
+        sigaddset(&one, SIGPIPE);\n\
+        sigpending(&pend);\n\
+        if (sigismember(&pend, SIGPIPE)) {\n\
+            struct timespec zero = { 0, 0 };\n\
+            sigtimedwait(&one, NULL, &zero);\n\
+        }\n\
+    }\n\
+    pthread_sigmask(SIG_SETMASK, old, NULL);\n\
+}\n\
+#define KELP_NO_SIGPIPE(call) ({ sigset_t kelp_sp_old; int kelp_sp_was; int kelp_sp_errno; \\\n\
+    kelp_sigpipe_block(&kelp_sp_old, &kelp_sp_was); \\\n\
+    __typeof__(call) kelp_sp_r = (call); kelp_sp_errno = errno; \\\n\
+    kelp_sigpipe_restore(&kelp_sp_old, kelp_sp_was); errno = kelp_sp_errno; kelp_sp_r; })\n\
 // The two classifiers `std/tls`'s fallible externs share. They are here\n\
 // rather than in each body because every failing SSL call needs the same\n\
 // translation, and a copy per call site is how the answers drift apart. The\n\

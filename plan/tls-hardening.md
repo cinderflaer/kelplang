@@ -50,9 +50,17 @@ peer becomes `EPIPE`. OpenSSL's socket BIO writes with a plain `write()`, which 
 ask to change, so a TLS write to a socket the peer has reset raised SIGPIPE and the default action
 took the process down before `SSL_write` could return the error the typed path already handles.
 
-**Fix.** `runtime/kelp_rt.c` ignores SIGPIPE once, process-wide, in a constructor; `<signal.h>` was
-added to `codegen_c::C_HEADERS` and to `build.rs`'s runtime wrapper. Both backends link the same
-runtime object, so both are covered. Regression: `a_tcp_reset_during_a_read_is_a_typed_error`.
+**Fix, first version (rejected).** `runtime/kelp_rt.c` ignored SIGPIPE once, process-wide, in a constructor.
+That fixed TLS and broke every other program: with the signal ignored, a Kelp program piped into `head` kept writing
+to a closed pipe forever instead of being ended like any Unix tool (`yes`-style producers never stopped; checked by
+running an endless `print` loop through `| head -1`: exit 141 before, a run to the 5 s cap after).
+
+**Fix, as shipped.** SIGPIPE is blocked on the calling thread only for the duration of each OpenSSL call that can
+write (`SSL_connect`, `SSL_write`, `SSL_read`, `SSL_shutdown`), through the `KELP_NO_SIGPIPE(call)` helper in
+`codegen_c::C_HEADERS` (shared by both backends). A SIGPIPE that the call itself raised is consumed before the mask is
+restored, one that was already pending is left alone, and `errno` is preserved for `SSL_get_error`. The default
+action stays in force everywhere else. Regressions: `a_tcp_reset_during_a_read_is_a_typed_error` (TLS) and
+`a_program_is_ended_by_sigpipe_when_its_reader_closes_the_pipe` (the process-wide behaviour).
 
 ### F2. The truncation and read-timeout fixtures leaked the `SSL*`, and the whole trust store with it
 
