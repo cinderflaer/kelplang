@@ -1,0 +1,484 @@
+// Release goal 1, hardening (case e): 64 concurrent TLS clients. Every worker
+// opens its own connection, handshakes, sends a request that carries its own id,
+// and compares the echo it reads back byte for byte against what it sent: a
+// stream that crossed with another worker's either reads a different id or fails
+// its handshake. The file-descriptor count of `/proc/self/fd` is taken before any
+// worker starts and after every one is joined, so a descriptor that was never
+// closed is a difference here rather than a slow leak.
+impl "std/fs"
+impl "std/net"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/thread"
+impl "std/tls"
+
+// What one worker needs: where to dial and which id it is.
+datac Job(val port: i32, val id: i64)
+
+fun fail(e: move tls.TlsError).R: tls.TlsStream {
+    val text = tls.error_text(e)
+    panic(text.as_str())
+}
+
+fun fail_unit(e: move tls.TlsError) {
+    val text = tls.error_text(e)
+    panic(text.as_str())
+}
+
+fun arg_port().R: i32 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_concurrent: argv[1] is not a port number",
+    )
+    return p.to_u16().to_i32()
+}
+
+// How many descriptors this process holds right now, read out of the kernel's own
+// listing. The listing call itself opens one directory descriptor and closes it
+// again before returning, so the two counts are taken the same way.
+fun fd_count().R: usize {
+    val listing = fs.list("/proc/self/fd")
+    return listing.len()
+}
+
+fun worker(j: move Job).R: i32 {
+    val id_text = str.from_i64(j.id)
+    var req = String.with_capacity(64)
+    req.push_str("GET /")
+    req.push_str(id_text.as_str())
+    req.push_str(" HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Id: ")
+    req.push_str(id_text.as_str())
+    req.push_str("\r\n\r\n")
+    var s = net.connect("127.0.0.1", j.port.to_u16())
+    s.set_timeout(20000)
+    val hs = tls.try_handshake(s, "127.0.0.1")
+    // A failed handshake panics with its own text: the joiner turns that into a
+    // mismatch, and the panic names which worker and why rather than a bare 0.
+    val t = when hs {
+        Ok(v) -> v
+        Err(e) -> fail(e)
+    }
+    val sent = tls.try_write_all(t, req.clone().into_bytes())
+    when sent {
+        Ok(_) -> {}
+        Err(e) -> fail_unit(e)
+    }
+    var got = Bytes.empty()
+    var reading = true
+    while reading {
+        val r = tls.try_read(t, 4096)
+        when r {
+            Ok(b) -> {
+                if b.is_empty() {
+                    reading = false
+                } else {
+                    got.append(b)
+                }
+            }
+            Err(e) -> fail_unit(e)
+        }
+    }
+    val ok = str.eq(got.as_str(), req.as_str())
+    val sd = tls.try_shutdown(t)
+    net.close(s)
+    if ok {
+        return 1
+    }
+    return 0
+}
+
+fun main() {
+    val port = arg_port()
+    val before = fd_count()
+    val h0 = thread.spawn(worker, Job(port = port, id = 0))
+    val h1 = thread.spawn(worker, Job(port = port, id = 1))
+    val h2 = thread.spawn(worker, Job(port = port, id = 2))
+    val h3 = thread.spawn(worker, Job(port = port, id = 3))
+    val h4 = thread.spawn(worker, Job(port = port, id = 4))
+    val h5 = thread.spawn(worker, Job(port = port, id = 5))
+    val h6 = thread.spawn(worker, Job(port = port, id = 6))
+    val h7 = thread.spawn(worker, Job(port = port, id = 7))
+    val h8 = thread.spawn(worker, Job(port = port, id = 8))
+    val h9 = thread.spawn(worker, Job(port = port, id = 9))
+    val h10 = thread.spawn(worker, Job(port = port, id = 10))
+    val h11 = thread.spawn(worker, Job(port = port, id = 11))
+    val h12 = thread.spawn(worker, Job(port = port, id = 12))
+    val h13 = thread.spawn(worker, Job(port = port, id = 13))
+    val h14 = thread.spawn(worker, Job(port = port, id = 14))
+    val h15 = thread.spawn(worker, Job(port = port, id = 15))
+    val h16 = thread.spawn(worker, Job(port = port, id = 16))
+    val h17 = thread.spawn(worker, Job(port = port, id = 17))
+    val h18 = thread.spawn(worker, Job(port = port, id = 18))
+    val h19 = thread.spawn(worker, Job(port = port, id = 19))
+    val h20 = thread.spawn(worker, Job(port = port, id = 20))
+    val h21 = thread.spawn(worker, Job(port = port, id = 21))
+    val h22 = thread.spawn(worker, Job(port = port, id = 22))
+    val h23 = thread.spawn(worker, Job(port = port, id = 23))
+    val h24 = thread.spawn(worker, Job(port = port, id = 24))
+    val h25 = thread.spawn(worker, Job(port = port, id = 25))
+    val h26 = thread.spawn(worker, Job(port = port, id = 26))
+    val h27 = thread.spawn(worker, Job(port = port, id = 27))
+    val h28 = thread.spawn(worker, Job(port = port, id = 28))
+    val h29 = thread.spawn(worker, Job(port = port, id = 29))
+    val h30 = thread.spawn(worker, Job(port = port, id = 30))
+    val h31 = thread.spawn(worker, Job(port = port, id = 31))
+    val h32 = thread.spawn(worker, Job(port = port, id = 32))
+    val h33 = thread.spawn(worker, Job(port = port, id = 33))
+    val h34 = thread.spawn(worker, Job(port = port, id = 34))
+    val h35 = thread.spawn(worker, Job(port = port, id = 35))
+    val h36 = thread.spawn(worker, Job(port = port, id = 36))
+    val h37 = thread.spawn(worker, Job(port = port, id = 37))
+    val h38 = thread.spawn(worker, Job(port = port, id = 38))
+    val h39 = thread.spawn(worker, Job(port = port, id = 39))
+    val h40 = thread.spawn(worker, Job(port = port, id = 40))
+    val h41 = thread.spawn(worker, Job(port = port, id = 41))
+    val h42 = thread.spawn(worker, Job(port = port, id = 42))
+    val h43 = thread.spawn(worker, Job(port = port, id = 43))
+    val h44 = thread.spawn(worker, Job(port = port, id = 44))
+    val h45 = thread.spawn(worker, Job(port = port, id = 45))
+    val h46 = thread.spawn(worker, Job(port = port, id = 46))
+    val h47 = thread.spawn(worker, Job(port = port, id = 47))
+    val h48 = thread.spawn(worker, Job(port = port, id = 48))
+    val h49 = thread.spawn(worker, Job(port = port, id = 49))
+    val h50 = thread.spawn(worker, Job(port = port, id = 50))
+    val h51 = thread.spawn(worker, Job(port = port, id = 51))
+    val h52 = thread.spawn(worker, Job(port = port, id = 52))
+    val h53 = thread.spawn(worker, Job(port = port, id = 53))
+    val h54 = thread.spawn(worker, Job(port = port, id = 54))
+    val h55 = thread.spawn(worker, Job(port = port, id = 55))
+    val h56 = thread.spawn(worker, Job(port = port, id = 56))
+    val h57 = thread.spawn(worker, Job(port = port, id = 57))
+    val h58 = thread.spawn(worker, Job(port = port, id = 58))
+    val h59 = thread.spawn(worker, Job(port = port, id = 59))
+    val h60 = thread.spawn(worker, Job(port = port, id = 60))
+    val h61 = thread.spawn(worker, Job(port = port, id = 61))
+    val h62 = thread.spawn(worker, Job(port = port, id = 62))
+    val h63 = thread.spawn(worker, Job(port = port, id = 63))
+    var ok: i64 = 0
+    val r0 = thread.join(h0)
+    when r0 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r1 = thread.join(h1)
+    when r1 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r2 = thread.join(h2)
+    when r2 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r3 = thread.join(h3)
+    when r3 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r4 = thread.join(h4)
+    when r4 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r5 = thread.join(h5)
+    when r5 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r6 = thread.join(h6)
+    when r6 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r7 = thread.join(h7)
+    when r7 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r8 = thread.join(h8)
+    when r8 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r9 = thread.join(h9)
+    when r9 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r10 = thread.join(h10)
+    when r10 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r11 = thread.join(h11)
+    when r11 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r12 = thread.join(h12)
+    when r12 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r13 = thread.join(h13)
+    when r13 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r14 = thread.join(h14)
+    when r14 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r15 = thread.join(h15)
+    when r15 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r16 = thread.join(h16)
+    when r16 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r17 = thread.join(h17)
+    when r17 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r18 = thread.join(h18)
+    when r18 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r19 = thread.join(h19)
+    when r19 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r20 = thread.join(h20)
+    when r20 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r21 = thread.join(h21)
+    when r21 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r22 = thread.join(h22)
+    when r22 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r23 = thread.join(h23)
+    when r23 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r24 = thread.join(h24)
+    when r24 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r25 = thread.join(h25)
+    when r25 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r26 = thread.join(h26)
+    when r26 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r27 = thread.join(h27)
+    when r27 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r28 = thread.join(h28)
+    when r28 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r29 = thread.join(h29)
+    when r29 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r30 = thread.join(h30)
+    when r30 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r31 = thread.join(h31)
+    when r31 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r32 = thread.join(h32)
+    when r32 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r33 = thread.join(h33)
+    when r33 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r34 = thread.join(h34)
+    when r34 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r35 = thread.join(h35)
+    when r35 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r36 = thread.join(h36)
+    when r36 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r37 = thread.join(h37)
+    when r37 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r38 = thread.join(h38)
+    when r38 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r39 = thread.join(h39)
+    when r39 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r40 = thread.join(h40)
+    when r40 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r41 = thread.join(h41)
+    when r41 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r42 = thread.join(h42)
+    when r42 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r43 = thread.join(h43)
+    when r43 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r44 = thread.join(h44)
+    when r44 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r45 = thread.join(h45)
+    when r45 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r46 = thread.join(h46)
+    when r46 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r47 = thread.join(h47)
+    when r47 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r48 = thread.join(h48)
+    when r48 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r49 = thread.join(h49)
+    when r49 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r50 = thread.join(h50)
+    when r50 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r51 = thread.join(h51)
+    when r51 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r52 = thread.join(h52)
+    when r52 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r53 = thread.join(h53)
+    when r53 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r54 = thread.join(h54)
+    when r54 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r55 = thread.join(h55)
+    when r55 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r56 = thread.join(h56)
+    when r56 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r57 = thread.join(h57)
+    when r57 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r58 = thread.join(h58)
+    when r58 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r59 = thread.join(h59)
+    when r59 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r60 = thread.join(h60)
+    when r60 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r61 = thread.join(h61)
+    when r61 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r62 = thread.join(h62)
+    when r62 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val r63 = thread.join(h63)
+    when r63 {
+        Ok(v) -> ok = ok + v.to_i64()
+        Err(_) -> {}
+    }
+    val after = fd_count()
+    print(ok)
+    print(before)
+    print(after)
+}

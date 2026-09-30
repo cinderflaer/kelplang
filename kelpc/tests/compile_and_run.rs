@@ -7,7 +7,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -5459,8 +5459,20 @@ struct TestCert {
     cert_path: PathBuf,
     key_path: PathBuf,
     // Kept alive only so the temp directory is not removed while the paths
-    // above are still in use; nothing reads it.
-    _dir: tempfile_dir::TempDir,
+    // above are still in use; nothing reads it. Shared rather than owned, so
+    // one certificate can back two servers (the `https` redirect case needs a
+    // second local port that the client's one `SSL_CERT_FILE` also trusts).
+    _dir: Arc<tempfile_dir::TempDir>,
+}
+
+impl Clone for TestCert {
+    fn clone(&self) -> TestCert {
+        TestCert {
+            cert_path: self.cert_path.clone(),
+            key_path: self.key_path.clone(),
+            _dir: self._dir.clone(),
+        }
+    }
 }
 
 /// A tiny drop-cleaned temp directory, written by hand rather than pulling in
@@ -5597,7 +5609,7 @@ fn generate_test_cert_with(subject: CertSubject, valid: bool) -> TestCert {
         .expect("failed to write the test certificate");
     std::fs::write(&key_path, key.private_key_to_pem_pkcs8().expect("private key as PEM"))
         .expect("failed to write the test private key");
-    TestCert { cert_path, key_path, _dir: dir }
+    TestCert { cert_path, key_path, _dir: Arc::new(dir) }
 }
 
 /// As `CannedServer`, but every accepted connection is a TLS server socket
@@ -5819,6 +5831,21 @@ enum TlsBehavior {
     Truncate,
     /// Complete the handshake, then stay silent until the test says stop.
     Silent,
+    /// Complete the handshake, write a partial response head and body, then
+    /// write a raw record the client cannot authenticate and hold. The read of
+    /// it has to be an error rather than a clean end of stream.
+    CorruptRecord,
+    /// Accept the TCP connection and close it without ever reading the
+    /// ClientHello. That unread data turns the close into a RST, which is the
+    /// reset a handshake has to survive as a typed error.
+    ResetHandshake,
+    /// Complete the handshake and close without reading the client's request,
+    /// which is a RST for the same reason.
+    ResetRead,
+    /// Never answer the ClientHello, and close the socket after a fixed hold
+    /// rather than waiting for the test to say stop, so a client with no
+    /// deadline still ends.
+    NeverHandshakeThenClose,
 }
 
 /// A one-connection server for the failure cases `CannedTlsServer`'s
@@ -5835,7 +5862,14 @@ struct RudeTlsServer {
 impl RudeTlsServer {
     fn start(behavior: TlsBehavior) -> RudeTlsServer {
         let cert = generate_test_cert();
-        let acceptor = tls_acceptor(&cert, None);
+        // The mid-stream garbage is written as a raw record, which only a TLS 1.2
+        // connection still reads without an AEAD record layer sealing it; the
+        // point here is the client's failure to authenticate, not the version.
+        let version = match behavior {
+            TlsBehavior::CorruptRecord => Some(openssl::ssl::SslVersion::TLS1_2),
+            _ => None,
+        };
+        let acceptor = tls_acceptor(&cert, version);
         let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
         let port = listener.local_addr().expect("local address").port();
         let accepted = Arc::new(AtomicUsize::new(0));
@@ -5882,6 +5916,39 @@ impl RudeTlsServer {
                         drop(tls);
                     }
                 }
+                TlsBehavior::CorruptRecord => {
+                    if let Ok(mut tls) = acceptor.accept(stream) {
+                        let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\npartial");
+                        // A record that is not a valid sealed record of this
+                        // session: content type 21, a length of 2 and two
+                        // bytes that are not a real alert. It goes in through
+                        // the underlying socket because the acceptor's own
+                        // `SslStream` has no public call for an arbitrary
+                        // post-handshake record.
+                        let _ = tls.get_mut().write_all(&[21, 3, 3, 0, 2, 2, 80]);
+                        while !stop_flag.load(Ordering::SeqCst) && Instant::now() < deadline {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        drop(tls);
+                    }
+                }
+                TlsBehavior::ResetHandshake => {
+                    // The ClientHello is on its way; give it time to land in the
+                    // receive queue unread, then let `stream` drop at the end of
+                    // this function, which is the RST.
+                    thread::sleep(Duration::from_millis(150));
+                }
+                TlsBehavior::ResetRead => {
+                    if let Ok(tls) = acceptor.accept(stream) {
+                        // The request the client sends right after the handshake
+                        // lands unread, so this close is a RST.
+                        thread::sleep(Duration::from_millis(250));
+                        drop(tls);
+                    }
+                }
+                TlsBehavior::NeverHandshakeThenClose => {
+                    thread::sleep(Duration::from_millis(1200));
+                }
             }
         });
         RudeTlsServer { port, accepted, stop, handle: Some(handle), cert }
@@ -5904,6 +5971,13 @@ impl RudeTlsServer {
 /// the untrusted fixtures deterministic: a developer's own `SSL_CERT_FILE` must
 /// not stand in for the test CA.
 fn run_tls_fixture(name: &str, args: &[String], env: &[(&str, &str)]) -> std::process::Output {
+    let bin = build_fixture_bin(name);
+    run_tls_binary(&bin, args, env)
+}
+
+/// Builds `tests/fixtures/<name>.kp` and returns the binary, so a test that has to
+/// time the *run* rather than the build can do the two separately.
+fn build_fixture_bin(name: &str) -> PathBuf {
     let bin = out_path(name);
     let build = kelpc()
         .arg("build")
@@ -5917,7 +5991,13 @@ fn run_tls_fixture(name: &str, args: &[String], env: &[(&str, &str)]) -> std::pr
         "expected '{name}' to compile, but it failed:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let mut cmd = Command::new(&bin);
+    bin
+}
+
+/// Runs an already-built fixture binary with `args`, `SSL_CERT_FILE` and
+/// `SSL_CERT_DIR` removed unless `env` sets them.
+fn run_tls_binary(bin: &Path, args: &[String], env: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = Command::new(bin);
     for a in args {
         cmd.arg(a);
     }
@@ -5934,7 +6014,9 @@ fn tls_fixture_stdout(name: &str, args: &[String], env: &[(&str, &str)]) -> Stri
     let out = run_tls_fixture(name, args, env);
     assert!(
         out.status.success(),
-        "expected '{name}' to exit successfully, got:\n{}",
+        "expected '{name}' to exit successfully, got {:?}:\nstdout: {}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).to_string()
@@ -6073,6 +6155,704 @@ fn a_private_ca_file_is_added_to_the_roots() {
     server.finish();
     assert_eq!(stdout, "ok\n");
     assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+// ---------------------------------------------------------------------------
+// Release goal 1 (stable TLS), part 2: the hostile-conditions matrix. Every case
+// dials 127.0.0.1 only and runs against a server started in this thread, with the
+// same per-server throwaway certificate the failure matrix above uses. What these
+// cases add are the conditions a happy path never reaches: a body far larger than
+// one read, a peer that dribbles, a peer that resets, a peer that alerts
+// mid-record, many clients at once, a silent peer with no deadline at all, the
+// SNI name itself, an `https` redirect to a second local port, `Connection:
+// close` against keep-alive, and a header block larger than the read buffer.
+// ---------------------------------------------------------------------------
+
+/// A digest as lowercase hex, the spelling `std/encoding`'s `hex_encode` gives, so
+/// a fixture's own SHA-1 can be compared with this file's `test_sha1`.
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+/// Byte `i` of the 1 MiB payload `tls_partial.kp` builds, matching that fixture's
+/// `payload_byte`.
+fn partial_payload_byte(i: usize) -> u8 {
+    ((i * 31 + 7) % 256) as u8
+}
+
+fn partial_payload(n: usize) -> Vec<u8> {
+    (0..n).map(partial_payload_byte).collect()
+}
+
+/// The 10 MiB body case (a) reads back. A position-dependent pattern rather than a
+/// constant, so a chunk that duplicated or dropped a byte moves the SHA-1.
+fn big_body(n: usize) -> Vec<u8> {
+    (0..n).map(|i| ((i * 131 + 17) % 253) as u8).collect()
+}
+
+/// The body `SlowTlsServer` writes one byte at a time.
+fn slow_reply(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 251) as u8).collect()
+}
+
+/// The server for case (b): drain the client's 1 MiB one byte at a time, record
+/// what arrived, then answer with its own body one byte at a time. An `SSL_read`
+/// of one byte still consumes a whole record underneath, so this drives the
+/// partial-read and partial-write loops of one stream in both directions.
+struct SlowTlsServer {
+    port: u16,
+    received: Arc<Mutex<Option<Vec<u8>>>>,
+    handle: Option<thread::JoinHandle<()>>,
+    cert: TestCert,
+}
+
+impl SlowTlsServer {
+    fn start(message_len: usize, reply_len: usize) -> SlowTlsServer {
+        let cert = generate_test_cert();
+        let acceptor = tls_acceptor(&cert, None);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let received = Arc::new(Mutex::new(None));
+        let slot = received.clone();
+        let handle = thread::spawn(move || {
+            let _ = listener.set_nonblocking(true);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break Some(stream),
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() > deadline {
+                            break None;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(_) => break None,
+                }
+            };
+            let Some(stream) = stream else { return };
+            let _ = stream.set_nonblocking(false);
+            let mut tls = acceptor.accept(stream).expect("the slow server's handshake");
+            let mut one = [0u8; 1];
+            let mut got = Vec::with_capacity(message_len);
+            for _ in 0..message_len {
+                if tls.read_exact(&mut one).is_err() {
+                    break;
+                }
+                got.push(one[0]);
+            }
+            *slot.lock().expect("the received slot") = Some(got);
+            for b in slow_reply(reply_len) {
+                if tls.write_all(std::slice::from_ref(&b)).is_err() {
+                    break;
+                }
+            }
+            let _ = tls.shutdown();
+        });
+        SlowTlsServer { port, received, handle: Some(handle), cert }
+    }
+
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn received(&self) -> Vec<u8> {
+        self.received.lock().expect("the received slot").clone().unwrap_or_default()
+    }
+}
+
+/// The server for case (e): one TLS connection per client, and each one echoes the
+/// request head it read back byte for byte, then shuts down cleanly. A client
+/// compares the echo against what it sent, so two streams that crossed produce a
+/// different request, and the accept count pins that every client really got its
+/// own connection.
+struct EchoTlsServer {
+    port: u16,
+    accepted: Arc<AtomicUsize>,
+    handle: Option<thread::JoinHandle<()>>,
+    cert: TestCert,
+}
+
+impl EchoTlsServer {
+    fn start(clients: usize) -> EchoTlsServer {
+        let cert = generate_test_cert();
+        let acceptor = Arc::new(tls_acceptor(&cert, None));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        let handle = thread::spawn(move || {
+            let _ = listener.set_nonblocking(true);
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut workers = Vec::new();
+            for _ in 0..clients {
+                let stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break Some(stream),
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            if Instant::now() > deadline {
+                                break None;
+                            }
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(_) => break None,
+                    }
+                };
+                let Some(stream) = stream else { break };
+                let _ = stream.set_nonblocking(false);
+                let acceptor = acceptor.clone();
+                let counter = counter.clone();
+                workers.push(thread::spawn(move || {
+                    let mut tls = acceptor.accept(stream).expect("the echo server's handshake");
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let mut head: Vec<u8> = Vec::new();
+                    let mut one = [0u8; 1];
+                    while tls.read(&mut one).unwrap_or(0) == 1 {
+                        head.push(one[0]);
+                        if head.ends_with(b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    tls.write_all(&head).expect("the echo write");
+                    let _ = tls.shutdown();
+                }));
+            }
+            for worker in workers {
+                let _ = worker.join();
+            }
+        });
+        EchoTlsServer { port, accepted, handle: Some(handle), cert }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// The server for case (g): it records the server name the client sent through SNI
+/// before it answers, so the test compares it with the host string the fixture
+/// handed `handshake` rather than with whatever the socket resolved to. The
+/// certificate carries only a `localhost` DNS name, which is what makes the
+/// fixture's `handshake(s, "localhost")` verify even though it dialed 127.0.0.1.
+struct SniTlsServer {
+    port: u16,
+    names: Arc<Mutex<Vec<String>>>,
+    handle: Option<thread::JoinHandle<()>>,
+    cert: TestCert,
+}
+
+impl SniTlsServer {
+    fn start() -> SniTlsServer {
+        let cert = generate_mismatched_test_cert();
+        let acceptor = tls_acceptor(&cert, None);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+        let port = listener.local_addr().expect("local address").port();
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let slot = names.clone();
+        let handle = thread::spawn(move || {
+            let _ = listener.set_nonblocking(true);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break Some(stream),
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() > deadline {
+                            break None;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(_) => break None,
+                }
+            };
+            let Some(stream) = stream else { return };
+            let _ = stream.set_nonblocking(false);
+            let mut tls = acceptor.accept(stream).expect("the SNI server's handshake");
+            let name = tls
+                .ssl()
+                .servername(openssl::ssl::NameType::HOST_NAME)
+                .unwrap_or("")
+                .to_string();
+            slot.lock().expect("the SNI slot").push(name);
+            if read_http_request(&mut tls) {
+                let _ = tls.write_all(BODY_200_HELLO);
+            }
+            let _ = tls.shutdown();
+        });
+        SniTlsServer { port, names, handle: Some(handle), cert }
+    }
+
+    fn finish(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn names(&self) -> Vec<String> {
+        self.names.lock().expect("the SNI slot").clone()
+    }
+}
+
+#[test]
+fn a_ten_mib_body_is_byte_for_byte_at_small_and_large_read_sizes() {
+    // (a) The same 10 MiB body read in 1 KiB pieces and in 64 KiB pieces. Both
+    // the length and the SHA-1 have to match the bytes the server actually sent,
+    // so a chunk boundary that lost or duplicated a byte is caught.
+    let body = big_body(10 * 1024 * 1024);
+    // The payload goes straight onto the stream: this case is about the read
+    // loop's chunking, so the body's end is a clean `close_notify` rather than a
+    // header the fixture would have to parse. The `std/http` 10 MiB path is the
+    // same framing `tls_partial` and the project tests already exercise.
+    let expected = format!("{}\n{}\n", body.len(), hex_lower(&test_sha1(&body)));
+    for mode in ["small", "large"] {
+        let mut server = CannedTlsServer::start(one_connection(&[body.as_slice()]));
+        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+        let stdout = tls_fixture_stdout(
+            "tls_big_body",
+            &[server.port.to_string(), mode.to_string()],
+            &[("SSL_CERT_FILE", ssl.as_str())],
+        );
+        server.finish();
+        assert_eq!(stdout, expected, "the body read in {mode} pieces did not match");
+        assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+    }
+}
+
+#[test]
+fn one_mib_written_through_write_all_arrives_whole_against_a_dribbling_peer() {
+    // (b) The client hands 1 MiB to `write_all` in one call while the server
+    // drains one byte at a time, and the server answers one byte at a time while
+    // the client reads 4 KiB at once. Both sides hash what they saw.
+    const SENT: usize = 1048576;
+    const REPLY: usize = 200_000;
+    let mut server = SlowTlsServer::start(SENT, REPLY);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_partial",
+        &[server.port.to_string(), REPLY.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    let reply = slow_reply(REPLY);
+    let expected = format!(
+        "{SENT}\n{}\n{}\n",
+        reply.len(),
+        hex_lower(&test_sha1(&reply))
+    );
+    assert_eq!(stdout, expected);
+    assert_eq!(
+        hex_lower(&test_sha1(&server.received())),
+        hex_lower(&test_sha1(&partial_payload(SENT))),
+        "the server did not drain exactly what `write_all` sent"
+    );
+}
+
+#[test]
+fn a_record_that_fails_authentication_mid_stream_is_not_a_clean_end_of_stream() {
+    // A partial response, then a record the client cannot authenticate. The read
+    // must be an error: a peer that wrote garbage mid-body may never look like a
+    // complete response. (`openssl`'s crate exposes no way to send a fatal alert
+    // after the handshake, since every record is authenticated by then, so the
+    // "peer that gives up mid-stream" signal is a corrupted record here and a
+    // `close_notify` in `a_close_notify_mid_body_is_not_a_complete_response`.)
+    let mut server = RudeTlsServer::start(TlsBehavior::CorruptRecord);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_bad_record",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    let stdout = stdout.trim();
+    assert_ne!(stdout, "clean", "a bad record was reported as a clean end of stream");
+    assert!(
+        stdout.starts_with("io ") || stdout == "peer_closed_uncleanly",
+        "unexpected error for a bad record: {stdout}"
+    );
+}
+
+#[test]
+fn a_close_notify_mid_body_is_not_a_complete_response() {
+    // (c) The alert a peer can actually send mid-stream: a clean `close_notify`
+    // where a `Content-Length` still promised more. `std/tls` is right to report
+    // a clean end of stream; `std/http` is what must refuse to call the short
+    // body complete, and this projects the whole path through `http.get`.
+    let response = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\npartial";
+    assert_project_served_tls_denied(
+        "https_get",
+        &project("https_get"),
+        one_connection(&[response]),
+        "the connection closed before the whole body arrived",
+    );
+}
+
+#[test]
+fn a_tcp_reset_during_the_handshake_is_a_typed_error() {
+    // (d) The server accepts and closes with the ClientHello unread, which is a
+    // RST. The handshake has to come back with an error at once.
+    let mut server = RudeTlsServer::start(TlsBehavior::ResetHandshake);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_reset_handshake",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    let stdout = stdout.trim();
+    assert!(
+        stdout.starts_with("io ") || stdout == "peer_closed_uncleanly",
+        "unexpected error for a reset handshake: {stdout}"
+    );
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn a_tcp_reset_during_a_read_is_a_typed_error() {
+    // (d) The handshake completes, the client sends a request, and the server
+    // closes with that request unread, which is a RST. The write and the read are
+    // both reported, and neither may look like a clean end of stream.
+    let mut server = RudeTlsServer::start(TlsBehavior::ResetRead);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_reset_read",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "expected a write line and a read line, got:\n{stdout}");
+    assert!(!stdout.contains("clean"), "a reset was reported as a clean read:\n{stdout}");
+    assert!(!stdout.contains("data"), "a reset produced data:\n{stdout}");
+    assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn sixty_four_concurrent_clients_get_their_own_streams_and_leak_no_descriptors() {
+    // (e) 64 workers, each with its own handshake, request, echo check and close.
+    // The fixture prints how many read back their own request and the
+    // `/proc/self/fd` count before and after, so a crossed stream and a leaked
+    // descriptor are both failures here.
+    const CLIENTS: usize = 64;
+    let mut server = EchoTlsServer::start(CLIENTS);
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_concurrent",
+        &[server.port.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 3, "expected the ok count and two fd counts, got:\n{stdout}");
+    let ok: i64 = lines[0].parse().expect("the ok count is a number");
+    let before: i64 = lines[1].parse().expect("the before count is a number");
+    let after: i64 = lines[2].parse().expect("the after count is a number");
+    assert_eq!(ok, CLIENTS as i64, "workers that did not read their own echo:\n{stdout}");
+    assert_eq!(after, before, "leaked descriptors: {before} before, {after} after");
+    assert_eq!(server.accepted(), CLIENTS, "the server accepted a different number of connections");
+}
+
+#[test]
+fn a_silent_peer_respects_the_socket_deadline_and_has_none_by_default() {
+    // (f) The same never-answering server for both halves, closing after a fixed
+    // 1200 ms hold. With a 400 ms deadline the client gives up first and reports
+    // `Timeout`; without one it waits for the close, so it cannot finish before
+    // the hold and cannot report `Timeout`. That difference is the whole check.
+    let hold = Duration::from_millis(900);
+
+    // Built first, so the clock below measures the client's own wait and not
+    // the compiler's.
+    let no_deadline = build_fixture_bin("tls_handshake_no_timeout");
+    let deadline = build_fixture_bin("tls_handshake_socket_timeout");
+
+    let mut without = RudeTlsServer::start(TlsBehavior::NeverHandshakeThenClose);
+    let started = Instant::now();
+    let out = run_tls_binary(&no_deadline, &[without.port.to_string()], &[]);
+    let waited = started.elapsed();
+    without.finish();
+    assert!(out.status.success(), "the no-timeout client failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert!(
+        !stdout.starts_with("timeout"),
+        "a handshake with no deadline reported `{stdout}`"
+    );
+    assert!(
+        waited >= hold,
+        "the no-timeout client returned after {waited:?}, before the server's hold"
+    );
+
+    let mut with = RudeTlsServer::start(TlsBehavior::NeverHandshakeThenClose);
+    let started = Instant::now();
+    let out = run_tls_binary(&deadline, &[with.port.to_string()], &[]);
+    let waited = started.elapsed();
+    with.finish();
+    assert!(out.status.success(), "the deadline client failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "timeout\n");
+    assert!(
+        waited < hold,
+        "the deadline client waited {waited:?}, past its own 400 ms deadline"
+    );
+}
+
+#[test]
+fn the_server_name_sent_is_the_host_given_to_handshake() {
+    // (g) The client dials 127.0.0.1 but hands `handshake` the name `localhost`,
+    // and the certificate names only `localhost`. The server records the SNI name
+    // it was actually sent, so a handshake that passed the resolved address, or
+    // sent no SNI at all, fails here even when verification passes.
+    const HOST: &str = "localhost";
+    let mut server = SniTlsServer::start();
+    let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let stdout = tls_fixture_stdout(
+        "tls_sni",
+        &[server.port.to_string(), HOST.to_string()],
+        &[("SSL_CERT_FILE", ssl.as_str())],
+    );
+    server.finish();
+    assert_eq!(stdout, "ok\n");
+    assert_eq!(
+        server.names(),
+        vec![HOST.to_string()],
+        "the server received a different SNI name"
+    );
+}
+
+#[test]
+fn an_https_redirect_reaches_a_second_local_port() {
+    // (h) Server B is up first so server A's `Location` can name its port. Both
+    // use the same certificate, so the one `SSL_CERT_FILE` the client is given
+    // trusts both hops; the body can only come from B.
+    let cert = generate_test_cert();
+    let mut second = CannedTlsServer::start_with_cert(cert.clone(), one_connection(&[BODY_200_HELLO]));
+    let location = format!(
+        "HTTP/1.1 301 Moved Permanently\r\nLocation: https://127.0.0.1:{}/final\r\nContent-Length: 0\r\n\r\n",
+        second.port
+    );
+    let mut first = CannedTlsServer::start_with_cert(cert, one_connection(&[location.as_bytes()]));
+
+    let bin = out_path("https_redirect");
+    let build = kelpc()
+        .arg("build")
+        .arg(project("https_redirect"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the https_redirect project to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let ssl = first.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+    let run = Command::new(&bin)
+        .arg(first.port.to_string())
+        .env_remove("SSL_CERT_FILE")
+        .env_remove("SSL_CERT_DIR")
+        .env("SSL_CERT_FILE", ssl)
+        .output()
+        .expect("failed to run the redirect client");
+    first.finish();
+    second.finish();
+
+    assert!(
+        run.status.success(),
+        "expected the redirect client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "200\nhello\ntrue\n");
+    assert_eq!(first.accepted(), 1, "the redirecting server served a different number of connections");
+    assert_eq!(second.accepted(), 1, "the redirect target served a different number of connections");
+}
+
+#[test]
+fn connection_close_is_dropped_from_the_pool_and_keep_alive_is_kept() {
+    // (i) The first connection answers `Connection: close`, so the pool has to
+    // drop it and dial again for the second request; the third request then rides
+    // the second connection. Two accepted connections is the whole assertion.
+    const CLOSED: &[u8] =
+        b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nfirst";
+    let connections = vec![
+        vec![CLOSED.to_vec()],
+        vec![BODY_200_HELLO.to_vec(), BODY_200_HELLO.to_vec()],
+    ];
+    assert_project_served(
+        "http_close_vs_keepalive",
+        &project("http_close_vs_keepalive"),
+        connections,
+        2,
+        "200\nfalse\n0\n200\ntrue\n1\n200\ntrue\n1\n",
+    );
+}
+
+#[test]
+fn a_hundred_kib_header_block_survives_std_http() {
+    // (j) The response head is 100 000 bytes of header, far more than the 4 KiB
+    // the client reads at a time, so locating the blank line and copying the head
+    // both span many refills. The body after it has to start at the right byte.
+    let big = "a".repeat(100_000);
+    let response =
+        format!("HTTP/1.1 200 OK\r\nX-Big: {big}\r\nContent-Length: 4\r\n\r\ndone").into_bytes();
+    assert_project_served_tls(
+        "https_big_headers",
+        &project("https_big_headers"),
+        one_connection(&[response.as_slice()]),
+        1,
+        &format!("200\n{}\ndone\n", big.len()),
+    );
+}
+
+/// The C backend's `kelpc`, whatever backend the enclosing run exercises: the
+/// AddressSanitizer gate below needs the generated `.c` to instrument, and only
+/// the C backend writes one.
+fn kelpc_c() -> Command {
+    let mut cmd = Command::new(kelpc_bin());
+    cmd.env_remove("KELPC_BACKEND");
+    cmd.env("KELPC_ORACLE", "c");
+    cmd
+}
+
+/// Builds `tests/fixtures/<name>.kp` through the C backend, rebuilds its generated
+/// `.c` with AddressSanitizer, runs it with `args` and `env`, and returns its
+/// stdout. A report from AddressSanitizer or LeakSanitizer fails the test; a
+/// non-zero exit that is the program's own typed-error path is fine.
+fn asan_tls_fixture(name: &str, args: &[String], env: &[(&str, &str)]) -> String {
+    let bin = out_path(&format!("{name}_asan_src"));
+    let build = kelpc_c()
+        .arg("build")
+        .arg(fixture(&format!("tests/fixtures/{name}.kp")))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected '{name}' to compile through the C backend, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let asan_bin = out_path(&format!("{name}_asan"));
+    let cc = Command::new("cc")
+        .arg("-fsanitize=address")
+        .arg("-O1")
+        .arg("-o")
+        .arg(&asan_bin)
+        .arg(bin.with_extension("c"))
+        .args(["-fwrapv", "-pthread", "-lm", "-lssl", "-lcrypto"])
+        .output()
+        .expect("failed to spawn cc");
+    assert!(
+        cc.status.success(),
+        "the AddressSanitizer build of '{name}' failed:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let mut cmd = Command::new(&asan_bin);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.env_remove("SSL_CERT_FILE");
+    cmd.env_remove("SSL_CERT_DIR");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.env("ASAN_OPTIONS", "detect_leaks=1");
+    let run = cmd.output().expect("failed to run the instrumented binary");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        !stderr.contains("AddressSanitizer") && !stderr.contains("LeakSanitizer"),
+        "AddressSanitizer flagged '{name}':\n{stderr}"
+    );
+    String::from_utf8_lossy(&run.stdout).to_string()
+}
+
+#[test]
+fn tls_handshakes_free_their_openssl_objects_under_address_sanitizer() {
+    // The leak gate for `SSL*`/`SSL_CTX*`: every handshake path, on the way out
+    // and on the way down, is run under AddressSanitizer's leak checker. It is
+    // the closest thing to `memory_gate.rs` this machine has (there is no
+    // valgrind here), and it is the C backend's generated translation unit that
+    // gets instrumented, which is the same C the LLVM backend compiles into its
+    // per-program object.
+    //
+    // The success path first: every `try_` operation, one connection.
+    {
+        let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO, BODY_200_HELLO]));
+        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+        let stdout = asan_tls_fixture(
+            "tls_try_ok",
+            &[server.port.to_string()],
+            &[("SSL_CERT_FILE", ssl.as_str())],
+        );
+        server.finish();
+        assert_eq!(stdout, "true\ntrue\ntrue\ntrue\ntrue\n");
+    }
+
+    // A handshake that fails halfway: the certificate is not in the store, so
+    // `SSL_connect` fails and the object it built has to be freed.
+    {
+        let mut server = CannedTlsServer::start(one_connection(&[BODY_200_HELLO]));
+        let stdout = asan_tls_fixture(
+            "tls_error",
+            &[server.port.to_string(), "127.0.0.1".to_string()],
+            &[],
+        );
+        server.finish();
+        assert_eq!(stdout, "untrusted\n");
+    }
+
+    // A handshake that times out: the socket deadline fires inside `SSL_connect`.
+    {
+        let mut server = RudeTlsServer::start(TlsBehavior::NeverHandshake);
+        let stdout = asan_tls_fixture("tls_timeout_handshake", &[server.port.to_string()], &[]);
+        server.finish();
+        assert_eq!(stdout, "timeout\n");
+    }
+
+    // A peer that resets during the handshake.
+    {
+        let mut server = RudeTlsServer::start(TlsBehavior::ResetHandshake);
+        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+        let stdout = asan_tls_fixture(
+            "tls_reset_handshake",
+            &[server.port.to_string()],
+            &[("SSL_CERT_FILE", ssl.as_str())],
+        );
+        server.finish();
+        assert!(!stdout.trim().is_empty(), "the reset handshake fixture printed nothing");
+    }
+
+    // A peer that truncates after a successful handshake, and one that alerts
+    // mid-stream: the `SSL*` a successful handshake allocated is freed by
+    // `try_shutdown` on the reader's way out.
+    {
+        let mut server = RudeTlsServer::start(TlsBehavior::Truncate);
+        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+        let stdout = asan_tls_fixture(
+            "tls_truncated",
+            &[server.port.to_string()],
+            &[("SSL_CERT_FILE", ssl.as_str())],
+        );
+        server.finish();
+        assert_eq!(stdout, "peer_closed_uncleanly\n");
+    }
+    {
+        let mut server = RudeTlsServer::start(TlsBehavior::CorruptRecord);
+        let ssl = server.cert.cert_path.to_str().expect("the cert path is utf-8").to_string();
+        let stdout = asan_tls_fixture(
+            "tls_bad_record",
+            &[server.port.to_string()],
+            &[("SSL_CERT_FILE", ssl.as_str())],
+        );
+        server.finish();
+        assert!(!stdout.trim().is_empty(), "the bad-record fixture printed nothing");
+    }
 }
 
 /// Compiles a project, runs it with the canned server's port as `argv[1]`,

@@ -1,0 +1,51 @@
+// Release goal 1, hardening (case f, with a deadline the caller set): the peer
+// accepts the TCP connection and never answers the ClientHello. `set_timeout` on
+// the socket is what the blocking `SSL_connect` underneath reads, so the
+// deadline does not have to come from the handshake's own options.
+impl "std/net"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/tls"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+
+fun fail(e: move tls.TlsError).R: tls.TlsStream {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun fail_unit(e: move tls.TlsError) {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun arg_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_handshake_socket_timeout: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun main() {
+    var s = net.connect("127.0.0.1", arg_port())
+    s.set_timeout(400)
+    val hs = tls.try_handshake(s, "127.0.0.1")
+    when hs {
+        Ok(_) -> print("ok")
+        Err(e) -> print(err_name(e))
+    }
+    net.close(s)
+}

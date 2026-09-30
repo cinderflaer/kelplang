@@ -1,0 +1,74 @@
+// Release goal 1, hardening (case d, half two): the peer resets the TCP
+// connection during a read. The handshake completes, the client sends a request,
+// and the server closes with that request still unread, which is a RST. Both the
+// write and the read are reported: either may be the first to see it, and neither
+// may be silently swallowed as a clean end of stream.
+impl "std/net"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/tls"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+
+fun fail(e: move tls.TlsError).R: tls.TlsStream {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun fail_unit(e: move tls.TlsError) {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun arg_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_reset_read: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun main() {
+    var s = net.connect("127.0.0.1", arg_port())
+    s.set_timeout(5000)
+    val hs = tls.try_handshake(s, "127.0.0.1")
+    val t = when hs {
+        Ok(v) -> v
+        Err(e) -> fail(e)
+    }
+    val sent = tls.try_write_all(t, Bytes.from_str("GET /a HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    when sent {
+        Ok(_) -> print("write ok")
+        Err(e) -> {
+            val text = err_name(e)
+            print(str.concat("write ", text.as_str()))
+        }
+    }
+    val r = tls.try_read(t, 4096)
+    when r {
+        Ok(b) -> {
+            if b.is_empty() {
+                print("clean")
+            } else {
+                print("data")
+            }
+        }
+        Err(e) -> print(err_name(e))
+    }
+    // A read that saw the reset still leaves the `SSL*` here, and only
+    // `try_shutdown` frees it.
+    val sd = tls.try_shutdown(t)
+    net.close(s)
+}

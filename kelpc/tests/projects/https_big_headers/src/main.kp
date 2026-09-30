@@ -1,0 +1,36 @@
+// Release goal 1, hardening (case j): a 100 KiB header block. The response head
+// is far larger than the 4 KiB the client reads at a time, so locating the blank
+// line and copying the head out are both exercised across many refills. The
+// program prints the header's own length and the body, so a head that was cut
+// short, or a body read that started inside the header, is visible.
+impl "std/http" caps(net = ["127.0.0.1:*"])
+impl "std/process"
+impl "std/result"
+impl "std/str"
+
+fun server_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "server_port: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun url_for(path: &str).R: String {
+    val port_text = str.from_u64(server_port().to_u64())
+    var out = String.with_capacity(64)
+    out.push_str("https://127.0.0.1:")
+    out.push_str(port_text.as_str())
+    out.push_str(path)
+    return out
+}
+
+fun main() {
+    val url = url_for("/big")
+    val r = http.get(url.as_str())
+    print(r.status)
+    val big = r.header("x-big")
+    print(big.len())
+    print(r.body.as_str())
+}

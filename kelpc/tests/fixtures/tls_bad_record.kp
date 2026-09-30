@@ -1,0 +1,72 @@
+// Release goal 1, hardening: a record mid-stream that the client cannot
+// authenticate. The server completes the handshake, writes a
+// `Content-Length: 1000` head and a few body bytes, then writes a raw record
+// whose bytes are not a valid AEAD-sealed record of this session. The read that
+// reaches it must be an error, never the clean empty `Bytes` a `close_notify`
+// gives: a peer that wrote garbage must not look like a complete response.
+impl "std/net"
+impl "std/process"
+impl "std/result"
+impl "std/str"
+impl "std/tls"
+
+fun err_name(e: move tls.TlsError).R: String = when e {
+    Untrusted -> String.from_str("untrusted")
+    Expired -> String.from_str("expired")
+    HostMismatch -> String.from_str("host_mismatch")
+    ProtocolTooOld -> String.from_str("protocol_too_old")
+    HandshakeFailed(reason) -> str.concat("handshake_failed ", reason.as_str())
+    PeerClosedUncleanly -> String.from_str("peer_closed_uncleanly")
+    Timeout -> String.from_str("timeout")
+    Io(reason) -> str.concat("io ", reason.as_str())
+}
+
+
+fun fail(e: move tls.TlsError).R: tls.TlsStream {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun fail_unit(e: move tls.TlsError) {
+    val text = err_name(e)
+    panic(text.as_str())
+}
+
+fun arg_port().R: u16 {
+    val args = process.args()
+    val p = result.expect(
+        r = str.parse_u64(args.get(1).as_str()),
+        message = "tls_alert: argv[1] is not a port number",
+    )
+    return p.to_u16()
+}
+
+fun main() {
+    var s = net.connect("127.0.0.1", arg_port())
+    s.set_timeout(5000)
+    val hs = tls.try_handshake(s, "127.0.0.1")
+    val t = when hs {
+        Ok(v) -> v
+        Err(e) -> fail(e)
+    }
+    var reading = true
+    while reading {
+        val r = tls.try_read(t, 4096)
+        when r {
+            Ok(b) -> {
+                if b.is_empty() {
+                    print("clean")
+                    reading = false
+                }
+            }
+            Err(e) -> {
+                print(err_name(e))
+                reading = false
+            }
+        }
+    }
+    // The failed read still left this side owning the `SSL*`, so the session is
+    // ended before the socket goes: `try_shutdown` frees it either way.
+    val sd = tls.try_shutdown(t)
+    net.close(s)
+}

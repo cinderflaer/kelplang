@@ -1,0 +1,4 @@
+name = "http_close_vs_keepalive"
+# Two kept-alive connections are allowed, so the pool has room to keep the second
+# connection after the first one is closed by the server's own header.
+http_pool = 2
