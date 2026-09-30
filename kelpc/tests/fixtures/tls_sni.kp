@@ -20,7 +20,6 @@ fun err_name(e: move tls.TlsError).R: String = when e {
     Io(reason) -> str.concat("io ", reason.as_str())
 }
 
-
 fun fail(e: move tls.TlsError).R: tls.TlsStream {
     val text = err_name(e)
     panic(text.as_str())
