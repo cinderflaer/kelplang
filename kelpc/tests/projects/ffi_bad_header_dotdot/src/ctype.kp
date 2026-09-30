@@ -1,0 +1,1 @@
+pub extern fun toupper(c: i32).R: i32

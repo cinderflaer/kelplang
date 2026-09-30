@@ -8,7 +8,8 @@
 the first slice of MK9-S1-M1 is in the tree.
 
 - A project's `coral.toml` may carry `[extern."<module id>"]` with `domain` (one of the six
-  capability domains), `library` and `symbols` (`resolve.rs`, `ExternModuleDecl`).
+  capability domains), `library`, `symbols` (`resolve.rs`, `ExternModuleDecl`), and an optional
+  `header` (a C header; see gap 3 below).
 - `infer.rs` accepts a user `extern fun` only when its bare name is in that module's `symbols`.
 - `codegen_c.rs::write_user_extern` emits a trampoline that forwards every parameter to the C
   symbol of the same name. `driver.rs` adds `-l<library>` for every `[extern.*]` section.
@@ -21,7 +22,7 @@ the first slice of MK9-S1-M1 is in the tree.
 |---|-----|-------|-------------------|
 | 1 | **No pointer or opaque-handle type.** `Ty` has scalars, `str`, `Bytes`, `String`, `View`, `Fn`, `Closure`, arrays and user types. | `types.rs` | `gtk_window_new` returns a `GtkWidget*`. `usize` would carry it at the ABI level but gives no type safety between a window and a button. |
 | 2 | **Symbol name is the Kelp name.** "1:1 name mapping" is stated as deliberate. | `resolve.rs`, `codegen_c.rs` | Every call reads `gtk.gtk_window_new`, and two libraries that share a symbol name cannot both be bound. |
-| 3 | **No declaration of the native symbol.** The trampoline calls it with no prototype and no `#include`; the fixtures only use libc symbols the runtime preamble already declares. | `codegen_c.rs::write_user_extern`, `C_HEADERS` | A GTK call is an implicit declaration (an error in newer C standards) or a guessed signature. Either a `header = "gtk/gtk.h"` key is needed or the prototype must be generated from the Kelp signature, which cannot express `const char*` versus `char*` or `gpointer`. |
+| 3 | **No declaration of the native symbol.** ~~The trampoline calls it with no prototype and no `#include`; the fixtures only use libc symbols the runtime preamble already declares.~~ **Include half done:** a `header = "gtk/gtk.h"` key in `[extern.*]` is validated and emitted as `#include <...>` after the preamble, deduplicated and sorted (`resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs`). The prototype-generation half stays open: A GTK call still relies on the header for its signature, which cannot express `const char*` versus `char*` or `gpointer`. | `resolve.rs`, `codegen_c.rs`, `codegen_llvm.rs` | GTK needs the header; a generated prototype needs the pointer types of gap 1. |
 | 4 | **Callbacks.** `Ty::Fn` is a plain function pointer with Kelp's signature; `Ty::Closure` is a `{fn, env, drop}` fat pointer. | `types.rs`, `codegen_c.rs::write_closure` | GTK wants a C function pointer plus a `void* user_data`. A closure would need a generated C-ABI thunk that unpacks `env`. `g_signal_connect_data`'s destroy-notify argument maps well onto the closure's `drop`. Nothing generates such a thunk. |
 | 5 | **Link flags are only `-l<name>`.** No `-L`, no `-I`, no `pkg-config`. `driver.rs` also always links `-lssl -lcrypto`. | `driver.rs` | GTK needs many include and library paths that `pkg-config gtk4` supplies. On NixOS they also have to be in `shell.nix`. `gtk4` is not present on this machine (`pkg-config --modversion gtk4` fails). |
 | 6 | **Capability domain.** Only `fs`, `net`, `process`, `env`, `time`, `rand`; the design pass explicitly forbids new names in this pass. | `stdlib.rs::DOMAINS`, roadmap B-1 | A window is authority over a display server (X11/Wayland socket), which fits none of them. Using `net` would work mechanically but would mislabel what the module can do. This needs a decision, not code (roadmap C-1/C-3). |

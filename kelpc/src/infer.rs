@@ -5877,6 +5877,7 @@ fn check_program_pass(
         gated: project.gated().clone(),
         declared_keys: (*declared_keys).clone(),
         extern_ffi_symbols,
+        extern_headers: project.extern_headers(),
     })
 }
 

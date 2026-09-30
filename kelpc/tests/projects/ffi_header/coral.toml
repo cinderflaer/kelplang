@@ -1,0 +1,13 @@
+name = "ffiheader"
+
+# MK9-S1-M1 (roadmap B-1): like ffi_getpid, an `[extern."<module id>"]`
+# section assigning "ctype" a domain and allowlisting one native symbol. The
+# extra `header` key names the C header that declares that symbol, and it is
+# the point of this fixture: `toupper` is a libc function whose declaration
+# lives in <ctype.h>, which the runtime's fixed preamble does not include, so
+# the generated C only compiles because this key emits the `#include`.
+[extern."ctype"]
+domain = "env"
+library = "c"
+symbols = ["toupper"]
+header = "ctype.h"

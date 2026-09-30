@@ -1,0 +1,5 @@
+// MK9-S1-M1 (roadmap B-1): a user module's own "extern fun", bound to a
+// native symbol through this project's coral.toml '[extern."ctype"]'
+// section. "toupper" is the native symbol, and its `header = "ctype.h"` key
+// is what the generated C includes for its prototype.
+pub extern fun toupper(c: i32).R: i32

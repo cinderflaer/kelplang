@@ -131,6 +131,24 @@ impl Project {
         libs.dedup();
         libs
     }
+
+    /// Every C header named across the project's `[extern.*]` sections,
+    /// deduplicated and sorted. `codegen_c.rs` emits one `#include <header>`
+    /// line per entry after the fixed preamble, so a project that names none
+    /// gets exactly the C text it got before the key existed.
+    pub fn extern_headers(&self) -> Vec<String> {
+        collect_extern_headers(&self.extern_modules)
+    }
+}
+
+fn collect_extern_headers(extern_modules: &HashMap<String, ExternModuleDecl>) -> Vec<String> {
+    let mut headers: Vec<String> = extern_modules
+        .values()
+        .filter_map(|e| e.header().map(str::to_string))
+        .collect();
+    headers.sort();
+    headers.dedup();
+    headers
 }
 
 /// One `[extern."<module id>"]` section's contents (MK9-S1-M1, roadmap B-1):
@@ -149,12 +167,23 @@ pub struct ExternModuleDecl {
     /// Kelp function name a declaration writes *is* the symbol
     /// `codegen_c.rs` calls, so a rename is not this pass's problem to solve.
     pub symbols: Vec<String>,
+    /// The C header this module's symbols are declared in, when the section
+    /// names one. `codegen_c.rs` emits it as `#include <header>` after the
+    /// fixed preamble, so a `extern fun` whose native symbol the runtime does
+    /// not already declare has a prototype instead of an implicit one.
+    header: Option<String>,
 }
 
 impl ExternModuleDecl {
     /// The native library this module's symbols are declared to live in.
     pub fn library(&self) -> &str {
         self.library.as_deref().unwrap_or_default()
+    }
+
+    /// The C header this module's symbols are declared in, if the section
+    /// named one.
+    pub fn header(&self) -> Option<&str> {
+        self.header.as_deref()
     }
 }
 
@@ -1398,6 +1427,46 @@ fn parse_extern_line(
             };
             entry.library = Some(library.to_string());
         }
+        "header" => {
+            let Some(header) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] header' must be a double-quoted string"
+                    ),
+                    at,
+                    "",
+                ));
+            };
+            if header.is_empty() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] header' must not be empty"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            // The value is spliced into an `#include <...>` line, so it may
+            // not close the angle brackets or leave the include path. `..` is
+            // refused for the same reason `impl` paths refuse it: a manifest
+            // is not a way around the project boundary.
+            if header.contains('"')
+                || header.contains('<')
+                || header.contains('>')
+                || header.contains('\n')
+                || header.contains('\r')
+                || header.contains("..")
+            {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[extern.\"{module_id}\"] header' must not contain '\"', '<', '>', a newline or '..'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            entry.header = Some(header.to_string());
+        }
         "symbols" => {
             let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
                 return Err(Diagnostic::new(
@@ -1755,4 +1824,83 @@ pub(crate) fn is_keyword(s: &str) -> bool {
             | "alias"
             | "print"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(text: &str) -> Manifest {
+        parse_manifest(text, Path::new("coral.toml")).expect("manifest should parse")
+    }
+
+    fn manifest_err(text: &str) -> Diagnostic {
+        parse_manifest(text, Path::new("coral.toml"))
+            .err()
+            .expect("manifest should be rejected")
+    }
+
+    fn extern_section(module: &str, header: &str) -> String {
+        format!(
+            "[extern.\"{module}\"]\n\
+             domain = \"time\"\n\
+             library = \"c\"\n\
+             symbols = []\n\
+             header = {header}\n"
+        )
+    }
+
+    #[test]
+    fn extern_headers_are_deduplicated_and_sorted() {
+        let text = format!(
+            "name = \"x\"\n{}{}{}",
+            extern_section("b", "\"zlib.h\""),
+            extern_section("a", "\"stdlib.h\""),
+            extern_section("c", "\"zlib.h\""),
+        );
+        let manifest = manifest(&text);
+        assert_eq!(
+            collect_extern_headers(&manifest.extern_modules),
+            vec!["stdlib.h".to_string(), "zlib.h".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_section_without_a_header_names_none() {
+        let text = format!(
+            "name = \"x\"\n[extern.\"a\"]\n\
+             domain = \"time\"\n\
+             library = \"c\"\n\
+             symbols = []\n"
+        );
+        let manifest = manifest(&text);
+        assert!(collect_extern_headers(&manifest.extern_modules).is_empty());
+    }
+
+    #[test]
+    fn a_header_that_is_not_a_quoted_string_is_rejected() {
+        let text = format!("name = \"x\"\n{}", extern_section("a", "zlib.h"));
+        let err = manifest_err(&text);
+        assert!(err.message.contains("header' must be a double-quoted string"));
+    }
+
+    #[test]
+    fn an_empty_header_is_rejected() {
+        let text = format!("name = \"x\"\n{}", extern_section("a", "\"\""));
+        let err = manifest_err(&text);
+        assert!(err.message.contains("header' must not be empty"));
+    }
+
+    #[test]
+    fn a_header_with_a_forbidden_character_is_rejected() {
+        for bad in ["\"gtk/gtk.h>\"", "\"../evil.h\"", "\"a<b\"", "\"a\\\"b\""] {
+            let text = format!("name = \"x\"\n{}", extern_section("a", bad));
+            let err = manifest_err(&text);
+            assert!(
+                err.message.contains("header' must not contain"),
+                "expected '{bad}' to be refused, got: {}",
+                err.message
+            );
+        }
+    }
 }

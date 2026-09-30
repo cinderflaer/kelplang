@@ -1,0 +1,10 @@
+name = "ffibadheaderdotdot"
+
+# MK9-S1-M1 (roadmap B-1): a `header` value may not contain '..': the same
+# boundary rule `impl` paths follow, because a manifest is not a way out of
+# the project.
+[extern."ctype"]
+domain = "env"
+library = "c"
+symbols = ["toupper"]
+header = "../ctype.h"
