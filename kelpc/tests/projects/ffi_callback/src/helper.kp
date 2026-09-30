@@ -1,0 +1,7 @@
+// Gap 4: the `move closure(i32)` parameter expands to three C arguments at the
+// native call, so `kelp_call_twice(thunk, env, destroy, x)` matches the
+// helper's `(fn, data, destroy, x)` prototype. The closure's own signature
+// must be all by-value scalars, and the parameter is `move` because the native
+// side takes ownership (its `destroy` notify is the only thing that frees the
+// environment).
+pub extern fun kelp_call_twice(f: move closure(i32), x: i32).R: i32

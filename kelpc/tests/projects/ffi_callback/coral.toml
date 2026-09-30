@@ -1,0 +1,13 @@
+name = "fficallback"
+
+# Gap 4: a user "extern fun" takes a "move closure(...)" parameter, which the
+# C backend expands in place into the GLib "(func, user_data,
+# destroy_notify)" triple. The helper is a project-local "static inline", so
+# there is no library to link: "include_dirs" is what lets the generated C
+# find its declaration.
+[extern."helper"]
+domain = "env"
+library = "c"
+symbols = ["kelp_call_twice"]
+header = "kelp_cb_helper.h"
+include_dirs = ["include"]
