@@ -2320,6 +2320,28 @@ fn a_raw_pointer_allocates_writes_reads_volatile_and_frees() {
     );
 }
 
+/// Kernel gap 2: `Ptr.from_fn(f)` is the address of a declared `fun` or a
+/// non-capturing `fun` literal, and it is legal outside `unsafe`. Two distinct
+/// functions have distinct, non-null addresses, and the same function answers
+/// the same address twice.
+#[test]
+fn a_function_address_is_a_checked_pointer() {
+    assert_compiles_and_runs(
+        "tests/fixtures/ptr_from_fn.kp",
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    );
+}
+
+/// A closure carries the environment its captures were moved into, so its code
+/// address alone is not the value: `Ptr.from_fn` refuses one and says why.
+#[test]
+fn a_closure_has_no_standalone_function_address() {
+    assert_rejected_with(
+        "tests/fixtures/ptr_from_fn_closure.kp",
+        "it carries an environment the code address alone cannot describe",
+    );
+}
+
 #[test]
 fn an_unsafe_fun_is_callable_from_an_unsafe_block() {
     assert_project_runs("unsafe_fn", &project("unsafe_fn"), "77\n");

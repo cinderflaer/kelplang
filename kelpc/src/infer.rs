@@ -3678,6 +3678,59 @@ fn check_ptr_associated(
     ctx: &mut Ctx,
     expected: Option<&Ty>,
 ) -> Result<tir::Expr> {
+    // `Ptr.from_fn(f)` (kernel gap 2): the address of a declared `fun` or a
+    // `fun` value with no environment, as a `Ptr<u8>`. It is the one pointer
+    // constructor that is *safe*: it names code the compiler already checked,
+    // and the result is an address, not a call. Its element is always `u8`, so
+    // it never reads the call's own type argument or the expected type.
+    if method == "from_fn" {
+        if !type_args.is_empty() {
+            return Err(TypeError {
+                message: "'Ptr.from_fn' takes no type argument: its result is always 'Ptr<u8>'"
+                    .to_string(),
+                span,
+            });
+        }
+        let [arg] = args else {
+            return Err(TypeError {
+                message: format!("'Ptr.from_fn' takes exactly 1 argument, found {}", args.len()),
+                span,
+            });
+        };
+        let value = check_expr(&arg.value, ctx, None)?;
+        match &value.ty {
+            Ty::Fn { .. } => {}
+            Ty::Closure { .. } => {
+                return Err(TypeError {
+                    message: "'Ptr.from_fn' takes a function, but this is a closure: its body captured something, so it carries an environment the code address alone cannot describe; pass a declared 'fun' or a 'fun' literal that captures nothing".to_string(),
+                    span,
+                })
+            }
+            Ty::ScopedFn { .. } => {
+                return Err(TypeError {
+                    message: "'Ptr.from_fn' takes a function, but this is a scoped function value: it is a code pointer paired with a stack environment that lives only for the call it was written in, so it has no standalone code address".to_string(),
+                    span,
+                })
+            }
+            other => {
+                return Err(TypeError {
+                    message: format!(
+                        "'Ptr.from_fn' takes a function value, found '{}': name a declared 'fun' or write a 'fun(...)' literal that captures nothing",
+                        other.display()
+                    ),
+                    span,
+                })
+            }
+        }
+        return Ok(tir::Expr {
+            kind: tir::ExprKind::Call {
+                callee: "Ptr#from_fn".to_string(),
+                args: vec![value],
+            },
+            ty: Ty::Ptr(Box::new(Ty::U8)),
+            span,
+        });
+    }
     let explicit = resolve_explicit_args(type_args, ctx)?;
     let elem = match explicit.len() {
         0 => expected.and_then(crate::types::ptr_elem_of).cloned(),
@@ -8053,6 +8106,7 @@ fn check_function(
         // a declaration never does (A-4 phase E).
         env: None,
         naked: f.naked,
+        align: f.align,
         section: f.section.clone(),
     })
 }
@@ -8761,6 +8815,7 @@ fn check_fn_literal(
         extern_: false,
         env,
         naked: false,
+        align: None,
         section: None,
     });
     let kind = match captures.is_empty() {
@@ -12554,6 +12609,7 @@ fn register_variadic_wrapper(
                 env: None,
                 section: None,
                 naked: false,
+                align: None,
             },
         ));
     }

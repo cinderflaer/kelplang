@@ -231,7 +231,7 @@ impl Parser {
             // item forms that can carry one (A-13). They are read here, before
             // the dispatch below, in either order round `pub`, because a
             // modified item is otherwise the same declaration.
-            let leading_section = self.parse_section_clause()?;
+            let (leading_section, leading_align) = self.parse_section_and_align_clauses()?;
             let leading_repr = self.parse_repr_clause()?;
             let is_pub = self.check(&TokenKind::Pub);
             if is_pub {
@@ -248,12 +248,23 @@ impl Parser {
                     })
                 }
             };
-            let section = match (leading_section, self.parse_section_clause()?) {
+            let (after_section, after_align) = self.parse_section_and_align_clauses()?;
+            let section = match (leading_section, after_section) {
                 (None, after_pub) => after_pub,
                 (before_pub, None) => before_pub,
                 (Some(_), Some(_)) => {
                     return Err(ParseError {
                         message: "a 'section(...)' clause is written once, before or after 'pub', not both".to_string(),
+                        span: self.peek().span,
+                    })
+                }
+            };
+            let align = match (leading_align, after_align) {
+                (None, after_pub) => after_pub,
+                (before_pub, None) => before_pub,
+                (Some(_), Some(_)) => {
+                    return Err(ParseError {
+                        message: "an 'align(N)' clause is written once, before or after 'pub', not both".to_string(),
                         span: self.peek().span,
                     })
                 }
@@ -271,6 +282,15 @@ impl Parser {
                 return Err(ParseError {
                     message: format!(
                         "'section(\"...\")' applies to a top-level 'const' or 'fun', found {:?}",
+                        self.peek_kind()
+                    ),
+                    span: self.peek().span,
+                });
+            }
+            if align.is_some() && !self.at_function_decl() {
+                return Err(ParseError {
+                    message: format!(
+                        "'align(N)' applies to a top-level 'fun', found {:?}",
                         self.peek_kind()
                     ),
                     span: self.peek().span,
@@ -320,7 +340,7 @@ impl Parser {
                 // identifier tokens and the lookahead is what makes them
                 // declaration markers here.
                 let (unsafe_, naked) = self.check_function_markers();
-                functions.push(self.parse_function(is_pub, unsafe_, naked, section)?);
+                functions.push(self.parse_function(is_pub, unsafe_, naked, section, align)?);
             }
             self.skip_newlines();
         }
@@ -397,6 +417,13 @@ impl Parser {
             // between `pub` and the `const`/`fun` it modifies (kernel stage 4).
             TokenKind::Ident(n)
                 if n == "section" && matches!(self.peek2_kind(), TokenKind::LParen) =>
+            {
+                Ok(())
+            }
+            // `pub align(4) fun f() ...`: an `align(N)` clause may sit between
+            // `pub` and the `fun` it modifies (kernel gap 2).
+            TokenKind::Ident(n)
+                if n == "align" && matches!(self.peek2_kind(), TokenKind::LParen) =>
             {
                 Ok(())
             }
@@ -725,6 +752,71 @@ impl Parser {
         Ok(Some(name))
     }
 
+    /// `section("...")` and `align(N)` are the two clauses of one family on a
+    /// `fun` (kernel stages 4 and gap 2), and a program may write either or
+    /// both, in either order. Each is consumed at most once; a second one is
+    /// the caller's duplicate error.
+    fn parse_section_and_align_clauses(&mut self) -> PResult<(Option<String>, Option<u32>)> {
+        let mut section = None;
+        let mut align = None;
+        loop {
+            if section.is_none() {
+                if let Some(s) = self.parse_section_clause()? {
+                    section = Some(s);
+                    continue;
+                }
+            }
+            if align.is_none() {
+                if let Some(a) = self.parse_align_clause()? {
+                    align = Some(a);
+                    continue;
+                }
+            }
+            break;
+        }
+        Ok((section, align))
+    }
+
+    /// `align(N)`, an optional leading clause on a top-level `fun` (kernel gap
+    /// 2), or `None` when the cursor is not at one. `align` is a contextual
+    /// word like `section`, so it only counts when a `(` touches it. `N` is a
+    /// power of two up to 4096: an alignment above a page is not one a trap
+    /// vector can use, and the bound keeps the LLVM and C attributes in the
+    /// range both accept.
+    fn parse_align_clause(&mut self) -> PResult<Option<u32>> {
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "align")
+            || !matches!(self.peek2_kind(), TokenKind::LParen)
+        {
+            return Ok(None);
+        }
+        self.advance();
+        self.expect(TokenKind::LParen, "'(' after 'align'")?;
+        let (n, n_span) = match self.peek_kind().clone() {
+            TokenKind::IntLit(n) => {
+                self.advance();
+                (n, self.tokens[self.pos - 1].span)
+            }
+            other => {
+                return Err(ParseError {
+                    message: format!(
+                        "expected an integer literal alignment in 'align(N)', found {other:?}"
+                    ),
+                    span: self.peek().span,
+                })
+            }
+        };
+        self.expect(TokenKind::RParen, "')' to close 'align(...)'")?;
+        if !n.is_power_of_two() || n > 4096 {
+            return Err(ParseError {
+                message: format!(
+                    "'align({n})' needs a power of two up to 4096: 1, 2, 4, 8, ... 4096 are the alignments a function can have"
+                ),
+                span: n_span,
+            });
+        }
+        Ok(Some(n as u32))
+    }
+
     /// Whether the cursor is at a function declaration: `fun`, `extern fun` or
     /// `unsafe fun`. Used to decide whether a `section(...)` clause has an item
     /// it applies to.
@@ -920,7 +1012,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>) -> PResult<FunctionDecl> {
+    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>, align: Option<u32>) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -1005,6 +1097,13 @@ impl Parser {
                 span: start,
             });
         }
+        if extern_ && align.is_some() {
+            return Err(ParseError {
+                message: "'align(N)' cannot be written on an 'extern fun': the declaration has no code of its own to align"
+                    .to_string(),
+                span: start,
+            });
+        }
 
         let return_type = if self.check(&TokenKind::Dot) {
             self.advance();
@@ -1071,6 +1170,7 @@ impl Parser {
             body,
             module: String::new(),
             section,
+            align,
             span: start.to(end),
         })
     }
@@ -2886,6 +2986,52 @@ mod tests {
     fn an_empty_section_name_does_not_parse() {
         let err = parse_err("section(\"\") fun f() {}");
         assert!(err.message.contains("needs a section name"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_align_clause_is_read_on_a_fun() {
+        let p = parse(
+            "align(4) fun h() {}\n\
+             pub section(\".text.trap\") align(4096) fun trap() {}\n\
+             align(2) section(\".text.other\") fun boot() {}\n",
+        );
+        assert_eq!(p.functions[0].align, Some(4));
+        assert_eq!(p.functions[1].align, Some(4096));
+        assert_eq!(p.functions[1].section.as_deref(), Some(".text.trap"));
+        assert_eq!(p.functions[2].align, Some(2));
+        assert_eq!(p.functions[2].section.as_deref(), Some(".text.other"));
+    }
+
+    #[test]
+    fn an_align_that_is_not_a_power_of_two_up_to_4096_does_not_parse() {
+        for src in ["align(3) fun f() {}", "align(8192) fun f() {}"] {
+            let err = parse_err(src);
+            assert!(
+                err.message.contains("power of two up to 4096"),
+                "{src}: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn an_align_clause_on_a_const_does_not_parse() {
+        let err = parse_err("align(4) const K: i32 = 1");
+        assert!(
+            err.message.contains("applies to a top-level 'fun'"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn an_align_clause_on_an_extern_fun_does_not_parse() {
+        let err = parse_err("align(4) extern fun f(n: i32).R: i32");
+        assert!(
+            err.message.contains("no code of its own to align"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

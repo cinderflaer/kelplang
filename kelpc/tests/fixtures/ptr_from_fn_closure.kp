@@ -1,0 +1,9 @@
+// Kernel gap 2: a closure carries the environment its captures were moved
+// into, so its code address alone is not the value; `Ptr.from_fn` refuses one
+// and the message says why. The compiler must reject this program.
+fun main() {
+    val k = 1
+    val add_k = fun(x: i32).R: i32 = x + k
+    val p = Ptr.from_fn(add_k)
+    print(p.addr())
+}

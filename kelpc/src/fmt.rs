@@ -1499,6 +1499,15 @@ mod tests {
         assert_eq!(format(src).unwrap(), src);
     }
 
+    /// Kernel gap 2: an `align(N)` clause on a `fun` is ordinary tokens, so the
+    /// existing spacing rules already put it back exactly as written, next to a
+    /// `section(...)` clause and a `naked` marker.
+    #[test]
+    fn an_align_clause_is_formatted_as_written() {
+        let src = "section(\".text.trap\") align(4) fun handler() {}\n";
+        assert_eq!(format(src).unwrap(), src);
+    }
+
     #[test]
     fn a_template_run_is_copied_verbatim() {
         let src = "fun main() {\n    val n = 1\n    print(\"sum=${n +  1}\")\n}\n";

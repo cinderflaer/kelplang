@@ -1116,6 +1116,12 @@ impl<'a> Gen<'a> {
             if let Some(section) = &f.section {
                 func.as_value().set_section(section);
             }
+            // The `align(N)` clause a declaration wrote (kernel gap 2) sets
+            // the function's alignment, which is what puts a trap handler's
+            // first byte at an `N`-aligned address.
+            if let Some(align) = f.align {
+                func.as_value().set_function_alignment(align);
+            }
             // A `naked fun` (kernel stage 5): no prologue and no epilogue, and
             // never inlined, because its body's asm is the whole ABI.
             if f.naked {
@@ -4691,6 +4697,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
             "from_ref" | "from_mut" => {
                 result_elem()?;
                 // The borrow argument already evaluated to the place's address.
+                Ok(Some(self.value_of(&args[0])?))
+            }
+            // `Ptr.from_fn(f)` (kernel gap 2): the function itself as a `ptr`
+            // constant. The argument is a `FnRef` (a declared `fun`, or a
+            // literal that captured nothing), whose value is already the
+            // function's address, so there is nothing to compute.
+            "from_fn" => {
+                result_elem()?;
                 Ok(Some(self.value_of(&args[0])?))
             }
             "alloc" => {
@@ -11888,6 +11902,7 @@ mod layout_tests {
                 env: None,
                 naked: false,
                 section: None,
+                align: None,
             }],
             caps: Vec::new(),
             gated: Default::default(),
@@ -12305,6 +12320,7 @@ mod layout_tests {
             env: None,
             naked: false,
             section: None,
+            align: None,
         };
         let program = Program {
             structs: vec![point, segment],
@@ -12473,6 +12489,7 @@ mod layout_tests {
                 env: None,
                 naked: false,
                 section: None,
+                align: None,
             }],
             caps: Vec::new(),
             gated: Default::default(),

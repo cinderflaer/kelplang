@@ -15,9 +15,10 @@ A raw pointer type `Ptr<T>` and the `unsafe` marker that is the only way to dere
   `Box`, `Map`, `View`, a borrow, a closure, a function value and `Atomic<T>` are refused by name:
   a raw pointer is a machine address, and none of those is one machine-level value.
 - **Safe operations** (legal anywhere): `Ptr.null()`, `Ptr.from_addr(a)`, `p.addr()`, `p.is_null()`,
-  `p.offset(n)`, `p.byte_offset(n)`, `p.cast<U>()`, `Ptr.from_ref(&x)`, `Ptr.from_mut(x)`, and
-  `==`/`!=` between two pointers of one type. `offset`/`byte_offset` scale or step in bytes with no
-  bounds check, because that is what a raw pointer is for.
+  `p.offset(n)`, `p.byte_offset(n)`, `p.cast<U>()`, `Ptr.from_ref(&x)`, `Ptr.from_mut(x)`,
+  `Ptr.from_fn(f)` (the address of a declared `fun` or a non-capturing `fun` literal, as a
+  `Ptr<u8>`; kernel gap 2), and `==`/`!=` between two pointers of one type. `offset`/`byte_offset`
+  scale or step in bytes with no bounds check, because that is what a raw pointer is for.
 - **Unsafe operations** (legal only inside `unsafe { ... }` or an `unsafe fun`): `p.read()`,
   `p.write(v)`, `p.read_volatile()`, `p.write_volatile(v)`, `Ptr.alloc<T>(count)` and `p.free()`.
   Calling one outside unsafe is an error that names the operation.
