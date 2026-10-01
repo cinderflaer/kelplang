@@ -12296,6 +12296,7 @@ fn register_variadic_wrapper(
                 module,
                 extern_: true,
                 env: None,
+                section: None,
             },
         ));
     }

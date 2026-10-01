@@ -421,6 +421,24 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
+            // A scoped literal (`plan/scoped-blocks.md`) keeps its captures in a stack
+            // environment with a no-op drop, so unlike an owning closure it needs nothing from the
+            // heap; its captures are checked like a closure's.
+            ExprKind::ScopedClosureLit { captures, .. } => {
+                for capture in captures {
+                    self.expr(capture, module)?;
+                }
+                Ok(())
+            }
+            // A variadic extern call goes through a generated fixed-arity C wrapper, which lives in
+            // the per-program C object a freestanding build deliberately does not have.
+            ExprKind::VariadicCall { callee, .. } => Err(unavailable(
+                format!(
+                    "the variadic call to '{callee}' is unavailable in a freestanding build: it is made through a generated C wrapper, and there is no per-program C object"
+                ),
+                expr.span,
+                module,
+            )),
             ExprKind::FnToClosure { func } => self.expr(func, module),
             ExprKind::IndirectCall { callee, args } => {
                 self.expr(callee, module)?;
