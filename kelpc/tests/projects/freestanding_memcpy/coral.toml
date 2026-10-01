@@ -1,0 +1,11 @@
+name = "freestanding_memcpy"
+
+# Kernel gap 4's acceptance program: a 4 KiB `datac` and a `[u8; 4096]` array
+# copied whole, at the sizes where LLVM's own aggregate copy lowers to a
+# `memcpy` call. `mode`, `triple`, `entry` and `linker_script` are stage 4's
+# `[target]` section (`plan/freestanding.md`).
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

@@ -1,0 +1,44 @@
+// Kernel gap 4's runtime proof: QEMU's RAM starts zeroed, so a plain read of a
+// `.bss` byte proves nothing about the compiler's `_start` clear loop. This
+// project has the image load a 64-byte marker into a section the linker script
+// places inside `[__bss_start, __bss_end)`, so `bss clear` can only be printed
+// if `_start` really erased those bytes before it called this entry.
+//
+// The marker is defined by assembler directives rather than by a
+// `section("...")` const, because LLVM's own section-name heuristic turns any
+// `.bss.*` name into `NOBITS`: a const there loses its initializer and the
+// image carries no pattern at all. The explicit `@progbits` is what puts these
+// 64 bytes in the image's loaded `.bss`. The address is then read with inline
+// asm, because the language still has no address-of-const form.
+impl "std/str"
+impl "uart"
+
+section(".text.boot") fun kmain() {
+    unsafe {
+        asm(".pushsection .bss.dirty, \"aw\", @progbits\n.globl kelp_bss_marker\n.balign 8\nkelp_bss_marker:\n.fill 64, 1, 0xAB\n.popsection")
+    }
+    val at: Ptr<u8> = Ptr.from_addr(unsafe { asm("la {0}, kelp_bss_marker", out("r") _) })
+    var i: isize = 0
+    var sum: u64 = 0
+    unsafe {
+        while i < 64 {
+            sum = sum + at.offset(i).read().to_u64()
+            i = i + 1
+        }
+    }
+    if sum == 0 {
+        uart.puts("bss clear\n")
+    } else {
+        uart.puts("bss dirty\n")
+    }
+    uart.halt()
+}
+
+// The handler `[target] panic` names, copied from kernel 0: the checks call it
+// with the compiler's own message and it prints that before it halts.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}
