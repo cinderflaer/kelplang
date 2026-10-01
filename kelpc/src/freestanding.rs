@@ -249,9 +249,9 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
 fn unavailable_builtin(name: &str) -> Option<&'static str> {
     match name {
         "print" | "print!" => Some("it writes through the hosted runtime's 'printf'"),
-        "panic" => Some(
-            "it calls the hosted runtime's 'kelp_panic'; a freestanding project's panic handler is the manifest's '[target] panic', and the compiler's own checks call that directly",
-        ),
+        // The builtin `panic` is *not* here: codegen lowers it to a call to the
+        // same handler the bounds and overflow checks use, so it is allowed and
+        // routed (see `Codegen::panic_fn`).
         "assert" => Some("it calls the hosted runtime's 'kelp_assert'"),
         // `Ptr<T>` is allowed; the allocator behind `Ptr.alloc`/`Ptr.free` is
         // not, because it is the hosted `malloc`/`free`. A kernel's own frame

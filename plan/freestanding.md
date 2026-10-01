@@ -44,16 +44,18 @@ that capture nothing (a capturing literal owns a heap environment that only the
 runtime could free); `Atomic<T>` and its methods, plus the pure `std/atomic`,
 `std/option` and `std/result` modules; `Ptr<T>` and the compile-time
 `size_of`/`align_of`/`offset_of`; a user `extern fun` whose module has its own
-`[extern."<id>"]` section; and arithmetic, including the overflow and bounds
-checks, which call the project's panic handler (below).
+`[extern."<id>"]` section; a call to the builtin `panic(msg)`, which lowers
+to a call to the same handler as the checks; and arithmetic, including the
+overflow and bounds checks, which call the project's panic handler (below).
 
 **Refused, each naming the construct.** `print`/`print!` (the `printf` call),
-the builtin `panic` and `assert` (the runtime's `kelp_panic`/`kelp_assert`), a
-defined `main` (the hosted entry point and its `argc`/`argv` globals),
-passdowns (`pd`, whose initializers run through the generated `kelp_init_pds`
-that only the hosted entry point calls), and the heap types `String`, `Bytes`,
-`List`, `Map`, `Box`, `View` and `Thread`. Any `std/*` module other than the
-pure three above is refused by name: they all reach libc or the allocator.
+`assert` (the runtime's `kelp_assert`), a defined `main` (the hosted entry point
+and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
+`malloc`/`free`), passdowns (`pd`, whose initializers run through the generated
+`kelp_init_pds` that only the hosted entry point calls), and the heap types
+`String`, `Bytes`, `List`, `Map`, `Box`, `View` and `Thread`. Any `std/*`
+module other than the pure three above is refused by name: they all reach libc
+or the allocator.
 
 The list is deliberately a *closure over reachability*, not the language's
 surface: `print` is refused as a call, `String` as a type wherever it appears

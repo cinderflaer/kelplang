@@ -138,8 +138,11 @@ program machine state, so the ways to be wrong are the ones C has:
 - The user's panic handler is a promise the compiler does not check. Nothing
   requires it to diverge, so a handler that returns comes back to the bounds or
   overflow check that called it, which then falls through into whatever the
-  check was guarding. The default handler (an infinite loop) is the only one
-  the compiler itself guarantees does not return.
+  check was guarding. A user-written `panic(msg)` is worse: the backend lowers
+  it to a call to the handler followed by LLVM's `unreachable`, so a handler
+  that returns is undefined behaviour there, not a fallthrough. The default
+  handler (an infinite loop) is the only one the compiler itself guarantees
+  does not return.
 
 **What the compiler does check.** That a `[target]` section names a `mode` and,
 for freestanding, a `triple`, an `entry` and a `linker_script`; that the entry
