@@ -23,9 +23,15 @@ SECTIONS
         *(.data .data.*)
     }
 
-    .bss : {
+    /* The range `_start` zeroes before it calls the entry (kernel gap 4);
+       the generated clear loop declares both weak, so this is optional. */
+    .bss : ALIGN(8) {
+        __bss_start = .;
+        *(.sbss .sbss.*)
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(8);
+        __bss_end = .;
     }
 
     . = ALIGN(16);

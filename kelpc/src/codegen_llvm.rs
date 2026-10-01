@@ -432,6 +432,9 @@ pub fn compile(
         lowering.emit_runtime_bodies()?;
     } else {
         lowering.emit_freestanding_str_bodies()?;
+        // The `mem*` routines LLVM's own aggregate copies call, defined weak
+        // and as loops (kernel gap 4).
+        lowering.emit_freestanding_mem_bodies()?;
     }
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
@@ -558,16 +561,34 @@ pub struct Freestanding {
 
 /// The `_start` stub a freestanding build emits as module-level assembly
 /// (kernel stage 4). It sets `sp` from the linker-script symbol `__stack_top`,
-/// clears nothing else, calls `entry` and loops on `wfi` if it returns. It goes
-/// in `.text.boot` so a linker script can place it first; `entry_symbol` is the
-/// mangled name of the project's entry `fun` (`kelp_kmain`).
+/// zeroes `[__bss_start, __bss_end)` a word at a time (kernel gap 4), calls
+/// `entry` and loops on `wfi` if it returns. It goes in `.text.boot` so a
+/// linker script can place it first; `entry_symbol` is the mangled name of the
+/// project's entry `fun` (`kelp_kmain`).
+///
+/// The two bounds are declared `.weak` so a script that does not assign them
+/// still links: both then resolve to 0, the loop runs zero times, and the image
+/// behaves exactly as it did before this stage. `sp` is loaded first and nothing
+/// touches memory before it, which is what lets the clear run on a kernel's
+/// first instruction. Only registers are used until the entry is called, so no
+/// stack has to exist yet.
 fn freestanding_entry_asm(entry_symbol: &str) -> String {
     format!(
         "    .section .text.boot, \"ax\", @progbits\n\
+         \x20   .weak __bss_start\n\
+         \x20   .weak __bss_end\n\
          \x20   .globl _start\n\
          \x20   .type _start, @function\n\
          _start:\n\
          \x20   la sp, __stack_top\n\
+         \x20   la t0, __bss_start\n\
+         \x20   la t1, __bss_end\n\
+         .Lkelp_bss_loop:\n\
+         \x20   bgeu t0, t1, .Lkelp_bss_done\n\
+         \x20   sd zero, 0(t0)\n\
+         \x20   addi t0, t0, 8\n\
+         \x20   j .Lkelp_bss_loop\n\
+         .Lkelp_bss_done:\n\
          \x20   call {entry_symbol}\n\
          1:\n\
          \x20   wfi\n\
@@ -9639,6 +9660,192 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(step);
             self.st(self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1"), i_slot);
             self.builder.build_br(header);
+        }
+        Ok(())
+    }
+
+    /// Emit the five libc memory routines a freestanding image needs and that
+    /// LLVM's own lowering of a large aggregate copy assumes: `memcpy`,
+    /// `memmove`, `memset`, `memcmp` and `bcmp`, as byte loops with no libc
+    /// behind them (kernel gap 4). Until this, a copy of a large aggregate left
+    /// an undefined `memcpy` for `ld.lld` to report.
+    ///
+    /// Each is weak (`Value::set_weak_linkage`) so a project or another object
+    /// in the image that defines its own wins at the link, and `nobuiltin`
+    /// (`Function::mark_nobuiltin`) so the target's loop-idiom pass cannot
+    /// rewrite a loop *inside* one of these into a call to the library function
+    /// of the same name, which for three of them would be the function itself.
+    ///
+    /// `memcpy`, `memset` and `memcmp` are already declared by `declare_libc`
+    /// with the exact signatures the compiler's own aggregate copies call, so
+    /// their bodies are added to those declarations; `memmove` and `bcmp` are
+    /// new. The width is the `i64` those declarations already use. Getting the
+    /// name right is what makes the loops safe: LLVM's loop-idiom pass refuses
+    /// to turn a loop into a call to the function the loop is already in, so a
+    /// definition named `memset` survives while one named `memset.1` does not
+    /// (`Module::add_function` renames rather than returning an existing
+    /// declaration, so the declaration has to be fetched, not added again).
+    fn emit_freestanding_mem_bodies(&self) -> Result<(), String> {
+        let i8t = self.ctx.i8();
+        let i32t = self.ctx.i32();
+        let i64t = self.ctx.i64();
+        let ptr = self.pty();
+        let size_t = i64t;
+        let zero = self.ctx.const_int(size_t, 0, false);
+        let one = self.ctx.const_int(size_t, 1, false);
+
+        // The definition of `name`: the declaration `declare_libc` already made
+        // when there is one, made weak, marked as not-a-builtin, and given a
+        // body by the caller.
+        let def = |name: &str, ret: Type<'a>, params: &[Type<'a>]| -> (LlvmFunction<'a>, FnType<'a>) {
+            let ty = self.ctx.fn_type(ret, params, false);
+            let func = match self.module.get_function(name) {
+                Some(func) => func,
+                None => self.module.add_function(name, ty),
+            };
+            func.as_value().set_weak_linkage();
+            func.mark_nobuiltin();
+            (func, ty)
+        };
+
+        // --- memcpy: forward byte copy, returns dst ---
+        {
+            let (func, _) = def("memcpy", ptr, &[ptr, ptr, size_t]);
+            let entry = func.append_block("entry");
+            self.builder.position_at_end(entry);
+            let dst = func.get_param(0);
+            let src = func.get_param(1);
+            let n = func.get_param(2);
+            let i_slot = self.builder.build_alloca(size_t, "i");
+            self.st(zero, i_slot);
+            let header = self.loop_header(func, "copy.cond");
+            let i = self.ld(size_t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let body = self.block(func, "copy.body");
+            let done = self.block(func, "copy.done");
+            self.builder.build_cond_br(more, body, done);
+            self.builder.position_at_end(body);
+            let byte = self.ld(i8t, self.gep(i8t, src, i, "src.at"), "byte");
+            self.st(byte, self.gep(i8t, dst, i, "dst.at"));
+            self.st(self.builder.build_int_binop(IntBinOp::Add, i, one, "i1"), i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(done);
+            self.builder.build_ret(dst);
+        }
+
+        // --- memmove: forward when the destination is at or below the source,
+        // backward otherwise, which is the direction that cannot overwrite a
+        // byte it has not read yet ---
+        {
+            let (func, _) = def("memmove", ptr, &[ptr, ptr, size_t]);
+            let entry = func.append_block("entry");
+            self.builder.position_at_end(entry);
+            let dst = func.get_param(0);
+            let src = func.get_param(1);
+            let n = func.get_param(2);
+            let d = self.builder.build_ptrtoint(dst, size_t);
+            let s = self.builder.build_ptrtoint(src, size_t);
+            let i_slot = self.builder.build_alloca(size_t, "i");
+            let forward = self.block(func, "fwd");
+            let backward = self.block(func, "bwd");
+            let at_or_below = self.builder.build_icmp(IntCmp::Ule, d, s, "at.or.below");
+            self.builder.build_cond_br(at_or_below, forward, backward);
+
+            self.builder.position_at_end(forward);
+            self.st(zero, i_slot);
+            let fwd_header = self.loop_header(func, "fwd.cond");
+            let i = self.ld(size_t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let fwd_body = self.block(func, "fwd.body");
+            let fwd_done = self.block(func, "fwd.done");
+            self.builder.build_cond_br(more, fwd_body, fwd_done);
+            self.builder.position_at_end(fwd_body);
+            let byte = self.ld(i8t, self.gep(i8t, src, i, "src.at"), "byte");
+            self.st(byte, self.gep(i8t, dst, i, "dst.at"));
+            self.st(self.builder.build_int_binop(IntBinOp::Add, i, one, "i1"), i_slot);
+            self.builder.build_br(fwd_header);
+            self.builder.position_at_end(fwd_done);
+            self.builder.build_ret(dst);
+
+            self.builder.position_at_end(backward);
+            self.st(n, i_slot);
+            let bwd_header = self.loop_header(func, "bwd.cond");
+            let i = self.ld(size_t, i_slot, "i");
+            let any = self.builder.build_icmp(IntCmp::Ugt, i, zero, "any");
+            let bwd_body = self.block(func, "bwd.body");
+            let bwd_done = self.block(func, "bwd.done");
+            self.builder.build_cond_br(any, bwd_body, bwd_done);
+            self.builder.position_at_end(bwd_body);
+            let i1 = self.builder.build_int_binop(IntBinOp::Sub, i, one, "i1");
+            self.st(i1, i_slot);
+            let byte = self.ld(i8t, self.gep(i8t, src, i1, "src.at"), "byte");
+            self.st(byte, self.gep(i8t, dst, i1, "dst.at"));
+            self.builder.build_br(bwd_header);
+            self.builder.position_at_end(bwd_done);
+            self.builder.build_ret(dst);
+        }
+
+        // --- memset: forward byte store, returns dst ---
+        {
+            let (func, _) = def("memset", ptr, &[ptr, i32t, size_t]);
+            let entry = func.append_block("entry");
+            self.builder.position_at_end(entry);
+            let dst = func.get_param(0);
+            let fill = self
+                .builder
+                .build_int_cast(false, false, func.get_param(1), i8t, "fill");
+            let n = func.get_param(2);
+            let i_slot = self.builder.build_alloca(size_t, "i");
+            self.st(zero, i_slot);
+            let header = self.loop_header(func, "set.cond");
+            let i = self.ld(size_t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let body = self.block(func, "set.body");
+            let done = self.block(func, "set.done");
+            self.builder.build_cond_br(more, body, done);
+            self.builder.position_at_end(body);
+            self.st(fill, self.gep(i8t, dst, i, "dst.at"));
+            self.st(self.builder.build_int_binop(IntBinOp::Add, i, one, "i1"), i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(done);
+            self.builder.build_ret(dst);
+        }
+
+        // --- memcmp and bcmp: the first differing byte's difference, 0 when
+        // the ranges match. The byte difference is what `memcmp` promises and
+        // it is a valid `bcmp` answer too (any nonzero is "different") ---
+        for name in ["memcmp", "bcmp"] {
+            let (func, _) = def(name, i32t, &[ptr, ptr, size_t]);
+            let entry = func.append_block("entry");
+            self.builder.position_at_end(entry);
+            let a = func.get_param(0);
+            let b = func.get_param(1);
+            let n = func.get_param(2);
+            let i_slot = self.builder.build_alloca(size_t, "i");
+            self.st(zero, i_slot);
+            let header = self.loop_header(func, "cmp.cond");
+            let i = self.ld(size_t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let body = self.block(func, "cmp.body");
+            let equal = self.block(func, "cmp.equal");
+            self.builder.build_cond_br(more, body, equal);
+            self.builder.position_at_end(body);
+            let x = self.ld(i8t, self.gep(i8t, a, i, "a.at"), "x");
+            let y = self.ld(i8t, self.gep(i8t, b, i, "b.at"), "y");
+            let differs = self.builder.build_icmp(IntCmp::Ne, x, y, "differs");
+            let step = self.block(func, "cmp.step");
+            let differ = self.block(func, "cmp.differ");
+            self.builder.build_cond_br(differs, differ, step);
+            self.builder.position_at_end(differ);
+            let wx = self.builder.build_int_cast(false, true, x, i32t, "x.wide");
+            let wy = self.builder.build_int_cast(false, true, y, i32t, "y.wide");
+            let delta = self.builder.build_int_binop(IntBinOp::Sub, wx, wy, "delta");
+            self.builder.build_ret(delta);
+            self.builder.position_at_end(step);
+            self.st(self.builder.build_int_binop(IntBinOp::Add, i, one, "i1"), i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(equal);
+            self.builder.build_ret(self.ctx.const_int(i32t, 0, false));
         }
         Ok(())
     }
