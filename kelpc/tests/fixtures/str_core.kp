@@ -1,0 +1,23 @@
+// Kernel stage 7: the `str` operations a freestanding build lowers itself
+// (`len`, `byte`, `eq`, `starts_with` and `ptr`). This fixture is the hosted
+// half of the promise that they behave exactly as they always did, and the
+// suite runs it on both backends: the default LLVM backend and, through
+// `KELPC_ORACLE=c`, the C oracle. The freestanding half is
+// `tests/projects/freestanding_str` plus the QEMU boots.
+impl "std/str"
+
+fun main() {
+    print(str.len(""))
+    print(str.len("kelp"))
+    print(str.byte("kelp", 0))
+    print(str.byte("kelp", 3))
+    print(str.eq("kelp", "kelp"))
+    print(str.eq("kelp", "kel"))
+    print(str.eq("", ""))
+    print(str.starts_with("kernel", "ker"))
+    print(str.starts_with("kernel", ""))
+    print(str.starts_with("ker", "kernel"))
+    // `ptr` is the address of the first byte, so it is never null for a
+    // literal; reading through it is what needs `unsafe`, not taking it.
+    print(str.ptr("kelp").is_null())
+}

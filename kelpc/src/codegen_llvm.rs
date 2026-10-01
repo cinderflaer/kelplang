@@ -425,9 +425,13 @@ pub fn compile(
     // the monomorphized containers. A freestanding program has no runtime
     // object to define the rest and no heap types to reach these, so it skips
     // them: a dead body that called `strlen` would be exactly the libc
-    // reference this mode exists to exclude.
+    // reference this mode exists to exclude. The one surface it does need is
+    // the `str` one, which `emit_freestanding_str_bodies` emits as the same
+    // kind of byte loop with no libc call behind it.
     if freestanding.is_none() {
         lowering.emit_runtime_bodies()?;
+    } else {
+        lowering.emit_freestanding_str_bodies()?;
     }
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
@@ -9484,6 +9488,167 @@ impl<'a> Gen<'a> {
             self.builder.build_ret(byte);
         }
         Ok(())
+    }
+
+    /// Emit the libc-free `str` surface a freestanding build needs: the five
+    /// `std/str` operations the allowed set admits, and the `View` accessors
+    /// their Kelp bodies reach. The hosted definitions are `strlen`/`memcmp`
+    /// in `runtime/kelp_rt.c` and the `externs.rs` C text, neither of which is
+    /// linked into a bare-metal image, so each one is emitted here as a byte
+    /// loop and given internal linkage, exactly as `emit_runtime_bodies`
+    /// does for the hosted accessors.
+    ///
+    /// `str.byte_at_raw`'s bounds check is the one new panic site: it calls the
+    /// project's `[target] panic` handler through `self.panic_fn` with the same
+    /// `"str.byte: index out of bounds"` text the C body passes, so the message
+    /// a kernel prints for an over-long index is the one the hosted build
+    /// prints.
+    ///
+    /// A program with no `std/str` in it has none of the three raw externs
+    /// declared, and this emits nothing; the `View` accessors are always
+    /// declared, and an unused internal definition references nothing the
+    /// image does not already define.
+    fn emit_freestanding_str_bodies(&self) -> Result<(), String> {
+        let i8t = self.ctx.i8();
+        let i64t = self.ctx.i64();
+        let view = *self
+            .structs
+            .get("View")
+            .ok_or_else(|| no_value("the builtin 'View' layout"))?;
+
+        let body = |symbol: &str| -> Result<LlvmFunction<'a>, String> {
+            let rt = self.rt(symbol)?;
+            rt.func.as_value().set_internal_linkage();
+            // The loops below are the lowering, not an input to be improved: an
+            // optimizable NUL scan is turned into a `strlen` call, which is the
+            // libc reference this whole mode exists to keep out of the image.
+            rt.func.mark_optnone();
+            let bb = rt.func.append_block("entry");
+            self.builder.position_at_end(bb);
+            Ok(rt.func)
+        };
+
+        // --- str.byte_len_raw ---
+        if self.runtime.contains_key("kelp_std__str__byte_len_raw") {
+            let f = body("kelp_std__str__byte_len_raw")?;
+            let n = self.emit_cstr_len(f, f.get_param(0))?;
+            self.builder.build_ret(n);
+
+            // --- str.byte_at_raw ---
+            let f = body("kelp_std__str__byte_at_raw")?;
+            let s = f.get_param(0);
+            let i = f.get_param(1);
+            let n = self.emit_cstr_len(f, s)?;
+            self.emit_bounds_check(f, n, i, "str.byte: index out of bounds")?;
+            let at = self.gep(i8t, s, i, "at");
+            let byte = self.ld(i8t, at, "byte");
+            self.builder.build_ret(byte);
+
+            // --- str.byte_ptr_raw ---
+            let f = body("kelp_std__str__byte_ptr_raw")?;
+            self.builder.build_ret(f.get_param(0));
+        }
+
+        // --- str.view ---
+        // The one place a `str`'s length is derived. A `str` this mode can hold
+        // is a literal or a panic message, so it is never null and the hosted
+        // body's null test has nothing to answer here.
+        {
+            let f = body("kelp_str__view")?;
+            let s = f.get_param(0);
+            let n = self.emit_cstr_len(f, s)?;
+            let slot = self.builder.build_alloca(view, "view");
+            self.st(s, self.fld(view, slot, 0, "ptr"));
+            self.st(n, self.fld(view, slot, 1, "len"));
+            let v = self.ld(view, slot, "view");
+            self.builder.build_ret(v);
+        }
+
+        // --- View.len ---
+        {
+            let f = body("kelp_View__len")?;
+            let n = self.builder.build_extract_value(f.get_param(0), 1, "len");
+            self.builder.build_ret(n);
+        }
+
+        // --- View.get ---
+        {
+            let f = body("kelp_View__get")?;
+            let v = f.get_param(0);
+            let i = f.get_param(1);
+            let n = self.builder.build_extract_value(v, 1, "len");
+            self.emit_bounds_check(f, n, i, "View.get: index out of bounds")?;
+            let text = self.builder.build_extract_value(v, 0, "ptr");
+            let at = self.gep(i8t, text, i, "at");
+            let byte = self.ld(i8t, at, "byte");
+            self.builder.build_ret(byte);
+        }
+
+        // --- View.eq ---
+        // `memcmp` over the shorter prefix would call "ab" and "abc" equal, so
+        // the lengths are compared first, exactly as the runtime object does.
+        {
+            let f = body("kelp_View__eq")?;
+            let a = f.get_param(0);
+            let b = f.get_param(1);
+            let la = self.builder.build_extract_value(a, 1, "la");
+            let lb = self.builder.build_extract_value(b, 1, "lb");
+            let pa = self.builder.build_extract_value(a, 0, "pa");
+            let pb = self.builder.build_extract_value(b, 0, "pb");
+            let same_len = self.builder.build_icmp(IntCmp::Eq, la, lb, "same.len");
+            let scan = self.block(f, "eq.scan");
+            let no = self.block(f, "eq.false");
+            self.builder.build_cond_br(same_len, scan, no);
+            self.builder.position_at_end(no);
+            self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 0, false));
+
+            self.builder.position_at_end(scan);
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "eq.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, la, "more");
+            let next = self.block(f, "eq.next");
+            let yes = self.block(f, "eq.true");
+            self.builder.build_cond_br(more, next, yes);
+            self.builder.position_at_end(yes);
+            self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 1, false));
+            self.builder.position_at_end(next);
+            let x = self.ld(i8t, self.gep(i8t, pa, i, "xa"), "x");
+            let y = self.ld(i8t, self.gep(i8t, pb, i, "yb"), "y");
+            let differs = self.builder.build_icmp(IntCmp::Ne, x, y, "differs");
+            let step = self.block(f, "eq.step");
+            let diff = self.block(f, "eq.diff");
+            self.builder.build_cond_br(differs, diff, step);
+            self.builder.position_at_end(diff);
+            self.builder.build_ret(self.ctx.const_int(self.ctx.i1(), 0, false));
+            self.builder.position_at_end(step);
+            self.st(self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1"), i_slot);
+            self.builder.build_br(header);
+        }
+        Ok(())
+    }
+
+    /// The length of a NUL-terminated `str`, as a loop. This is the one place
+    /// the compiler derives the length of a `str` without `strlen`: the scan
+    /// stops at the first zero byte.
+    fn emit_cstr_len(&self, func: LlvmFunction<'a>, s: Value<'a>) -> Result<Value<'a>, String> {
+        let i8t = self.ctx.i8();
+        let i64t = self.ctx.i64();
+        let i_slot = self.builder.build_alloca(i64t, "len.i");
+        self.st(self.v_i64(0), i_slot);
+        let header = self.loop_header(func, "len.cond");
+        let i = self.ld(i64t, i_slot, "i");
+        let byte = self.ld(i8t, self.gep(i8t, s, i, "at"), "byte");
+        let nul = self.builder.build_icmp(IntCmp::Eq, byte, self.v_i8(0), "nul");
+        let step = self.block(func, "len.step");
+        let done = self.block(func, "len.end");
+        self.builder.build_cond_br(nul, done, step);
+        self.builder.position_at_end(step);
+        self.st(self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1"), i_slot);
+        self.builder.build_br(header);
+        self.builder.position_at_end(done);
+        Ok(self.ld(i64t, i_slot, "len"))
     }
 
     // ---- container bodies -------------------------------------------------

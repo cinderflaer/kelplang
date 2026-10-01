@@ -9917,6 +9917,40 @@ fn have_qemu() -> bool {
 /// The expected lines are compared whole, and they are QEMU's own stdout, not
 /// anything the project says it will print.
 fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
+    let marker = expected.last().expect("at least one expected line");
+    let captured = boot_and_capture(name, target, &|got| {
+        got.lines().any(|line| line == *marker)
+    });
+    for line in expected {
+        assert!(
+            captured.lines().any(|got| got == *line),
+            "the serial output of '{name}' has no line '{line}':\n{captured}"
+        );
+    }
+}
+
+/// The same boot, for an assertion that is a shape rather than a whole line.
+/// Kernel 0's panic handler prints the compiler's own message, which the test
+/// cannot spell out in full, so the wait and the check are a set of substrings:
+/// `index out of bounds` is in the text and some line starts with `panic: `.
+fn boot_under_qemu_containing(name: &str, target: &Path, needle: &str, line_prefix: &str) {
+    let captured = boot_and_capture(name, target, &|got| {
+        got.contains(needle) && got.lines().any(|line| line.starts_with(line_prefix))
+    });
+    assert!(
+        captured.contains(needle),
+        "the serial output of '{name}' does not contain '{needle}':\n{captured}"
+    );
+    assert!(
+        captured.lines().any(|line| line.starts_with(line_prefix)),
+        "the serial output of '{name}' has no line starting with '{line_prefix}':\n{captured}"
+    );
+}
+
+/// Builds a freestanding project, boots it under QEMU, and reads the serial
+/// output until `done` says the interesting part has arrived (or the deadline
+/// fires), then kills the emulator and returns everything captured.
+fn boot_and_capture(name: &str, target: &Path, done: &dyn Fn(&str) -> bool) -> String {
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
@@ -9967,7 +10001,6 @@ fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
         }
     });
 
-    let marker = expected.last().expect("at least one expected line");
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut captured = String::new();
     while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
@@ -9975,7 +10008,7 @@ fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
             Ok(line) => {
                 captured.push_str(&line);
                 captured.push('\n');
-                if line == *marker {
+                if done(&captured) {
                     break;
                 }
             }
@@ -9984,13 +10017,7 @@ fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
     }
     let _ = child.kill();
     let _ = child.wait();
-
-    for line in expected {
-        assert!(
-            captured.lines().any(|got| got == *line),
-            "the serial output of '{name}' has no line '{line}':\n{captured}"
-        );
-    }
+    captured
 }
 
 /// Runs an external tool and returns its stdout, failing the test with the
@@ -10312,5 +10339,104 @@ fn kernel0_handles_a_trap_and_continues_after_it() {
         "kernel0_trap",
         &fixture("../examples/kernel0-trap"),
         &["trap: ecall", "done"],
+    );
+}
+
+/// Kernel stage 7's panic half: `examples/kernel0-panic` reads one element past
+/// an array's end on purpose, so the compiler's own bounds check calls the
+/// project's `[target] panic` handler with the static message the check was
+/// written with. The handler prints `panic: ` and the message, which is only
+/// possible now that a freestanding program has `str` operations to walk.
+///
+/// The assertion is the shape of the line rather than a whole line: the text is
+/// the compiler's, and the test should not have to restate it verbatim to know
+/// that the check fired.
+#[test]
+fn kernel0_panic_prints_the_checks_own_message_over_the_uart() {
+    if !have_ld_lld() || !have_qemu() {
+        println!(
+            "skipping the kernel0 panic test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu_containing(
+        "kernel0_panic",
+        &fixture("../examples/kernel0-panic"),
+        "index out of bounds",
+        "panic: ",
+    );
+}
+
+/// Kernel stage 7's hosted half: the `str` operations a freestanding build
+/// lowers itself (`len`, `byte`, `eq`, `starts_with` and `ptr`) behave exactly
+/// as they did before the stage, on both backends. The suite runs this under
+/// the default backend and under `KELPC_ORACLE=c`, so the two answers are
+/// compared against one literal.
+#[test]
+fn the_hosted_str_core_operations_are_unchanged() {
+    assert_compiles_and_runs(
+        "tests/fixtures/str_core.kp",
+        "0\n4\n107\n112\ntrue\nfalse\ntrue\ntrue\ntrue\nfalse\nfalse\n",
+    );
+}
+
+/// Kernel stage 7's rejection half: `std/str` is only partly on the freestanding
+/// allowed set, so its other functions are refused at the call, by name. The
+/// check runs before either backend is named, so the C oracle refuses with the
+/// same message `kelpc build` gives.
+#[test]
+fn a_std_str_function_outside_the_freestanding_five_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_str_refused",
+        "'std.str.char_count' is unavailable in a freestanding build",
+    );
+}
+
+/// Kernel stage 7's acceptance test: the five `str` operations, called from a
+/// freestanding entry, compile through LLVM and `ld.lld` into an image whose
+/// symbols all resolve. The point of the test is the `llvm-nm` line: the
+/// obvious lowering of a NUL scan is a loop LLVM's own optimizer rewrites into
+/// a `strlen` call, and the module's allocating bodies would leave `malloc` and
+/// friends behind, so an image that links at all is the stage's whole claim.
+#[test]
+fn freestanding_str_builds_the_five_operations_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding str test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_str");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_str"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding str build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding str image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+    assert!(
+        !symbols.contains("strlen"),
+        "the NUL scan was rewritten into a libc strlen call:\n{symbols}"
     );
 }

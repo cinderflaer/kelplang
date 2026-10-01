@@ -1,0 +1,10 @@
+// `str.char_count` is not one of the five `str` operations a freestanding build
+// lowers, so the allowed-set check refuses the call and names it.
+impl "std/str"
+
+fun kmain() {
+    var n: u64 = 0
+    while true {
+        n = n + str.char_count("kelp").to_u64()
+    }
+}

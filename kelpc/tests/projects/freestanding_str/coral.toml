@@ -1,0 +1,12 @@
+name = "freestandingstr"
+
+# Kernel stage 7: the five `str` operations a freestanding build has. The
+# manifest is kernel stage 4's `[target]` shape, and the entry does nothing but
+# loop; what this project demonstrates is that a program which calls `len`,
+# `byte`, `eq`, `starts_with` and `ptr` on a `str` builds into an image whose
+# symbols all resolve, with no `strlen` and no per-program C object.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

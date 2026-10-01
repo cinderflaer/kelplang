@@ -13,6 +13,7 @@ impl "std/result"
 extern fun byte_len_raw(s: &str).R: usize
 extern fun byte_at_raw(s: &str, i: usize).R: u8
 extern fun slice_from_raw(s: &str, from: usize).R: &str
+extern fun byte_ptr_raw(s: &str).R: Ptr<u8>
 
 // Byte length, not character count — see `char_count`, which counts
 // continuation bytes as parts of the same character.
@@ -21,6 +22,13 @@ fun len(s: &str).R: usize = byte_len_raw(s)
 // The byte at `i`.
 // Panics: if `i` is out of bounds.
 fun byte(s: &str, i: usize).R: u8 = byte_at_raw(s, i)
+
+// The address of the first byte of `s`, which is the NUL-terminated literal
+// itself. Reading through the pointer needs `unsafe`, like any other `Ptr`;
+// taking it does not. This is what a driver that has to hand text to a device
+// walks with `len`/`byte`, and the one `str` operation whose whole body is the
+// identity.
+fun ptr(s: &str).R: Ptr<u8> = byte_ptr_raw(s)
 
 fun is_empty(s: &str).R: bool = len(s) == 0
 

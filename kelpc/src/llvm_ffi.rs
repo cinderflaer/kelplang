@@ -977,6 +977,18 @@ impl<'ctx> Function<'ctx> {
         self.add_enum_attribute(LLVMAttributeFunctionIndex, "noinline");
     }
 
+    /// Attach `optnone` and `noinline` to this function (kernel stage 7): the
+    /// freestanding `str` bodies are written as byte loops and must stay byte
+    /// loops. LLVM's loop-idiom pass rewrites a NUL scan into a call to
+    /// `strlen` (and a byte compare into `memcmp`), which is exactly the libc
+    /// reference a freestanding image cannot resolve; the pass skips an
+    /// `optnone` function, and the verifier requires the `noinline` that comes
+    /// with it.
+    pub fn mark_optnone(&self) {
+        self.add_enum_attribute(LLVMAttributeFunctionIndex, "optnone");
+        self.mark_noinline();
+    }
+
     /// Attach one enum attribute named `name` at `index`, looking the kind up
     /// by name because `llvm-sys` exports no constant for it (the C API's kind
     /// ids are deliberately unstable).

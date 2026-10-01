@@ -1,0 +1,21 @@
+// The whole freestanding `str` surface, reachable from the entry so every
+// lowering is emitted: the length scan, the bounds-checked byte read, the
+// byte-wise equality, the prefix test and the raw pointer. The results feed
+// the loop's own counter, so none of them can be folded away, and reading
+// through the pointer is the only part that would need `unsafe`.
+impl "std/str"
+
+section(".text.boot") fun kmain() {
+    var acc: u64 = 1
+    while true {
+        if str.eq("kelp", "kelp") && !str.eq("kelp", "help") {
+            acc = acc + str.len("kernel").to_u64()
+        }
+        if str.starts_with("kernel", "ker") {
+            acc = acc + str.byte("kelp", 1).to_u64()
+        }
+        if str.ptr("kelp").is_null() {
+            acc = acc + 1
+        }
+    }
+}

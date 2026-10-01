@@ -39,6 +39,11 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/str",
+        "byte_ptr_raw",
+        "    return (uint8_t*)kelp_s;\n",
+    ),
+    (
+        "std/str",
         "from_f64_raw",
         "    int need = snprintf(NULL, 0, \"%.*f\", (int)kelp_decimals, kelp_x);\n    if (need < 0) {\n        kelp_panic(\"str.from_f64: formatting failed\");\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw((size_t)need);\n    snprintf((char*)b.data, b.len + 1, \"%.*f\", (int)kelp_decimals, kelp_x);\n    return kelp_String__from_bytes(b);\n",
     ),

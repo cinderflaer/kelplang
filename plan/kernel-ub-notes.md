@@ -258,3 +258,45 @@ or privilege state at `mret`, and every MMIO fact. These are the reasons the
 next stages add `interrupt` attributes, stack guards and the panic semantics
 of stage 10, and MMIO capabilities in stage 11 (`plan/kernel0-status.md` lists
 them in order).
+
+## Stage 7: the freestanding `str` surface (`plan/kernel0-status.md` gap 1)
+
+**New ways to reach UB.** A freestanding program can now hold and walk a `str`,
+which is a NUL-terminated literal in read-only data. The type still carries no
+proof of that, and the compiler does not add one:
+
+- `str.len` scans to the first zero byte, so the promise NUL-termination is
+  carries is the whole operation. A `str` that is not terminated (only reachable
+  through a user `extern fun` that returns one, since this mode has no `String`
+  and no `View.to_string`) reads past its own end until it happens to meet a
+  zero. `str.byte` bounds-checks against that same scanned length, so it
+  inherits the same assumption rather than adding a check of its own.
+- `str.ptr` is the address of the first byte, and reading through it is as
+  unchecked as any `Ptr<T>`. Taking the address needs no `unsafe`; dereferencing
+  it does, and nothing relates the pointer back to the `str` it came from, so a
+  driver that keeps it past the literal's own lifetime has no diagnostic.
+- The panic handler's parameter is a real pointer to a real message now, which
+  is the point of the stage. Its body stays unchecked in the stage-4 sense: the
+  compiler neither requires it to return nor to print, and a handler that
+  returns leaves the check that called it with no continuation. `str.len` on a
+  message is the same NUL scan, so a message missing its terminator has the
+  same failure as any other `str`.
+
+**What the compiler does check.** The five operations are the only `std/str`
+functions a freestanding program may call, and `std/mem` may not be called at
+all; every other function in either module is refused by name at the call site
+(`freestanding.rs`). `str.byte`'s index is checked against the scanned length and
+a failure calls the project's `[target] panic` handler with `str.byte: index out
+of bounds`, distinct from the array, `Bytes` and `View` texts. The three raw
+externs are lowered as byte loops inside the module, and the lowerings are
+marked `optnone` so the target's own optimizer cannot rewrite the NUL scan into
+a `strlen` call or the byte compare into a `memcmp`.
+
+**What it does not check.** NUL-termination of any `str` the program did not
+write itself (there is no such `str` today), the provenance or lifetime of a
+`str.ptr` result, whether the panic handler prints or returns, and anything
+about the device a driver hand the bytes to. The emission half of the allowed
+set (`prune`) drops the rest of `std/str` and `std/mem` before inference rather
+than trusting the optimizer to remove their bodies, because at `-O0` nothing
+would: an unwanted body there is an undefined symbol at link time, not a
+diagnostic.
