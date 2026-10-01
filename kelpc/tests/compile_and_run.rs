@@ -4130,6 +4130,7 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "drop_control_flow",
         "drop_container",
         "drop_enum",
+        "drop_map",
         // A guard owned by a thread closure's heap environment: a worker that
         // never freed the environment would leave its box behind at exit.
         "drop_thread_closure",
@@ -11242,6 +11243,16 @@ fn containers_drop_each_element_through_its_destructor() {
 #[test]
 fn an_enum_destructor_runs_for_every_variant() {
     assert_compiles_and_runs("tests/fixtures/drop_enum.kp", "body\nmaybe\nmaybe\nleaf\n1\n");
+}
+
+/// A `Map` value of a destructor type: a removed value drops at the new owner,
+/// and the values the map still holds drop when the map does.
+#[test]
+fn map_values_drop_through_their_destructor() {
+    assert_compiles_and_runs(
+        "tests/fixtures/drop_map.kp",
+        "body\nremoved\ndrop\n1\ndrop\n2\n",
+    );
 }
 
 /// The kernel pattern the stage exists for: the guard's destructor releases the
