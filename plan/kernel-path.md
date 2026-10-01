@@ -36,7 +36,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 6 | **MK9-S6-M1 `defer`, `Drop`** (B-8) | deterministic cleanup a kernel can point at | Releasing locks and frames on every exit path |
 | 7 | **MK9-S5 allocators** (B-7) | a global allocator hook, arenas, alignment, fallible allocation | The first frame allocator and a kernel heap |
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
-| 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation | Userspace |
+| 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
 | 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines, frames as *capabilities* | The safety story: a driver can only touch what it was granted |
 
@@ -146,11 +146,12 @@ memory". `examples/kernel0-heap` is the idiom: a bump allocator over a
 feature and a fallible allocation surface are not in this stage.
 
 **What the next stages need.** The table's stages 6 to 11 are the remaining work:
-`defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),
-mapping and a syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and
-MMIO regions and IRQ lines as capabilities (row 11). The allocator is what anything running at
-boot needs first, and the panic semantics of row 10 are what turn a check that fires into a
-diagnostic instead of a bare `panic` byte.
+`Drop` (the other half of row 6), arenas and a fallible allocation surface (row 7), per-CPU
+storage (row 8), stack guards and panic semantics with no OS (row 10), and MMIO regions and IRQ
+lines as capabilities (row 11). Row 9 is now closed: both its mapping half and its syscall ABI
+are in the tree. The panic semantics of row 10 are what turn a check that fires into a
+diagnostic instead of a bare `panic` byte, and row 8's per-CPU storage is what a second hart
+needs before anything here can run on more than one.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
@@ -174,9 +175,22 @@ and `mret`, turns the MMU on, and proves the high virtual name and the identity-
 name are one frame. `examples/kernel0-vm-fault` takes a load page fault (13) and a store page
 fault (15) on purpose into a naked S-mode `stvec` handler that prints `scause` and `stval`. No
 compiler change was needed: the only thing the language could not spell is a linker-script symbol,
-and that is stage 5's `asm` with `la`. What the row still owes is the syscall ABI and
-untrusted-pointer validation, and what this stage deliberately leaves out is TLB shootdown, ASIDs,
-huge-page *creation*, Sv48 and a per-section (W^X) identity map.
+and that is stage 5's `asm` with `la`. What this stage deliberately leaves out is TLB
+shootdown, ASIDs, huge-page *creation*, Sv48 and a per-section (W^X) identity map.
+
+**Row 9's other half is done too** (MK9-S4-M9, `plan/syscall-abi.md`):
+`examples/kernel0-user` adds the `TrapFrame` and the naked `trap_entry` that builds it on a
+per-hart trap stack (swapping `sp` with `sscratch`), the drop to U-mode through `sepc`,
+`sstatus.SPP` and `sret`, one Sv39 address space per program with its code page at `0x10000` and
+its stack page at `0x20000`, the `ecall` ABI (number in `a7`, arguments in `a0`..`a5`, result in
+`a0`, a negative result an error) with `write` and `exit`, and the untrusted-pointer check that
+makes `write` safe: a length cap, a range bound that cannot wrap before it is checked, and a
+page-table walk that demands the U and R bits on every page before a byte is copied through a
+kernel buffer. Two hand-written programs prove it, one ending in `exit(7)` and one dying on a
+load page fault while the kernel prints the cause and keeps running. No compiler change was
+needed, and what the stage leaves out is the process model: no scheduler, one process at a time,
+no preemption or timer interrupt, no `fork`, no TLB shootdown, no ASIDs, no huge-page *creation*,
+no Sv48 and no per-section (W^X) identity map.
 
 ## Two rules that keep the language honest
 
