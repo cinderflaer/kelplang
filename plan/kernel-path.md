@@ -152,6 +152,19 @@ MMIO regions and IRQ lines as capabilities (row 11). The allocator is what anyth
 boot needs first, and the panic semantics of row 10 are what turn a check that fires into a
 diagnostic instead of a bare `panic` byte.
 
+**Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
+chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
+`generic-rv64`/`+m,+a,+c`, the medium code model and the `la sp` stub, and `aarch64-unknown-none`
+gets the `generic` CPU, the **small** code model (LLVM refuses medium on AArch64) and an AArch64
+stub that loads `sp` with `ldr x0, =__stack_top; mov sp, x0`, clears `[__bss_start, __bss_end)`
+the same word at a time and halts on `wfe`. Any other triple is refused by name at the stub.
+`examples/kernel0-aarch64` is the PL011 driver (`DR` at `0x09000000`, `FR` bit 5 the FIFO-full
+flag) whose `kmain` prints `hello from kelp (aarch64)` and halts; it boots under
+`qemu-system-aarch64 -M virt -cpu cortex-a57 -nographic -serial mon:stdio -kernel <elf>` and
+`examples/kernel0-aarch64/run.sh` and two tests in `kelpc/tests/compile_and_run.rs` (an
+`llvm-readelf`/`llvm-nm`/`llvm-objdump` check of the ELF and the boot) cover it. The riscv64
+`examples/kernel0*` all still boot after the change.
+
 ## Two rules that keep the language honest
 
 1. **`unsafe` is auditable, not ambient.** A module may contain `unsafe` only if `coral.toml` lists it
@@ -164,7 +177,8 @@ diagnostic instead of a bare `panic` byte.
 ## What is deliberately not here
 
 - A specific kernel design (scheduler, filesystem, drivers). The language work above is what they would sit on.
-- x86-64 and aarch64 kernels. The target triple is a parameter of stage 4; kernel 0 is riscv64 only, and an x86-64
-  kernel follows once the stages are in.
+- x86-64 kernels. aarch64 is the second architecture and it boots (`examples/kernel0-aarch64`);
+  an x86-64 kernel still needs a 32-bit PVH or Multiboot entry stub that enters long mode before
+  any Kelp runs, which is bootstrapping rather than language work, so it follows once the stages are in.
 - Memory-safety proofs about `unsafe` code. D-1/D-2/D-3 stay open; the UB catalogue has to grow a section per
   stage, and each stage's design note says what it adds to it.

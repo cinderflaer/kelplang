@@ -460,7 +460,7 @@ pub fn compile(
     // `sp` from a linker-script symbol is not expressible in the language yet;
     // it belongs to the boot section the linker script places first.
     if let Some(fs) = freestanding {
-        module.append_inline_asm(&freestanding_entry_asm(&symbol_name(&fs.entry)));
+        module.append_inline_asm(&freestanding_entry_asm(&fs.triple, &symbol_name(&fs.entry))?);
     }
 
     // Every location has been attached now, so the debug descriptors are
@@ -579,11 +579,12 @@ struct AllocFns<'a> {
 }
 
 /// The `_start` stub a freestanding build emits as module-level assembly
-/// (kernel stage 4). It sets `sp` from the linker-script symbol `__stack_top`,
-/// zeroes `[__bss_start, __bss_end)` a word at a time (kernel gap 4), calls
-/// `entry` and loops on `wfi` if it returns. It goes in `.text.boot` so a
-/// linker script can place it first; `entry_symbol` is the mangled name of the
-/// project's entry `fun` (`kelp_kmain`).
+/// (kernel stage 4), chosen by the manifest's `[target] triple`. It sets `sp`
+/// from the linker-script symbol `__stack_top`, zeroes
+/// `[__bss_start, __bss_end)` a word at a time (kernel gap 4), calls `entry` and
+/// loops on the target's wait-for-interrupt instruction if it returns. It goes
+/// in `.text.boot` so a linker script can place it first; `entry_symbol` is the
+/// mangled name of the project's entry `fun` (`kelp_kmain`).
 ///
 /// The two bounds are declared `.weak` so a script that does not assign them
 /// still links: both then resolve to 0, the loop runs zero times, and the image
@@ -591,7 +592,26 @@ struct AllocFns<'a> {
 /// touches memory before it, which is what lets the clear run on a kernel's
 /// first instruction. Only registers are used until the entry is called, so no
 /// stack has to exist yet.
-fn freestanding_entry_asm(entry_symbol: &str) -> String {
+///
+/// Loading `sp` from a linker-script symbol is not expressible in the language,
+/// so each architecture gets its own hand-written stub. `Err` names the triple
+/// for an architecture this compiler has no stub for, rather than emitting an
+/// image whose entry point is another ISA's code.
+fn freestanding_entry_asm(triple: &str, entry_symbol: &str) -> Result<String, String> {
+    if triple.starts_with("riscv64") || triple.starts_with("riscv32") {
+        Ok(riscv64_entry_asm(entry_symbol))
+    } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+        Ok(aarch64_entry_asm(entry_symbol))
+    } else {
+        Err(format!(
+            "kelpc has no freestanding '_start' stub for the triple '{triple}': it has one for riscv64 and aarch64"
+        ))
+    }
+}
+
+/// The riscv64 stub: `la sp, __stack_top`, the word-at-a-time clear, then the
+/// entry call and a `wfi` halt.
+fn riscv64_entry_asm(entry_symbol: &str) -> String {
     format!(
         "    .section .text.boot, \"ax\", @progbits\n\
          \x20   .weak __bss_start\n\
@@ -612,6 +632,37 @@ fn freestanding_entry_asm(entry_symbol: &str) -> String {
          1:\n\
          \x20   wfi\n\
          \x20   j 1b\n\
+         \x20   .size _start, . - _start\n"
+    )
+}
+
+/// The aarch64 stub, the same shape as the riscv64 one in AArch64's own
+/// assembly: `ldr x0, =__stack_top` loads the symbol's absolute address into
+/// `x0`, which `mov sp, x0` makes the stack pointer. The clear is a
+/// post-indexed `str xzr, [x0], #8` while `x0` is below `x1` (unsigned), so it
+/// is the same word-at-a-time loop. `wfe` is the halt; `b 1b` spins on it.
+fn aarch64_entry_asm(entry_symbol: &str) -> String {
+    format!(
+        "    .section .text.boot, \"ax\", @progbits\n\
+         \x20   .weak __bss_start\n\
+         \x20   .weak __bss_end\n\
+         \x20   .globl _start\n\
+         \x20   .type _start, @function\n\
+         _start:\n\
+         \x20   ldr x0, =__stack_top\n\
+         \x20   mov sp, x0\n\
+         \x20   ldr x0, =__bss_start\n\
+         \x20   ldr x1, =__bss_end\n\
+         .Lkelp_bss_loop:\n\
+         \x20   cmp x0, x1\n\
+         \x20   b.hs .Lkelp_bss_done\n\
+         \x20   str xzr, [x0], #8\n\
+         \x20   b .Lkelp_bss_loop\n\
+         .Lkelp_bss_done:\n\
+         \x20   bl {entry_symbol}\n\
+         1:\n\
+         \x20   wfe\n\
+         \x20   b 1b\n\
          \x20   .size _start, . - _start\n"
     )
 }
@@ -13192,5 +13243,28 @@ mod layout_tests {
             shape_at < point_at,
             "the `enum` a `datac` field names by value was not declared before it:\n{source}"
         );
+    }
+
+    /// Kernel stage 10: the `_start` stub is chosen by the manifest's triple,
+    /// and a triple with no stub is refused by name rather than emitted as
+    /// another architecture's entry point.
+    #[test]
+    fn the_freestanding_entry_stub_is_per_architecture() {
+        let riscv = super::freestanding_entry_asm("riscv64-unknown-none-elf", "kelp_kmain")
+            .expect("riscv64 has a stub");
+        assert!(riscv.contains("la sp, __stack_top"), "{riscv}");
+        assert!(riscv.contains("wfi"), "{riscv}");
+
+        let arm = super::freestanding_entry_asm("aarch64-unknown-none", "kelp_kmain")
+            .expect("aarch64 has a stub");
+        assert!(arm.contains("ldr x0, =__stack_top"), "{arm}");
+        assert!(arm.contains("mov sp, x0"), "{arm}");
+        assert!(arm.contains("str xzr, [x0], #8"), "{arm}");
+        assert!(arm.contains("bl kelp_kmain"), "{arm}");
+        assert!(arm.contains("wfe"), "{arm}");
+
+        let refused = super::freestanding_entry_asm("x86_64-unknown-none", "kelp_kmain")
+            .expect_err("x86-64 has no stub yet");
+        assert!(refused.contains("x86_64-unknown-none"), "{refused}");
     }
 }

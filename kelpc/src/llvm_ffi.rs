@@ -2474,22 +2474,36 @@ impl TargetMachine {
     ///
     /// A `riscv64` triple gets the `generic-rv64` CPU and `+m,+a,+c`: the
     /// extensions the QEMU `virt` machine's baseline core has, and the ones any
-    /// RISC-V code has to assume to be portable across the ISA's profiles.
-    /// Every other triple keeps `baseline_cpu` and no features, exactly as the
-    /// hosted path does. Relocations are `LLVMRelocStatic`, because there is no
-    /// dynamic loader to fix up a position-independent object, and the code
-    /// model is `LLVMCodeModelMedium`, which reaches the whole address space a
-    /// kernel image is placed in without the long-call sequences of `large`.
+    /// RISC-V code has to assume to be portable across the ISA's profiles. An
+    /// `aarch64` triple gets the `generic` CPU and no extra features, because
+    /// the baseline ARMv8-A feature set (Advanced SIMD included) is already what
+    /// `generic` means and a kernel 0 uses none of it. Every other triple keeps
+    /// `baseline_cpu` and no features, exactly as the hosted path does.
+    /// Relocations are `LLVMRelocStatic`, because there is no
+    /// dynamic loader to fix up a position-independent object. riscv64 uses the
+    /// `medium` code model, which reaches the whole address space a kernel image
+    /// is placed in without the long-call sequences of `large`; aarch64 has no
+    /// `medium` code model at all (LLVM refuses it: only small, tiny and large
+    /// are allowed), and `small` is the one that reaches a kernel image loaded
+    /// at 0x40000000, so it is what aarch64 gets.
     ///
     /// [`for_triple`]: TargetMachine::for_triple
     pub fn for_freestanding(
         triple_str: &str,
         level: LLVMCodeGenOptLevel,
     ) -> Result<Self, String> {
+        let is_aarch64 = triple_str.starts_with("aarch64") || triple_str.starts_with("arm64");
         let (cpu, features) = if triple_str.starts_with("riscv64") {
             ("generic-rv64", "+m,+a,+c")
+        } else if is_aarch64 {
+            ("generic", "")
         } else {
             (baseline_cpu(triple_str), "")
+        };
+        let code_model = if is_aarch64 {
+            LLVMCodeModel::LLVMCodeModelSmall
+        } else {
+            LLVMCodeModel::LLVMCodeModelMedium
         };
         TargetMachine::create(
             triple_str,
@@ -2497,7 +2511,7 @@ impl TargetMachine {
             features,
             level,
             LLVMRelocMode::LLVMRelocStatic,
-            LLVMCodeModel::LLVMCodeModelMedium,
+            code_model,
         )
     }
 

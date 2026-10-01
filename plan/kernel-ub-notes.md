@@ -524,3 +524,48 @@ stub loads immediately after overlaps it, or the semantics of a `mem*`
 replacement a project links in. The per-call contract is LLVM's to assume and
 the linker's to trust; the compiler supplies a definition that meets it, and
 nothing more.
+
+## Stage 10: kernel 0 on a second architecture (aarch64)
+
+**New ways to reach UB.** The `[target] triple` now selects an architecture, and
+the compiler trusts it in places it cannot check:
+
+- The triple is a promise about the ISA the image will run on and nothing more.
+  `aarch64-unknown-none` produces a well-formed ELF64 AArch64 image whatever
+  machine boots it; booting that image on riscv64, or the reverse, executes
+  another ISA's bytes. The compiler checks only that the triple is one it has a
+  `_start` stub and a target machine for; it never checks the emulator, the
+  loader or the hardware.
+- The aarch64 stub reaches its linker-script symbols with absolute
+  `ldr x0, =sym` literals (`R_AARCH64_ABS64`), and the aarch64 target machine is
+  created with the **small** code model, because LLVM refuses `medium` on
+  AArch64 (`only small, tiny and large code models are allowed`). Every branch,
+  literal load and absolute address the compiler and the assembler emit then
+  assumes the image and its symbols fit that model's ranges. A script that
+  scatters sections far enough apart, or links at an address the model does not
+  cover, can make the entry's own constant loads reach the wrong address, which
+  the linker does not diagnose and the compiler does not model.
+- The clear loop is the riscv64 one in AArch64 instructions: `cmp`/`b.hs` is the
+  same unsigned bounds test, and `[__bss_start, __bss_end)` is the same pair of
+  linker-script promises. Everything stage 9 says about a wrong, unaligned,
+  overlapping or device-mapped clear range holds unchanged; omitting the bounds
+  is still silence (both resolve to 0, the loop runs zero times, and a kernel
+  that expected its statics zeroed reads indeterminate memory).
+- The device constants remain the driver's claim: the PL011 base `0x09000000`,
+  `DR` at `+0x00` and `FR` bit 5 (`TXFF`) are a claim about QEMU's `virt`
+  machine, and a `Ptr` write to any other address is unchecked device I/O.
+
+**What the compiler does check.** That the manifest's triple names an
+architecture with a `_start` stub (riscv64 or aarch64, refused by name
+otherwise); that `initialize_target_for` loads exactly that backend; and that
+the stub assembles, because it is emitted as the target's own module assembly
+with that target's MC parser registered. The triple's truthfulness about the
+machine, the layout of the linker script and the reach of the code model are not
+checked.
+
+**What it does not check.** That the booted machine is the triple's
+architecture, that the image is loaded where the script says, that the clear
+range is safe to write, or that the small code model's assumptions hold for the
+script's placement. It also still cannot check anything about a driver's
+register addresses, which remain `Ptr` writes the language marks `unsafe` and a
+manifest lists.

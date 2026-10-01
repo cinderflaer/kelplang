@@ -20,9 +20,11 @@ panic = "kp_panic"          # optional
   project with no `[target]` section, or with `mode = "hosted"`, builds for the
   host exactly as every project before this stage did; that is the whole
   compatibility promise.
-- `triple` is any LLVM triple string. `riscv64-unknown-none-elf` is the one
-  kernel 0 targets; `aarch64-unknown-none` and an x86-64 triple work as far as
-  target-machine creation goes, but only riscv64 is exercised today.
+- `triple` is the LLVM triple the project targets. `riscv64-unknown-none-elf` and
+  `aarch64-unknown-none` are the two kernel 0 boots, and the two the compiler
+  has a target machine and a `_start` stub for; any other triple is refused by
+  name at the stub, so an x86-64 image has to wait for its own entry stub
+  (a 32-bit PVH/Multiboot one that enters long mode first).
 - `entry` is a bare `fun` name in the entry module, with no parameters and no
   return.
 - `linker_script` is a path relative to the directory holding `coral.toml`.
@@ -85,7 +87,8 @@ that compiles freestanding cannot reference a symbol the link would miss.
 
 The compiler emits a `_start` symbol as module-level assembly (the LLVM
 `module asm` string), because loading `sp` from a linker-script symbol is not
-expressible in the language yet:
+expressible in the language yet. The stub is per-architecture, selected by the
+manifest's `triple`; the riscv64 one is:
 
 ```asm
     .section .text.boot, "ax", @progbits
@@ -107,6 +110,32 @@ _start:
 1:
     wfi
     j 1b
+    .size _start, . - _start
+```
+
+and the aarch64 one is the same shape in AArch64 assembly:
+
+```asm
+    .section .text.boot, "ax", @progbits
+    .weak __bss_start
+    .weak __bss_end
+    .globl _start
+    .type _start, @function
+_start:
+    ldr x0, =__stack_top
+    mov sp, x0
+    ldr x0, =__bss_start
+    ldr x1, =__bss_end
+.Lkelp_bss_loop:
+    cmp x0, x1
+    b.hs .Lkelp_bss_done
+    str xzr, [x0], #8
+    b .Lkelp_bss_loop
+.Lkelp_bss_done:
+    bl kelp_kmain
+1:
+    wfe
+    b 1b
     .size _start, . - _start
 ```
 
@@ -137,7 +166,8 @@ The `.sbss` half is placed too, because a small-data build puts its small
 statics there and a clear that misses them would be a kernel that boots with
 garbage in a `static` it never wrote.
 
-It loops on `wfi` if the entry function returns. `kelp_kmain` is the entry
+It loops on the target's wait instruction (`wfi` on riscv64, `wfe` on aarch64)
+if the entry function returns. `kelp_kmain` is the entry
 `fun`'s emitted symbol. `.text.boot` is where a linker script should place the
 stub first. Naming it first is not enough on its own: the script has to name
 the other sections too, because lld places an unnamed orphan (`.eh_frame` is
@@ -243,14 +273,18 @@ check (alignment, size, aliasing, double free).
 message naming the mode and the backend, because the C backend's preamble is
 libc. The LLVM path:
 
-- loads the target's backend by name (`LLVMInitializeRISCV*`), rather than
+- loads the target's backend by name (`LLVMInitializeRISCV*` for riscv64,
+  `LLVMInitializeAArch64*` for aarch64), rather than
   through LLVM's `LLVMInitializeAllTargets` macro: that macro is a C static
   inline whose expansion depends on the LLVM headers' own target list, and this
   host's headers registered no RISC-V through it.
-- creates the `TargetMachine` for the triple with the `generic-rv64` CPU and
-  `+m,+a,+c` features (riscv64 only; other triples keep the portable baseline
-  and no features), the **static** relocation model and the **medium** code
-  model, and sets the module's triple and data layout from it.
+- creates the `TargetMachine` for the triple. riscv64 gets the `generic-rv64`
+  CPU, `+m,+a,+c` features and the **medium** code model; aarch64 gets the
+  `generic` CPU, no extra features and the **small** code model, because
+  LLVM refuses `medium` on AArch64 (`only small, tiny and large code models are
+  allowed`) and the small model still reaches an image linked at 0x40000000.
+  The relocation model is **static** for both, and the module's triple and data
+  layout are set from the machine.
 - writes the object, then links it with `ld.lld -T <script> -o <out> --static
   <obj>`. A missing `ld.lld` is an error naming it; `kelpc` never falls back to
   `cc`, which would link the hosted startup files back in. No runtime object, no
