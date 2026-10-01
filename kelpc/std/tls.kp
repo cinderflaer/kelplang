@@ -54,11 +54,14 @@ impl "std/str"
    Nothing here closes on drop either, the same rule `net.Socket` and
    `net.Listener` follow.
 
-   `handle` is still a `usize` rather than an `extern type` handle: an
-   `extern type` is legal only in a module with its own `coral.toml`
-   `[extern."<module id>"]` section (`resolve.rs`), and a compiler-shipped
-   std module has no manifest. `plan/release-goals.md` records the smallest
-   compiler change that would lift that, under "Follow-ups". */
+   `handle` is an `extern type` handle (`TlsHandle`), not a `usize`: a
+   compiler-shipped std module may now declare one (a module the compiler
+   ships is admitted by `stdlib.rs`'s source table in `resolve.rs`, since its
+   extern bodies come from `externs.rs` rather than a manifest), and the
+   OpenSSL `SSL*` crosses as an opaque value with nothing to compare or do
+   arithmetic on. `TlsHandle.null()` and `is_null()` are not needed here: the
+   only caller that wants "no handle" is `std/http`/`std/ws`, and they carry
+   an `Option<TlsHandle>` whose `None` is that value. */
 
 // The `TlsError` codes the C classifiers (`codegen_c::C_HEADERS`) write
 // through `err_code`. They are the wire between the extern bodies and
@@ -72,19 +75,21 @@ const ERR_PEER_CLOSED: i32 = 6
 const ERR_TIMEOUT: i32 = 7
 const ERR_IO: i32 = 8
 
-extern fun handshake_try_raw(fd: i32, host: &str, ca_file: &str, ca_dir: &str, timeout_ms: u64, err_code: mut i32, reason: mut String).R: usize
-extern fun set_timeout_raw(handle: usize, ms: u64)
-extern fun write_try_raw(handle: usize, data: Bytes, err_code: mut i32, reason: mut String).R: usize
-extern fun write_all_try_raw(handle: usize, data: Bytes, err_code: mut i32, reason: mut String).R: usize
-extern fun read_try_raw(handle: usize, max: usize, err_code: mut i32, reason: mut String).R: Bytes
-extern fun read_into_try_raw(handle: usize, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String).R: usize
-extern fun shutdown_try_raw(handle: usize, err_code: mut i32, reason: mut String)
+extern fun handshake_try_raw(fd: i32, host: &str, ca_file: &str, ca_dir: &str, timeout_ms: u64, err_code: mut i32, reason: mut String).R: TlsHandle
+extern fun set_timeout_raw(handle: TlsHandle, ms: u64)
+extern fun write_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String).R: usize
+extern fun write_all_try_raw(handle: TlsHandle, data: Bytes, err_code: mut i32, reason: mut String).R: usize
+extern fun read_try_raw(handle: TlsHandle, max: usize, err_code: mut i32, reason: mut String).R: Bytes
+extern fun read_into_try_raw(handle: TlsHandle, buf: mut Bytes, at: usize, err_code: mut i32, reason: mut String).R: usize
+extern fun shutdown_try_raw(handle: TlsHandle, err_code: mut i32, reason: mut String)
 
 // A TLS session bound to a connected file descriptor. `handle` is the
-// OpenSSL `SSL*`, carried as `usize` because v1 has no pointer type in a
-// std module (see the header comment). Not `Copy`, so passing one around is
-// a borrow and there is never a silent second free of the `SSL*`.
-datac TlsStream(val fd: i32, val handle: usize)
+// OpenSSL `SSL*`, carried as an opaque `extern type` handle. Not `Copy`, so
+// passing one around is a borrow and there is never a silent second free of
+// the `SSL*`.
+pub extern type TlsHandle
+
+datac TlsStream(val fd: i32, val handle: TlsHandle)
 
 // Why a TLS operation failed, as a value a caller can branch on.
 //

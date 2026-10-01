@@ -673,11 +673,15 @@ pub fn load(
             program.enums.push(e);
         }
         // An opaque handle is a module's own type, prefixed and exported like
-        // a `datac`. It is legal only where the manifest has an `[extern.*]`
-        // section to reach a native symbol with, so the refusal is here, next
-        // to the name resolution that would otherwise let it cross modules.
+        // a `datac`. It is legal only where a native surface exists to reach a
+        // symbol with: a project's own `[extern.*]` section, or a module the
+        // compiler ships (`stdlib::source`), whose extern bodies come from
+        // `externs.rs` and need no manifest. The refusal is here, next to the
+        // name resolution that would otherwise let it cross modules.
         for e in &parsed.extern_types {
-            if !loader.extern_modules.contains_key(&m.id) {
+            if !loader.extern_modules.contains_key(&m.id)
+                && crate::stdlib::source(&m.id).is_none()
+            {
                 return Err(Diagnostic::new(
                     format!(
                         "'extern type {}' is only legal in a module with a coral.toml '[extern.\"{}\"]' section",
