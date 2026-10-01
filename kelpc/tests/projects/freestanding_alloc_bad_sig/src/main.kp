@@ -1,0 +1,12 @@
+// `alloc` takes one parameter instead of `(size: usize, align: usize)`, so the
+// front end refuses it rather than generating a call with the wrong arity.
+fun alloc(size: usize).R: Ptr<u8> {
+    return Ptr.null()
+}
+
+fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {}
+
+fun kmain() {
+    var i: usize = 0
+    i = i + 1
+}

@@ -10752,3 +10752,174 @@ fn a_freestanding_project_can_release_a_lock_with_a_defer() {
         undefined.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Kernel stage 7 (MK9-S5-M1, roadmap B-7): the global allocator hook. A
+// freestanding manifest names `alloc`/`dealloc` (and optionally `realloc`), and
+// `Box`/`List`/`Map` then allocate and free through them instead of libc. The
+// rejection fixtures are front-end refusals, so they name the same construct on
+// both backends; the builds and the boot are LLVM-only by design.
+// ---------------------------------------------------------------------------
+
+/// Kernel stage 7's acceptance build: a freestanding project that configures all
+/// three allocator functions and instantiates `Box`, `List` and `Map`, linked
+/// into an image with no undefined symbol. The IR beside the binary is checked
+/// too: every allocation calls `@kelp_alloc`/`@kelp_realloc` and every free
+/// `@kelp_dealloc`, with no `malloc`/`free` call at all.
+///
+/// It needs `ld.lld` and `llvm-nm` from `dev-kernel.nix`.
+#[test]
+fn freestanding_containers_allocate_through_the_project_allocator() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding allocator test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_alloc");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_alloc"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding allocator build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding allocator image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+
+    let ir = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the LLVM backend writes textual IR beside the object");
+    for symbol in [
+        "@kelp_alloc(",
+        "@kelp_dealloc(",
+        "@kelp_realloc(",
+        "@__kelp_freestanding_memset(",
+    ] {
+        assert!(
+            ir.contains(symbol),
+            "the container bodies should call '{symbol}'"
+        );
+    }
+    for symbol in ["call ptr @malloc", "call ptr @realloc", "call void @free", "call ptr @memset", "call ptr @memcpy"] {
+        assert!(
+            !ir.contains(symbol),
+            "a freestanding build must not call libc's '{symbol}'"
+        );
+    }
+}
+
+/// Kernel stage 7's acceptance boot: `examples/kernel0-heap` defines a bump
+/// allocator over a `static mut` arena, builds a `List<i32>` of 1..=10 with no
+/// `realloc` (the alloc + copy + dealloc fallback), sums it and prints
+/// `heap sum 55`, then prints `balanced` once every allocation has reached a
+/// matching `dealloc`.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_heap_boots_and_balances_its_allocations() {
+    if !have_ld_lld() || !have_qemu() {
+        println!(
+            "skipping the kernel0-heap boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        "kernel0_heap",
+        &fixture("../examples/kernel0-heap"),
+        &["heap sum 55", "balanced"],
+    );
+}
+
+/// `List` with no `[target] alloc`/`dealloc` is refused exactly as before, with
+/// a message that names the two keys whose absence is why.
+#[test]
+fn a_freestanding_list_without_an_allocator_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_list_no_alloc",
+        "'[target] alloc' and '[target] dealloc'",
+    );
+}
+
+/// An allocator does not make `String` available: its storage still reaches the
+/// hosted runtime, and the refusal names it through `List<String>`.
+#[test]
+fn a_freestanding_string_is_refused_even_with_an_allocator() {
+    assert_rejected_with("tests/projects/freestanding_alloc_string", "'String'");
+}
+
+/// `alloc` and `dealloc` are required together: naming one alone is a manifest
+/// error rather than an allocator that can never free.
+#[test]
+fn an_allocator_without_a_dealloc_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_alloc_half",
+        "'alloc' without 'dealloc'",
+    );
+}
+
+/// A named allocator whose signature is not the `(size, align)` pair the
+/// generated calls assume is refused with the expected signature.
+#[test]
+fn an_allocator_with_the_wrong_signature_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_alloc_bad_sig",
+        "wrong signature",
+    );
+}
+
+/// The hosted regression: with no `[target]` allocator, containers still
+/// allocate through libc. The program runs and prints its sum, and (on the LLVM
+/// backend) the IR calls `@malloc`, never `@kelp_alloc`.
+#[test]
+fn hosted_containers_still_allocate_through_libc() {
+    let bin = out_path("hosted_list_alloc");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/hosted_list_alloc.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the hosted list fixture failed to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(run.status.success(), "the hosted list fixture failed to run");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "6\n");
+
+    if backend() == "llvm" {
+        let ir = std::fs::read_to_string(bin.with_extension("ll"))
+            .expect("the LLVM backend writes textual IR beside the object");
+        // `List.reserve` grows through `realloc` (a null pointer on the first
+        // call is libc's `malloc`), and the drop frees the buffer.
+        assert!(
+            ir.contains("call ptr @realloc") && ir.contains("call void @free"),
+            "a hosted container should still allocate and free through libc"
+        );
+        assert!(
+            !ir.contains("@kelp_alloc("),
+            "a hosted build has no project allocator to call"
+        );
+    }
+}

@@ -1,0 +1,10 @@
+name = "freestandingallochalf"
+
+# Kernel stage 7's rejection fixture: `alloc` without `dealloc`. The pair is
+# required together, because a container that can allocate must be able to free.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+alloc = "alloc"

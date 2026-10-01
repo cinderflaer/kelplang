@@ -1,0 +1,9 @@
+name = "freestandinglistnoalloc"
+
+# Kernel stage 7's rejection fixture: `List` with no `[target] alloc`/`dealloc`.
+# The refusal names the two keys whose absence is why the container is refused.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

@@ -1,0 +1,72 @@
+// Kernel stage 7's build acceptance project: a bump allocator with all three
+// functions, and the three heap containers. Nothing here prints (the image is
+// checked, not booted), so `kmain` just builds one of each and halts.
+
+static mut ARENA: [u8; 16384] = [0; 16384]
+static mut USED: usize = 0
+
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 16384 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            val arena: Ptr<[u8; 16384]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            USED = USED
+        }
+    }
+}
+
+// The optional growth fast path: a fresh block, the old bytes copied, the old
+// block released. The copy is a byte loop so the image needs no `memcpy`.
+fun realloc(p: Ptr<u8>, old: usize, new: usize, align: usize).R: Ptr<u8> {
+    val fresh: Ptr<u8> = alloc(new, align)
+    if fresh.is_null() {
+        return Ptr.null()
+    }
+    if p.is_null() == false {
+        var i: usize = 0
+        while i < old {
+            unsafe {
+                val src: Ptr<u8> = p.byte_offset(i.to_isize())
+                val dst: Ptr<u8> = fresh.byte_offset(i.to_isize())
+                dst.write(src.read())
+            }
+            i = i + 1
+        }
+        dealloc(p, old, align)
+    }
+    return fresh
+}
+
+section(".text.boot") fun kmain() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+
+    var m: Map<i32, i32> = Map.new()
+    m.insert(1, 2)
+
+    var b: Box<i32> = Box.empty()
+    b.set(3)
+
+    while true {
+        unsafe {
+            asm("wfi")
+        }
+    }
+}
