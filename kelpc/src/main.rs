@@ -10,6 +10,7 @@ mod driver;
 mod externs;
 mod fmt;
 mod freestanding;
+mod guard;
 mod infer;
 mod lexer;
 mod lint;
@@ -1110,7 +1111,10 @@ fn main() -> ExitCode {
         Some("fmt") => return fmt_command(&args[2..]),
         Some("lint") => return lint_command(&args[2..]),
         Some("check") => return check_command(&args[2..]),
-        Some(c @ ("build" | "run")) => c,
+        Some(c @ ("build" | "run")) => {
+            guard::start();
+            c
+        }
         _ => {
             usage();
             return ExitCode::FAILURE;
@@ -1228,6 +1232,7 @@ fn main() -> ExitCode {
         } else {
             PathBuf::from("./").join(&out_path)
         };
+        guard::stop();
         match Command::new(&abs_out).status() {
             Ok(status) => {
                 return ExitCode::from(status.code().unwrap_or(1) as u8);

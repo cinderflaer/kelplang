@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::guard::GuardedOutput;
 use crate::opt::OptLevel;
 
 /// The C runtime object, compiled from `runtime/kelp_rt.c` by `build.rs` and
@@ -86,7 +87,7 @@ pub fn compile_c(
     for lib in link_libs {
         command.arg(format!("-l{lib}"));
     }
-    let output = command.output().map_err(|e| CompileError {
+    let output = command.guarded_output().map_err(|e| CompileError {
         message: format!("could not invoke 'cc': {e}"),
     })?;
 
@@ -148,7 +149,7 @@ pub fn compile_c_object(
         .arg("-o")
         .arg(obj_path)
         .arg(c_path)
-        .output()
+        .guarded_output()
         .map_err(|e| CompileError {
             message: format!("could not invoke 'cc': {e}"),
         })?;
@@ -240,7 +241,7 @@ pub fn link_llvm_object(
     for lib in link_libs {
         command.arg(format!("-l{lib}"));
     }
-    let output = command.output().map_err(|e| CompileError {
+    let output = command.guarded_output().map_err(|e| CompileError {
         message: format!("could not invoke 'cc': {e}"),
     })?;
     // The object is embedded in `kelpc`; the file was only a place for `cc` to
@@ -282,7 +283,7 @@ pub fn link_freestanding_object(
         .arg(out_path)
         .arg("--static")
         .arg(object_path)
-        .output()
+        .guarded_output()
         .map_err(|e| CompileError {
             message: format!(
                 "could not invoke 'ld.lld': {e}; a freestanding build needs 'ld.lld' on PATH"
@@ -340,7 +341,7 @@ pub fn pkg_config_flags(packages: &[String]) -> Result<Vec<String>, CompileError
     }
     let output = Command::new("pkg-config")
         .args(pkg_config_args(packages))
-        .output()
+        .guarded_output()
         .map_err(|e| CompileError {
             message: format!(
                 "could not invoke 'pkg-config' for {}: {e}",
