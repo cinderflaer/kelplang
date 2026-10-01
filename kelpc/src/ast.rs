@@ -651,9 +651,8 @@ pub fn is_place(expr: &Expr) -> bool {
 }
 
 /// The canonical path of a place expression: `xs` for an `Ident`, `self.items`
-/// for a field chain, and `None` for anything else (a temporary, a
-/// dereference, a call). `parser.rs` records the place a `for` walks this way
-/// and `infer.rs`
+/// for a field chain, and `None` for anything else (a temporary, a dereference,
+/// a call). `parser.rs` records the place a `for` walks this way and `infer.rs`
 /// hands the same path to the borrow checker, so both agree on what names a
 /// list.
 pub fn place_path(expr: &Expr) -> Option<String> {

@@ -116,22 +116,27 @@ unspecified value (left, with the reason).**
   `math.is_nan` as the defined test, so this is not a bug; a program that
   prints a raw NaN is relying on an unspecified byte.
 
-### Correction and open design question: `for` over a list the body pushes to
+### Correction and decision: `for` over a list the body pushes to
 
 The pass above says mutating a `List` inside `for` over it is "bounded by the desugar". Checked afterwards, with
-`( ulimit -v 1048576; ulimit -t 10; timeout 10 ./prog )`, that holds only for owned elements:
+`( ulimit -v 1048576; ulimit -t 10; timeout 10 ./prog )`, that held only for owned elements:
 
 - `List<String>` (`for x in xs { xs.push(x.clone()) }`) is **refused at compile time**: "cannot borrow `xs` as
   exclusive: already borrowed as shared", because an owned element is bound as a borrow of the list.
-- `List<i32>` (`for x in xs { xs.push(x) }`) is **accepted**, and the loop never ends: each iteration pushes one more
-  element, the desugared index walk re-reads `xs.len()`, and the program grows until memory runs out (a `panic: out of
+- `List<i32>` (`for x in xs { xs.push(x) }`) was **accepted**, and the loop never ended: each iteration pushed one more
+  element, the desugared index walk re-read `xs.len()`, and the program grew until memory ran out (a `panic: out of
   memory` under the 1 GiB limit; unbounded without it, which is what took this machine down on 2026-10-01).
 
-It is not memory-unsafe (the failure is a clean OOM panic), but it is inconsistent: the same loop is a compile error for
-owned elements and a runaway for copyable ones. Options for the maintainer: refuse any mutation of the iterated list
-inside the body (one rule for both element kinds), or define `for` to walk the length the list had on entry. Not changed
-here, because it is a language decision. No fixture was added: a test that runs this program would need the memory
-limits above, and a compile-time rejection fixture only makes sense once the rule is chosen.
+**Decided 2026-10-02: refuse any mutation of the iterated place.** `for` is a parser desugar to an index and a `while`
+(`syntax.md` 6.2), and the walk is front to back over the length the loop re-reads, so the honest rule is that the body
+may read what it walks but not change it. `borrowck.rs` now refuses a `mut` receiver method on the iterated place
+(`push`, `pop`, `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a move of it, `&mut xs`, a
+`mut` parameter argument, and a `fun` literal that captures it, as one diagnostic, `cannot mutate 'xs' while iterating
+over it`, on the `for` line. It replaces the old `List<String>`-only refusal (that loop now reports the same message in
+the same place), and the message names the place, so `for x in self.items { self.other.push(x) }` stays legal. The
+index `while` is the supported way for a loop to change the list it walks. Fixtures: the ten `for_mutates_iterated_*.kp`
+rejections, plus `for_iterated_place_is_read_only.kp` and `for_mutates_another_field.kp` for what stays legal. No stdlib
+or example program hit the rule.
 
 ## 6. Docs touched
 

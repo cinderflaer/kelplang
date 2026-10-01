@@ -1056,3 +1056,30 @@ for the aarch64 PL011. `kernel0-bss` (the BSS marker's address comes back from
 grant `["*"]` to the modules that build pointers from computed addresses (a
 page-table frame, a trap-frame slot, a user page, the faulting `sepc`), because
 a non-constant address is refused under a range grant by design.
+
+## Language bugfix: mutation of the place a `for` walks (2026-10-02, not a kernel stage)
+
+**New way to reach undefined behaviour.** None, and one path to memory exhaustion is closed. The
+`for` desugar re-reads `xs.len()` every pass, so `for x in xs { xs.push(x) }` on a `Copy` element
+(where nothing borrowed the list) grew the list until the allocator failed, which is a clean panic
+rather than UB but took the machine down on 2026-10-01. The body may now read the iterated place
+and change a different one, but not mutate the one it walks.
+
+**What the compiler does check.** That a `mut` receiver method on the iterated place (`push`,
+`pop`, `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a move of it,
+`&mut xs`, an argument to a `mut` parameter, and a `fun` literal that captures it are all one
+front-end refusal, `cannot mutate 'xs' while iterating over it`, on the `for` line. The comparison
+is the place's canonical path, so `for x in self.items { self.other.push(x) }` is legal and a
+written `while` over an index is untouched.
+
+**What it does not check.** The rule is name-based and looks at a statement's own place, so it
+misses an indirect write and a raw-pointer alias. An indirect write is a call on something else
+that reaches the field, such as `for x in self.items { self.grow() }` where `grow` pushes to
+`self.items`; that is not detectable without effect analysis, and a `Copy`-element list can still
+grow that way. A raw-pointer alias is a `Ptr<List<T>>` in a module an `unsafe` block lets write
+through it, which the type system does not track here. A shadowed binding of the same spelling
+inside the body is refused as if it were the iterated one (over-strict, the conservative
+direction). And it says nothing about a list mutated by another thread while a `for` walks it,
+which is the `Atomic`/lock story and not this rule. (An exclusive borrow taken *before* the loop,
+`val p = &mut xs` then `p.push(..)` in the body, is already refused by the lexical borrow rule: the
+desugared `.len()` needs a shared borrow of `xs` and the alias holds it exclusively.)

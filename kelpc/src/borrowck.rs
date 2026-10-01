@@ -1063,10 +1063,6 @@ impl Ctx {
         Ok(())
     }
 
-    /// Phase two: the reservation becomes the exclusive borrow the call wants.
-    /// A shared borrow started while the reservation was in flight and still
-    /// live here is a real conflict (`f(&mut c, &c)`), and so is a move, which
-    /// `use_value` already refused.
     /// Refuses a mutation of `place` while a `for` in this frame is walking it
     /// (`plan/syntax.md` 6.2). The comparison is on the canonical path, so
     /// `for x in self.items { self.other.push(x) }` is legal and naming the
@@ -1085,6 +1081,10 @@ impl Ctx {
         })
     }
 
+    /// Phase two: the reservation becomes the exclusive borrow the call wants.
+    /// A shared borrow started while the reservation was in flight and still
+    /// live here is a real conflict (`f(&mut c, &c)`), and so is a move, which
+    /// `use_value` already refused.
     fn commit_exclusive(&mut self, root: &str, span: Span) -> Result<()> {
         let Some(v) = self.lookup_mut(root) else {
             return Ok(());

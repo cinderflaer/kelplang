@@ -2863,7 +2863,7 @@ if counts.has("a") { print(counts.get("a")) }
 - `List.empty()` and `Map.new()` need the element type from somewhere. Write it on the binding, or let the first `push`/`insert`/`set` decide it: `var xs = List.empty()` followed by `xs.push(1)` is a `List<i32>`.
 - `Map` keys are `String`, an integer, `bool`, a `char`, or a `datac`/`enum` whose every field (or every variant payload) is itself keyable. The compiler derives the hash and the equality, so a float, a `Bytes`, a container, a view, a borrow, and a `datac`/`enum` with a field outside that set are all refused.
 - Both keep insertion order; `Map` has no `Map<String, Map<i32>>` (a container value is refused), while a `List<List<i32>>` and a `List<Box<i32>>` are fine since A-10 slice 1.
-- `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index.
+- `for x in xs { }` walks a `List` front to back. There is no `break`; to stop early, put the condition in a `while` with an index. The body cannot mutate the list it walks (`xs.push`, `xs.set`, `&mut xs`, a move of it): that is `cannot mutate 'xs' while iterating over it`, and the shape when the loop has to change the list is the index `while` (6.2).
 
 ### 22.7 Capabilities are declared where you import
 
