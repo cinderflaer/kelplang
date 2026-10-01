@@ -1,0 +1,10 @@
+impl "state"
+
+fun main() {
+    state.bump()
+    state.bump()
+    unsafe {
+        print(state.COUNT)
+    }
+    print(state.LIMIT)
+}

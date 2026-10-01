@@ -1,0 +1,32 @@
+// Kernel stage 7: a `static` holding an `Atomic<i64>` is the safe shared
+// mutable. Two workers each add 500 and the joins read back exactly 1000: no
+// `unsafe`, because every atomic operation takes a shared borrow of the
+// static, and the module needs no `[unsafe]` listing.
+impl "std/thread"
+impl "std/atomic"
+impl "std/result"
+
+static COUNTER: AtomicI64 = AtomicI64.new(0)
+
+fun worker(rounds: i64).R: i64 {
+    var i: i64 = 0
+    while i < rounds {
+        COUNTER.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+        i = i + 1
+    }
+    COUNTER.load(order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    val h1 = thread.spawn(worker, 500)
+    val h2 = thread.spawn(worker, 500)
+    when thread.join(h1) {
+        Ok(_) -> {}
+        Err(e) -> { print(e.message) }
+    }
+    when thread.join(h2) {
+        Ok(_) -> {}
+        Err(e) -> { print(e.message) }
+    }
+    print(COUNTER.load(order = atomic.Ordering.SeqCst))
+}

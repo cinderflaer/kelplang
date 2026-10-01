@@ -1,0 +1,10 @@
+// A module's own `pub` statics: `COUNT` is mutable and `LIMIT` is not, and both
+// are reached from `main` as `state.COUNT`/`state.LIMIT`.
+pub static mut COUNT: i64 = 0
+pub static LIMIT: i64 = 3
+
+pub fun bump() {
+    unsafe {
+        COUNT = COUNT + 1
+    }
+}

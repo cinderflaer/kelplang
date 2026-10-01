@@ -1,0 +1,17 @@
+name = "kernel0-statics"
+
+# Kernel stage 7: the same boot as kernel 0, with the two things a `static`
+# adds. `COUNTER` is a `static mut` the kernel bumps three times in `unsafe`,
+# which is what puts `main` on the audit list beside `uart`; `LABEL` is an
+# immutable static the same `unsafe` module reads as a plain table. Both are
+# one object with a stable address, and the counter starts in `.bss` (QEMU's
+# ELF loader zeroes it) where a folded `const` could not be.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "uart"]

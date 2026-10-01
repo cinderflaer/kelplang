@@ -1,0 +1,46 @@
+// Kernel stage 7: a `static mut` counter and a `static` message table, which is
+// what a kernel needs before it has a console cursor or a page table. `bump`
+// increments the counter in `unsafe` (a `static mut` is the audited shared
+// state, so its module is on the manifest's `[unsafe] modules` list), and
+// `kmain` prints `counter 3` through the UART and halts.
+impl "uart"
+
+static mut COUNTER: usize = 0
+static LABEL: [u8; 8] = [99, 111, 117, 110, 116, 101, 114, 32]
+const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
+
+fun bump() {
+    unsafe {
+        COUNTER = COUNTER + 1
+    }
+}
+
+section(".text.boot") fun kmain() {
+    bump()
+    bump()
+    bump()
+
+    val label: [u8; 8] = LABEL
+    val bytes: Ptr<[u8; 8]> = Ptr.from_ref(&label)
+    uart.puts(bytes.cast<u8>(), label.len())
+
+    // The counter's value plus `'0'`, one step per unit, so the digit comes
+    // from the static rather than from a second literal.
+    val n: usize = unsafe { COUNTER }
+    var digit: u8 = 48
+    var k: usize = 0
+    while k < n {
+        digit = digit + 1
+        k = k + 1
+    }
+    uart.putc(digit)
+    uart.putc(10)
+    uart.halt()
+}
+
+fun kp_panic(_msg: str) {
+    val msg: [u8; 6] = PANIC_MSG
+    val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
+    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.halt()
+}

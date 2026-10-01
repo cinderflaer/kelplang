@@ -1,0 +1,56 @@
+// Kernel stage 7: global objects with a stable address. `COUNTER` and `TOTAL`
+// are `static mut`, so every read and write of them is inside `unsafe`;
+// `TABLE` and `ORIGIN` are immutable and read anywhere. The last block takes a
+// `static mut`'s address with `Ptr.from_mut` and writes through it, which is
+// the other half of "a stable address". `MAGIC` and `BOOT` carry a
+// `section("...")` clause, which places them exactly as a sectioned `const` is
+// placed.
+section(".rodata.boot") static MAGIC: [u8; 2] = [3, 4]
+section(".data.boot") static mut BOOT: i64 = 7
+static mut COUNTER: i64 = 0
+static mut TOTAL: i64 = 0
+static TABLE: [u8; 4] = [10, 20, 30, 40]
+static ORIGIN: Point = Point(x = 1, y = 2)
+
+datac Point(val x: i32, val y: i32)
+
+fun bump(n: i64) {
+    var i: i64 = 0
+    while i < n {
+        unsafe {
+            COUNTER = COUNTER + 1
+            TOTAL = TOTAL + TABLE.get(i = 0).to_i64()
+        }
+        i = i + 1
+    }
+}
+
+fun main() {
+    bump(3)
+    bump(2)
+    unsafe {
+        print(COUNTER)
+        print(TOTAL)
+        val p: Ptr<i64> = Ptr.from_mut(COUNTER)
+        p.write(100)
+        print(COUNTER)
+    }
+    print(ORIGIN.x)
+    print(ORIGIN.y)
+
+    // A static lookup table indexed in a loop, which is the reason a global
+    // exists rather than a folded `const`.
+    var sum: u8 = 0
+    var j: usize = 0
+    while j < 4 {
+        sum = sum + TABLE.get(i = j)
+        j = j + 1
+    }
+    print(sum)
+
+    print(MAGIC.get(i = 1))
+    unsafe {
+        BOOT = BOOT + 1
+        print(BOOT)
+    }
+}

@@ -1,0 +1,2 @@
+// Not `pub`, so only this module can name it.
+static HIDDEN: i64 = 1
