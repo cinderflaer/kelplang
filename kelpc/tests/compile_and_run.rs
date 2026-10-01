@@ -9917,11 +9917,54 @@ fn have_ld_lld() -> bool {
         .unwrap_or(false)
 }
 
-/// Whether `qemu-system-riscv64` is on PATH. Kernel stage 6's milestone is a
+/// One bare-metal target's emulator: the QEMU binary and the machine arguments
+/// the target needs. Kernel stage 6 added the riscv64 one; kernel stage 10, the
+/// second architecture, added aarch64, so the boot harness is parameterized
+/// instead of naming one emulator.
+#[derive(Clone, Copy)]
+struct Emulator {
+    binary: &'static str,
+    args: &'static [&'static str],
+}
+
+/// QEMU's riscv64 `virt` machine, the one kernel stage 6 boots. `-bios none`
+/// makes QEMU start the image from 0x80000000 with no firmware in front of it.
+const RISCV64_QEMU: Emulator = Emulator {
+    binary: "qemu-system-riscv64",
+    args: &[
+        "-machine",
+        "virt",
+        "-bios",
+        "none",
+        "-nographic",
+        "-no-reboot",
+        "-serial",
+        "mon:stdio",
+    ],
+};
+
+/// QEMU's aarch64 `virt` machine, the one kernel stage 10 boots. `-cpu
+/// cortex-a57` is the core its target machine is built for; QEMU loads the
+/// `-kernel` ELF at 0x40000000 and starts it at the ELF entry, so no `-bios`
+/// argument is needed.
+const AARCH64_QEMU: Emulator = Emulator {
+    binary: "qemu-system-aarch64",
+    args: &[
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-nographic",
+        "-serial",
+        "mon:stdio",
+    ],
+};
+
+/// Whether `emu`'s QEMU binary is on PATH. Kernel stage 6's milestone is a
 /// real boot, so its acceptance test needs the emulator as well as `ld.lld`;
 /// like the freestanding tests, a shell without it prints a skip.
-fn have_qemu() -> bool {
-    Command::new("qemu-system-riscv64")
+fn have_qemu(emu: &Emulator) -> bool {
+    Command::new(emu.binary)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -9931,16 +9974,16 @@ fn have_qemu() -> bool {
 }
 
 /// Kernel stage 6's acceptance harness: build a freestanding project and boot
-/// the ELF under QEMU until the last `expected` line has come out of the UART,
+/// the ELF under `emu` until the last `expected` line has come out of the UART,
 /// then kill QEMU and check every expected line against what was captured. The
-/// kernel halts in a `wfi` loop, so nothing but reading the marker and killing
+/// kernel halts in a wait loop, so nothing but reading the marker and killing
 /// the emulator keeps the test from waiting out the whole window.
 ///
 /// The expected lines are compared whole, and they are QEMU's own stdout, not
 /// anything the project says it will print.
-fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
+fn boot_under_qemu(emu: &Emulator, name: &str, target: &Path, expected: &[&str]) {
     let marker = expected.last().expect("at least one expected line");
-    let captured = boot_and_capture(name, target, &|got| {
+    let captured = boot_and_capture(emu, name, target, &|got| {
         got.lines().any(|line| line == *marker)
     });
     for line in expected {
@@ -9955,8 +9998,14 @@ fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
 /// Kernel 0's panic handler prints the compiler's own message, which the test
 /// cannot spell out in full, so the wait and the check are a set of substrings:
 /// `index out of bounds` is in the text and some line starts with `panic: `.
-fn boot_under_qemu_containing(name: &str, target: &Path, needle: &str, line_prefix: &str) {
-    let captured = boot_and_capture(name, target, &|got| {
+fn boot_under_qemu_containing(
+    emu: &Emulator,
+    name: &str,
+    target: &Path,
+    needle: &str,
+    line_prefix: &str,
+) {
+    let captured = boot_and_capture(emu, name, target, &|got| {
         got.contains(needle) && got.lines().any(|line| line.starts_with(line_prefix))
     });
     assert!(
@@ -9969,10 +10018,15 @@ fn boot_under_qemu_containing(name: &str, target: &Path, needle: &str, line_pref
     );
 }
 
-/// Builds a freestanding project, boots it under QEMU, and reads the serial
+/// Builds a freestanding project, boots it under `emu`, and reads the serial
 /// output until `done` says the interesting part has arrived (or the deadline
 /// fires), then kills the emulator and returns everything captured.
-fn boot_and_capture(name: &str, target: &Path, done: &dyn Fn(&str) -> bool) -> String {
+fn boot_and_capture(
+    emu: &Emulator,
+    name: &str,
+    target: &Path,
+    done: &dyn Fn(&str) -> bool,
+) -> String {
     let bin = out_path(name);
     let build = Command::new(kelpc_bin())
         .env_remove("KELPC_BACKEND")
@@ -9989,22 +10043,15 @@ fn boot_and_capture(name: &str, target: &Path, done: &dyn Fn(&str) -> bool) -> S
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let mut child = Command::new("qemu-system-riscv64")
-        .arg("-machine")
-        .arg("virt")
-        .arg("-bios")
-        .arg("none")
-        .arg("-nographic")
-        .arg("-no-reboot")
-        .arg("-serial")
-        .arg("mon:stdio")
+    let mut child = Command::new(emu.binary)
+        .args(emu.args)
         .arg("-kernel")
         .arg(&bin)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("failed to spawn qemu-system-riscv64");
+        .unwrap_or_else(|e| panic!("failed to spawn {}: {e}", emu.binary));
 
     // A reader thread turns the pipe into a channel so the wait below has a
     // deadline: without one a kernel that never prints would hang the suite.
@@ -10331,7 +10378,7 @@ fn inline_asm_assembles_csrr_and_wfi_for_riscv64() {
 /// without them prints a skip.
 #[test]
 fn kernel0_boots_and_prints_its_greeting_over_the_uart() {
-    if !have_ld_lld() || !have_qemu() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
         println!(
             "skipping the kernel0 boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
              PATH (run the suite under dev-kernel.nix)"
@@ -10339,6 +10386,7 @@ fn kernel0_boots_and_prints_its_greeting_over_the_uart() {
         return;
     }
     boot_under_qemu(
+        &RISCV64_QEMU,
         "kernel0",
         &fixture("../examples/kernel0"),
         &["hello from kelp"],
@@ -10350,7 +10398,7 @@ fn kernel0_boots_and_prints_its_greeting_over_the_uart() {
 /// finishes. Both lines have to come out of the UART in one boot.
 #[test]
 fn kernel0_handles_a_trap_and_continues_after_it() {
-    if !have_ld_lld() || !have_qemu() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
         println!(
             "skipping the kernel0 trap test: 'ld.lld' or 'qemu-system-riscv64' is not on \
              PATH (run the suite under dev-kernel.nix)"
@@ -10358,6 +10406,7 @@ fn kernel0_handles_a_trap_and_continues_after_it() {
         return;
     }
     boot_under_qemu(
+        &RISCV64_QEMU,
         "kernel0_trap",
         &fixture("../examples/kernel0-trap"),
         &["trap: ecall", "done"],
@@ -10375,7 +10424,7 @@ fn kernel0_handles_a_trap_and_continues_after_it() {
 /// that the check fired.
 #[test]
 fn kernel0_panic_prints_the_checks_own_message_over_the_uart() {
-    if !have_ld_lld() || !have_qemu() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
         println!(
             "skipping the kernel0 panic test: 'ld.lld' or 'qemu-system-riscv64' is not on \
              PATH (run the suite under dev-kernel.nix)"
@@ -10383,6 +10432,7 @@ fn kernel0_panic_prints_the_checks_own_message_over_the_uart() {
         return;
     }
     boot_under_qemu_containing(
+        &RISCV64_QEMU,
         "kernel0_panic",
         &fixture("../examples/kernel0-panic"),
         "index out of bounds",
@@ -10834,7 +10884,7 @@ fn a_project_that_defines_its_own_memcpy_links_with_that_one() {
 /// range the clear loop was pointed at, so the boot cannot pass vacuously.
 #[test]
 fn kernel0_bss_clears_an_image_loaded_marker_before_the_entry_runs() {
-    if !have_ld_lld() || !have_qemu() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
         println!(
             "skipping the kernel0 bss test: 'ld.lld' or 'qemu-system-riscv64' is not on \
              PATH (run the suite under dev-kernel.nix)"
@@ -10872,5 +10922,87 @@ fn kernel0_bss_clears_an_image_loaded_marker_before_the_entry_runs() {
         "the image does not carry the marker pattern:\n{contents}"
     );
 
-    boot_under_qemu("kernel0_bss", &target, &["bss clear"]);
+    boot_under_qemu(&RISCV64_QEMU, "kernel0_bss", &target, &["bss clear"]);
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 10: the second architecture. `[target] triple =
+// "aarch64-unknown-none"` gets an AArch64 target machine and the aarch64
+// `_start` stub (load `sp` from `__stack_top`, clear `[__bss_start,
+// __bss_end)`, call the entry, spin on `wfe`), and `examples/kernel0-aarch64`
+// is the PL011 driver that boots on QEMU's aarch64 `virt` machine. Freestanding
+// is LLVM-only by design, so these build through the default backend; they need
+// `ld.lld` and the llvm tools, and the boot needs `qemu-system-aarch64`.
+// ---------------------------------------------------------------------------
+
+/// The ELF half of the stage: the image is ELF64 AArch64 whose entry is the
+/// linker script's 0x40000000, referencing no undefined symbol, and whose
+/// `_start` is real AArch64 code that halts on `wfe`. A boot that worked by
+/// accident on some other entry point could not pass these.
+#[test]
+fn kernel0_aarch64_builds_an_aarch64_elf_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the aarch64 elf test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = build_freestanding("kernel0_aarch64", &fixture("../examples/kernel0-aarch64"));
+    let path = bin.to_str().expect("the artifact path is utf-8");
+
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("AArch64"), "not an AArch64 image:\n{header}");
+    let entry_line = header
+        .lines()
+        .find(|line| line.contains("Entry point address"))
+        .unwrap_or_default();
+    assert!(
+        entry_line.contains("0x40000000"),
+        "the entry point is not the linker script's 0x40000000:\n{header}"
+    );
+
+    // `llvm-objdump` is the disassembler half: the generated `_start` has to be
+    // real AArch64 code, not an empty section.
+    let disassembly = tool("llvm-objdump", &["-d", path]);
+    assert!(
+        disassembly.contains("_start"),
+        "no _start in the image:\n{disassembly}"
+    );
+    assert!(
+        disassembly.contains("wfe"),
+        "the _start halt is missing:\n{disassembly}"
+    );
+
+    // `llvm-nm -u` prints what the linker had to leave for someone else: an
+    // empty list is the whole claim that no libc symbol and no `kelp_rt` helper
+    // is behind the image.
+    let undefined = tool("llvm-nm", &["-u", path]);
+    assert!(
+        undefined.trim().is_empty(),
+        "the aarch64 image has undefined symbols:\n{undefined}"
+    );
+}
+
+/// The boot half: `examples/kernel0-aarch64` is a complete Kelp kernel that
+/// boots on QEMU's aarch64 `virt` machine and writes one line to the PL011
+/// UART. The assertion is against what QEMU captured, so it proves the boot,
+/// the linker script's stack and the driver's polling, not that the source says
+/// `hello from kelp (aarch64)`.
+#[test]
+fn kernel0_aarch64_boots_and_prints_its_greeting_over_the_uart() {
+    if !have_ld_lld() || !have_qemu(&AARCH64_QEMU) {
+        println!(
+            "skipping the aarch64 boot test: 'ld.lld' or 'qemu-system-aarch64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &AARCH64_QEMU,
+        "kernel0_aarch64_boot",
+        &fixture("../examples/kernel0-aarch64"),
+        &["hello from kelp (aarch64)"],
+    );
 }
