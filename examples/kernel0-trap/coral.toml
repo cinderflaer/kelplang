@@ -1,0 +1,15 @@
+name = "kernel0_trap"
+
+# Kernel stage 6, the trap half: the same bare-metal riscv64 image, but `kmain`
+# installs a trap vector with `csrw mtvec` and takes a machine-mode `ecall`.
+# `main` joins `uart` in the audit list because the vector installation and the
+# `ecall` are inline asm (stage 5, `plan/inline-asm.md`).
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "trap", "uart"]
