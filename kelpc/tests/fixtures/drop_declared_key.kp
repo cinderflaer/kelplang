@@ -1,0 +1,12 @@
+// Kernel stage 9, MK9-S6-M1: a destructor type cannot declare a `Map` key
+// pair, because the map clones every key in and the resource would be freed
+// twice.
+datac Leaf(val tag: f64)
+
+fun mut Leaf.drop() { }
+
+fun Leaf.hash().R: u64 = 0
+
+fun Leaf.eq(other: &Leaf).R: bool = true
+
+fun main() { }

@@ -1,0 +1,12 @@
+// Kernel stage 9, MK9-S6-M1: a type with a destructor is not `Copy`, so the
+// derived deep-copy fixpoint excludes it and `List.clone` is refused rather
+// than producing a second owner of the same resource.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() { }
+
+fun main() {
+    var xs: List<Leaf> = List.empty()
+    xs.push(Leaf(tag = 1))
+    val ys = xs.clone()
+}

@@ -1,0 +1,5 @@
+// Kernel stage 9, MK9-S6-M1: only a user `datac`/`enum` can declare a
+// destructor. A builtin type's methods are the compiler's.
+fun mut i32.drop() { }
+
+fun main() { }

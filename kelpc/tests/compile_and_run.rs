@@ -4121,6 +4121,15 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         // drop to anything but a plain binding.
         "assign_through_deref",
         "assign_owned_field",
+        // Kernel stage 9, MK9-S6-M1: a destructor type that owns a `String`,
+        // so the generated `kelp_drop_<T>` must free the field exactly once
+        // after the user body runs, and the container/`enum` drops must reach
+        // the same place.
+        "drop_owned_field",
+        "drop_order",
+        "drop_control_flow",
+        "drop_container",
+        "drop_enum",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -11165,6 +11174,205 @@ fn a_freestanding_project_can_release_a_lock_with_a_defer() {
     assert!(
         undefined.is_empty(),
         "the freestanding defer image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Kernel stage 9 (MK9-S6-M1, roadmap B-8): the second half of stage 6, a user
+// `Drop`. `fun mut T.drop()` is the destructor; the generated `kelp_drop_<T>`
+// calls it first and drops the fields after, so every drop point the plan
+// already has reaches it. The fixtures run on both backends: LLVM is the
+// default and the suite's `KELPC_ORACLE=c` pass runs the same programs through
+// the C oracle.
+// ---------------------------------------------------------------------------
+
+/// The user destructor runs before the fields, fields drop in declaration
+/// order, and locals die last-in-first-out.
+#[test]
+fn a_user_destructor_runs_before_fields_in_declaration_order() {
+    assert_compiles_and_runs(
+        "tests/fixtures/drop_order.kp",
+        "body\nleaf\n3\npair\nleaf\n1\nleaf\n2\n",
+    );
+}
+
+/// Every drop point the plan already had reaches the destructor: an early
+/// `return` frees the frame after reading the returned value, and a loop body
+/// frees one value per iteration.
+#[test]
+fn a_destructor_runs_at_every_drop_point() {
+    assert_compiles_and_runs(
+        "tests/fixtures/drop_control_flow.kp",
+        "leaf\n1\n9\nleaf\n2\nleaf\n1\n0\nloop\nleaf\n10\nloop\nleaf\n11\n",
+    );
+}
+
+/// Reassigning an owned `var` of a destructor type runs the destructor on the
+/// value it replaces.
+#[test]
+fn reassigning_an_owned_destructor_value_runs_the_destructor() {
+    assert_compiles_and_runs(
+        "tests/fixtures/drop_reassign.kp",
+        "leaf\n1\nafter\nleaf\n2\n",
+    );
+}
+
+/// A moved-out value is not dropped by the scope that declared it.
+#[test]
+fn a_moved_out_destructor_value_is_not_dropped() {
+    assert_compiles_and_runs("tests/fixtures/drop_moved.kp", "moved\nleaf\n1\n");
+}
+
+/// A container drops each element through the element's destructor, including a
+/// `Leaf` held by a `datac` held by a `List`.
+#[test]
+fn containers_drop_each_element_through_its_destructor() {
+    assert_compiles_and_runs(
+        "tests/fixtures/drop_container.kp",
+        "pushed\nleaf\n1\nleaf\n2\ncleared\npopped\n3\nholder\nleaf\n4\nleaf\n3\n",
+    );
+}
+
+/// An `enum` destructor runs for every variant, and the live variant's payload
+/// drops after it.
+#[test]
+fn an_enum_destructor_runs_for_every_variant() {
+    assert_compiles_and_runs("tests/fixtures/drop_enum.kp", "body\nmaybe\nmaybe\nleaf\n1\n");
+}
+
+/// The kernel pattern the stage exists for: the guard's destructor releases the
+/// flag, so the caller sees it clear after the guarded call returns.
+#[test]
+fn a_lock_guard_releases_the_flag_through_its_destructor() {
+    assert_compiles_and_runs("tests/fixtures/drop_guard_lock.kp", "true\nfalse\n");
+}
+
+/// A destructor type that owns a buffer: the user body runs first and can read
+/// the field, and the field drop frees it after. It is in the AddressSanitizer
+/// pass, where a missing drop is a leak and a second one a double free.
+#[test]
+fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
+    assert_compiles_and_runs("tests/fixtures/drop_owned_field.kp", "body\nnamed\n4\nnamed\n5\n");
+}
+
+/// A destructor already runs when the value dies, so naming it explicitly would
+/// run it twice.
+#[test]
+fn an_explicit_destructor_call_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/explicit_destructor_call.kp",
+        "explicit destructor call",
+    );
+}
+
+/// A destructor's shape is checked where it is declared: a shared receiver is
+/// not the mutable borrow the drop body needs.
+#[test]
+fn a_destructor_must_take_its_receiver_with_mut() {
+    assert_rejected_with(
+        "tests/fixtures/drop_wrong_signature.kp",
+        "must take its receiver with 'mut'",
+    );
+}
+
+/// One destructor per type: a second declaration shares the `T#drop` key.
+#[test]
+fn a_second_destructor_for_one_type_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/drop_two_impls.kp",
+        "method 'Leaf.drop' is defined more than once",
+    );
+}
+
+/// Only a user `datac`/`enum` can declare a destructor; a builtin type's
+/// methods are the compiler's.
+#[test]
+fn a_destructor_on_a_builtin_type_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/drop_builtin_type.kp",
+        "is a builtin type",
+    );
+}
+
+/// A destructor type is not `Copy`, so the derived deep-copy fixpoint excludes
+/// it: `List.clone` is refused rather than producing a second owner.
+#[test]
+fn a_destructor_type_cannot_be_copied() {
+    assert_rejected_with(
+        "tests/fixtures/drop_not_copy.kp",
+        "a type with a destructor is not `Copy`",
+    );
+}
+
+/// The map clones every key in, so a destructor type cannot declare a key
+/// pair either.
+#[test]
+fn a_destructor_type_cannot_be_a_map_key() {
+    assert_rejected_with(
+        "tests/fixtures/drop_declared_key.kp",
+        "a type with a destructor is not deep-copyable",
+    );
+}
+
+/// Kernel stage 9's freestanding acceptance test: a project whose guard
+/// releases a static lock flag through its destructor builds through LLVM and
+/// `ld.lld` into an ELF64 RISC-V image that references no undefined symbol, and
+/// the generated drop and the user body are both in the image.
+///
+/// It needs `ld.lld`, `llvm-readelf`, `llvm-objdump` and `llvm-nm`, all from
+/// `dev-kernel.nix`; a shell without them prints a skip.
+#[test]
+fn a_freestanding_project_can_release_a_lock_with_a_destructor() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding drop test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_drop");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_drop"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding drop build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+
+    let disassembly = tool("llvm-objdump", &["-d", path]);
+    assert!(disassembly.contains("_start"), "no _start in the image:\n{disassembly}");
+    // The generated drop and the user body it calls are both in the image, so
+    // the destructor is linked in and not merely referenced.
+    assert!(
+        disassembly.contains("kelp_drop_LockGuard"),
+        "the generated drop is missing:\n{disassembly}"
+    );
+    assert!(
+        disassembly.contains("kelp_LockGuard__drop"),
+        "the declared destructor is missing:\n{disassembly}"
+    );
+
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding drop image has undefined symbols:\n{}",
         undefined.join("\n")
     );
 }

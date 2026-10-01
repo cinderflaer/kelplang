@@ -1,0 +1,8 @@
+// Kernel stage 9, MK9-S6-M1: a destructor takes its receiver with `mut`, no
+// parameters, and returns nothing. A shared receiver is refused at the
+// declaration.
+datac Leaf(val tag: i32)
+
+fun Leaf.drop() { }
+
+fun main() { }

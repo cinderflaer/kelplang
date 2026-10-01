@@ -1,0 +1,9 @@
+// Kernel stage 9, MK9-S6-M1: one destructor per type. A second declaration
+// shares the `T#drop` key, so it is the ordinary duplicate-method error.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() { }
+
+fun mut Leaf.drop() { }
+
+fun main() { }

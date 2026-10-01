@@ -1,0 +1,27 @@
+// A freestanding RAII lock guard: `with_lock` takes the static flag and hands
+// back a guard whose destructor releases it, so the flag is released on every
+// ordinary exit without naming the release at the call site. The entry loops
+// forever, so the image is a build-and-link check with no undefined symbol.
+impl "std/atomic"
+
+static LOCK: Atomic<bool> = Atomic.new(false)
+
+datac LockGuard(val held: bool)
+
+fun mut LockGuard.drop() {
+    LOCK.store(value = false, order = atomic.Ordering.SeqCst)
+}
+
+fun with_lock().R: bool {
+    LOCK.store(value = true, order = atomic.Ordering.SeqCst)
+    val g = LockGuard(held = true)
+    return LOCK.load(order = atomic.Ordering.SeqCst)
+}
+
+section(".text.boot") fun kmain() {
+    var i: u64 = 1
+    while true {
+        with_lock()
+        i = i * 3 + 1
+    }
+}

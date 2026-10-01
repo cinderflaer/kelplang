@@ -1,0 +1,16 @@
+// Kernel stage 9, MK9-S6-M1: a destructor type that owns a buffer. The user
+// body runs first and can read the field it is about to lose; the field drop
+// frees the buffer after. This fixture is in the AddressSanitizer pass, where a
+// missing drop is a leak and a second one a double free.
+datac Named(val name: String)
+
+fun mut Named.drop() {
+    print("named")
+    print(self.name.len())
+}
+
+fun main() {
+    val a = Named(name = String.from_str("alpha"))
+    val b = Named(name = String.from_str("beta"))
+    print("body")
+}

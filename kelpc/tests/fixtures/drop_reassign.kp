@@ -1,0 +1,15 @@
+// Kernel stage 9, MK9-S6-M1: reassigning an owned `var` of a destructor type
+// frees the value it replaces through the destructor, before the new one is
+// stored.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+    print(self.tag)
+}
+
+fun main() {
+    var a = Leaf(tag = 1)
+    a = Leaf(tag = 2)
+    print("after")
+}
