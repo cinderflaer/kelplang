@@ -3711,11 +3711,12 @@ fn atomic_sig(key: &str, elem: &Ty, ctx: &Ctx, span: Span) -> Result<Option<FnSi
     }))
 }
 
-/// The `Ptr<T>` operations that need an unsafe context (MK9-S2 stage 1).
+/// The `Ptr<T>` operations that need an unsafe context (MK9-S2 stage 1, with
+/// the fallible `try_alloc` from kernel stage 13).
 ///
-/// `Ptr.alloc`, `read`, `write`, `read_volatile`, `write_volatile` and `free`
-/// touch memory the language did not check: they are the whole reason `unsafe`
-/// exists, so each names itself in the refusal.
+/// `Ptr.alloc`, `Ptr.try_alloc`, `read`, `write`, `read_volatile`,
+/// `write_volatile` and `free` touch memory the language did not check: they
+/// are the whole reason `unsafe` exists, so each names itself in the refusal.
 fn ptr_op_is_unsafe(key: &str) -> bool {
     matches!(
         key,
@@ -3726,6 +3727,7 @@ fn ptr_op_is_unsafe(key: &str) -> bool {
             | "Ptr#read_unaligned"
             | "Ptr#write_unaligned"
             | "Ptr#alloc"
+            | "Ptr#try_alloc"
             | "Ptr#free"
     )
 }
@@ -3778,8 +3780,9 @@ fn ptr_receiver(receiver: &ast::Expr, ctx: &mut Ctx) -> bool {
         .unwrap_or(false)
 }
 
-/// `Ptr.null()`, `Ptr.from_addr(a)`, `Ptr.from_ref(&x)`, `Ptr.from_mut(x)` and
-/// `Ptr.alloc<T>(count)` (MK9-S2 stage 1).
+/// `Ptr.null()`, `Ptr.from_addr(a)`, `Ptr.from_ref(&x)`, `Ptr.from_mut(x)`,
+/// `Ptr.alloc<T>(count)` (MK9-S2 stage 1) and `Ptr.try_alloc<T>(count)` (kernel
+/// stage 13).
 ///
 /// The element type comes from the call's own `<T>` when it writes one, and
 /// otherwise from the binding's written type or the expected type: a constructor
@@ -3890,11 +3893,15 @@ fn check_ptr_associated(
             vec![p("place", Ty::Ref { mutable: true, inner: Box::new(elem) })],
             ptr,
         ),
-        "alloc" => ("Ptr#alloc".to_string(), vec![p("count", Ty::Usize)], ptr),
+        "alloc" => ("Ptr#alloc".to_string(), vec![p("count", Ty::Usize)], ptr.clone()),
+        // `Ptr.try_alloc<T>(count)` (kernel stage 13): the fallible twin of
+        // `Ptr.alloc`, so the same element resolution and the same signature,
+        // only a different callee key.
+        "try_alloc" => ("Ptr#try_alloc".to_string(), vec![p("count", Ty::Usize)], ptr),
         other => {
             return Err(TypeError {
                 message: format!(
-                    "'Ptr.{other}' is not a pointer operation: a pointer is made with 'Ptr.null()', 'Ptr.from_addr(a)', 'Ptr.from_ref(&x)', 'Ptr.from_mut(x)' or 'Ptr.alloc<i32>(count)', and read through the value it is bound to"
+                    "'Ptr.{other}' is not a pointer operation: a pointer is made with 'Ptr.null()', 'Ptr.from_addr(a)', 'Ptr.from_ref(&x)', 'Ptr.from_mut(x)', 'Ptr.alloc<i32>(count)' or 'Ptr.try_alloc<i32>(count)', and read through the value it is bound to"
                 ),
                 span,
             })
