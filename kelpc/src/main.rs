@@ -391,6 +391,9 @@ fn build(
                     entry: target.entry().unwrap_or_default().to_string(),
                     panic: target.panic().map(str::to_string),
                     linker_script: script.to_string_lossy().into_owned(),
+                    alloc: target.alloc().map(str::to_string),
+                    dealloc: target.dealloc().map(str::to_string),
+                    realloc: target.realloc().map(str::to_string),
                 })
             } else {
                 None

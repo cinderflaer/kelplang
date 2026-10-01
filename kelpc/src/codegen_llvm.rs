@@ -551,6 +551,24 @@ pub struct Freestanding {
     pub entry: String,
     pub panic: Option<String>,
     pub linker_script: String,
+    /// The global allocator (kernel stage 7, MK9-S5-M1): the entry module's
+    /// bare `alloc`, `dealloc` and optional `realloc` names. All `None` when the
+    /// manifest configures none, which keeps the heap types refused.
+    pub alloc: Option<String>,
+    pub dealloc: Option<String>,
+    pub realloc: Option<String>,
+}
+
+/// The project's own allocator, resolved to the LLVM functions the container
+/// bodies call instead of libc's `malloc`/`realloc`/`free` (kernel stage 7,
+/// MK9-S5-M1). `alloc` takes `(size, align)` and returns a nullable pointer;
+/// `dealloc` takes `(ptr, size, align)`; `realloc` takes
+/// `(ptr, old, new, align)`. Without one, every helper falls back to libc.
+#[derive(Clone, Copy)]
+struct AllocFns<'a> {
+    alloc: (LlvmFunction<'a>, FnType<'a>),
+    dealloc: (LlvmFunction<'a>, FnType<'a>),
+    realloc: Option<(LlvmFunction<'a>, FnType<'a>)>,
 }
 
 /// The `_start` stub a freestanding build emits as module-level assembly
@@ -808,6 +826,15 @@ struct Gen<'a> {
     /// headers' allocation, copy and scan functions, declared and never
     /// re-implemented, exactly as the C backend reaches them.
     libc: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
+    /// The project's own allocator, when a freestanding manifest configures one
+    /// (kernel stage 7). `None` means libc or, in a freestanding build, no
+    /// allocator at all, in which case the heap types were refused before
+    /// codegen.
+    alloc_fns: Option<AllocFns<'a>>,
+    /// The module's own `memcpy`/`memset` definitions, present only in a
+    /// freestanding build: there is no libc to provide them, and the container
+    /// bodies still need a byte copy and a zero fill.
+    mem: HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)>,
     /// Every container instantiation the program mentions, so the module emits
     /// exactly the sets it uses (mirrors `codegen_c::Instantiations`).
     instantiations: Instantiations,
@@ -987,6 +1014,12 @@ impl<'a> Gen<'a> {
             env_types: HashMap::new(),
             coerce_env_ty,
             libc: declare_libc(ctx, module),
+            alloc_fns: None,
+            mem: if freestanding.is_some() {
+                define_freestanding_mem(ctx, module)
+            } else {
+                HashMap::new()
+            },
             instantiations: collect_instantiations(program),
             clonable: crate::types::clonable_types(&type_decls),
             sortable: crate::types::sortable_types(&type_decls),
@@ -1158,6 +1191,7 @@ impl<'a> Gen<'a> {
         // to attach a subprogram to, and the passdown globals for the generated
         // `kelp_init_pds`.
         self.resolve_freestanding_panic()?;
+        self.resolve_freestanding_allocator()?;
         self.declare_debug();
         Ok(())
     }
@@ -6450,6 +6484,97 @@ fn declare_libc<'a>(
     out
 }
 
+/// The two memory primitives a freestanding build has no libc for: `memcpy` and
+/// `memset`, defined in the module with internal linkage (kernel stage 7). The
+/// container bodies call them through [`Gen::mem_fn`], so a freestanding image
+/// references no libc symbol. `intrinsic` forms are avoided deliberately: the
+/// bodies use volatile accesses, which LLVM's loop-idiom pass will not turn into
+/// an `llvm.memcpy`/`llvm.memset` call, so the RISC-V backend never emits a
+/// libcall to a libc symbol that is not there.
+fn define_freestanding_mem<'a>(
+    ctx: &'a Context,
+    module: &'a Module<'a>,
+) -> HashMap<&'static str, (LlvmFunction<'a>, FnType<'a>)> {
+    let ptr = ctx.opaque_ptr();
+    let i8t = ctx.i8();
+    let i32t = ctx.i32();
+    let i64t = ctx.i64();
+    let void = ctx.void();
+    let mut out = HashMap::new();
+    let builder = Builder::new(ctx);
+
+    // `memcpy(ptr dst, ptr src, usize n)`, one volatile byte at a time.
+    {
+        let ty = ctx.fn_type(void, &[ptr, ptr, i64t], false);
+        // The `__` prefix keeps the name out of the `kelp_`-prefixed namespace
+        // a user function is mangled into, so a program that declares its own
+        // `memcpy` cannot collide with this definition.
+        let func = module.add_function("__kelp_freestanding_memcpy", ty);
+        func.as_value().set_internal_linkage();
+        let entry = func.append_block("entry");
+        builder.position_at_end(entry);
+        let (dst, src, n) = (func.get_param(0), func.get_param(1), func.get_param(2));
+        let i_slot = builder.build_alloca(i64t, "i");
+        builder.build_store(ctx.const_int(i64t, 0, false), i_slot);
+        let header = func.append_block("cond");
+        builder.build_br(header);
+        builder.position_at_end(header);
+        let i = builder.build_load(i64t, i_slot, "i");
+        let more = builder.build_icmp(IntCmp::Ult, i, n, "more");
+        let body = func.append_block("body");
+        let exit = func.append_block("exit");
+        builder.build_cond_br(more, body, exit);
+        builder.position_at_end(body);
+        let sp = builder.build_gep(i8t, src, i, "src");
+        let dp = builder.build_gep(i8t, dst, i, "dst");
+        let byte = builder.build_load(i8t, sp, "byte");
+        builder.set_volatile(byte);
+        let store = builder.build_store(byte, dp);
+        builder.set_volatile(store);
+        let next = builder.build_int_binop(IntBinOp::Add, i, ctx.const_int(i64t, 1, false), "i1");
+        builder.build_store(next, i_slot);
+        builder.build_br(header);
+        builder.position_at_end(exit);
+        builder.build_ret_void();
+        out.insert("memcpy", (func, ty));
+    }
+
+    // `memset(ptr dst, int value, usize n)`, the same one volatile byte at a
+    // time. The `i32` value is the libc signature's, so the call sites do not
+    // change; only the low byte is stored.
+    {
+        let ty = ctx.fn_type(void, &[ptr, i32t, i64t], false);
+        let func = module.add_function("__kelp_freestanding_memset", ty);
+        func.as_value().set_internal_linkage();
+        let entry = func.append_block("entry");
+        builder.position_at_end(entry);
+        let (dst, value, n) = (func.get_param(0), func.get_param(1), func.get_param(2));
+        let byte = builder.build_int_cast(false, false, value, i8t, "byte");
+        let i_slot = builder.build_alloca(i64t, "i");
+        builder.build_store(ctx.const_int(i64t, 0, false), i_slot);
+        let header = func.append_block("cond");
+        builder.build_br(header);
+        builder.position_at_end(header);
+        let i = builder.build_load(i64t, i_slot, "i");
+        let more = builder.build_icmp(IntCmp::Ult, i, n, "more");
+        let body = func.append_block("body");
+        let exit = func.append_block("exit");
+        builder.build_cond_br(more, body, exit);
+        builder.position_at_end(body);
+        let dp = builder.build_gep(i8t, dst, i, "dst");
+        let store = builder.build_store(byte, dp);
+        builder.set_volatile(store);
+        let next = builder.build_int_binop(IntBinOp::Add, i, ctx.const_int(i64t, 1, false), "i1");
+        builder.build_store(next, i_slot);
+        builder.build_br(header);
+        builder.position_at_end(exit);
+        builder.build_ret_void();
+        out.insert("memset", (func, ty));
+    }
+
+    out
+}
+
 impl<'a> Gen<'a> {
     /// The pointer type LLVM 21 uses for every pointer.
     fn pty(&self) -> Type<'a> {
@@ -6531,6 +6656,42 @@ impl<'a> Gen<'a> {
     /// Emit `kelp_panic(msg)` and terminate the block, for the bounds checks
     /// and the empty-container panics whose text must be byte-identical to the
     /// C backend's.
+    /// Point `alloc_fns` at this project's own allocator (kernel stage 7,
+    /// MK9-S5-M1): the manifest's `[target] alloc`/`dealloc`/`realloc` names,
+    /// resolved to the LLVM functions `declare_functions` already declared for
+    /// them. It runs after every function is in `funcs` and before any
+    /// container body, because a container body calls these directly.
+    fn resolve_freestanding_allocator(&mut self) -> Result<(), String> {
+        let Some(fs) = self.freestanding.clone() else {
+            return Ok(());
+        };
+        let (Some(alloc), Some(dealloc)) = (fs.alloc.clone(), fs.dealloc.clone()) else {
+            return Ok(());
+        };
+        let lookup = |name: &str| -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+            self.funcs
+                .get(name)
+                .map(|info| (info.func, info.ty))
+                .ok_or_else(|| {
+                    format!(
+                        "the manifest's '[target]' names the allocator function '{name}', which the program does not declare"
+                    )
+                })
+        };
+        let alloc = lookup(&alloc)?;
+        let dealloc = lookup(&dealloc)?;
+        let realloc = match &fs.realloc {
+            Some(name) => Some(lookup(name)?),
+            None => None,
+        };
+        self.alloc_fns = Some(AllocFns {
+            alloc,
+            dealloc,
+            realloc,
+        });
+        Ok(())
+    }
+
     fn emit_panic(&self, msg: &str) -> Result<(), String> {
         let ptr = self.builder.global_string(msg, "panic.msg");
         self.builder
@@ -6748,11 +6909,104 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    /// The libc call `malloc(sizeof(<ty>))` lowered to a constant byte count.
+    /// `malloc(sizeof(<ty>))` lowered to a constant byte count, through the
+    /// project's own allocator when the manifest configured one.
     fn malloc_for(&self, ty: Type<'a>) -> Result<Value<'a>, String> {
         let size = self.layout.abi_size_of(ty);
-        let (func, fty) = self.libc_fn("malloc")?;
-        Ok(self.call(func, fty, &[self.v_i64(size)], "heap"))
+        let align = self.layout.abi_alignment_of(ty);
+        self.heap_alloc(self.v_i64(size), align as u64)
+    }
+
+    /// One byte-copy or zero-fill primitive: this module's own definition in a
+    /// freestanding build, libc's otherwise (kernel stage 7).
+    fn mem_fn(&self, name: &str) -> Result<(LlvmFunction<'a>, FnType<'a>), String> {
+        if let Some(pair) = self.mem.get(name) {
+            return Ok(*pair);
+        }
+        self.libc_fn(name)
+    }
+
+    /// `alloc(bytes, align)` lowered to the project's own allocator when the
+    /// manifest configured one, or to libc's `malloc` otherwise (kernel stage 7,
+    /// MK9-S5-M1). The result is nullable; the caller runs `check_alloc`, which
+    /// routes a null to the project's panic handler with "out of memory".
+    fn heap_alloc(&self, bytes: Value<'a>, align: u64) -> Result<Value<'a>, String> {
+        match &self.alloc_fns {
+            Some(a) => {
+                let align = self.v_i64(align);
+                Ok(self.call(a.alloc.0, a.alloc.1, &[bytes, align], "heap"))
+            }
+            None => {
+                let (func, fty) = self.libc_fn("malloc")?;
+                Ok(self.call(func, fty, &[bytes], "heap"))
+            }
+        }
+    }
+
+    /// `dealloc(ptr, bytes, align)` lowered to the project's own allocator, or
+    /// to libc's `free` otherwise. The byte count and alignment are what a
+    /// freestanding allocator needs and libc's `free` ignores; they come from
+    /// the type whose storage is being released, so no allocation records them.
+    fn heap_dealloc(
+        &self,
+        ptr: Value<'a>,
+        bytes: Value<'a>,
+        align: u64,
+    ) -> Result<(), String> {
+        match &self.alloc_fns {
+            Some(a) => {
+                let align = self.v_i64(align);
+                self.call(a.dealloc.0, a.dealloc.1, &[ptr, bytes, align], "");
+                Ok(())
+            }
+            None => {
+                let (func, fty) = self.libc_fn("free")?;
+                self.call(func, fty, &[ptr], "");
+                Ok(())
+            }
+        }
+    }
+
+    /// `realloc(ptr, new)` lowered through the project's allocator, or libc's
+    /// `realloc` otherwise. A project that names an allocator but no `realloc`
+    /// gets the literal fallback its manifest documents: allocate, copy the old
+    /// bytes, free the old block. The returned pointer is checked non-null here,
+    /// because a `realloc` call site has no natural place to branch.
+    fn heap_realloc(
+        &self,
+        old: Value<'a>,
+        old_bytes: Value<'a>,
+        new_bytes: Value<'a>,
+        align: u64,
+        func: LlvmFunction<'a>,
+    ) -> Result<Value<'a>, String> {
+        match &self.alloc_fns {
+            Some(a) => {
+                if let Some((realloc, rty)) = a.realloc {
+                    let align = self.v_i64(align);
+                    let buf = self.call(
+                        realloc,
+                        rty,
+                        &[old, old_bytes, new_bytes, align],
+                        "buf",
+                    );
+                    self.check_alloc(buf, func)?;
+                    return Ok(buf);
+                }
+                let new = self.heap_alloc(new_bytes, align)?;
+                self.check_alloc(new, func)?;
+                let (memcpy, mty) = self.mem_fn("memcpy")?;
+                self.call(memcpy, mty, &[new, old, old_bytes], "");
+                self.heap_dealloc(old, old_bytes, align)?;
+                Ok(new)
+            }
+            None => {
+                let (realloc, rty) = self.libc_fn("realloc")?;
+                let buf = self.call(realloc, rty, &[old, new_bytes], "buf");
+                self.check_alloc(buf, func)?;
+                Ok(buf)
+            }
+        }
     }
 
     /// `kelp_panic("out of memory")` when `ptr` is NULL, the same check every
@@ -7068,8 +7322,9 @@ impl<'a> Gen<'a> {
             let field = self.builder.build_struct_gep(env_ty, raw, index as u32, name);
             self.call_drop(field, ty)?;
         }
-        let (free, fty) = self.libc_fn("free")?;
-        self.call(free, fty, &[raw], "");
+        let bytes = self.v_i64(self.layout.abi_size_of(env_ty));
+        let align = self.layout.abi_alignment_of(env_ty) as u64;
+        self.heap_dealloc(raw, bytes, align)?;
         self.builder.build_ret_void();
         Ok(())
     }
@@ -7120,8 +7375,9 @@ impl<'a> Gen<'a> {
         let entry = func.append_block("entry");
         self.builder.position_at_end(entry);
         let raw = func.get_param(0);
-        let (free, fty) = self.libc_fn("free")?;
-        self.call(free, fty, &[raw], "");
+        let bytes = self.v_i64(self.layout.abi_size_of(self.coerce_env_ty));
+        let align = self.layout.abi_alignment_of(self.coerce_env_ty) as u64;
+        self.heap_dealloc(raw, bytes, align)?;
         self.builder.build_ret_void();
         Ok(())
     }
@@ -8315,6 +8571,7 @@ impl<'a> Gen<'a> {
         let list_ty = self.cty(&Ty::List(Box::new(elem.clone())))?;
         let elem_ty = self.lty2(elem)?;
         let elem_size = self.layout.abi_size_of(elem_ty);
+        let elem_align = self.layout.abi_alignment_of(elem_ty) as u64;
         let ptr = self.pty();
         let (i1t, i32t, i64t) = (self.ctx.i1(), self.ctx.i32(), self.ctx.i64());
         let drop_elem = needs_drop(elem, &self.owned);
@@ -8362,10 +8619,11 @@ impl<'a> Gen<'a> {
             let size = self
                 .builder
                 .build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(elem_size), "bytes");
+            let old_size = self
+                .builder
+                .build_int_binop(IntBinOp::Mul, cap, self.v_i64(elem_size), "old.bytes");
             let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
-            let (realloc, rty) = self.libc_fn("realloc")?;
-            let buf = self.call(realloc, rty, &[data, size], "buf");
-            self.check_alloc(buf, f)?;
+            let buf = self.heap_realloc(data, old_size, size, elem_align, f)?;
             self.st(buf, self.fld(list_ty, self_p, L_DATA, "data"));
             self.st(final_cap, self.fld(list_ty, self_p, L_CAP, "cap"));
             self.builder.build_br(done);
@@ -9461,9 +9719,12 @@ impl<'a> Gen<'a> {
             let self_p = f.get_param(0);
             let (clear, cty2) = self.cfn(&format!("{base}__clear"))?;
             self.call(clear, cty2, &[self_p], "");
+            let cap = self.ld(i64t, self.fld(list_ty, self_p, L_CAP, "cap"), "cap");
+            let bytes = self
+                .builder
+                .build_int_binop(IntBinOp::Mul, cap, self.v_i64(elem_size), "bytes");
             let data = self.ld(ptr, self.fld(list_ty, self_p, L_DATA, "data"), "data");
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[data], "");
+            self.heap_dealloc(data, bytes, elem_align)?;
             self.st(self.ctx.const_null(ptr), self.fld(list_ty, self_p, L_DATA, "data"));
             self.st(self.v_i64(0), self.fld(list_ty, self_p, L_CAP, "cap"));
             self.builder.build_ret_void();
@@ -9681,6 +9942,8 @@ impl<'a> Gen<'a> {
         let base = box_c_type(elem);
         let box_ty = self.cty(&Ty::Box(Box::new(elem.clone())))?;
         let elem_ty = self.lty2(elem)?;
+        let elem_size = self.layout.abi_size_of(elem_ty);
+        let elem_align = self.layout.abi_alignment_of(elem_ty) as u64;
         let ptr = self.pty();
         let i1t = self.ctx.i1();
         let drop_elem = needs_drop(elem, &self.owned);
@@ -9784,8 +10047,7 @@ impl<'a> Gen<'a> {
             self.emit_panic("Box.take: the box is empty")?;
             self.builder.position_at_end(ok);
             let v = self.ld(elem_ty, value, "take");
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[value], "");
+            self.heap_dealloc(value, self.v_i64(elem_size), elem_align)?;
             self.st(null, slot);
             self.builder.build_ret(v);
         }
@@ -9804,8 +10066,7 @@ impl<'a> Gen<'a> {
             if drop_elem {
                 self.call_drop(value, elem)?;
             }
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[value], "");
+            self.heap_dealloc(value, self.v_i64(elem_size), elem_align)?;
             self.st(null, slot);
             self.builder.build_br(done);
             self.builder.position_at_end(done);
@@ -10199,6 +10460,9 @@ impl<'a> Gen<'a> {
         let ptr = self.pty();
         let (i1t, i8t, i32t, i64t) = (self.ctx.i1(), self.ctx.i8(), self.ctx.i32(), self.ctx.i64());
         let entry_size = self.layout.abi_size_of(entry_ty);
+        let entry_align = self.layout.abi_alignment_of(entry_ty) as u64;
+        // The index is an `i32` array, so its entries are four-byte aligned.
+        let index_align = 4u64;
         let value_drops = needs_drop(value, &self.owned);
         let clonable = crate::types::value_is_clonable(value, &self.clonable);
         let size_max = u64::MAX;
@@ -10224,8 +10488,7 @@ impl<'a> Gen<'a> {
             self.builder.build_cond_br(zerocap, empty, sized);
             self.builder.position_at_end(sized);
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, cap, self.v_i64(entry_size), "bytes");
-            let (malloc, mty) = self.libc_fn("malloc")?;
-            let entries = self.call(malloc, mty, &[bytes], "entries");
+            let entries = self.heap_alloc(bytes, entry_align)?;
             self.check_alloc(entries, f)?;
             self.st(entries, self.fld(map_ty, m, M_ENTRIES, "entries"));
             self.st(cap, self.fld(map_ty, m, M_ENTRY_CAP, "entry_cap"));
@@ -10336,14 +10599,14 @@ impl<'a> Gen<'a> {
             self.builder.build_br(header);
             self.builder.position_at_end(exit);
             let final_cap = self.ld(i64t, cap_slot, "cap");
+            let old_cap = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
+            let old_bytes = self.builder.build_int_binop(IntBinOp::Mul, old_cap, self.v_i64(4), "old.bytes");
             let old = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[old], "");
+            self.heap_dealloc(old, old_bytes, index_align)?;
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, final_cap, self.v_i64(4), "bytes");
-            let (malloc, mty) = self.libc_fn("malloc")?;
-            let buf = self.call(malloc, mty, &[bytes], "index");
+            let buf = self.heap_alloc(bytes, index_align)?;
             self.check_alloc(buf, f)?;
-            let (memset, sety) = self.libc_fn("memset")?;
+            let (memset, sety) = self.mem_fn("memset")?;
             self.call(memset, sety, &[buf, self.v_i32(0), bytes], "");
             self.st(buf, self.fld(map_ty, self_p, M_INDEX, "index"));
             self.st(final_cap, self.fld(map_ty, self_p, M_INDEX_CAP, "index_cap"));
@@ -10585,9 +10848,8 @@ impl<'a> Gen<'a> {
             let new_cap = self.builder.build_select(is_zero, self.v_i64(8), double, "newcap");
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, new_cap, self.v_i64(entry_size), "bytes");
-            let (realloc, rty) = self.libc_fn("realloc")?;
-            let new_entries = self.call(realloc, rty, &[entries, bytes], "entries");
-            self.check_alloc(new_entries, f)?;
+            let old_bytes = self.builder.build_int_binop(IntBinOp::Mul, ecap, self.v_i64(entry_size), "old.bytes");
+            let new_entries = self.heap_realloc(entries, old_bytes, bytes, entry_align, f)?;
             self.st(new_entries, self.fld(map_ty, self_p, M_ENTRIES, "entries"));
             self.st(new_cap, self.fld(map_ty, self_p, M_ENTRY_CAP, "entry_cap"));
             self.builder.build_br(have_space);
@@ -10671,7 +10933,7 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(clear_index);
             let icap = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
             let bytes = self.builder.build_int_binop(IntBinOp::Mul, icap, self.v_i64(4), "bytes");
-            let (memset, sety) = self.libc_fn("memset")?;
+            let (memset, sety) = self.mem_fn("memset")?;
             self.call(memset, sety, &[index, self.v_i32(0), bytes], "");
             self.builder.build_br(end);
             self.builder.position_at_end(end);
@@ -10818,11 +11080,14 @@ impl<'a> Gen<'a> {
             self.st(en, i_slot);
             self.builder.build_br(header);
             self.builder.position_at_end(exit);
+            let rows = self.ld(i64t, self.fld(map_ty, self_p, M_ENTRY_CAP, "ecap"), "ecap");
+            let entry_bytes = self.builder.build_int_binop(IntBinOp::Mul, rows, self.v_i64(entry_size), "entry.bytes");
+            let icols = self.ld(i64t, self.fld(map_ty, self_p, M_INDEX_CAP, "icap"), "icap");
+            let index_bytes = self.builder.build_int_binop(IntBinOp::Mul, icols, self.v_i64(4), "index.bytes");
             let entries = self.ld(ptr, self.fld(map_ty, self_p, M_ENTRIES, "entries"), "entries");
             let index = self.ld(ptr, self.fld(map_ty, self_p, M_INDEX, "index"), "index");
-            let (free, fty) = self.libc_fn("free")?;
-            self.call(free, fty, &[entries], "");
-            self.call(free, fty, &[index], "");
+            self.heap_dealloc(entries, entry_bytes, entry_align)?;
+            self.heap_dealloc(index, index_bytes, index_align)?;
             self.st(self.ctx.const_null(map_ty), self_p);
             self.builder.build_ret_void();
         }
