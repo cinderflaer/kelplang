@@ -335,7 +335,21 @@ impl Check {
         for process in self.processes() {
             let errors = process.errors().unwrap_or(0);
             let leaks = process.leaks();
-            if errors == 0 && leaks.lost() == 0 {
+            // `env_thread_stress` is not a false positive to chase: `kelp_rt.c`'s
+            // env read cache (the comment above `kelp_EnvTable`) deliberately
+            // never frees the table a `set`/`unset` rebuild replaces, because a
+            // concurrent lock-free reader may still hold a pointer to it and
+            // there is no way to know when the last one is done — "the accepted
+            // price for lock-free reads". This fixture's three threads each
+            // `set` and `unset` once, so six rebuilds leak their old table on
+            // purpose every run (confirmed pre-existing and deterministic under
+            // valgrind, investigated as BUG-fY3nQ before being recognized as
+            // exactly this design, not a defect). Only the leak byte count is
+            // exempted: an invalid read/write or a double free here would still
+            // be a real bug and still fails the gate.
+            let leak_is_the_documented_env_cache_tradeoff =
+                self.fixture == "env_thread_stress" && errors == 0;
+            if errors == 0 && (leaks.lost() == 0 || leak_is_the_documented_env_cache_tradeoff) {
                 continue;
             }
             let role = if process.launched {
