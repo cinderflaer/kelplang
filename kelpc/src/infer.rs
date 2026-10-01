@@ -99,6 +99,13 @@ struct TypeEnv {
     /// `datac` that names such a type has to see the same key set a body
     /// does.
     declared_keys: std::rc::Rc<std::collections::HashSet<String>>,
+    /// The user types that declare their own destructor (kernel stage 9,
+    /// MK9-S6-M1): a `datac`/`enum` with `fun mut T.drop()`. Decided once, from
+    /// the whole function list, for the same reason `declared_keys` is: a
+    /// `datac` field or a `List<T>` element type is resolved before the
+    /// signatures are, and the derived-copy fixpoints those resolutions ask
+    /// must already know which types a destructor keeps out of them.
+    declared_drops: std::rc::Rc<std::collections::HashSet<String>>,
     /// The canonical keys of the items each module exports (A-13). Private by
     /// default, so a key is here only for a declaration written `pub`, or for
     /// any declaration in a compiler-shipped module (the transitional rule
@@ -904,7 +911,7 @@ impl Ctx {
     /// a scalar, `String`/`Bytes`, or a `datac`/`enum` all of whose fields can
     /// be deep-copied.
     fn value_clonable(&self, ty: &Ty) -> bool {
-        let set = crate::types::clonable_types(&self.type_decls());
+        let set = crate::types::clonable_types(&self.type_decls(), &self.env.declared_drops);
         crate::types::value_is_clonable(ty, &set)
     }
 
@@ -918,7 +925,11 @@ impl Ctx {
     /// The user types that are `Map` keys, by the same declaration-graph rule
     /// (A-6), plus the types that declare their own pair (A-12).
     fn keyable_set(&self) -> std::collections::HashSet<String> {
-        crate::types::map_key_types(&self.type_decls(), &self.env.declared_keys)
+        crate::types::map_key_types(
+            &self.type_decls(),
+            &self.env.declared_keys,
+            &self.env.declared_drops,
+        )
     }
 
     /// Instantiates a generic template for one use site (A-2). Idempotent: a
@@ -1035,7 +1046,7 @@ impl TypeScope<'_> {
     /// always an earlier declaration, and an earlier declaration is present.
     fn keyable_set(&self) -> std::collections::HashSet<String> {
         let decls = type_decls_of(self.structs, self.enums, &self.env.instances.borrow());
-        crate::types::map_key_types(&decls, &self.env.declared_keys)
+        crate::types::map_key_types(&decls, &self.env.declared_keys, &self.env.declared_drops)
     }
 
     /// A written type name, or a container over one. `indirect` is true
@@ -1924,6 +1935,60 @@ fn declared_key_names(program: &ast::Program) -> std::collections::HashSet<Strin
         }
     }
     out
+}
+
+/// The user types that declare their own destructor (kernel stage 9,
+/// MK9-S6-M1): the receiver name of every `fun mut T.drop()` in the program.
+///
+/// Like a declared key pair, the method name *is* the declaration and there is
+/// no trait and no new syntax; this is the one set both backends and
+/// `types::owned_types` read to know which types get a user call at the top of
+/// their generated `kelp_drop_<T>`.
+fn declared_drop_names(program: &ast::Program) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for f in &program.functions {
+        if let Some(r) = &f.receiver {
+            if f.name == crate::types::DROP_METHOD {
+                out.insert(r.type_name.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Whether one declared destructor is the shape the compiler calls: an
+/// exclusive (`mut`) receiver, no parameters, and no return value. Checked at
+/// the declaration, where the receiver, the parameters and the return type are
+/// already resolved, so a malformed destructor is an error at its own line
+/// rather than a call the generated drop cannot make.
+fn check_drop_method(
+    f: &ast::FunctionDecl,
+    params: &[(String, Ty)],
+    ret: &Ty,
+) -> std::result::Result<(), Diagnostic> {
+    let receiver = f
+        .receiver
+        .as_ref()
+        .expect("only a receiver method is a destructor");
+    let owner = &receiver.type_name;
+    let err = |message: String| Diagnostic::new(message, f.span, f.module.clone());
+    if !receiver.mutable {
+        return Err(err(format!(
+            "'{owner}.drop' must take its receiver with 'mut': the drop body reads and may adjust the value it is running for, so write 'fun mut {owner}.drop()'"
+        )));
+    }
+    if !f.params.is_empty() {
+        return Err(err(format!(
+            "'{owner}.drop' takes no parameters: the compiler calls it with the value being dropped, so write 'fun mut {owner}.drop()'"
+        )));
+    }
+    if *ret != Ty::Unit {
+        return Err(err(format!(
+            "'{owner}.drop' must not return a value: a drop runs where the value dies and has nowhere to hand a result, so write 'fun mut {owner}.drop()'"
+        )));
+    }
+    let _ = params;
+    Ok(())
 }
 
 /// One user-declared key-pair half, kept while the signatures are built so a
@@ -6360,10 +6425,16 @@ fn check_program_pass(
     // signature has been resolved, so the key set has to be known that early.
     // The signature loop below then refuses a half or a malformed pair.
     let declared_keys = std::rc::Rc::new(declared_key_names(program));
+    // Kernel stage 9, MK9-S6-M1: which user types declare `fun mut T.drop()`,
+    // decided that early for the same reason as `declared_keys`: a container
+    // element or `Map` key type may be resolved before any signature is, and
+    // the derived-copy fixpoints must already exclude a destructor type.
+    let declared_drops = std::rc::Rc::new(declared_drop_names(program));
     let env = TypeEnv {
         generics: std::rc::Rc::new(generics),
         instances: std::rc::Rc::new(std::cell::RefCell::new(InstanceState::default())),
         declared_keys: declared_keys.clone(),
+        declared_drops: declared_drops.clone(),
         exported: std::rc::Rc::new(collect_exports(program)),
         // `resolve.rs` has prefixed every handle name, so the set is already
         // canonical. A handle is a type like any other and is known before any
@@ -6743,11 +6814,34 @@ fn check_program_pass(
                     f.module.clone(),
                 ));
             }
+            if f.name == crate::types::DROP_METHOD && !r.type_args.is_empty() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}.drop' cannot have type parameters: a destructor is declared on the type itself, so write it on '{}' rather than on the generic template",
+                        r.type_name, r.type_name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
             if half && r.mutable {
                 return Err(Diagnostic::new(
                     format!(
                         "'{}.{}' cannot take 'mut': a key pair's receiver is a shared borrow, so write 'fun {}.{}()' without 'mut'",
                         r.type_name, f.name, r.type_name, f.name
+                    ),
+                    f.span,
+                    f.module.clone(),
+                ));
+            }
+            // A destructor type is not deep-copyable, and the map clones every
+            // key in, so a declared key pair on one would be a second owner of
+            // the resource the destructor frees.
+            if half && env.declared_drops.contains(&r.type_name) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'{}.{}' cannot be declared: a type with a destructor is not deep-copyable, and a key pair is cloned into the map, so the resource would be freed twice (kernel stage 9, MK9-S6-M1)",
+                        r.type_name, f.name
                     ),
                     f.span,
                     f.module.clone(),
@@ -6832,6 +6926,17 @@ fn check_program_pass(
                 );
             }
         }
+        // Kernel stage 9, MK9-S6-M1: `fun mut T.drop()` on a user type is
+        // that type's destructor, so its shape is checked here, where the
+        // receiver, the parameters and the return type are resolved. The
+        // duplicate-key check below is what refuses a second one, since both
+        // spellings share the `T#drop` key.
+        if let Some(r) = &f.receiver {
+            if f.name == crate::types::DROP_METHOD {
+                check_drop_method(f, &params, &ret)?;
+                let _ = r;
+            }
+        }
         // A returned borrow has to have something to borrow from, which the
         // borrow checker enforces per return site (M6.3): either the first
         // reference parameter, or a `str` literal (whose storage is static,
@@ -6901,7 +7006,10 @@ fn check_program_pass(
     // backend to fail on a clone that was never emitted.
     {
         let instances = env.instances.borrow();
-        let clonable = crate::types::clonable_types(&type_decls_of(&structs, &enums, &instances));
+        let clonable = crate::types::clonable_types(
+            &type_decls_of(&structs, &enums, &instances),
+            &env.declared_drops,
+        );
         for name in &key_pair_types {
             if clonable.contains(name) {
                 continue;
@@ -6934,6 +7042,7 @@ fn check_program_pass(
     let owned_structs = crate::types::owned_types(
         &structs.values().cloned().collect::<Vec<_>>(),
         &enums.values().cloned().collect::<Vec<_>>(),
+        &declared_drops,
     );
 
     // Kernel stage 7: every `static` is resolved and folded before any body or
@@ -7230,6 +7339,7 @@ fn check_program_pass(
         caps,
         gated: project.gated().clone(),
         declared_keys: (*declared_keys).clone(),
+        drop_types: (*declared_drops).clone(),
         extern_ffi_symbols,
         extern_headers: project.extern_headers(),
         handles: {
@@ -8275,13 +8385,23 @@ fn check_function(
         .receiver
         .as_ref()
         .and_then(|_| struct_name_of(&sig.params[0].1).map(|s| s.to_string()));
+    // A declared destructor (kernel stage 9, MK9-S6-M1) reads its passdowns
+    // the way `main` does: directly from the generated globals. The reason is
+    // that the generated `kelp_drop_<T>` calls it from every drop point with
+    // one pointer and nothing else, so a hidden passdown parameter would have
+    // no caller able to supply it. The passdown surface is read-only inside a
+    // function, so the global read is the same borrow `main` takes.
+    let is_drop_method = f
+        .receiver
+        .as_ref()
+        .is_some_and(|_| f.name == crate::types::DROP_METHOD);
     // Passdowns this function references become trailing hidden parameters
     // (see `PdInfo::arg` for the call-site side). `main` is the exception
     // downstream, not here: `codegen_c.rs` emits a fixed `main(argc, argv)`
     // regardless of parameters, and the body's `pd#...` identifiers then
     // resolve to the file-scope globals — which is why the hidden name and
     // the global name are the same string.
-    let hidden = if key == "main" {
+    let hidden = if key == "main" || is_drop_method {
         Vec::new()
     } else {
         // An instantiation's passdown wiring is the template's: the scan runs
@@ -8320,7 +8440,7 @@ fn check_function(
     ctx.type_args = type_args.clone();
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
-    ctx.pd_global_borrow = key == "main";
+    ctx.pd_global_borrow = key == "main" || is_drop_method;
     // `unsafe fun` (MK9-S2 stage 1) and `naked fun` (kernel stage 5): the whole
     // body is an unsafe context, so the unsafe-only pointer operations, and the
     // `asm` a naked body must be, are legal without a block around them. Every
@@ -13781,6 +13901,19 @@ fn check_method_call(
             span,
         });
     };
+    // Kernel stage 9, MK9-S6-M1: a destructor is not callable. Naming it would
+    // run it on top of the drop the value already owes, so the explicit call is
+    // refused with the reason.
+    if method == crate::types::DROP_METHOD
+        && ctx.sig_of(&crate::types::drop_method_key(&owner)).is_some()
+    {
+        return Err(TypeError {
+            message: format!(
+                "'{owner}.drop' cannot be called: an explicit destructor call is an error, because the value's own drop already runs when its owner dies"
+            ),
+            span,
+        });
+    }
     // A method on an `Atomic<T>` (MK9-S3-M1 stage A1). Its signature depends on
     // the element type, and `compare_exchange`'s `Result<T, T>` is an instance
     // of the stdlib enum rather than a fixed type, so neither can live in the
@@ -13915,6 +14048,17 @@ fn check_method_call(
                     Some(s) => (key, s),
                     None => {
                         let base = match (&container_elem, owner.as_str()) {
+                // A destructor type is not `Copy` (kernel stage 9,
+                // MK9-S6-M1): the derived copy fixpoint excludes it, so this
+                // names the destructor rather than reporting a field that
+                // cannot be copied.
+                (Some(Ty::Struct(n)), "List")
+                    if method == "clone" && ctx.env.declared_drops.contains(n) =>
+                {
+                    format!(
+                        "List<{n}>.clone is not defined: '{n}' declares 'fun mut {n}.drop()', and a type with a destructor is not `Copy`, so a second owner of the same resource would be freed twice"
+                    )
+                }
                 // Three List methods are defined only for an element type that
                 // can be ordered, compared, or copied, so the generic "no
                 // method" text would be misleading for exactly these three.

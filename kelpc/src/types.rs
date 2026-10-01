@@ -587,9 +587,16 @@ pub fn env_drop_name(literal_key: &str) -> String {
 /// repeating until stable. Merged order matters here for the first time in
 /// A-1: a `datac` and an `enum` may each name the other's earlier-declared
 /// half, so the two declaration lists have to be walked as one sequence.
+///
+/// `drop_types` is the set of user types that declare their own destructor
+/// (kernel stage 9, MK9-S6-M1); each is seeded into the result, because a
+/// destructor type needs a `kelp_drop_<T>` to hold the user call even when it
+/// owns no memory, and a later type that holds one by value then owns memory
+/// through it.
 pub fn owned_types(
     structs: &[StructDef],
     enums: &[EnumDef],
+    drop_types: &std::collections::HashSet<String>,
 ) -> std::collections::HashSet<String> {
     enum Decl<'a> {
         Record(&'a StructDef),
@@ -602,7 +609,7 @@ pub fn owned_types(
         .collect();
     decls.sort_by_key(|(order, _)| *order);
 
-    let mut owned = std::collections::HashSet::new();
+    let mut owned = drop_types.clone();
     for (_, decl) in decls {
         let (name, fields_own) = match decl {
             Decl::Record(s) => (
@@ -682,10 +689,11 @@ pub fn value_is_keyable(ty: &Ty, keyable: &std::collections::HashSet<String>) ->
 pub fn keyable_types(
     decls: &[(String, Vec<Ty>)],
     declared: &std::collections::HashSet<String>,
+    drop_types: &std::collections::HashSet<String>,
 ) -> std::collections::HashSet<String> {
     let plain: Vec<(String, Vec<Ty>)> = decls
         .iter()
-        .filter(|(name, _)| !declared.contains(name))
+        .filter(|(name, _)| !declared.contains(name) && !drop_types.contains(name))
         .cloned()
         .collect();
     fixpoint(&plain, value_is_keyable)
@@ -698,9 +706,10 @@ pub fn keyable_types(
 pub fn map_key_types(
     decls: &[(String, Vec<Ty>)],
     declared: &std::collections::HashSet<String>,
+    drop_types: &std::collections::HashSet<String>,
 ) -> std::collections::HashSet<String> {
-    let mut set = keyable_types(decls, declared);
-    set.extend(declared.iter().cloned());
+    let mut set = keyable_types(decls, declared, drop_types);
+    set.extend(declared.iter().filter(|n| !drop_types.contains(*n)).cloned());
     set
 }
 
@@ -713,8 +722,16 @@ pub fn map_key_types(
 /// honest answer: v1's declaration rule already forbids a directly recursive
 /// `datac`, and a recursion through a `Box`/`List` is not a shape a plain copy
 /// can follow without a decision about what the copy owns.
-pub fn clonable_types(decls: &[(String, Vec<Ty>)]) -> std::collections::HashSet<String> {
-    fixpoint(decls, value_is_clonable)
+pub fn clonable_types(
+    decls: &[(String, Vec<Ty>)],
+    drop_types: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let plain: Vec<(String, Vec<Ty>)> = decls
+        .iter()
+        .filter(|(name, _)| !drop_types.contains(name))
+        .cloned()
+        .collect();
+    fixpoint(&plain, value_is_clonable)
 }
 
 /// The same fixpoint for the order a `datac`/`enum` gets when it is sorted:
@@ -796,6 +813,26 @@ pub const KEY_PAIR_EQ_METHOD: &str = "eq";
 /// declaration and the two cannot drift.
 pub fn key_pair_method_key(type_name: &str, method: &str) -> String {
     format!("{}#{}", type_name, method)
+}
+
+/// The destructor's method name (kernel stage 9, MK9-S6-M1). Like the two
+/// halves of a key pair, the name *is* the declaration: `fun mut T.drop()` on
+/// a user type makes that type's own drop run at every drop point. Both
+/// backends reach the body through the same `Type#name` key `sig_key` gives
+/// every receiver method.
+pub const DROP_METHOD: &str = "drop";
+
+/// The `sigs`/`tir` key of a type's declared destructor.
+pub fn drop_method_key(type_name: &str) -> String {
+    format!("{}#{}", type_name, DROP_METHOD)
+}
+
+/// The emitted symbol of a type's declared destructor, the same spelling on
+/// both backends (`codegen_c.rs::write_signature` and
+/// `codegen_llvm.rs::symbol_name` both mangle the `Type#name` key the same
+/// way). The generated `kelp_drop_<T>` calls this at the top of its body.
+pub fn user_drop_fn_name(type_name: &str) -> String {
+    format!("kelp_{}", c_ident(&drop_method_key(type_name)))
 }
 
 /// Whether a value of `ty` has to be freed — the builtin owned types, or a

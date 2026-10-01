@@ -300,16 +300,16 @@ impl Decl<'_> {
 }
 
 pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> String {
-    let owned = owned_types(&program.structs, &program.enums);
+    let owned = owned_types(&program.structs, &program.enums, &program.drop_types);
     // The user types with a derived deep copy and a derived order
     // (MISSING-jL9tE): the least fixpoint over the declaration graph, computed
     // once here for the same reasons `owned` is — `infer.rs` offers
     // `List.clone`/`List.sort` for exactly the types these sets name, and if
     // the two disagreed the checker would offer a signature with no body.
     let type_decls = type_decls(&program.structs, &program.enums);
-    let clonable = crate::types::clonable_types(&type_decls);
+    let clonable = crate::types::clonable_types(&type_decls, &program.drop_types);
     let sortable = crate::types::sortable_types(&type_decls);
-    let keyable = crate::types::keyable_types(&type_decls, &program.declared_keys);
+    let keyable = crate::types::keyable_types(&type_decls, &program.declared_keys, &program.drop_types);
     let caps = CapTable {
         gated: program.gated.clone(),
         patterns: program
@@ -532,8 +532,8 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
             emit_arrays_for(&mut out, ty, &mut emitted_arrays, &owned);
         }
         match decl {
-            Decl::Record(s) => write_struct(&mut out, s, &owned, &clonable, &sortable, &keyable),
-            Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable, &keyable),
+            Decl::Record(s) => write_struct(&mut out, s, &owned, &clonable, &sortable, &keyable, &program.drop_types),
+            Decl::Sum(e) => write_enum(&mut out, e, &owned, &clonable, &sortable, &keyable, &program.drop_types),
         }
     }
     // A key type that declares its own pair (A-12) is reached from the `Map`
@@ -1207,6 +1207,7 @@ fn write_struct(
     clonable: &HashSet<String>,
     sortable: &HashSet<String>,
     keyable: &HashSet<String>,
+    drop_types: &HashSet<String>,
 ) {
     // Tagged (M8), because a container typedef emitted *earlier* may hold a
     // pointer to this struct (`Box<Node>` inside `Node` itself), and a
@@ -1233,6 +1234,19 @@ fn write_struct(
         _ => String::new(),
     };
     write!(out, "}}{align} {};\n", ty.c_type()).unwrap();
+    // The declared destructor's prototype, right after the typedef that makes
+    // its receiver a complete type and before the generated drop that calls
+    // it (kernel stage 9, MK9-S6-M1). Its definition is written with the
+    // program's other functions, further down.
+    if drop_types.contains(&s.name) {
+        writeln!(
+            out,
+            "static void {}({}* v);",
+            crate::types::user_drop_fn_name(&s.name),
+            ty.c_type()
+        )
+        .unwrap();
+    }
     if needs_drop(&ty, owned) {
         writeln!(
             out,
@@ -1241,6 +1255,9 @@ fn write_struct(
             ty.c_type()
         )
         .unwrap();
+        if drop_types.contains(&s.name) {
+            writeln!(out, "    {}(v);", crate::types::user_drop_fn_name(&s.name)).unwrap();
+        }
         for f in &s.fields {
             if needs_drop(&f.ty, owned) {
                 writeln!(
@@ -1356,6 +1373,7 @@ fn write_enum(
     clonable: &HashSet<String>,
     sortable: &HashSet<String>,
     keyable: &HashSet<String>,
+    drop_types: &HashSet<String>,
 ) {
     write!(out, "typedef struct {} {{\n", crate::types::struct_tag(&e.name)).unwrap();
     // The tag's width is the `repr(<int>)` clause's, `i32` by default
@@ -1376,6 +1394,15 @@ fn write_enum(
     out.push_str("    } kelp_v;\n");
     let ty = Ty::Struct(e.name.clone());
     write!(out, "}} {};\n", ty.c_type()).unwrap();
+    if drop_types.contains(&e.name) {
+        writeln!(
+            out,
+            "static void {}({}* v);",
+            crate::types::user_drop_fn_name(&e.name),
+            ty.c_type()
+        )
+        .unwrap();
+    }
 
     if needs_drop(&ty, owned) {
         writeln!(
@@ -1385,6 +1412,9 @@ fn write_enum(
             ty.c_type()
         )
         .unwrap();
+        if drop_types.contains(&e.name) {
+            writeln!(out, "    {}(v);", crate::types::user_drop_fn_name(&e.name)).unwrap();
+        }
         out.push_str("    switch (v->kelp_tag) {\n");
         for (i, v) in e.variants.iter().enumerate() {
             let owned_fields: Vec<&crate::types::FieldDef> = v
@@ -2099,9 +2129,9 @@ pub(crate) fn write_referenced_type_layouts(
         }
         match decl {
             Decl::Record(s) => {
-                write_struct(out, s, &no_derives, &no_derives, &no_derives, &no_derives)
+                write_struct(out, s, &no_derives, &no_derives, &no_derives, &no_derives, &no_derives)
             }
-            Decl::Sum(e) => write_enum(out, e, &no_derives, &no_derives, &no_derives, &no_derives),
+            Decl::Sum(e) => write_enum(out, e, &no_derives, &no_derives, &no_derives, &no_derives, &no_derives),
         }
     }
     if !decls.is_empty() {

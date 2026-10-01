@@ -1122,7 +1122,7 @@ impl<'a> Gen<'a> {
             drops,
             runtime,
             drop_fns: HashMap::new(),
-            owned: owned_types(&program.structs, &program.enums),
+            owned: owned_types(&program.structs, &program.enums, &program.drop_types),
             containers: HashMap::new(),
             map_entries: HashMap::new(),
             container_fns: HashMap::new(),
@@ -1141,9 +1141,9 @@ impl<'a> Gen<'a> {
                 HashMap::new()
             },
             instantiations: collect_instantiations(program),
-            clonable: crate::types::clonable_types(&type_decls),
+            clonable: crate::types::clonable_types(&type_decls, &program.drop_types),
             sortable: crate::types::sortable_types(&type_decls),
-            keyable: crate::types::keyable_types(&type_decls, &program.declared_keys),
+            keyable: crate::types::keyable_types(&type_decls, &program.declared_keys, &program.drop_types),
             pd_globals: HashMap::new(),
             static_globals: HashMap::new(),
             cpus: freestanding.as_ref().map(|fs| fs.cpus).unwrap_or(1),
@@ -2280,7 +2280,7 @@ impl<'a> Gen<'a> {
     /// (`types::needs_drop`), the mirror of the routine `codegen_c.rs` writes
     /// beside each typedef. The plan's targets call them by name.
     fn declare_drop_fns(&mut self) {
-        let owned = owned_types(&self.program.structs, &self.program.enums);
+        let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
         for s in &self.program.structs {
             if !needs_drop(&Ty::Struct(s.name.clone()), &owned) {
                 continue;
@@ -2314,7 +2314,7 @@ impl<'a> Gen<'a> {
     /// straight to the runtime's drop; a nested owned aggregate recurses through
     /// its own drop.
     fn emit_drop_fn_bodies(&self) -> Result<(), String> {
-        let owned = owned_types(&self.program.structs, &self.program.enums);
+        let owned = owned_types(&self.program.structs, &self.program.enums, &self.program.drop_types);
         for s in &self.program.structs {
             let Some((func, _)) = self.drop_fns.get(&s.name) else {
                 continue;
@@ -2326,6 +2326,9 @@ impl<'a> Gen<'a> {
                 .get(&s.name)
                 .ok_or_else(|| no_value(&format!("the datac '{}'", s.name)))?;
             let self_ptr = func.get_param(0);
+            if self.program.drop_types.contains(&s.name) {
+                self.call_user_drop(self_ptr, &s.name)?;
+            }
             for (index, field) in s.fields.iter().enumerate() {
                 if !needs_drop(&field.ty, &owned) {
                     continue;
@@ -2368,6 +2371,9 @@ impl<'a> Gen<'a> {
         let entry = func.append_block("entry");
         self.builder.position_at_end(entry);
         let self_ptr = func.get_param(0);
+        if self.program.drop_types.contains(&e.name) {
+            self.call_user_drop(self_ptr, &e.name)?;
+        }
         let tag_ptr = self
             .builder
             .build_struct_gep(info.llvm_ty, self_ptr, ENUM_TAG_FIELD, "tag");
@@ -2410,6 +2416,20 @@ impl<'a> Gen<'a> {
         }
         self.builder.position_at_end(done);
         self.builder.build_ret_void();
+        Ok(())
+    }
+
+    /// Call one type's declared destructor (`fun mut T.drop()`) at the top of
+    /// its generated drop (kernel stage 9, MK9-S6-M1). `declare_functions` has
+    /// already declared the body as an ordinary method, so the LLVM function is
+    /// in `funcs` under the same `Type#name` key the C backend mangles.
+    fn call_user_drop(&self, ptr: Value<'a>, name: &str) -> Result<(), String> {
+        let key = crate::types::drop_method_key(name);
+        let info = self
+            .funcs
+            .get(&key)
+            .ok_or_else(|| no_value(&format!("the declared destructor '{key}'")))?;
+        self.builder.build_call(info.func, info.ty, &[ptr], "");
         Ok(())
     }
 
@@ -12808,6 +12828,7 @@ mod layout_tests {
             caps: Vec::new(),
             gated: Default::default(),
             declared_keys: Default::default(),
+            drop_types: Default::default(),
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 
@@ -13265,6 +13286,7 @@ mod layout_tests {
             caps: Vec::new(),
             gated: Default::default(),
             declared_keys: Default::default(),
+            drop_types: Default::default(),
         };
         let source = program_c_source(&program).expect("two extern funs are two bodies");
 
@@ -13397,6 +13419,7 @@ mod layout_tests {
             caps: Vec::new(),
             gated: Default::default(),
             declared_keys: Default::default(),
+            drop_types: Default::default(),
         };
         let source = program_c_source(&program).expect("one extern fun is one body");
 

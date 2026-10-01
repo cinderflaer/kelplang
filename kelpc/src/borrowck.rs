@@ -1334,7 +1334,7 @@ fn merge_roots(left: &str, right: &str) -> Option<String> {
 
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
     let mut plan = DropPlan::default();
-    let owned = crate::types::owned_types(&program.structs, &program.enums);
+    let owned = crate::types::owned_types(&program.structs, &program.enums, &program.drop_types);
     // Every `enum` by name, so a payload move can name the field it moved out
     // (`Ty::Struct` carries only the name; the two indices are what the `tir`
     // node has). Instantiations are in here beside the templates, under the
