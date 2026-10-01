@@ -91,6 +91,14 @@ type the literal is refused by name rather than guessing. A block with no header
 today's behaviour when the expected type is a `fun()`/`closure()`/scoped `fun()`; with an expected
 non-unit return its tail is the value, which is the value-block half.
 
+A **generic** callee's `scoped fun(...)` parameter is the one place that needed more than the
+signature: the call's type arguments are inferred before its arguments are checked, and the hint
+handed to each argument came from `field_hint`, which resolved the written type through the storage
+path and so refused the modifier. `field_hint` now resolves a `scoped` parameter through the same
+parameter path a non-generic declaration's signature uses (`resolve_scoped_param`), which is what
+lets `polyp.column { k -> ... }` take `k`'s type from the expected return type of `column<M>`
+(fixture `scoped_block_generic`; the Polyp builder in `examples/polyp/lib.kp`).
+
 ## What is deliberately out of scope
 
 - Exclusive (`mut`) captures, `move` captures, and a scoped literal that outlives its call.

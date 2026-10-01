@@ -44,4 +44,52 @@ static inline int polyp_poll(void) {
     return id;
 }
 
+/* The edit channel: a program with no user asks the loop to set an entry's
+ * text, which fires the entry's real `changed` signal. A second ring, with the
+ * text copied in, for the same reason as the first: the loop owns the widgets,
+ * the scheduler does not. */
+#define POLYP_EDIT_CAPACITY 8
+#define POLYP_EDIT_TEXT_MAX 256
+
+static char polyp_edit_text[POLYP_EDIT_CAPACITY][POLYP_EDIT_TEXT_MAX];
+static int polyp_edit_entry[POLYP_EDIT_CAPACITY];
+static int polyp_edit_head;
+static int polyp_edit_count;
+static int polyp_edit_last = -1;
+
+static inline void polyp_post_edit(int index, const char* text) {
+    if (polyp_edit_count == POLYP_EDIT_CAPACITY) {
+        return; /* full: the edit is dropped rather than overwriting a pending one */
+    }
+    int slot = (polyp_edit_head + polyp_edit_count) % POLYP_EDIT_CAPACITY;
+    int i = 0;
+    while (text[i] != '\0' && i < POLYP_EDIT_TEXT_MAX - 1) {
+        polyp_edit_text[slot][i] = text[i];
+        i++;
+    }
+    polyp_edit_text[slot][i] = '\0';
+    polyp_edit_entry[slot] = index;
+    polyp_edit_count++;
+}
+
+/* The entry index of the oldest pending edit, or -1 when none is pending. The
+ * text of the edit just polled is read with `polyp_poll_edit_text`. */
+static inline int polyp_poll_edit(void) {
+    if (polyp_edit_count == 0) {
+        polyp_edit_last = -1;
+        return -1;
+    }
+    polyp_edit_last = polyp_edit_head;
+    polyp_edit_head = (polyp_edit_head + 1) % POLYP_EDIT_CAPACITY;
+    polyp_edit_count--;
+    return polyp_edit_entry[polyp_edit_last];
+}
+
+static inline const char* polyp_poll_edit_text(void) {
+    if (polyp_edit_last < 0) {
+        return "";
+    }
+    return polyp_edit_text[polyp_edit_last];
+}
+
 #endif

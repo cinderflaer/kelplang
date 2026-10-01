@@ -44,7 +44,11 @@ the first slice of MK9-S1-M1 is in the tree.
   borrows released with the call, so a view callback can read a borrowed `state`. An *exclusive*
   capture (the `state.count += 1` shape) and a callback that outlives the call (the native
   `extern` shape, gap 4) still need a `move` closure or a shared cell, as the Polyp v0 note below
-  describes.
+  describes. **Polyp v1 landed on that shape:** `examples/polyp/lib.kp` has a `Children` builder
+  with block-taking `column`/`row`, a sized/bold `Text`, `Spacer` and a text `Entry` whose
+  `fun(String).R: M` constructor is a plain function value, with ordinal focus retention for the
+  entry; the v0 library is frozen in `examples/polyp-v0/` and both smoke tests pass on both
+  backends.
 - **Event loop.** `g_application_run` blocks and calls back on the main thread. The callback
   thunk must therefore run on that thread, and the closure must stay alive until GTK's
   destroy-notify fires.

@@ -1,32 +1,46 @@
-// A counter: the smallest program that is actually a Polyp program. State is a
-// `datac` with one field, `Msg` is an `enum`, `view` is a function of the state
-// and `update` is a `when` over every variant.
+// A counter in the v1 builder syntax: a `polyp.column { k -> ... }` block is
+// handed a `Children` value, and its captures borrow the view's state, so
+// `k.text(...)` reads `s` without a copy and without a callback owning it.
 //
-// `src/deps/polyp/` is a link to examples/polyp/ in this repository; a real
-// consumer copies the library there. See examples/polyp/README.md.
+// The entry's message is a plain function value, `changed`, not a closure: it
+// takes the entry's new text and builds the `Msg`, and the loop (which owns the
+// state) calls it. `src/deps/polyp/` is a link to examples/polyp/ in this
+// repository; a real consumer copies the library there. See
+// examples/polyp/README.md.
 impl "deps/polyp/lib" caps(ui = ["*"])
 impl "std/env"
 impl "std/fmt"
 impl "std/str"
 
-datac Counter(var count: i32)
+datac Counter(var count: i32, var draft: String)
 
 enum Msg {
     Inc
     Dec
     Reset
+    Changed(val text: String)
 }
 
+// The constructor the entry's `on_change` is: a top-level `fun`, so nothing is
+// captured and the type is exactly `fun(String).R: Msg`. `fun(String)` hands
+// the text over as a borrow, so the constructor copies it into the `Msg`.
+fun changed(text: String).R: Msg = Msg.Changed(text = String.from_str(text.as_str()))
+
 // The buttons are visited in this order, so their ids are 0 (Inc), 1 (Dec) and
-// 2 (Reset). The smoke run below leans on that.
-fun view(state: Counter).R: polyp.Node<Msg> {
-    var kids: List<polyp.Node<Msg>> = List.empty()
-    val shown = fmt.int(state.count.to_i64())
-    kids.push(polyp.text(str.concat("count: ", shown.as_str())))
-    kids.push(polyp.button("+1", Msg.Inc))
-    kids.push(polyp.button("-1", Msg.Dec))
-    kids.push(polyp.button("reset", Msg.Reset))
-    return polyp.column(kids)
+// 2 (Reset). The smoke run below leans on that; the entry has its own id space
+// and does not consume a button id.
+fun view(s: Counter).R: polyp.Node<Msg> {
+    return polyp.column { k ->
+        k.text_styled("a counter", 0, true)
+        val shown_count = fmt.int(s.count.to_i64())
+        val shown = str.concat("count: ", shown_count.as_str())
+        k.text(shown.as_str())
+        k.spacer(6)
+        k.button("+1", Msg.Inc)
+        k.button("-1", Msg.Dec)
+        k.button("reset", Msg.Reset)
+        k.entry(s.draft.as_str(), changed)
+    }
 }
 
 fun update(state: mut Counter, msg: Msg) {
@@ -40,6 +54,9 @@ fun update(state: mut Counter, msg: Msg) {
         Reset -> {
             state.count = 0
         }
+        Changed(text) -> {
+            state.draft = String.from_str(text.as_str())
+        }
     }
 }
 
@@ -48,14 +65,17 @@ fun smoke_enabled().R: bool {
     return str.eq(value.as_str(), "1")
 }
 
-// With POLYP_SMOKE=1 the program drives itself: +1, +1, -1, then quit, so the
-// final count is 1 and the only thing on stdout is that count. A display is
-// still needed; examples/polyp-counter/smoke.sh supplies a headless one.
+// With POLYP_SMOKE=1 the program drives itself: +1, +1, -1, then it sets the
+// entry's text (which fires the entry's real `changed` signal), then quits. The
+// final count is 1, the draft is what was set, and exactly one entry widget was
+// ever built, which is what proves the rebuild reused it. A display is still
+// needed; examples/polyp-counter/smoke.sh supplies a headless one.
 fun arm_smoke() {
     polyp.schedule_post(delay_ms = 100, id = 0)
     polyp.schedule_post(delay_ms = 150, id = 0)
     polyp.schedule_post(delay_ms = 200, id = 1)
-    polyp.schedule_quit(delay_ms = 250)
+    polyp.schedule_set_entry(delay_ms = 300, index = 0, new_text = "typed")
+    polyp.schedule_quit(delay_ms = 400)
 }
 
 fun main() {
@@ -66,9 +86,11 @@ fun main() {
         title = "polyp counter",
         width = 320,
         height = 200,
-        init = Counter(count = 0),
+        init = Counter(count = 0, draft = String.from_str("")),
         view = view,
         update = update,
     )
     print(final.count)
+    print(final.draft)
+    print(polyp.entries_built())
 }
