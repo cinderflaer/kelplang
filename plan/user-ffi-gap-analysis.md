@@ -202,3 +202,14 @@ day gap 1's handle has such a method, and the same action is duplicated at every
 exit of its block. What it does not give a binding is a *drop*: a `defer` is
 written where the resource is taken, and a panic skips it, so the leak a native
 handle has when a frame panics is unchanged (`plan/defer.md`).
+
+## What kernel gap 4 (the freestanding runtime essentials) changed for this list
+
+Nothing is closed, and one freestanding obstacle is gone. A binding whose
+signature or wrapping code makes LLVM emit an aggregate `memcpy`/`memmove`/
+`memset`/`memcmp` call no longer leaves an undefined symbol for `ld.lld` to
+report: the compiler defines all five weakly and as loops in every freestanding
+object, and a kernel that wants its own implementation only has to put a strong
+definition in the image (`plan/freestanding.md`). The binding mechanism itself
+is unchanged: a freestanding `extern fun` still has no trampoline, and the
+symbol is still the linker's or the script's to resolve.

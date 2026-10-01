@@ -1,0 +1,20 @@
+name = "kernel0_bss"
+
+# Kernel stage 6, "kernel 0": a bare-metal riscv64 image QEMU's `virt` machine
+# boots, which writes a line to the NS16550 UART and halts. `mode`, `triple`,
+# `entry` and `linker_script` are stage 4's `[target]` section
+# (`plan/freestanding.md`); `panic` routes the compiler's own overflow and
+# bounds checks to `kp_panic` in the entry module instead of the generated
+# infinite loop, so a fault prints something before it wedges.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+# The audit list (stage 1, `plan/unsafe-and-pointers.md`): `uart` is the module
+# that talks to the device register, and `main` is the module whose inline asm
+# takes the marker's address.
+[unsafe]
+modules = ["main", "uart"]

@@ -3,8 +3,10 @@
 *The integration stage of `plan/kernel-path.md`'s "kernel 0": the pieces stages 1 to 5 added,
 wired into an image QEMU's riscv64 `virt` machine actually starts. This file says what was
 built, what could not be, and in what order the gaps matter. Stage 7 closed gaps 1 and 3
-(a libc-free `str` surface and a panic handler that can print its message), and kernel
-gap 2 (the function-address form) is closed by `Ptr.from_fn` and the `align(N)` clause.*
+(a libc-free `str` surface and a panic handler that can print its message), kernel
+gap 2 (the function-address form) is closed by `Ptr.from_fn` and the `align(N)` clause, and
+kernel gap 4's `.bss`-clear half is closed by the compiler-emitted clear loop and the weak
+`mem*` fallbacks.*
 
 ## What was built
 
@@ -29,6 +31,11 @@ gap 2 (the function-address form) is closed by `Ptr.from_fn` and the `align(N)` 
   driver whose `kmain` reads one element past an array's end; its `run.sh` asserts the
   *shape* of the handler's line (starts with `panic: `, contains `index out of bounds`)
   rather than a whole line, because the text is the compiler's.
+- **`examples/kernel0-bss/`** (kernel gap 4): proves the entry's clear loop
+  ran by loading a 64-byte marker into a `PROGBITS` `.bss.dirty` section the
+  script places inside `[__bss_start, __bss_end)` and printing `bss clear` only
+  when every byte of it reads zero. Its `run.sh` is kernel 0's with the
+  expected line pinned.
 - **`kelpc/tests/compile_and_run.rs`**: the same two boots as acceptance tests
   (`kernel0_boots_and_prints_its_greeting_over_the_uart`,
   `kernel0_handles_a_trap_and_continues_after_it`), skipped unless `ld.lld` and
@@ -37,6 +44,10 @@ gap 2 (the function-address form) is closed by `Ptr.from_fn` and the `align(N)` 
   example, `freestanding_str_builds_the_five_operations_with_no_undefined_symbols` and
   `a_std_str_function_outside_the_freestanding_five_is_refused` for the surface, and the
   hosted `the_hosted_str_core_operations_are_unchanged` (which runs on both backends).
+  Kernel gap 4 added `kernel0_bss_clears_an_image_loaded_marker_before_the_entry_runs`
+  and the four freestanding runtime tests (`freestanding_memcpy`'s zero undefined
+  symbols, the weak `mem*` bodies, the `_start` clear range, and the project that
+  defines its own `memcpy`).
 
 Kernel 0 needed no compiler change: stages 1 to 5 already carry every construct
 the original two examples use. Stage 7 (the gaps below) did change the compiler,
@@ -84,11 +95,17 @@ and those changes are described with the gaps.
    and `str.byte` index checks, the narrowing conversions' `value out of range`,
    and the `panic(msg)` builtin's own text. Integer overflow is not one of them:
    the language wraps, so there is no overflow check to message.
-4. **The `.bss` is not cleared and interrupts are not set up.** `_start` loads `sp` and calls
-   the entry, nothing else (stage 4's contract). `kmain` does not use `.bss`, so kernel 0
-   boots, but a kernel with statics has to zero it and set up `mtvec` before any `wfi`-with
-   `mstatus.MIE`. The plan's stage 10 (panic semantics with no OS) and stage 11 (MMIO
-   capabilities) are where this becomes a checked story rather than a comment.
+4. **~~The `.bss` is not cleared.~~ Closed by kernel gap 4; interrupts are
+   still not set up.** `_start` now zeroes `[__bss_start, __bss_end)` a word at
+   a time after it loads `sp` and before it calls the entry, with both bounds
+   declared weak so a script that omits them still links
+   (`plan/freestanding.md`). The compiler also defines the five `mem*` routines
+   LLVM's own aggregate copies call, weakly and as loops, so a kernel with
+   `static` data or a big aggregate copy links with no libc. What remains of
+   this gap is the interrupt half: `kernel0-trap` installs `mtvec` itself, and
+   nothing enables `mstatus.MIE` or models the privilege transition. The plan's
+   stage 10 (panic semantics with no OS) and stage 11 (MMIO capabilities) are
+   where that becomes a checked story rather than a comment.
 5. **No C-oracle coverage.** Freestanding is LLVM-only by design (stage 4), so the C backend
    refuses these projects and the usual "both backends, same behaviour" rule does not apply
    to them. The rule still holds everywhere else.
@@ -116,6 +133,7 @@ and those changes are described with the gaps.
 
 `nix-shell ../../overnight/dev-kernel.nix --run 'examples/kernel0/run.sh'` prints
 `hello from kelp`; the same for `examples/kernel0-trap/run.sh` prints `trap: ecall` then
-`done`, and for `examples/kernel0-panic/run.sh` prints
-`panic: Array.get: index out of bounds`. `cargo test --test compile_and_run kernel0` runs both through QEMU (0.29 s), and the
+`done`, for `examples/kernel0-panic/run.sh` prints
+`panic: Array.get: index out of bounds`, and for `examples/kernel0-bss/run.sh` prints
+`bss clear` (kernel gap 4). `cargo test --test compile_and_run kernel0` runs all four through QEMU (0.29 s), and the
 full suite is run as the task requires.

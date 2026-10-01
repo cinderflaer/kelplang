@@ -35,9 +35,16 @@ SECTIONS
         *(.data .data.*)
     }
 
+    /* `_start` zeroes this range before it calls the entry, so the bounds are
+       exported for the generated clear loop (kernel gap 4). They are declared
+       weak in that loop's assembly, so a script without them still links. */
     .bss : ALIGN(8) {
+        __bss_start = .;
+        *(.sbss .sbss.*)
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(8);
+        __bss_end = .;
     }
 
     . = ALIGN(16);

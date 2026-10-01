@@ -1,0 +1,19 @@
+// Kernel gap 4's weak-linkage fixture: the same 4 KiB aggregate copies as
+// `freestanding_memcpy`, with the project's own strong `memcpy` in
+// `user_memcpy.s` beside this project. The test assembles that file for the
+// same triple and relinks the object `kelpc` emits beside it, so the link has
+// to keep the project's definition over the compiler's weak fallback. The entry
+// loops forever so nothing has to terminate.
+
+datac Big(val bytes: [u8; 4096])
+
+section(".text.boot") fun kmain() {
+    var page: Big = Big(bytes = [0; 4096])
+    var copy: Big = page
+    var arr: [u8; 4096] = [7; 4096]
+    var arr2: [u8; 4096] = arr
+    var acc: u64 = 1
+    while true {
+        acc = acc * 3 + copy.bytes.get(0).to_u64() + arr2.get(4095).to_u64()
+    }
+}

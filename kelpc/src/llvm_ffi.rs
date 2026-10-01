@@ -864,6 +864,16 @@ impl<'ctx> Value<'ctx> {
         unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMAppendingLinkage) };
     }
 
+    /// Give a global (or a function) weak linkage (`LLVMSetLinkage` with
+    /// `LLVMWeakAnyLinkage`), which is C's `__attribute__((weak))`: this object
+    /// defines the symbol, but the linker prefers any strong definition from
+    /// another object, so a program that supplies its own wins. The
+    /// freestanding `mem*` fallbacks are defined this way (kernel gap 4).
+    pub fn set_weak_linkage(&self) {
+        // SAFETY: as above; the argument is a global handle's own ref.
+        unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMWeakAnyLinkage) };
+    }
+
     /// Place a global (or a function) in section `section` (`LLVMSetSection`),
     /// which is how a `section("...")` clause reaches the object writer
     /// (kernel stage 4). An empty name would be the target's default, so the
@@ -1023,6 +1033,16 @@ impl<'ctx> Function<'ctx> {
         self.mark_noinline();
     }
 
+    /// Attach `nobuiltin` to this function (kernel gap 4): LLVM must not treat a
+    /// call to it as a library builtin, and, the half that matters here, its
+    /// loop-idiom pass must not rewrite a loop *inside* it into a call to the
+    /// library function of the same name. Without this, the body of the
+    /// freestanding `memcpy` fallback is recognized as a `memcpy` and turned
+    /// into a call to itself.
+    pub fn mark_nobuiltin(&self) {
+        self.add_enum_attribute(LLVMAttributeFunctionIndex, "nobuiltin");
+    }
+
     /// Attach one enum attribute named `name` at `index`, looking the kind up
     /// by name because `llvm-sys` exports no constant for it (the C API's kind
     /// ids are deliberately unstable).
@@ -1171,10 +1191,10 @@ impl<'ctx> Module<'ctx> {
     /// Declare a function named `name` of type `ty` in this module
     /// (`LLVMAddFunction`).
     ///
-    /// A name that already exists returns that existing function rather than a
-    /// second declaration, which makes this safe to call again for a runtime
-    /// symbol the module already mentions. The result is a declaration until a
-    /// basic block with a terminator is appended to it.
+    /// A name the module already holds is *not* reused: LLVM renames the new
+    /// function (`memcpy` becomes `memcpy.1`), so a caller that wants the
+    /// existing declaration asks [`Module::get_function`] first. The result is
+    /// a declaration until a basic block with a terminator is appended to it.
     pub fn add_function(&self, name: &str, ty: FnType<'ctx>) -> Function<'ctx> {
         let name = cstring(name);
         Function {

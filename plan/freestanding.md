@@ -89,23 +89,96 @@ expressible in the language yet:
 
 ```asm
     .section .text.boot, "ax", @progbits
+    .weak __bss_start
+    .weak __bss_end
     .globl _start
+    .type _start, @function
 _start:
     la sp, __stack_top
+    la t0, __bss_start
+    la t1, __bss_end
+.Lkelp_bss_loop:
+    bgeu t0, t1, .Lkelp_bss_done
+    sd zero, 0(t0)
+    addi t0, t0, 8
+    j .Lkelp_bss_loop
+.Lkelp_bss_done:
     call kelp_kmain
 1:
     wfi
     j 1b
+    .size _start, . - _start
 ```
 
-It clears nothing else, and if the entry function returns it loops on `wfi`.
-`kelp_kmain` is the entry `fun`'s emitted symbol. `.text.boot` is where a
-linker script should place the stub first. Naming it first is not enough on its
-own: the script has to name the other sections too, because lld places an
-unnamed orphan (`.eh_frame` is the one a program with unwinding tables emits)
-before `.text`, and QEMU's `-bios none` starts the image at 0x80000000 rather
-than the ELF entry, so `_start` has to hold that address
-(`examples/kernel0/kernel.ld`, `plan/kernel0-status.md`).
+`sp` is loaded first, and nothing between it and the entry call touches memory
+except the clear loop itself, so a kernel's first instruction already has a
+stack and already has zeroed statics; no register is read before it is written
+and no stack frame exists yet.
+
+The two bounds are `.weak` (kernel gap 4): a linker script that does not assign
+them still links, both resolve to 0, and the loop runs zero times, which is
+exactly the pre-gap-4 behaviour. A script that does assign them should put both
+around the same word-aligned range, with `.bss.dirty`, `.sbss`, `.bss` and
+`COMMON` inside it, e.g.
+
+```ld
+    .bss : ALIGN(8) {
+        __bss_start = .;
+        *(.sbss .sbss.*)
+        *(.bss .bss.*)
+        *(COMMON)
+        . = ALIGN(8);
+        __bss_end = .;
+    }
+```
+
+`examples/kernel0*` and the `freestanding_*` test projects carry exactly that.
+The `.sbss` half is placed too, because a small-data build puts its small
+statics there and a clear that misses them would be a kernel that boots with
+garbage in a `static` it never wrote.
+
+It loops on `wfi` if the entry function returns. `kelp_kmain` is the entry
+`fun`'s emitted symbol. `.text.boot` is where a linker script should place the
+stub first. Naming it first is not enough on its own: the script has to name
+the other sections too, because lld places an unnamed orphan (`.eh_frame` is
+the one a program with unwinding tables emits) before `.text`, and QEMU's
+`-bios none` starts the image at 0x80000000 rather than the ELF entry, so
+`_start` has to hold that address (`examples/kernel0/kernel.ld`,
+`plan/kernel0-status.md`).
+
+## The compiler's `mem*` fallbacks
+
+A bare-metal image has no libc, but LLVM's own lowering of a large aggregate
+copy, a whole-array fill or a generated clone calls `memcpy`, `memmove`,
+`memset`, `memcmp` or `bcmp`. The compiler therefore defines all five in every
+freestanding object, as byte loops generated as IR
+(`codegen_llvm::emit_freestanding_mem_bodies`):
+
+- `memcpy` and `memset` copy forward, `memmove` picks the direction from the two
+  addresses, and `memcmp`/`bcmp` return the first differing byte's difference
+  (so `bcmp`'s nonzero answer is also `memcmp`'s sign).
+- Each is **weak** (`LLVMWeakAnyLinkage`), the same as C's
+  `__attribute__((weak))`: an object the image links beside this one that
+  defines any of them strongly wins, and a project's own `memcpy` is simply a
+  strong definition in that object (`tests/projects/freestanding_memcpy_user`).
+  A program cannot define one in Kelp, because a Kelp `fun`'s symbol is mangled.
+- Each is marked `nobuiltin`, so LLVM's loop-idiom pass cannot rewrite the loop
+  *inside* it into a call to the library function of the same name. The
+  definition's own name is the other half of the same guard: LLVM refuses to
+  turn a loop into a call to the function the loop is already in, so a body
+  named `memcpy` survives while one LLVM renamed to `memcpy.1` would not.
+
+The declarations are `declare_libc`'s own (the ones the compiler's aggregate
+copies already call), so the widths are whatever that table uses: `size_t` is
+`i64` on every triple today. A freestanding image that does not use any of them
+still carries the five small loops; a project that links an object with a
+strong definition of one of the names takes over every call LLVM emitted for
+that name, and the other four stay weak.
+
+`tests/projects/freestanding_memcpy` is the acceptance artifact: a 4 KiB
+`datac` and a `[u8; 4096]` array copied whole, linked with zero undefined
+symbols (`llvm-nm -u`), and `llvm-objdump -d` shows no `jal`/`call` inside any
+of the five bodies.
 
 `section("<name>")` is the clause that lets a script place other things: an
 optional leading clause on a top-level `const` or `fun`, in either order round
@@ -203,6 +276,18 @@ failing, so the ordinary suite stays green.
 There is no kernel yet: booting the image under QEMU with serial output is the
 milestone the next stages reach, not this one.
 
+Kernel gap 4's own acceptance is four more tests in
+`kelpc/tests/compile_and_run.rs`, all skipped without `ld.lld` (and `llvm-mc`
+for the weak-linkage one): `freestanding_memcpy` links a 4 KiB `datac` and a
+`[u8; 4096]` array with zero undefined symbols, `llvm-nm` shows the five `mem*`
+symbols weak and `llvm-objdump -d` shows no self-call in any body,
+`examples/kernel0-bss` boots with `bss clear` only after the entry stub has
+erased a 64-byte pattern the image itself loaded into `.bss`, and
+`freestanding_memcpy_user` links a project's own strong `memcpy` in place of the
+compiler's weak one. The `_start` clear loop is also checked by decoding its two
+`la` sequences and comparing them to the `llvm-nm` addresses of `__bss_start`
+and `__bss_end`.
+
 ## What this stage does not do
 
 - No QEMU run. The artifact is proven to be a well-formed image, not a boot.
@@ -216,7 +301,9 @@ milestone the next stages reach, not this one.
   their operations reach `strlen`/`memcpy`/`realloc` in the hosted runtime; only
   `Box`, `List` and `Map` are rerouted.
 - A large aggregate copy can make LLVM emit a `memcpy` or `memset` call, which
-  it assumes libc provides. Nothing here maps those to an in-language loop, so
-  `ld.lld` reports the undefined symbol and the project has to supply it. The
-  acceptance program is a loop and reaches neither.
+  it assumes libc provides. ~~Nothing here maps those to an in-language loop, so
+  `ld.lld` reports the undefined symbol and the project has to supply it.~~
+  Closed by kernel gap 4: all five `mem*` routines are defined in every
+  freestanding object as weak loops (above), so an aggregate copy of any size
+  links.
 - `section` on a `datac`/`enum`, and per-field placement, are not planned.
