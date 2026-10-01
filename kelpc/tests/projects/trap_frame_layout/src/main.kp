@@ -1,0 +1,52 @@
+// Kernel stage 11 (`plan/syscall-abi.md`): the trap frame's layout is a
+// contract between the naked trap entry's hardcoded offsets and the `datac` the
+// dispatcher reads. The compiler checks neither end against the other, so this
+// project prints the numbers and the test pins them: `size_of` 264, `x1` at 0,
+// `x2` at 8, `x31` at 240, `sepc` at 248 and `sstatus` at 256.
+//
+// The declaration is a copy of `examples/kernel0-user/src/trap.kp`'s, which is
+// why the numbers can drift: the copy is the fixture's job.
+repr(c) datac TrapFrame(
+    val x1: u64,
+    val x2: u64,
+    val x3: u64,
+    val x4: u64,
+    val x5: u64,
+    val x6: u64,
+    val x7: u64,
+    val x8: u64,
+    val x9: u64,
+    val x10: u64,
+    val x11: u64,
+    val x12: u64,
+    val x13: u64,
+    val x14: u64,
+    val x15: u64,
+    val x16: u64,
+    val x17: u64,
+    val x18: u64,
+    val x19: u64,
+    val x20: u64,
+    val x21: u64,
+    val x22: u64,
+    val x23: u64,
+    val x24: u64,
+    val x25: u64,
+    val x26: u64,
+    val x27: u64,
+    val x28: u64,
+    val x29: u64,
+    val x30: u64,
+    val x31: u64,
+    val sepc: u64,
+    val sstatus: u64,
+)
+
+fun main() {
+    print(size_of<TrapFrame>())
+    print(offset_of<TrapFrame>("x1"))
+    print(offset_of<TrapFrame>("x2"))
+    print(offset_of<TrapFrame>("x31"))
+    print(offset_of<TrapFrame>("sepc"))
+    print(offset_of<TrapFrame>("sstatus"))
+}

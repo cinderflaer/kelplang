@@ -10809,6 +10809,75 @@ fn kernel0_vm_images_link_with_no_undefined_symbols() {
     assert_no_undefined_symbols("kernel0_vm_fault", &fixture("../examples/kernel0-vm-fault"));
 }
 
+/// Kernel stage 11's frame half: the trap frame is 264 bytes with `x1` at 0,
+/// `x2` at 8, `x31` at 240, `sepc` at 248 and `sstatus` at 256. Those numbers
+/// are what `trap_entry`'s asm hardcodes, so the project prints them and the
+/// test pins them; the boot checks the same four against the same constants and
+/// prints `user: frame ok` only when they agree. `trap_frame_layout` is a copy
+/// of the example's declaration, and the layout queries fold in the front end,
+/// so this runs on both backends with the same output.
+#[test]
+fn the_trap_frame_offsets_are_what_the_trap_entry_hardcodes() {
+    assert_project_runs(
+        "trap_frame_layout",
+        &project("trap_frame_layout"),
+        "264\n0\n8\n240\n248\n256\n",
+    );
+}
+
+/// Kernel stage 11's acceptance test: `examples/kernel0-user` drops to U-mode
+/// and takes `ecall`s. The first program writes `hello from user`, earns
+/// `-14` from a write whose pointer names a mapped kernel page, turns the errno
+/// into a hex digit and writes `bad write -> E`, then exits with 7; the second
+/// loads from an unmapped address, and the kernel prints the cause and survives
+/// it. Every line is QEMU's own stdout.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_user_runs_a_syscall_abi_and_kills_a_faulting_program() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-user boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_user",
+        &fixture("../examples/kernel0-user"),
+        &[
+            "user: s-mode",
+            "user: paging on",
+            "user: frame ok",
+            "hello from user",
+            "user: efault ok",
+            "bad write -> E",
+            "user exited 7",
+            "user killed: scause 13",
+            "kernel survived",
+        ],
+    );
+}
+
+/// The user-mode image links with no undefined symbol: the trap entry, the
+/// dispatcher and the syscall copy reach only the image's own code and the
+/// frame region's linker symbols, and the two user programs live in their own
+/// sections rather than in a libc the image does not have.
+///
+/// It needs `ld.lld` and the llvm tools from `dev-kernel.nix`.
+#[test]
+fn kernel0_user_image_links_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-user symbol test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    assert_no_undefined_symbols("kernel0_user", &fixture("../examples/kernel0-user"));
+}
+
 /// A `pub static`/`pub static mut` is reached across modules exactly as a
 /// `pub const` is (`state.COUNT`, `state.LIMIT`), and the mutable one is still
 /// `unsafe` on the importing side.
