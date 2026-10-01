@@ -1,0 +1,12 @@
+// A deferred action runs while the block is being left, so it cannot leave the
+// block itself: a `return` inside one is refused rather than duplicated at
+// every exit.
+fun f() {
+    defer {
+        return
+    }
+    print("x")
+}
+fun main() {
+    f()
+}

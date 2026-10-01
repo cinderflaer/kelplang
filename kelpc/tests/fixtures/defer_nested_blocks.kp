@@ -1,0 +1,10 @@
+// A nested block's defers run when that block is left, before the enclosing
+// block's: each block owns its own deferred actions.
+fun main() {
+    defer print("outer-end")
+    {
+        defer print("inner-end")
+        print("inner-body")
+    }
+    print("outer-body")
+}

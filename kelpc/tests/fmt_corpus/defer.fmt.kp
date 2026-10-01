@@ -1,0 +1,10 @@
+// pins default-one-space-between-atoms
+// `defer` is a statement keyword: its action keeps one space after it, and a
+// deferred block is laid out like any other.
+fun main() {
+    defer print("a")
+    defer {
+        print("b")
+        print("c")
+    }
+}

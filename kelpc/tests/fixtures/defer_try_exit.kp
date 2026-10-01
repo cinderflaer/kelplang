@@ -1,0 +1,16 @@
+// A `defer` and the `?` operator cannot share a block: `?` leaves the
+// enclosing function, which would skip the deferred action, and the lowering
+// has no exit for it. The refusal names the operator.
+impl "std/option"
+
+fun g().R: option.Option<i32> = option.Option.None
+
+fun f().R: i32 {
+    defer print("out")
+    val x = option.unwrap(o = g())?
+    return x
+}
+
+fun main() {
+    print(f())
+}

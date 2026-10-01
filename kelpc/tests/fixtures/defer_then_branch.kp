@@ -1,0 +1,14 @@
+// A `defer` in a nested `if` block belongs to that block, so it runs when the
+// branch is left; the function's own defer waits for the function body.
+fun f(c: bool).R: i32 {
+    defer print("out")
+    if c {
+        defer print("then")
+        return 1
+    }
+    return 2
+}
+fun main() {
+    print(f(c = true))
+    print(f(c = false))
+}

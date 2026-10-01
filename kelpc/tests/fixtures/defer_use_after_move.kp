@@ -1,0 +1,15 @@
+// The deferred action runs with the locals that were in scope at the `defer`
+// statement still alive: `take` moves `s` before the block exits, so the
+// action's read of it is the ordinary use-of-moved-value error, reported at
+// the `defer`.
+impl "std/str"
+
+fun take(s: move String) {
+    print(s)
+}
+
+fun main() {
+    val s = String.from_str(s = "x")
+    defer print(s)
+    take(s)
+}

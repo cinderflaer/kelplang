@@ -1,0 +1,7 @@
+// A deferred action reads the local at the block's exit, not at the `defer`
+// statement, so it sees the value the statements after it left behind.
+fun main() {
+    var x = 1
+    defer print(x)
+    x = 42
+}

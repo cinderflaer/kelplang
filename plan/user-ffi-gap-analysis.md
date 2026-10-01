@@ -169,3 +169,12 @@ a spelling for. The one thing it changes for a binding is that a native
 instruction a library's header wraps in a macro (a fence, a `pause`, a system
 call register setup) is now expressible without a C helper, in the same module
 that already had to be on the audit list to use `Ptr<T>`.
+
+## What `defer` (MK9-S6-M1) changed for this list
+
+Nothing is closed. A `defer` action is an ordinary expression, so a deferred
+release of a bound native resource (`defer widget.destroy()`) is expressible the
+day gap 1's handle has such a method, and the same action is duplicated at every
+exit of its block. What it does not give a binding is a *drop*: a `defer` is
+written where the resource is taken, and a panic skips it, so the leak a native
+handle has when a frame panics is unchanged (`plan/defer.md`).

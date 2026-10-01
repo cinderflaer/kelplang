@@ -301,3 +301,49 @@ one holds, or anything about the linker script's placement of `.data`/`.bss`. Th
 `Atomic<T>` operations remain the only safe shared mutable, and this stage does
 not extend the (still unpublished) memory model to a `static` and a `Ptr` over
 the same bytes.
+
+## Stage 8: `defer` (MK9-S6-M1, roadmap B-8)
+
+**New ways to reach UB or unsequenced behaviour.** `defer` adds no new operation:
+its action is an ordinary expression, duplicated at each ordinary exit of the
+block that holds it, so every check stages 1-7 apply is applied to every copy.
+What it adds is a *second execution site* for code the author wrote once, and
+two ways to be surprised by it:
+
+- **A panic does not run a deferred action.** A deferred lock release is skipped
+  when a bounds check, an overflow check or an explicit `panic` fires: the lock
+  stays held, the frame's owners are not freed, and the process ends. The
+  compiler's panic path is a call, not an unwind, so the cleanup the `defer`
+  promised never happens. This is a leak and a deadlock, not UB, and it is the
+  one behaviour a reader of `defer` most wants stated.
+- **The action runs once per dynamic exit, not once per program.** A `defer` in
+  a loop body runs on every iteration's exit, and a `defer` in a block that is
+  entered again runs again. A deferred action with a side effect is therefore
+  not idempotent by construction, and nothing checks that running it twice (in a
+  loop) means the same thing as running it once.
+- **A deferred action that itself panics or never returns replaces the exit it
+  is running on.** The block was already leaving; the action can loop forever or
+  take the process, so a cleanup path can hang or abort. The compiler does not
+  check termination, and it refuses only the exits an action may not *write*
+  (`return`, and `break`/`continue` the day they exist) plus a `?` in the same
+  block.
+- `defer` inside `unsafe` inherits every stage-1 rule: a deferred volatile store
+  to an MMIO address is the same unchecked write at a second site, and a
+  deferred `Ptr.free` is a double free if another path already freed the block.
+
+**What the compiler does check.** That each duplicated copy is ordinary code, so
+inference, the move checker and the borrow checker see it: reading a local moved
+out before the exit is a use of a moved value (reported at the `defer`), and a
+borrowed tail keeps its elided lifetime. That a deferred action names only the
+locals already in scope where the `defer` is written, so it cannot resolve a
+binding the `defer` never saw. That the block the `defer` is written in contains
+no `?`, because `?` leaves the function and the lowering has no exit for it. That
+a deferred action contains no `return`. Both backends run the same lowered code.
+
+**What it does not check.** Whether a deferred release matches a matching
+acquire, whether the action's prerequisites still hold at the exit, whether it
+terminates, whether it is idempotent, or anything on the panic path. The lexical
+`?` refusal is per block, so a `?` in a *sibling* block still skips nothing that
+this block's `defer` owes; and the scope check is a lexical rule about names, not
+a lifetime, so a `Ptr` a deferred action reads is exactly as unchecked as it was
+at the statement.
