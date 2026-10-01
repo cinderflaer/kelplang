@@ -1,0 +1,15 @@
+// `String` is refused with an allocator configured, and so is `List<String>`.
+static mut ARENA: [u8; 128] = [0; 128]
+
+fun alloc(_size: usize, _align: usize).R: Ptr<u8> {
+    val arena: Ptr<[u8; 128]> = unsafe { Ptr.from_mut(ARENA) }
+    val out: Ptr<u8> = arena.cast<u8>()
+    return out
+}
+
+fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {}
+
+fun kmain() {
+    var xs: List<String> = List.empty()
+    xs.push(String.from_str("no"))
+}

@@ -1,0 +1,5 @@
+// No allocator is configured, so `List` is refused by name.
+fun kmain() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+}

@@ -1,0 +1,20 @@
+name = "kernel0-heap"
+
+# Kernel stage 7's heap half: the same bare-metal riscv64 image as kernel 0, with
+# a global allocator over a `static mut` arena. `[target] alloc`/`dealloc` name
+# the entry module's own bump allocator, so `List<i32>` allocates and frees
+# through them instead of libc's `malloc`/`free`. No `realloc` is named, so
+# growth is alloc + copy + dealloc, which is the fallback path this boot
+# exercises; `main` is on the audit list because the allocator writes a
+# `static mut` and reads a `Ptr<u8>`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main", "uart"]

@@ -1,0 +1,19 @@
+name = "freestandingalloc"
+
+# Kernel stage 7's build acceptance: a freestanding project that configures the
+# full allocator hook (`alloc`, `dealloc` and `realloc`) and instantiates
+# `Box`, `List` and `Map`. The test builds it and checks with `llvm-nm` that the
+# image references no libc symbol, which is what proves every allocation and
+# free went through these functions. `main` is on the audit list because the
+# allocator writes a `static mut` arena and uses `asm`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+alloc = "alloc"
+dealloc = "dealloc"
+realloc = "realloc"
+
+[unsafe]
+modules = ["main"]

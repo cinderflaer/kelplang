@@ -1,0 +1,19 @@
+// Kernel stage 7's hosted regression: with no `[target]` allocator configured,
+// a `List<i32>` still allocates and frees through libc. The test runs this and
+// checks that the LLVM IR calls `@malloc`, which is what proves the project
+// allocator hook did not redirect a hosted build.
+fun main() {
+    var xs: List<i32> = List.empty()
+    var i: i32 = 1
+    while i <= 3 {
+        xs.push(i)
+        i = i + 1
+    }
+    var sum: i32 = 0
+    var j: usize = 0
+    while j < xs.len() {
+        sum = sum + xs.get(j)
+        j = j + 1
+    }
+    print(sum)
+}

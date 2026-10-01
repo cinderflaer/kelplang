@@ -235,6 +235,13 @@ pub struct TargetDecl {
     entry: Option<String>,
     linker_script: Option<String>,
     panic: Option<String>,
+    /// The global allocator (kernel stage 7, MK9-S5-M1): the bare names of the
+    /// entry module's `alloc`, `dealloc` and optional `realloc` functions. All
+    /// three are `None` when the section configures no allocator, which is the
+    /// behaviour every project before this stage had.
+    alloc: Option<String>,
+    dealloc: Option<String>,
+    realloc: Option<String>,
 }
 
 impl TargetDecl {
@@ -247,6 +254,9 @@ impl TargetDecl {
             entry: None,
             linker_script: None,
             panic: None,
+            alloc: None,
+            dealloc: None,
+            realloc: None,
         }
     }
 
@@ -280,6 +290,23 @@ impl TargetDecl {
     /// section named one; the default handler is an infinite loop.
     pub fn panic(&self) -> Option<&str> {
         self.panic.as_deref()
+    }
+
+    /// The bare Kelp name of the entry module's `alloc` function, when the
+    /// section configures an allocator.
+    pub fn alloc(&self) -> Option<&str> {
+        self.alloc.as_deref()
+    }
+
+    /// The bare Kelp name of the entry module's `dealloc` function.
+    pub fn dealloc(&self) -> Option<&str> {
+        self.dealloc.as_deref()
+    }
+
+    /// The bare Kelp name of the entry module's `realloc` function, when the
+    /// section names one; without it, growth is alloc + copy + dealloc.
+    pub fn realloc(&self) -> Option<&str> {
+        self.realloc.as_deref()
     }
 }
 
@@ -1546,6 +1573,9 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                     ("entry", manifest.target.entry.as_ref()),
                     ("linker_script", manifest.target.linker_script.as_ref()),
                     ("panic", manifest.target.panic.as_ref()),
+                    ("alloc", manifest.target.alloc.as_ref()),
+                    ("dealloc", manifest.target.dealloc.as_ref()),
+                    ("realloc", manifest.target.realloc.as_ref()),
                 ] {
                     if value.is_some() {
                         return Err(Diagnostic::new(
@@ -1573,6 +1603,43 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                             "",
                         ));
                     }
+                }
+                // The allocator hook (kernel stage 7): `alloc` and `dealloc`
+                // are a pair; either alone leaves a container that can
+                // allocate but never free, so the section is refused rather
+                // than half-honoured. `realloc` needs the pair it accelerates.
+                match (
+                    manifest.target.alloc.is_some(),
+                    manifest.target.dealloc.is_some(),
+                ) {
+                    (true, false) => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME}'s [target] section names 'alloc' without 'dealloc': the allocator hook requires both, because a container that allocates must be able to free"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                    (false, true) => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME}'s [target] section names 'dealloc' without 'alloc': the allocator hook requires both, because a container that allocates must be able to free"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                    _ => {}
+                }
+                if manifest.target.realloc.is_some() && manifest.target.alloc.is_none() {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "{MANIFEST_NAME}'s [target] section names 'realloc' without 'alloc' and 'dealloc': the allocator hook requires the pair first"
+                        ),
+                        at,
+                        "",
+                    ));
                 }
             }
         }
@@ -1829,10 +1896,49 @@ fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
             }
             set_target_key(&mut manifest.target.panic, value, "panic", at)?;
         }
+        // The global allocator (kernel stage 7): `alloc` and `dealloc` name the
+        // two functions every container allocation and free calls instead of
+        // libc's, and `realloc` is the optional growth fast path.
+        "alloc" => {
+            if !is_bare_ident(value) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[target] alloc' must be a bare function name, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            set_target_key(&mut manifest.target.alloc, value, "alloc", at)?;
+        }
+        "dealloc" => {
+            if !is_bare_ident(value) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[target] dealloc' must be a bare function name, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            set_target_key(&mut manifest.target.dealloc, value, "dealloc", at)?;
+        }
+        "realloc" => {
+            if !is_bare_ident(value) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[target] realloc' must be a bare function name, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            set_target_key(&mut manifest.target.realloc, value, "realloc", at)?;
+        }
         other => {
             return Err(Diagnostic::new(
                 format!(
-                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script' or 'panic'"
+                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script', 'panic', 'alloc', 'dealloc' or 'realloc'"
                 ),
                 at,
                 "",
@@ -2902,6 +3008,40 @@ mod tests {
         assert_eq!(m.target.entry(), Some("kmain"));
         assert_eq!(m.target.linker_script(), Some("kernel.ld"));
         assert_eq!(m.target.panic(), Some("kp_panic"));
+    }
+
+    #[test]
+    fn a_freestanding_target_section_reads_the_allocator_keys() {
+        let text = "name = \"x\"\n[target]\n\
+                    mode = \"freestanding\"\n\
+                    triple = \"riscv64-unknown-none-elf\"\n\
+                    entry = \"kmain\"\n\
+                    linker_script = \"kernel.ld\"\n\
+                    alloc = \"kmalloc\"\n\
+                    dealloc = \"kfree\"\n\
+                    realloc = \"krealloc\"\n";
+        let m = manifest(text);
+        assert_eq!(m.target.alloc(), Some("kmalloc"));
+        assert_eq!(m.target.dealloc(), Some("kfree"));
+        assert_eq!(m.target.realloc(), Some("krealloc"));
+        // A section with no allocator keys configures no allocator.
+        assert!(manifest("name = \"x\"\n").target.alloc().is_none());
+    }
+
+    #[test]
+    fn a_half_allocator_pair_is_rejected() {
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\n\
+             triple = \"riscv64-unknown-none-elf\"\nentry = \"kmain\"\n\
+             linker_script = \"k.ld\"\nalloc = \"kmalloc\"\n",
+        );
+        assert!(err.message.contains("'alloc' without 'dealloc'"), "{}", err.message);
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\n\
+             triple = \"riscv64-unknown-none-elf\"\nentry = \"kmain\"\n\
+             linker_script = \"k.ld\"\nrealloc = \"krealloc\"\n",
+        );
+        assert!(err.message.contains("'realloc' without 'alloc'"), "{}", err.message);
     }
 
     #[test]

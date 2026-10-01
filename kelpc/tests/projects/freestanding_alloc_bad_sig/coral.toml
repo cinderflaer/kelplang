@@ -1,0 +1,11 @@
+name = "freestandingallocbadsig"
+
+# Kernel stage 7's rejection fixture: a named allocator whose signature is not
+# the one the generated calls assume, refused with the expected signature.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+alloc = "alloc"
+dealloc = "dealloc"

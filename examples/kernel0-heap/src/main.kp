@@ -1,0 +1,107 @@
+// Kernel stage 7's heap half: a bump allocator over a `static mut` arena, and a
+// `List<i32>` built on it. `coral.toml`'s `[target] alloc`/`dealloc` name the two
+// functions below, so every allocation and free the list makes calls them
+// instead of libc's `malloc`/`free` (there is no libc in this image). The bump
+// allocator never reclaims a block: `dealloc` only counts, which is what makes
+// the "balanced" line a proof that every allocation reached a matching free.
+impl "uart"
+
+static mut ARENA: [u8; 16384] = [0; 16384]
+static mut USED: usize = 0
+static mut ALLOCS: usize = 0
+static mut DEALLOCS: usize = 0
+
+const PREFIX: [u8; 9] = [104, 101, 97, 112, 32, 115, 117, 109, 32]
+const BALANCED: [u8; 9] = [98, 97, 108, 97, 110, 99, 101, 100, 10]
+const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
+
+// `align` is always a power of two (every type's alignment the compiler asks
+// for is), so the round-up is a divide and multiply rather than a bit mask: v1
+// has no bitwise operators.
+fun align_up(value: usize, align: usize).R: usize {
+    return ((value + align - 1) / align) * align
+}
+
+// The project's allocator. It returns a pointer into `ARENA`, aligned for the
+// caller, or the null pointer when the arena is full. `check_alloc` in the
+// compiler turns that null into a call to `kp_panic("out of memory")`, so a
+// failed allocation never dereferences null.
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    val out: Ptr<u8> = unsafe {
+        val start: usize = align_up(USED, align)
+        if start + size > 16384 {
+            Ptr.null()
+        } else {
+            USED = start + size
+            ALLOCS = ALLOCS + 1
+            val arena: Ptr<[u8; 16384]> = Ptr.from_mut(ARENA)
+            val base: Ptr<u8> = arena.cast<u8>()
+            base.byte_offset(start.to_isize())
+        }
+    }
+    return out
+}
+
+// The bump allocator frees nothing, so `dealloc` is a no-op beyond its count.
+// A null pointer is not an allocation (`free(NULL)` is a no-op too), so it is
+// not counted: the realloc fallback and a fresh map's index both release a null.
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            DEALLOCS = DEALLOCS + 1
+        }
+    }
+}
+
+// Build `List<i32>` of 1..=10, sum it, and let the list drop on return. The
+// growth path is the no-`realloc` one the manifest asks for: allocate a bigger
+// block, copy the old bytes, free the old block.
+fun sum_one_to_ten().R: i32 {
+    var xs: List<i32> = List.empty()
+    var i: i32 = 1
+    while i <= 10 {
+        xs.push(i)
+        i = i + 1
+    }
+    var sum: i32 = 0
+    var j: usize = 0
+    while j < xs.len() {
+        sum = sum + xs.get(j)
+        j = j + 1
+    }
+    return sum
+}
+
+fun print_heap_sum(sum: i32) {
+    val prefix: [u8; 9] = PREFIX
+    val prefix_ptr: Ptr<[u8; 9]> = Ptr.from_ref(&prefix)
+    uart.puts(prefix_ptr.cast<u8>(), prefix.len())
+    val value: usize = sum.to_usize()
+    uart.putc(48 + (value / 10).to_u8())
+    uart.putc(48 + (value % 10).to_u8())
+    uart.putc(10)
+}
+
+section(".text.boot") fun kmain() {
+    val sum: i32 = sum_one_to_ten()
+    print_heap_sum(sum)
+    unsafe {
+        if ALLOCS == DEALLOCS {
+            val line: [u8; 9] = BALANCED
+            val line_ptr: Ptr<[u8; 9]> = Ptr.from_ref(&line)
+            uart.puts(line_ptr.cast<u8>(), line.len())
+        }
+    }
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds and overflow check, and the
+// allocator's null return, calls this with the static message the check was
+// written with. It prints `panic` and loops, because a check that fired has no
+// meaningful continuation.
+fun kp_panic(_msg: str) {
+    val msg: [u8; 6] = PANIC_MSG
+    val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
+    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.halt()
+}

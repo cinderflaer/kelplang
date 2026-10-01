@@ -435,3 +435,49 @@ terminates, whether it is idempotent, or anything on the panic path. The lexical
 this block's `defer` owes; and the scope check is a lexical rule about names, not
 a lifetime, so a `Ptr` a deferred action reads is exactly as unchecked as it was
 at the statement.
+
+## Stage 9: the global allocator hook (MK9-S5-M1, roadmap B-7)
+
+**New ways to reach UB.** A project can now name its own `alloc`/`dealloc`
+(and optional `realloc`) in `[target]`, and `Box`/`List`/`Map` call them. Every
+allocation the containers make is now a promise the compiler takes on trust:
+
+- The compiler computes `size` and `align` from the element type and passes them
+  to the project's `alloc`, but it does not check that the pointer it gets back
+  is `align`-aligned, is large enough, is distinct from every live block, or is
+  writable. A misaligned block turns every aligned field access built on it into
+  UB; an overlapping block is an aliasing bug the containers cannot see; a
+  region that is too small is a buffer overrun.
+- `dealloc` gets `(ptr, size, align)` with the same numbers the type implies, and
+  the compiler does not check that the pointer came from `alloc`, that it is not
+  still live, or that it has not already been freed. A double free or a
+  use-after-free is the project's UB.
+- With no `realloc`, growth is the compiler's own alloc + copy + dealloc, so a
+  copy of `old` bytes runs against the old block: if that block is smaller than
+  the size the container recorded, the copy reads out of bounds, and if `alloc`
+  returns a block that overlaps the old one the copy is unordered.
+- A null return is *not* UB: the generated `check_alloc` calls the project's
+  panic handler with `"out of memory"`, so a failed allocation panics instead of
+  dereferencing null.
+- The allocator may never effect a free (a bump arena's `dealloc` is a no-op),
+  which is a leak the compiler cannot see and the counting wrapper in
+  `examples/kernel0-heap` only detects for its own test.
+
+**What the compiler does check.** That `[target]` names `alloc` and `dealloc`
+together or neither, and that `realloc`, when named, needs them; that each name
+is a bare identifier and a non-`extern` `fun` in the entry module; that their
+signatures are exactly `(usize, usize).R: Ptr<u8>`, `(Ptr<u8>, usize, usize)`
+and `(Ptr<u8>, usize, usize, usize).R: Ptr<u8>`; that with no pair `Box`, `List`
+and `Map` are refused with a message naming the two keys, while `String`,
+`Bytes`, `View` and `Thread` stay refused even with one; and that a freestanding
+image built this way references no libc symbol (`kelp_memcpy`/`kelp_memset` are
+module-private definitions, and the boot graph was checked with `llvm-nm -u`).
+
+**What it does not check.** Any property of the memory the allocator returns:
+alignment, capacity, provenance, liveness, distinctness or thread-safety. It
+does not require `dealloc` to use `size`/`align`, does not require `alloc` to
+honour `align`, does not require the arena to be non-empty, and does not check
+that the allocator terminates or is lock-free. It does not run the allocator:
+the checks are compile-time, and a bad allocator is only observable at the boot
+the project writes.
+

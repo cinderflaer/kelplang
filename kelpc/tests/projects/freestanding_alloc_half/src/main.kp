@@ -1,0 +1,5 @@
+// The manifest is refused before this body matters.
+fun kmain() {
+    var i: usize = 0
+    i = i + 1
+}

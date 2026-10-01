@@ -22,6 +22,10 @@
 //!   `std/str`'s `len`, `byte`, `eq`, `starts_with` and `ptr`, and nothing else
 //!   in that module;
 //! - `Ptr<T>` and the compile-time queries `size_of`/`align_of`/`offset_of`;
+//! - `Box<T>`, `List<T>` and `Map<V>` of allowed element types once `[target]
+//!   alloc`/`dealloc` name the project's own allocator (kernel stage 7,
+//!   MK9-S5-M1), because then every allocation and free those containers make
+//!   calls the project's functions instead of libc's;
 //! - `extern fun` declared in a module with its own `[extern."<id>"]` section,
 //!   so a project can bind a native symbol it will place itself;
 //! - arithmetic, including the overflow and bounds checks: in this mode they
@@ -31,8 +35,11 @@
 //! And what is refused, each naming the construct:
 //!
 //! - `print`/`print!` (a `Template`), which is `printf`;
-//! - `String`, `Bytes`, `List`, `Map`, `Box`, `View` and `Thread`, whose
-//!   storage is the runtime allocator's, and therefore any `std/*` module not
+//! - `String`, `Bytes`, `View` and `Thread`, whose storage is the hosted C
+//!   runtime's (and `String`/`Bytes` reach `strlen`/`memcpy`/`realloc`), so
+//!   they stay refused even with an allocator configured; and `List`, `Map` and
+//!   `Box` when no `[target] alloc`/`dealloc` pair is configured, since their
+//!   storage is the runtime allocator's; and therefore any `std/*` module not
 //!   on the list above, and every `std/str` function other than the five;
 //! - passdowns (`pd`), whose initializers run through the generated
 //!   `kelp_init_pds` that only the hosted entry point calls.
@@ -151,6 +158,65 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
         }
     }
 
+    // The allocator hook (kernel stage 7): `alloc` and `dealloc` name the
+    // entry module's functions, and their shapes are what the generated calls
+    // assume. `realloc`, when named, is the growth fast path.
+    if let (Some(alloc_name), Some(dealloc_name)) = (target.alloc(), target.dealloc()) {
+        let Some(alloc) = find_entry_fun(program, project, alloc_name) else {
+            return Err(Diagnostic::new(
+                format!(
+                    "the allocator function '{alloc_name}' named by coral.toml's '[target] alloc' is not declared in the entry module"
+                ),
+                Span::new(0, 0),
+                project.entry.clone(),
+            ));
+        };
+        check_allocator_signature(alloc, alloc_name, &[Ty::Usize, Ty::Usize], true, project)?;
+
+        let Some(dealloc) = find_entry_fun(program, project, dealloc_name) else {
+            return Err(Diagnostic::new(
+                format!(
+                    "the allocator function '{dealloc_name}' named by coral.toml's '[target] dealloc' is not declared in the entry module"
+                ),
+                Span::new(0, 0),
+                project.entry.clone(),
+            ));
+        };
+        check_allocator_signature(
+            dealloc,
+            dealloc_name,
+            &[Ty::Ptr(Box::new(Ty::U8)), Ty::Usize, Ty::Usize],
+            false,
+            project,
+        )?;
+
+        if let Some(realloc_name) = target.realloc() {
+            let Some(realloc) = find_entry_fun(program, project, realloc_name) else {
+                return Err(Diagnostic::new(
+                    format!(
+                        "the allocator function '{realloc_name}' named by coral.toml's '[target] realloc' is not declared in the entry module"
+                    ),
+                    Span::new(0, 0),
+                    project.entry.clone(),
+                ));
+            };
+            check_allocator_signature(
+                realloc,
+                realloc_name,
+                &[
+                    Ty::Ptr(Box::new(Ty::U8)),
+                    Ty::Usize,
+                    Ty::Usize,
+                    Ty::Usize,
+                ],
+                true,
+                project,
+            )?;
+        }
+    }
+
+    let heap_ok = target.alloc().is_some() && target.dealloc().is_some();
+
     // A passdown's initializer is a module-scope global the generated
     // `kelp_init_pds` fills in, and only the hosted `main` calls that. A
     // freestanding program therefore has no place for one.
@@ -186,18 +252,20 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     for f in &program.functions {
         module_of.entry(f.name.as_str()).or_insert(f.module.as_str());
     }
-    let checker = Checker { module_of };
+    let checker = Checker { module_of, heap_ok };
 
     // The program's own declarations first, so a construct in the program is
     // reported by its own name rather than behind the std module it reaches
     // through.
     for s in &program.structs {
         for f in &s.fields {
-            if let Some(name) = heap_type(&f.ty) {
+            if let Some(name) = heap_refusal(&f.ty, heap_ok) {
                 return Err(unavailable(
                     format!(
-                        "the field '{}.{}' has type '{name}', which is unavailable in a freestanding build",
-                        s.name, f.name
+                        "the field '{}.{}' has type {}",
+                        s.name,
+                        f.name,
+                        heap_message(name, heap_ok)
                     ),
                     Span::new(0, 0),
                     "",
@@ -208,11 +276,14 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     for e in &program.enums {
         for v in &e.variants {
             for f in &v.fields {
-                if let Some(name) = heap_type(&f.ty) {
+                if let Some(name) = heap_refusal(&f.ty, heap_ok) {
                     return Err(unavailable(
                         format!(
-                            "the payload '{}.{}.{}' has type '{name}', which is unavailable in a freestanding build",
-                            e.name, v.name, f.name
+                            "the payload '{}.{}.{}' has type {}",
+                            e.name,
+                            v.name,
+                            f.name,
+                            heap_message(name, heap_ok)
                         ),
                         Span::new(0, 0),
                         "",
@@ -226,22 +297,24 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
             continue;
         }
         for (name, ty) in &f.params {
-            if let Some(heap) = heap_type(ty) {
+            if let Some(heap) = heap_refusal(ty, heap_ok) {
                 return Err(unavailable(
                     format!(
-                        "the parameter '{name}' of '{}' has type '{heap}', which is unavailable in a freestanding build",
-                        f.name
+                        "the parameter '{name}' of '{}' has type {}",
+                        f.name,
+                        heap_message(heap, heap_ok)
                     ),
                     f.span,
                     f.module.clone(),
                 ));
             }
         }
-        if let Some(heap) = heap_type(&f.ret) {
+        if let Some(heap) = heap_refusal(&f.ret, heap_ok) {
             return Err(unavailable(
                 format!(
-                    "'{}' returns '{heap}', which is unavailable in a freestanding build",
-                    f.name
+                    "'{}' returns {}",
+                    f.name,
+                    heap_message(heap, heap_ok)
                 ),
                 f.span,
                 f.module.clone(),
@@ -347,27 +420,111 @@ fn unavailable(message: String, span: Span, module: impl Into<String>) -> Diagno
 /// `None` for every type a freestanding program may hold. A user `datac` is
 /// reported through its own fields (the sweep in `check`), so it is `None`
 /// here.
-fn heap_type(ty: &Ty) -> Option<&'static str> {
+///
+/// `heap_ok` is whether the manifest configured an `alloc`/`dealloc` pair: with
+/// one, `Box`, `List` and `Map` are allowed and the walk descends into their
+/// element types, because a `List<String>` still reaches the hosted runtime.
+/// `String`, `Bytes`, `View` and `Thread` are refused whatever `heap_ok` is.
+fn heap_refusal(ty: &Ty, heap_ok: bool) -> Option<&'static str> {
     match ty {
         Ty::String => Some("String"),
         Ty::Bytes => Some("Bytes"),
         Ty::View => Some("View"),
-        Ty::List(_) => Some("List"),
-        Ty::Map(_, _) => Some("Map"),
-        Ty::Box(_) => Some("Box"),
         Ty::Thread(_) => Some("Thread"),
-        Ty::Ref { inner, .. } | Ty::Atomic(inner) | Ty::Ptr(inner) => heap_type(inner),
-        Ty::Array(inner, _) => heap_type(inner),
+        Ty::List(inner) => {
+            if heap_ok {
+                heap_refusal(inner, true)
+            } else {
+                Some("List")
+            }
+        }
+        Ty::Map(key, value) => {
+            if heap_ok {
+                heap_refusal(key, true).or_else(|| heap_refusal(value, true))
+            } else {
+                Some("Map")
+            }
+        }
+        Ty::Box(inner) => {
+            if heap_ok {
+                heap_refusal(inner, true)
+            } else {
+                Some("Box")
+            }
+        }
+        Ty::Ref { inner, .. } | Ty::Atomic(inner) | Ty::Ptr(inner) => heap_refusal(inner, heap_ok),
+        Ty::Array(inner, _) => heap_refusal(inner, heap_ok),
         Ty::Fn { params, ret } | Ty::Closure { params, ret } => params
             .iter()
             .chain(std::iter::once(&**ret))
-            .find_map(heap_type),
+            .find_map(|t| heap_refusal(t, heap_ok)),
         _ => None,
     }
 }
 
+/// The tail of every heap-type refusal message: a container without an
+/// allocator names the two manifest keys that would let it through, and every
+/// other type stays a plain "unavailable".
+fn heap_message(kind: &'static str, heap_ok: bool) -> String {
+    if !heap_ok && matches!(kind, "Box" | "List" | "Map") {
+        format!(
+            "'{kind}', which needs an allocator in a freestanding build: set '[target] alloc' and '[target] dealloc' to the project's own functions"
+        )
+    } else {
+        format!("'{kind}', which is unavailable in a freestanding build")
+    }
+}
+
+/// The entry module's own declaration of `name`, if it has one.
+fn find_entry_fun<'a>(
+    program: &'a Program,
+    project: &Project,
+    name: &str,
+) -> Option<&'a crate::tir::Function> {
+    program
+        .functions
+        .iter()
+        .find(|f| f.module == project.entry && f.name == name && !f.extern_)
+}
+
+/// One allocator function's shape: `params` is the exact parameter list the
+/// generated call has, and `returns_ptr` says whether it returns `Ptr<u8>`
+/// (every function but `dealloc` does). The check is a refusal, not a cast, so
+/// a wrong signature is a compile error naming the expected one.
+fn check_allocator_signature(
+    f: &crate::tir::Function,
+    name: &str,
+    params: &[Ty],
+    returns_ptr: bool,
+    project: &Project,
+) -> Result<(), Diagnostic> {
+    let expected = params
+        .iter()
+        .map(|p| p.display())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let expected_ret = if returns_ptr { ".R: Ptr<u8>" } else { "" };
+    let shape_ok = f.env.is_none()
+        && f.params.len() == params.len()
+        && f.params.iter().zip(params).all(|((_, ty), want)| ty == want)
+        && f.ret == if returns_ptr { Ty::Ptr(Box::new(Ty::U8)) } else { Ty::Unit };
+    if shape_ok {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        format!(
+            "the allocator function '{name}' named by coral.toml's '[target]' has the wrong signature: it must be 'fun {name}({expected}){expected_ret}'"
+        ),
+        f.span,
+        project.entry.clone(),
+    ))
+}
+
 struct Checker<'a> {
     module_of: HashMap<&'a str, &'a str>,
+    /// Whether the manifest configured an `alloc`/`dealloc` pair, which is what
+    /// lets `Box`, `List` and `Map` through.
+    heap_ok: bool,
 }
 
 impl Checker<'_> {
@@ -384,10 +541,11 @@ impl Checker<'_> {
     fn stmt(&self, stmt: &Stmt, module: &str) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let { name, ty, init } => {
-                if let Some(heap) = heap_type(ty) {
+                if let Some(heap) = heap_refusal(ty, self.heap_ok) {
                     return Err(unavailable(
                         format!(
-                            "the binding '{name}' has type '{heap}', which is unavailable in a freestanding build"
+                            "the binding '{name}' has type {}",
+                            heap_message(heap, self.heap_ok)
                         ),
                         init.span,
                         module,
@@ -410,9 +568,12 @@ impl Checker<'_> {
     fn expr(&self, expr: &Expr, module: &str) -> Result<(), Diagnostic> {
         // Every expression carries its own type, so the heap check is one
         // question per node rather than one per expression form.
-        if let Some(heap) = heap_type(&expr.ty) {
+        if let Some(heap) = heap_refusal(&expr.ty, self.heap_ok) {
             return Err(unavailable(
-                format!("the expression has type '{heap}', which is unavailable in a freestanding build"),
+                format!(
+                    "the expression has type {}",
+                    heap_message(heap, self.heap_ok)
+                ),
                 expr.span,
                 module,
             ));
