@@ -1,0 +1,10 @@
+name = "freestandingptralloc"
+
+[unsafe]
+modules = ["main"]
+
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

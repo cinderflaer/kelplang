@@ -1,0 +1,8 @@
+// `Ptr<T>` is allowed freestanding; the allocator behind `Ptr.alloc` is not,
+// because it is the hosted `malloc`. The compiler refuses the call by name.
+fun kmain() {
+    unsafe {
+        val p: Ptr<u8> = Ptr.alloc<u8>(4)
+        p.free()
+    }
+}

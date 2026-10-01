@@ -139,6 +139,23 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
         ));
     }
 
+    // The hosted entry point saves `argc`/`argv` into the runtime's globals and
+    // returns an `int` the C runtime reads. A freestanding image has neither, so
+    // a defined `main` is refused by name; the manifest's `[target] entry` is
+    // the entry point instead.
+    if let Some(main) = program
+        .functions
+        .iter()
+        .find(|f| f.name == "main" && !f.extern_)
+    {
+        return Err(unavailable(
+            "'main' is unavailable in a freestanding build: there is no C runtime to call it, so the manifest's '[target] entry' names the entry function instead"
+                .to_string(),
+            main.span,
+            main.module.clone(),
+        ));
+    }
+
     let mut module_of: HashMap<&str, &str> = HashMap::new();
     for f in &program.functions {
         module_of.entry(f.name.as_str()).or_insert(f.module.as_str());
@@ -236,6 +253,11 @@ fn unavailable_builtin(name: &str) -> Option<&'static str> {
             "it calls the hosted runtime's 'kelp_panic'; a freestanding project's panic handler is the manifest's '[target] panic', and the compiler's own checks call that directly",
         ),
         "assert" => Some("it calls the hosted runtime's 'kelp_assert'"),
+        // `Ptr<T>` is allowed; the allocator behind `Ptr.alloc`/`Ptr.free` is
+        // not, because it is the hosted `malloc`/`free`. A kernel's own frame
+        // allocator arrives in a later stage (MK9-S5).
+        "Ptr#alloc" => Some("it allocates through the hosted runtime's 'malloc'"),
+        "Ptr#free" => Some("it frees through the hosted runtime's 'free'"),
         _ => None,
     }
 }

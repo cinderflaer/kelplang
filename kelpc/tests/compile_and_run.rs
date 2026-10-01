@@ -8471,6 +8471,23 @@ fn the_c_backend_refuses_a_freestanding_project() {
     assert!(stderr.contains("llvm"), "{stderr}");
 }
 
+/// `Ptr.alloc` and `Ptr.free` are the hosted `malloc`/`free`, so they are
+/// refused even though `Ptr<T>` itself is allowed.
+#[test]
+fn ptr_alloc_is_rejected_in_a_freestanding_project() {
+    assert_rejected_with(
+        "tests/projects/freestanding_ptr_alloc",
+        "'Ptr#alloc' is unavailable in a freestanding build",
+    );
+}
+
+/// The host entry point has no runtime to call it in a freestanding image, so
+/// a defined `main` is refused and the manifest's entry is the entry point.
+#[test]
+fn main_is_rejected_in_a_freestanding_project() {
+    assert_rejected_with("tests/projects/freestanding_main", "'main' is unavailable");
+}
+
 /// The acceptance test for kernel stage 4: the `freestanding_min` project,
 /// whose entry loops forever, builds through LLVM and `ld.lld` into an ELF64
 /// RISC-V image based at 0x80000000 that references no undefined symbol, which

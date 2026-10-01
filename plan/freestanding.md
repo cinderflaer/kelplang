@@ -48,7 +48,8 @@ runtime could free); `Atomic<T>` and its methods, plus the pure `std/atomic`,
 checks, which call the project's panic handler (below).
 
 **Refused, each naming the construct.** `print`/`print!` (the `printf` call),
-the builtin `panic` and `assert` (the runtime's `kelp_panic`/`kelp_assert`),
+the builtin `panic` and `assert` (the runtime's `kelp_panic`/`kelp_assert`), a
+defined `main` (the hosted entry point and its `argc`/`argv` globals),
 passdowns (`pd`, whose initializers run through the generated `kelp_init_pds`
 that only the hosted entry point calls), and the heap types `String`, `Bytes`,
 `List`, `Map`, `Box`, `View` and `Thread`. Any `std/*` module other than the
@@ -125,8 +126,9 @@ forever, with the entry in `.text.boot` and a `[u8; 4]` const in
 `__stack_top`. The test builds it and checks with `llvm-readelf` that the image
 is ELF64 RISC-V with a 0x80000000 entry, with `llvm-objdump` that `_start`
 disassembles to RISC-V including the `wfi` halt, and with `llvm-nm` that there
-is no undefined symbol. `freestanding_print` and `freestanding_no_entry` are the
-rejection fixtures. All of these need `dev-kernel.nix`'s `ld.lld` and llvm
+is no undefined symbol. `freestanding_print`, `freestanding_no_entry`,
+`freestanding_main` and `freestanding_ptr_alloc` are the rejection fixtures. All
+of these need `dev-kernel.nix`'s `ld.lld` and llvm
 tools; where those are absent the acceptance test prints a skip rather than
 failing, so the ordinary suite stays green.
 
@@ -139,5 +141,11 @@ milestone the next stages reach, not this one.
 - No inline asm and no naked functions (stage 5): `_start` is a compiler-emitted
   assembly blob, not something the language can write. `sp` can only come from
   the linker script.
-- No allocator hook. Anything that needs the heap is refused rather than served.
+- No allocator hook. Anything that needs the heap is refused rather than served;
+  `Ptr.alloc`/`Ptr.free` are refused (they are `malloc`/`free`) even though
+  `Ptr<T>` itself is allowed.
+- A large aggregate copy can make LLVM emit a `memcpy` or `memset` call, which
+  it assumes libc provides. Nothing here maps those to an in-language loop, so
+  `ld.lld` reports the undefined symbol and the project has to supply it. The
+  acceptance program is a loop and reaches neither.
 - `section` on a `datac`/`enum`, and per-field placement, are not planned.
