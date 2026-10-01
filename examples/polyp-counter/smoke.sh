@@ -2,10 +2,13 @@
 # Polyp's headless smoke test: build examples/polyp-counter with the default
 # backend and run it under Xvfb, where the program drives itself.
 #
-# The run is real: a GTK window, real click-callback thunks, the real queue. The
-# only thing missing is a user, so with POLYP_SMOKE=1 the program schedules its
-# own input (Inc, Inc, Dec, quit) and prints the final count. stdout must be
-# exactly "1".
+# The run is real: a GTK window, real click-callback thunks, the real queue, and
+# an entry whose text is set through its own `changed` signal. The only thing
+# missing is a user, so with POLYP_SMOKE=1 the program schedules its own input
+# (Inc, Inc, Dec, set the entry, quit) and prints the final count, the entry's
+# text, and how many entry widgets were ever built. stdout must be exactly
+# "1\ntyped\n1": the count after the clicks, the text the entry posted, and one
+# entry (a rebuild that reused it) rather than one per render.
 #
 # The toolchain lives in the GTK shell next to this repository. Without
 # POLYP_IN_SHELL this script re-enters it; POLYP_DEV_GTK overrides the path.
@@ -44,8 +47,9 @@ BIN=${TMPDIR:-/tmp}/polyp-counter-smoke
 # go to stderr and are not the program's answer.
 out=$(xvfb-run -a env GSK_RENDERER=cairo GDK_BACKEND=x11 POLYP_SMOKE=1 timeout 60 "$BIN")
 
-if [ "$out" != "1" ]; then
-    echo "smoke: expected stdout '1', got '$out'" >&2
+expected=$'1\ntyped\n1'
+if [ "$out" != "$expected" ]; then
+    echo "smoke: expected stdout '$expected', got '$out'" >&2
     exit 1
 fi
-echo "smoke: ok (counter ended at 1)"
+echo "smoke: ok (counter ended at 1, entry text 'typed', one entry built)"

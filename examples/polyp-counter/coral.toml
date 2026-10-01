@@ -14,11 +14,11 @@ domain = "ui"
 library = "gtk-4"
 header = "gtk/gtk.h"
 pkg_config = "gtk4"
-symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_button_new_with_label", "g_object_unref", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
+symbols = ["gtk_init", "gtk_window_new", "gtk_window_set_title", "gtk_window_set_default_size", "gtk_window_set_child", "gtk_window_present", "gtk_box_new", "gtk_box_append", "gtk_label_new", "gtk_label_set_markup", "gtk_widget_set_size_request", "gtk_entry_new", "gtk_editable_set_text", "gtk_editable_get_text", "gtk_widget_unparent", "gtk_button_new_with_label", "g_object_unref", "g_object_ref_sink", "g_main_context_iteration", "g_timeout_add_full", "connect=g_signal_connect_data", "connect_ret=g_signal_connect_data"]
 
 [extern."deps/polyp/queue"]
 domain = "ui"
 library = "c"
 header = "polyp_queue.h"
 include_dirs = ["src/deps/polyp/include"]
-symbols = ["polyp_post", "polyp_poll"]
+symbols = ["polyp_post", "polyp_poll", "polyp_post_edit", "polyp_poll_edit", "polyp_poll_edit_text"]
