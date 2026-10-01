@@ -1,0 +1,157 @@
+impl "uart"
+
+// The S-mode trap vector for a stack overflow (kernel stage 14, MK9-S7-M2).
+//
+// `sscratch` holds this hart's trap stack top, so the naked handler swaps `sp`
+// with it before it does anything else: the kernel stack is the thing that just
+// overflowed, and a handler that used it would fault on its own frame. The
+// report address lives in a slot at the top of the trap stack rather than in a
+// register, because the naked entry has no prologue in which to compute it and
+// no register it may keep across the handler's own body.
+//
+// One boot takes two faults. The first is the small-frame recursion, and the
+// handler prints it, points `sepc` at the second phase and returns 1; the entry
+// then resets `sp` to the top of the kernel stack and `sret`s there. The second
+// is the one big frame, and the handler prints it and returns 0, which halts.
+//
+// The handler is not a page-fault recovery: it cannot undo the store that
+// faulted, and it never resumes the phase that faulted. Returning to the second
+// phase with a fresh stack is the whole recovery it has.
+
+// The report address is the one word in the top of the trap stack the entry
+// reads; the frame it builds below is what keeps the slot above its own `sp`.
+const SLOT_REPORT_FROM_TOP: usize = 8
+
+const SCAUSE_LOAD_PAGE_FAULT: usize = 13
+const SCAUSE_STORE_PAGE_FAULT: usize = 15
+
+static mut PHASE: usize = 0
+static mut RESUME: usize = 0
+
+// The trap stack and the guard page, from the linker script the way `vm` reads
+// its frame region: symbols the language cannot name outside an asm template.
+pub fun trap_stack_top().R: usize = unsafe {
+    asm("la {0}, __trap_stack_top", out("r") _)
+}
+
+pub fun guard_bottom().R: usize = unsafe {
+    asm("la {0}, __guard_bottom", out("r") _)
+}
+
+pub fun guard_top().R: usize = unsafe {
+    asm("la {0}, __guard_top", out("r") _)
+}
+
+pub fun arm(phase: usize) {
+    unsafe {
+        PHASE = phase
+    }
+}
+
+pub fun set_resume(addr: usize) {
+    unsafe {
+        RESUME = addr
+    }
+}
+
+fun current_phase().R: usize {
+    unsafe { PHASE }
+}
+
+fun resume_pc().R: usize {
+    unsafe { RESUME }
+}
+
+// `0x` then the significant hex digits, so a printed address is one line the
+// run script can read.
+pub fun put_hex(value: usize) {
+    uart.puts("0x")
+    var started: bool = false
+    var i: usize = 0
+    while i < 16 {
+        val nib: usize = (value >> ((15 - i) * 4)) & 15
+        if nib != 0 {
+            started = true
+        }
+        if started {
+            if nib < 10 {
+                uart.putc((48 + nib).to_u8())
+            } else {
+                uart.putc((87 + nib).to_u8())
+            }
+        }
+        i = i + 1
+    }
+    if started == false {
+        uart.putc(48)
+    }
+}
+
+pub fun install() {
+    unsafe {
+        val top: usize = trap_stack_top()
+        val slot: Ptr<usize> = Ptr.from_addr(top - SLOT_REPORT_FROM_TOP)
+        slot.write_volatile(Ptr.from_fn(report).addr())
+        asm("csrw stvec, {0}", in("r") Ptr.from_fn(trap_handler).addr())
+        asm("csrw sscratch, {0}", in("r") top)
+    }
+}
+
+// The body the naked entry calls: read `scause` and `stval`, print them, and
+// answer with `1` to resume the next phase or `0` to halt. `stval` is the
+// address the faulting access named, so the guard-page line is a check that the
+// probe sent the frame into the hole rather than under it.
+pub fun report().R: usize {
+    val cause: usize = unsafe { asm("csrr {0}, scause", out("r") _) }
+    val tval: usize = unsafe { asm("csrr {0}, stval", out("r") _) }
+
+    uart.puts("stack overflow: scause ")
+    put_hex(cause)
+    uart.puts(" stval ")
+    put_hex(tval)
+    uart.putc(10)
+
+    if tval >= guard_bottom() && tval < guard_top() {
+        uart.puts("stack: stval in guard")
+    } else {
+        uart.puts("stack: stval outside guard")
+    }
+    uart.putc(10)
+
+    if cause != SCAUSE_STORE_PAGE_FAULT && cause != SCAUSE_LOAD_PAGE_FAULT {
+        uart.puts("stack: unexpected cause")
+        uart.putc(10)
+        return 0
+    }
+
+    if current_phase() == 0 {
+        arm(1)
+        unsafe {
+            asm("csrw sepc, {0}", in("r") resume_pc())
+        }
+        return 1
+    }
+
+    uart.puts("stack: halted")
+    uart.putc(10)
+    return 0
+}
+
+// `stvec` names this function, `align(4)` because the low two bits select the
+// direct vector mode and this one is direct.
+section(".text.trap") align(4) naked fun trap_handler() {
+    asm("
+            csrrw sp, sscratch, sp
+            addi sp, sp, -256
+            ld t0, 248(sp)
+            jalr ra, t0, 0
+            beqz a0, .Lkelp_stack_halt
+            la sp, __stack_top
+            la t0, __trap_stack_top
+            csrw sscratch, t0
+            sret
+        .Lkelp_stack_halt:
+            wfi
+            j .Lkelp_stack_halt
+        ")
+}

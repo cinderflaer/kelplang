@@ -208,10 +208,11 @@ from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
 not this stage.
 
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
-arenas and the fallible allocation surface), per-CPU storage (row 8) and mapping plus the syscall
-ABI (row 9) are all done. What remains is stack guards and panic semantics with no OS (row 10), the
-panic semantics being what turn a check that fires into a diagnostic instead of a bare `panic`
-byte, and MMIO regions and IRQ lines as capabilities (row 11).
+arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
+ABI (row 9) and the stack half of row 10 (guards and probing) are all done. What remains is the
+panic semantics with no OS (the other half of row 10), which turn a check that fires into a
+diagnostic instead of a bare `panic` byte, and MMIO regions and IRQ lines as capabilities
+(row 11).
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
@@ -251,6 +252,18 @@ load page fault while the kernel prints the cause and keeps running. No compiler
 needed, and what the stage leaves out is the process model: no scheduler, one process at a time,
 no preemption or timer interrupt, no `fork`, no TLB shootdown, no ASIDs, no huge-page *creation*,
 no Sv48 and no per-section (W^X) identity map.
+
+**Row 10's stack half is done** (MK9-S7-M2, `plan/stack-guard.md`): every function a freestanding
+LLVM build emits carries `probe-stack="inline-asm"`, so a frame larger than a page touches each
+page in order and a guard page catches the overflow instead of the frame stepping over it;
+hosted builds carry no attribute. `examples/kernel0-stack` is the acceptance: an Sv39 riscv64
+kernel whose kernel stack sits above an unmapped guard page, with a 16 KiB trap stack below the
+hole. One boot recurses with a small frame into the guard, the S-mode handler reports `scause`
+and `stval` on that stack and resumes a second phase at the top of the kernel stack, and that
+phase overflows the same guard with one `[u8; 16384]` frame. What the example forced is a
+lowering fix: `[v; N]` now fills the local's own slot in place (`{array}__fill_into`) rather than
+returning the array by value, because LLVM's instcombine exhausted memory folding the by-value
+store of a frame-sized array at `-O2`. The panic-semantics half of the row is still open.
 
 ## Two rules that keep the language honest
 

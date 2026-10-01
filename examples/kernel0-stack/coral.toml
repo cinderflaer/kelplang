@@ -1,0 +1,16 @@
+name = "kernel0_stack"
+
+# Kernel stage 14 (MK9-S7-M2), the stack half: a bare-metal riscv64 image whose
+# kernel stack sits directly above an unmapped guard page, with a trap handler
+# on its own stack. `main` builds the tables and the recursion, `trap` owns
+# `stvec` and the naked handler, `uart` is the device register, and `vm` is the
+# walker copied from `examples/kernel0-vm`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "trap", "uart", "vm"]

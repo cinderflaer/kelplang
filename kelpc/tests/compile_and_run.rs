@@ -12823,3 +12823,187 @@ fn freestanding_try_alloc_boots_and_prints_its_lines() {
         &["ptr 0", "align 0", "val 1234", "huge 1"],
     );
 }
+
+// ---------------------------------------------------------------------------
+// Kernel stage 14 (MK9-S7-M2), the stack half: the freestanding `probe-stack`
+// attribute and the guard page. The first test is the object-only claim that a
+// frame larger than a page carries the inline probe; the second is the boot
+// that overflows a small frame and a big one into the same unmapped page.
+// ---------------------------------------------------------------------------
+
+/// Parses a `0x`-prefixed hex word.
+fn parse_hex_word(text: &str) -> Option<usize> {
+    usize::from_str_radix(text.strip_prefix("0x")?, 16).ok()
+}
+
+/// Kernel stage 14's object-only test: `examples/kernel0-stack`'s
+/// `recurse_big` holds a `[u8; 16384]` local, and the freestanding build's
+/// `"probe-stack"="inline-asm"` attribute has to lower its prologue to a page
+/// probe rather than one `sub sp, sp, 16400`. The assertion is on
+/// `llvm-objdump`: at least three probe stores, each preceded by a
+/// page-sized subtraction, which is what lets the guard page catch the frame
+/// instead of the frame stepping over it.
+///
+/// It needs `ld.lld` and `llvm-objdump` from `dev-kernel.nix`.
+#[test]
+fn freestanding_big_frames_probe_every_page() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding probe test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("kernel0_stack_probe");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/kernel0-stack"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the kernel0-stack build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+
+    // The lowering carries the attribute, so the check has two halves: the IR
+    // says the function was marked, and the object shows the probe it lowers to.
+    let ir = std::fs::read_to_string(bin.with_extension("ll")).expect("the .ll artifact");
+    assert!(
+        ir.contains("\"probe-stack\"=\"inline-asm\""),
+        "the freestanding IR carries no probe-stack attribute"
+    );
+
+    let disassembly = tool(
+        "llvm-objdump",
+        &["-d", "--disassemble-symbols=kelp_recurse_big", path],
+    );
+    // `llvm-objdump` prints the displacement as `0(sp)` or `0x0(sp)` depending
+    // on the build, so the probe is matched by its operands rather than one
+    // exact spelling.
+    let is_probe = |line: &str| {
+        line.contains("\tsd\t") && line.contains("zero, 0") && line.contains("sp)")
+    };
+    let probes = disassembly.lines().filter(|line| is_probe(line)).count();
+    assert!(
+        probes >= 3,
+        "kelp_recurse_big's probe is missing: its disassembly has {probes} probe stores:\n{disassembly}"
+    );
+    // A single `sub sp, sp, 16400` with no probe store would mean the 16 KiB
+    // frame stepped over the guard in one instruction.
+    assert!(
+        disassembly.lines().filter(|line| line.contains("sub\tsp, sp,")).count() >= 3,
+        "kelp_recurse_big builds its frame in fewer than three page steps:\n{disassembly}"
+    );
+}
+
+/// Kernel stage 14's acceptance boot: `examples/kernel0-stack` runs two phases
+/// over one trap vector. Phase a recurses with a 16-byte frame until the frame
+/// that crosses `__stack_bottom` stores into the guard page; phase b is entered
+/// by the handler, which restored `sp` to the top of the kernel stack, and its
+/// one 16 KiB frame probes down into the same page. The handler prints the
+/// `scause` and `stval` of each fault and says so, so the test can assert both
+/// addresses are inside the guard page the boot printed.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_stack_overflows_into_the_guard_page() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-stack boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let captured = boot_and_capture(
+        &RISCV64_QEMU,
+        "kernel0_stack",
+        &fixture("../examples/kernel0-stack"),
+        &|got| got.contains("stack: halted"),
+    );
+    for line in [
+        "stack: m-mode",
+        "stack: paging on",
+        "stack: phase a",
+        "stack: stval in guard",
+        "stack: phase b",
+        "stack: stval in guard",
+        "stack: halted",
+    ] {
+        assert!(
+            captured.lines().any(|got| got == line),
+            "the serial output of kernel0-stack has no line '{line}':\n{captured}"
+        );
+    }
+
+    // The kernel's own `in guard` line is one check; this is the independent
+    // one: parse the guard bounds the boot printed and the two `stval`s, and
+    // require each fault address to lie in the hole.
+    let bounds: Vec<usize> = captured
+        .lines()
+        .find(|line| line.starts_with("stack: guard "))
+        .and_then(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            Some(vec![parse_hex_word(words.get(2)?)?, parse_hex_word(words.get(3)?)?])
+        })
+        .expect("the boot printed no `stack: guard <lo> <hi>` line");
+    let (lo, hi) = (bounds[0], bounds[1]);
+    let faults: Vec<usize> = captured
+        .lines()
+        .filter(|line| line.starts_with("stack overflow: scause "))
+        .filter_map(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let at = words.iter().position(|w| *w == "stval")?;
+            parse_hex_word(words.get(at + 1)?)
+        })
+        .collect();
+    assert_eq!(
+        faults.len(),
+        2,
+        "expected one fault per phase, got {}:\n{captured}",
+        faults.len()
+    );
+    for fault in &faults {
+        assert!(
+            *fault >= lo && *fault < hi,
+            "a fault at {fault:#x} is outside the guard page [{lo:#x}, {hi:#x}):\n{captured}"
+        );
+    }
+}
+
+/// Kernel stage 14's other half of "hosted builds are unchanged": a hosted
+/// function carries no `probe-stack` attribute, so the probe is a freestanding
+/// lowering and not a change to every build. The IR is the LLVM backend's
+/// artifact, so this check is LLVM-only.
+#[test]
+fn hosted_functions_carry_no_stack_probe() {
+    if backend() == "c" {
+        println!("skipping the hosted probe check: the C backend writes no IR artifact");
+        return;
+    }
+    let bin = out_path("hosted_no_probe");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("tests/fixtures/array_basic.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the hosted build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let ir = std::fs::read_to_string(bin.with_extension("ll")).expect("the .ll artifact");
+    assert!(
+        !ir.contains("probe-stack"),
+        "a hosted build carries the freestanding probe-stack attribute"
+    );
+}

@@ -462,6 +462,22 @@ pub fn compile(
     lowering.emit_pd_globals()?;
     lowering.emit_all()?;
 
+    // Every function a freestanding image emits carries `probe-stack="inline-asm"`
+    // (kernel stage 14): a frame larger than one page then touches each page in
+    // order, so a guard page below the stack catches the overflow instead of a
+    // single `sub sp` stepping over it. A hosted build is unchanged. Declarations
+    // are skipped because there is no prologue to probe; the compiler-generated
+    // bodies (the `mem*` fallbacks, the drops and the container sets) are swept
+    // here too, because a large frame among them would otherwise be the one
+    // frame that skips the guard.
+    if freestanding.is_some() {
+        for func in module.functions() {
+            if !func.is_declaration() {
+                func.mark_probe_stack();
+            }
+        }
+    }
+
     // The bare-metal entry stub, after every function is declared so the call
     // to the entry symbol resolves. It is module-level assembly because setting
     // `sp` from a linker-script symbol is not expressible in the language yet;
@@ -2899,6 +2915,29 @@ impl<'g, 'a> FnGen<'g, 'a> {
         }
         match stmt {
             Stmt::Let { name, ty, init } => {
+                // A `[v; N]` local is filled in place (kernel stage 14): building
+                // it as an aggregate value and storing it makes LLVM's
+                // instcombine constant-fold one `insertvalue` per element, which
+                // is enough to exhaust memory on a frame-sized array. The slot is
+                // a fresh alloca, so the fill writes it directly.
+                if let (Ty::Array(elem, len), ExprKind::ArrayRepeat { value }) = (ty, &init.kind) {
+                    let v = self.value_of(value)?;
+                    // An initializer that diverged leaves the binding dead.
+                    if self.terminated {
+                        return Ok(());
+                    }
+                    let slot = self.alloca(ty, name)?;
+                    self.scopes
+                        .last_mut()
+                        .expect("a scope is always open")
+                        .insert(name.clone(), slot);
+                    self.bindings.insert(BindingId::Local(stmt_id(stmt)), slot);
+                    let symbol =
+                        format!("{}__fill_into", crate::types::array_c_type(elem, *len));
+                    let (func, fty) = self.g.cfn(&symbol)?;
+                    self.g.call(func, fty, &[slot, v], "");
+                    return Ok(());
+                }
                 let value = self.emit_expr(init)?;
                 // An initializer that diverged leaves the binding dead: emitting
                 // its store would put an instruction after the block's terminator.
@@ -8152,6 +8191,10 @@ impl<'a> Gen<'a> {
         }
         out.push(spec(&format!("{base}__set"), void, &[ptr, i64t, elem_ty]));
         out.push(spec(&format!("{base}__fill"), array, &[elem_ty]));
+        // Kernel stage 14: the in-place fill a `[v; N]` local uses, so a large
+        // repeat never becomes an aggregate value that LLVM's instcombine then
+        // folds element by element.
+        out.push(spec(&format!("{base}__fill_into"), void, &[ptr, elem_ty]));
         out.push(spec(
             &drop_fn_name(&Ty::Array(Box::new(elem.clone()), len)),
             void,
@@ -11237,6 +11280,30 @@ impl<'a> Gen<'a> {
             self.builder.position_at_end(exit);
             let out_v = self.ld(array_ty, out, "fill");
             self.builder.build_ret(out_v);
+        }
+
+        // --- fill_into(dst, v) ---
+        {
+            let (f, _) = self.start(&format!("{base}__fill_into"), "entry")?;
+            let dst = f.get_param(0);
+            let v = f.get_param(1);
+            let v0 = self.fld(array_ty, dst, 0, "v");
+            let i_slot = self.builder.build_alloca(i64t, "i");
+            self.st(self.v_i64(0), i_slot);
+            let header = self.loop_header(f, "fill.cond");
+            let i = self.ld(i64t, i_slot, "i");
+            let more = self.builder.build_icmp(IntCmp::Ult, i, n, "more");
+            let body = self.block(f, "fill.body");
+            let exit = self.block(f, "fill.end");
+            self.builder.build_cond_br(more, body, exit);
+            self.builder.position_at_end(body);
+            let addr = self.gep(elem_ty, v0, i, "at");
+            self.st(v, addr);
+            let next = self.builder.build_int_binop(IntBinOp::Add, i, self.v_i64(1), "i1");
+            self.st(next, i_slot);
+            self.builder.build_br(header);
+            self.builder.position_at_end(exit);
+            self.builder.build_ret_void();
         }
 
         // --- drop(self) ---

@@ -937,3 +937,57 @@ or alignment, the null check before a dereference, the provenance of any address
 `Ptr` arithmetic builds, whether a pointer is used after `reset`, or whether
 `alloc_zeroed`'s write lands inside the region. D-1/D-2/D-3 stay open; this stage
 adds the two allocator shapes they will have to describe.
+
+## Stage 14: stack guards and probing (MK9-S7-M2, the stack half)
+
+**New ways to reach UB.** The compiler now emits a page probe on every
+freestanding function, and the kernel supplies the hole the probe is for:
+
+- **The guard page is the kernel's, not the compiler's.** `probe-stack` only
+  turns a large frame into a sequence of stores one page apart; whether those
+  stores land on an unmapped page is the linker script's business. A script that
+  puts the guard above the stack, sizes it to zero, or maps it anyway means the
+  probe touches ordinary RAM and the overflow is silent. `examples/kernel0-stack`
+  splits its identity map around `[__guard_bottom, __guard_top)` to leave the
+  hole, and the two bounds are linker-script promises the compiler cannot read.
+- **The probe is not a check.** It does not compare `sp` against a bound, does
+  not know a stack exists, and does not run on a `naked` function (no prologue)
+  or on a function whose frame is one page or less (nothing to probe). A frame
+  smaller than a page can still cross the guard with its ordinary stores, which
+  is why the small-frame recursion faults too; a frame that is exactly the stack
+  size plus a little may put its first probe store past the hole and its body
+  into mapped memory below it.
+- **The fault stack has to be separate and mapped.** A trap handler that runs on
+  the stack it just overflowed faults on its own frame, and the S-mode handler
+  here runs on a 16 KiB region below the guard with `sscratch` naming its top.
+  A `sscratch` that is not set, not switched, or points into the hole is the
+  same class of failure the stage documents for `kernel0-user`; a guard page
+  below the trap stack would make the handler's own overflow equally quiet.
+- **The resume path is a jump, not a return.** After the first fault the handler
+  points `sepc` at the second phase, resets `sp` to `__stack_top`, restores
+  `sscratch` and `sret`s. Nothing checks that the phase function is a function,
+  that `__stack_top` is the top of the stack the kernel meant, or that the
+  interrupted frame's registers are the ones the resumed code expects; the
+  abandoned phase's frames are leaked in place.
+- **The recursion shape is the demo's promise.** LLVM may tail-call-eliminate or
+  accumulator-rewrite a recursion into a loop on one frame, and may collapse a
+  recursion it can prove non-terminating into an infinite loop; either makes the
+  stack growth vanish with no diagnostic. The example's volatile store after the
+  recursive call and its volatile `limit` are what keep the recursion real, and
+  they are the program's own defence, not a guarantee the compiler makes.
+
+**What the compiler does check.** That every non-declaration function of a
+freestanding LLVM build gets the `probe-stack="inline-asm"` string attribute and
+that a hosted build gets none; that the attribute's value is the one LLVM
+lowering understands; that the example's `asm`, `static mut` reads and writes and
+`Ptr` accesses are inside `unsafe` in listed modules; and the whole freestanding
+allowed set. Nothing about the frame size at which the probe fires, the pages it
+lands on, the linker script's bounds, or the fault stack's address.
+
+**What it does not check.** Whether the guard page exists, is unmapped or is
+below the stack; whether the trap stack is separate, mapped and large enough;
+whether `sscratch` holds its top; whether the resumed `sepc`/`sp` are the ones
+the kernel meant; whether a recursion was rewritten into a loop; and whether the
+platform delivers the fault to the handler at all. D-1/D-2/D-3 stay open; the
+guard page and the fault stack join the catalogue of promises a kernel makes
+with `Ptr`, `static mut`, `asm` and a linker script.
