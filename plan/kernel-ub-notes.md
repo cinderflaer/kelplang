@@ -1073,11 +1073,14 @@ is the place's canonical path, so `for x in self.items { self.other.push(x) }` i
 written `while` over an index is untouched.
 
 **What it does not check.** The rule is name-based and looks at a statement's own place, so it
-misses an indirect write and a raw-pointer alias. An indirect write is a call on something else
-that reaches the field, such as `for x in self.items { self.grow() }` where `grow` pushes to
-`self.items`; that is not detectable without effect analysis, and a `Copy`-element list can still
-grow that way. A raw-pointer alias is a `Ptr<List<T>>` in a module an `unsafe` block lets write
-through it, which the type system does not track here. A shadowed binding of the same spelling
+misses an indirect write, a passdown, and a raw-pointer alias. An indirect write is a call on
+something else that reaches the field, such as `for x in self.items { self.grow() }` where `grow`
+pushes to `self.items`; that is not detectable without effect analysis, and a `Copy`-element list
+can still grow that way. A `pd var` list is read through a global's storage, not a local name, so
+the path recorded for `for x in xs` (a `pd var`) does not match the write's place and the rule does
+not fire; a freestanding project has no heap types at all, so this is hosted-only. A raw-pointer
+alias is a `Ptr<List<T>>` in a module an `unsafe` block lets write through it, which the type
+system does not track here. A shadowed binding of the same spelling
 inside the body is refused as if it were the iterated one (over-strict, the conservative
 direction). And it says nothing about a list mutated by another thread while a `for` walks it,
 which is the `Atomic`/lock story and not this rule. (An exclusive borrow taken *before* the loop,
