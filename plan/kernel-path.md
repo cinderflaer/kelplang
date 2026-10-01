@@ -38,7 +38,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
 | 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
-| 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines, frames as *capabilities* | The safety story: a driver can only touch what it was granted |
+| 11 | **MK10-S1** (C-3) | MMIO regions (done), IRQ lines and frames (next) as *capabilities* | The safety story: a driver can only touch what it was granted |
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
@@ -207,12 +207,30 @@ reads the other copy by setting `tp = 1` by hand, and asserts the four lines
 from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
 not this stage.
 
+**Row 11's MMIO half is done** (MK10-S1, roadmap C-3, `plan/device-caps.md`):
+the capability model now reaches devices. A new `mmio` domain takes a list of
+half-open address ranges (`caps(mmio = ["0x10000000+0x100"])`) or the whole
+address space as `["*"]`, and a freestanding `Ptr.from_addr` is a compile error
+unless the module holds a grant that covers the address a constant expression
+names, or holds `["*"]` for an address the compiler cannot fold. The grant lives
+where every other domain's does, except that the entry module does **not** hold
+`mmio` by default: the address of a device is a fact about the machine, so it
+has to be written down in the manifest's `[caps]` section and delegated to a
+driver with `impl "uart" caps(mmio = [...])`. `caps(*)` deliberately skips
+`mmio`, so the whole-address-space escape hatch is always visible. Every
+`examples/kernel0*` manifest grew a `[caps]` section and every driver its grant,
+and all thirteen still boot under QEMU; `kelpc/tests/mmio.rs` covers the
+accepting and refusing shapes with `kelpc check` (front end only, no `ld.lld`).
+The check is on the address a pointer is *born* at, so an offset applied later
+is not revisited; IRQ lines and physical frames are the rest of the row and are
+not in this stage.
+
 **What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
 arenas and the fallible allocation surface), per-CPU storage (row 8), mapping plus the syscall
-ABI (row 9) and the stack half of row 10 (guards and probing) are all done. What remains is the
-panic semantics with no OS (the other half of row 10), which turn a check that fires into a
-diagnostic instead of a bare `panic` byte, and MMIO regions and IRQ lines as capabilities
-(row 11).
+ABI (row 9) and the stack half of row 10 (guards and probing) are all done, and so is row 11's
+MMIO half. What remains is the panic semantics with no OS (the other half of row 10), which turn
+a check that fires into a diagnostic instead of a bare `panic` byte, and the IRQ-line and
+physical-frame halves of row 11.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps

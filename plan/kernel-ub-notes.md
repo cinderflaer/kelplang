@@ -1014,3 +1014,45 @@ stand in for a handle.
 **What it does not check.** Whether a handle points at a live `SSL` object, whether it was freed once,
 whether the module that produced it is the one that consumes it, or whether the C body's cast is the right
 type. Those are the promises `std/tls`'s header documents and the AddressSanitizer gate exercises.
+
+## Stage 16: MMIO as a capability (MK10-S1, roadmap C-3, `plan/device-caps.md`)
+
+**New way to reach undefined behaviour.** None from the check itself: it only
+adds a compile-time rule about which addresses `Ptr.from_addr` may name, and a
+call it admits is as unchecked at every later step as it was before. What the
+domain *moves* is the honesty of a grant: an `mmio` range is the compiler's
+record of "this module was allowed to name this address", and a program that
+takes a granted address, offsets past the range (`p.byte_offset(n)`,
+`p.offset(n)`, `p.cast<U>()`) and reads or writes it is doing exactly what
+`Ptr` always allowed, now with a paper trail that stops at the pointer's birth.
+The `["*"]` grant is the escape hatch: it admits a computed address, so a module
+that holds it can reach any address the integer arithmetic yields, and it is the
+line to grep for when auditing a kernel's device surface.
+
+**What the compiler does check.** That `mmio` is a capability domain and a
+grant in it is a list of half-open ranges (`"0xBASE+0xLEN"`, hex or decimal,
+non-zero length, pairwise disjoint) or the wildcard alone; that a freestanding
+module's `Ptr.from_addr` holds a grant at all; that a constant address falls
+inside a granted range; and that a computed address is only accepted under
+`["*"]`. The check runs in the front end before either backend is named, so
+`kelpc check` and `kelpc build` agree; it is a no-op for a hosted project and
+for the C oracle, because freestanding mode is LLVM-only by design.
+
+**What it does not check.** Whether the granted range is really memory-mapped,
+really a device, or really this project's; anything about an address derived
+from a granted one by arithmetic, a cast or a read of the tick counter; whether
+two modules' ranges overlap or whether a module's range is correct for the
+machine it will boot on; and, in the other direction, whether a module with a
+correct-looking grant actually needed it. There is still no runtime check, no
+provenance model (roadmap D-1) and no ownership: a granted range says nothing
+about who may write it, when, or through how many pointers at once.
+
+**Grants the examples carry.** The UART drivers name a compile-time constant
+and hold exactly their device's window: `0x10000000+0x100` for the riscv64
+NS16550 (`kernel0`, `-trap`, `-heap`, `-panic`, `-percpu`, `-statics`, `-string`
+and the two freestanding arena/`try_alloc` projects) and `0x09000000+0x1000`
+for the aarch64 PL011. `kernel0-bss` (the BSS marker's address comes back from
+`asm`), `kernel0-stack`, `kernel0-user`, `kernel0-vm` and `kernel0-vm-fault`
+grant `["*"]` to the modules that build pointers from computed addresses (a
+page-table frame, a trap-frame slot, a user page, the faulting `sepc`), because
+a non-constant address is refused under a range grant by design.
