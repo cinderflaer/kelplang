@@ -884,3 +884,56 @@ terminator a `str` was promised is inside its allocation; and whether the
 project's panic handler diverges. The buffer's byte loops are ordinary code
 once the module is verified: the compiler supplies them and trusts the
 allocator, and nothing more.
+
+## Stage 13 (row 7): arenas and a fallible allocation surface (MK9-S5-M3)
+
+**New ways to reach UB.** This is the other half of row 7. `Ptr.try_alloc` hands
+back uninitialised memory through the same promise `Ptr.alloc` already took on
+trust, with one difference: failure is the null `Ptr<T>` rather than a panic, so
+the null check the compiler used to make for the program (the `check_alloc`
+branch) is now the program's own. The arena adds two more shapes:
+
+- `Ptr.try_alloc<T>(count)` returns memory the allocator claims is `count * size`
+  bytes. Reading a slot before writing it is the stage 1 indeterminate-value
+  rule, and the byte count is checked for *wrap* on both backends (a count whose
+  product would overflow `usize` is the null pointer, so a huge request cannot
+  silently become a small block). What is unchecked is the rest: that the memory
+  is large enough, that the returned address is not null before it is
+  dereferenced, and that `count` items are ever written.
+- The alignment promise is the allocator's. Hosted, `Ptr.try_alloc<T>` is
+  `malloc`, which is aligned for `max_align_t` and not necessarily for an
+  over-aligned `T` (`repr(align(64))`); treating an under-aligned address as
+  that `T` is the stage 2 UB. Freestanding, the manifest's `alloc` is handed the
+  type's own alignment and its answer is taken as the promise.
+- `std/arena` never checks or records anything about `base`: the region has to be
+  live, writable and at least `cap` bytes for as long as the arena hands out
+  pointers, and `Ptr.byte_offset` is unchecked arithmetic, so nothing ties a
+  returned pointer's provenance to the region. `reset` frees nothing and clears
+  nothing, so every pointer handed out before it is a use-after-reset the
+  compiler cannot see (the bytes are still there; reading or writing them is the
+  stage 1 rule, not an error). `alloc_zeroed` writes zeros *through* the returned
+  pointer, so a wrong or null `base` is a write to an arbitrary address, the
+  worst shape in this catalogue.
+- A `datac` field of `Ptr<T>` (which `Arena` has) is now laid out by the LLVM
+  backend, so a `Ptr` can be a struct member. Nothing about the field is checked
+  either: copying the `datac` copies the address, and the address carries no
+  lifetime, no provenance and no tie to the region it was derived from.
+
+**What the compiler does check.** That `Ptr.try_alloc` is an unsafe operation
+(inside `unsafe { ... }` or an `unsafe fun`, and in a module the manifest lists
+or the compiler ships on its own list); that its element is a type with a
+machine-level layout; that `count * size` is refused for wrap on both backends;
+that `std/arena`'s `align` is a power of two (a zero or non-power value panics
+with the module's own message) and that the padded end is computed with `%` and
+`/` and refused at each step that could wrap, so `alloc` answers the null pointer
+rather than a short block; that the freestanding lowering reaches the manifest's
+own `alloc` (so `llvm-nm -u` stays clean) and that the call is refused by name
+without one; and that the `unsafe` block in `std/arena` is admitted only through
+the compiler's short `stdlib::UNSAFE_MODULES` list. It checks nothing about the
+memory any of it returns.
+
+**What it does not check.** The allocator's honesty, the region's size, liveness
+or alignment, the null check before a dereference, the provenance of any address
+`Ptr` arithmetic builds, whether a pointer is used after `reset`, or whether
+`alloc_zeroed`'s write lands inside the region. D-1/D-2/D-3 stay open; this stage
+adds the two allocator shapes they will have to describe.

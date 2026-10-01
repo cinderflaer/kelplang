@@ -172,6 +172,26 @@ the UART under QEMU and proves `ALLOCS == DEALLOCS`; `llvm-nm -u` stays clean.
 Without an allocator `String`/`Bytes` stay refused, and `View`/`Thread` stay
 refused either way.
 
+**Row 7's arena and fallible-allocation halves are done too** (MK9-S5-M3,
+`plan/arena.md`): `Ptr.try_alloc<T>(count)` is `Ptr.alloc`'s non-panicking twin,
+`unsafe` and aligned for `T`, libc's `malloc` on both hosted backends and the
+manifest's own `[target] alloc` in a freestanding image, with a byte count that
+would wrap `usize` answered by the null pointer rather than a short block. The
+shipped `std/arena` is a bump arena over a caller-owned byte region, written in
+Kelp with no libc call, so it is legal in a hosted program and in a freestanding
+image with no allocator at all: `alloc(size, align)` aligns the returned
+*address*, returns the null `Ptr<u8>` when the padded end would exceed `cap` or
+wrap, and panics on a non-power-of-two `align`; `reset`, `used` and `remaining`
+are the rest. `alloc_zeroed` writes through the returned pointer, which is why
+`std/arena` is the first shipped module on the compiler's own `[unsafe]` list
+(`stdlib::UNSAFE_MODULES`, consulted by `resolve.rs` beside the manifest's). The
+acceptance is a hosted pair of fixtures/projects on both backends plus two
+riscv64 freestanding projects under QEMU - one carving a `static mut [u8; 4096]`
+arena with no allocator, one proving `Ptr.try_alloc` reaches the project's own
+allocator - both with `llvm-nm -u` clean. Layouting a `Ptr<T>` `datac` field was
+the one compiler-side change the arena needed; it is the same one-pointer reply
+the opaque handle already had.
+
 **Row 8's per-CPU half is done** (MK9-S3-M3, `plan/percpu.md`): a freestanding
 project may write `percpu static mut NAME: T = INIT`, and a manifest's
 `[target] cpus = N` (1 to 64, default 1) makes it `N` copies laid out as one
@@ -187,9 +207,9 @@ reads the other copy by setting `tp = 1` by hand, and asserts the four lines
 from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
 not this stage.
 
-**What the next stages need.** `defer`/`Drop` (row 6), the allocator hook (row 7), per-CPU
-storage (row 8) and mapping plus the syscall ABI (row 9) are all done. What remains is arenas and
-a fallible allocation surface (row 7), stack guards and panic semantics with no OS (row 10), the
+**What the next stages need.** `defer`/`Drop` (row 6), the whole of row 7 (the allocator hook,
+arenas and the fallible allocation surface), per-CPU storage (row 8) and mapping plus the syscall
+ABI (row 9) are all done. What remains is stack guards and panic semantics with no OS (row 10), the
 panic semantics being what turn a check that fires into a diagnostic instead of a bare `panic`
 byte, and MMIO regions and IRQ lines as capabilities (row 11).
 

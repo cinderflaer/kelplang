@@ -44,7 +44,8 @@ a borrowed literal in read-only data; user `datac` and `enum` values; arrays
 `[T; N]`; borrows `&T`/`&mut T`; `if`, `when`, loops, functions, and closures
 that capture nothing (a capturing literal owns a heap environment that only the
 runtime could free); `Atomic<T>` and its methods, plus the pure `std/atomic`,
-`std/option` and `std/result` modules, and the five `std/str` operations the
+`std/option`, `std/result` and `std/arena` modules (the arena is pure pointer
+arithmetic and needs no allocator, kernel stage 13), and the five `std/str` operations the
 compiler lowers itself (`len`, `byte`, `eq`, `starts_with` and `ptr`, kernel
 stage 7); `Ptr<T>` and the compile-time
 `size_of`/`align_of`/`offset_of`; a user `extern fun` whose module has its own
@@ -69,7 +70,7 @@ and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
 (which reach the hosted runtime whatever the manifest says), `String` and
 `Bytes` when no allocator is configured, and `Box`, `List` and `Map` when no
 `[target] alloc`/`dealloc` pair is configured. Any `std/*` module other than the
-pure three above and the `std/str` subset is refused by name: they all reach
+pure four above and the `std/str` subset is refused by name: they all reach
 libc or the allocator.
 
 `std/str` is the one module that is partly allowed, because a kernel that
