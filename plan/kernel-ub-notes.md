@@ -215,3 +215,46 @@ refused. The operand types are `Copy` machine words, so no move or drop
 bookkeeping is owed, and the borrow checker does not model the asm's own
 memory effects (the clobber list is the only thing that tells the compiler
 about them, and it is not checked).
+
+## Stage 6: kernel 0 integration (`examples/kernel0`, `examples/kernel0-trap`)
+
+**New ways to reach UB.** This stage adds no construct; it composes stages 1-5
+into an image a boot loader starts, and every new way to be wrong is a promise
+the compiler cannot see:
+
+- The linker script and the generated `_start` are one contract split across
+two files. QEMU's `-bios none` starts the image at 0x80000000 rather than at
+the ELF entry, so any section the script does not name that lld places first
+(`.eh_frame` here) silently puts `_start` somewhere QEMU does not jump to; the
+kernel then executes data. `__stack_top` over program data or the vector table
+is the stage-4 failure, unchanged.
+- The trap vector is an address written with `la` against the module's mangled
+symbol inside an asm template. A renamed or re-mangled function points `mtvec`
+at nothing, at data or at the wrong function, and nothing checks the name; the
+handler also assumes the trap is the `ecall` it expects and resumes at
+`mepc + 4` unconditionally, so a different cause (an illegal instruction, a
+fault) is resumed at an address that is not the next instruction.
+- The naked handler's save and restore list is a promise. A register it
+clobbers but does not save corrupts the interrupted code after `mret`, with no
+diagnostic; the compiler emits no framing around the body to catch it.
+- `mret` assumes the trap came from machine mode with the CSR state the handler
+expects. Nothing restores `mstatus` or `mcause`, and a nested trap lands on
+the same vector with the same stack.
+- MMIO is a claim about the hardware. The UART base, the LSR offset, bit 5 and
+the THR offset are the driver's own constants; writing THR without polling or
+polling the wrong bit is simply wrong, not checked.
+- `.bss` is not zeroed by `_start`, and `kmain` here does not touch it. The
+first static a kernel adds is read as whatever the loader left in RAM.
+
+**What the compiler does check.** Everything stages 1-5 check (the unsafe
+listing, the freestanding allowed set, the naked body shape, the asm operand
+shapes, the manifest's entry and panic shapes), on both `check` and `build`.
+Nothing about the script's contents, the address a mangled symbol resolves to,
+the trap cause, the handler's save list or the hardware.
+
+**What it does not check.** The linker script, the `la` symbol in an asm
+template, the trap entry assumptions, the register save completeness, the CSR
+or privilege state at `mret`, and every MMIO fact. These are the reasons the
+next stages add `interrupt` attributes, stack guards and the panic semantics
+of stage 10, and MMIO capabilities in stage 11 (`plan/kernel0-status.md` lists
+them in order).

@@ -82,7 +82,12 @@ _start:
 
 It clears nothing else, and if the entry function returns it loops on `wfi`.
 `kelp_kmain` is the entry `fun`'s emitted symbol. `.text.boot` is where a
-linker script should place the stub first.
+linker script should place the stub first. Naming it first is not enough on its
+own: the script has to name the other sections too, because lld places an
+unnamed orphan (`.eh_frame` is the one a program with unwinding tables emits)
+before `.text`, and QEMU's `-bios none` starts the image at 0x80000000 rather
+than the ELF entry, so `_start` has to hold that address
+(`examples/kernel0/kernel.ld`, `plan/kernel0-status.md`).
 
 `section("<name>")` is the clause that lets a script place other things: an
 optional leading clause on a top-level `const` or `fun`, in either order round
