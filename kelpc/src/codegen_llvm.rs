@@ -564,6 +564,10 @@ pub struct Freestanding {
     pub alloc: Option<String>,
     pub dealloc: Option<String>,
     pub realloc: Option<String>,
+    /// The manifest's `[target] cpus` (kernel stage 8): how many copies a
+    /// `percpu` static is laid out as, and the bound `cpu_index()` is checked
+    /// against in a debug build.
+    pub cpus: u64,
 }
 
 /// The project's own allocator, resolved to the LLVM functions the container
@@ -609,8 +613,15 @@ fn freestanding_entry_asm(triple: &str, entry_symbol: &str) -> Result<String, St
     }
 }
 
-/// The riscv64 stub: `la sp, __stack_top`, the word-at-a-time clear, then the
-/// entry call and a `wfi` halt.
+/// The riscv64 stub: park every hart but hart 0, then `la sp, __stack_top`,
+/// the word-at-a-time clear, the entry call, and a `wfi` halt.
+///
+/// QEMU's `-bios none` starts every hart at the entry with no firmware to park
+/// the secondaries, so a kernel built with `-smp 2` (kernel stage 8) would have
+/// both harts racing through the boot path. The `mhartid` test is the first
+/// instruction: a hart whose id is not zero waits on `wfi` before the stack is
+/// loaded, so it never touches memory and never reaches the entry. A single
+/// hart (the default `-smp 1`) reads 0 and falls through.
 fn riscv64_entry_asm(entry_symbol: &str) -> String {
     format!(
         "    .section .text.boot, \"ax\", @progbits\n\
@@ -619,6 +630,8 @@ fn riscv64_entry_asm(entry_symbol: &str) -> String {
          \x20   .globl _start\n\
          \x20   .type _start, @function\n\
          _start:\n\
+         \x20   csrr t0, mhartid\n\
+         \x20   bnez t0, .Lkelp_park\n\
          \x20   la sp, __stack_top\n\
          \x20   la t0, __bss_start\n\
          \x20   la t1, __bss_end\n\
@@ -632,6 +645,9 @@ fn riscv64_entry_asm(entry_symbol: &str) -> String {
          1:\n\
          \x20   wfi\n\
          \x20   j 1b\n\
+         .Lkelp_park:\n\
+         \x20   wfi\n\
+         \x20   j .Lkelp_park\n\
          \x20   .size _start, . - _start\n"
     )
 }
@@ -675,6 +691,26 @@ struct FnInfo<'a> {
     func: LlvmFunction<'a>,
     ty: FnType<'a>,
     ret_ty: Ty,
+}
+
+/// One module-scope `static`'s LLVM global, its `tir` type, and, for a
+/// `percpu` static (kernel stage 8), how to index it. `percpu` is `Some` when
+/// the global is an `[N x stride]` array; a reference computes the address of
+/// the `cpu_index()`-th element rather than using the global directly.
+#[derive(Clone)]
+struct StaticGlobal<'a> {
+    global: Value<'a>,
+    ty: Ty,
+    percpu: Option<PercpuStatic<'a>>,
+}
+
+/// How one `percpu` static's copies are laid out: the array's element type
+/// (the `tir` type, or a `{ T, pad }` wrapper when its size is not a multiple
+/// of the 64-byte cache line) and whether that wrapper is in use.
+#[derive(Clone, Copy)]
+struct PercpuStatic<'a> {
+    stride_ty: Type<'a>,
+    padded: bool,
 }
 
 /// One runtime helper the IR calls by declaration: the function, its LLVM type,
@@ -936,11 +972,12 @@ struct Gen<'a> {
     init_pds_fn: Option<LlvmFunction<'a>>,
     drop_pds_fn: Option<LlvmFunction<'a>>,
     /// One module-scope global per `static` (kernel stage 7), keyed by the
-    /// module-prefixed name `tir` gives it, plus its type. Each holds its
-    /// folded constant, so no code runs at startup and a freestanding image
-    /// needs no init hook; a `StaticRef` loads from it, stores through it and
-    /// takes its address.
-    static_globals: HashMap<String, (Value<'a>, Ty)>,
+    /// module-prefixed name `tir` gives it, plus its type and, for a `percpu`
+    /// static (kernel stage 8), the number of copies. Each holds its folded
+    /// constant, so no code runs at startup and a freestanding image needs no
+    /// init hook; a `StaticRef` loads from it, stores through it and takes its
+    /// address.
+    static_globals: HashMap<String, StaticGlobal<'a>>,
     /// The runtime's two saved `argv` globals (`runtime/kelp_rt.c`), which
     /// `main` writes and `process.args()` reads. They are `extern` here: the
     /// runtime object defines them, exactly as it does for the C backend's
@@ -980,6 +1017,13 @@ struct Gen<'a> {
     /// call: the project's own `panic = "..."` function, or a generated
     /// infinite loop when the manifest names none.
     freestanding: Option<Freestanding>,
+    /// The manifest's `[target] cpus` (kernel stage 8), defaulted to 1 for a
+    /// hosted build (which has no `percpu` statics anyway).
+    cpus: u64,
+    /// Whether the `cpu_index()` bounds check is emitted: true at `-O0`, the
+    /// dev build. A release image trusts the register and carries no check
+    /// (`plan/kernel-ub-notes.md` stage 11).
+    debug_checks: bool,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -1102,6 +1146,8 @@ impl<'a> Gen<'a> {
             keyable: crate::types::keyable_types(&type_decls, &program.declared_keys),
             pd_globals: HashMap::new(),
             static_globals: HashMap::new(),
+            cpus: freestanding.as_ref().map(|fs| fs.cpus).unwrap_or(1),
+            debug_checks: !optimized,
             init_pds_fn: None,
             drop_pds_fn: None,
             argc_global: module.add_external_global("kelp_argc", ctx.i32()),
@@ -1355,6 +1401,10 @@ impl<'a> Gen<'a> {
     /// an atomic writes through a shared borrow.
     fn declare_statics(&mut self) -> Result<(), String> {
         for s in &self.program.statics {
+            if s.percpu {
+                self.declare_percpu_static(s)?;
+                continue;
+            }
             let lty = llvm_type(self.ctx, &self.structs, &self.containers, &s.ty)?;
             let global = self.module.add_global(&symbol_name(&s.name), lty);
             let zero = static_init_is_zero_llvm(&s.init);
@@ -1370,30 +1420,94 @@ impl<'a> Gen<'a> {
                 global.set_section(section);
             }
             global.set_internal_linkage();
-            self.static_globals
-                .insert(s.name.clone(), (global, s.ty.clone()));
+            self.static_globals.insert(
+                s.name.clone(),
+                StaticGlobal {
+                    global,
+                    ty: s.ty.clone(),
+                    percpu: None,
+                },
+            );
         }
-        // `@llvm.used` keeps every static in the object even when LLVM can
-        // constant-fold every read of it (an immutable table, a `static mut`
-        // nothing writes). The C backend's `__attribute__((used))` is the same
-        // fact, and a freestanding image's section placement has to match on
-        // both.
-        if !self.program.statics.is_empty() {
-            let ptr = self.ctx.opaque_ptr();
-            let values: Vec<Value<'a>> = self
-                .program
-                .statics
-                .iter()
-                .filter_map(|s| self.static_globals.get(&s.name).map(|(g, _)| *g))
-                .collect();
-            let arr_ty = self.ctx.array_type(ptr, values.len() as u64);
-            let arr = self.ctx.const_array(ptr, &values);
-            let used = self.module.add_global("llvm.used", arr_ty);
-            used.set_initializer(arr);
-            used.set_appending_linkage();
-            used.set_section("llvm.metadata");
-        }
+        self.emit_llvm_used();
         Ok(())
+    }
+
+    /// One `percpu` static (kernel stage 8): `[cpus x stride]`, where each
+    /// element is the declared type `T` (or `{ T, pad }` when `T`'s size is not
+    /// a multiple of 64), so consecutive copies start a cache line apart. The
+    /// folded initializer is replicated into every copy, the global is aligned
+    /// to 64 bytes and placed in `.percpu` unless the declaration wrote its own
+    /// `section(...)`, and the copy count is the manifest's `[target] cpus`.
+    fn declare_percpu_static(&mut self, s: &crate::tir::Static) -> Result<(), String> {
+        let elem_lty = llvm_type(self.ctx, &self.structs, &self.containers, &s.ty)?;
+        let size = self.layout.abi_size_of(elem_lty);
+        // The stride has to be a multiple of 64 so every copy is cache-line
+        // aligned. `T`'s size is always a multiple of its own alignment, and
+        // every alignment here divides 64 (an over-64 `repr(align)` makes the
+        // size itself a multiple of 64), so padding to the next multiple of 64
+        // is exactly the stride.
+        let pad = (64 - (size % 64)) % 64;
+        let padded_name = format!("kelp_percpu_{}", s.name);
+        let (stride_ty, padded) = if pad == 0 {
+            (elem_lty, false)
+        } else {
+            let pad_ty = self.ctx.array_type(self.ctx.i8(), pad);
+            let ty = self.ctx.struct_type(&padded_name);
+            self.ctx.struct_set_body(ty, &[elem_lty, pad_ty]);
+            (ty, true)
+        };
+        let arr_ty = self.ctx.array_type(stride_ty, self.cpus);
+        let global = self.module.add_global(&symbol_name(&s.name), arr_ty);
+        let elem_init = self.llvm_static_init(&s.init, &s.ty)?;
+        let copy = if padded {
+            let pad_ty = self.ctx.array_type(self.ctx.i8(), pad);
+            self.ctx
+                .const_named_struct(stride_ty, &[elem_init, self.ctx.const_null(pad_ty)])
+        } else {
+            elem_init
+        };
+        let copies = vec![copy; self.cpus as usize];
+        global.set_initializer(self.ctx.const_array(stride_ty, &copies));
+        global.set_global_alignment(64);
+        // A per-CPU object is always written through, so it is never `constant`;
+        // the declared `section(...)` wins, for the same reason it does on an
+        // ordinary static, and the default is `.percpu`.
+        global.set_section(s.section.as_deref().unwrap_or(".percpu"));
+        global.set_internal_linkage();
+        self.static_globals.insert(
+            s.name.clone(),
+            StaticGlobal {
+                global,
+                ty: s.ty.clone(),
+                percpu: Some(PercpuStatic { stride_ty, padded }),
+            },
+        );
+        Ok(())
+    }
+
+    /// The `@llvm.used` global that keeps every static in the object even when
+    /// LLVM can constant-fold every read of it (an immutable table, a
+    /// `static mut` nothing writes). The C backend's `__attribute__((used))` is
+    /// the same fact, and a freestanding image's section placement has to match
+    /// on both.
+    fn emit_llvm_used(&mut self) {
+        if self.program.statics.is_empty() {
+            return;
+        }
+        let ptr = self.ctx.opaque_ptr();
+        let values: Vec<Value<'a>> = self
+            .program
+            .statics
+            .iter()
+            .filter_map(|s| self.static_globals.get(&s.name).map(|sg| sg.global))
+            .collect();
+        let arr_ty = self.ctx.array_type(ptr, values.len() as u64);
+        let arr = self.ctx.const_array(ptr, &values);
+        let used = self.module.add_global("llvm.used", arr_ty);
+        used.set_initializer(arr);
+        used.set_appending_linkage();
+        used.set_section("llvm.metadata");
     }
 
     /// One folded static initializer as an LLVM constant.
@@ -2933,14 +3047,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::Ident(_) if e.ty == Ty::Unit => Ok(None),
             ExprKind::Ident(name) => Ok(Some(self.load_ident(e, name)?)),
             // A `static` is one module-scope object (kernel stage 7), so a read
-            // is a load from its global and its place is the global itself.
+            // is a load from its global; a `percpu` static (kernel stage 8)
+            // reads the copy `cpu_index()` selects.
             ExprKind::StaticRef(name) => {
-                let (global, ty) = self
-                    .g
-                    .static_place(name)
-                    .ok_or_else(|| no_value(&format!("the static '{name}'")))?;
+                let (ty, slot) = self.static_slot(name)?;
                 let lty = self.lty(&ty)?;
-                Ok(Some(self.g.builder.build_load(lty, global, name)))
+                Ok(Some(self.g.builder.build_load(lty, slot, name)))
             }
             ExprKind::Unary { op, expr } => Ok(Some(self.emit_unary(*op, expr, &e.ty)?)),
             ExprKind::Binary { op, lhs, rhs } => {
@@ -3801,6 +3913,34 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(Some(self.g.builder.build_load(lty, ok_field, "try.ok")))
     }
 
+    /// The `tir` type and the address of one `static`'s current-CPU copy
+    /// (kernel stage 7; per-CPU, kernel stage 8). For an ordinary static the
+    /// address is the global itself; for a `percpu` one it is
+    /// `&global[cpu_index()]`, computed through the same stride type the global
+    /// was declared with.
+    fn static_slot(&self, name: &str) -> Result<(Ty, Value<'a>), String> {
+        let (global, ty, percpu) = self
+            .g
+            .static_place(name)
+            .ok_or_else(|| no_value(&format!("the static '{name}'")))?;
+        let Some(percpu) = percpu else {
+            return Ok((ty, global));
+        };
+        let idx = self.g.cpu_index(self.cur_fn)?;
+        let slot = self
+            .g
+            .builder
+            .build_gep(percpu.stride_ty, global, idx, "percpu.slot");
+        let cell = if percpu.padded {
+            self.g
+                .builder
+                .build_struct_gep(percpu.stride_ty, slot, 0, "percpu")
+        } else {
+            slot
+        };
+        Ok((ty, cell))
+    }
+
     /// The address of `base.field`, plus the LLVM struct type it indexes and the
     /// field's index: what a field read and a field write both need.
     fn field_place(
@@ -3859,12 +3999,9 @@ impl<'g, 'a> FnGen<'g, 'a> {
                     Ok(slot)
                 }
             }
-            // A `static`'s place is its own module-scope global.
-            ExprKind::StaticRef(name) => self
-                .g
-                .static_place(name)
-                .map(|(global, _)| global)
-                .ok_or_else(|| no_value(&format!("the static '{name}'"))),
+            // A `static`'s place is its own module-scope global; a `percpu`
+            // static's is the current CPU's copy.
+            ExprKind::StaticRef(name) => self.static_slot(name).map(|(_, slot)| slot),
             ExprKind::FieldAccess { base, field } => {
                 let (ptr, struct_ty, index) = self.field_place(base, field)?;
                 Ok(self
@@ -4255,11 +4392,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             // place, and a static never owns memory, so no old value is
             // dropped.
             ExprKind::StaticRef(name) => {
-                let slot = self
-                    .g
-                    .static_place(name)
-                    .map(|(global, _)| global)
-                    .ok_or_else(|| no_value(&format!("the static '{name}'")))?;
+                let slot = self.static_slot(name)?.1;
                 self.g.builder.build_store(v, slot);
                 Ok(())
             }
@@ -5547,6 +5680,12 @@ impl<'g, 'a> FnGen<'g, 'a> {
         ret: &Ty,
         span: Span,
     ) -> Result<Option<Value<'a>>, String> {
+        // `cpu_index()` (kernel stage 8): the register the kernel set at boot,
+        // read with one inline-asm instruction. `cpu_count()` is folded to a
+        // literal in `infer.rs`, so it never reaches here.
+        if callee == "cpu_index" {
+            return Ok(Some(self.g.cpu_index(self.cur_fn)?));
+        }
         // `Handle.null()` and `w.is_null()` (gap 1): a handle is `ptr`, so the
         // null handle is `ptr null` and the test is a pointer comparison.
         // Both keys are synthetic (see `types::HANDLE_NULL_KEY`).
@@ -6810,6 +6949,42 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// The current CPU's index (kernel stage 8): the value of the register the
+    /// kernel sets at boot, read with one inline-asm instruction (`tp` on
+    /// riscv64, `TPIDR_EL1` on aarch64). The compiler never sets the register,
+    /// and it never trusts a value it did not produce: in a debug build
+    /// (`-O0`) the index is compared against the manifest's `[target] cpus`
+    /// and panics through the project's own handler when it is out of range,
+    /// while a release build trusts it (`plan/kernel-ub-notes.md` stage 11).
+    fn cpu_index(&self, func: LlvmFunction<'a>) -> Result<Value<'a>, String> {
+        let triple = self
+            .freestanding
+            .as_ref()
+            .map(|fs| fs.triple.as_str())
+            .ok_or_else(|| no_value("'cpu_index()' outside a freestanding build"))?;
+        let template = if triple.starts_with("riscv64") || triple.starts_with("riscv32") {
+            "mv {0}, tp"
+        } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+            "mrs {0}, TPIDR_EL1"
+        } else {
+            return Err(format!(
+                "kelpc has no 'cpu_index()' lowering for the triple '{triple}': it reads 'tp' on riscv64 and 'TPIDR_EL1' on aarch64"
+            ));
+        };
+        let usize_ty = self.lty2(&Ty::Usize)?;
+        let fn_ty = self.ctx.fn_type(usize_ty, &[], false);
+        let text = asm_operand_text(template, &[0], '$');
+        let callee = self.ctx.inline_asm(fn_ty, &text, "=r", true, false);
+        let idx = self
+            .builder
+            .build_indirect_call(callee, fn_ty, &[], "cpu");
+        if self.debug_checks {
+            let n = self.ctx.const_int(usize_ty, self.cpus, false);
+            self.emit_bounds_check(func, n, idx, "cpu index out of range")?;
+        }
+        Ok(idx)
+    }
+
     /// The inline half of `kelp_buf_reserve` for an owned buffer: test
     /// `len + extra <= cap` where the callee tests it, which is its own first
     /// line, and call the callee only when the buffer has to grow. Both sides
@@ -7634,11 +7809,13 @@ impl<'a> Gen<'a> {
             .ok_or_else(|| no_value(&format!("the container '{}'", ty.display())))
     }
 
-    /// The LLVM global and type of one `static` (kernel stage 7).
-    fn static_place(&self, name: &str) -> Option<(Value<'a>, Ty)> {
+    /// The LLVM global, `tir` type and per-CPU layout (if any) of one `static`
+    /// (kernel stage 7). The caller resolves the address of the current CPU's
+    /// copy through `FnGen::static_slot`.
+    fn static_place(&self, name: &str) -> Option<(Value<'a>, Ty, Option<PercpuStatic<'a>>)> {
         self.static_globals
             .get(name)
-            .map(|(global, ty)| (*global, ty.clone()))
+            .map(|sg| (sg.global, sg.ty.clone(), sg.percpu))
     }
 
     /// Position the builder at a fresh block of the named container function.

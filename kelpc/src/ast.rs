@@ -82,6 +82,11 @@ pub struct StaticDecl {
     pub is_pub: bool,
     /// `static mut NAME` — every access to it is `unsafe`.
     pub mutable: bool,
+    /// `percpu static mut NAME` (kernel stage 8, MK9-S3-M3): the static is one
+    /// object *per CPU*, laid out as the manifest's `[target] cpus` copies and
+    /// indexed by `cpu_index()`. Legal only in a freestanding build, and only
+    /// with `mut`.
+    pub percpu: bool,
     pub ty: TypeExpr,
     /// The constant initializer, checked to fold at compile time.
     pub init: Expr,

@@ -79,6 +79,11 @@ pub struct Static {
     pub ty: Ty,
     /// `static mut NAME` — every access is `unsafe`.
     pub mutable: bool,
+    /// `percpu static mut NAME` (kernel stage 8): the static is one object per
+    /// CPU. The backends emit it as the manifest's `[target] cpus` copies in
+    /// `.percpu`, each 64-byte aligned, and a reference to the name indexes the
+    /// copy for the current CPU.
+    pub percpu: bool,
     /// The `section("...")` clause, when one was written.
     pub section: Option<String>,
     pub init: StaticInit,

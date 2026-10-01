@@ -242,6 +242,10 @@ pub struct TargetDecl {
     alloc: Option<String>,
     dealloc: Option<String>,
     realloc: Option<String>,
+    /// `cpus = N` (kernel stage 8, MK9-S3-M3): how many copies a `percpu`
+    /// static is laid out as. 1 when the section names none, which is what a
+    /// single-hart image and every project before this stage get.
+    cpus: u64,
 }
 
 impl TargetDecl {
@@ -257,6 +261,7 @@ impl TargetDecl {
             alloc: None,
             dealloc: None,
             realloc: None,
+            cpus: 1,
         }
     }
 
@@ -307,6 +312,12 @@ impl TargetDecl {
     /// section names one; without it, growth is alloc + copy + dealloc.
     pub fn realloc(&self) -> Option<&str> {
         self.realloc.as_deref()
+    }
+
+    /// How many copies a `percpu` static is laid out as (kernel stage 8):
+    /// the manifest's `[target] cpus`, or 1 when it names none.
+    pub fn cpus(&self) -> u64 {
+        self.cpus
     }
 }
 
@@ -1369,6 +1380,7 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         target_seen: false,
         target: TargetDecl::hosted(),
         target_mode_set: false,
+        target_cpus_set: false,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1690,6 +1702,9 @@ struct Manifest {
     /// Whether `mode` was set, so a section without one is refused rather than
     /// defaulted.
     target_mode_set: bool,
+    /// Whether `cpus` was set, so a duplicated key is refused rather than
+    /// silently keeping one of the two values.
+    target_cpus_set: bool,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -1821,8 +1836,9 @@ fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
 
 /// One `key = value` line inside `coral.toml`'s `[target]` section (kernel
 /// stage 4): `mode`, `triple`, `entry`, `linker_script` or `panic`, each a
-/// double-quoted string. The section's completeness is checked once, after the
-/// whole file is read, so an out-of-order line is not an error.
+/// double-quoted string, plus `cpus` (kernel stage 8), a bare integer. The
+/// section's completeness is checked once, after the whole file is read, so an
+/// out-of-order line is not an error.
 fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
     let Some((key, value)) = line.split_once('=') else {
         return Err(Diagnostic::new(
@@ -1835,6 +1851,39 @@ fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
     };
     let key = key.trim();
     let value = value.trim();
+    // `cpus` is the one numeric key: a hart count is a number, and writing
+    // `"4"` for it would be silly (the same reasoning as the program-level
+    // `http_pool`, S4).
+    if key == "cpus" {
+        if manifest.target_cpus_set {
+            return Err(Diagnostic::new(
+                format!("'cpus' appears more than once in {MANIFEST_NAME}'s [target] section"),
+                at,
+                "",
+            ));
+        }
+        let Ok(n) = value.parse::<u64>() else {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[target] cpus' must be an integer between 1 and 64, found '{value}'"
+                ),
+                at,
+                "",
+            ));
+        };
+        if !(1..=64).contains(&n) {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME} value for '[target] cpus' must be between 1 and 64, found {n}"
+                ),
+                at,
+                "",
+            ));
+        }
+        manifest.target.cpus = n;
+        manifest.target_cpus_set = true;
+        return Ok(());
+    }
     let Some(value) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
         return Err(Diagnostic::new(
             format!(
@@ -1938,7 +1987,7 @@ fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
         other => {
             return Err(Diagnostic::new(
                 format!(
-                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script', 'panic', 'alloc', 'dealloc' or 'realloc'"
+                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script', 'panic', 'alloc', 'dealloc', 'realloc' or 'cpus'"
                 ),
                 at,
                 "",
@@ -3026,6 +3075,33 @@ mod tests {
         assert_eq!(m.target.realloc(), Some("krealloc"));
         // A section with no allocator keys configures no allocator.
         assert!(manifest("name = \"x\"\n").target.alloc().is_none());
+    }
+
+    #[test]
+    fn the_cpu_count_is_read_as_a_bare_integer() {
+        assert_eq!(manifest("name = \"x\"\n").target.cpus(), 1);
+        let m = manifest(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\n\
+             triple = \"riscv64-unknown-none-elf\"\nentry = \"kmain\"\n\
+             linker_script = \"k.ld\"\ncpus = 4\n",
+        );
+        assert_eq!(m.target.cpus(), 4);
+    }
+
+    #[test]
+    fn a_cpu_count_outside_one_to_sixty_four_is_rejected() {
+        for bad in ["0", "65", "yes", "\"4\""] {
+            let err = manifest_err(&format!(
+                "name = \"x\"\n[target]\nmode = \"hosted\"\ncpus = {bad}\n"
+            ));
+            assert!(
+                err.message.contains("'[target] cpus'"),
+                "{bad}: {}",
+                err.message
+            );
+        }
+        let err = manifest_err("name = \"x\"\n[target]\nmode = \"hosted\"\ncpus = 2\ncpus = 4\n");
+        assert!(err.message.contains("appears more than once"), "{}", err.message);
     }
 
     #[test]

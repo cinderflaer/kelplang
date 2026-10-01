@@ -454,6 +454,12 @@ struct Ctx {
     /// The functions declared `unsafe fun`, by canonical key. Calling one
     /// requires `unsafe_depth > 0`.
     unsafe_fns: std::collections::HashSet<String>,
+    /// Whether the project is a freestanding build (kernel stage 8). The
+    /// `percpu` storage class and its two intrinsics exist only there.
+    freestanding: bool,
+    /// The manifest's `[target] cpus` (kernel stage 8), which is the value
+    /// `cpu_count()` folds to and the number of copies a `percpu` static has.
+    cpus: u64,
 }
 
 /// One checked `static` (kernel stage 7).
@@ -4596,6 +4602,30 @@ fn collect_statics(
                 decl.module.clone(),
             ));
         }
+        // `percpu` is a freestanding-only storage class, and it is only
+        // meaningful when mutable: one shared copy per CPU that no code may
+        // write is an ordinary `static` with extra address space (kernel
+        // stage 8). Both are checked here, before any backend is named, so
+        // `kelpc check` and `kelpc build` refuse identically and the C oracle
+        // refuses for the same reason the LLVM backend does.
+        if decl.percpu && !decl.mutable {
+            return Err(Diagnostic::new(
+                format!(
+                    "a per-CPU static must be 'mut', written 'percpu static mut {bare}: T = INIT': a read-only per-CPU is just a 'static'"
+                ),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
+        if decl.percpu && !project.target().is_freestanding() {
+            return Err(Diagnostic::new(
+                format!(
+                    "the per-CPU static '{bare}' is only legal in a freestanding build: one copy per CPU needs a bare-metal target whose CPU index register the kernel sets, so '[target] mode = \"freestanding\"' and a '[target] cpus' are required"
+                ),
+                decl.span,
+                decl.module.clone(),
+            ));
+        }
         let aliases = project.alias_prefixes_of(&decl.module);
         let ty = TypeScope {
             structs,
@@ -4653,6 +4683,7 @@ fn collect_statics(
             name: decl.name.clone(),
             ty,
             mutable: decl.mutable,
+            percpu: decl.percpu,
             section: decl.section.clone(),
             init,
         });
@@ -7535,6 +7566,8 @@ fn base_ctx(
         defer_empty_container: false,
         unsafe_depth: 0,
         unsafe_fns: project.unsafe_fns().clone(),
+        freestanding: project.target().is_freestanding(),
+        cpus: project.target().cpus(),
     }
 }
 
@@ -12607,6 +12640,46 @@ fn check_call(
     // program cannot shadow one and get a different `size_of` than the ABI.
     if matches!(callee, "size_of" | "align_of" | "offset_of") && !callee.contains('.') {
         return check_layout_query(callee, &explicit, args, span, ctx);
+    }
+    // The per-CPU intrinsics (kernel stage 8). `cpu_count()` folds to the
+    // manifest's `[target] cpus`; `cpu_index()` stays a call, read from the
+    // register the kernel set at boot. Both are freestanding-only and take no
+    // arguments, and both are resolved before the program's own declarations
+    // for the same reason the layout queries are.
+    if matches!(callee, "cpu_index" | "cpu_count") && !callee.contains('.') {
+        if !ctx.freestanding {
+            return Err(TypeError {
+                message: format!(
+                    "'{callee}' is only available in a freestanding build: it reads the CPU index register the kernel sets at boot"
+                ),
+                span,
+            });
+        }
+        if !explicit.is_empty() {
+            return Err(TypeError {
+                message: format!("'{callee}' takes no type arguments"),
+                span,
+            });
+        }
+        if !args.is_empty() {
+            return Err(TypeError {
+                message: format!("'{callee}' takes no arguments, found {}", args.len()),
+                span,
+            });
+        }
+        let kind = if callee == "cpu_count" {
+            tir::ExprKind::IntLit(i128::from(ctx.cpus))
+        } else {
+            tir::ExprKind::Call {
+                callee: "cpu_index".to_string(),
+                args: Vec::new(),
+            }
+        };
+        return Ok(tir::Expr {
+            kind,
+            ty: Ty::Usize,
+            span,
+        });
     }
     if callee == "main" {
         // `main` is the program entry point; it takes no arguments, so there

@@ -893,6 +893,16 @@ impl<'ctx> Value<'ctx> {
         // `LLVMSetAlignment` accepts besides a global variable.
         unsafe { LLVMSetAlignment(self.raw, align) };
     }
+
+    /// Set a global variable's alignment in bytes (`LLVMSetAlignment`), which
+    /// is what a `percpu` static's 64-byte cache-line alignment lowers to
+    /// (kernel stage 8): the object writer emits the alignment that keeps each
+    /// copy on a cache line of its own.
+    pub fn set_global_alignment(&self, align: u32) {
+        // SAFETY: `raw` is a global variable value, the other kind
+        // `LLVMSetAlignment` accepts.
+        unsafe { LLVMSetAlignment(self.raw, align) };
+    }
 }
 
 /// The sign of a sub-word integer that crosses to a C body, as LLVM's
