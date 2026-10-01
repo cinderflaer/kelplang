@@ -113,6 +113,18 @@ the ordinary use-of-a-moved-value error. Both a hosted fixture set and a freesta
 project that releases a lock flag with a `defer` are in the suite. User `Drop`, the other half
 of the row, is not in this stage.
 
+**Row 7's hook half is done** (MK9-S5-M1, `plan/freestanding.md`): a freestanding
+manifest may name `alloc`, `dealloc` and an optional `realloc` in `[target]`, and
+`Box<T>`, `List<T>` and `Map<V>` of allowed element types then allocate and free
+through them instead of libc, on the LLVM backend that freestanding mode is.
+Without the pair the three containers are refused exactly as before, with a
+message that names the keys; `String`/`Bytes`/`View`/`Thread` stay refused
+either way. A failed allocation reaches the project's panic handler with "out of
+memory". `examples/kernel0-heap` is the idiom: a bump allocator over a
+`static mut` arena, a `List<i32>` of 1..=10, and a counting wrapper that prints
+`balanced` when every allocation reached a matching free. Arenas as a language
+feature and a fallible allocation surface are not in this stage.
+
 **What the next stages need.** The table's stages 6 to 11 are the remaining work:
 `defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),
 mapping and a syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and

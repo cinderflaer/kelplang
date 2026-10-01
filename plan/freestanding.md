@@ -47,15 +47,18 @@ runtime could free); `Atomic<T>` and its methods, plus the pure `std/atomic`,
 `[extern."<id>"]` section; a call to the builtin `panic(msg)`, which lowers
 to a call to the same handler as the checks; and arithmetic, including the
 overflow and bounds checks, which call the project's panic handler (below).
+With `[target] alloc`/`dealloc` configured, `Box<T>`, `List<T>` and `Map<V>` of
+allowed element types are allowed too (the next section).
 
 **Refused, each naming the construct.** `print`/`print!` (the `printf` call),
 `assert` (the runtime's `kelp_assert`), a defined `main` (the hosted entry point
 and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
 `malloc`/`free`), passdowns (`pd`, whose initializers run through the generated
-`kelp_init_pds` that only the hosted entry point calls), and the heap types
-`String`, `Bytes`, `List`, `Map`, `Box`, `View` and `Thread`. Any `std/*`
-module other than the pure three above is refused by name: they all reach libc
-or the allocator.
+`kelp_init_pds` that only the hosted entry point calls), `String`, `Bytes`,
+`View` and `Thread` (which always reach the hosted C runtime, `String`/`Bytes`
+through `strlen`/`memcpy`/`realloc`), and `Box`, `List` and `Map` when no
+`[target] alloc`/`dealloc` pair is configured. Any `std/*` module other than the
+pure three above is refused by name: they all reach libc or the allocator.
 
 The list is deliberately a *closure over reachability*, not the language's
 surface: `print` is refused as a call, `String` as a type wherever it appears
@@ -103,6 +106,49 @@ RISC-V calls `section` and `repr` "contextual words": like `unsafe`, the word is
 an identifier unless the following `(` or `fun` makes it a marker, so a program
 may still use `section` as a variable name.
 
+## The allocator hook (kernel stage 7, MK9-S5-M1)
+
+A freestanding project that wants the heap types names the functions that own
+its memory:
+
+```toml
+[target]
+mode = "freestanding"
+# ... triple, entry, linker_script, panic ...
+alloc = "kmalloc"
+dealloc = "kfree"
+realloc = "krealloc"      # optional
+```
+
+All three are bare names of `fun`s in the entry module,
+`extern`-free, with fixed signatures: `fun alloc(size: usize, align: usize).R:
+Ptr<u8>` (the null pointer on failure), `fun dealloc(p: Ptr<u8>, size: usize,
+align: usize)`, and `fun realloc(p: Ptr<u8>, old: usize, new: usize, align:
+usize).R: Ptr<u8>`. `alloc` and `dealloc` are required together; `realloc` needs
+the pair. A wrong signature is a compile error naming the expected one.
+
+With a pair configured, `Box<T>`, `List<T>` and `Map<V>` are allowed whenever
+their element/key/value types are allowed (so no `String`, `Bytes`, `View` or
+`Thread` anywhere inside). Every allocation and free those containers make in
+the LLVM output calls the project's functions instead of libc's `malloc`,
+`realloc` and `free`, and the two memory primitives a freestanding image has no
+libc for (`memcpy`, `memset`) are emitted as module-private `kelp_memcpy` and
+`kelp_memset` definitions. Without a `realloc`, growth is alloc + copy +
+dealloc. The generated object still references no libc symbol, which the
+acceptance test checks with `llvm-nm -u`. With no pair configured the three
+containers are refused exactly as before, with a message that now names the
+`alloc`/`dealloc` keys; `String`, `Bytes`, `View` and `Thread` are refused
+either way.
+
+`Ptr.alloc`/`Ptr.free` stay refused: they are the hosted `malloc`/`free` and
+this stage does not reroute them. A failed allocation (the project's `alloc`
+returns null) calls the project's panic handler with `"out of memory"`, so it is
+a panic and never a null dereference.
+
+`plan/kernel-ub-notes.md` carries the stage's undefined behaviour: everything
+the allocator does with the memory it returns is a promise the compiler does not
+check (alignment, size, aliasing, double free).
+
 ## The target machine and the link
 
 `kelpc build` in freestanding mode is LLVM-only. `KELPC_ORACLE=c` refuses with a
@@ -148,9 +194,12 @@ milestone the next stages reach, not this one.
 - No inline asm and no naked functions (stage 5): `_start` is a compiler-emitted
   assembly blob, not something the language can write. `sp` can only come from
   the linker script.
-- No allocator hook. Anything that needs the heap is refused rather than served;
-  `Ptr.alloc`/`Ptr.free` are refused (they are `malloc`/`free`) even though
-  `Ptr<T>` itself is allowed.
+- No `Ptr.alloc`/`Ptr.free` hook. The global allocator of kernel stage 7 is
+  `[target] alloc`/`dealloc`; the `Ptr` methods stay the hosted `malloc`/`free`
+  and are still refused, even though `Ptr<T>` itself is allowed.
+- `String` and `Bytes` stay refused even with an allocator configured, because
+  their operations reach `strlen`/`memcpy`/`realloc` in the hosted runtime; only
+  `Box`, `List` and `Map` are rerouted.
 - A large aggregate copy can make LLVM emit a `memcpy` or `memset` call, which
   it assumes libc provides. Nothing here maps those to an in-language loop, so
   `ld.lld` reports the undefined symbol and the project has to supply it. The
