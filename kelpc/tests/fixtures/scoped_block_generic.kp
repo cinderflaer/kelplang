@@ -1,0 +1,71 @@
+// `plan/scoped-blocks.md` part 1 on a *generic* callee. A block header takes
+// its parameter types from the function type of the parameter it is passed to,
+// and for a generic function that type is only fully known once the call's type
+// arguments are inferred from the expected return type. `column<M>` names no
+// argument that determines `M`, so the hint has to come from `view`'s return
+// type, and then the block's `k` is the `mut Children<Msg>` the scoped
+// parameter declares. This is the shape Polyp's builder syntax uses.
+datac State(val title: String, val n: i32)
+
+pub enum Node<M> {
+    Column(val children: List<Node<M>>)
+    Text(val text: String)
+    Button(val label: String, val on_click: M)
+}
+
+enum Msg {
+    Inc
+}
+
+pub datac Children<M>(var items: List<Node<M>>)
+
+fun mut Children<M>.text(t: str) {
+    items.push(Node.Text(text = String.from_str(t)))
+}
+
+fun mut Children<M>.button(label: str, on_click: move M) {
+    items.push(Node.Button(label = String.from_str(label), on_click = on_click))
+}
+
+fun mut Children<M>.column(block: scoped fun(mut Children<M>)) {
+    var inner = Children<M>(items = List.empty())
+    block(inner)
+    items.push(Node.Column(children = inner.items))
+}
+
+pub fun column<M>(block: scoped fun(mut Children<M>)).R: Node<M> {
+    var c = Children<M>(items = List.empty())
+    block(c)
+    return Node.Column(children = c.items)
+}
+
+// The block reads the borrowed `s` and nests a second scoped block.
+fun view(s: State).R: Node<Msg> {
+    return column { k ->
+        k.text(s.title.as_str())
+        k.column { m ->
+            m.text("nested")
+            m.button("+1", Msg.Inc)
+        }
+    }
+}
+
+fun size<M>(n: Node<M>).R: i32 = when n {
+    Column(children) -> total(children)
+    Text(_) -> 1
+    Button(_, _) -> 1
+}
+
+fun total<M>(xs: List<Node<M>>).R: i32 {
+    var sum = 0
+    var i: usize = 0
+    while i < xs.len() {
+        sum += size(xs.get(i))
+        i += 1
+    }
+    return sum
+}
+
+fun main() {
+    print(size(view(State(title = "row", n = 3))))
+}

@@ -9373,6 +9373,15 @@ fn field_hint(
         const_fns: Some(&ctx.const_fns),
         handles: &ctx.env.handles,
     };
+    // A generic declaration's `scoped fun(...)` parameter is still a top-level
+    // parameter of a declaration, so the scoped type is legal here; the hint
+    // is what lets a trailing block header take its parameter and return types
+    // from it. `resolve` refuses the modifier everywhere because everywhere
+    // else the value could be stored, so the hint goes through the same
+    // parameter path a non-generic declaration's signature uses.
+    if written.scoped {
+        return scope.resolve_scoped_param(written, ast::ParamMode::Borrow).ok();
+    }
     scope.resolve(written, false).ok()
 }
 

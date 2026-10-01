@@ -8308,6 +8308,11 @@ fn a_scoped_block_in_a_loop_sees_the_current_iteration() {
 }
 
 #[test]
+fn a_generic_scoped_parameter_types_its_block_from_the_expected_return() {
+    assert_compiles_and_runs("tests/fixtures/scoped_block_generic.kp", "3\n");
+}
+
+#[test]
 fn a_scoped_value_cannot_be_stored_in_a_datac() {
     assert_rejected_with(
         "tests/fixtures/scoped_param_stored.kp",
