@@ -118,10 +118,13 @@ pub(crate) const C_HEADERS: &str = "\
 #include <stdio.h>\n\
 #include <stdlib.h>\n\
 #include <string.h>\n\
-// `std/tls`'s externs (MK5-S4b-M1, open item 37) are the only OpenSSL-touching\n\
-// code in the compiler, but the declarations are unconditional here, the same\n\
-// as `math.h` above: an unused declaration costs nothing, and `driver.rs`\n\
-// already links `-lssl -lcrypto` unconditionally for the same reason.\n\
+\n";
+
+/// The OpenSSL declarations, added after [`C_HEADERS`] only for a program that
+/// reaches `std/tls` (see [`uses_tls`]). `std/tls`'s externs are the only
+/// OpenSSL-touching code in the compiler, and a program without them must build
+/// on a host that has no OpenSSL development files (BUG-x7Qmd).
+pub(crate) const OPENSSL_HEADERS: &str = "\
 #include <openssl/err.h>\n\
 #include <openssl/ssl.h>\n\
 #include <openssl/x509v3.h>\n\
@@ -247,6 +250,17 @@ pub(crate) fn extern_header_includes(headers: &[String]) -> String {
     out
 }
 
+/// Whether the program carries a `std/tls` extern, which is the one thing that
+/// needs OpenSSL's headers at compile time and `-lssl -lcrypto` at link time.
+/// `std/http` and `std/ws` import `std/tls`, so a program that uses either has
+/// it too.
+pub fn uses_tls(program: &Program) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|f| f.extern_ && f.module == "std/tls")
+}
+
 /// Which function keys are gated, and each module's patterns per domain.
 /// Built once per program in `generate`; `Gen` carries a reference to it so
 /// every call site can decide whether a check is needed without threading
@@ -333,6 +347,9 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     let mut out = String::new();
     out.push_str(C_HEADERS);
     out.push_str(&extern_header_includes(&program.extern_headers));
+    if uses_tls(program) {
+        out.push_str(OPENSSL_HEADERS);
+    }
     out.push_str(RUNTIME);
     out.push('\n');
     if path_loaded || cap_needed {

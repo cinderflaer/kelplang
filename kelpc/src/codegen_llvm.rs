@@ -543,6 +543,7 @@ pub fn compile(
         link_libs,
         library_dirs,
         pkg_config_flags,
+        crate::codegen_c::uses_tls(program),
     )
     .map_err(|e| e.message)
 }
@@ -11644,6 +11645,9 @@ fn program_c_source(program: &Program) -> Option<String> {
     );
     out.push_str(crate::codegen_c::C_HEADERS);
     out.push_str(&crate::codegen_c::extern_header_includes(&program.extern_headers));
+    if crate::codegen_c::uses_tls(program) {
+        out.push_str(crate::codegen_c::OPENSSL_HEADERS);
+    }
 
     // The builtin layouts, field for field the structs `runtime/kelp_rt.c`
     // defines (MK7 §3.3). Only the types an extern signature names are

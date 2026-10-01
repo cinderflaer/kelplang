@@ -395,6 +395,7 @@ fn build(
                 &include_dirs,
                 &library_dirs,
                 &pkg_config_flags,
+                codegen_c::uses_tls(&typed),
             ) {
                 eprintln!("error: {}", e.message);
                 return false;

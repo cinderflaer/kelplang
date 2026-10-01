@@ -30,7 +30,7 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     (
         "std/str",
         "byte_at_raw",
-        "    if (kelp_i >= strlen(kelp_s)) {\n        kelp_panic(\"str.byte: index out of bounds\");\n    }\n    return (uint8_t)kelp_s[kelp_i];\n",
+        "    /* `i` is in bounds exactly when no NUL sits in `s[0..=i]`, so the check\n       scans `i + 1` bytes rather than the whole string: a read near the start\n       of a long `str` costs what it reads. */\n    if (kelp_i == SIZE_MAX || memchr(kelp_s, 0, kelp_i + 1) != NULL) {\n        kelp_panic(\"str.byte: index out of bounds\");\n    }\n    return (uint8_t)kelp_s[kelp_i];\n",
     ),
     (
         "std/str",
@@ -530,6 +530,21 @@ static EXTERNS: &[(&str, &str, &str)] = &[
     ),
     (
         "std/net",
+        "send_all_try_raw",
+        "    size_t off = 0;\n    while (off < kelp_data->len) {\n        ssize_t n = send(kelp_fd, kelp_data->data + off, kelp_data->len - off, MSG_NOSIGNAL);\n        if (n < 0) {\n            if (errno == EINTR) {\n                continue;\n            }\n            char text[256];\n            snprintf(text, sizeof text, \"net.send: send failed (the peer may have closed)\\n  errno %d: %s\", errno, strerror(errno));\n            free(kelp_reason->data);\n            *kelp_reason = kelp_String__from_str(text);\n            return -1;\n        }\n        off += (size_t)n;\n    }\n    return 0;\n",
+    ),
+    (
+        "std/net",
+        "recv_try_raw",
+        "    if (kelp_max == 0) {\n        return kelp_bytes_alloc_raw(0);\n    }\n    kelp_Bytes b = kelp_bytes_alloc_raw(kelp_max);\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, b.data, kelp_max, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.recv: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.recv: receive failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        b.len = 0;\n        b.data[0] = 0;\n        return b;\n    }\n    b.len = (size_t)n;\n    b.data[b.len] = 0;\n    return b;\n",
+    ),
+    (
+        "std/net",
+        "recv_into_try_raw",
+        "    size_t room = kelp_at < kelp_buf->len ? kelp_buf->len - kelp_at : 0;\n    if (room == 0) {\n        return 0;\n    }\n    ssize_t n;\n    do {\n        n = recv(kelp_fd, kelp_buf->data + kelp_at, room, 0);\n    } while (n < 0 && errno == EINTR);\n    if (n < 0) {\n        char text[256];\n        if (errno == EAGAIN || errno == EWOULDBLOCK) {\n            snprintf(text, sizeof text, \"net.recv_into: timed out\");\n        } else {\n            snprintf(text, sizeof text, \"net.recv_into: receive failed\\n  errno %d: %s\", errno, strerror(errno));\n        }\n        free(kelp_reason->data);\n        *kelp_reason = kelp_String__from_str(text);\n        return 0;\n    }\n    kelp_buf->data[kelp_at + (size_t)n] = 0;\n    return (size_t)n;\n",
+    ),
+    (
+        "std/net",
         "set_timeout_raw",
         "    struct timeval tv;\n    tv.tv_sec = (time_t)(kelp_ms / 1000);\n    tv.tv_usec = (suseconds_t)((kelp_ms % 1000) * 1000);\n    if (setsockopt(kelp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"net.set_timeout: cannot set the receive timeout\");\n    }\n    if (setsockopt(kelp_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) != 0) {\n        kelp_panic_errno(\"net.set_timeout: cannot set the send timeout\");\n    }\n",
     ),
@@ -665,7 +680,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kelp_recv_zero_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory for the harness");
         let bin = dir.join("recv_zero");
-        crate::driver::compile_c(&source, &bin, crate::opt::OptLevel::DEFAULT, &[], &[], &[], &[])
+        crate::driver::compile_c(&source, &bin, crate::opt::OptLevel::DEFAULT, &[], &[], &[], &[], false)
             .unwrap_or_else(|e| panic!("the recv_raw harness did not compile: {}", e.message));
 
         let out = Command::new(&bin)

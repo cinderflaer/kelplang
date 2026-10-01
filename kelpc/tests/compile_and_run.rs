@@ -6003,7 +6003,9 @@ impl CannedTlsServer {
         let port = listener.local_addr().expect("local address").port();
         let accepted = Arc::new(AtomicUsize::new(0));
         let counter = accepted.clone();
-        let handle = thread::spawn(move || serve_tls(listener, acceptor, connections, counter));
+        let handle = thread::spawn(move || {
+            serve_tls(listener, acceptor, connections, counter)
+        });
         CannedTlsServer { port, accepted, handle: Some(handle), cert }
     }
 
@@ -7412,6 +7414,106 @@ fn an_https_get_completes_the_tls_handshake_and_reads_the_body() {
     );
 }
 
+const TRUNCATED_200: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
+const LOOP_302: &[u8] = b"HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n";
+
+#[test]
+fn a_fallible_send_reports_a_dial_an_early_close_and_a_redirect_loop_as_values() {
+    // MISSING-p7Kdm. Three connections on the canned server, in the order the
+    // program makes them: a fresh `try_get` whose body stops after 3 of 10
+    // bytes, a pooled request that does the same (the pool must not keep that
+    // half-read connection), and a pooled redirect loop followed by a good
+    // response on the same kept connection (six `302`s to one `Location`
+    // exhaust the client's five hops; the seventh response answers the request
+    // after it). The refused half dials a port this test released.
+    let mut loop_then_hello: Vec<Vec<u8>> = vec![LOOP_302.to_vec(); 6];
+    loop_then_hello.push(BODY_200_HELLO.to_vec());
+    let mut server = CannedServer::start(vec![
+        vec![TRUNCATED_200.to_vec()],
+        vec![TRUNCATED_200.to_vec()],
+        loop_then_hello,
+    ]);
+    let dead = TcpListener::bind("127.0.0.1:0").expect("failed to bind loopback");
+    let dead_port = dead.local_addr().expect("local address").port();
+    drop(dead);
+
+    let bin = out_path("http_try_send");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/http_try_send.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the http_try_send fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin)
+        .arg(dead_port.to_string())
+        .arg(server.port.to_string())
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let cut = "exchange http: the connection closed before the whole body arrived";
+    let expected = format!(
+        "refused dial\nfresh {cut}\npool-cut {cut}\npool kept 0\n\
+         pool-loop redirects http: too many redirects\npool kept 1\n\
+         pool-hello ok 200 hello\npool kept 1\nsurvived\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        expected,
+        "unexpected stdout for 'http_try_send'"
+    );
+    assert_eq!(server.accepted(), 3, "the client opened an unexpected number of connections");
+}
+
+#[test]
+fn a_failed_tls_handshake_is_a_dial_error_value() {
+    // MISSING-p7Kdm: the server presents a self-signed certificate and the
+    // client is not told to trust it (no `SSL_CERT_FILE`), so the handshake
+    // fails. That is `HttpErr.Dial` (nothing was sent), not a panic.
+    let mut server = CannedTlsServer::start(one_connection(&[]));
+    let bin = out_path("https_try_dial");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture("tests/fixtures/https_try_dial.kp"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected the https_try_dial fixture to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    // Trust store pinned away from the test cert, so it cannot vouch for it.
+    let run = Command::new(&bin)
+        .arg(server.port.to_string())
+        .env("SSL_CERT_FILE", "/dev/null")
+        .env("SSL_CERT_DIR", "/dev/null")
+        .output()
+        .expect("failed to run the client");
+    server.finish();
+    assert!(
+        run.status.success(),
+        "expected the client to exit successfully, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "dial true\nsurvived\n",
+        "unexpected stdout for 'https_try_dial'"
+    );
+}
+
 #[test]
 fn https_to_a_host_the_grant_does_not_name_is_denied() {
     // Same shape as `a_redirect_to_a_host_the_grant_does_not_name_is_denied`,
@@ -7659,8 +7761,13 @@ fn serve_ws_tls(
 /// the test's own failure.
 fn serve_ws_conn<S: Read + Write>(mut stream: S, accepted: &AtomicUsize) {
     accepted.fetch_add(1, Ordering::SeqCst);
+    ws_gate_exchange(&mut stream);
+}
 
-    let head = read_ws_head(&mut stream);
+/// The gate's scripted exchange over any byte stream: plain TCP for `ws`, a
+/// TLS server stream for `wss`.
+fn ws_gate_exchange<S: Read + Write>(stream: &mut S) {
+    let head = read_ws_head(stream);
     assert!(
         head.starts_with("GET /gateway HTTP/1.1"),
         "the request line was not the gate's own path:\n{head}"
@@ -7695,7 +7802,7 @@ fn serve_ws_conn<S: Read + Write>(mut stream: S, accepted: &AtomicUsize) {
     stream.write_all(&ws_frame(0x0, true, b"ment")).expect("continuation");
     stream.write_all(&ws_frame(0x9, true, b"ping?")).expect("ping frame");
 
-    let (opcode, payload) = read_ws_frame(&mut stream);
+    let (opcode, payload) = read_ws_frame(stream);
     assert_eq!(
         opcode, 0xA,
         "the client answered the ping with opcode {opcode:#x}, not a pong"
@@ -7706,7 +7813,7 @@ fn serve_ws_conn<S: Read + Write>(mut stream: S, accepted: &AtomicUsize) {
     close.extend_from_slice(b"done");
     stream.write_all(&ws_frame(0x8, true, &close)).expect("close frame");
 
-    let (opcode, payload) = read_ws_frame(&mut stream);
+    let (opcode, payload) = read_ws_frame(stream);
     assert_eq!(
         opcode, 0x8,
         "the client's closing frame was opcode {opcode:#x}, not a close"
@@ -7919,6 +8026,15 @@ fn a_ws_try_connect_tells_a_refused_dial_from_a_non_101_answer() {
         "unexpected stdout for 'ws_try_connect'"
     );
     assert_eq!(server.accepted(), 1, "the client opened more than one connection");
+}
+
+#[test]
+fn a_wss_url_parses_with_its_scheme_and_default_port() {
+    assert_fixture_runs_with_stdin(
+        "ws_wss_parse",
+        "",
+        "gateway.discord.gg 443 /?v=10&encoding=json true\n8443 true\n80 false\n",
+    );
 }
 
 #[test]
@@ -9629,6 +9745,25 @@ fn thread_sleep_ms_and_current_id_work_on_both_threads() {
 #[test]
 fn env_reads_and_writes_from_several_threads_at_once_are_safe() {
     assert_compiles_and_runs("tests/fixtures/env_thread_stress.kp", "true\ntrue\ntrue\n");
+}
+
+/// BUG-hT3wK: `str.byte` bounds-checks with a scan of `index + 1` bytes instead
+/// of a `strlen`; the answers at the edges, and the panics one past them, are
+/// unchanged.
+#[test]
+fn str_byte_keeps_its_answers_and_bounds_at_the_edges() {
+    assert_compiles_and_runs("tests/fixtures/str_byte_edges.kp", "104\n111\n5\n0\n");
+    assert_fixture_panics("str_byte_at_len", "str.byte: index out of bounds");
+    assert_fixture_panics("str_byte_empty", "str.byte: index out of bounds");
+}
+
+/// BUG-fY3nQ: rebuilds free the table they replace while readers keep probing.
+/// The readers' answers do not depend on the interleaving (one name stays set,
+/// one is never set); the leak half of the fix is gated by `memory_gate.rs`,
+/// which runs this fixture under valgrind with every other one.
+#[test]
+fn env_table_rebuilds_do_not_disturb_concurrent_readers() {
+    assert_compiles_and_runs("tests/fixtures/env_thread_churn.kp", "200000\n200000\n3000\n3000\n");
 }
 
 /// `thread.join` consumes a `Thread<T>` and nothing else: a handle is the one
@@ -11615,5 +11750,93 @@ fn kernel0_aarch64_boots_and_prints_its_greeting_over_the_uart() {
         "kernel0_aarch64_boot",
         &fixture("../examples/kernel0-aarch64"),
         &["hello from kelp (aarch64)"],
+    );
+}
+
+/// Builds `source` with a `cc` shim first on `PATH` that records every
+/// invocation's arguments, and returns the recorded lines.
+fn build_recording_cc_lines(source: &str) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_cc = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v cc"])
+            .output()
+            .expect("failed to look up cc")
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert!(!real_cc.is_empty(), "no cc on PATH");
+
+    let name = Path::new(source).file_stem().unwrap().to_string_lossy().to_string();
+    let bin = out_path(&name);
+    let dir = bin.with_extension("shim");
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("cc.log");
+    let _ = std::fs::remove_file(&log);
+    let shim = dir.join("cc");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\nexec '{real_cc}' \"$@\"\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default());
+
+    let build = kelpc()
+        .env("PATH", path)
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    std::fs::read_to_string(&log)
+        .expect("the cc shim was never called")
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// BUG-x7Qmd: a program that does not reach `std/tls` neither links OpenSSL nor
+/// includes its headers, so it builds on a host with no OpenSSL development
+/// files. A program that does reach it links both libraries.
+#[test]
+fn only_a_tls_program_links_openssl() {
+    let plain = build_recording_cc_lines("tests/fixtures/fs_path_family.kp");
+    assert!(!plain.is_empty());
+    for line in &plain {
+        assert!(
+            !line.contains("-lssl") && !line.contains("-lcrypto"),
+            "a program without std/tls linked OpenSSL: {line}"
+        );
+    }
+    let name = "fs_path_family";
+    let generated = out_path(name);
+    let source = std::fs::read_to_string(if backend() == "c" {
+        generated.with_extension("c")
+    } else {
+        generated.with_extension("externs.c")
+    })
+    .expect("the generated C source");
+    assert!(
+        !source.contains("#include <openssl/"),
+        "a program without std/tls includes OpenSSL's headers"
+    );
+
+    let tls = build_recording_cc_lines("tests/fixtures/https_try_dial.kp");
+    assert!(
+        tls.iter().any(|l| l.contains("-lssl") && l.contains("-lcrypto")),
+        "a program that reaches std/tls did not link OpenSSL: {tls:?}"
     );
 }

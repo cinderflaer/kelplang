@@ -37,6 +37,9 @@ extern fun close_raw(fd: i32)
 extern fun shutdown_write_raw(fd: i32)
 extern fun send_raw(fd: i32, data: Bytes).R: usize
 extern fun send_all_raw(fd: i32, data: Bytes).R: usize
+extern fun send_all_try_raw(fd: i32, data: Bytes, reason: mut String).R: i32
+extern fun recv_try_raw(fd: i32, max: usize, reason: mut String).R: Bytes
+extern fun recv_into_try_raw(fd: i32, buf: mut Bytes, at: usize, reason: mut String).R: usize
 extern fun recv_raw(fd: i32, max: usize).R: Bytes
 extern fun recv_into_raw(fd: i32, buf: mut Bytes, at: usize).R: usize
 extern fun set_timeout_raw(fd: i32, ms: u64)
@@ -95,6 +98,44 @@ fun try_connect(host: &str, port: u16).R: result.Result<Socket, ConnectErr> {
         return result.Result.Err(error = ConnectErr(reason = reason))
     }
     return result.Result.Ok(value = Socket(fd = fd))
+}
+
+// Why a fallible send or receive failed: `reason` is the text the panicking
+// form would have panicked with (the message line and the `errno` detail
+// line, or `net.recv: timed out` for a read that hit the socket's timeout).
+datac NetErr(val reason: String)
+
+// `send_all`, with a failed send (a reset, a closed peer) as an `Err` instead
+// of a panic. The `usize` is the count written, always the whole buffer on
+// success.
+fun try_send_all(s: Socket, data: Bytes).R: result.Result<usize, NetErr> {
+    var reason = String.empty()
+    val rc = send_all_try_raw(s.fd, data, &mut reason)
+    if rc < 0 {
+        return result.Result.Err(error = NetErr(reason = reason))
+    }
+    return result.Result.Ok(value = data.len())
+}
+
+// `recv`, with a failed read (a reset, a timeout) as an `Err`. An empty `Ok`
+// is still the peer's clean end of stream.
+fun try_recv(s: Socket, max: usize).R: result.Result<Bytes, NetErr> {
+    var reason = String.empty()
+    val b = recv_try_raw(s.fd, max, &mut reason)
+    if !reason.is_empty() {
+        return result.Result.Err(error = NetErr(reason = reason))
+    }
+    return result.Result.Ok(value = b)
+}
+
+// `recv_into`, with a failed read as an `Err`. `Ok(0)` is end of stream.
+fun try_recv_into(s: Socket, buf: mut Bytes, at: usize).R: result.Result<usize, NetErr> {
+    var reason = String.empty()
+    val n = recv_into_try_raw(s.fd, buf, at, &mut reason)
+    if !reason.is_empty() {
+        return result.Result.Err(error = NetErr(reason = reason))
+    }
+    return result.Result.Ok(value = n)
 }
 
 // Binds `port` on every interface and listens, leaving the backlog to the
