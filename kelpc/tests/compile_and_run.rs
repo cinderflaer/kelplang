@@ -10678,6 +10678,137 @@ fn kernel0_statics_boots_and_prints_its_counter() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Kernel stage 10 (MK9-S4-M8): Sv39 address spaces. The encoders below are
+// pure arithmetic and run hosted on both backends; the boot and the two faults
+// are freestanding riscv64 and skip in a shell without `ld.lld` and
+// `qemu-system-riscv64`.
+// ---------------------------------------------------------------------------
+
+/// Kernel stage 10's hosted half: the Sv39 VPN split, the PTE encoder and the
+/// `satp` encoder, copied out of `examples/kernel0-vm/src/vm.kp` into a project
+/// both backends build and run. The suite's `KELPC_ORACLE=c` pass compares the
+/// same literal, so the C oracle pins what the LLVM-default freestanding image
+/// computes.
+#[test]
+fn the_sv39_vpn_split_and_pte_and_satp_encoders_are_the_specs() {
+    assert_project_runs(
+        "vm_pure",
+        &project("vm_pure"),
+        "255\n511\n511\n0\n4095\n536871119\n207\n2147483648\ntrue\ntrue\nfalse\ntrue\n8\n0\n524293\n",
+    );
+}
+
+/// Build a freestanding project and assert the linked image names no undefined
+/// symbol. Kernel stage 10's page tables reach only the frame-region symbols the
+/// linker script defines, and the walker's `Ptr<u64>` accesses and `asm` must
+/// leave no libc behind; a `malloc`, a `memcpy` or an unresolved frame bound
+/// would show up here rather than at the boot.
+fn assert_no_undefined_symbols(name: &str, target: &Path) {
+    let bin = out_path(name);
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding build of '{name}' failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &["-u", path]);
+    assert!(
+        symbols.trim().is_empty(),
+        "the image for '{name}' has undefined symbols:\n{symbols}"
+    );
+}
+
+/// Kernel stage 10's acceptance test: `examples/kernel0-vm` builds an Sv39
+/// root table, identity-maps the image, its stack and the frame region, maps
+/// the UART and one high page, drops from machine mode to supervisor mode,
+/// turns the MMU on, and proves that the high virtual name and the
+/// identity-mapped physical name reach the same frame. Every step is a line on
+/// the UART.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_vm_boots_and_aliases_a_high_page() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-vm boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_vm",
+        &fixture("../examples/kernel0-vm"),
+        &[
+            "vm: m-mode",
+            "vm: root",
+            "vm: identity",
+            "vm: uart page",
+            "vm: high page",
+            "vm: s-mode",
+            "vm: paging on",
+            "vm: alias ok",
+            "vm: unmap ok",
+        ],
+    );
+}
+
+/// Kernel stage 10's fault half: `examples/kernel0-vm-fault` takes a load page
+/// fault (`scause` 13) on an unmapped address and a store page fault (15) on a
+/// read-only leaf, and the S-mode trap handler prints both. The lines are the
+/// handler's own hex rendering of `scause` and `stval`.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_vm_fault_reports_a_load_and_a_store_page_fault() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-vm-fault boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_vm_fault",
+        &fixture("../examples/kernel0-vm-fault"),
+        &[
+            "fault: m-mode",
+            "fault: paging on",
+            "fault: scause 0xd stval 0x40000000",
+            "fault: scause 0xf stval 0x3ffffff000",
+        ],
+    );
+}
+
+/// The two address-space images link with no undefined symbol: the page-table
+/// walker, the frame allocator and the dropped-to-supervisor boot must each
+/// resolve entirely inside the image.
+///
+/// It needs `ld.lld` and the llvm tools from `dev-kernel.nix`.
+#[test]
+fn kernel0_vm_images_link_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-vm symbol test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    assert_no_undefined_symbols("kernel0_vm", &fixture("../examples/kernel0-vm"));
+    assert_no_undefined_symbols("kernel0_vm_fault", &fixture("../examples/kernel0-vm-fault"));
+}
+
 /// A `pub static`/`pub static mut` is reached across modules exactly as a
 /// `pub const` is (`state.COUNT`, `state.LIMIT`), and the mutable one is still
 /// `unsafe` on the importing side.
