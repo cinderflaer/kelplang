@@ -2,16 +2,16 @@
 //
 // The application supplies four things and Polyp owns the loop:
 //
-//   State  — any type it likes
-//   Msg    — an `enum`, its own
-//   view   — `fun(State).R: Node<Msg>`, a pure function of the state
-//   update — `fun(mut State, Msg)`, where the app writes one exhaustive `when`
+//   State:  any type it likes
+//   Msg:    an `enum`, its own
+//   view:   `fun(State).R: Node<Msg>`, a pure function of the state
+//   update: `fun(mut State, Msg)`, where the app writes one exhaustive `when`
 //
 // Why the Elm shape and not callbacks that capture the state: a Kelp closure
 // owns its captures and cannot borrow one (plan/syntax.md 7.4), and Kelp has no
 // shared-ownership type to put the state behind. So no callback here captures
 // the state at all. A button's handler captures one small integer, posts it to
-// the queue, and the loop — which does own the state — turns the integer back
+// the queue, and the loop, which does own the state, turns the integer back
 // into the `Msg` stored in the tree it built and calls `update`.
 //
 // v1 adds the builder syntax. `polyp.column { k -> k.text(s.title) }` is a
@@ -409,6 +409,14 @@ pub fun run<S, M>(title: str, width: i32, height: i32, init: move S, view: fun (
         }
     }
 
+    // The box that holds each current entry is about to go with the window, so
+    // release our own reference to each one here.
+    var e: usize = 0
+    while e < entry_widgets.len() {
+        gtk.gtk_widget_unparent(entry_widgets.get(e))
+        gtk.g_object_unref(entry_widgets.get(e))
+        e += 1
+    }
     gtk.g_object_unref(win)
     return state
 }
