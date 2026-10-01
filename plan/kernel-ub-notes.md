@@ -390,7 +390,7 @@ the function. `align(N)` is emitted but its result is not re-checked by the
 compiler at runtime, and `Ptr.from_fn` does not make the resulting pointer
 non-null, non-wrapping or unique.
 
-## Stage 8: `defer` (MK9-S6-M1, roadmap B-8)
+## Stage 8 (core language): `defer` (MK9-S6-M1, roadmap B-8)
 
 **New ways to reach UB or unsequenced behaviour.** `defer` adds no new operation:
 its action is an ordinary expression, duplicated at each ordinary exit of the
