@@ -430,4 +430,24 @@ mod tests {
         assert!(checked_args("ui", "gtk_window_new", &[false, false]).is_empty());
         assert!(checked_args("ui", "gtk_window_set_title", &[false, true]).is_empty());
     }
+
+    #[test]
+    fn the_tls_handle_of_a_connection_is_an_option_not_a_usize() {
+        // Release goal 1: `std/http` and `std/ws` used a `tls_handle: usize`
+        // whose `0` meant "not TLS"; an opaque `extern type` has no integer
+        // value, so both carry `Option<tls.TlsHandle>` and `None` is that
+        // value. `Conn` is internal to the two modules, so the field's type
+        // is checked where it is written rather than through a program.
+        for module in ["std/http", "std/ws"] {
+            let text = source(module).expect("a shipped module has source");
+            assert!(
+                text.contains("tls_handle: option.Option<tls.TlsHandle>"),
+                "{module} no longer carries an Option<tls.TlsHandle>"
+            );
+            assert!(
+                !text.contains("tls_handle: usize"),
+                "{module} still carries the raw usize handle"
+            );
+        }
+    }
 }

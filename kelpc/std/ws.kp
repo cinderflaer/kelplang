@@ -135,13 +135,13 @@ enum Msg {
 // does: a parameter is always a borrow, so an owned socket cannot be moved
 // into a struct field, and the socket is rebuilt at each call. Nothing closes
 // on drop, `close` is explicit.
-// `tls_handle` is the OpenSSL `SSL*` from `tls.handshake`, or 0 for a plain
-// `ws` connection. The same sentinel `std/http`'s `Conn` uses: 0 is never a
-// real handshake result (every failure panics or returns before one), so no
-// separate flag is needed.
+// `tls_handle` is the OpenSSL `SSL*` from `tls.handshake`, or `None` for a
+// plain `ws` connection: the opaque `tls.TlsHandle` has no integer sentinel,
+// so the plain/TLS choice is a value the type system carries (`Some`/`None`)
+// rather than a `0`.
 datac Conn(
     val fd: i32,
-    val tls_handle: usize,
+    val tls_handle: option.Option<tls.TlsHandle>,
     var buf: Bytes,
     var start: usize,
     var frag_opcode: u8,
@@ -149,35 +149,35 @@ datac Conn(
 )
 
 // The one place the transport is chosen: a TLS stream when `tls_handle` is
-// set, a plain socket otherwise. Both are rebuilt from the `Copy` fields
+// `Some`, a plain socket otherwise. Both are rebuilt from the `Copy` fields
 // because a datac parameter is always a borrow and cannot be moved into a
 // struct field.
-fun conn_send_all(fd: i32, tls_handle: usize, data: Bytes).R: usize {
-    if tls_handle != 0 {
-        return tls.write_all(tls.TlsStream(fd = fd, handle = tls_handle), data)
+fun conn_send_all(fd: i32, tls_handle: option.Option<tls.TlsHandle>, data: Bytes).R: usize {
+    if let Some(h) = tls_handle {
+        return tls.write_all(tls.TlsStream(fd = fd, handle = h), data)
     }
     return net.send_all(net.Socket(fd = fd), data)
 }
 
-fun conn_recv(fd: i32, tls_handle: usize, max: usize).R: Bytes {
-    if tls_handle != 0 {
-        return tls.read(tls.TlsStream(fd = fd, handle = tls_handle), max)
+fun conn_recv(fd: i32, tls_handle: option.Option<tls.TlsHandle>, max: usize).R: Bytes {
+    if let Some(h) = tls_handle {
+        return tls.read(tls.TlsStream(fd = fd, handle = h), max)
     }
     return net.recv(net.Socket(fd = fd), max)
 }
 
-fun conn_recv_into(fd: i32, tls_handle: usize, buf: mut Bytes, at: usize).R: usize {
-    if tls_handle != 0 {
-        return tls.read_into(tls.TlsStream(fd = fd, handle = tls_handle), buf, at)
+fun conn_recv_into(fd: i32, tls_handle: option.Option<tls.TlsHandle>, buf: mut Bytes, at: usize).R: usize {
+    if let Some(h) = tls_handle {
+        return tls.read_into(tls.TlsStream(fd = fd, handle = h), buf, at)
     }
     return net.recv_into(net.Socket(fd = fd), buf, at)
 }
 
 // Ends the TLS session first (best effort: a peer that has already gone is
 // routine at the end of a connection) and then closes the socket.
-fun conn_close(fd: i32, tls_handle: usize) {
-    if tls_handle != 0 {
-        val _ended = tls.try_shutdown(tls.TlsStream(fd = fd, handle = tls_handle))
+fun conn_close(fd: i32, tls_handle: option.Option<tls.TlsHandle>) {
+    if let Some(h) = tls_handle {
+        val _ended = tls.try_shutdown(tls.TlsStream(fd = fd, handle = h))
     }
     net.close(net.Socket(fd = fd))
 }
@@ -536,17 +536,17 @@ fun try_connect_scheme(scheme: &str, host: &str, port: u16, path: &str).R: resul
     return out
 }
 
-// The `wss` half of a connect: `Ok(0)` for a plain `ws` (the sentinel a plain
-// `Conn` carries), or the OpenSSL handle a completed `tls.try_handshake`
-// returned. A refused handshake is `WsErr.Tls`, so a reconnect loop can tell
-// "the peer is not TLS" from "nothing is listening".
-fun connect_tls(scheme: &str, s: net.Socket, host: &str).R: result.Result<usize, WsErr> {
+// The `wss` half of a connect: `Ok(None)` for a plain `ws` (the value a plain
+// `Conn` carries), or the opaque `tls.TlsHandle` a completed
+// `tls.try_handshake` returned. A refused handshake is `WsErr.Tls`, so a
+// reconnect loop can tell "the peer is not TLS" from "nothing is listening".
+fun connect_tls(scheme: &str, s: net.Socket, host: &str).R: result.Result<option.Option<tls.TlsHandle>, WsErr> {
     if !str.eq(scheme, WSS_SCHEME) {
-        return result.Result.Ok(value = 0)
+        return result.Result.Ok(value = option.Option.None)
     }
     val hs = tls.try_handshake(s, host)
     return when hs {
-        Ok(t) -> result.Result.Ok(value = t.handle)
+        Ok(t) -> result.Result.Ok(value = option.Option.Some(value = t.handle))
         Err(e) -> result.Result.Err(error = WsErr.Tls(reason = tls.error_text(e)))
     }
 }
@@ -555,14 +555,14 @@ fun connect_tls(scheme: &str, s: net.Socket, host: &str).R: result.Result<usize,
 // response head, and the three checks on it. `key_text` is the base64 key this
 // call sent and `expected` is the accept value derived from it, so the response
 // is held to the key this side chose, which is what makes a `101` mean
-// WebSocket. `tls_handle` is 0 for a plain socket; `conn_send_all` is what
+// WebSocket. `tls_handle` is `None` for a plain socket; `conn_send_all` is what
 // chooses the transport.
 //
 // Panics: as `try_connect` does for the errors with no status to report.
 fun handshake(
     scheme: &str,
     fd: i32,
-    tls_handle: usize,
+    tls_handle: move option.Option<tls.TlsHandle>,
     host: &str,
     port: u16,
     path: &str,

@@ -6397,6 +6397,28 @@ fn tls_fixture_stdout(name: &str, args: &[String], env: &[(&str, &str)]) -> Stri
 }
 
 #[test]
+fn a_tls_handle_cannot_be_read_as_an_integer() {
+    // Release goal 1: `TlsStream.handle` is the opaque `tls.TlsHandle`, so the
+    // `usize` the module used to carry is gone and any integer use is a type
+    // error. `std/tls` is compiler-shipped, so the fixture names the handle
+    // with no `[extern.*]` section of its own.
+    assert_rejected_with(
+        "tests/fixtures/tls_handle_not_an_integer.kp",
+        "cannot assign value of type 'std.tls.TlsHandle' to 'n' declared as 'usize'",
+    );
+}
+
+#[test]
+fn a_tls_handle_cannot_be_forged_from_an_integer() {
+    // The other direction: no conversion from an integer to a handle exists,
+    // so "no TLS" cannot be spelled `0` at a handle's type.
+    assert_rejected_with(
+        "tests/fixtures/tls_handle_not_forged.kp",
+        "declared to return 'std.tls.TlsHandle' but body evaluates to 'i32'",
+    );
+}
+
+#[test]
 fn every_try_tls_operation_succeeds_against_a_local_server() {
     // The Ok path of `try_handshake`, `try_write`, `try_write_all`,
     // `try_read`, `try_read_into` and `try_shutdown`. `SSL_CERT_FILE` is the
