@@ -1,0 +1,26 @@
+// Kernel 0's panic path, exercised on purpose. `kmain` reads one element past
+// an array's end, which is what the compiler's own bounds check catches: the
+// check calls the `[target] panic` handler with the static message it was
+// written with, so the fault names the check instead of just wedging. The
+// handler prints `panic: ` and the message over the same UART driver kernel 0
+// uses.
+impl "uart"
+
+section(".text.boot") fun kmain() {
+    val slots: [u32; 2] = [1, 2]
+    // The index is a local rather than a literal so the read is a running
+    // check, not a constant the front end could refuse at compile time.
+    var i: usize = 2
+    uart.putc(slots.get(i = i).to_u8())
+    uart.halt()
+}
+
+// The handler `[target] panic` names. `msg` is the check's own message, a
+// `str` literal in read-only data, which is the whole reason kernel 0 needed
+// a libc-free `str` surface before this could print more than `panic`.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

@@ -1,0 +1,11 @@
+name = "freestandingstrrefused"
+
+# Kernel stage 7's rejection half: `std/str` is only partly on the allowed set,
+# so a project that calls one of its allocating or formatting functions is
+# refused by name. `char_count` counts UTF-8 characters, which is a code point
+# table this mode has no room for, and it is enough to prove the rule.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

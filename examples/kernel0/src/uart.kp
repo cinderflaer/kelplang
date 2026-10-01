@@ -5,6 +5,12 @@
 // compiler can neither merge, reorder nor elide it, and nothing else about the
 // device is checked: the base, the offsets and the bit are the driver's own
 // claim about the hardware (kernel stage 1, `plan/unsafe-and-pointers.md`).
+//
+// Text arrives as a `str`, the same type a hosted program writes, and
+// `str.len`/`str.byte` are the compiler's own byte loops (kernel stage 7,
+// `plan/kernel0-status.md` gap 1), so no `strlen` and no `[u8; N]` copy sits
+// between the caller and the device.
+impl "std/str"
 
 const UART_BASE: usize = 0x10000000
 const LSR_OFFSET: usize = 5
@@ -19,12 +25,11 @@ pub fun putc(c: u8) {
     }
 }
 
-pub fun puts(msg: Ptr<u8>, len: usize) {
+pub fun puts(s: str) {
+    val n = str.len(s)
     var i: usize = 0
-    while i < len {
-        unsafe {
-            putc(msg.offset(i.to_isize()).read_volatile())
-        }
+    while i < n {
+        putc(str.byte(s, i))
         i = i + 1
     }
 }

@@ -18,6 +18,9 @@
 //!   to free);
 //! - `Atomic<T>` and its methods (`std/atomic`), `Option`/`Result`
 //!   (`std/option`, `std/result`), which are pure Kelp;
+//! - the `str` operations the compiler lowers as byte loops with no libc call:
+//!   `std/str`'s `len`, `byte`, `eq`, `starts_with` and `ptr`, and nothing else
+//!   in that module;
 //! - `Ptr<T>` and the compile-time queries `size_of`/`align_of`/`offset_of`;
 //! - `extern fun` declared in a module with its own `[extern."<id>"]` section,
 //!   so a project can bind a native symbol it will place itself;
@@ -30,7 +33,7 @@
 //! - `print`/`print!` (a `Template`), which is `printf`;
 //! - `String`, `Bytes`, `List`, `Map`, `Box`, `View` and `Thread`, whose
 //!   storage is the runtime allocator's, and therefore any `std/*` module not
-//!   on the list above;
+//!   on the list above, and every `std/str` function other than the five;
 //! - passdowns (`pd`), whose initializers run through the generated
 //!   `kelp_init_pds` that only the hosted entry point calls.
 //!
@@ -43,6 +46,7 @@
 
 use std::collections::HashMap;
 
+use crate::ast;
 use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::resolve::Project;
@@ -54,6 +58,28 @@ use crate::types::Ty;
 /// Every other shipped module is refused, by name, when it is part of the
 /// program.
 pub const ALLOWED_STD_MODULES: &[&str] = &["std/atomic", "std/option", "std/result"];
+
+/// The one module that is allowed to be *part* of a freestanding program while
+/// only some of its functions are callable, and the ones that are. A `str` is a
+/// NUL-terminated literal in read-only data, so the compiler can lower `len`,
+/// `byte`, `eq`, `starts_with` and `ptr` as byte loops inside the module (see
+/// `codegen_llvm::emit_freestanding_str_bodies`); everything else the module
+/// exposes (`concat`, `split`, `join`, `parse_i64`, `from_f64`, `trim`, ...)
+/// allocates, formats or parses, so the call-site check refuses each by name.
+pub const STD_STR: &str = "std/str";
+pub const ALLOWED_STD_STR_FUNCTIONS: &[&str] = &["len", "byte", "eq", "starts_with", "ptr"];
+
+/// The `std/str` functions `prune` keeps by name: the public five plus the
+/// private helper `starts_with` reaches. Every `extern fun` in the module is
+/// kept as well, because the five lower to them.
+const EMITTED_STD_STR_FUNCTIONS: &[&str] =
+    &["len", "byte", "eq", "starts_with", "starts_with_at", "ptr"];
+
+/// The `std/*` modules that may be *part* of a freestanding program without
+/// being callable. `std/str` is narrowed to its five operations at each call
+/// site; `std/mem` is here only because `std/str` imports it, and neither
+/// module's other functions are emitted (`prune`).
+const PRESENT_STD_MODULES: &[&str] = &[STD_STR, "std/mem"];
 
 /// Enforces the allowed set for `project`'s freestanding mode. A hosted project
 /// (the default, and what a manifest with no `[target]` section is) passes
@@ -225,10 +251,15 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
     }
 
     // Finally, every `std/*` module the program reaches has to be one of the
-    // pure three. A module that was imported but never called is still part of
-    // the program, so this is where an unused `std/str` import is caught.
+    // pure three, or `std/str`, which is carried by the front end too but whose
+    // function set is narrowed at each call site below. A module that was
+    // imported but never called is still part of the program, so this is where
+    // an unused `std/fmt` import is caught.
     for m in &project.modules {
-        if m.id.starts_with("std/") && !ALLOWED_STD_MODULES.contains(&m.id.as_str()) {
+        if m.id.starts_with("std/")
+            && !ALLOWED_STD_MODULES.contains(&m.id.as_str())
+            && !PRESENT_STD_MODULES.contains(&m.id.as_str())
+        {
             return Err(unavailable(
                 format!(
                     "the module '{}' is unavailable in a freestanding build: it reaches the hosted runtime (libc or the 'kelp_rt' helpers)",
@@ -240,6 +271,50 @@ pub fn check(program: &Program, project: &Project) -> Result<(), Diagnostic> {
         }
     }
     Ok(())
+}
+
+/// Drops the `std/*` declarations a freestanding program does not need, so the
+/// `std/str` and `std/mem` bodies that reach `strlen`/`malloc` are never in the
+/// program at all. The allowed set above is what a program may *call*; this is
+/// the emission half of the same rule, and it runs on the merged AST between
+/// the check and the build's own inference.
+///
+/// It has to run *before* inference rather than after, because inference is
+/// what turns a mention of a type into a concrete instance: `std/str.parse_f64`
+/// alone is enough to instantiate `Result<f64, ParseErr>` and its generated
+/// comparator, and that comparator is emitted whether or not anything calls it
+/// (on a target without hardware floats it reaches the soft-float helpers, which
+/// no bare-metal image has). Dropping the declaration means the instance never
+/// exists. A hosted build compiles the whole module and links the runtime that
+/// defines the symbols, so it is untouched.
+///
+/// Every function the program itself declares is kept, as is every function of
+/// an allowed module, so the only thing that disappears is dead code in the two
+/// present modules. The five operations, the helper they use and the three
+/// `extern` primitives they call are kept by name; a kept `std/str` body can
+/// reach nothing else.
+pub fn prune(program: &mut ast::Program) {
+    program.functions.retain(|f| {
+        if !f.module.starts_with("std/") {
+            return true;
+        }
+        if ALLOWED_STD_MODULES.contains(&f.module.as_str()) {
+            return true;
+        }
+        if f.module != STD_STR {
+            return false;
+        }
+        // An `extern fun` is a declaration the module's own bodies may call; a
+        // pruned body leaves it unused, and an unused declaration is no symbol.
+        f.extern_ || EMITTED_STD_STR_FUNCTIONS.contains(&bare_name(&f.name))
+    });
+}
+
+/// The last dot-separated component of a function's key, which is how
+/// `externs.rs` and the allowed lists name a `std` function (`std.str.len` is
+/// `len`).
+fn bare_name(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }
 
 /// The compiler builtin a freestanding program may not call, and why, or
@@ -358,16 +433,27 @@ impl Checker<'_> {
                     ));
                 }
                 if let Some(callee_module) = self.module_of.get(callee.as_str()) {
-                    if callee_module.starts_with("std/")
-                        && !ALLOWED_STD_MODULES.contains(callee_module)
-                    {
-                        return Err(unavailable(
-                            format!(
-                                "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' reaches the hosted runtime"
-                            ),
-                            expr.span,
-                            module,
-                        ));
+                    if callee_module.starts_with("std/") {
+                        if *callee_module == STD_STR {
+                            if !ALLOWED_STD_STR_FUNCTIONS.contains(&bare_name(callee)) {
+                                return Err(unavailable(
+                                    format!(
+                                        "the call to '{callee}' is unavailable in a freestanding build: 'std/str' has a libc-free lowering only for {}",
+                                        ALLOWED_STD_STR_FUNCTIONS.join(", ")
+                                    ),
+                                    expr.span,
+                                    module,
+                                ));
+                            }
+                        } else if !ALLOWED_STD_MODULES.contains(callee_module) {
+                            return Err(unavailable(
+                                format!(
+                                    "the call to '{callee}' is unavailable in a freestanding build: the module '{callee_module}' reaches the hosted runtime"
+                                ),
+                                expr.span,
+                                module,
+                            ));
+                        }
                     }
                 }
                 for arg in args {

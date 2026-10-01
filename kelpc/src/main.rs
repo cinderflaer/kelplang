@@ -311,13 +311,36 @@ fn build(
         return false;
     }
 
-    let typed = match infer::check_program(&loaded.program, &loaded.project) {
+    // The allowed set is checked on the whole program, before the prune below
+    // removes the `std` declarations it names: a call to `str.concat` has to be
+    // refused by name, and that needs the declaration it names to still be
+    // there. The check is a no-op for a hosted project.
+    let mut typed = match infer::check_program(&loaded.program, &loaded.project) {
         Ok(p) => p,
         Err(d) => {
             sources.report(&d);
             return false;
         }
     };
+    if let Err(d) = freestanding::check(&typed, &loaded.project) {
+        sources.report(&d);
+        return false;
+    }
+    // The allowed set's emission half: a freestanding build drops the `std/str`
+    // and `std/mem` declarations no call can reach and infers the program again,
+    // so their `strlen`/`malloc` bodies and the type instances they would
+    // otherwise instantiate never exist.
+    if loaded.project.target().is_freestanding() {
+        let mut pruned = loaded.program.clone();
+        freestanding::prune(&mut pruned);
+        typed = match infer::check_program(&pruned, &loaded.project) {
+            Ok(p) => p,
+            Err(d) => {
+                sources.report(&d);
+                return false;
+            }
+        };
+    }
 
     let drops = match borrowck::check_program(&typed) {
         Ok(plan) => plan,
@@ -331,10 +354,6 @@ fn build(
     // against, so the C backend's libc preamble cannot express it. The refusal
     // is here, before either generator runs, rather than at the `cc` failure a
     // C build would produce.
-    if let Err(d) = freestanding::check(&typed, &loaded.project) {
-        sources.report(&d);
-        return false;
-    }
     if loaded.project.target().is_freestanding() && backend == Backend::C {
         eprintln!(
             "error: '{}' sets '[target] mode = \"freestanding\"', which only the llvm backend can build: the C backend's runtime preamble is libc (the KELPC_ORACLE switch cannot build a freestanding project)",
