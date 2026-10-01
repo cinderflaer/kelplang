@@ -10663,7 +10663,7 @@ fn freestanding_statics_land_in_data_rodata_and_bss() {
 /// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
 #[test]
 fn kernel0_statics_boots_and_prints_its_counter() {
-    if !have_ld_lld() || !have_qemu() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
         println!(
             "skipping the kernel0-statics boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
              on PATH (run the suite under dev-kernel.nix)"
@@ -10671,6 +10671,7 @@ fn kernel0_statics_boots_and_prints_its_counter() {
         return;
     }
     boot_under_qemu(
+        &RISCV64_QEMU,
         "kernel0_statics",
         &fixture("../examples/kernel0-statics"),
         &["counter 3"],
@@ -11033,7 +11034,7 @@ fn freestanding_containers_allocate_through_the_project_allocator() {
 /// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
 #[test]
 fn kernel0_heap_boots_and_balances_its_allocations() {
-    if !have_ld_lld() || !have_qemu() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
         println!(
             "skipping the kernel0-heap boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
              PATH (run the suite under dev-kernel.nix)"
@@ -11041,6 +11042,7 @@ fn kernel0_heap_boots_and_balances_its_allocations() {
         return;
     }
     boot_under_qemu(
+        &RISCV64_QEMU,
         "kernel0_heap",
         &fixture("../examples/kernel0-heap"),
         &["heap sum 55", "balanced"],
