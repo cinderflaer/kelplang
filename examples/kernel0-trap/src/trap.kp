@@ -2,6 +2,12 @@
 // function (kernel stage 5): it runs with no prologue and no compiler-generated
 // return, because the interrupted code never agreed to a calling convention.
 // Everything the handler disturbs it saves itself, and it ends in `mret`.
+//
+// The vector is installed from `Ptr.from_fn(trap_handler).addr()` (kernel gap
+// 2), so no mangled symbol is spelled in this file: the address the check
+// names is the one the linker resolves. The handler reaches `report` through
+// `mscratch` for the same reason, and because an inline-asm operand would make
+// the compiler materialise a register before the handler has saved anything.
 impl "uart"
 
 const TRAP_MSG: [u8; 12] = [116, 114, 97, 112, 58, 32, 101, 99, 97, 108, 108, 10]
@@ -14,15 +20,17 @@ pub fun report() {
     uart.puts(bytes.cast<u8>(), msg.len())
 }
 
-// `mtvec`'s low two bits are the vectored mode, so `trap_handler` is placed in
-// its own section and the linker script aligns that section to 4. The template
-// writes the address with `la` into an `out` register, then `csrw` reads it.
+// `mtvec`'s low two bits are the vectored mode, so `trap_handler` carries
+// `align(4)` and lives in its own section. `install` writes both the vector
+// address and, in `mscratch`, the address of the body the handler calls.
 pub fun install() {
-    val vector: usize = unsafe { asm("la {0}, kelp_trap__trap_handler", out("r") _) }
-    unsafe { asm("csrw mtvec, {0}", in("r") vector) }
+    unsafe {
+        asm("csrw mtvec, {0}", in("r") Ptr.from_fn(trap_handler).addr())
+        asm("csrw mscratch, {0}", in("r") Ptr.from_fn(report).addr())
+    }
 }
 
-section(".text.trap") naked fun trap_handler() {
+section(".text.trap") align(4) naked fun trap_handler() {
     asm("
             csrr t0, mepc
             addi t0, t0, 4
@@ -44,7 +52,8 @@ section(".text.trap") naked fun trap_handler() {
             sd a5, 104(sp)
             sd a6, 112(sp)
             sd a7, 120(sp)
-            call kelp_trap__report
+            csrr t0, mscratch
+            jalr ra, t0, 0
             ld ra, 0(sp)
             ld t0, 8(sp)
             ld t1, 16(sp)

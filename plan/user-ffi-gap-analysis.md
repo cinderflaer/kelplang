@@ -182,3 +182,14 @@ itself changed: `str.ptr` is the address of the first byte, so it is the same
 module on the `[unsafe] modules` list. The other `std/str` functions stay out
 of reach in that mode, so anything that allocates or formats a string from a
 native value still needs a different shape.
+
+## What kernel gap 2 (`Ptr.from_fn`) changed for this list
+
+One shape a native binding reaches for is now expressible: the address of a
+Kelp `fun` as a `Ptr<u8>`, which is what a callback table, an interrupt vector
+or a native API taking a function pointer wants to hand over. It is safe
+(`Ptr.from_fn` needs no `unsafe`), the address is the linker's real symbol, and
+`align(N)` on the `fun` sets the alignment the native side needs. It does not
+close gap 4: a `Ptr<u8>` is one machine word with no signature and no
+environment, so it is not a `move closure(...)` and the native side still has
+to know the ABI itself.
