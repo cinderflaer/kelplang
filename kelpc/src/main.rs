@@ -15,7 +15,6 @@ mod llvm_ffi;
 mod opt;
 mod parser;
 mod preprocess;
-mod pretty;
 mod resolve;
 mod stdlib;
 mod tir;

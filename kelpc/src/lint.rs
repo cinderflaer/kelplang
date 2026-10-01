@@ -99,11 +99,9 @@ impl CommentRun {
     }
 }
 
-/// Every comment run in `src`, in source order.
-///
-/// A lexing failure is returned rather than reported: the caller has the file
-/// and the diagnostic machinery, so it decides how to print it. `kelpc lint`
-/// prints it the way `kelpc build` prints the same failure for the same file.
+/// The comment-run rule over a whole `src`, the entry the unit tests below
+/// use; `findings` runs the same rule over tokens it already has.
+#[cfg(test)]
 pub fn comment_runs(src: &str) -> Result<Vec<CommentRun>, LexError> {
     let tokens = Lexer::new(src).tokenize_with_trivia()?;
     Ok(comment_runs_in(&tokens, src))
@@ -168,17 +166,6 @@ pub fn findings(src: &str, naming: Option<&Naming>) -> Result<Vec<Finding>, LexE
     // findings are sorted by where they are before anyone prints them.
     all.sort_by_key(|f| f.span.start);
     Ok(all)
-}
-
-/// The `else if` links in `src` (`syntax.md` 6.1: both spellings work, `elif`
-/// is the preferred one, and this is the cosmetic warning about the other).
-///
-/// The two tokens are adjacent, and that is exactly the question: `else` and
-/// `if` with anything between them, a newline included, is not the link the
-/// parser reads as one, so it is not this warning either.
-pub fn else_if_links(src: &str) -> Result<Vec<Finding>, LexError> {
-    let tokens = Lexer::new(src).tokenize_with_trivia()?;
-    Ok(else_if_links_in(&tokens))
 }
 
 /// The `else if` rule over an already-lexed file.

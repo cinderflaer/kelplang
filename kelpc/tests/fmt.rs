@@ -115,6 +115,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[path = "../src/lexer.rs"]
+#[allow(dead_code)] // the standalone copy drops the parser's only caller of Span::to
 mod lexer;
 
 use lexer::{Lexer, TokenKind};

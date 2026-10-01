@@ -1441,7 +1441,6 @@ fn write_coerce_env(out: &mut String, ty: &Ty) {
         .iter()
         .map(crate::types::container_elem_c_type)
         .collect::<Vec<_>>();
-    let names: Vec<String> = (0..params.len()).map(|i| format!("p{i}")).collect();
     writeln!(out, "// ---- {env} (A-4 phase E) {}", "-".repeat(26)).unwrap();
     writeln!(
         out,

@@ -230,7 +230,6 @@ pub struct Param {
     /// `Borrow` (the default), `mut T` (an exclusive borrow) or `move T`
     /// (the callee takes ownership, A-4).
     pub mode: ParamMode,
-    pub span: Span,
 }
 
 /// How a parameter receives its argument. One enum rather than two flags,

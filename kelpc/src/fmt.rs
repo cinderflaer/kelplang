@@ -7,8 +7,8 @@
 //! text is ever rewritten, so a literal's spelling, a `%*alias*%`'s macro
 //! text and a template's contents survive byte-for-byte by construction.
 //!
-//! Why not an AST printer (`pretty.rs` is one, and is dead code): the
-//! information a formatter needs is information the AST drops.
+//! Why not an AST printer: the information a formatter needs is information
+//! the AST drops.
 //!
 //! - Comments are discarded by the lexer before the parser runs, and the AST
 //!   has no comment node, so an AST printer cannot reproduce them at all.
