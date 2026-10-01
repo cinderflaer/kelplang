@@ -169,3 +169,16 @@ a spelling for. The one thing it changes for a binding is that a native
 instruction a library's header wraps in a macro (a fence, a `pause`, a system
 call register setup) is now expressible without a C helper, in the same module
 that already had to be on the audit list to use `Ptr<T>`.
+
+## What kernel stage 7 (the freestanding `str` surface) changed for this list
+
+Nothing is closed, and one gap gets smaller. A freestanding program can now
+call `str.len`, `str.byte`, `str.eq`, `str.starts_with` and `str.ptr` with no
+libc behind them, so a binding whose native side hands back a `const char*` (a
+`str` parameter or return, which stage 4 already accepts) can be *inspected* in
+the kernel instead of only passed around. Nothing about the binding mechanism
+itself changed: `str.ptr` is the address of the first byte, so it is the same
+`Ptr<u8>` a driver already writes out, and reading through it still needs the
+module on the `[unsafe] modules` list. The other `std/str` functions stay out
+of reach in that mode, so anything that allocates or formats a string from a
+native value still needs a different shape.

@@ -104,6 +104,15 @@ compiler change was needed. What the examples could not do is in `plan/kernel0-s
 order: a libc-free `str` surface, an address-of-function form (plus the `interrupt` attribute
 stage 5 deferred), and a usable panic message.
 
+**Stage 7 closed two of those three.** A freestanding program now has `str.len`,
+`str.byte`, `str.eq`, `str.starts_with` and `str.ptr`, lowered as byte loops inside
+the module by the LLVM backend (no `strlen`, no C object), with every other
+`std/str` function refused by name and pruned from the program before inference;
+`examples/kernel0` prints its greeting through `puts(s: str)` and its panic
+handler prints `panic: ` plus the compiler's own message, and the new
+`examples/kernel0-panic` proves it by reading one element past an array on
+purpose. The address-of-function form (gap 2) is still open.
+
 **What the next stages need.** The table's stages 6 to 11 are the remaining work:
 `defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),
 mapping and a syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and
