@@ -99,3 +99,15 @@ hand-shifted bits, which is where gap 9 (a `datac` crossing an `extern fun`
 boundary) would otherwise force a C helper. `Ptr<T>` unaligned access is also
 the honest way to read a packed native field once gap 3's generated prototype
 lands; today it is still only reachable from a module in `[unsafe] modules`.
+
+## What kernel stage 4 (MK9-S4) changed for this list
+
+Nothing is closed, and a freestanding project's binding story is narrower. A
+user `extern fun` is still *accepted* in freestanding mode, but the per-program
+C object that carries its trampoline is libc-backed and is not compiled there,
+so the symbol is left for `ld.lld` to resolve against whatever the linker script
+or the build puts beside the object. `library`, `header`, `include_dirs`,
+`library_dirs` and `pkg_config` have no effect in that mode: there is no `cc`
+link line to put them on. Gap 4's callback machinery is likewise hosted-only
+for now. A kernel binding should therefore be a bare `extern fun` whose symbol
+is defined by code linked into the image, not by a system library.

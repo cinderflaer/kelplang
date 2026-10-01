@@ -42,7 +42,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
-**Status: stages 1 to 3 are done.** Stage 1 (MK9-S2 unsafe and pointers): `unsafe` blocks and
+**Status: stages 1 to 4 are done.** Stage 1 (MK9-S2 unsafe and pointers): `unsafe` blocks and
 `unsafe fun`, the raw pointer type `Ptr<T>`,
 `offset`/`byte_offset`/`cast`/`addr`/`is_null`, `read`/`write` and their volatile twins,
 `Ptr.alloc`/`free`, and the `coral.toml` `[unsafe] modules` audit list all work on both backends
@@ -62,6 +62,19 @@ Stage 3 adds the integer byte-order conversions (`x.swap_bytes()`, `x.to_be()`, 
 `Ptr.read_unaligned`/`write_unaligned`. `to_le` is the identity because the target is
 little-endian, asked of the target's own data layout on LLVM and of `__BYTE_ORDER__` on C, so a
 big-endian target swaps instead (`plan/data-formats.md`).
+
+Stage 4 (MK9-S4-M1/M2 freestanding, LLVM-only by design) adds a `coral.toml` `[target]`
+section (`mode`, `triple`, `entry`, `linker_script`, optional `panic`), the LLVM target machine
+for a non-host triple (static relocation, medium code model, `generic-rv64`/`+m,+a,+c` for
+riscv64), a compiler-emitted `_start` stub that sets `sp` from `__stack_top` and calls the
+entry, the `section("...")` clause on a top-level `const`/`fun` (integer-array consts emitted
+as read-only data in their section), and an `ld.lld -T <script>` link with no libc and no
+runtime object. The allowed set (no `print`, no `panic`/`assert` builtins, no heap types, no
+`std/*` except `std/atomic`, `std/option` and `std/result`, no `pd`) is enforced by
+`kelpc check` and `kelpc build` alike, and the overflow and bounds checks call the project's
+`panic` handler or a default infinite loop. The acceptance artifact is
+`tests/projects/freestanding_min`, checked with the llvm tools under `dev-kernel.nix`
+(`plan/freestanding.md`, `plan/kernel-ub-notes.md`).
 
 ## Two rules that keep the language honest
 
