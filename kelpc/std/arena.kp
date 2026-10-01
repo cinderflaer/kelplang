@@ -1,4 +1,4 @@
-/* std/arena — a bump arena over a caller-owned byte region (kernel stage 13,
+/* std/arena - a bump arena over a caller-owned byte region (kernel stage 13,
    MK9-S5-M3).
 
    An arena is the allocation tool a kernel reaches for first: the caller hands
