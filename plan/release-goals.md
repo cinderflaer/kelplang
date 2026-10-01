@@ -51,12 +51,9 @@ language and toolchain have to make writing them possible.
 
 ## Follow-ups
 
-- **A typed `extern type` handle for `std/tls`.** `TlsStream` still carries the `SSL*` as a `usize`. An
-  `extern type` is legal only in a module with its own `coral.toml` `[extern."<module id>"]` section
-  (`resolve.rs`), and a compiler-shipped std module has no manifest, so `std/tls` cannot declare one. The
-  smallest change is one condition in `resolve.rs`: admit a module that is compiler-shipped (`stdlib.rs`'s
-  source table already tells a std module from a project one), since the extern bodies such a module may
-  declare already come from `externs.rs` and the handle's C (`void*`) and LLVM (`ptr`) lowering is
-  module-independent. The second half is in the callers: `std/http` and `std/ws` use `0` in a
-  `tls_handle: usize` to mean "not TLS", and an opaque handle has no integer value to compare against, so
-  both would carry `Option<tls.TlsHandle>` instead and test that.
+- ~~**A typed `extern type` handle for `std/tls`.**~~ **Done** (`plan/tls-handle.md`). `resolve.rs` admits an
+  `extern type` in a compiler-shipped module (`stdlib.rs`'s source table; a project module still needs its own
+  `[extern."<module id>"]` section), `std/tls` declares `pub extern type TlsHandle` and carries the OpenSSL
+  `SSL*` as one, and `std/http`/`std/ws` carry `Option<tls.TlsHandle>` with `None` for a plain connection
+  instead of the `0` in a `tls_handle: usize`. Both backends pass the full suite; the project-module refusal
+  (`ffi_handle_no_section`) and the opaque-handle fixtures are unchanged.

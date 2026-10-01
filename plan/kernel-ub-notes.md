@@ -991,3 +991,26 @@ the kernel meant; whether a recursion was rewritten into a loop; and whether the
 platform delivers the fault to the handler at all. D-1/D-2/D-3 stay open; the
 guard page and the fault stack join the catalogue of promises a kernel makes
 with `Ptr`, `static mut`, `asm` and a linker script.
+
+## The typed `std/tls` handle (release goal 1 follow-up, `plan/tls-handle.md`)
+
+Not a kernel stage, recorded here because it changes what an opaque handle can hide.
+
+**New way to reach undefined behaviour.** `TlsHandle` is an `extern type`: C lowers it to `void*` behind
+`kelp_tls_TlsHandle` and LLVM to `ptr`, and every OpenSSL body trusts it (`(SSL*)kelp_handle`). A handle
+that is null, already freed by a `try_shutdown` that ran twice, or produced by a different library is
+undefined behaviour inside OpenSSL, exactly as the old `usize` `0` or a stale integer was. What the type
+buys is that a handle cannot be manufactured from an integer, compared with one, or confused with a
+different handle type, so the *accidental* integer-to-pointer path is gone. It does not track liveness:
+`TlsHandle` is `Copy`, owns nothing and has no drop, so nothing stops a handle outliving the `SSL_free`
+that released it.
+
+**What the compiler does check.** That `extern type` is declared in a module with an `[extern.*]` section
+or a module `stdlib.rs` ships; that a handle is used only as itself (`==`/`!=` with a handle of the same
+or an ancestor type, an argument, a binding, a return, `null()`/`is_null()`/`cast()` only in an extern
+module); and, in `std/http`/`std/ws`, that the plain/TLS choice is an `Option`, so no integer sentinel can
+stand in for a handle.
+
+**What it does not check.** Whether a handle points at a live `SSL` object, whether it was freed once,
+whether the module that produced it is the one that consumes it, or whether the C body's cast is the right
+type. Those are the promises `std/tls`'s header documents and the AddressSanitizer gate exercises.

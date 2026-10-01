@@ -86,8 +86,9 @@ Closed on `main`: gap 1 (the opaque handle), gap 2 (symbol rename), gap 3 (the `
   `Widget.null()`/`w.is_null()`/`Window.cast(w)` are the null handle, the null test and the unchecked downcast,
   legal only in an extern module. Fixtures `ffi_handle_upcast`, `ffi_handle_null`, `ffi_handle_bad_downcast`,
   `ffi_handle_null_outside`, on both backends.
-  A compiler-shipped std module still cannot declare one (it has no manifest), so `std/tls` carries its `SSL*` as a
-  `usize`; the one-condition change that would lift that is in `plan/release-goals.md` under Follow-ups.
+  A compiler-shipped std module could not declare one when this gap closed (it has no manifest); that is now
+  lifted too (`plan/tls-handle.md`): `resolve.rs` admits an `extern type` in a module `stdlib.rs` ships, and
+  `std/tls` uses it for `TlsHandle` in place of the `usize` it used to carry.
 - **Gap 3, prototype generation: not planned.** The `header` key makes the real declaration visible, so generating
   a prototype from the Kelp signature would only risk a second, conflicting declaration.
 - **Gap 6 (domain):** **closed.** Option 2 of `plan/ffi-display-domain.md` is implemented: `ui` is the
@@ -224,3 +225,13 @@ object, and a kernel that wants its own implementation only has to put a strong
 definition in the image (`plan/freestanding.md`). The binding mechanism itself
 is unchanged: a freestanding `extern fun` still has no trampoline, and the
 symbol is still the linker's or the script's to resolve.
+
+## Status update (release goal 1 follow-up): a shipped std module may declare a handle
+
+Gap 1's last restriction is gone. `resolve.rs` admits an `extern type` in a module `stdlib.rs` ships
+(`stdlib::source`), not only in a module with its own `[extern."<module id>"]` section; a project module
+still needs that section, and `tests/projects/ffi_handle_no_section` pins the refusal. `std/tls` uses it
+for `pub extern type TlsHandle`, `TlsStream.handle` is now a `TlsHandle` rather than a `usize`, and
+`std/http`/`std/ws` carry `option.Option<tls.TlsHandle>` so `None`, not `0`, is "not TLS". Fixtures
+`tls_handle_not_an_integer.kp` and `tls_handle_not_forged.kp` show the two integer directions are refused.
+`plan/tls-handle.md` is the record.

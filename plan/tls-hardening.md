@@ -78,9 +78,10 @@ success.
 
 **Fix.** `tls_truncated.kp`, `tls_timeout_read.kp` and every new fixture call `try_shutdown` on every
 path where a `TlsStream` exists, including after a read error. The typed-handle follow-up in
-`plan/release-goals.md` (an owned handle whose drop is the free) is the change that would make the
-omission impossible; until then the contract stays documented in `std/tls`'s header and is the thing
-the leak gate checks.
+`plan/release-goals.md` landed (`plan/tls-handle.md`): `TlsStream.handle` is the opaque `tls.TlsHandle`
+rather than a `usize`, so the handle can no longer be confused with an address or a length. It is a `Copy`
+handle that owns nothing, though, so the contract stands unchanged: nothing frees the `SSL*` on a `TlsStream`'s
+drop, `try_shutdown` is still the call that does, and that is what the leak gate checks.
 
 ### F3. The helper cannot send a fatal alert, so case (c) is split in two
 
