@@ -1,0 +1,71 @@
+// `u8`/`u16` arithmetic is the *declared width's* arithmetic, and C has no
+// operand of either width: every one of them promotes to `int` before `+`,
+// `-`, `*`, `<<`, `&`, `|`, `^`, `~` and unary `-`, so the C backend used to
+// hand back a result wider than the type the program wrote. A `u8 + u8` of
+// 300 printed as 300 and compared as 300, where LLVM (which works at `i8`)
+// wrapped to 44, and a `u16 * u16` widened to 3,000,000,000 where the type
+// says 24064. Every value below is chosen so a wrong width prints a different
+// number, and the comparison and the container element are there because the
+// bug was observable without `print` too.
+//
+// The compound assignments (`+=`, `-=`) are already narrowed by the store
+// back into the variable, so they are pinned here beside the expressions to
+// stop a fix from breaking the case that always worked.
+fun main() {
+    val a: u8 = 200
+    val b: u8 = 100
+
+    // `+`, `-`, `*`, `/`, `%`.
+    print(a + b) // 300 wraps to 44
+    print(a - b) // 100
+    print(b - a) // -100 wraps to 156
+    print(a * b) // 20000 wraps to 32
+    print(a / b) // 2
+    print(a % b) // 0
+
+    // The bitwise operators, which promote the same way.
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(a << 2) // 800 wraps to 32
+    print(a >> 2) // 50
+
+    // Unary `~` (and unary `-` on a wide-enough value) is a result too.
+    print(~a)
+    val zero: u8 = 0
+    print(~zero)
+
+    // The same at `u16`, where the promotion is still to `int` and the
+    // product is still truncated to the declared width.
+    val c: u16 = 60000
+    val d: u16 = 50000
+    print(c + d)
+    print(c * d)
+    print(~c)
+    print(c - d) // 10000 fits, so this one has to stay unchanged
+
+    // A nested expression narrows at every step, not only at the top.
+    print((a + b) * 2) // (44) * 2 = 88
+    print(a + b + a) // 44 + 200 = 244
+
+    // The value is what a comparison and a container see, not the promoted
+    // `int`: 44 is not greater than 200, and the element stored is 44.
+    if a + b > a {
+        print("bigger")
+    } else {
+        print("smaller")
+    }
+    var xs: List<u8> = List.empty()
+    xs.push(a + b)
+    xs.push(a * b)
+    print(xs.get(0))
+    print(xs.get(1))
+
+    // A compound assignment narrowed by the store, kept as the control.
+    var e: u8 = 250
+    e += 10
+    print(e)
+    var f: u16 = 65530
+    f += 10
+    print(f)
+}

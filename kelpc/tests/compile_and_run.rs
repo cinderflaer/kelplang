@@ -1611,6 +1611,14 @@ fn remainder_works_at_every_integer_width() {
 }
 
 #[test]
+fn narrow_integer_arithmetic_wraps_at_its_own_width() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_narrow_width_arithmetic.kp",
+        "44\n100\n156\n32\n2\n0\n64\n236\n172\n32\n50\n55\n255\n44464\n24064\n5535\n10000\n88\n244\nsmaller\n44\n32\n4\n4\n",
+    );
+}
+
+#[test]
 fn a_failed_syscall_reports_errno_and_strerror() {
     // `ENOENT` is 2 on Linux, and glibc and musl both spell it this way; the
     // message line is asserted separately so a stable prefix is what a
