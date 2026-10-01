@@ -9758,7 +9758,7 @@ fn a_program_is_ended_by_sigpipe_when_its_reader_closes_the_pipe() {
     let bin = out_path("pipe_producer");
     let build = kelpc()
         .arg("build")
-        .arg(fixture("tests/fixtures/pipe_producer.kp"))
+        .arg(fixture("tests/hazards/pipe_producer.kp"))
         .arg("-o")
         .arg(&bin)
         .output()

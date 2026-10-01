@@ -1,0 +1,14 @@
+// HAZARD: this program never stops printing. It lives in tests/hazards/, not tests/fixtures/, because the
+// backend_coverage sweep builds and runs every fixture and buffers its stdout, so an endless printer there
+// grows that test until the machine runs out of memory (it did, four times, on 2026-10-01). Only the SIGPIPE
+// test in compile_and_run.rs runs this file, and it closes the pipe after one line.
+// Prints forever. Piped into a reader that closes its end, the process must be
+// ended by SIGPIPE like any Unix tool; if the runtime ignored SIGPIPE
+// process-wide, every write would fail with EPIPE and this loop would never stop.
+fun main() {
+    var i = 0
+    while true {
+        print(i)
+        i = i + 1
+    }
+}
