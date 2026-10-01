@@ -150,12 +150,27 @@ manifest may name `alloc`, `dealloc` and an optional `realloc` in `[target]`, an
 `Box<T>`, `List<T>` and `Map<V>` of allowed element types then allocate and free
 through them instead of libc, on the LLVM backend that freestanding mode is.
 Without the pair the three containers are refused exactly as before, with a
-message that names the keys; `String`/`Bytes`/`View`/`Thread` stay refused
-either way. A failed allocation reaches the project's panic handler with "out of
-memory". `examples/kernel0-heap` is the idiom: a bump allocator over a
-`static mut` arena, a `List<i32>` of 1..=10, and a counting wrapper that prints
-`balanced` when every allocation reached a matching free. Arenas as a language
-feature and a fallible allocation surface are not in this stage.
+message that names the keys; `View`/`Thread` stay refused either way. A failed
+allocation reaches the project's panic handler with "out of memory".
+`examples/kernel0-heap` is the idiom: a bump allocator over a `static mut`
+arena, a `List<i32>` of 1..=10, and a counting wrapper that prints `balanced`
+when every allocation reached a matching free. Arenas as a language feature and
+a fallible allocation surface are not in this stage.
+
+**Row 7's `String`/`Bytes` half is done too** (MK9-S5-M2,
+`plan/freestanding-string.md`): with an allocator configured, `String` and
+`Bytes` become legal and the operations a kernel needs - the constructors, the
+length and byte accessors, `push`/`push_str`, `clone`, `reserve`, `clear`,
+`str.concat` and the integer-to-text builders, and drop - are emitted as
+libc-free byte loops into the object, growing by doubling through the project's
+`realloc` when one is named and alloc + copy + dealloc otherwise. Every other
+`String`/`Bytes`/`std/str` operation is refused at the call with "needs the
+hosted runtime" (including `str.from_f64`), so nothing is left for the linker to
+report. `examples/kernel0-string` is the acceptance: it concatenates, formats
+an integer, grows a `Bytes` past several doublings, prints four lines through
+the UART under QEMU and proves `ALLOCS == DEALLOCS`; `llvm-nm -u` stays clean.
+Without an allocator `String`/`Bytes` stay refused, and `View`/`Thread` stay
+refused either way.
 
 **Row 8's per-CPU half is done** (MK9-S3-M3, `plan/percpu.md`): a freestanding
 project may write `percpu static mut NAME: T = INIT`, and a manifest's

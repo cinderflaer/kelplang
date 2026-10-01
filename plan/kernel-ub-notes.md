@@ -468,10 +468,11 @@ together or neither, and that `realloc`, when named, needs them; that each name
 is a bare identifier and a non-`extern` `fun` in the entry module; that their
 signatures are exactly `(usize, usize).R: Ptr<u8>`, `(Ptr<u8>, usize, usize)`
 and `(Ptr<u8>, usize, usize, usize).R: Ptr<u8>`; that with no pair `Box`, `List`
-and `Map` are refused with a message naming the two keys, while `String`,
-`Bytes`, `View` and `Thread` stay refused even with one; and that a freestanding
-image built this way references no libc symbol (`kelp_memcpy`/`kelp_memset` are
-module-private definitions, and the boot graph was checked with `llvm-nm -u`).
+and `Map` are refused with a message naming the two keys, while `View` and
+`Thread` stay refused even with one (`String` and `Bytes` join the allowed set
+in stage 13); and that a freestanding image built this way references no libc
+symbol (`kelp_memcpy`/`kelp_memset` are module-private definitions, and the
+boot graph was checked with `llvm-nm -u`).
 
 **What it does not check.** Any property of the memory the allocator returns:
 alignment, capacity, provenance, liveness, distinctness or thread-safety. It
@@ -834,3 +835,52 @@ register offsets the dispatcher uses, what a validated user pointer is
 *for*, what the physical address it names contains, or whether a copied program
 is still the program that was assembled. The catalogue for the unchecked tools
 is stages 1, 5, 7, 8 and 11.
+
+## Stage 13 (row 7): freestanding `String` and `Bytes` (MK9-S5-M2)
+
+**New ways to reach UB.** With an allocator configured, `String` and `Bytes`
+become legal, and every buffer the two types grow is memory the project's own
+allocator returned through the same promise stage 9 already took on trust. The
+buffer layer adds four shapes stage 9's containers did not have:
+
+- `kelp_buf_reserve` computes the new capacity as `want = cap == 0 ? 8 : cap`
+doubled until it holds `len + extra`, and the **capacity is the only record of
+how large the block is**: `dealloc` is handed `cap + 1` bytes. A project whose
+`alloc` returned a smaller block than the `size` it was given, or whose
+`realloc` returns a block that is not `want + 1` bytes, turns the next append or
+the free into an out-of-bounds access the compiler never checks. The reverse is
+a leak, not UB.
+- The `realloc` fast path passes the project `(ptr, cap + 1, want + 1, align)`.
+An `alloc`-and-copy replacement is expected; a `realloc` that moves the block
+**without** telling the compiler is fine only because the buffer reloads the
+pointer it stores, but one that copies fewer than `cap + 1` bytes, or that
+returns a block overlapping the old one, is silent corruption. With no
+`realloc` named, the fallback is the compiler's alloc + copy + dealloc, and the
+copy overlap rule is stage 9's.
+- `String.from_str` and `Bytes.from_str` derive the length with the compiler's
+own NUL scan and then copy `n + 1` bytes. A `str` without a terminator in its
+allocation makes the scan read past the literal, before any allocation happens.
+The bodies carry `optnone` so the scan cannot become a `strlen` call, which is a
+*promise the compiler keeps*, not something the program can break.
+- `Bytes.get`/`set` and `str.byte`'s bounds checks call the project's panic
+handler; a handler that returns instead of looping lets execution continue past
+the check into the code the check was guarding, which is UB if the index was out
+of bounds. Nothing requires the handler to diverge.
+
+**What the compiler does check.** That `String`/`Bytes` are refused without an
+allocator, with the message naming the two keys; that every method not on the
+libc-free list (and every `std/str` function outside the listed subset,
+including `str.from_f64`) is refused at the call with "needs the hosted
+runtime", before either backend runs; that every allocation and free the two
+types make reaches the project's `alloc`/`dealloc`/`realloc` with `align = 1`
+and size `cap + 1`, and that a null return reaches the panic handler with
+`"out of memory"`; and that the image references no libc symbol (`llvm-nm -u`
+stays clean, and the IR carries no `malloc`/`realloc`/`free`/`strlen` call).
+
+**What it does not check.** Any property of the memory the allocator returns,
+exactly as stage 9 does not; whether `realloc` grew the block, copied all
+`cap + 1` bytes or kept the new block disjoint from the old; whether the `NUL`
+terminator a `str` was promised is inside its allocation; and whether the
+project's panic handler diverges. The buffer's byte loops are ordinary code
+once the module is verified: the compiler supplies them and trusts the
+allocator, and nothing more.

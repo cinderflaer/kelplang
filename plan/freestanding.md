@@ -52,17 +52,25 @@ stage 7); `Ptr<T>` and the compile-time
 to a call to the same handler as the checks; and arithmetic, including the
 overflow and bounds checks, which call the project's panic handler (below).
 With `[target] alloc`/`dealloc` configured, `Box<T>`, `List<T>` and `Map<V>` of
-allowed element types are allowed too (the next section).
+allowed element types are allowed too, and so are `String` and `Bytes` (the
+next section), with only the operations that have a libc-free lowering -
+`String.empty`/`from_str`/`len`/`is_empty`/`as_str`/`clone`/`push`/`push_str`/
+`reserve`/`with_capacity`/`clear`, `Bytes.empty`/`from_str`/`len`/`is_empty`/
+`get`/`set`/`push`/`clone`/`reserve`/`clear`, `str.concat` and the integer
+builders, and drop - callable; every other `String`/`Bytes` method and every
+other `std/str` function is refused by name with "needs the hosted runtime"
+(`plan/freestanding-string.md`).
 
 **Refused, each naming the construct.** `print`/`print!` (the `printf` call),
 `assert` (the runtime's `kelp_assert`), a defined `main` (the hosted entry point
 and its `argc`/`argv` globals), `Ptr.alloc`/`Ptr.free` (the hosted
 `malloc`/`free`), passdowns (`pd`, whose initializers run through the generated
-`kelp_init_pds` that only the hosted entry point calls), `String`, `Bytes`,
-`View` and `Thread` (which always reach the hosted C runtime, `String`/`Bytes`
-through `strlen`/`memcpy`/`realloc`), and `Box`, `List` and `Map` when no
+`kelp_init_pds` that only the hosted entry point calls), `View` and `Thread`
+(which reach the hosted runtime whatever the manifest says), `String` and
+`Bytes` when no allocator is configured, and `Box`, `List` and `Map` when no
 `[target] alloc`/`dealloc` pair is configured. Any `std/*` module other than the
-pure three above is refused by name: they all reach libc or the allocator.
+pure three above and the `std/str` subset is refused by name: they all reach
+libc or the allocator.
 
 `std/str` is the one module that is partly allowed, because a kernel that
 prints anything has to walk text. The five operations above are the whole of
@@ -246,17 +254,17 @@ usize).R: Ptr<u8>`. `alloc` and `dealloc` are required together; `realloc` needs
 the pair. A wrong signature is a compile error naming the expected one.
 
 With a pair configured, `Box<T>`, `List<T>` and `Map<V>` are allowed whenever
-their element/key/value types are allowed (so no `String`, `Bytes`, `View` or
-`Thread` anywhere inside). Every allocation and free those containers make in
-the LLVM output calls the project's functions instead of libc's `malloc`,
-`realloc` and `free`, and the two memory primitives a freestanding image has no
-libc for (`memcpy`, `memset`) are emitted as module-private `kelp_memcpy` and
-`kelp_memset` definitions. Without a `realloc`, growth is alloc + copy +
-dealloc. The generated object still references no libc symbol, which the
-acceptance test checks with `llvm-nm -u`. With no pair configured the three
-containers are refused exactly as before, with a message that now names the
-`alloc`/`dealloc` keys; `String`, `Bytes`, `View` and `Thread` are refused
-either way.
+their element/key/value types are allowed, and `String` and `Bytes` themselves
+are allowed with the operation subset above (`plan/freestanding-string.md`).
+Every allocation and free those types make in the LLVM output calls the
+project's functions instead of libc's `malloc`, `realloc` and `free`, and the
+two memory primitives a freestanding image has no libc for (`memcpy`,
+`memset`) are emitted as module-private `kelp_memcpy` and `kelp_memset`
+definitions. Without a `realloc`, growth is alloc + copy + dealloc. The
+generated object still references no libc symbol, which the acceptance test
+checks with `llvm-nm -u`. With no pair configured the containers and
+`String`/`Bytes` are refused exactly as before, with a message that names the
+`alloc`/`dealloc` keys; `View` and `Thread` are refused either way.
 
 `Ptr.alloc`/`Ptr.free` stay refused: they are the hosted `malloc`/`free` and
 this stage does not reroute them. A failed allocation (the project's `alloc`
@@ -331,9 +339,10 @@ and `__bss_end`.
 - No `Ptr.alloc`/`Ptr.free` hook. The global allocator of kernel stage 7 is
   `[target] alloc`/`dealloc`; the `Ptr` methods stay the hosted `malloc`/`free`
   and are still refused, even though `Ptr<T>` itself is allowed.
-- `String` and `Bytes` stay refused even with an allocator configured, because
-  their operations reach `strlen`/`memcpy`/`realloc` in the hosted runtime; only
-  `Box`, `List` and `Map` are rerouted.
+- ~~`String` and `Bytes` stay refused even with an allocator configured~~
+  Closed by kernel stage 12: with an allocator, the operations with a libc-free
+  lowering are legal and the rest are refused by name
+  (`plan/freestanding-string.md`).
 - A large aggregate copy can make LLVM emit a `memcpy` or `memset` call, which
   it assumes libc provides. ~~Nothing here maps those to an in-language loop, so
   `ld.lld` reports the undefined symbol and the project has to supply it.~~
