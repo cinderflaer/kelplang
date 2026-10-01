@@ -1,0 +1,12 @@
+// Kernel stage 4: a `section("...")` clause on a top-level `const` (an integer
+// array, emitted as read-only data in that section) and on a `fun` (its code
+// placed there). A hosted build runs the same way whichever section the linker
+// would put each in, so the observable behaviour this fixture pins is that the
+// clause parses, typechecks and changes nothing about the result.
+section(".kelp.data") const STEPS: [i32; 4] = [1, 2, 3, 4]
+
+section(".kelp.text") fun add(a: i32, b: i32).R: i32 = a + b
+
+fun main() {
+    print(add(STEPS.get(i = 0), 40))
+}

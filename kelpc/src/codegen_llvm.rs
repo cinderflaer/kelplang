@@ -417,6 +417,7 @@ pub fn compile(
         freestanding.cloned(),
     )?;
     lowering.declare()?;
+    lowering.emit_const_data()?;
     // The small builtin accessors get their bodies here, as IR rather than a
     // declaration into the runtime object, so the module's own `-O2` inlines
     // them at the call site. `emit_container_bodies` below is the same idea for
@@ -1105,6 +1106,11 @@ impl<'a> Gen<'a> {
             };
             let ty = ctx.fn_type(ret, &params, false);
             let func = self.module.add_function(&symbol_name(&f.name), ty);
+            // The `section("...")` clause a declaration wrote (kernel stage 4)
+            // places its code where a linker script can find it.
+            if let Some(section) = &f.section {
+                func.as_value().set_section(section);
+            }
             // A `mut` parameter is an exclusive borrow (`borrowck`), so no other
             // live pointer reaches the same object through the call and LLVM may
             // assume `noalias` of it. A shared parameter gets nothing: two
@@ -1177,6 +1183,34 @@ impl<'a> Gen<'a> {
                 self.panic_fn = func;
                 self.panic_ty = ty;
             }
+        }
+        Ok(())
+    }
+
+    /// Define one read-only data global per `section("...")` const (kernel
+    /// stage 4), so a linker script can place the bytes where the clause asked.
+    /// The values are the folded element list `infer.rs` built; the global is
+    /// `constant` and carries the named section. Uses of the const still fold to
+    /// its literal, so this global is a *symbol for the linker*, not a load: a
+    /// kernel boot table is placed by the script and reached through the
+    /// address, not read back through the const's name.
+    fn emit_const_data(&self) -> Result<(), String> {
+        for data in &self.program.const_data {
+            let Ty::Array(elem, len) = &data.ty else {
+                continue;
+            };
+            let llvm_elem = llvm_type(self.ctx, &self.structs, &self.containers, elem)?;
+            let arr_ty = self.ctx.array_type(llvm_elem, *len);
+            let values: Vec<Value<'a>> = data
+                .values
+                .iter()
+                .map(|v| self.ctx.const_int(llvm_elem, *v as u64, *v < 0))
+                .collect();
+            let arr = self.ctx.const_array(llvm_elem, &values);
+            let global = self.module.add_global(&symbol_name(&data.name), arr_ty);
+            global.set_initializer(arr);
+            global.set_constant(true);
+            global.set_section(&data.section);
         }
         Ok(())
     }
@@ -11356,6 +11390,7 @@ mod layout_tests {
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
             handles: Vec::new(),
+            const_data: Vec::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -11370,6 +11405,7 @@ mod layout_tests {
                 module: "std/mem".to_string(),
                 extern_: true,
                 env: None,
+                section: None,
             }],
             caps: Vec::new(),
             gated: Default::default(),
@@ -11785,6 +11821,7 @@ mod layout_tests {
             module: module.to_string(),
             extern_: true,
             env: None,
+            section: None,
         };
         let program = Program {
             structs: vec![point, segment],
@@ -11793,6 +11830,7 @@ mod layout_tests {
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
             handles: Vec::new(),
+            const_data: Vec::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -11937,6 +11975,7 @@ mod layout_tests {
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
             handles: Vec::new(),
+            const_data: Vec::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),
@@ -11949,6 +11988,7 @@ mod layout_tests {
                 module: "std/time".to_string(),
                 extern_: true,
                 env: None,
+                section: None,
             }],
             caps: Vec::new(),
             gated: Default::default(),

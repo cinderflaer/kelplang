@@ -177,10 +177,12 @@ impl Parser {
         let mut type_order = 0usize;
         while !matches!(self.peek_kind(), TokenKind::Eof) {
             // `repr(...)` is an optional leading clause on a `datac`/`enum`
-            // (kernel stage 2), and `pub` is an optional leading token on the
-            // item forms that can carry one (A-13). The two are read here,
-            // before the dispatch below, in either order, because a modified
-            // item is otherwise the same declaration.
+            // (kernel stage 2), `section("...")` one on a `const`/`fun`
+            // (kernel stage 4), and `pub` is an optional leading token on the
+            // item forms that can carry one (A-13). They are read here, before
+            // the dispatch below, in either order round `pub`, because a
+            // modified item is otherwise the same declaration.
+            let leading_section = self.parse_section_clause()?;
             let leading_repr = self.parse_repr_clause()?;
             let is_pub = self.check(&TokenKind::Pub);
             if is_pub {
@@ -197,10 +199,29 @@ impl Parser {
                     })
                 }
             };
+            let section = match (leading_section, self.parse_section_clause()?) {
+                (None, after_pub) => after_pub,
+                (before_pub, None) => before_pub,
+                (Some(_), Some(_)) => {
+                    return Err(ParseError {
+                        message: "a 'section(...)' clause is written once, before or after 'pub', not both".to_string(),
+                        span: self.peek().span,
+                    })
+                }
+            };
             if repr.is_some() && !self.check(&TokenKind::Datac) && !self.check(&TokenKind::Enum) {
                 return Err(ParseError {
                     message: format!(
                         "'repr(...)' applies to a 'datac' or an 'enum', found {:?}",
+                        self.peek_kind()
+                    ),
+                    span: self.peek().span,
+                });
+            }
+            if section.is_some() && !self.check(&TokenKind::Const) && !self.at_function_decl() {
+                return Err(ParseError {
+                    message: format!(
+                        "'section(\"...\")' applies to a top-level 'const' or 'fun', found {:?}",
                         self.peek_kind()
                     ),
                     span: self.peek().span,
@@ -221,7 +242,7 @@ impl Parser {
                         span: self.peek().span,
                     });
                 }
-                consts.push(self.parse_const_decl(is_pub)?);
+                consts.push(self.parse_const_decl(is_pub, section)?);
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
@@ -249,7 +270,7 @@ impl Parser {
                 // word everywhere, so it is an identifier token and the lookahead
                 // is what makes it a declaration marker here.
                 let unsafe_ = self.check_unsafe_fun();
-                functions.push(self.parse_function(is_pub, unsafe_)?);
+                functions.push(self.parse_function(is_pub, unsafe_, section)?);
             }
             self.skip_newlines();
         }
@@ -304,6 +325,13 @@ impl Parser {
             {
                 Ok(())
             }
+            // `pub section(".x") fun f() ...`: a `section(...)` clause may sit
+            // between `pub` and the `const`/`fun` it modifies (kernel stage 4).
+            TokenKind::Ident(n)
+                if n == "section" && matches!(self.peek2_kind(), TokenKind::LParen) =>
+            {
+                Ok(())
+            }
             TokenKind::Pd => Err(ParseError {
                 message: "a 'pd' cannot be 'pub': a passdown is module-scoped by design, so another module cannot reach it; a 'fun' that reads it can be exported instead".to_string(),
                 span: pub_span.to(self.peek().span),
@@ -320,7 +348,7 @@ impl Parser {
 
     /// `const NAME: T = expr` — the type is mandatory, since a `const` is a
     /// declared contract rather than an inferred binding.
-    fn parse_const_decl(&mut self, is_pub: bool) -> PResult<ConstDecl> {
+    fn parse_const_decl(&mut self, is_pub: bool, section: Option<String>) -> PResult<ConstDecl> {
         let start = self.expect(TokenKind::Const, "'const'")?.span;
         let (name, _) = self.expect_ident()?;
         self.expect(TokenKind::Colon, "':' (a 'const' must declare its type)")?;
@@ -334,6 +362,7 @@ impl Parser {
             ty,
             init,
             module: String::new(),
+            section,
             span,
         })
     }
@@ -590,6 +619,55 @@ impl Parser {
         Ok(Some(repr))
     }
 
+    /// `section("<name>")`, an optional leading clause on a top-level `const`
+    /// or `fun` (kernel stage 4), or `None` when the cursor is not at one.
+    /// `section` is a contextual word, so it only counts when a `(` touches it,
+    /// exactly as `repr` and `unsafe` do.
+    fn parse_section_clause(&mut self) -> PResult<Option<String>> {
+        if !matches!(self.peek_kind(), TokenKind::Ident(n) if n == "section")
+            || !matches!(self.peek2_kind(), TokenKind::LParen)
+        {
+            return Ok(None);
+        }
+        self.advance();
+        self.expect(TokenKind::LParen, "'(' after 'section'")?;
+        let (name, name_span) = match self.peek_kind().clone() {
+            TokenKind::StringLit(s) => {
+                let span = self.peek().span;
+                self.advance();
+                (s, span)
+            }
+            other => {
+                return Err(ParseError {
+                    message: format!(
+                        "expected a quoted section name in 'section(\"...\")', found {other:?}"
+                    ),
+                    span: self.peek().span,
+                })
+            }
+        };
+        self.expect(TokenKind::RParen, "')' to close 'section(...)'")?;
+        if name.is_empty() {
+            return Err(ParseError {
+                message: "'section(\"\")' needs a section name, for example 'section(\".text.boot\")'"
+                    .to_string(),
+                span: name_span,
+            });
+        }
+        Ok(Some(name))
+    }
+
+    /// Whether the cursor is at a function declaration: `fun`, `extern fun` or
+    /// `unsafe fun`. Used to decide whether a `section(...)` clause has an item
+    /// it applies to.
+    fn at_function_decl(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Fun)
+            || (matches!(self.peek_kind(), TokenKind::Extern)
+                && matches!(self.peek2_kind(), TokenKind::Fun))
+            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe")
+                && matches!(self.peek2_kind(), TokenKind::Fun))
+    }
+
     /// `extern type Widget`: an opaque native handle (gap 1). `type` is not a
     /// lexer keyword, so the caller has already seen the two tokens and this
     /// only reads the name; nothing else follows the declaration.
@@ -755,7 +833,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, is_pub: bool, unsafe_: bool) -> PResult<FunctionDecl> {
+    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, section: Option<String>) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -833,6 +911,13 @@ impl Parser {
                 span: start,
             });
         }
+        if extern_ && section.is_some() {
+            return Err(ParseError {
+                message: "'section(\"...\")' cannot be written on an 'extern fun': the declaration has no code of its own to place"
+                    .to_string(),
+                span: start,
+            });
+        }
 
         let return_type = if self.check(&TokenKind::Dot) {
             self.advance();
@@ -896,6 +981,7 @@ impl Parser {
             return_type,
             body,
             module: String::new(),
+            section,
             span: start.to(end),
         })
     }
@@ -2459,6 +2545,44 @@ mod tests {
     fn a_repr_clause_on_a_non_type_item_does_not_parse() {
         let err = parse_err("repr(c) fun main() {}");
         assert!(err.message.contains("applies to a 'datac' or an 'enum'"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_section_clause_is_read_on_a_const_and_on_a_fun() {
+        let p = parse(
+            "section(\".rodata.boot\") const K: [u8; 2] = [1, 2]\n\
+             section(\".text.boot\") fun boot() {}\n\
+             pub section(\".x\") fun h().R: i32 = 1\n",
+        );
+        assert_eq!(p.consts[0].section.as_deref(), Some(".rodata.boot"));
+        assert_eq!(p.functions[0].section.as_deref(), Some(".text.boot"));
+        assert_eq!(p.functions[1].section.as_deref(), Some(".x"));
+    }
+
+    #[test]
+    fn a_section_clause_on_a_non_const_or_fun_does_not_parse() {
+        let err = parse_err("section(\".x\") datac A(val x: i32)");
+        assert!(
+            err.message.contains("'const' or 'fun'"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn a_section_clause_on_an_extern_fun_does_not_parse() {
+        let err = parse_err("section(\".x\") extern fun f(n: i32).R: i32");
+        assert!(
+            err.message.contains("no code of its own to place"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn an_empty_section_name_does_not_parse() {
+        let err = parse_err("section(\"\") fun f() {}");
+        assert!(err.message.contains("needs a section name"), "{}", err.message);
     }
 
     #[test]

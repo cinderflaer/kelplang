@@ -51,6 +51,11 @@ pub struct ConstDecl {
     pub init: Expr,
     /// See `DatacDecl::module`.
     pub module: String,
+    /// The `section("<name>")` clause, when one was written (kernel stage 4):
+    /// the object section a top-level integer-array `const` is emitted in, so a
+    /// linker script can place it. `None` is the compilers's default section,
+    /// which is every const written before this clause existed.
+    pub section: Option<String>,
     pub span: Span,
 }
 
@@ -225,6 +230,10 @@ pub struct FunctionDecl {
     pub body: FunctionBody,
     /// See `DatacDecl::module`.
     pub module: String,
+    /// The `section("<name>")` clause, when one was written (kernel stage 4):
+    /// the object section this function's code is emitted in, so a linker
+    /// script can place it. `None` is the target's default `.text`.
+    pub section: Option<String>,
     pub span: Span,
 }
 

@@ -83,7 +83,9 @@ use llvm_sys::core::{
     LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetAlignment, LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer,
-    LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget, LLVMSetVolatile,
+    LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetSection, LLVMSetTarget,
+    LLVMSetVolatile,
+    LLVMConstArray2,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
     LLVMVoidTypeInContext,
 };
@@ -613,6 +615,25 @@ impl Context {
         self.const_int(self.i1(), u64::from(value), false)
     }
 
+    /// The constant array `[elem; values.len()]` (`LLVMConstArray2`), the
+    /// initializer a `section("...")` const's global is given (kernel stage
+    /// 4). The returned value's type is the array type, so a caller asks for
+    /// it with [`Context::array_type`] and passes both to
+    /// [`Module::add_global`] and [`Value::set_initializer`].
+    ///
+    /// [`Context::array_type`]: Context::array_type
+    /// [`Module::add_global`]: Module::add_global
+    /// [`Value::set_initializer`]: Value::set_initializer
+    pub fn const_array(&self, elem: Type<'_>, values: &[Value<'_>]) -> Value<'_> {
+        let mut raws: Vec<LLVMValueRef> = values.iter().map(|v| v.raw).collect();
+        Value {
+            // SAFETY: the element type and every value are live in this
+            // context; LLVM copies the array.
+            raw: unsafe { LLVMConstArray2(elem.raw, raws.as_mut_ptr(), raws.len() as u64) },
+            context: PhantomData,
+        }
+    }
+
     /// The floating-point constant `value` of type `ty` (`LLVMConstReal`).
     ///
     /// The C API takes the value as a C `double` and converts to `ty`'s own
@@ -743,6 +764,16 @@ impl<'ctx> Value<'ctx> {
     pub fn set_internal_linkage(&self) {
         // SAFETY: as above; the argument is a global handle's own ref.
         unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMInternalLinkage) };
+    }
+
+    /// Place a global (or a function) in section `section` (`LLVMSetSection`),
+    /// which is how a `section("...")` clause reaches the object writer
+    /// (kernel stage 4). An empty name would be the target's default, so the
+    /// caller passes only a name a manifest wrote.
+    pub fn set_section(&self, section: &str) {
+        let section = cstring(section);
+        // SAFETY: as above; LLVM copies the string.
+        unsafe { LLVMSetSection(self.raw, section.as_ptr()) };
     }
 }
 

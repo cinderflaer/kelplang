@@ -15,6 +15,7 @@ SECTIONS
     }
 
     .rodata : {
+        *(.rodata.boot)
         *(.rodata .rodata.*)
     }
 

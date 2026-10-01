@@ -57,6 +57,27 @@ pub struct Program {
     /// behind its own C typedef, emitted with the other type definitions; a
     /// program that declares none leaves the generated output unchanged.
     pub handles: Vec<String>,
+    /// The top-level integer-array `const`s that carry a `section("...")`
+    /// clause (kernel stage 4), sorted by name so both backends emit them in
+    /// one order. Each is emitted as read-only data in its section so a linker
+    /// script can place it; uses of the const still fold to the literal, so the
+    /// global is a symbol for the linker, not a load. Empty for a program that
+    /// writes no such clause, which leaves both backends' output unchanged.
+    pub const_data: Vec<ConstData>,
+}
+
+/// One `section(".rodata") const NAME: [u8; N] = [...]` (kernel stage 4).
+#[derive(Debug, Clone)]
+pub struct ConstData {
+    /// The module-prefixed top-level name, which is the emitted symbol
+    /// (`kelp_...`/the C backend's own mangling is applied by each backend).
+    pub name: String,
+    /// The array's element type and length, already checked.
+    pub ty: Ty,
+    /// The section the `section(...)` clause named.
+    pub section: String,
+    /// One value per element, in order, each already cut to the element type.
+    pub values: Vec<i128>,
 }
 
 /// One module's patterns for one capability domain.
@@ -109,6 +130,10 @@ pub struct Function {
     /// body's `ExprKind::Capture` reads go through. `None` for every ordinary
     /// function and for a literal that captured nothing.
     pub env: Option<ClosureEnv>,
+    /// The `section("...")` clause a declaration carried (kernel stage 4), or
+    /// `None` for the target's default `.text`. Each backend places the
+    /// function's code in this section.
+    pub section: Option<String>,
 }
 
 /// One literal's environment (A-4 phase E); see `Function::env`.

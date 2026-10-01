@@ -4182,10 +4182,19 @@ fn collect_consts(
             ));
         }
         let literal = {
-            let evaluator = ConstEvaluator::new(const_fns, structs, enums, env, &out);
-            evaluator
-                .fold_const(&bare, &decl.init, &declared, prefix, &aliases)
-                .map_err(|e| e.in_module(&decl.module))?
+            if let Some(result) = const_int_array(decl, &declared) {
+                let elems = result.map_err(|message| Diagnostic::new(message, decl.span, decl.module.clone()))?;
+                tir::Expr {
+                    kind: tir::ExprKind::ArrayLit(elems),
+                    ty: declared.clone(),
+                    span: decl.init.span(),
+                }
+            } else {
+                let evaluator = ConstEvaluator::new(const_fns, structs, enums, env, &out);
+                evaluator
+                    .fold_const(&bare, &decl.init, &declared, prefix, &aliases)
+                    .map_err(|e| e.in_module(&decl.module))?
+            }
         };
         out.insert(decl.name.clone(), ConstInfo { value: literal });
     }
@@ -4195,6 +4204,84 @@ fn collect_consts(
 /// The name a module's own source writes for a prefixed top-level item.
 fn bare_name<'a>(qualified: &'a str, prefix: &str) -> &'a str {
     qualified.strip_prefix(prefix).unwrap_or(qualified)
+}
+
+/// The elements of a top-level `const` whose declared type is a fixed-size
+/// array of integers and whose initializer is a literal array of integer
+/// literals (kernel stage 4). The const folding evaluator refuses array
+/// values, and a `section("...")` const has to be a data global, so this is
+/// the one array shape it accepts: `[1, 2, 3]` or `[0; 16]`, element by
+/// element, which is what a boot table or an IDT-shaped array is.
+///
+/// `None` means "not this shape, fold it the ordinary way"; `Some(Err(..))`
+/// is a shape that *is* an integer array but whose initializer does not match,
+/// so it is refused rather than folded into a confusing "array value" error.
+fn const_int_array(
+    decl: &ast::ConstDecl,
+    declared: &Ty,
+) -> Option<std::result::Result<Vec<tir::Expr>, String>> {
+    let Ty::Array(elem, len) = declared else {
+        return None;
+    };
+    if !elem.is_integer() {
+        return None;
+    }
+    let values: Vec<i128> = match &decl.init {
+        ast::Expr::ArrayLit { elems, .. } => {
+            let mut out = Vec::with_capacity(elems.len());
+            for e in elems {
+                match int_literal(e) {
+                    Some(v) => out.push(v),
+                    None => return None,
+                }
+            }
+            out
+        }
+        ast::Expr::ArrayRepeat { value, .. } => match int_literal(value) {
+            Some(v) => vec![v; *len as usize],
+            None => return None,
+        },
+        _ => return None,
+    };
+    if values.len() != *len as usize {
+        return Some(Err(format!(
+            "the initializer has {} element(s), but the const's type is an array of {len}",
+            values.len()
+        )));
+    }
+    if let Some((lo, hi)) = Ty::int_bounds(elem) {
+        for v in &values {
+            if *v < lo || (*v as u128) > hi {
+                return Some(Err(format!(
+                    "the array element {v} does not fit the element type '{}'",
+                    elem.display()
+                )));
+            }
+        }
+    }
+    let span = decl.init.span();
+    Some(Ok(values
+        .into_iter()
+        .map(|v| tir::Expr {
+            kind: tir::ExprKind::IntLit(v),
+            ty: (**elem).clone(),
+            span,
+        })
+        .collect()))
+}
+
+/// The value of an integer literal, with `-` folded in so a negative array
+/// element is one value rather than two expressions.
+fn int_literal(expr: &ast::Expr) -> Option<i128> {
+    match expr {
+        ast::Expr::IntLit(v, _) => Some(*v as i128),
+        ast::Expr::Unary {
+            op: ast::UnOp::Neg,
+            expr,
+            ..
+        } => int_literal(expr).map(|v| -v),
+        _ => None,
+    }
 }
 
 /// The folded value behind a `ConstInfo`, for a constant referenced by another
@@ -6413,6 +6500,48 @@ fn check_program_pass(
             extern_ffi_symbols.insert(f.name.clone(), symbol.to_string());
         }
     }
+    // The `section("...")` consts, as data globals (kernel stage 4). A const
+    // whose section names a place but whose value is not a fixed-size integer
+    // array has no data to place, so it is refused here rather than silently
+    // dropped; a const with no section is folded and inlined as before.
+    let mut const_data: Vec<tir::ConstData> = Vec::new();
+    for decl in &program.consts {
+        let Some(section) = &decl.section else {
+            continue;
+        };
+        let Some(info) = consts.get(&decl.name) else {
+            continue;
+        };
+        match (&info.value.ty, &info.value.kind) {
+            (Ty::Array(_, _), tir::ExprKind::ArrayLit(_)) => const_data.push(tir::ConstData {
+                name: decl.name.clone(),
+                ty: info.value.ty.clone(),
+                section: section.clone(),
+                values: match &info.value.kind {
+                    tir::ExprKind::ArrayLit(elems) => elems
+                        .iter()
+                        .map(|e| match &e.kind {
+                            tir::ExprKind::IntLit(v) => *v,
+                            _ => 0,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                },
+            }),
+            _ => {
+                return Err(Diagnostic::new(
+                    format!(
+                        "'section(\"{section}\")' on const '{}' needs a fixed-size array of integers: that is the one const value a section can place",
+                        bare_name(&decl.name, project.prefix_of(&decl.module))
+                    ),
+                    decl.span,
+                    decl.module.clone(),
+                ));
+            }
+        }
+    }
+    const_data.sort_by(|a, b| a.name.cmp(&b.name));
+
     Ok(tir::Program {
         structs: records,
         enums: sums,
@@ -6428,6 +6557,7 @@ fn check_program_pass(
             names.sort();
             names
         },
+        const_data,
     })
 }
 
@@ -7522,6 +7652,7 @@ fn check_function(
         // Only a `fun` literal that captured something has an environment;
         // a declaration never does (A-4 phase E).
         env: None,
+        section: f.section.clone(),
     })
 }
 
@@ -8111,6 +8242,7 @@ fn check_fn_literal(
         module: ctx.module.clone(),
         extern_: false,
         env,
+        section: None,
     });
     let kind = match captures.is_empty() {
         true => tir::ExprKind::FnRef(key),
