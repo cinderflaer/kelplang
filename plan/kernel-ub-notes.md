@@ -621,3 +621,52 @@ hart, that it is below `cpus` (release only), or that the register survives a
 context switch. There is no per-CPU provenance model, so the compiler cannot tie
 a `ptr<T>` built from a `percpu` copy back to the copy, exactly as it cannot tie
 any `Ptr` to the object it came from (roadmap D-1).
+
+## Stage 12 (core language): user `Drop` (MK9-S6-M1, roadmap B-8, second half)
+
+**New ways to reach UB or unsequenced behaviour.** A destructor is an ordinary
+method body, so every check of stages 1-11 applies to it; what the stage adds is
+a *second execution site* the author did not write at the value's death, and
+three ways to be surprised by it:
+
+- **A destructor runs at a drop point the author may not see.** A value moved
+  into a `List` or a closure, or one a `pd` owns, is dropped where that owner
+  dies, which can be another function's frame or process exit or every loop
+  iteration. A destructor with a side effect is therefore not idempotent by
+  construction, and nothing checks that running it once per drop point means the
+  same thing as running it once; a `defer` and a `Drop` on one value run twice
+  if the author writes both.
+- **A panic does not run a destructor**, for the same reason it does not run a
+  `defer`: the panic path is a call that ends the process, not an unwind. Every
+  value the abandoned frame owns leaks, and a lock a destructor would have
+  released stays held. This is the same admitted leak `plan/mk9-memory-model.md`
+  §2 records for an abandoned worker frame, now stated for every frame.
+- **A destructor that itself panics or never returns replaces the drop point it
+  is running on.** The compiler does not check termination, idempotence, or that
+  the body leaves the value in a state its field drops can handle. A destructor
+  that drops a value of its own type (directly or through a container it builds)
+  recurses on the C stack exactly as a recursive `datac` drop always did, so a
+  cycle of destructors overflows the stack rather than being refused.
+- **A destructor reads its passdowns as globals.** The generated
+  `kelp_drop_<T>` calls the body from every drop point with one pointer, so a
+  destructor cannot take a hidden passdown parameter; the body reads the
+  generated global directly, the same read-only borrow `main` takes. There is no
+  exclusivity check across a destructor, so a destructor that writes a `static
+  mut` (inside `unsafe`) is the same unchecked write any other function's is.
+
+**What the compiler does check.** That a destructor is exactly one per type,
+declared as `fun mut T.drop()` on a user `datac`/`enum`: an exclusive receiver,
+no parameters, no return value; that a builtin type and a generic template
+cannot declare one; that it cannot be called explicitly (`g.drop()` is refused
+by name); and that a destructor type is not `Copy` by excluding it from the
+derived deep-copy and key fixpoints, so `List.clone`/`slice`, `Map.get_or`/
+`values` and a declared key pair are refused rather than producing a second
+owner of the resource. Both backends put the user call at the top of the same
+generated `kelp_drop_<T>`, so every existing drop point reaches it identically.
+
+**What it does not check.** Whether the destructor releases the right resource,
+whether it matches its acquisition, whether it terminates, whether it is
+idempotent, whether two destructors over one object are ordered safely, or
+anything on the panic path. The value is still live (borrowed exclusively) while
+the body runs, so the body cannot move out of it, but it can assign a field or
+read through a raw `Ptr` the value holds, with all of stage 1's consequences.
