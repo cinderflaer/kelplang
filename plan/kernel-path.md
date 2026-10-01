@@ -36,7 +36,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 6 | **MK9-S6-M1 `defer`, `Drop`** (B-8) | deterministic cleanup a kernel can point at | Releasing locks and frames on every exit path |
 | 7 | **MK9-S5 allocators** (B-7) | a global allocator hook, arenas, alignment, fallible allocation | The first frame allocator and a kernel heap |
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
-| 9 | **MK9-S4-M4/M5** (B-12, B-13) | mapping/unmapping, page-table walks; a syscall ABI and untrusted-pointer validation | Userspace |
+| 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
 | 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines, frames as *capabilities* | The safety story: a driver can only touch what it was granted |
 
@@ -164,6 +164,19 @@ flag) whose `kmain` prints `hello from kelp (aarch64)` and halts; it boots under
 `examples/kernel0-aarch64/run.sh` and two tests in `kelpc/tests/compile_and_run.rs` (an
 `llvm-readelf`/`llvm-nm`/`llvm-objdump` check of the ELF and the boot) cover it. The riscv64
 `examples/kernel0*` all still boot after the change.
+
+**Row 9's mapping half is done** (MK9-S4-M8, `plan/address-spaces.md`): `examples/kernel0-vm`
+builds Sv39 tables in Kelp (the PTE bits, the VPN split, the PTE and `satp` encoders, a zeroing
+frame allocator over the linker script's `__frames_start`..`__frames_end`, `map_page`,
+`map_range`, `unmap_page` and `translate`), identity-maps the image and the UART, maps a page at
+`0x3F_FFFF_F000`, drops from machine mode to supervisor mode through `pmpaddr0`/`medeleg`/`mstatus`
+and `mret`, turns the MMU on, and proves the high virtual name and the identity-mapped physical
+name are one frame. `examples/kernel0-vm-fault` takes a load page fault (13) and a store page
+fault (15) on purpose into a naked S-mode `stvec` handler that prints `scause` and `stval`. No
+compiler change was needed: the only thing the language could not spell is a linker-script symbol,
+and that is stage 5's `asm` with `la`. What the row still owes is the syscall ABI and
+untrusted-pointer validation, and what this stage deliberately leaves out is TLB shootdown, ASIDs,
+huge-page *creation*, Sv48 and a per-section (W^X) identity map.
 
 ## Two rules that keep the language honest
 

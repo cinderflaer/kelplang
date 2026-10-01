@@ -569,3 +569,72 @@ range is safe to write, or that the small code model's assumptions hold for the
 script's placement. It also still cannot check anything about a driver's
 register addresses, which remain `Ptr` writes the language marks `unsafe` and a
 manifest lists.
+
+## Stage 11: Sv39 address spaces (MK9-S4-M8, `plan/address-spaces.md`)
+
+**New ways to reach UB.** This stage adds no construct. Every line of
+`examples/kernel0-vm` is stage 1's `Ptr<u64>`, stage 7's `static mut`, stage 5's
+`asm` or ordinary arithmetic, so the compiler's whole check set is the one
+stages 1-10 already apply. What is new is that the machine state those unchecked
+writes build is the translation itself, and the ways to be wrong are the ways a
+page table can lie:
+
+- The frame region is a **linker-script promise** read with
+  `asm("la ...")`. A script that puts `__frames_start`/`__frames_end` outside
+  RAM, overlapping the image or the stack, or describes a region that is not
+  actually mapped lets `alloc_frame` hand out live memory as a fresh frame, and
+  the walker then writes PTEs over whatever was there. A script that omits the
+  two symbols is not UB but silence: both resolve to 0, `next + PAGE_SIZE >
+  frames_end()` is true immediately, and the allocator reports exhausted (which
+  the example turns into a panic line, not a link error).
+- `alloc_frame` returns a bare address. Nothing checks it is RAM, 4 KiB-aligned,
+  not already handed out, or that the `FRAME_CURSOR` arithmetic has not wrapped.
+  "Zeroed on allocation" is the allocator's own promise, and only the code that
+  reads a table before writing every entry depends on it.
+- Every PTE and `satp` value is the program's claim about the format. A wrong
+  PPN, a missing A or D, a leaf bit where a pointer entry belongs, an entry that
+  points at a device page instead of RAM, or a root that was never zeroed all
+  produce a translation the hardware acts on and the compiler cannot read. A
+  leaf written with a misaligned PPN silently becomes a 2 MiB or 1 GiB superpage
+  covering far more than the caller meant.
+- `enable_paging` writes `satp` and one `sfence.vma`. A store to a page-table
+  entry is not ordered against the MMU's own read of it, so a mapping change
+  without the flush leaves a stale translation, and the compiler emits none
+  itself. The root the CSR names is the caller's address, checked by nothing.
+- `map_page` does not check that the virtual address is canonical for Sv39
+  (bits 63:39 must equal bit 38). A non-canonical address builds an entry the
+  MMU will never use or faults on, and the failure is at the access, not the
+  call.
+- The drop to S-mode is four CSR writes and an `mret`. `pmpaddr0`/`pmpcfg0` are
+  the only reason S-mode can touch memory at all; `medeleg` decides which
+  exceptions reach the S-mode vector and which come back to machine mode, where
+  this kernel installs nothing; `mstatus.MPP` decides the privilege `mret`
+  returns to; and `mepc` is the address it jumps to. The compiler models none of
+  this: a wrong MPP returns to the wrong privilege, and a wrong `mepc` jumps
+  anywhere.
+- The S-mode handler is a naked function, so stage 8's register-save promise
+  and stage 6's handler assumptions apply verbatim. Its resume path advances
+  `sepc` by the faulting instruction's own length, read from the low bits; a
+  wrong length resumes mid-instruction, and resuming past a faulting load leaves
+  the destination register holding its old value while the compiler that emitted
+  the load assumes the loaded value is there. Using that value after a resumed
+  fault is the miscompile the handler cannot see.
+- `translate` walks the tables and returns a physical address. It says nothing
+  about whether the leaf's permissions allow the access a caller intends, and
+  nothing about whether the address is RAM or a device range: it is the walk's
+  answer, not an access check.
+
+**What the compiler does check.** Everything stages 1-11 apply: that `vm` and
+`main` are on the manifest's `[unsafe] modules` list; that a `Ptr<u64>` element
+has a machine-level layout; that `asm` operands are machine words inside
+`unsafe`; that a `static mut` read or write is inside `unsafe`; and the
+freestanding allowed set. It checks no new construct because the stage adds
+none.
+
+**What it does not check.** Anything about the linker script's frame region,
+the address `alloc_frame` returns, the PTE or `satp` encoding, the canonicality
+of a virtual address, the reachability of a physical one, the privilege
+transition, the handler's save list or resume length, or the meaning of a
+translation. This stage is the point where the kernel builds the machine's own
+view of memory with the language's unchecked tools, and the catalogue for those
+tools is stages 1, 5, 7 and 8.
