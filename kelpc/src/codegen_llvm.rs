@@ -369,9 +369,17 @@ pub fn compile(
     include_dirs: &[String],
     library_dirs: &[String],
     pkg_config_flags: &[String],
+    freestanding: Option<&Freestanding>,
 ) -> Result<(), String> {
-    llvm_ffi::initialize_native_target()?;
-    let triple = llvm_ffi::default_target_triple();
+    if let Some(fs) = freestanding {
+        llvm_ffi::initialize_target_for(&fs.triple)?;
+    } else {
+        llvm_ffi::initialize_native_target()?;
+    }
+    let triple = match freestanding {
+        Some(fs) => fs.triple.clone(),
+        None => llvm_ffi::default_target_triple(),
+    };
     if triple.is_empty() {
         return Err("LLVM returned an empty host triple".to_string());
     }
@@ -387,7 +395,10 @@ pub fn compile(
     // types were built for and the layout codegen assumes cannot be two
     // different ones. It carries the level's codegen half; the pipeline below
     // carries the module half.
-    let machine = TargetMachine::for_host_at(opt.codegen_level())?;
+    let machine = match freestanding {
+        Some(_) => TargetMachine::for_freestanding(&triple, opt.codegen_level())?,
+        None => TargetMachine::for_host_at(opt.codegen_level())?,
+    };
     let layout = machine.data_layout();
     // The module has to carry the same data layout the machine lays the object
     // out with before any pass runs: a pass that folds a struct field to a byte
@@ -403,13 +414,20 @@ pub fn compile(
         sources,
         &layout,
         opt.is_optimized(),
+        freestanding.cloned(),
     )?;
     lowering.declare()?;
+    lowering.emit_const_data()?;
     // The small builtin accessors get their bodies here, as IR rather than a
     // declaration into the runtime object, so the module's own `-O2` inlines
     // them at the call site. `emit_container_bodies` below is the same idea for
-    // the monomorphized containers.
-    lowering.emit_runtime_bodies()?;
+    // the monomorphized containers. A freestanding program has no runtime
+    // object to define the rest and no heap types to reach these, so it skips
+    // them: a dead body that called `strlen` would be exactly the libc
+    // reference this mode exists to exclude.
+    if freestanding.is_none() {
+        lowering.emit_runtime_bodies()?;
+    }
     // The generated per-`datac` and per-`enum` drops, clones and comparators are
     // defined before the function bodies that call them, mirroring the order
     // `codegen_c.rs` writes each typedef and its drop routine in. The container
@@ -427,6 +445,14 @@ pub fn compile(
     // the drops and container sets above.
     lowering.emit_pd_globals()?;
     lowering.emit_all()?;
+
+    // The bare-metal entry stub, after every function is declared so the call
+    // to the entry symbol resolves. It is module-level assembly because setting
+    // `sp` from a linker-script symbol is not expressible in the language yet;
+    // it belongs to the boot section the linker script places first.
+    if let Some(fs) = freestanding {
+        module.append_inline_asm(&freestanding_entry_asm(&symbol_name(&fs.entry)));
+    }
 
     // Every location has been attached now, so the debug descriptors are
     // constructed and frozen before the module is written (MK7 S4, §4.4).
@@ -463,6 +489,25 @@ pub fn compile(
     // own C half, compiled into their own object (MK7 §3.2, §5). Keeping the C
     // source beside the IR is the same artifact contract the C backend's
     // `<out>.c` has: the text an author can read is the text that was compiled.
+    // The `extern fun` bodies this program reaches and the capability check's
+    // own C half, compiled into their own object (MK7 §3.2, §5). Keeping the C
+    // source beside the IR is the same artifact contract the C backend's
+    // `<out>.c` has: the text an author can read is the text that was compiled.
+    //
+    // A freestanding build never compiles it: that object's preamble is libc
+    // and the runtime object's helpers, which is the whole thing this mode
+    // excludes. A user `extern fun` therefore stays a bare declaration here and
+    // is the linker's to resolve against whatever the script or the build puts
+    // beside this object.
+    if let Some(fs) = freestanding {
+        return crate::driver::link_freestanding_object(
+            &object_path,
+            Path::new(&fs.linker_script),
+            out_path,
+        )
+        .map_err(|e| e.message);
+    }
+
     let program_object = match program_c_source(program) {
         Some(source) => {
             let c_path = out_path.with_extension("externs.c");
@@ -491,6 +536,39 @@ pub fn compile(
         pkg_config_flags,
     )
     .map_err(|e| e.message)
+}
+
+/// Everything the LLVM backend needs to know about a freestanding project
+/// (kernel stage 4): the target triple, the entry function's bare Kelp name,
+/// the emitted name of the project's panic handler (or `None` for the default
+/// infinite-loop handler) and the linker script, already resolved to an
+/// absolute path.
+#[derive(Clone)]
+pub struct Freestanding {
+    pub triple: String,
+    pub entry: String,
+    pub panic: Option<String>,
+    pub linker_script: String,
+}
+
+/// The `_start` stub a freestanding build emits as module-level assembly
+/// (kernel stage 4). It sets `sp` from the linker-script symbol `__stack_top`,
+/// clears nothing else, calls `entry` and loops on `wfi` if it returns. It goes
+/// in `.text.boot` so a linker script can place it first; `entry_symbol` is the
+/// mangled name of the project's entry `fun` (`kelp_kmain`).
+fn freestanding_entry_asm(entry_symbol: &str) -> String {
+    format!(
+        "    .section .text.boot, \"ax\", @progbits\n\
+         \x20   .globl _start\n\
+         \x20   .type _start, @function\n\
+         _start:\n\
+         \x20   la sp, __stack_top\n\
+         \x20   call {entry_symbol}\n\
+         1:\n\
+         \x20   wfi\n\
+         \x20   j 1b\n\
+         \x20   .size _start, . - _start\n"
+    )
 }
 
 /// One declared callable: the LLVM function, its LLVM type, and the `tir` return
@@ -786,6 +864,11 @@ struct Gen<'a> {
     /// emitted into that one function, and its scope is what makes their
     /// statements resolve to the `.kp` line that declared them.
     pd_init_scope: Option<Metadata<'a>>,
+    /// The freestanding configuration, when this is a freestanding build (kernel
+    /// stage 4). It decides the panic handler the bounds and overflow checks
+    /// call: the project's own `panic = "..."` function, or a generated
+    /// infinite loop when the manifest names none.
+    freestanding: Option<Freestanding>,
 }
 
 /// Every container instantiation a program mentions, the mirror of
@@ -831,6 +914,7 @@ impl<'a> Gen<'a> {
         sources: &'a SourceMap,
         layout: &'a DataLayout,
         optimized: bool,
+        freestanding: Option<Freestanding>,
     ) -> Result<Self, String> {
         let ptr = ctx.opaque_ptr();
         // The one libc symbol this slice reaches: `printf`, for `print` and
@@ -910,6 +994,7 @@ impl<'a> Gen<'a> {
             debug: DebugBuilder::new(module, optimized),
             debug_scopes: HashMap::new(),
             pd_init_scope: None,
+            freestanding,
         })
     }
 
@@ -1021,6 +1106,11 @@ impl<'a> Gen<'a> {
             };
             let ty = ctx.fn_type(ret, &params, false);
             let func = self.module.add_function(&symbol_name(&f.name), ty);
+            // The `section("...")` clause a declaration wrote (kernel stage 4)
+            // places its code where a linker script can find it.
+            if let Some(section) = &f.section {
+                func.as_value().set_section(section);
+            }
             // A `mut` parameter is an exclusive borrow (`borrowck`), so no other
             // live pointer reaches the same object through the call and LLVM may
             // assume `noalias` of it. A shared parameter gets nothing: two
@@ -1052,7 +1142,76 @@ impl<'a> Gen<'a> {
         // The DWARF skeleton last, because it needs each function's LLVM value
         // to attach a subprogram to, and the passdown globals for the generated
         // `kelp_init_pds`.
+        self.resolve_freestanding_panic()?;
         self.declare_debug();
+        Ok(())
+    }
+
+    /// Points the panic path at this project's own handler (kernel stage 4):
+    /// the `fun(msg: str)` the manifest's `[target] panic` names, or a generated
+    /// function that loops forever when it names none. It runs after every
+    /// function is declared so the user's handler is in `funcs`, and before any
+    /// body, because a bounds or overflow check emitted in a body calls
+    /// `self.panic_fn` directly.
+    fn resolve_freestanding_panic(&mut self) -> Result<(), String> {
+        let Some(fs) = self.freestanding.clone() else {
+            return Ok(());
+        };
+        match fs.panic {
+            Some(name) => {
+                let info = self.funcs.get(&name).ok_or_else(|| {
+                    format!(
+                        "the manifest's '[target] panic' names '{name}', which the program does not declare"
+                    )
+                })?;
+                self.panic_fn = info.func;
+                self.panic_ty = info.ty;
+            }
+            None => {
+                let ptr = self.ctx.opaque_ptr();
+                let ty = self.ctx.fn_type(self.ctx.void(), &[ptr], false);
+                let func = self.module.add_function("kelp_freestanding_panic", ty);
+                func.as_value().set_internal_linkage();
+                // Two blocks: the entry must have no predecessors, so it jumps
+                // into the self-loop rather than being it.
+                let entry_bb = func.append_block("entry");
+                let loop_bb = func.append_block("loop");
+                self.builder.position_at_end(entry_bb);
+                self.builder.build_br(loop_bb);
+                self.builder.position_at_end(loop_bb);
+                self.builder.build_br(loop_bb);
+                self.panic_fn = func;
+                self.panic_ty = ty;
+            }
+        }
+        Ok(())
+    }
+
+    /// Define one read-only data global per `section("...")` const (kernel
+    /// stage 4), so a linker script can place the bytes where the clause asked.
+    /// The values are the folded element list `infer.rs` built; the global is
+    /// `constant` and carries the named section. Uses of the const still fold to
+    /// its literal, so this global is a *symbol for the linker*, not a load: a
+    /// kernel boot table is placed by the script and reached through the
+    /// address, not read back through the const's name.
+    fn emit_const_data(&self) -> Result<(), String> {
+        for data in &self.program.const_data {
+            let Ty::Array(elem, len) = &data.ty else {
+                continue;
+            };
+            let llvm_elem = llvm_type(self.ctx, &self.structs, &self.containers, elem)?;
+            let arr_ty = self.ctx.array_type(llvm_elem, *len);
+            let values: Vec<Value<'a>> = data
+                .values
+                .iter()
+                .map(|v| self.ctx.const_int(llvm_elem, *v as u64, *v < 0))
+                .collect();
+            let arr = self.ctx.const_array(llvm_elem, &values);
+            let global = self.module.add_global(&symbol_name(&data.name), arr_ty);
+            global.set_initializer(arr);
+            global.set_constant(true);
+            global.set_section(&data.section);
+        }
         Ok(())
     }
 
@@ -11392,6 +11551,7 @@ mod layout_tests {
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
             handles: Vec::new(),
+            const_data: Vec::new(),
             functions: vec![Function {
                 name: "std.mem.alloc_raw".to_string(),
                 params: vec![("n".to_string(), Ty::Usize)],
@@ -11406,6 +11566,7 @@ mod layout_tests {
                 module: "std/mem".to_string(),
                 extern_: true,
                 env: None,
+                section: None,
             }],
             caps: Vec::new(),
             gated: Default::default(),
@@ -11821,6 +11982,7 @@ mod layout_tests {
             module: module.to_string(),
             extern_: true,
             env: None,
+            section: None,
         };
         let program = Program {
             structs: vec![point, segment],
@@ -11829,6 +11991,7 @@ mod layout_tests {
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
             handles: Vec::new(),
+            const_data: Vec::new(),
             functions: vec![
                 // The bug's own shape: an `enum` in the parameter list.
                 extern_fn(
@@ -11973,6 +12136,7 @@ mod layout_tests {
             extern_ffi_symbols: std::collections::HashMap::new(),
             extern_headers: Vec::new(),
             handles: Vec::new(),
+            const_data: Vec::new(),
             functions: vec![Function {
                 name: "std.time.now_mono_ns_raw".to_string(),
                 params: Vec::new(),
@@ -11985,6 +12149,7 @@ mod layout_tests {
                 module: "std/time".to_string(),
                 extern_: true,
                 env: None,
+                section: None,
             }],
             caps: Vec::new(),
             gated: Default::default(),

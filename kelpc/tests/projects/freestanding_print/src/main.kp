@@ -1,0 +1,6 @@
+// `print` is `printf`, and a freestanding build has no libc. The compiler
+// refuses the construct by name rather than emitting a call to a symbol the
+// linker could not resolve.
+fun kmain() {
+    print("hello")
+}

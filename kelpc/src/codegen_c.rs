@@ -685,6 +685,8 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
         sources,
     );
 
+    write_const_data(&mut out, &program.const_data);
+
     for f in &program.functions {
         if f.extern_ {
             write_extern(&mut out, f, &program.extern_ffi_symbols, false);
@@ -706,6 +708,34 @@ pub fn generate(program: &Program, drops: &DropPlan, sources: &SourceMap) -> Str
     }
 
     out
+}
+
+/// Emits one read-only data array per `section("...")` const (kernel stage 4).
+/// The values are the folded integer elements `infer.rs` built; `static const`
+/// plus `used` keeps the array in the object (a linker script reaches it by
+/// section, not by name) and `section(...)` is the clause itself. A program
+/// with no such const writes nothing here.
+fn write_const_data(out: &mut String, data: &[crate::tir::ConstData]) {
+    for d in data {
+        let Ty::Array(elem, len) = &d.ty else {
+            continue;
+        };
+        writeln!(out, "/* emitted for section({}) */", c_string_literal(&d.section)).unwrap();
+        let values: Vec<String> = d.values.iter().map(|v| v.to_string()).collect();
+        writeln!(
+            out,
+            "static const {} {}[{}] __attribute__((section({}), used)) = {{ {} }};",
+            elem.c_type(),
+            c_name(&d.name),
+            len,
+            c_string_literal(&d.section),
+            values.join(", ")
+        )
+        .unwrap();
+    }
+    if !data.is_empty() {
+        out.push('\n');
+    }
 }
 
 /// Emits an `extern` declaration's body: either the compiler-supplied C text
@@ -3456,6 +3486,12 @@ impl<'a> Gen<'a> {
             self.out.push_str("}\n");
             self.pop_locals();
             return;
+        }
+        if let Some(section) = &f.section {
+            // The `section("...")` clause on a `fun` (kernel stage 4): place
+            // the function's code where a linker script can find it. C spells
+            // it as an attribute in front of the definition.
+            write!(self.out, "__attribute__((section({}))) ", c_string_literal(section)).unwrap();
         }
         write_signature(&mut self.out, f);
         self.out.push_str(" {\n");

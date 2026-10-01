@@ -97,6 +97,11 @@ pub struct Project {
     /// the set `infer.rs` requires an `unsafe` context to call. Empty for a
     /// program that declares none.
     unsafe_fns: std::collections::HashSet<String>,
+    /// The manifest's `[target]` section (kernel stage 4), or the hosted default
+    /// when there is none. `infer.rs` reads the entry name from it, the
+    /// freestanding checker its allowed set, and the driver the triple and
+    /// linker script.
+    target: TargetDecl,
 }
 
 impl Project {
@@ -124,6 +129,12 @@ impl Project {
     /// The functions declared `unsafe fun` (MK9-S2 stage 1), by canonical key.
     pub fn unsafe_fns(&self) -> &std::collections::HashSet<String> {
         &self.unsafe_fns
+    }
+
+    /// The manifest's `[target]` section, or the hosted default (kernel stage
+    /// 4). Every read of the execution environment goes through this.
+    pub fn target(&self) -> &TargetDecl {
+        &self.target
     }
 
     /// Every native library named across the project's `[extern.*]`
@@ -211,6 +222,75 @@ fn collect_extern_dirs(
     dirs.sort();
     dirs.dedup();
     dirs
+}
+
+/// The execution environment a `[target]` section names (kernel stage 4,
+/// MK9-S4-M1). Without a `[target]` section, or with `mode = "hosted"`, a
+/// project builds for the host exactly as every project before this stage did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetMode {
+    /// The ambient runtime: libc, the `kelp_rt` object, the hosted entry point.
+    Hosted,
+    /// No libc, no runtime object, a user entry point and a linker script
+    /// (LLVM backend only).
+    Freestanding,
+}
+
+/// One `coral.toml` `[target]` section (kernel stage 4): where the program runs.
+/// `mode` is required, and the other four keys are required exactly when it is
+/// `freestanding`; the validation is `parse_manifest`'s, so every `TargetDecl` a
+/// caller sees is complete for its mode.
+#[derive(Debug, Clone)]
+pub struct TargetDecl {
+    mode: TargetMode,
+    triple: Option<String>,
+    entry: Option<String>,
+    linker_script: Option<String>,
+    panic: Option<String>,
+}
+
+impl TargetDecl {
+    /// The hosted default: the mode a project with no `[target]` section runs
+    /// in, byte for byte the behaviour every earlier build had.
+    pub fn hosted() -> Self {
+        TargetDecl {
+            mode: TargetMode::Hosted,
+            triple: None,
+            entry: None,
+            linker_script: None,
+            panic: None,
+        }
+    }
+
+    pub fn mode(&self) -> TargetMode {
+        self.mode
+    }
+
+    pub fn is_freestanding(&self) -> bool {
+        self.mode == TargetMode::Freestanding
+    }
+
+    /// The LLVM triple (`riscv64-unknown-none-elf`), freestanding only.
+    pub fn triple(&self) -> Option<&str> {
+        self.triple.as_deref()
+    }
+
+    /// The bare Kelp name of the entry `fun`, freestanding only.
+    pub fn entry(&self) -> Option<&str> {
+        self.entry.as_deref()
+    }
+
+    /// The linker script path, as written in the manifest (relative to the
+    /// directory holding it), freestanding only.
+    pub fn linker_script(&self) -> Option<&str> {
+        self.linker_script.as_deref()
+    }
+
+    /// The bare Kelp name of the `fun(msg: str)` panic handler, when the
+    /// section named one; the default handler is an infinite loop.
+    pub fn panic(&self) -> Option<&str> {
+        self.panic.as_deref()
+    }
 }
 
 /// One `[extern."<module id>"]` section's contents (MK9-S1-M1, roadmap B-1):
@@ -375,6 +455,7 @@ pub fn load(
         manifest_caps,
         manifest_extern,
         manifest_unsafe,
+        manifest_target,
     ) = if given.is_dir() {
             let manifest_path = given.join(MANIFEST_NAME);
             let text = fs::read_to_string(&manifest_path).map_err(|_| {
@@ -410,6 +491,7 @@ pub fn load(
                 manifest.caps,
                 manifest.extern_modules,
                 manifest.unsafe_modules,
+                manifest.target,
             )
         } else {
             match find_manifest_root(&given) {
@@ -439,6 +521,7 @@ pub fn load(
                         manifest.caps,
                         manifest.extern_modules,
                         manifest.unsafe_modules,
+                        manifest.target,
                     )
                 }
                 None => {
@@ -456,6 +539,7 @@ pub fn load(
                         None,
                         HashMap::new(),
                         Vec::new(),
+                        TargetDecl::hosted(),
                     )
                 }
             }
@@ -839,6 +923,7 @@ pub fn load(
         gated,
         extern_modules: loader.extern_modules,
         unsafe_fns,
+        target: manifest_target,
     };
     Ok(Loaded {
         program,
@@ -1253,6 +1338,9 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
         caps: None,
         extern_modules: HashMap::new(),
         unsafe_modules: Vec::new(),
+        target_seen: false,
+        target: TargetDecl::hosted(),
+        target_mode_set: false,
     };
     let at = Span::new(0, 0);
     // `None` until the first `[section]` header; `Some("caps")` while inside
@@ -1300,6 +1388,9 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                     .extern_modules
                     .insert(module_id.to_string(), ExternModuleDecl::default());
             }
+            if name == "target" {
+                manifest.target_seen = true;
+            }
             section = Some(name.to_string());
             continue;
         }
@@ -1312,6 +1403,8 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
                 }
             } else if name == "unsafe" {
                 parse_unsafe_line(&mut manifest, line, at)?;
+            } else if name == "target" {
+                parse_target_line(&mut manifest, line, at)?;
             }
             continue;
         }
@@ -1430,6 +1523,59 @@ fn parse_manifest(text: &str, path: &Path) -> Result<Manifest, Diagnostic> {
             ));
         }
     }
+    // A `[target]` section has to say which mode it is: the other four keys
+    // mean different things in each, so a section that names only `triple`
+    // would be silently hosted, which is the one outcome the section exists to
+    // prevent. A freestanding mode also has to name all three of its required
+    // keys; a hosted one may name none of the freestanding ones.
+    if manifest.target_seen {
+        if !manifest.target_mode_set {
+            return Err(Diagnostic::new(
+                format!(
+                    "{MANIFEST_NAME}'s [target] section is missing 'mode = \"hosted\"' or 'mode = \"freestanding\"'"
+                ),
+                at,
+                "",
+            ));
+        }
+        match manifest.target.mode {
+            TargetMode::Hosted => {
+                for (key, value) in [
+                    ("triple", manifest.target.triple.as_ref()),
+                    ("entry", manifest.target.entry.as_ref()),
+                    ("linker_script", manifest.target.linker_script.as_ref()),
+                    ("panic", manifest.target.panic.as_ref()),
+                ] {
+                    if value.is_some() {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME}'s [target] key '{key}' is only meaningful with 'mode = \"freestanding\"'"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                }
+            }
+            TargetMode::Freestanding => {
+                for (key, value) in [
+                    ("triple", manifest.target.triple.as_ref()),
+                    ("entry", manifest.target.entry.as_ref()),
+                    ("linker_script", manifest.target.linker_script.as_ref()),
+                ] {
+                    if value.map(|v| v.is_empty()).unwrap_or(true) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "{MANIFEST_NAME}'s [target] section with 'mode = \"freestanding\"' is missing '{key} = \"<value>\"'"
+                            ),
+                            at,
+                            "",
+                        ));
+                    }
+                }
+            }
+        }
+    }
     Ok(manifest)
 }
 
@@ -1466,6 +1612,16 @@ struct Manifest {
     /// allowed to contain `unsafe`. Empty when the section is absent, which
     /// keeps a project that never writes `unsafe` behaving exactly as before.
     unsafe_modules: Vec<String>,
+    /// Whether a `[target]` section header was seen at all (kernel stage 4).
+    /// Distinct from the fields below being unset, because a `[target]` section
+    /// that names no `mode` is an error rather than the hosted default.
+    target_seen: bool,
+    /// The `[target]` section's contents, `TargetDecl::hosted()` when there is
+    /// none.
+    target: TargetDecl,
+    /// Whether `mode` was set, so a section without one is refused rather than
+    /// defaulted.
+    target_mode_set: bool,
 }
 
 /// One `domain = ["pattern", ...]` line inside `coral.toml`'s `[caps]`
@@ -1593,6 +1749,127 @@ fn parse_unsafe_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<()
         }
     }
     Ok(())
+}
+
+/// One `key = value` line inside `coral.toml`'s `[target]` section (kernel
+/// stage 4): `mode`, `triple`, `entry`, `linker_script` or `panic`, each a
+/// double-quoted string. The section's completeness is checked once, after the
+/// whole file is read, so an out-of-order line is not an error.
+fn parse_target_line(manifest: &mut Manifest, line: &str, at: Span) -> Result<(), Diagnostic> {
+    let Some((key, value)) = line.split_once('=') else {
+        return Err(Diagnostic::new(
+            format!(
+                "expected 'key = \"value\"' in {MANIFEST_NAME}'s [target] section, found '{line}'"
+            ),
+            at,
+            "",
+        ));
+    };
+    let key = key.trim();
+    let value = value.trim();
+    let Some(value) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+        return Err(Diagnostic::new(
+            format!(
+                "{MANIFEST_NAME} value for '[target] {key}' must be a double-quoted string"
+            ),
+            at,
+            "",
+        ));
+    };
+    match key {
+        "mode" => {
+            if manifest.target_mode_set {
+                return Err(Diagnostic::new(
+                    format!("'mode' appears more than once in {MANIFEST_NAME}'s [target] section"),
+                    at,
+                    "",
+                ));
+            }
+            manifest.target.mode = match value {
+                "hosted" => TargetMode::Hosted,
+                "freestanding" => TargetMode::Freestanding,
+                other => {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "unknown '{other}' for {MANIFEST_NAME}'s '[target] mode': it is 'hosted' or 'freestanding'"
+                        ),
+                        at,
+                        "",
+                    ))
+                }
+            };
+            manifest.target_mode_set = true;
+        }
+        "triple" => set_target_key(&mut manifest.target.triple, value, "triple", at)?,
+        "entry" => {
+            if !is_bare_ident(value) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[target] entry' must be a bare function name, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            set_target_key(&mut manifest.target.entry, value, "entry", at)?;
+        }
+        "linker_script" => {
+            set_target_key(&mut manifest.target.linker_script, value, "linker_script", at)?;
+        }
+        "panic" => {
+            if !is_bare_ident(value) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "{MANIFEST_NAME} value for '[target] panic' must be a bare function name, found '{value}'"
+                    ),
+                    at,
+                    "",
+                ));
+            }
+            set_target_key(&mut manifest.target.panic, value, "panic", at)?;
+        }
+        other => {
+            return Err(Diagnostic::new(
+                format!(
+                    "unknown key '{other}' in {MANIFEST_NAME}'s [target] section: it is 'mode', 'triple', 'entry', 'linker_script' or 'panic'"
+                ),
+                at,
+                "",
+            ))
+        }
+    }
+    Ok(())
+}
+
+/// Sets one optional `[target]` key, refusing a second assignment so a
+/// duplicated key cannot silently keep the first or the last value.
+fn set_target_key(
+    slot: &mut Option<String>,
+    value: &str,
+    key: &str,
+    at: Span,
+) -> Result<(), Diagnostic> {
+    if slot.is_some() {
+        return Err(Diagnostic::new(
+            format!("'{key}' appears more than once in {MANIFEST_NAME}'s [target] section"),
+            at,
+            "",
+        ));
+    }
+    *slot = Some(value.to_string());
+    Ok(())
+}
+
+/// Whether `name` is a bare Kelp identifier: a letter or `_` followed by
+/// letters, digits and `_`. Used for the `[target]` keys that name a function,
+/// so a manifest cannot smuggle a path or a module qualification through them.
+fn is_bare_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// One `key = value` line inside `coral.toml`'s `[extern."<module_id>"]`
@@ -2595,5 +2872,88 @@ mod tests {
         assert!(err.message.contains("the section has one key, 'modules'"), "{}", err.message);
         let err = manifest_err("name = \"x\"\n[unsafe]\nmodules = [\"main\", \"main\"]\n");
         assert!(err.message.contains("appears more than once"), "{}", err.message);
+    }
+
+    #[test]
+    fn no_target_section_is_the_hosted_default() {
+        let m = manifest("name = \"x\"\n");
+        assert!(!m.target_seen);
+        assert_eq!(m.target.mode(), TargetMode::Hosted);
+        assert!(!m.target.is_freestanding());
+        assert!(m.target.triple().is_none());
+        assert!(m.target.entry().is_none());
+        assert!(m.target.linker_script().is_none());
+        assert!(m.target.panic().is_none());
+    }
+
+    #[test]
+    fn a_freestanding_target_section_is_read_whole() {
+        let text = "name = \"x\"\n[target]\n\
+                    mode = \"freestanding\"\n\
+                    triple = \"riscv64-unknown-none-elf\"\n\
+                    entry = \"kmain\"\n\
+                    linker_script = \"kernel.ld\"\n\
+                    panic = \"kp_panic\"\n";
+        let m = manifest(text);
+        assert!(m.target.is_freestanding());
+        assert_eq!(m.target.triple(), Some("riscv64-unknown-none-elf"));
+        assert_eq!(m.target.entry(), Some("kmain"));
+        assert_eq!(m.target.linker_script(), Some("kernel.ld"));
+        assert_eq!(m.target.panic(), Some("kp_panic"));
+    }
+
+    #[test]
+    fn a_hosted_target_section_names_no_freestanding_keys() {
+        let m = manifest("name = \"x\"\n[target]\nmode = \"hosted\"\n");
+        assert_eq!(m.target.mode(), TargetMode::Hosted);
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"hosted\"\ntriple = \"riscv64-unknown-none-elf\"\n",
+        );
+        assert!(
+            err.message.contains("only meaningful with 'mode = \"freestanding\"'"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn a_target_section_without_a_mode_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[target]\ntriple = \"riscv64-unknown-none-elf\"\n");
+        assert!(err.message.contains("missing 'mode"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_freestanding_section_missing_a_required_key_is_rejected() {
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\nentry = \"kmain\"\n",
+        );
+        assert!(err.message.contains("missing 'triple"), "{}", err.message);
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\n\
+             triple = \"riscv64-unknown-none-elf\"\nlinker_script = \"k.ld\"\n",
+        );
+        assert!(err.message.contains("missing 'entry"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_unknown_target_mode_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[target]\nmode = \"based\"\n");
+        assert!(err.message.contains("unknown 'based'"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_target_entry_that_is_not_a_bare_name_is_rejected() {
+        let err = manifest_err(
+            "name = \"x\"\n[target]\nmode = \"freestanding\"\n\
+             triple = \"riscv64-unknown-none-elf\"\nentry = \"kernel.kmain\"\n\
+             linker_script = \"k.ld\"\n",
+        );
+        assert!(err.message.contains("must be a bare function name"), "{}", err.message);
+    }
+
+    #[test]
+    fn an_unknown_key_in_the_target_section_is_rejected() {
+        let err = manifest_err("name = \"x\"\n[target]\nmode = \"hosted\"\nnope = \"1\"\n");
+        assert!(err.message.contains("unknown key 'nope'"), "{}", err.message);
     }
 }

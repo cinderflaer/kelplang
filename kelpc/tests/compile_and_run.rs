@@ -9865,3 +9865,169 @@ fn a_scoped_blocks_captured_borrow_cannot_outlive_a_move_in_the_same_call() {
         "use of moved value",
     );
 }
+
+/// Whether `ld.lld` is on PATH. A freestanding build's last step is a bare
+/// `ld.lld` link, so these tests are for the `dev-kernel.nix` shell (which
+/// carries `llvmPackages_21.lld` and the llvm tools); under the ordinary
+/// `dev.nix` shell the tool is absent and the test prints a skip rather than
+/// failing, which is what keeps the normal suite green.
+fn have_ld_lld() -> bool {
+    Command::new("ld.lld")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Runs an external tool and returns its stdout, failing the test with the
+/// tool's stderr when it exits nonzero.
+fn tool(name: &str, args: &[&str]) -> String {
+    let out = Command::new(name)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("could not run '{name}': {e}"));
+    assert!(
+        out.status.success(),
+        "'{name}' failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Kernel stage 4: `section("...")` on a `const` and on a `fun` changes where
+/// the linker may place them, never what the program does. Both backends run
+/// the same program to the same output.
+#[test]
+fn a_section_clause_places_code_and_data_without_changing_the_result() {
+    assert_compiles_and_runs("tests/fixtures/section_attribute.kp", "41\n");
+}
+
+/// `print` is `printf`, and a freestanding build has no libc: the front end
+/// refuses the construct by name. The check runs before either backend is
+/// named, so the C oracle refuses for the same reason and with the same
+/// message.
+#[test]
+fn print_is_rejected_in_a_freestanding_project() {
+    assert_rejected_with(
+        "tests/projects/freestanding_print",
+        "freestanding build",
+    );
+}
+
+/// The manifest's `[target] entry` must name a `fun` that exists in the entry
+/// module: a missing one is named rather than left as an ELF whose `_start`
+/// calls an undefined symbol.
+#[test]
+fn a_missing_freestanding_entry_is_rejected() {
+    assert_rejected_with(
+        "tests/projects/freestanding_no_entry",
+        "no entry function 'kmain' found",
+    );
+}
+
+/// The C backend's runtime preamble is libc, so it cannot express a
+/// freestanding project at all. A build asked for the oracle anyway refuses
+/// with a message that says which mode and which backend.
+#[test]
+fn the_c_backend_refuses_a_freestanding_project() {
+    let bin = out_path("freestanding_oracle_refusal");
+    let build = kelpc()
+        .env("KELPC_ORACLE", "c")
+        .arg("build")
+        .arg(project("freestanding_min"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        !build.status.success(),
+        "the C backend should not build a freestanding project"
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(stderr.contains("freestanding"), "{stderr}");
+    assert!(stderr.contains("llvm"), "{stderr}");
+}
+
+/// `Ptr.alloc` and `Ptr.free` are the hosted `malloc`/`free`, so they are
+/// refused even though `Ptr<T>` itself is allowed.
+#[test]
+fn ptr_alloc_is_rejected_in_a_freestanding_project() {
+    assert_rejected_with(
+        "tests/projects/freestanding_ptr_alloc",
+        "'Ptr#alloc' is unavailable in a freestanding build",
+    );
+}
+
+/// The host entry point has no runtime to call it in a freestanding image, so
+/// a defined `main` is refused and the manifest's entry is the entry point.
+#[test]
+fn main_is_rejected_in_a_freestanding_project() {
+    assert_rejected_with("tests/projects/freestanding_main", "'main' is unavailable");
+}
+
+/// The acceptance test for kernel stage 4: the `freestanding_min` project,
+/// whose entry loops forever, builds through LLVM and `ld.lld` into an ELF64
+/// RISC-V image based at 0x80000000 that references no undefined symbol, which
+/// is to say no libc symbol and no `kelp_rt` helper.
+///
+/// It needs `ld.lld`, `llvm-readelf`, `llvm-objdump` and `llvm-nm`, all from
+/// `dev-kernel.nix`; a shell without them prints a skip.
+#[test]
+fn freestanding_min_builds_a_riscv_elf_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding acceptance test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_min");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_min"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+    let entry_line = header
+        .lines()
+        .find(|line| line.contains("Entry point address"))
+        .unwrap_or_default();
+    assert!(
+        entry_line.contains("0x80000000"),
+        "the entry point is not the linker script's 0x80000000:\n{header}"
+    );
+
+    // `llvm-objdump` is the disassembler half of the acceptance check: the
+    // generated `_start` has to be real RISC-V code, not an empty section.
+    let disassembly = tool("llvm-objdump", &["-d", path]);
+    assert!(disassembly.contains("_start"), "no _start in the image:\n{disassembly}");
+    assert!(disassembly.contains("wfi"), "the _start halt is missing:\n{disassembly}");
+
+    // No symbol the linker had to leave for someone else: no `printf`, no
+    // `malloc`, no `kelp_panic`.
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}

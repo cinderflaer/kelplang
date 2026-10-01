@@ -68,6 +68,7 @@ use llvm_sys::core::{
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
     LLVMBuildSub, LLVMBuildSwitch, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
     LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstNull, LLVMConstReal,
+    LLVMAppendModuleInlineAsm,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
     LLVMDisposeBuilder,
     LLVMDisposeMessage, LLVMDisposeModule, LLVMDoubleTypeInContext, LLVMFloatTypeInContext,
@@ -82,7 +83,9 @@ use llvm_sys::core::{
     LLVMPointerTypeInContext,
     LLVMPositionBuilderAtEnd, LLVMPositionBuilderBefore, LLVMPrintModuleToString,
     LLVMSetAlignment, LLVMSetCurrentDebugLocation2, LLVMSetGlobalConstant, LLVMSetInitializer,
-    LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetTarget, LLVMSetVolatile,
+    LLVMSetLinkage, LLVMSetMetadata, LLVMSetOrdering, LLVMSetSection, LLVMSetTarget,
+    LLVMSetVolatile,
+    LLVMConstArray2,
     LLVMStructCreateNamed, LLVMStructSetBody, LLVMValueAsMetadata, LLVMVectorType,
     LLVMVoidTypeInContext,
 };
@@ -110,6 +113,11 @@ use llvm_sys::target::{
     LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMByteOrder, LLVMByteOrdering,
     LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVMTargetDataRef,
     LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
+    LLVMInitializeAArch64AsmPrinter, LLVMInitializeAArch64Target, LLVMInitializeAArch64TargetInfo,
+    LLVMInitializeAArch64TargetMC, LLVMInitializeRISCVAsmPrinter, LLVMInitializeRISCVTarget,
+    LLVMInitializeRISCVTargetInfo, LLVMInitializeRISCVTargetMC, LLVMInitializeX86AsmPrinter,
+    LLVMInitializeX86Target, LLVMInitializeX86TargetInfo, LLVMInitializeX86TargetMC,
+    LLVMInitializeAArch64AsmParser, LLVMInitializeRISCVAsmParser, LLVMInitializeX86AsmParser,
 };
 use llvm_sys::target_machine::{
     LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMCreateTargetDataLayout,
@@ -219,6 +227,56 @@ pub fn initialize_native_target() -> Result<(), String> {
     let printer_failed = unsafe { LLVM_InitializeNativeAsmPrinter() };
     if printer_failed != 0 {
         return Err("LLVM has no assembly printer for this host".to_string());
+    }
+    Ok(())
+}
+
+/// Load the code generator for the triple a freestanding build targets (kernel
+/// stage 4).
+///
+/// [`initialize_native_target`] registers only the host's own backend, which is
+/// the whole of what a hosted build needs; a freestanding build targets a triple
+/// the host is not, so its backend has to be loaded by name. This calls the
+/// same three `LLVMInitialize<Target>*` entries per architecture that LLVM's
+/// own `LLVMInitializeAllTargets` macro expands to, for the architectures this
+/// compiler can build for. Calling them directly rather than through the
+/// "all targets" wrapper is deliberate: that wrapper is a C static inline in
+/// `llvm-c/Target.h`, so which targets it registers is decided by the target
+/// list baked into the LLVM headers on the build machine, and a header list
+/// without `riscv` would make it silently register nothing this mode needs.
+///
+/// `Err` names the triple when no architecture matches; the caller turns that
+/// into the build's diagnostic.
+pub fn initialize_target_for(triple: &str) -> Result<(), String> {
+    // SAFETY: every one of these reads no arguments and only registers target
+    // code. They are idempotent, so a second freestanding build in one process
+    // is not a problem, and a target that is already registered is a no-op.
+    unsafe {
+        if triple.starts_with("riscv64") || triple.starts_with("riscv32") {
+            LLVMInitializeRISCVTargetInfo();
+            LLVMInitializeRISCVTarget();
+            LLVMInitializeRISCVTargetMC();
+            LLVMInitializeRISCVAsmPrinter();
+            // The module-level `_start` blob is assembled by the target's own
+            // asm parser, so a freestanding build needs this one too.
+            LLVMInitializeRISCVAsmParser();
+        } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+            LLVMInitializeAArch64TargetInfo();
+            LLVMInitializeAArch64Target();
+            LLVMInitializeAArch64TargetMC();
+            LLVMInitializeAArch64AsmPrinter();
+            LLVMInitializeAArch64AsmParser();
+        } else if triple.starts_with("x86_64") || triple.starts_with("i686") {
+            LLVMInitializeX86TargetInfo();
+            LLVMInitializeX86Target();
+            LLVMInitializeX86TargetMC();
+            LLVMInitializeX86AsmPrinter();
+            LLVMInitializeX86AsmParser();
+        } else {
+            return Err(format!(
+                "kelpc has no code generator to load for the freestanding triple '{triple}'"
+            ));
+        }
     }
     Ok(())
 }
@@ -557,6 +615,25 @@ impl Context {
         self.const_int(self.i1(), u64::from(value), false)
     }
 
+    /// The constant array `[elem; values.len()]` (`LLVMConstArray2`), the
+    /// initializer a `section("...")` const's global is given (kernel stage
+    /// 4). The returned value's type is the array type, so a caller asks for
+    /// it with [`Context::array_type`] and passes both to
+    /// [`Module::add_global`] and [`Value::set_initializer`].
+    ///
+    /// [`Context::array_type`]: Context::array_type
+    /// [`Module::add_global`]: Module::add_global
+    /// [`Value::set_initializer`]: Value::set_initializer
+    pub fn const_array(&self, elem: Type<'_>, values: &[Value<'_>]) -> Value<'_> {
+        let mut raws: Vec<LLVMValueRef> = values.iter().map(|v| v.raw).collect();
+        Value {
+            // SAFETY: the element type and every value are live in this
+            // context; LLVM copies the array.
+            raw: unsafe { LLVMConstArray2(elem.raw, raws.as_mut_ptr(), raws.len() as u64) },
+            context: PhantomData,
+        }
+    }
+
     /// The floating-point constant `value` of type `ty` (`LLVMConstReal`).
     ///
     /// The C API takes the value as a C `double` and converts to `ty`'s own
@@ -687,6 +764,16 @@ impl<'ctx> Value<'ctx> {
     pub fn set_internal_linkage(&self) {
         // SAFETY: as above; the argument is a global handle's own ref.
         unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMInternalLinkage) };
+    }
+
+    /// Place a global (or a function) in section `section` (`LLVMSetSection`),
+    /// which is how a `section("...")` clause reaches the object writer
+    /// (kernel stage 4). An empty name would be the target's default, so the
+    /// caller passes only a name a manifest wrote.
+    pub fn set_section(&self, section: &str) {
+        let section = cstring(section);
+        // SAFETY: as above; LLVM copies the string.
+        unsafe { LLVMSetSection(self.raw, section.as_ptr()) };
     }
 }
 
@@ -929,6 +1016,21 @@ impl<'ctx> Module<'ctx> {
         // SAFETY: the module and the layout are live, and LLVM copies the
         // layout out of the target-data handle.
         unsafe { LLVMSetModuleDataLayout(self.raw, layout.raw) };
+    }
+
+    /// Append `asm` to the module's module-level inline assembly
+    /// (`LLVMAppendModuleInlineAsm`), emitted verbatim into the assembly the
+    /// object is written from.
+    ///
+    /// This is how a freestanding build writes `_start` (kernel stage 4):
+    /// loading `sp` from a linker-script symbol is not expressible in the
+    /// language yet, and a module-level blob is the one place the backend can
+    /// put it without a function to attach it to. The text is appended, so two
+    /// calls write two blobs in order.
+    pub fn append_inline_asm(&self, asm: &str) {
+        // SAFETY: the module is live and the string's length is passed with it,
+        // so LLVM copies exactly these bytes.
+        unsafe { LLVMAppendModuleInlineAsm(self.raw, asm.as_ptr() as *const c_char, asm.len()) };
     }
 
     /// Declare a function named `name` of type `ty` in this module
@@ -2202,6 +2304,61 @@ impl TargetMachine {
     /// `Err` carries LLVM's message when the triple names no compiled-in target,
     /// which is the one failure mode.
     pub fn for_triple(triple_str: &str, level: LLVMCodeGenOptLevel) -> Result<Self, String> {
+        TargetMachine::create(
+            triple_str,
+            baseline_cpu(triple_str),
+            "",
+            level,
+            LLVMRelocMode::LLVMRelocPIC,
+            LLVMCodeModel::LLVMCodeModelDefault,
+        )
+    }
+
+    /// A target machine for a freestanding triple (kernel stage 4): the same
+    /// creation as [`for_triple`], with the choices a bare-metal image needs.
+    ///
+    /// A `riscv64` triple gets the `generic-rv64` CPU and `+m,+a,+c`: the
+    /// extensions the QEMU `virt` machine's baseline core has, and the ones any
+    /// RISC-V code has to assume to be portable across the ISA's profiles.
+    /// Every other triple keeps `baseline_cpu` and no features, exactly as the
+    /// hosted path does. Relocations are `LLVMRelocStatic`, because there is no
+    /// dynamic loader to fix up a position-independent object, and the code
+    /// model is `LLVMCodeModelMedium`, which reaches the whole address space a
+    /// kernel image is placed in without the long-call sequences of `large`.
+    ///
+    /// [`for_triple`]: TargetMachine::for_triple
+    pub fn for_freestanding(
+        triple_str: &str,
+        level: LLVMCodeGenOptLevel,
+    ) -> Result<Self, String> {
+        let (cpu, features) = if triple_str.starts_with("riscv64") {
+            ("generic-rv64", "+m,+a,+c")
+        } else {
+            (baseline_cpu(triple_str), "")
+        };
+        TargetMachine::create(
+            triple_str,
+            cpu,
+            features,
+            level,
+            LLVMRelocMode::LLVMRelocStatic,
+            LLVMCodeModel::LLVMCodeModelMedium,
+        )
+    }
+
+    /// The shared body of [`for_triple`] and [`for_freestanding`]: look the
+    /// triple up, then create the machine with the given subtarget choices.
+    ///
+    /// [`for_triple`]: TargetMachine::for_triple
+    /// [`for_freestanding`]: TargetMachine::for_freestanding
+    fn create(
+        triple_str: &str,
+        cpu: &str,
+        features: &str,
+        level: LLVMCodeGenOptLevel,
+        reloc: LLVMRelocMode,
+        code_model: LLVMCodeModel,
+    ) -> Result<Self, String> {
         let triple = cstring(triple_str);
         let mut target = null_mut();
         let mut message: *mut c_char = null_mut();
@@ -2217,13 +2374,13 @@ impl TargetMachine {
                 text
             });
         }
-        let cpu = cstring(baseline_cpu(triple_str));
-        let features = cstring("");
+        let cpu = cstring(cpu);
+        let features = cstring(features);
         // SAFETY: the target came from the call above and is registered; LLVM
         // copies both strings. `cpu` is a portable architecture baseline (see
         // `baseline_cpu`), never the host's own CPU — that would be
         // `-march=native` and make the object non-portable, which this is
-        // not. `features` stays empty: no CPU-specific extension is assumed.
+        // not.
         let raw = unsafe {
             LLVMCreateTargetMachine(
                 target,
@@ -2231,8 +2388,8 @@ impl TargetMachine {
                 cpu.as_ptr(),
                 features.as_ptr(),
                 level,
-                LLVMRelocMode::LLVMRelocPIC,
-                LLVMCodeModel::LLVMCodeModelDefault,
+                reloc,
+                code_model,
             )
         };
         if raw.is_null() {

@@ -114,3 +114,46 @@ the field the program says they do is the program's claim about the format,
 not the type system's. The two APIs are also not bounds-checked against each
 other: a `write_u32_le` may overwrite a field a `read_u16_le` expects, and the
 language has no rule that ties two accesses to one location (roadmap D-1).
+
+## Stage 4: MK9-S4-M1/M2 freestanding
+
+**New ways to reach UB.** This stage removes the ambient runtime and hands the
+program machine state, so the ways to be wrong are the ones C has:
+
+- `_start` sets `sp` from the linker-script symbol `__stack_top`. If the script
+  defines it over program data, over the vector table or below the image, the
+  first push corrupts something; the compiler checks that a script was named,
+  not what it contains. The stub clears nothing else, so it runs with whatever
+  the boot loader left in every other register and CSR.
+- The entry function's body is ordinary Kelp code, but nothing has run yet: a
+  `String` or a `List` there would call an allocator that does not exist, which
+  is why those types are refused, not why they are safe. `Atomic<T>` on bare
+  metal is only as correct as the target's memory model makes it, and the
+  language still publishes no model for a `Ptr<T>` and an `Atomic<T>` over the
+  same bytes (stage 1's rule).
+- A `section("...")` clause names an object-file section a script may or may
+  not place. A clause naming a section the script does not mention silently
+  drops the code or data from the image; the compiler only checks the clause's
+  syntax and, for a `const`, that the value is a fixed-size integer array.
+- The user's panic handler is a promise the compiler does not check. Nothing
+  requires it to diverge, so a handler that returns comes back to the bounds or
+  overflow check that called it, which then falls through into whatever the
+  check was guarding. A user-written `panic(msg)` is worse: the backend lowers
+  it to a call to the handler followed by LLVM's `unreachable`, so a handler
+  that returns is undefined behaviour there, not a fallthrough. The default
+  handler (an infinite loop) is the only one the compiler itself guarantees
+  does not return.
+
+**What the compiler does check.** That a `[target]` section names a `mode` and,
+for freestanding, a `triple`, an `entry` and a `linker_script`; that the entry
+is a `fun` in the entry module with no parameters and no return; that a named
+panic handler is a `fun(msg: str)` with no return; and the allowed set of
+`src/freestanding.rs`, construct by construct, on both `kelpc check` and
+`kelpc build`. It also refuses the C backend for a freestanding project rather
+than producing an image with libc in it.
+
+**What it does not check.** Anything about the linker script's contents, the
+address `__stack_top` names, the alignment or reachability of a section, or
+whether the panic handler diverges. The generated `_start` and the script are
+one contract split across two files, and only a boot (the next stages) tests it
+end to end.

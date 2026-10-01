@@ -1,0 +1,11 @@
+// A freestanding image has no C runtime to call `main`, so the entry point is
+// what the manifest names. A defined `main` here is refused by name rather
+// than getting the hosted `int main(int, char**)` signature and the runtime
+// globals that go with it.
+fun kmain() {
+    while true {
+    }
+}
+
+fun main() {
+}

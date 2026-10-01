@@ -1,0 +1,17 @@
+// A freestanding entry point that does nothing but loop: the smallest program
+// the LLVM backend can emit an ELF for that references no libc symbol and no
+// runtime helper. `i` is perturbed each pass so the loop has no exit the
+// optimizer can turn into a return.
+//
+// The `section(...)` clauses are the stage's other half: the entry goes in
+// `.text.boot` (placed first by the linker script) and the integer-array const
+// in `.rodata.boot`, so the script's placement is what the test reads back out
+// of the ELF.
+section(".rodata.boot") const BOOT_MAGIC: [u8; 4] = [75, 69, 76, 80]
+
+section(".text.boot") fun kmain() {
+    var i: u64 = 1
+    while true {
+        i = i * 3 + BOOT_MAGIC.get(i = 0).to_u64()
+    }
+}
