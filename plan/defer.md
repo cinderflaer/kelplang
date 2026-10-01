@@ -91,3 +91,12 @@ A deferred action is not checked for being idempotent, terminating, or free of a
 Nothing about the panic path is checked: a `defer` that releases a lock is not run when a panic
 takes the process, so the lock stays held in the core that panicked. `plan/kernel-ub-notes.md`
 carries the stage's section.
+
+A block in *value* position (`val v = { defer d(); x }`, `if c { defer d(); x } else { y }`) is
+lowered through a synthesized binding, which is the nested-block form the language already has,
+so the value's borrows follow the existing block rules rather than the direct-expression ones.
+That is a property of block values today, not of `defer`: a view read out of a block does not
+pin its owner the way `val v = s.as_str()` does (`val v = { s.as_str() }` behaves the same way
+with and without the `defer`), and a borrow held in a local and returned is refused naming the
+local as the root. A function *body* is not this case: its tail is lowered as an explicit
+`return`, so `defer_borrow_return.kp` keeps its elided lifetime.
