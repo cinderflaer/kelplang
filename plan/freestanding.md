@@ -73,23 +73,26 @@ pure three above and the `std/str` subset is refused by name: they all reach
 libc or the allocator.
 
 `std/str` is the one module that is partly allowed, because a kernel that
-prints anything has to walk text. The five operations above are the whole of
-it: their raw primitives (`byte_len_raw`, `byte_at_raw`, `byte_ptr_raw`) have
+prints anything has to walk text. The listed operations are the whole of it:
+the five raw primitives (`byte_len_raw`, `byte_at_raw`, `byte_ptr_raw`) have
 freestanding lowerings emitted into the module by the LLVM backend
 (`codegen_llvm::emit_freestanding_str_bodies`), as byte loops marked `optnone`
 so the target's own loop-idiom pass cannot rewrite the NUL scan into a `strlen`
-call; `eq` and `starts_with` are the hosted bodies on top of the same loops.
-The rest of the module is refused both at the call site (by name) and, because
-a dead body is still a `strlen`/`malloc` relocation at `-O0`, in emission:
+call; `eq` and `starts_with` are the hosted bodies on top of the same loops;
+and `concat`/`from_u64`/`from_i64` are the hosted Kelp bodies, kept only when
+an allocator is configured because they build an owned `String`. The rest of the
+module is refused both at the call site (by name) and, because a dead body is
+still a `strlen`/`malloc` relocation at `-O0`, in emission:
 `freestanding::prune` drops the module's other declarations, and `std/mem`
 (which it imports), from the AST before inference, so the concrete types they
 would instantiate never exist either. The hosted `std/str` is unchanged.
 
 The list is deliberately a *closure over reachability*, not the language's
-surface: `print` is refused as a call, `String` as a type wherever it appears
-(a local, a parameter, a field, a return), and a `std/*` module as both.
-A shape not on the allowed list is refused rather than lowered, so a program
-that compiles freestanding cannot reference a symbol the link would miss.
+surface: `print` is refused as a call, `String`/`Bytes` as a type wherever they
+appear without an allocator (a local, a parameter, a field, a return),
+`View`/`Thread` always, and a `std/*` module as both. A shape not on the allowed
+list is refused rather than lowered, so a program that compiles freestanding
+cannot reference a symbol the link would miss.
 
 ## The entry stub and sections
 
