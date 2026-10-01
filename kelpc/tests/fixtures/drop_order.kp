@@ -1,0 +1,21 @@
+// Kernel stage 9, MK9-S6-M1: a user destructor runs before the fields it
+// holds, the fields drop in declaration order, and locals die last-in-first-
+// out, exactly as the drop plan already ordered an owned `datac`.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+    print(self.tag)
+}
+
+datac Pair(val a: Leaf, val b: Leaf)
+
+fun mut Pair.drop() {
+    print("pair")
+}
+
+fun main() {
+    val p = Pair(a = Leaf(tag = 1), b = Leaf(tag = 2))
+    val l = Leaf(tag = 3)
+    print("body")
+}

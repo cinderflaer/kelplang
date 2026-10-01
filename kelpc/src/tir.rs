@@ -36,6 +36,14 @@ pub struct Program {
     /// of the derived `kelp_hash_<T>`/`kelp_eq_<T>` pair it does not emit for
     /// them.
     pub declared_keys: std::collections::HashSet<String>,
+    /// The user types that declare their own destructor (kernel stage 9,
+    /// MK9-S6-M1): a `datac`/`enum` with `fun mut T.drop()`. `infer.rs` is the
+    /// only place that decides it, so both backends and the drop-plan seeding
+    /// read the same set: `types::owned_types` seeds its owned set with these,
+    /// which is what gives a destructor type a `kelp_drop_<T>` even when every
+    /// field is a scalar, and each backend calls the user body at the top of
+    /// that function.
+    pub drop_types: std::collections::HashSet<String>,
     /// Full (prefixed) function name -> the bare native symbol it binds to,
     /// for a *user*-declared `extern fun` (MK9-S1-M1, roadmap B-1) —
     /// `codegen_c.rs::write_extern` reads this instead of `externs.rs` when a
@@ -79,6 +87,11 @@ pub struct Static {
     pub ty: Ty,
     /// `static mut NAME` — every access is `unsafe`.
     pub mutable: bool,
+    /// `percpu static mut NAME` (kernel stage 8): the static is one object per
+    /// CPU. The backends emit it as the manifest's `[target] cpus` copies in
+    /// `.percpu`, each 64-byte aligned, and a reference to the name indexes the
+    /// copy for the current CPU.
+    pub percpu: bool,
     /// The `section("...")` clause, when one was written.
     pub section: Option<String>,
     pub init: StaticInit,

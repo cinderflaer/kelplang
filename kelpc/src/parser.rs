@@ -270,6 +270,18 @@ impl Parser {
                     })
                 }
             };
+            // `percpu static ...` (kernel stage 8): `percpu` is a contextual
+            // word that modifies the `static` it precedes. It is read after
+            // the `section(...)`/`align(N)` clauses so a modified item stays
+            // the same declaration wherever the clauses are written.
+            let percpu = self.check_percpu_marker();
+            if !percpu && matches!(self.peek_kind(), TokenKind::Ident(n) if n == "percpu") {
+                return Err(ParseError {
+                    message: "'percpu' applies to a 'static', written 'percpu static mut NAME: T = INIT'"
+                        .to_string(),
+                    span: self.peek().span,
+                });
+            }
             if repr.is_some() && !self.check(&TokenKind::Datac) && !self.check(&TokenKind::Enum) {
                 return Err(ParseError {
                     message: format!(
@@ -320,7 +332,7 @@ impl Parser {
                         span: self.peek().span,
                     });
                 }
-                statics.push(self.parse_static_decl(is_pub, section)?);
+                statics.push(self.parse_static_decl(is_pub, section, percpu)?);
             } else if self.check(&TokenKind::Pd) {
                 if !datacs.is_empty() || !enums.is_empty() || !functions.is_empty() {
                     return Err(ParseError {
@@ -363,6 +375,21 @@ impl Parser {
             extern_types,
             functions,
         })
+    }
+
+    /// The `percpu` marker before a top-level `static` (kernel stage 8). Like
+    /// `unsafe`/`naked`, it is a contextual word: it is only a marker when
+    /// `static` is what follows it, so a program can still use `percpu` as an
+    /// ordinary name. Nothing is consumed otherwise.
+    fn check_percpu_marker(&mut self) -> bool {
+        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "percpu")
+            && matches!(self.peek2_kind(), TokenKind::Static)
+        {
+            self.advance();
+            true
+        } else {
+            false
+        }
     }
 
     /// The declaration markers before `fun`: `unsafe` and `naked` (MK9-S2
@@ -431,6 +458,11 @@ impl Parser {
             {
                 Ok(())
             }
+            // `pub percpu static ...`: `percpu` may sit between `pub` and the
+            // `static` it modifies (kernel stage 8).
+            TokenKind::Ident(n) if n == "percpu" && matches!(self.peek2_kind(), TokenKind::Static) => {
+                Ok(())
+            }
             // `pub align(4) fun f() ...`: an `align(N)` clause may sit between
             // `pub` and the `fun` it modifies (kernel gap 2).
             TokenKind::Ident(n)
@@ -474,9 +506,15 @@ impl Parser {
     }
 
     /// `static NAME: T = expr` / `static mut NAME: T = expr` — a top-level
-    /// global object (kernel stage 7). The type is mandatory, as it is on a
-    /// `const`, and the initializer must fold at compile time.
-    fn parse_static_decl(&mut self, is_pub: bool, section: Option<String>) -> PResult<StaticDecl> {
+    /// global object (kernel stage 7), optionally with a leading `percpu`
+    /// (kernel stage 8). The type is mandatory, as it is on a `const`, and the
+    /// initializer must fold at compile time.
+    fn parse_static_decl(
+        &mut self,
+        is_pub: bool,
+        section: Option<String>,
+        percpu: bool,
+    ) -> PResult<StaticDecl> {
         let start = self.expect(TokenKind::Static, "'static'")?.span;
         let mutable = if self.check(&TokenKind::Mut) {
             self.advance();
@@ -494,6 +532,7 @@ impl Parser {
             name,
             is_pub,
             mutable,
+            percpu,
             ty,
             init,
             module: String::new(),
@@ -3061,6 +3100,30 @@ mod tests {
         assert!(p.statics[2].is_pub);
         assert!(p.statics[2].mutable);
         assert_eq!(p.statics[2].section.as_deref(), Some(".data.boot"));
+    }
+
+    #[test]
+    fn parses_a_percpu_static_beside_pub_and_section() {
+        let p = parse(
+            "percpu static mut A: i32 = 1\n\
+             pub percpu static mut B: u32 = 2\n\
+             section(\".percpu.boot\") percpu static mut C: u8 = 3\n",
+        );
+        assert_eq!(p.statics.len(), 3);
+        assert!(p.statics[0].percpu && p.statics[0].mutable);
+        assert!(p.statics[1].percpu && p.statics[1].is_pub);
+        assert!(p.statics[2].percpu);
+        assert_eq!(p.statics[2].section.as_deref(), Some(".percpu.boot"));
+    }
+
+    #[test]
+    fn a_percpu_that_does_not_precede_a_static_does_not_parse() {
+        let err = parse_err("percpu fun f() {}");
+        assert!(
+            err.message.contains("'percpu' applies to a 'static'"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

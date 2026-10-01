@@ -1,0 +1,15 @@
+name = "kernel0-percpu"
+
+# Kernel stage 8 (MK9-S3-M3): per-CPU storage. `cpus = 2` makes the `percpu`
+# static in `src/main.kp` two copies; `main` is on the audit list because it
+# writes one, and `uart` because every device access is a raw pointer store.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+cpus = 2
+
+[unsafe]
+modules = ["main", "uart"]

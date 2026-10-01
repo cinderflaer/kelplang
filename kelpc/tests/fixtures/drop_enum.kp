@@ -1,0 +1,24 @@
+// Kernel stage 9, MK9-S6-M1: a destructor on an `enum` runs for every variant
+// before the live variant's payload drops. A payload-less variant still runs
+// the user body; only the field drop is skipped.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+    print(self.tag)
+}
+
+enum MaybeLeaf {
+    Full(val leaf: Leaf)
+    Empty
+}
+
+fun mut MaybeLeaf.drop() {
+    print("maybe")
+}
+
+fun main() {
+    val f = MaybeLeaf.Full(leaf = Leaf(tag = 1))
+    val e = MaybeLeaf.Empty
+    print("body")
+}

@@ -414,6 +414,7 @@ fn build(
                     alloc: target.alloc().map(str::to_string),
                     dealloc: target.dealloc().map(str::to_string),
                     realloc: target.realloc().map(str::to_string),
+                    cpus: target.cpus(),
                 })
             } else {
                 None

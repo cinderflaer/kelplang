@@ -1,0 +1,12 @@
+name = "freestandingdrop"
+
+# Kernel stage 9 (MK9-S6-M1): the same bare-metal target as `freestanding_min`,
+# with a user destructor in the image. The guard's destructor releases the
+# static atomic lock flag, so the image needs no libc and no runtime helper: the
+# store is one atomic instruction and the linker has no undefined symbol to
+# leave.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

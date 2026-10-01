@@ -1,0 +1,29 @@
+// Kernel stage 9, MK9-S6-M1: a container drops each element through the
+// element's own generated drop, so a destructor runs for `List.clear`, for the
+// element `List.pop` moves out (when that new owner dies), and for a `Leaf`
+// held by a `datac` held by a `List`.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+    print(self.tag)
+}
+
+datac Holder(val leaf: Leaf)
+
+fun main() {
+    var xs: List<Leaf> = List.empty()
+    xs.push(Leaf(tag = 1))
+    xs.push(Leaf(tag = 2))
+    print("pushed")
+    xs.clear()
+    print("cleared")
+    var ys: List<Leaf> = List.empty()
+    ys.push(Leaf(tag = 3))
+    val taken = ys.pop()
+    print("popped")
+    print(taken.tag)
+    var hs: List<Holder> = List.empty()
+    hs.push(Holder(leaf = Leaf(tag = 4)))
+    print("holder")
+}

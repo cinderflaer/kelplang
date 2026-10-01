@@ -1,0 +1,18 @@
+// Kernel stage 9, MK9-S6-M1: a `Map` value of a destructor type. A removed
+// value is owned by whoever received it and drops there; the values the map
+// still holds drop when the map does, each through its destructor.
+datac Guard(val id: i32)
+
+fun mut Guard.drop() {
+    print("drop")
+    print(self.id)
+}
+
+fun main() {
+    var m: Map<String, Guard> = Map.empty()
+    m.insert(key = "a", v = Guard(id = 1))
+    m.insert(key = "b", v = Guard(id = 2))
+    print("body")
+    val removed = m.remove(key = "a")
+    print("removed")
+}

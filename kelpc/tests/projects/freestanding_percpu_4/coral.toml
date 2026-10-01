@@ -1,0 +1,14 @@
+name = "freestandingpercpu4"
+
+# Kernel stage 8's object-layout test at `cpus = 4`: two statics of different
+# sizes, so the size column checks both a copy that fills a cache line exactly
+# and one rounded up to the next multiple of 64.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+cpus = 4
+
+[unsafe]
+modules = ["main"]

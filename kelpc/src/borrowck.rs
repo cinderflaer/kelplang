@@ -483,6 +483,10 @@ struct Ctx {
     /// cannot answer that on its own, so the struct table decision is made
     /// once in `check_program` and threaded here.
     owned_structs: std::collections::HashSet<String>,
+    /// Which user types declare a destructor (kernel stage 9, MK9-S6-M1), so a
+    /// partial move of one can be refused before it zeroes a slot the base's
+    /// own drop would run the destructor on again.
+    drop_types: std::collections::HashSet<String>,
     /// For every callee whose result is a borrow: the parameter index the
     /// elided lifetime binds to (M6.3). Both `.kp` functions and builtins
     /// follow the same rule, so both are in here.
@@ -1334,7 +1338,7 @@ fn merge_roots(left: &str, right: &str) -> Option<String> {
 
 pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Diagnostic> {
     let mut plan = DropPlan::default();
-    let owned = crate::types::owned_types(&program.structs, &program.enums);
+    let owned = crate::types::owned_types(&program.structs, &program.enums, &program.drop_types);
     // Every `enum` by name, so a payload move can name the field it moved out
     // (`Ty::Struct` carries only the name; the two indices are what the `tir`
     // node has). Instantiations are in here beside the templates, under the
@@ -1363,7 +1367,7 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
         .map(|p| (p.name.clone(), p.value_ty.clone()))
         .collect();
     for f in &program.functions {
-        let function = check_function(f, &owned, &fn_borrow_root, &globals, &enums).map_err(|e| {
+        let function = check_function(f, &owned, &program.drop_types, &fn_borrow_root, &globals, &enums).map_err(|e| {
             Diagnostic::new(e.message, e.span, f.module.clone())
         })?;
         plan.functions.insert(f.name.clone(), function);
@@ -1374,6 +1378,7 @@ pub fn check_program(program: &tir::Program) -> std::result::Result<DropPlan, Di
 fn check_function(
     f: &tir::Function,
     owned_structs: &std::collections::HashSet<String>,
+    drop_types: &std::collections::HashSet<String>,
     fn_borrow_root: &HashMap<String, Option<usize>>,
     globals: &[(String, Ty)],
     enums: &HashMap<String, EnumDef>,
@@ -1382,6 +1387,7 @@ fn check_function(
         scopes: vec![Scope::default()],
         plan: FnDrops::default(),
         owned_structs: owned_structs.clone(),
+        drop_types: drop_types.clone(),
         fn_borrow_root: fn_borrow_root.clone(),
         // A borrowed return type borrows from the first reference
         // parameter — `infer.rs` has already rejected a function that
@@ -1689,6 +1695,24 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     return Err(BorrowError { message, span: expr.span });
                 };
                 let proj = Projection::Field(field.clone());
+                if crate::types::is_drop_type(&expr.ty, &ctx.drop_types) {
+                    let (what, base_name) = match crate::types::tuple_field_index(field) {
+                        Some(index) => (
+                            format!("element {}", index + 1),
+                            "the tuple".to_string(),
+                        ),
+                        None => (
+                            format!("field '{field}'"),
+                            tir_root_ident(base).unwrap_or("a value").to_string(),
+                        ),
+                    };
+                    return Err(BorrowError {
+                        message: format!(
+                            "cannot move {what} out of '{base_name}' by value: it is a type with a destructor, and a partial move zeroes the slot it came from, so the base's own drop would run that destructor a second time; take the whole value by moving it, or use it through a borrow"
+                        ),
+                        span: expr.span,
+                    });
+                }
                 ctx.move_field_out(root, proj, expr)?;
             }
             Ok(())
@@ -1845,6 +1869,14 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     };
                     return Err(BorrowError { message, span: expr.span });
                 };
+                if crate::types::is_drop_type(&expr.ty, &ctx.drop_types) {
+                    return Err(BorrowError {
+                        message: format!(
+                            "cannot move the payload '{name}' out of the enum by value: it is a type with a destructor, and a partial move zeroes the slot it came from, so the enum's own drop would run that destructor a second time; match the enum through a borrow, or move the whole value"
+                        ),
+                        span: expr.span,
+                    });
+                }
                 let proj = Projection::EnumPayload {
                     variant: *variant,
                     field: *field,

@@ -130,8 +130,20 @@ against the block's other defers, by a lowering that duplicates the action at ea
 type checking so both backends run ordinary code. A `defer` and a `?` in one block is refused
 by name, a `return` inside a deferred action is refused, and a local moved before the exit is
 the ordinary use-of-a-moved-value error. Both a hosted fixture set and a freestanding riscv64
-project that releases a lock flag with a `defer` are in the suite. User `Drop`, the other half
-of the row, is not in this stage.
+project that releases a lock flag with a `defer` are in the suite.
+
+**Stage 6's `Drop` half is done too** (MK9-S6-M1, `plan/drop.md`): `fun mut T.drop()` on a
+user `datac`/`enum` is that type's destructor, the same "the method name is the declaration"
+shape A-12 slice 1 gave a declared `Map` key pair, so no trait keyword and no new syntax. The
+generated `kelp_drop_<T>` calls the user body first and drops the fields after, on both
+backends, so every drop point the `DropPlan` already had (block end, before `return`, owned
+reassignment, a container element, a containing `datac`/`enum`, the `atexit` pd drop) reaches
+it unchanged; a destructor type is excluded from every derived-copy fixpoint, so it is not
+`Copy`, and an explicit `g.drop()` is refused by name. The fixtures cover order, early return,
+reassignment, container removal, a moved-out value, an `enum` variant, a closure capture and
+the RAII atomic lock guard, and a freestanding riscv64 project releases a lock flag through a
+destructor with no undefined symbol. Both `defer` and `Drop` still have no panic-path cleanup:
+there is no unwinding (`plan/mk9-memory-model.md` §2), so a panic leaks the frame.
 
 **Row 7's hook half is done** (MK9-S5-M1, `plan/freestanding.md`): a freestanding
 manifest may name `alloc`, `dealloc` and an optional `realloc` in `[target]`, and
@@ -145,12 +157,28 @@ memory". `examples/kernel0-heap` is the idiom: a bump allocator over a
 `balanced` when every allocation reached a matching free. Arenas as a language
 feature and a fallible allocation surface are not in this stage.
 
-**What the next stages need.** The table's stages 6 to 11 are the remaining work:
-`defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),
-mapping and a syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and
-MMIO regions and IRQ lines as capabilities (row 11). The allocator is what anything running at
-boot needs first, and the panic semantics of row 10 are what turn a check that fires into a
-diagnostic instead of a bare `panic` byte.
+**Row 8's per-CPU half is done** (MK9-S3-M3, `plan/percpu.md`): a freestanding
+project may write `percpu static mut NAME: T = INIT`, and a manifest's
+`[target] cpus = N` (1 to 64, default 1) makes it `N` copies laid out as one
+64-byte-aligned array in `.percpu`, indexed by the new `cpu_index()` intrinsic
+(`tp` on riscv64, `TPIDR_EL1` on aarch64; the kernel sets the register).
+`cpu_count()` folds to the manifest's constant, a `percpu` without `mut` is
+refused, and both the class and the intrinsics are freestanding-only, refused
+by `infer.rs` on both backends. The riscv64 `_start` stub now parks every hart
+whose `mhartid` is not zero before it loads `sp`, so a `-smp 2` image with no
+firmware does not have two harts racing through boot;
+`examples/kernel0-percpu/run.sh` boots one, writes a per-CPU static on hart 0,
+reads the other copy by setting `tp = 1` by hand, and asserts the four lines
+from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
+not this stage.
+
+**What the next stages need.** The table's stages 7 to 11 are the remaining work:
+`defer`/`Drop` (row 6) is done, so a global allocator hook and arenas (row 7), mapping and a
+syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and MMIO regions and
+IRQ lines as capabilities (row 11) are what remain. Row 7's hook is done
+(`plan/freestanding.md`) and row 8's per-CPU storage is done (`plan/percpu.md`); the allocator
+is what anything running at boot needs first, and the panic semantics of row 10 are what turn a
+check that fires into a diagnostic instead of a bare `panic` byte.
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps

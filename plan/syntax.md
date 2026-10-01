@@ -998,6 +998,18 @@ print(c.total())
 - Passing a receiver to a method does not move it.
 - Builtin types have methods too, listed in 12 and 13 (`String.push_str`, `List.push`, `n.to_u64`, and so on).
 
+**The destructor.** A user `datac`/`enum` may declare exactly one method named `drop`,
+written `fun mut T.drop()`: an exclusive receiver, no parameters, and no return. The name is
+the whole declaration, the same way `fun T.hash()` and `fun T.eq(other: &T)` are the whole
+declaration of a `Map` key (9.4), so there is no trait and no new syntax. It is not a
+callable method: it is the type's destructor, and it runs **first** at every drop point of an
+owned value of that type, with the fields dropped after it in declaration order (`List`/`Map`/
+`Box`/array elements and a `datac`/`enum` field reach it through the same generated drop).
+`g.drop()` is an error naming the explicit destructor call: the value's own drop already runs
+when its owner dies. A type with a destructor is not `Copy`, so it cannot be a `Map` key and
+`List.clone`/`slice` and `Map.values`/`get_or` are refused for it. A panic does not run it:
+there is no unwinding, so a panicking frame's owners leak.
+
 ## 9. `datac` and `enum`
 
 ### 9.1 `datac`
@@ -2372,7 +2384,7 @@ These are deliberate, and each one has a workaround in this document:
 - No sized integer literal and no digit separator: a literal has no width of its own, so a `u8` byte is written `val b: u8 = 0xff`. Hexadecimal and binary are `0x` and `0b` (2.4); there is no octal form and no suffix.
 - A `char` is a code point and does not mix with the integer types: `'a' + 1` and `'a' == 97` are errors. Give the literal the type the arithmetic needs (`val a: u8 = 'a'`).
 - No float-to-integer conversion: `to_i64` does not exist on `f64` (it would drop the fraction silently). Use `math.trunc`/`math.floor` and then an integer conversion.
-- No exceptions, no `defer`, no destructors beyond the automatic drop at scope exit.
+- No exceptions and no unwinding: a `defer` and a user destructor (`fun mut T.drop()`, 8) run on ordinary exits only, so a panic leaks the frame it abandons.
 - A `[T; N]` array is fixed at its written length: there is no `[T; 0]`, no `a[i]` subscript (use `.get`/`.set`, as on a `List`), and no growth (`push`/`insert` are a `List`'s). The repeat form `[x; N]` copies its value into every slot, so it needs an element that owns nothing, and it is the one array shape a `datac` element cannot take (write the elements out, or start from a literal and `set` each one).
 - Compile-time evaluation is the language's own operators plus calls to plain `fun`s. There is no `comptime` block, no compile-time `List`/`Map`, no `size_of`/`align_of`, and a `const` cannot read a `pd` or call anything `extern`-backed.
 - Function values (7.4) are declared functions, `fun` literals, and closures: a literal becomes a closure when it names a binding from the enclosing scope, captures are **move-only** (a `Copy` binding is copied, an owned one is moved), and a borrow cannot be captured at all. A function value cannot be called as the result of another call (`f()(x)`) — bind it first.

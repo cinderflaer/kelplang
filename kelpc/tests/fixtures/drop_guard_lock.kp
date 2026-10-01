@@ -1,0 +1,24 @@
+// Kernel stage 9, MK9-S6-M1: the RAII lock guard, the kernel pattern the stage
+// exists for. The guard's destructor releases the flag, so every ordinary way
+// out of the scope releases it and no exit path can forget. The flag is a `pd
+// val` atomic, which the destructor reads through its generated global.
+impl "std/atomic"
+
+pd val LOCK: AtomicBool = AtomicBool.new(false)
+
+datac LockGuard(val held: bool)
+
+fun mut LockGuard.drop() {
+    LOCK.store(value = false, order = atomic.Ordering.SeqCst)
+}
+
+fun body().R: bool {
+    val g = LockGuard(held = true)
+    return LOCK.load(order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    LOCK.store(value = true, order = atomic.Ordering.SeqCst)
+    print(body())
+    print(LOCK.load(order = atomic.Ordering.SeqCst))
+}

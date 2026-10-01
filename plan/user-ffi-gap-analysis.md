@@ -203,6 +203,17 @@ exit of its block. What it does not give a binding is a *drop*: a `defer` is
 written where the resource is taken, and a panic skips it, so the leak a native
 handle has when a frame panics is unchanged (`plan/defer.md`).
 
+## What user `Drop` (MK9-S6-M1) changed for this list
+
+One thing is closed for a *wrapper*: a `datac` holding a native handle can now
+declare `fun mut T.drop()` and release the handle there, so the release runs at
+every ordinary drop point the value reaches (end of scope, an early `return`, a
+container element, a closure environment), which a `defer` could not do because
+it is written at the acquisition site. What it does not change is the *binding*
+side: a raw `extern type` handle is `Copy` and has no destructor, so the leak a
+handle has when a frame panics is unchanged, and an `extern fun` that hands out
+an owned pointer still needs a wrapper type before `Drop` can describe it.
+
 ## What kernel gap 4 (the freestanding runtime essentials) changed for this list
 
 Nothing is closed, and one freestanding obstacle is gone. A binding whose

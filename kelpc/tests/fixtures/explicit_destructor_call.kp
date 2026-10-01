@@ -1,0 +1,10 @@
+// Kernel stage 9, MK9-S6-M1: a destructor is not callable. Naming it would run
+// it on top of the drop the value already owes.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() { }
+
+fun main() {
+    var l = Leaf(tag = 1)
+    l.drop()
+}

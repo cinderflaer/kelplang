@@ -1,0 +1,10 @@
+name = "percpu_outside_unsafe"
+
+# Kernel stage 8: a `percpu` static is a `static mut` in every way, so naming
+# it outside an `unsafe` block is the ordinary `static mut` error.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+cpus = 2

@@ -1,0 +1,14 @@
+// Kernel stage 9, MK9-S6-M1: a moved-out value is not dropped by the scope that
+// declared it. Only the new owner's drop runs, exactly once.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+    print(self.tag)
+}
+
+fun main() {
+    val a = Leaf(tag = 1)
+    val b = a
+    print("moved")
+}

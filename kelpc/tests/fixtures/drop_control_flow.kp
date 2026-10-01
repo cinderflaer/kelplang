@@ -1,0 +1,29 @@
+// Kernel stage 9, MK9-S6-M1: a destructor runs at every drop point the plan
+// already has. An early `return` frees the frame's live locals after the
+// returned value is read, and a loop body frees one value per iteration.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() {
+    print("leaf")
+    print(self.tag)
+}
+
+fun early(x: bool).R: i32 {
+    val a = Leaf(tag = 1)
+    if x {
+        return 9
+    }
+    val b = Leaf(tag = 2)
+    return 0
+}
+
+fun main() {
+    print(early(x = true))
+    print(early(x = false))
+    var i = 0
+    while i < 2 {
+        val c = Leaf(tag = 10 + i)
+        print("loop")
+        i = i + 1
+    }
+}

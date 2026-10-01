@@ -1,0 +1,14 @@
+name = "percpu_initializer"
+
+# Kernel stage 8: a `percpu` static's initializer is folded to a constant and
+# replicated into every copy, so anything that would need code at startup (here
+# a call) is refused.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+cpus = 2
+
+[unsafe]
+modules = ["main"]
