@@ -447,7 +447,6 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
-            ExprKind::Template { .. } => unreachable!("handled above"),
             ExprKind::IntLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::FloatLit(_)

@@ -4378,11 +4378,6 @@ fn collect_const_fns(program: &ast::Program, project: &Project) -> ConstFns {
     out
 }
 
-/// Stand-in for "no later datacs" at the sites where every `datac` in the
-/// program is already known (signatures, bodies, passdown types).
-static EMPTY_DATACS: std::sync::LazyLock<std::collections::HashSet<String>> =
-    std::sync::LazyLock::new(std::collections::HashSet::new);
-
 /// Stand-in for "no type parameters in scope" at every site that is not
 /// inside a generic template's own fields (A-2).
 static EMPTY_PARAMS: std::sync::LazyLock<HashMap<String, Ty>> =

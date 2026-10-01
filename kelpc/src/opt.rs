@@ -53,7 +53,9 @@ impl OptLevel {
         OptLevel::Os,
     ];
 
-    /// The spelling without the `-O`, for a diagnostic that names a level.
+    /// The spelling without the `-O`, used by the round-trip test below; the
+    /// diagnostic path spells a level with `cc_flag`.
+    #[cfg(test)]
     pub fn name(self) -> &'static str {
         match self {
             OptLevel::O0 => "0",

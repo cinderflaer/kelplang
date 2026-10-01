@@ -105,18 +105,6 @@ pub struct Project {
 }
 
 impl Project {
-    /// The capability domain a module is gated on: a stdlib module's fixed
-    /// domain (`stdlib::domain_of`), or, when there is none, this project's
-    /// own `[extern."<module id>"]` assignment. Both tables are consulted the
-    /// same way at every call site that used to read `stdlib::domain_of`
-    /// alone (M7's `gated` map, the RT-module injection, the `caps(*)`
-    /// reachability walk), which is the point of MK9-S1-M1's design: a user
-    /// module's domain behaves exactly like a stdlib one downstream, because
-    /// it is the same table with one more source.
-    pub fn domain_of(&self, module: &str) -> Option<String> {
-        domain_of_with_extern(module, &self.extern_modules)
-    }
-
     /// The native library and symbol allowlist a `[extern."<module id>"]`
     /// section declared for `module`, if it has one. `infer.rs` checks a
     /// declared `extern fun`'s bare name against `symbols`;
@@ -262,6 +250,8 @@ impl TargetDecl {
         }
     }
 
+    // Read only by this module's own tests; production code asks `is_freestanding`.
+    #[cfg(test)]
     pub fn mode(&self) -> TargetMode {
         self.mode
     }
@@ -368,10 +358,9 @@ impl ExternModuleDecl {
 }
 
 /// `stdlib::domain_of`, folded with a project's own `[extern.*]` table
-/// (MK9-S1-M1). Shared by `Project::domain_of` and by the loader's own three
-/// domain checks (the `gated` map, the RT-module import injection, and
-/// `caps(*)`'s reachability walk), so a user module is gated exactly like a
-/// stdlib one at every one of them, not just some.
+/// (MK9-S1-M1). Every caller is a loader domain check (the `gated` map, the
+/// RT-module import injection, and `caps(*)`'s reachability walk), so a user
+/// module is gated exactly like a stdlib one at each of them, not just some.
 fn domain_of_with_extern(
     module: &str,
     extern_modules: &HashMap<String, ExternModuleDecl>,

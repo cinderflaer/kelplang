@@ -93,7 +93,6 @@ impl Parser {
                     name,
                     ty: TypeExpr::named("", span),
                     mode: ParamMode::Borrow,
-                    span,
                 });
                 if self.check(&TokenKind::Comma) {
                     self.advance();
@@ -1227,7 +1226,7 @@ impl Parser {
                 variadic = true;
                 break;
             }
-            let (pname, pspan) = self.expect_ident()?;
+            let (pname, _) = self.expect_ident()?;
             self.expect(TokenKind::Colon, "':'")?;
             // `mut T` requests an exclusive borrow and `move T` takes
             // ownership (A-4); this is the *only* spelling for either in
@@ -1240,7 +1239,6 @@ impl Parser {
                 name: pname,
                 ty,
                 mode,
-                span: pspan,
             });
             if self.check(&TokenKind::Comma) {
                 self.advance();

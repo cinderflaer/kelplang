@@ -1543,7 +1543,6 @@ fn write_coerce_env(out: &mut String, ty: &Ty) {
         .iter()
         .map(crate::types::container_elem_c_type)
         .collect::<Vec<_>>();
-    let names: Vec<String> = (0..params.len()).map(|i| format!("p{i}")).collect();
     writeln!(out, "// ---- {env} (A-4 phase E) {}", "-".repeat(26)).unwrap();
     writeln!(
         out,
@@ -3776,7 +3775,15 @@ impl<'a> Gen<'a> {
                     UnOp::BitNot => "~",
                 };
                 let inner = self.expr_value(sub);
-                format!("({sym}{inner})")
+                let raw = format!("({sym}{inner})");
+                // C promotes a `u8`/`u16` operand to `int` before `~` or unary
+                // `-`, so the result has to be narrowed back to the declared
+                // width; LLVM works at that width already.
+                if matches!(expr.ty, Ty::U8 | Ty::U16) {
+                    format!("(({}){raw})", expr.ty.c_type())
+                } else {
+                    raw
+                }
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 let sym = match op {
@@ -3806,7 +3813,30 @@ impl<'a> Gen<'a> {
                 };
                 let l = self.expr_value(lhs);
                 let r = self.expr_value(rhs);
-                format!("({l} {sym} {r})")
+                let raw = format!("({l} {sym} {r})");
+                // A `u8`/`u16` value promotes to C's `int`, so an arithmetic or
+                // bitwise result wider than its declared type leaks (a `u8 +
+                // u8` of 300 compares and prints as 300, not 44). Narrow it
+                // back; a comparison already yields a `bool` the promotion
+                // cannot widen.
+                let value_op = matches!(
+                    op,
+                    BinOp::Add
+                        | BinOp::Sub
+                        | BinOp::Mul
+                        | BinOp::Div
+                        | BinOp::Mod
+                        | BinOp::BitAnd
+                        | BinOp::BitOr
+                        | BinOp::BitXor
+                        | BinOp::Shl
+                        | BinOp::Shr
+                );
+                if value_op && matches!(expr.ty, Ty::U8 | Ty::U16) {
+                    format!("(({}){raw})", expr.ty.c_type())
+                } else {
+                    raw
+                }
             }
             ExprKind::Call { callee, args } => self.call_value(callee, args, expr.span, &expr.ty),
             // A variadic user `extern fun` call (gap 7): the call goes to the

@@ -3,7 +3,7 @@
 //! (for fixtures that should be rejected) checks that `kelpc build` fails.
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1607,6 +1607,14 @@ fn remainder_works_at_every_integer_width() {
     assert_compiles_and_runs(
         "tests/fixtures/int_mod_narrow.kp",
         "1\n-1\n1\n-1\n6\n3\n4\n15\n2\n535\n999993014\n-999993014\n",
+    );
+}
+
+#[test]
+fn narrow_integer_arithmetic_wraps_at_its_own_width() {
+    assert_compiles_and_runs(
+        "tests/fixtures/int_narrow_width_arithmetic.kp",
+        "44\n100\n156\n32\n2\n0\n64\n236\n172\n32\n50\n55\n255\n44464\n24064\n5535\n10000\n88\n244\nsmaller\n44\n32\n4\n4\n",
     );
 }
 
