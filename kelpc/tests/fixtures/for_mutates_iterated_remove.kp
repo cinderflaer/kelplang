@@ -1,0 +1,8 @@
+// `remove` is a `mut` receiver method on the iterated place.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        xs.remove(0)
+    }
+}

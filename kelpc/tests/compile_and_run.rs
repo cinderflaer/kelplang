@@ -4455,6 +4455,55 @@ fn a_for_loop_only_walks_a_list() {
 }
 
 #[test]
+fn a_for_loop_refuses_every_mutation_of_what_it_walks() {
+    // `for x in xs { xs.push(x) }` was accepted for a `Copy` element (nothing
+    // borrowed the list) and grew the list until memory ran out. Every mutation
+    // form is now one refusal, naming the place the `for` walks.
+    for fixture in [
+        "for_mutates_iterated_push",
+        "for_mutates_iterated_remove",
+        "for_mutates_iterated_set",
+        "for_mutates_iterated_assign",
+        "for_mutates_iterated_field",
+        "for_mutates_iterated_mutref",
+        "for_mutates_iterated_mutarg",
+        "for_mutates_iterated_capture",
+        "for_mutates_iterated_move",
+        "for_mutates_iterated_nested",
+    ] {
+        assert_rejected_with(
+            &format!("tests/fixtures/{fixture}.kp"),
+            "while iterating over it",
+        );
+    }
+    // The message names the place: a local for a local, a field path for a
+    // field.
+    assert_rejected_with(
+        "tests/fixtures/for_mutates_iterated_push.kp",
+        "cannot mutate 'xs' while iterating over it",
+    );
+    assert_rejected_with(
+        "tests/fixtures/for_mutates_iterated_field.kp",
+        "cannot mutate 'self.items' while iterating over it",
+    );
+}
+
+#[test]
+fn a_for_loop_still_allows_reads_another_list_and_a_while() {
+    // The rule covers mutation of the walked place only: reading it, changing a
+    // different list, changing it after the loop, and the index-`while` that is
+    // the supported way for a loop to change what it walks all stay legal.
+    assert_compiles_and_runs(
+        "tests/fixtures/for_iterated_place_is_read_only.kp",
+        "2\n2\n5\n10\n20\n3\n3\n1\n",
+    );
+    assert_compiles_and_runs(
+        "tests/fixtures/for_mutates_another_field.kp",
+        "2\n7\n",
+    );
+}
+
+#[test]
 fn a_list_of_owned_and_datac_elements_moves_them() {
     assert_compiles_and_runs(
         "tests/fixtures/list_owned.kp",

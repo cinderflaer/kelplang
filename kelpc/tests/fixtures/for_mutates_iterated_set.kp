@@ -1,0 +1,8 @@
+// An assignment through the iterated place: element `i` is written back.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        xs.set(i = 0, v = x)
+    }
+}

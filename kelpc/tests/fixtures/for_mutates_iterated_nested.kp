@@ -1,0 +1,11 @@
+// A nested loop mutating the *outer* iterated list: both places are live.
+fun main() {
+    var xs: List<i32> = List.empty()
+    var ys: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        for y in ys {
+            xs.push(y)
+        }
+    }
+}

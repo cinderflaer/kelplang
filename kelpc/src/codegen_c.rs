@@ -3231,7 +3231,7 @@ fn collect_containers(program: &Program, out: &mut Instantiations) {
                     note_ty(ty, out);
                     note_expr(init, out);
                 }
-                Stmt::While { cond, body } => {
+                Stmt::While { cond, body, .. } => {
                     note_expr(cond, out);
                     note_block(body, out);
                 }
@@ -3816,7 +3816,7 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
-            Stmt::While { cond, body } => {
+            Stmt::While { cond, body, .. } => {
                 let cond = self.cond_text(cond);
                 indent(&mut self.out, depth);
                 writeln!(self.out, "while {cond} {{").unwrap();

@@ -1,0 +1,10 @@
+// The bug this rule closes: a `Copy` element binds as a value, so nothing
+// borrowed the list and `for x in xs { xs.push(x) }` grew the list the loop was
+// walking until it ran out of memory. The body may not mutate what it iterates.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        xs.push(x)
+    }
+}

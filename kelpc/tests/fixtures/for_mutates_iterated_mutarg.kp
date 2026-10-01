@@ -1,0 +1,12 @@
+// Passing the iterated place to a `mut` parameter is the same exclusive borrow.
+fun bump(v: mut List<i32>) {
+    v.push(0)
+}
+
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        bump(xs)
+    }
+}

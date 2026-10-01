@@ -8825,7 +8825,12 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             lower_pattern(pattern, &tmp, &value_ty, &elements, *mutable, ctx, &mut stmts, *span)?;
             Ok(stmts)
         }
-        ast::Stmt::While { cond, body, span } => {
+        ast::Stmt::While {
+            cond,
+            body,
+            iterating,
+            span,
+        } => {
             let cond = check_expr(cond, ctx, Some(&Ty::Bool))?;
             if cond.ty != Ty::Bool {
                 return Err(TypeError {
@@ -8834,7 +8839,13 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
                 });
             }
             let body = check_block(body, ctx, None)?;
-            Ok(vec![tir::Stmt::While { cond, body }])
+            let iterating = iterating.as_ref().and_then(|place| {
+                ast::place_path(place).map(|path| tir::IteratedPlace {
+                    path,
+                    span: place.span(),
+                })
+            });
+            Ok(vec![tir::Stmt::While { cond, body, iterating }])
         }
         ast::Stmt::Return { value, .. } => {
             let ret_ty = ctx.ret_ty.clone();

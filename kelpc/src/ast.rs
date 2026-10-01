@@ -548,6 +548,12 @@ pub enum Stmt {
     While {
         cond: Expr,
         body: Block,
+        /// The place a `for` loop walks, when it walks one (`xs`, `self.items`).
+        /// `infer.rs` copies its path and span into the typed loop so
+        /// `borrowck.rs` can refuse a mutation of it while the body runs
+        /// (`plan/syntax.md` 6.2). `None` for a written `while` and for a `for`
+        /// over a temporary, which nothing names.
+        iterating: Option<Expr>,
         span: Span,
     },
     Return {
@@ -641,6 +647,22 @@ pub fn is_place(expr: &Expr) -> bool {
         Expr::Ident(..) | Expr::Deref { .. } => true,
         Expr::FieldAccess { base, .. } => is_place(base),
         _ => false,
+    }
+}
+
+/// The canonical path of a place expression: `xs` for an `Ident`, `self.items`
+/// for a field chain, and `None` for anything else (a temporary, a
+/// dereference, a call). `parser.rs` records the place a `for` walks this way
+/// and `infer.rs`
+/// hands the same path to the borrow checker, so both agree on what names a
+/// list.
+pub fn place_path(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name, _) => Some(name.clone()),
+        Expr::FieldAccess { base, field, .. } => {
+            place_path(base).map(|b| format!("{b}.{field}"))
+        }
+        _ => None,
     }
 }
 

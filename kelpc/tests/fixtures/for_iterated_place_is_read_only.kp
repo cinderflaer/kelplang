@@ -1,0 +1,38 @@
+// What `for` still allows while it walks a list: reads of the iterated place,
+// changes to a different list, a change to the iterated list *after* the loop,
+// and walking by index in a `while`, which is the supported way for a loop to
+// change what it walks.
+fun main() {
+    var xs: List<i32> = List.empty()
+    var ys: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+
+    var total: i32 = 0
+    for x in xs {
+        total += x
+        total += xs.get(i = 0)
+        print(xs.len())
+    }
+    print(total)
+
+    for x in xs {
+        ys.push(x * 10)
+    }
+    print(ys.get(i = 0))
+    print(ys.get(i = 1))
+
+    xs.push(3)
+    print(xs.len())
+
+    var i: usize = 0
+    while i < xs.len() {
+        val v = xs.get(i = i)
+        if v > 1 {
+            xs.set(i = i, v = v - 1)
+        }
+        i += 1
+    }
+    print(xs.len())
+    print(xs.get(i = 0))
+}

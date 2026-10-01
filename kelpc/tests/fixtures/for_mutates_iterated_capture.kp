@@ -1,0 +1,12 @@
+// A `fun` literal in the body cannot capture the iterated list either: a capture
+// moves or copies, and the move is refused the same way.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        val f = fun().R: usize {
+            return xs.len()
+        }
+        print(f())
+    }
+}

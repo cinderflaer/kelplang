@@ -1,0 +1,14 @@
+// The rule names a field path, not a root: `self.items` is the place walked.
+datac Bag(val items: List<i32>)
+
+fun mut Bag.grow() {
+    for x in self.items {
+        self.items.push(x)
+    }
+}
+
+fun main() {
+    var bag = Bag(items = List.empty())
+    bag.items.push(1)
+    bag.grow()
+}

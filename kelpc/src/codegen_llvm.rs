@@ -2998,7 +2998,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
                 }
                 self.terminated = true;
             }
-            Stmt::While { cond, body } => self.emit_while(cond, body)?,
+            Stmt::While { cond, body, .. } => self.emit_while(cond, body)?,
             Stmt::Expr(e) => {
                 self.emit_expr(e)?;
             }
@@ -6576,7 +6576,7 @@ fn collect_instantiations(program: &Program) -> Instantiations {
         for stmt in &block.stmts {
             match stmt {
                 Stmt::Let { init, .. } => note_expr(init, out),
-                Stmt::While { cond, body } => {
+                Stmt::While { cond, body, .. } => {
                     note_expr(cond, out);
                     note_block(body, out);
                 }

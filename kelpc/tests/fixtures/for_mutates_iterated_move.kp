@@ -1,0 +1,9 @@
+// Moving the iterated place out of the body.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        val taken = xs
+        print(taken.len())
+    }
+}

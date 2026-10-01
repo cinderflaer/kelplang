@@ -648,7 +648,7 @@ impl Checker<'_> {
                 }
                 self.expr(init, module)
             }
-            Stmt::While { cond, body } => {
+            Stmt::While { cond, body, .. } => {
                 self.expr(cond, module)?;
                 self.block(body, module)
             }

@@ -1799,7 +1799,7 @@ impl Parser {
         let cond = self.parse_head_expr()?;
         let body = self.parse_block()?;
         let span = start.to(body.span);
-        Ok(Stmt::While { cond, body, span })
+        Ok(Stmt::While { cond, body, iterating: None, span })
     }
 
     /// `for x in xs { BODY }`, desugared here into an indexed walk over the
@@ -1854,6 +1854,11 @@ impl Parser {
         let iterable = self.parse_head_expr()?;
         let body = self.parse_block()?;
         let span = start.to(body.span);
+        // A place iterable stays a place and is walked as written, so the
+        // borrow checker can name it and refuse a mutation of it in the body
+        // (`plan/syntax.md` 6.2). A temporary is staged into `#forN` and has no
+        // name a body could mutate.
+        let iterating = (temporary_root(&iterable).is_none()).then(|| iterable.clone());
 
         self.fors += 1;
         let seq_name = format!("{}{}", FOR_PREFIX, self.fors - 1);
@@ -1956,6 +1961,7 @@ impl Parser {
                 ],
                 span: body.span,
             },
+            iterating,
             span,
         });
 

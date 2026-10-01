@@ -1,0 +1,8 @@
+// Assignment to the iterated binding itself.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    for x in xs {
+        xs = List.empty()
+    }
+}

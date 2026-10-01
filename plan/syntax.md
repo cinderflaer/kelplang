@@ -722,10 +722,19 @@ for x in xs {
 }
 ```
 
-- The iterable must be a `List<T>` or a `[T; N]` (12.4). `for` is **desugared by the parser** into the index-and-`while` walk below, so anything with `.len()` and `.get(i)` walks the same way; no later pass knows it exists, and there is no protocol to implement (`iter`/`next` is a post-v1 question).
+- The iterable must be a `List<T>` or a `[T; N]` (12.4). `for` is **desugared by the parser** into the index-and-`while` walk below, so anything with `.len()` and `.get(i)` walks the same way, and there is no protocol to implement (`iter`/`next` is a post-v1 question). A `Map` is not one of them: it has `.len()`, but its `.get` takes a key rather than an index, so `for k in map` is a type error (write `for k in map.keys()`).
 - The element binding gives exactly what `List.get` gives (12.1): a copy of a `Copy` element, and a shared borrow of an owned one. So `for n in numbers` reads `n: i32` directly, while `for name in names` reads `name: &String` and a `str.*` call wants `name.as_str()` (the same wart as 12.1).
 - The iterable is *borrowed*, not moved, when it is a place (`xs`, `self.items`): `for x in xs` inside a function that takes `xs: List<i32>` is the ordinary case. Anything else — a call, a literal — is bound to a temporary that the loop owns and frees, so it is evaluated **once**.
-- The loop variable is a `val`. Copy it into a `var` to mutate it, and note that the list is still borrowed for the duration of the body, so the body cannot `push` to what it walks.
+- The loop variable is a `val`. Copy it into a `var` to mutate it.
+- The body may **read** the place it walks (`xs.get(i)`, `xs.len()`, `&xs`) and may walk or change a
+  **different** list, but it may not mutate the one it walks. A `mut` receiver method on it (`push`,
+  `pop`, `remove`, `insert`, `set`, `clear`, `sort`, `reverse`), an assignment to it, a move of it,
+  taking `&mut xs`, and passing it to a `mut` parameter are all one compile error, `cannot mutate
+  'xs' while iterating over it`, reported on the `for` line. A `fun` literal written in the body
+  cannot capture it either: a capture moves or copies, and the move is refused the same way. The
+  rule names the place, so `for x in self.items { self.other.push(x) }` is legal.
+- When the loop has to change what it walks, walk it by index with `while` (below) instead: that is
+  the supported pattern, and no such rule applies to it.
 - There is no `break` and no `continue`; the body runs from the first element to the last.
 
 Walking a `List` by index is still available, and is what `for` becomes:
