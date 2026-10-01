@@ -1,7 +1,7 @@
 //! Typed intermediate representation produced by `infer.rs` and consumed by
 //! `codegen_c.rs` (and, from M3 onward, `borrowck.rs`).
 
-use crate::ast::{BinOp, UnOp};
+use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::lexer::Span;
 use crate::types::{EnumDef, StructDef, Ty};
 
@@ -130,6 +130,10 @@ pub struct Function {
     /// body's `ExprKind::Capture` reads go through. `None` for every ordinary
     /// function and for a literal that captured nothing.
     pub env: Option<ClosureEnv>,
+    /// `naked fun ...` (kernel stage 5): LLVM's `naked` and `noinline`. The
+    /// body is exactly one `asm(...)` statement, so no prologue or epilogue is
+    /// emitted around it.
+    pub naked: bool,
     /// The `section("...")` clause a declaration carried (kernel stage 4), or
     /// `None` for the target's default `.text`. Each backend places the
     /// function's code in this section.
@@ -373,6 +377,38 @@ pub enum ExprKind {
     /// expression's own type (`[T; N]`), which is where codegen reads it; the
     /// element must own nothing, because the value is copied into every slot.
     ArrayRepeat { value: Box<Expr> },
+    /// `asm("...", operands...)` (kernel stage 5): one instruction of the
+    /// target's own assembler. The template's `{k}` placeholders are still the
+    /// source spelling; each backend maps them to its own operand numbers.
+    Asm(AsmBlock),
+}
+
+/// The checked form of one `asm(...)` expression (kernel stage 5).
+#[derive(Debug, Clone)]
+pub struct AsmBlock {
+    /// The target assembler's text, with `{0}`, `{1}`, ... placeholders.
+    pub template: String,
+    /// The operands, in appearance order (the order `{0}`, `{1}`, ... name).
+    pub operands: Vec<AsmOperand>,
+    /// The registers the asm clobbers, from `clobber("...")`.
+    pub clobbers: Vec<String>,
+    /// `nomem`: the asm does not touch memory, so the default `~{memory}`
+    /// clobber is dropped.
+    pub nomem: bool,
+    /// The index in `operands` of the anonymous `out("...") _` whose value the
+    /// expression's own value is, when one was written.
+    pub value_out: Option<usize>,
+}
+
+/// One `in`/`out`/`inout` operand of a checked `asm(...)` (kernel stage 5).
+#[derive(Debug, Clone)]
+pub struct AsmOperand {
+    pub kind: AsmOperandKind,
+    /// The constraint the source wrote, passed to the backend unchanged.
+    pub constraint: String,
+    /// For `in`, the value read; for `out`/`inout`, the place written. `None`
+    /// for the anonymous output, which is `AsmBlock::value_out`.
+    pub operand: Option<Expr>,
 }
 
 /// One piece of a template: literal text, or an interpolated value that has

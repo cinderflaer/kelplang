@@ -1,0 +1,9 @@
+// Kernel stage 5: the operand kinds are `in`, `out`, `inout` and `clobber`;
+// any other word is refused by name. A single file, so this parser-level
+// rejection lives with the other negative fixtures (`tests/fixtures/` holds
+// programs that are deliberately invalid, and the formatter corpus skips it).
+fun main() {
+    unsafe {
+        asm("nop", sideways("r") 1)
+    }
+}

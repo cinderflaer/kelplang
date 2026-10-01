@@ -1,0 +1,7 @@
+name = "kelpasm_outside_unsafe"
+
+# Kernel stage 5 (MK9-S7-M1/M3, roadmap B-9/B-16): inline `asm` and `naked fun`.
+# The one key is the audit list: an `asm` is an unsafe operation, so only a
+# module named here may contain one.
+[unsafe]
+modules = ["main"]

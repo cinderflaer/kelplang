@@ -14,7 +14,7 @@
 //! locals die at the end of this block" and "which die before this return" as
 //! it writes each one — no second walk, and no lockstep between two passes.
 
-use crate::ast::{BinOp, UnOp};
+use crate::ast::{AsmOperandKind, BinOp, UnOp};
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::diag::SourceMap;
 use crate::lexer::Span;
@@ -3492,6 +3492,11 @@ impl<'a> Gen<'a> {
             // it as an attribute in front of the definition.
             write!(self.out, "__attribute__((section({}))) ", c_string_literal(section)).unwrap();
         }
+        if f.naked {
+            // A `naked fun` (kernel stage 5): no prologue and no epilogue, and
+            // never inlined, because its body's asm is the whole ABI.
+            self.out.push_str("__attribute__((naked, noinline)) ");
+        }
         write_signature(&mut self.out, f);
         self.out.push_str(" {\n");
         // A literal that captured something receives its environment as the
@@ -3991,6 +3996,9 @@ impl<'a> Gen<'a> {
                     self.expr_value(value)
                 )
             }
+            // `asm(...)` (kernel stage 5): one GCC extended-asm statement, with
+            // the same operand order LLVM uses (outputs first, then inputs).
+            ExprKind::Asm(block) => self.asm_value(block, expr),
             ExprKind::Template { newline, pieces } => {
                 // One `printf` with a generated format string: literal chunks
                 // are escaped into it, each interpolated value contributes
@@ -5575,6 +5583,89 @@ impl<'a> Gen<'a> {
     /// guarantees an assignment's target is always an `Ident`, a `.field`
     /// chain rooted in one, or a dereferenced borrow (`*p`, `(*p).field`) —
     /// see `infer::is_tir_place`.
+    /// `asm(...)` (kernel stage 5): one GCC extended-asm statement. The operand
+    /// order is the LLVM backend's (outputs in appearance order, then inputs),
+    /// and the template's `{k}` placeholders become `%numbers[k]`. The whole
+    /// statement is a GNU statement expression when the asm produces a value
+    /// (`out("...") _`), so it can stand where any other expression does.
+    fn asm_value(&self, block: &crate::tir::AsmBlock, expr: &Expr) -> String {
+        let out_count = block
+            .operands
+            .iter()
+            .filter(|op| op.kind != AsmOperandKind::In)
+            .count();
+        // GCC numbers `=r` and `+r` outputs first (an `inout` is one `+r`, not
+        // an output plus an input), then the `in` operands.
+        let mut numbers = vec![0usize; block.operands.len()];
+        let mut out_index = 0;
+        for (i, op) in block.operands.iter().enumerate() {
+            if op.kind != AsmOperandKind::In {
+                numbers[i] = out_index;
+                out_index += 1;
+            }
+        }
+        let mut in_index = 0;
+        for (i, op) in block.operands.iter().enumerate() {
+            if op.kind == AsmOperandKind::In {
+                numbers[i] = out_count + in_index;
+                in_index += 1;
+            }
+        }
+        let template = asm_operand_text(&block.template, &numbers, '%');
+        let tmp = fresh_temp();
+        let mut outs: Vec<String> = Vec::new();
+        let mut ins: Vec<String> = Vec::new();
+        let mut tmp_decl = String::new();
+        for op in block.operands.iter() {
+            match op.kind {
+                AsmOperandKind::In => {
+                    let value = self.expr_value(
+                        op.operand.as_ref().expect("an 'in' has a value"),
+                    );
+                    ins.push(format!("\"{}\"({value})", op.constraint));
+                }
+                AsmOperandKind::Out | AsmOperandKind::InOut => {
+                    let place = match &op.operand {
+                        Some(place) => self.lvalue(place),
+                        None => {
+                            tmp_decl = format!("{};", expr.ty.c_decl(&tmp));
+                            tmp.clone()
+                        }
+                    };
+                    let sigil = if op.kind == AsmOperandKind::InOut { '+' } else { '=' };
+                    outs.push(format!("\"{sigil}{}\"({place})", op.constraint));
+                }
+            }
+        }
+        let mut clobbers: Vec<String> = block.clobbers.iter().map(|c| format!("\"{c}\"")).collect();
+        if !block.nomem {
+            clobbers.push("\"memory\"".to_string());
+        }
+        // One template reads destination-first on x86 (Intel syntax) and in the
+        // target's own syntax elsewhere (`plan/inline-asm.md`); GCC's default is
+        // AT&T on x86, so the dialect is switched around the template and back
+        // again, or the compiler's own following output would be misread.
+        let body = if cfg!(any(target_arch = "x86_64", target_arch = "x86")) {
+            format!(".intel_syntax noprefix\n{template}\n.att_syntax prefix")
+        } else {
+            template.clone()
+        };
+        let statement = format!(
+            "__asm__ volatile({} : {} : {} : {})",
+            c_string_literal(&body),
+            outs.join(", "),
+            ins.join(", "),
+            clobbers.join(", ")
+        );
+        if block.value_out.is_none() {
+            return statement;
+        }
+        // The anonymous output is the expression's value: declare a temporary
+        // of the expression's own type, name it as the output, and hand it
+        // back. A statement expression is what lets a statement be a value.
+        format!("__extension__({{ {tmp_decl} {statement}; {tmp}; }})")
+    }
+
     fn lvalue(&self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::Ident(name) => self.local_c_name(name),
@@ -5910,6 +6001,52 @@ fn c_float_literal(v: f64) -> String {
         return if v < 0.0 { "(-INFINITY)" } else { "INFINITY" }.to_string();
     }
     format!("{v:?}")
+}
+
+/// A template with each `{k}` placeholder replaced by `sigil` and
+/// `numbers[k]`, the backend's own operand number. A literal `sigil` is
+/// doubled, which is how LLVM reads `$$` and GCC reads `%%`; the other
+/// backend's sigil is ordinary text (`%` is not special to LLVM's x86
+/// templates, and `$` is bare in GCC's). Shared with the LLVM backend for the
+/// same reason `c_string_literal` is: the two must translate one template the
+/// same way.
+pub(crate) fn asm_operand_text(template: &str, numbers: &[usize], sigil: char) -> String {
+    let chars: Vec<char> = template.chars().collect();
+    let mut out = String::with_capacity(template.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == sigil {
+            out.push(sigil);
+            out.push(sigil);
+            i += 1;
+        } else if c == '{' {
+            let close = chars[i + 1..].iter().position(|&c| c == '}');
+            let number = close.and_then(|close| {
+                chars[i + 1..i + 1 + close]
+                    .iter()
+                    .collect::<String>()
+                    .parse::<usize>()
+                    .ok()
+                    .map(|n| (n, close))
+            });
+            match number {
+                Some((n, close)) if n < numbers.len() => {
+                    out.push(sigil);
+                    out.push_str(&numbers[n].to_string());
+                    i += close + 2;
+                }
+                _ => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// A C string literal for `s`, escapes included. Shared with the LLVM

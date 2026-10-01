@@ -75,6 +75,8 @@ use llvm_sys::core::{
     LLVMFunctionType, LLVMGetEnumAttributeKindForName, LLVMGetFirstInstruction,
     LLVMGetIntTypeWidth, LLVMGetMDKindIDInContext, LLVMGetNamedFunction, LLVMGetNextInstruction,
     LLVMGetParam,
+    LLVMGetInlineAsm,
+    LLVMStructTypeInContext,
     LLVMGetTarget, LLVMGetTypeKind,
     LLVMGetUndef, LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext,
     LLVMInt64TypeInContext,
@@ -102,8 +104,8 @@ use llvm_sys::transforms::pass_builder::{
     LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMRunPasses,
 };
 use llvm_sys::{
-    LLVMAttributeIndex, LLVMAttributeReturnIndex, LLVMIntPredicate, LLVMModuleFlagBehavior,
-    LLVMRealPredicate, LLVMTypeKind,
+    LLVMAttributeFunctionIndex, LLVMAttributeIndex, LLVMAttributeReturnIndex, LLVMInlineAsmDialect,
+    LLVMIntPredicate, LLVMModuleFlagBehavior, LLVMRealPredicate, LLVMTypeKind,
 };
 use llvm_sys::prelude::{
     LLVMBasicBlockRef, LLVMBool, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef,
@@ -112,7 +114,7 @@ use llvm_sys::prelude::{
 use llvm_sys::target::{
     LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMByteOrder, LLVMByteOrdering,
     LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVMTargetDataRef,
-    LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
+    LLVM_InitializeNativeAsmParser, LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTarget,
     LLVMInitializeAArch64AsmPrinter, LLVMInitializeAArch64Target, LLVMInitializeAArch64TargetInfo,
     LLVMInitializeAArch64TargetMC, LLVMInitializeRISCVAsmPrinter, LLVMInitializeRISCVTarget,
     LLVMInitializeRISCVTargetInfo, LLVMInitializeRISCVTargetMC, LLVMInitializeX86AsmPrinter,
@@ -227,6 +229,15 @@ pub fn initialize_native_target() -> Result<(), String> {
     let printer_failed = unsafe { LLVM_InitializeNativeAsmPrinter() };
     if printer_failed != 0 {
         return Err("LLVM has no assembly printer for this host".to_string());
+    }
+    // Inline asm (kernel stage 5) goes through the target's own assembler, so
+    // the MC asm parser has to be registered as well. The asm printer alone is
+    // not enough: without this, any `asm(...)` aborts the build with "we don't
+    // have an asm parser for this target".
+    // SAFETY: as above; this one registers the asm parser.
+    let parser_failed = unsafe { LLVM_InitializeNativeAsmParser() };
+    if parser_failed != 0 {
+        return Err("LLVM has no assembly parser for this host".to_string());
     }
     Ok(())
 }
@@ -532,6 +543,22 @@ impl Context {
         }
     }
 
+    /// An anonymous aggregate type of `fields` in order
+    /// (`LLVMStructTypeInContext`), the shape a multi-output `asm` call returns:
+    /// one member per output operand, in constraint order.
+    pub fn literal_struct(&self, fields: &[Type<'_>]) -> Type<'_> {
+        let mut raw: Vec<LLVMTypeRef> = fields.iter().map(|f| f.raw).collect();
+        Type {
+            // SAFETY: the field types are live in this context, the vector is
+            // read only for the call, and this struct is unpacked exactly as
+            // the inline-asm return shape LLVM expects.
+            raw: unsafe {
+                LLVMStructTypeInContext(self.raw, raw.as_mut_ptr(), raw.len() as c_uint, 0)
+            },
+            context: PhantomData,
+        }
+    }
+
     /// The vector type `<count x elem>` (`LLVMVectorType`). The one caller is
     /// the alignment anchor a `repr(align(N))` struct body carries: for an `N`
     /// wider than an `i128`, a vector of `N` bytes is the only LLVM type whose
@@ -540,6 +567,53 @@ impl Context {
         Type {
             // SAFETY: the element type is live and owned by this context.
             raw: unsafe { LLVMVectorType(elem.as_raw(), count) },
+            context: PhantomData,
+        }
+    }
+
+    /// An inline-assembly value (`LLVMGetInlineAsm`): the callee of a call
+    /// instruction that is one target instruction rather than a function.
+    ///
+    /// `ty` is the generated function type (each output operand is a member of
+    /// the return, each input operand is a parameter, in constraint order),
+    /// `constraints` is LLVM's constraint string, `sideeffect` is the `volatile`
+    /// flag (Kelp always sets it: it has no pure asm), and `intel` selects the
+    /// Intel dialect instead of the target's default, which is how one Kelp
+    /// template reads as destination-first on x86 and on riscv64 alike
+    /// (`plan/inline-asm.md`).
+    ///
+    /// The template is passed with an explicit length, so a NUL byte inside it
+    /// is not a C-string terminator; the same text reaches GCC as a C literal
+    /// on the other backend.
+    pub fn inline_asm<'ctx>(
+        &self,
+        ty: FnType<'ctx>,
+        template: &str,
+        constraints: &str,
+        sideeffect: bool,
+        intel: bool,
+    ) -> Value<'ctx> {
+        let dialect = if intel {
+            LLVMInlineAsmDialect::LLVMInlineAsmDialectIntel
+        } else {
+            LLVMInlineAsmDialect::LLVMInlineAsmDialectATT
+        };
+        Value {
+            // SAFETY: the function type is live in this context and both
+            // strings are read only for the call, with the lengths given.
+            raw: unsafe {
+                LLVMGetInlineAsm(
+                    ty.as_raw(),
+                    template.as_ptr() as *const c_char,
+                    template.len(),
+                    constraints.as_ptr() as *const c_char,
+                    constraints.len(),
+                    sideeffect as LLVMBool,
+                    0,
+                    dialect,
+                    0,
+                )
+            },
             context: PhantomData,
         }
     }
@@ -886,6 +960,21 @@ impl<'ctx> Function<'ctx> {
     /// read the register's upper bits as part of the value (BUG-rK2mW).
     pub fn add_return_extension(&self, ext: IntExtension) {
         self.add_enum_attribute(LLVMAttributeReturnIndex, ext.name());
+    }
+
+    /// Attach LLVM's `naked` attribute to this function (kernel stage 5): the
+    /// backend emits no prologue and no epilogue, so the body's own asm is the
+    /// whole function. The kind is looked up by name for the same reason every
+    /// other enum attribute here is.
+    pub fn mark_naked(&self) {
+        self.add_enum_attribute(LLVMAttributeFunctionIndex, "naked");
+    }
+
+    /// Attach `noinline` to this function (kernel stage 5): a naked function
+    /// must not be inlined into a caller it has no ABI for, and LLVM's `naked`
+    /// implies it on most targets but not all.
+    pub fn mark_noinline(&self) {
+        self.add_enum_attribute(LLVMAttributeFunctionIndex, "noinline");
     }
 
     /// Attach one enum attribute named `name` at `index`, looking the kind up

@@ -42,7 +42,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 
 Stages 1-5 are kernel 0. 6-11 turn it into something that can run more than one thing.
 
-**Status: stages 1 to 4 are done.** Stage 1 (MK9-S2 unsafe and pointers): `unsafe` blocks and
+**Status: stages 1 to 5 are done.** Stage 1 (MK9-S2 unsafe and pointers): `unsafe` blocks and
 `unsafe fun`, the raw pointer type `Ptr<T>`,
 `offset`/`byte_offset`/`cast`/`addr`/`is_null`, `read`/`write` and their volatile twins,
 `Ptr.alloc`/`free`, and the `coral.toml` `[unsafe] modules` audit list all work on both backends
@@ -75,6 +75,21 @@ runtime object. The allowed set (no `print`, no `panic`/`assert` builtins, no he
 `panic` handler or a default infinite loop. The acceptance artifact is
 `tests/projects/freestanding_min`, checked with the llvm tools under `dev-kernel.nix`
 (`plan/freestanding.md`, `plan/kernel-ub-notes.md`).
+
+Stage 5 (MK9-S7-M1/M3 ISA surface, roadmap B-9/B-16) adds the statement and expression
+`asm("<template>", in("...") e, out("...") place, inout("...") place, clobber("..."), volatile,
+nomem, nostack)`, legal only inside `unsafe` and therefore only in a module the manifest
+lists under `[unsafe] modules`; the anonymous `out("...") _` is the expression's value (`i64`
+when the context names no type); and `naked fun`, whose body must be exactly one `asm` and
+which lowers to LLVM's `naked` plus `noinline` (`__attribute__((naked, noinline))` on C) with
+no prologue or epilogue. One template reads destination-first everywhere: the dialect is
+Intel on x86 and the target's own syntax elsewhere, chosen per target so both backends
+assemble the same text. Both backends carry the feature: LLVM through `LLVMGetInlineAsm` and
+LLVM's `naked`/`noinline` enum attributes, the C oracle through GCC's extended asm and
+`__attribute__((naked, noinline))`, and the run fixtures pass on both. `interrupt` and
+calling-convention attributes are out of scope for this stage: a naked function whose body is
+one `asm` covers a trap vector without them. `plan/inline-asm.md` is the design and
+`plan/kernel-ub-notes.md` carries the stage's undefined behaviour.
 
 ## Two rules that keep the language honest
 

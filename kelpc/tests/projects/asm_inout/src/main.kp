@@ -1,0 +1,11 @@
+// Kernel stage 5: `asm` with an `inout` output and an `in` input. On x86-64 the
+// template is Intel syntax, so `add {0}, {1}` accumulates the input into the
+// inout place, and `{0}`/`{1}` are the operands in appearance order.
+fun main() {
+    unsafe {
+        var x: i64 = 5
+        val y: i64 = 37
+        asm("add {0}, {1}", inout("r") x, in("r") y)
+        print(x)
+    }
+}

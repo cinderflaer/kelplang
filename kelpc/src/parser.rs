@@ -315,11 +315,12 @@ impl Parser {
             {
                 extern_types.push(self.parse_extern_type_decl(is_pub)?);
             } else {
-                // `unsafe fun ...` (MK9-S2 stage 1). `unsafe` is a contextual
-                // word everywhere, so it is an identifier token and the lookahead
-                // is what makes it a declaration marker here.
-                let unsafe_ = self.check_unsafe_fun();
-                functions.push(self.parse_function(is_pub, unsafe_, section)?);
+                // `unsafe fun ...` / `naked fun ...` (MK9-S2 stage 1, kernel
+                // stage 5). Both are contextual words everywhere, so they are
+                // identifier tokens and the lookahead is what makes them
+                // declaration markers here.
+                let (unsafe_, naked) = self.check_function_markers();
+                functions.push(self.parse_function(is_pub, unsafe_, naked, section)?);
             }
             self.skip_newlines();
         }
@@ -334,17 +335,32 @@ impl Parser {
         })
     }
 
-    /// Whether the `unsafe` word at the cursor begins an `unsafe fun`
-    /// declaration and should be consumed (MK9-S2 stage 1). `unsafe` is not a
-    /// keyword, so it is only a marker when the token after it is `fun`.
-    fn check_unsafe_fun(&mut self) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe")
-            && matches!(self.peek2_kind(), TokenKind::Fun)
-        {
-            self.advance();
-            return true;
+    /// The declaration markers before `fun`: `unsafe` and `naked` (MK9-S2
+    /// stage 1, kernel stage 5). Neither is a keyword, so each is only a marker
+    /// when `fun` is what follows the run of them, and nothing is consumed
+    /// otherwise.
+    fn check_function_markers(&mut self) -> (bool, bool) {
+        let mut unsafe_ = false;
+        let mut naked = false;
+        let mut i = 0;
+        loop {
+            match self.tokens.get(self.pos + i).map(|t| &t.kind) {
+                Some(TokenKind::Ident(n)) if n == "unsafe" => unsafe_ = true,
+                Some(TokenKind::Ident(n)) if n == "naked" => naked = true,
+                _ => break,
+            }
+            i += 1;
         }
-        false
+        if !matches!(
+            self.tokens.get(self.pos + i).map(|t| &t.kind),
+            Some(TokenKind::Fun)
+        ) {
+            return (false, false);
+        }
+        for _ in 0..i {
+            self.advance();
+        }
+        (unsafe_, naked)
     }
 
     /// The item a leading `pub` must be followed by (A-13). `pub` on anything
@@ -359,10 +375,13 @@ impl Parser {
             | TokenKind::Datac
             | TokenKind::Enum
             | TokenKind::Const => Ok(()),
-            // `pub unsafe fun ...`: `unsafe` is a contextual word, so it is only
-            // a marker when `fun` follows it.
+            // `pub unsafe fun ...` / `pub naked fun ...`, in either order: both
+            // are contextual words, so each is only a marker when `fun` follows
+            // the run of them.
             TokenKind::Ident(n)
-                if n == "unsafe" && matches!(self.peek2_kind(), TokenKind::Fun) =>
+                if (n == "unsafe" || n == "naked")
+                    && (matches!(self.peek2_kind(), TokenKind::Fun)
+                        || matches!(self.peek2_kind(), TokenKind::Ident(m) if m == "unsafe" || m == "naked")) =>
             {
                 Ok(())
             }
@@ -713,7 +732,7 @@ impl Parser {
         matches!(self.peek_kind(), TokenKind::Fun)
             || (matches!(self.peek_kind(), TokenKind::Extern)
                 && matches!(self.peek2_kind(), TokenKind::Fun))
-            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe")
+            || (matches!(self.peek_kind(), TokenKind::Ident(n) if n == "unsafe" || n == "naked")
                 && matches!(self.peek2_kind(), TokenKind::Fun))
     }
 
@@ -901,7 +920,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, section: Option<String>) -> PResult<FunctionDecl> {
+    fn parse_function(&mut self, is_pub: bool, unsafe_: bool, naked: bool, section: Option<String>) -> PResult<FunctionDecl> {
         // `extern fun ...` — a declaration whose body the compiler supplies
         // (M6.2). It has no body at all, and cannot be a receiver method
         // (there is nothing to give it a body with).
@@ -1045,6 +1064,7 @@ impl Parser {
             extern_,
             unsafe_,
             variadic,
+            naked,
             receiver,
             params,
             return_type,
@@ -2050,6 +2070,169 @@ impl Parser {
         Ok((args, end))
     }
 
+    /// `asm("<template>", operands...)` (kernel stage 5). The template's
+    /// placeholders are `{0}`, `{1}`, ... in operand order; each operand is
+    /// `in("<constraint>") expr`, `out("<constraint>") place` (or `_` for the
+    /// anonymous output that is the expression's value), `inout(...) place`,
+    /// or `clobber("<register>")`, and the option words are `volatile`,
+    /// `nomem` and `nostack`. `plan/inline-asm.md` is the design.
+    fn parse_asm_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span;
+        self.expect(TokenKind::LParen, "'(' after 'asm'")?;
+        let (template, _) = match self.peek_kind().clone() {
+            TokenKind::StringLit(s) => {
+                self.advance();
+                (s, self.tokens[self.pos - 1].span)
+            }
+            other => {
+                return Err(ParseError {
+                    message: format!(
+                        "expected a quoted instruction template in 'asm(\"...\", ...)', found {other:?}"
+                    ),
+                    span: self.peek().span,
+                })
+            }
+        };
+        let saved = std::mem::replace(&mut self.no_trailing_block, true);
+        let mut operands: Vec<AsmOperand> = Vec::new();
+        let mut clobbers: Vec<String> = Vec::new();
+        let mut nomem = false;
+        let mut nostack = false;
+        while self.check(&TokenKind::Comma) {
+            self.advance();
+            let (word, word_span) = match self.peek_kind().clone() {
+                TokenKind::Ident(n) => {
+                    self.advance();
+                    (n, self.tokens[self.pos - 1].span)
+                }
+                other => {
+                    return Err(ParseError {
+                        message: format!(
+                            "expected an asm operand ('in', 'out', 'inout', 'clobber') or an option word ('volatile', 'nomem', 'nostack'), found {other:?}"
+                        ),
+                        span: self.peek().span,
+                    })
+                }
+            };
+            match word.as_str() {
+                "volatile" | "nomem" | "nostack"
+                    if !matches!(self.peek_kind(), TokenKind::LParen) =>
+                {
+                    match word.as_str() {
+                        "volatile" => {}
+                        "nomem" => nomem = true,
+                        _ => nostack = true,
+                    }
+                }
+                "clobber" if matches!(self.peek_kind(), TokenKind::LParen) => {
+                    let (name, _) = self.asm_constraint("clobber")?;
+                    if name.is_empty() {
+                        return Err(ParseError {
+                            message: "'clobber(\"\")' needs a register name, for example 'clobber(\"memory\")' or 'clobber(\"rax\")'"
+                                .to_string(),
+                            span: word_span,
+                        });
+                    }
+                    clobbers.push(name);
+                }
+                "in" | "out" | "inout" if matches!(self.peek_kind(), TokenKind::LParen) => {
+                    let kind = match word.as_str() {
+                        "in" => AsmOperandKind::In,
+                        "out" => AsmOperandKind::Out,
+                        _ => AsmOperandKind::InOut,
+                    };
+                    let (constraint, _) = self.asm_constraint(&word)?;
+                    let operand = if matches!(self.peek_kind(), TokenKind::Ident(n) if n == "_") {
+                        self.advance();
+                        None
+                    } else {
+                        Some(self.parse_expr()?)
+                    };
+                    if operand.is_none() && kind != AsmOperandKind::Out {
+                        return Err(ParseError {
+                            message: format!(
+                                "'{}' needs a place: only 'out' may write an anonymous output ('out(\"...\") _')",
+                                word
+                            ),
+                            span: word_span,
+                        });
+                    }
+                    let end = operand
+                        .as_ref()
+                        .map(|e| e.span())
+                        .unwrap_or(word_span);
+                    operands.push(AsmOperand {
+                        kind,
+                        constraint,
+                        operand,
+                        span: word_span.to(end),
+                    });
+                }
+                other => {
+                    return Err(ParseError {
+                        message: format!(
+                            "unknown asm operand kind '{other}': expected 'in', 'out', 'inout' or 'clobber'"
+                        ),
+                        span: word_span,
+                    })
+                }
+            }
+        }
+        self.no_trailing_block = saved;
+        let end = self.expect(TokenKind::RParen, "')' to close 'asm(...)'")?.span;
+        Ok(Expr::Asm {
+            template,
+            operands,
+            clobbers,
+            nomem,
+            nostack,
+            span: start.to(end),
+        })
+    }
+
+    /// `("<constraint>")` after an asm operand kind: the LLVM constraint or
+    /// clobber name, passed to the backend unchanged. The compiler checks that
+    /// it is a plain word, never that the register exists.
+    fn asm_constraint(&mut self, kind: &str) -> PResult<(String, Span)> {
+        self.expect(TokenKind::LParen, "'(' after the operand kind")?;
+        let (name, span) = match self.peek_kind().clone() {
+            TokenKind::StringLit(s) => {
+                let span = self.peek().span;
+                self.advance();
+                (s, span)
+            }
+            other => {
+                return Err(ParseError {
+                    message: format!(
+                        "expected a quoted constraint in '{kind}(\"...\")', found {other:?}"
+                    ),
+                    span: self.peek().span,
+                })
+            }
+        };
+        if name.is_empty() {
+            return Err(ParseError {
+                message: format!(
+                    "'{kind}(\"\")' needs a constraint name, for example 'in(\"r\")' or 'out(\"rax\")'"
+                ),
+                span,
+            });
+        }
+        if name
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '{' | '}' | '~' | ',' | '$'))
+        {
+            return Err(ParseError {
+                message: format!(
+                    "'{name}' is not a constraint name: a constraint is a register class or register name, with no spaces, '{{', '}}', '~', ',' or '$'"
+                ),
+                span,
+            });
+        }
+        self.expect(TokenKind::RParen, "')' to close the constraint")?;
+        Ok((name, span))
+    }
+
     fn parse_primary(&mut self) -> PResult<Expr> {
         let tok = self.peek().clone();
         match tok.kind {
@@ -2085,6 +2268,12 @@ impl Parser {
             }
             TokenKind::Ident(ref name) => {
                 let name = name.clone();
+                // `asm("...", ...)` (kernel stage 5): `asm` is a contextual
+                // word, so it only counts when a `(` touches it, exactly as
+                // `unsafe` counts only before `{`.
+                if name == "asm" && matches!(self.peek2_kind(), TokenKind::LParen) {
+                    return self.parse_asm_expr();
+                }
                 // `unsafe { ... }` (MK9-S2 stage 1): the contextual word is a
                 // block introducer exactly when the next token is `{`, so
                 // `unsafe` stays usable as an ordinary name everywhere else.
@@ -3880,5 +4069,76 @@ mod tests {
         parse("fun each(f: scoped fun(i32).R: i32) {}\n");
         // `scoped` is contextual: as an ordinary type name it is untouched.
         parse("datac scoped(val n: i32)\nfun f(x: scoped) {}\n");
+    }
+
+    #[test]
+    fn an_asm_expression_parses_its_operands_in_order() {
+        let p = parse(
+            "fun main() {\n    asm(\"add {0}, {1}\", inout(\"r\") x, in(\"r\") y, clobber(\"rax\"), nomem)\n}",
+        );
+        let stmts = body_stmts(&p);
+        let Stmt::Expr { expr, .. } = &stmts[0] else {
+            panic!("expected an asm statement");
+        };
+        let Expr::Asm {
+            template,
+            operands,
+            clobbers,
+            nomem,
+            nostack,
+            ..
+        } = expr
+        else {
+            panic!("expected an asm statement");
+        };
+        assert_eq!(template, "add {0}, {1}");
+        assert_eq!(operands.len(), 2);
+        assert_eq!(operands[0].kind, AsmOperandKind::InOut);
+        assert_eq!(operands[0].constraint, "r");
+        assert!(operands[0].operand.is_some());
+        assert_eq!(operands[1].kind, AsmOperandKind::In);
+        assert_eq!(clobbers, &vec!["rax".to_string()]);
+        assert!(*nomem);
+        assert!(!*nostack);
+    }
+
+    #[test]
+    fn an_anonymous_out_operand_parses_as_no_expression() {
+        let p = parse("fun main() {\n    val v: i64 = asm(\"mov {0}, 1\", out(\"r\") _)\n}");
+        let stmts = body_stmts(&p);
+        let Stmt::Let { init, .. } = &stmts[0] else {
+            panic!("expected a let statement");
+        };
+        let Expr::Asm { operands, .. } = init else {
+            panic!("expected an asm expression");
+        };
+        assert_eq!(operands[0].kind, AsmOperandKind::Out);
+        assert!(operands[0].operand.is_none());
+    }
+
+    #[test]
+    fn an_unknown_asm_operand_kind_is_refused_by_name() {
+        let e = parse_err("fun main() {\n    asm(\"nop\", sideways(\"r\") 1)\n}");
+        assert!(
+            e.message.contains("unknown asm operand kind 'sideways'"),
+            "got: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn a_naked_fun_declaration_sets_its_flag() {
+        let p = parse("naked fun f().R: i64 {\n    asm(\"ret\")\n}\nfun main() {}");
+        assert!(p.functions[0].naked);
+        assert!(!p.functions[0].unsafe_);
+        assert!(!p.functions[1].naked);
+    }
+
+    #[test]
+    fn naked_and_unsafe_can_be_written_together() {
+        let p = parse("pub unsafe naked fun f().R: i64 {\n    asm(\"ret\")\n}\nfun main() {}");
+        assert!(p.functions[0].naked);
+        assert!(p.functions[0].unsafe_);
+        assert!(p.functions[0].is_pub);
     }
 }

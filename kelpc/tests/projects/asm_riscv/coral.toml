@@ -1,0 +1,14 @@
+name = "kelpasmriscv"
+
+# Kernel stage 5: inline asm in the freestanding mode, where it is the whole
+# point of the feature. The target is bare-metal riscv64, so the template is
+# riscv assembly and LLVM's default dialect, and `asm` is an unsafe operation
+# in a module the audit list names.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+
+[unsafe]
+modules = ["main"]

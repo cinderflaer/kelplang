@@ -1,0 +1,12 @@
+// Kernel stage 5: an `out` operand writes its place, and the anonymous form
+// `out("r") _` is the asm expression's own value.
+fun main() {
+    unsafe {
+        var o: i64 = 0
+        asm("mov {0}, 1234", out("r") o)
+        print(o)
+
+        val v: i64 = asm("mov {0}, 7", out("r") _)
+        print(v)
+    }
+}
