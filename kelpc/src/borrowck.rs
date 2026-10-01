@@ -1642,6 +1642,11 @@ fn check_if(then_block: &tir::Block, else_block: &Option<tir::Block>, ctx: &mut 
 fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
     match &expr.kind {
         tir::ExprKind::Ident(name) => ctx.use_value_moving(name, expr),
+        // A `static` read (kernel stage 7) is a read of a place the frame does
+        // not own, so nothing moves and nothing drops: a static's type is a
+        // scalar, an array of scalars, a datac of those, or an `Atomic`, none
+        // of which owns memory.
+        tir::ExprKind::StaticRef(_) => Ok(()),
         tir::ExprKind::FieldAccess { base, field } => {
             check_place_through(base, ctx)?;
             // A field read is a *place*, and a partial move is the one way a

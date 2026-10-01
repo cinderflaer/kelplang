@@ -64,6 +64,47 @@ pub struct Program {
     /// global is a symbol for the linker, not a load. Empty for a program that
     /// writes no such clause, which leaves both backends' output unchanged.
     pub const_data: Vec<ConstData>,
+    /// The program's `static` globals (kernel stage 7), in declaration order.
+    /// Each is one object with a stable address; `infer.rs` has already folded
+    /// its initializer into a constant tree, so no code runs at startup.
+    pub statics: Vec<Static>,
+}
+
+/// One `static NAME: T = INIT` global (kernel stage 7).
+#[derive(Debug, Clone)]
+pub struct Static {
+    /// The module-prefixed top-level name, which is the emitted symbol (each
+    /// backend mangles it with its own prefix).
+    pub name: String,
+    pub ty: Ty,
+    /// `static mut NAME` — every access is `unsafe`.
+    pub mutable: bool,
+    /// The `section("...")` clause, when one was written.
+    pub section: Option<String>,
+    pub init: StaticInit,
+}
+
+/// A `static`'s folded initializer (kernel stage 7). A small tree rather than a
+/// `tir::Expr`, because both backends need a *constant* of the global's type:
+/// the C backend writes a compound initializer and the LLVM backend builds an
+/// `LLVMConst*`, and neither can run code at startup (a freestanding image has
+/// no init hook).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StaticInit {
+    Int(i128),
+    Float(f64),
+    Bool(bool),
+    Char(u32),
+    /// `[a, b, c]` — one entry per element, in order.
+    Array(Vec<StaticInit>),
+    /// `[v; N]` — the same value repeated. Kept apart from `Array` so a 4096-byte
+    /// zero buffer stays one `zeroinitializer` (or one `= { 0 }`), not 4096
+    /// entries the code generators would each have to spell.
+    Repeat { value: Box<StaticInit>, len: u64 },
+    /// A `datac` constructor's fields, in declaration order.
+    Struct(Vec<StaticInit>),
+    /// `Atomic.new(v)` — the cell's one member.
+    Atomic(Box<StaticInit>),
 }
 
 /// One `section(".rodata") const NAME: [u8; N] = [...]` (kernel stage 4).
@@ -211,6 +252,11 @@ pub enum ExprKind {
     StringLit(String),
     BoolLit(bool),
     Ident(String),
+    /// A read of a top-level `static` (kernel stage 7). A *place*, not a value:
+    /// codegen loads from it in value position, stores through it for an
+    /// assignment, and takes its address for `Ptr.from_ref`/`Ptr.from_mut`.
+    /// `name` is the module-prefixed symbol.
+    StaticRef(String),
     Unary {
         op: UnOp,
         expr: Box<Expr>,

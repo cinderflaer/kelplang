@@ -568,6 +568,7 @@ pub fn load(
     let mut program = ast::Program {
         impls: Vec::new(),
         consts: Vec::new(),
+        statics: Vec::new(),
         pds: Vec::new(),
         datacs: Vec::new(),
         enums: Vec::new(),
@@ -598,6 +599,12 @@ pub fn load(
             c.name = format!("{}{}", m.prefix, c.name);
             c.module = m.id.clone();
             program.consts.push(c);
+        }
+        for s in &parsed.statics {
+            let mut s = s.clone();
+            s.name = format!("{}{}", m.prefix, s.name);
+            s.module = m.id.clone();
+            program.statics.push(s);
         }
         for p in &parsed.pds {
             let mut p = p.clone();

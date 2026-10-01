@@ -258,3 +258,46 @@ or privilege state at `mret`, and every MMIO fact. These are the reasons the
 next stages add `interrupt` attributes, stack guards and the panic semantics
 of stage 10, and MMIO capabilities in stage 11 (`plan/kernel0-status.md` lists
 them in order).
+
+## Stage 7: global `static` data (MK9-S4-M6)
+
+**New ways to reach UB.** A `static` is one object with a stable address for the
+whole program, so this stage hands out a second kind of shared, long-lived
+storage beside `Ptr<T>`:
+
+- A `static mut` is the language's audited shared state. `unsafe` is the whole
+  check: two threads that touch the same `static mut` without an `Atomic` or a
+  fence are a data race the compiler does not see, and a `static mut` written
+  inside an `unsafe` block is no more sequenced than a `Ptr` write. The
+  read-modify-write a kernel writes as `COUNTER = COUNTER + 1` is not atomic.
+- `Ptr.from_mut(NAME)` and `Ptr.from_ref(&NAME)` hand out the same raw pointer
+  stage 1 describes, now to storage that outlives every frame, so the stage-1
+  rules (alignment, provenance, the pointee still being the type it is read as)
+  apply unchanged and no lifetime can make the pointer dangle.
+- An immutable `static` is emitted read-only (`.rodata`, or `.data` when it
+  holds an `Atomic`), and a `static mut` is writable storage in `.data`/`.bss`.
+  A program that reaches an immutable static through a `Ptr` built with
+  `Ptr.from_addr` and writes through it is the ordinary type-punning UB, not a
+  new one; the compiler checks that a *written* static is `static mut`, not that
+  a pointer derived from one is used correctly.
+- A `static` initialised to all zero is placed in `.bss`, and a freestanding
+  image's `.bss` is zero only because QEMU's ELF loader zeroes the segment; the
+  compiler's `_start` still clears nothing, so a real boot loader that does not
+  zero `.bss` reads indeterminate values where `.bss` is expected.
+
+**What the compiler does check.** That a `static`'s type is a Copy scalar, an
+integer/`bool`/`char` array, a `datac` of those, or an `Atomic<T>`, and no heap
+type, borrow, `View`, function value, `Ptr<T>` or `extern type` handle; that its
+initializer is a constant expression, folded before codegen; that every access
+to a `static mut` is inside `unsafe { ... }` or an `unsafe fun`, in a module the
+manifest lists under `[unsafe] modules`; that an assignment names a `static mut`;
+and that a cross-module reference goes through `pub`. Both backends emit the
+same object and the same access, and the freestanding allowed set accepts a
+static by construction, because a heap type cannot be one.
+
+**What it does not check.** The sequencing of two accesses to a `static mut`
+(no atomicity, no ordering, no race detection), the address a `Ptr` derived from
+one holds, or anything about the linker script's placement of `.data`/`.bss`. The
+`Atomic<T>` operations remain the only safe shared mutable, and this stage does
+not extend the (still unpublished) memory model to a `static` and a `Ptr` over
+the same bytes.

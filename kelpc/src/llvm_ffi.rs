@@ -68,6 +68,7 @@ use llvm_sys::core::{
     LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
     LLVMBuildSub, LLVMBuildSwitch, LLVMBuildTrunc, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem,
     LLVMBuildUnreachable, LLVMBuildXor, LLVMBuildZExt, LLVMConstInt, LLVMConstNull, LLVMConstReal,
+    LLVMConstNamedStruct,
     LLVMAppendModuleInlineAsm,
     LLVMContextCreate, LLVMContextDispose, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
     LLVMDisposeBuilder,
@@ -708,6 +709,21 @@ impl Context {
         }
     }
 
+    /// The constant of the *named* struct type `ty` with the given element
+    /// values (`LLVMConstNamedStruct`), which is what a `datac` or `Atomic<T>`
+    /// static's initializer is. `LLVMConstStruct` would build a literal struct
+    /// type instead, and a global's initializer has to match its own named
+    /// type, so the named form is the one that works here.
+    pub fn const_named_struct(&self, ty: Type<'_>, values: &[Value<'_>]) -> Value<'_> {
+        let mut raws: Vec<LLVMValueRef> = values.iter().map(|v| v.raw).collect();
+        Value {
+            // SAFETY: the type and every value are live in this context; LLVM
+            // copies the element list.
+            raw: unsafe { LLVMConstNamedStruct(ty.raw, raws.as_mut_ptr(), raws.len() as c_uint) },
+            context: PhantomData,
+        }
+    }
+
     /// The floating-point constant `value` of type `ty` (`LLVMConstReal`).
     ///
     /// The C API takes the value as a C `double` and converts to `ty`'s own
@@ -838,6 +854,14 @@ impl<'ctx> Value<'ctx> {
     pub fn set_internal_linkage(&self) {
         // SAFETY: as above; the argument is a global handle's own ref.
         unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMInternalLinkage) };
+    }
+
+    /// Give a global appending linkage (`LLVMSetLinkage` with
+    /// `LLVMAppendingLinkage`), the linkage `@llvm.used` itself carries so the
+    /// linker never drops a symbol a program reaches only through its section.
+    pub fn set_appending_linkage(&self) {
+        // SAFETY: as above; the argument is a global handle's own ref.
+        unsafe { LLVMSetLinkage(self.raw, LLVMLinkage::LLVMAppendingLinkage) };
     }
 
     /// Place a global (or a function) in section `section` (`LLVMSetSection`),
