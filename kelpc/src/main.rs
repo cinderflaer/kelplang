@@ -8,6 +8,7 @@ mod diag;
 mod driver;
 mod externs;
 mod fmt;
+mod freestanding;
 mod infer;
 mod lexer;
 mod lint;
@@ -183,6 +184,14 @@ fn front_end(
         return (findings, false);
     }
 
+    // The freestanding allowed set (kernel stage 4) runs in the front end, so
+    // `kelpc check` enforces exactly what `kelpc build` does. It is a no-op for
+    // a hosted project, which is every project written before this stage.
+    if let Err(d) = freestanding::check(&typed, &loaded.project) {
+        findings.push((Severity::Error, d));
+        return (findings, false);
+    }
+
     (findings, true)
 }
 
@@ -288,6 +297,7 @@ fn build(
     backend: Backend,
     deny_outdated: bool,
     opt: OptLevel,
+    freestanding_out: &mut bool,
 ) -> bool {
     let mut sources = SourceMap::new();
 
@@ -317,6 +327,23 @@ fn build(
             return false;
         }
     };
+
+    // Kernel stage 4: a freestanding project has no hosted runtime to build
+    // against, so the C backend's libc preamble cannot express it. The refusal
+    // is here, before either generator runs, rather than at the `cc` failure a
+    // C build would produce.
+    if let Err(d) = freestanding::check(&typed, &loaded.project) {
+        sources.report(&d);
+        return false;
+    }
+    if loaded.project.target().is_freestanding() && backend == Backend::C {
+        eprintln!(
+            "error: '{}' sets '[target] mode = \"freestanding\"', which only the llvm backend can build: the C backend's runtime preamble is libc (the KELPC_ORACLE switch cannot build a freestanding project)",
+            path
+        );
+        return false;
+    }
+    *freestanding_out = loaded.project.target().is_freestanding();
 
     // One `pkg-config` invocation for every package the manifest's `[extern.*]`
     // sections named (MK9-S1-M1), shared by both backends. It runs before the
@@ -355,6 +382,19 @@ fn build(
             }
         }
         Backend::Llvm => {
+            let freestanding = if loaded.project.target().is_freestanding() {
+                let target = loaded.project.target();
+                let root = loaded.project.root.clone().unwrap_or_default();
+                let script = root.join(target.linker_script().unwrap_or_default());
+                Some(codegen_llvm::Freestanding {
+                    triple: target.triple().unwrap_or_default().to_string(),
+                    entry: target.entry().unwrap_or_default().to_string(),
+                    panic: target.panic().map(str::to_string),
+                    linker_script: script.to_string_lossy().into_owned(),
+                })
+            } else {
+                None
+            };
             // The LLVM backend builds its own module, writes the textual IR
             // beside the binary, and links the object itself; the C source
             // string the arm above writes has no counterpart here.
@@ -371,6 +411,7 @@ fn build(
                 &include_dirs,
                 &library_dirs,
                 &pkg_config_flags,
+                freestanding.as_ref(),
             ) {
                 eprintln!("error: {message}");
                 return false;
@@ -1143,11 +1184,21 @@ fn main() -> ExitCode {
         }
     }
 
-    if !build(&path, &out_path, backend, deny_outdated, opt) {
+    let mut freestanding = false;
+    if !build(&path, &out_path, backend, deny_outdated, opt, &mut freestanding) {
         return ExitCode::FAILURE;
     }
 
     if command == "run" {
+        // A freestanding artifact is a bare-metal image: running it here would
+        // be an exec-format error at best. `-o` is how it is written and a
+        // boot loader or emulator is how it is run.
+        if freestanding {
+            eprintln!(
+                "error: '{path}' is a freestanding project, whose artifact is a bare-metal ELF; 'kelpc run' does not run one"
+            );
+            return ExitCode::FAILURE;
+        }
         let abs_out = if out_path.is_absolute() {
             out_path.clone()
         } else {

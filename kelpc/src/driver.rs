@@ -257,6 +257,46 @@ pub fn link_llvm_object(
     Ok(())
 }
 
+/// Links a freestanding object into an ELF with `ld.lld` (kernel stage 4).
+///
+/// This is the LLVM backend's *other* finishing step: no `cc`, no libc, no
+/// `-lm`, no runtime object. The linker script places the sections and defines
+/// the symbols the generated `_start` reads, and `ld.lld` is the linker the
+/// bare-metal LLVM toolchains supply. A missing `ld.lld` is an error naming it,
+/// never a fallback to `cc`: `cc` would link the hosted startup files back in,
+/// which is the one thing a freestanding image must not have.
+///
+/// `linker_script` is the manifest's `[target] linker_script`, already resolved
+/// against the directory holding `coral.toml`.
+pub fn link_freestanding_object(
+    object_path: &Path,
+    linker_script: &Path,
+    out_path: &Path,
+) -> Result<(), CompileError> {
+    let output = Command::new("ld.lld")
+        .arg("-T")
+        .arg(linker_script)
+        .arg("-o")
+        .arg(out_path)
+        .arg("--static")
+        .arg(object_path)
+        .output()
+        .map_err(|e| CompileError {
+            message: format!(
+                "could not invoke 'ld.lld': {e}; a freestanding build needs 'ld.lld' on PATH"
+            ),
+        })?;
+    if !output.status.success() {
+        return Err(CompileError {
+            message: format!(
+                "ld.lld failed:\n{}",
+                String::from_utf8_lossy(&output.stderr).trim_end()
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// The `-I<dir>` and `-L<dir>` flags for a project's `[extern.*]` include and
 /// library directories, in that order. Pure, so the flag shape is tested
 /// without invoking `cc`.

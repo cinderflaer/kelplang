@@ -6220,9 +6220,25 @@ fn check_program_pass(
     )?;
     let wired = scan_all(program, &all_pds, &structs, &decl_keys);
 
-    if !sigs.contains_key("main") {
+    // Kernel stage 4: a freestanding project has no hosted `main`. Its entry
+    // point is the `fun` the manifest's `[target] entry` names, in the entry
+    // module, and the same rule the hosted entry has holds for it: a program
+    // without one is a compile error rather than an artifact with an entry
+    // point nothing points at.
+    let entry_key = if project.target().is_freestanding() {
+        project.target().entry().unwrap_or("main")
+    } else {
+        "main"
+    };
+    if !sigs.contains_key(entry_key) {
         return Err(Diagnostic::new(
-            "no 'main' function found".to_string(),
+            if entry_key == "main" {
+                "no 'main' function found".to_string()
+            } else {
+                format!(
+                    "no entry function '{entry_key}' found: coral.toml's '[target] entry' names a `fun` with no parameters and no return in the entry module"
+                )
+            },
             Span::new(0, 0),
             project.entry.clone(),
         ));

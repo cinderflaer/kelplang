@@ -1,0 +1,7 @@
+// The manifest's `[target] entry` names `kmain`, and there is no such function:
+// the compiler must say so rather than emit an ELF whose `_start` calls an
+// undefined symbol.
+fun entry_typo() {
+    while true {
+    }
+}

@@ -1,0 +1,10 @@
+// A freestanding entry point that does nothing but loop: the smallest program
+// the LLVM backend can emit an ELF for that references no libc symbol and no
+// runtime helper. `k` is a fixed value so the loop has no exit the optimizer
+// can turn into a return.
+fun kmain() {
+    var i: u64 = 1
+    while true {
+        i = i * 3 + 1
+    }
+}
