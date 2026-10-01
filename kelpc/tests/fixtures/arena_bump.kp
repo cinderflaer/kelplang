@@ -1,0 +1,39 @@
+// Kernel stage 13's arena: alignment of the returned addresses, exhaustion and
+// an overflowing size both answering the null pointer, and `reset` making the
+// region reusable. No `unsafe` is written here: the backing store is an array
+// borrowed with `Ptr.from_ref`, and every check is an address or a `bool`, so
+// the fixture runs on both backends and prints the same lines.
+impl "std/arena"
+
+fun main() {
+    var buf: [u8; 128] = [0; 128]
+    val bp: Ptr<[u8; 128]> = Ptr.from_ref(&buf)
+    val base: Ptr<u8> = bp.cast<u8>()
+    var a: arena.Arena = arena.new(base = base, cap = 128)
+
+    val p0: Ptr<u8> = a.alloc(size = 1, align = 1)
+    val p1: Ptr<u8> = a.alloc(size = 4, align = 8)
+    val p2: Ptr<u8> = a.alloc(size = 16, align = 16)
+    print(p0.is_null())
+    print(p1.is_null())
+    print(p2.is_null())
+    print(p1.addr() % 8 == 0)
+    print(p2.addr() % 16 == 0)
+    print(p1.addr() > p0.addr())
+    print(p2.addr() > p1.addr())
+    print(a.used() == 128 - a.remaining())
+    print(a.used() >= 21)
+
+    val exhausted: Ptr<u8> = a.alloc(size = 128, align = 1)
+    print(exhausted.is_null())
+
+    val max: usize = ~0
+    val wrapped: Ptr<u8> = a.alloc(size = max, align = 1)
+    print(wrapped.is_null())
+
+    a.reset()
+    print(a.used())
+    val again: Ptr<u8> = a.alloc(size = 1, align = 1)
+    print(again.addr() == p0.addr())
+    print(again.is_null())
+}

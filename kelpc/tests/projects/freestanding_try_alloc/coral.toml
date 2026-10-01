@@ -1,0 +1,20 @@
+name = "freestandingtryalloc"
+
+# Kernel stage 13's fallible-allocation acceptance: a bare-metal riscv64 image
+# whose `[target] alloc`/`dealloc` pair is the project's own bump allocator, so
+# `Ptr.try_alloc` lowers to *those* functions rather than libc's `malloc`. The
+# boot proves a normal request comes back non-null and writable and an absurd
+# one comes back null, and the `llvm-nm -u` check proves no libc symbol is left.
+# `main` is on the audit list for the `static mut` heap and the writes through
+# the returned pointers; `uart` for its volatile `Ptr` access.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+alloc = "alloc"
+dealloc = "dealloc"
+
+[unsafe]
+modules = ["main", "uart"]

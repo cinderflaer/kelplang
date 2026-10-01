@@ -1,0 +1,20 @@
+name = "freestandingarena"
+
+# Kernel stage 13's arena acceptance: a bare-metal riscv64 image that imports
+# the shipped `std/arena`, carves a `static mut [u8; 4096]` region into aligned
+# allocations, prints the results over the UART and links with no undefined
+# symbol. No `[target] alloc` pair is configured on purpose: the arena does its
+# own pointer arithmetic and never reaches the host runtime, so it must build
+# and run without an allocator. `uart` is on the audit list for its volatile
+# `Ptr` access and `main` for the `static mut` region and the writes through the
+# arena's pointers; `std/arena` is admitted by the compiler's own list, which is
+# why this manifest does not (and cannot) name it.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+panic = "kp_panic"
+
+[unsafe]
+modules = ["main", "uart"]

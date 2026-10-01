@@ -1,0 +1,7 @@
+// `Ptr.try_alloc` is an unsafe operation like `Ptr.alloc`: written outside any
+// `unsafe` block it is refused by name, even though the module is on the
+// manifest's audit list.
+fun main() {
+    val p: Ptr<i32> = Ptr.try_alloc<i32>(4)
+    print(p.is_null())
+}

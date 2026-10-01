@@ -1,0 +1,7 @@
+name = "arenamemory"
+
+# Kernel stage 13's arena over real memory: the returned pointers are written
+# and read back, and `alloc_zeroed` clears a block the previous user wrote. The
+# module is on the audit list because the writes go through a raw `Ptr<u8>`.
+[unsafe]
+modules = ["main"]

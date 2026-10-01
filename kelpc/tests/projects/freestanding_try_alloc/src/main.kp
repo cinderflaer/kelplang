@@ -1,0 +1,107 @@
+// Kernel stage 13's fallible-allocation acceptance. `[target] alloc`/`dealloc`
+// name the two functions below, so a `Ptr.try_alloc` call in the entry lowers to
+// this bump allocator: the null it returns for an absurd count is the answer the
+// program prints, and no libc `malloc` is behind it. The heap is a
+// `static mut [u8; 256]` and `dealloc` only counts, because a bump allocator
+// frees nothing.
+impl "uart"
+
+static mut HEAP: [u8; 256] = [0; 256]
+static mut USED: usize = 0
+static mut DEALLOCS: usize = 0
+
+const HEAP_CAP: usize = 256
+
+// The project's allocator. It returns an aligned pointer into `HEAP`, or the
+// null pointer when the aligned request does not fit; `try_alloc` passes that
+// null straight back to the caller rather than panicking on it.
+fun alloc(size: usize, align: usize).R: Ptr<u8> {
+    return unsafe {
+        val misalign: usize = (USED % align)
+        val padding: usize = (align - misalign) % align
+        if padding > HEAP_CAP - USED {
+            Ptr.null()
+        } else {
+            val start: usize = USED + padding
+            if size > HEAP_CAP - start {
+                Ptr.null()
+            } else {
+                USED = start + size
+                val heap: Ptr<[u8; 256]> = Ptr.from_mut(HEAP)
+                val base: Ptr<u8> = heap.cast<u8>()
+                base.byte_offset(start.to_isize())
+            }
+        }
+    }
+}
+
+// A bump allocator frees nothing, so `dealloc` is a no-op beyond its count. A
+// null pointer is not an allocation, so it is not counted.
+fun dealloc(p: Ptr<u8>, _size: usize, _align: usize) {
+    unsafe {
+        if p.is_null() == false {
+            DEALLOCS = DEALLOCS + 1
+        }
+    }
+}
+
+fun flag(value: bool).R: usize {
+    if value {
+        return 1
+    }
+    return 0
+}
+
+fun put_num(value: usize) {
+    if value == 0 {
+        uart.putc(48)
+        return
+    }
+    var digits: [u8; 20] = [0; 20]
+    var i: usize = 20
+    var v: usize = value
+    while v > 0 {
+        i = i - 1
+        digits.set(i = i, v = (48 + (v % 10)).to_u8())
+        v = v / 10
+    }
+    while i < 20 {
+        uart.putc(digits.get(i = i))
+        i = i + 1
+    }
+}
+
+fun line(label: str, value: usize) {
+    uart.puts(label)
+    put_num(value)
+    uart.puts("\n")
+}
+
+section(".text.boot") fun kmain() {
+    // A normal request: non-null, aligned, and writable through the pointer the
+    // hook's own `alloc` handed back.
+    val p: Ptr<u32> = unsafe { Ptr.try_alloc<u32>(4) }
+    line(label = "ptr ", value = flag(p.is_null()))
+    line(label = "align ", value = p.addr() % 4)
+    unsafe {
+        p.write(1234)
+        line(label = "val ", value = p.read().to_usize())
+    }
+
+    // A count whose byte request cannot fit comes back null instead of
+    // panicking, which is the whole difference from `Ptr.alloc`.
+    val max: usize = ~0
+    val huge: Ptr<u8> = unsafe { Ptr.try_alloc<u8>(max / 2) }
+    line(label = "huge ", value = flag(huge.is_null()))
+
+    uart.halt()
+}
+
+// The handler `[target] panic` names. Nothing here should reach it: a failed
+// `try_alloc` is the null pointer, not a panic.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.puts("\n")
+    uart.halt()
+}

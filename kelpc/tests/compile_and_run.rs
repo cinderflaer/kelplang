@@ -12616,3 +12616,210 @@ fn only_a_tls_program_links_openssl() {
         "a program that reaches std/tls did not link OpenSSL: {tls:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Kernel stage 13 (MK9-S5-M3): the fallible `Ptr.try_alloc` and the shipped
+// `std/arena`. The hosted halves run on both backends (each run of the suite is
+// pointed at one); the freestanding halves are LLVM-only by design and need
+// `ld.lld`, `llvm-nm` and `qemu-system-riscv64` from `dev-kernel.nix`.
+// ---------------------------------------------------------------------------
+
+/// The arena's hosted behaviour: the returned addresses are aligned (`base` is a
+/// plain array with no alignment of its own, so the arena has to account for
+/// where it starts), a request that does not fit and a size whose aligned end
+/// would wrap both answer the null pointer, and `reset` makes the region
+/// reusable. No `unsafe` is written in the fixture, so both backends build it.
+#[test]
+fn an_arena_bumps_with_alignment_and_reuses_after_reset() {
+    assert_compiles_and_runs(
+        "tests/fixtures/arena_bump.kp",
+        "false\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n0\ntrue\nfalse\n",
+    );
+}
+
+/// A non-power-of-two `align` is refused at the call with the arena's own
+/// message rather than handing back a misaligned pointer.
+#[test]
+fn an_arena_rejects_a_non_power_of_two_alignment() {
+    assert_fixture_panics("arena_bad_align", "arena align must be a power of two");
+}
+
+/// The arena over real memory: both pointers are written and read back, and
+/// `alloc_zeroed` clears a block the previous user wrote. `main` is on the
+/// audit list because the writes go through a raw `Ptr<u8>`.
+#[test]
+fn an_arena_hands_out_writable_aligned_memory_and_zeroes_on_request() {
+    assert_project_runs(
+        "arena_memory",
+        &project("arena_memory"),
+        "170\n187\ntrue\ntrue\n0\n0\ntrue\n",
+    );
+}
+
+/// `Ptr.try_alloc` is the non-panicking twin: a small request is non-null and
+/// writable, and a count whose byte request no allocator can honour is the null
+/// pointer instead of a call to the panic handler.
+#[test]
+fn try_alloc_is_fallible_where_alloc_would_panic() {
+    assert_project_runs(
+        "ptrs_try_alloc",
+        &project("ptrs_try_alloc"),
+        "false\n42\ntrue\nfalse\n",
+    );
+}
+
+/// `Ptr.try_alloc` carries the same `unsafe` requirement as `Ptr.alloc`, so a
+/// call outside any block is refused by name even in a module the manifest
+/// lists.
+#[test]
+fn try_alloc_outside_unsafe_is_refused() {
+    assert_project_rejected(
+        "ptr_try_alloc_outside_unsafe",
+        &project("ptr_try_alloc_outside_unsafe"),
+        "'Ptr.try_alloc' is an unsafe operation",
+    );
+}
+
+/// In a freestanding build the hook behind `Ptr.try_alloc` is the project's own
+/// allocator, so without a `[target] alloc`/`dealloc` pair the call is refused
+/// with the two keys that would make it available.
+#[test]
+fn try_alloc_without_a_freestanding_allocator_is_refused() {
+    assert_project_rejected(
+        "freestanding_try_alloc_no_alloc",
+        &project("freestanding_try_alloc_no_alloc"),
+        "'[target] alloc' and '[target] dealloc'",
+    );
+}
+
+/// The freestanding arena's build claim: `std/arena` and its `unsafe` block
+/// compile into a riscv64 image that references no undefined symbol, and the
+/// project configures no allocator at all, which is what proves the module is
+/// pure pointer arithmetic. Needs `ld.lld` and `llvm-nm`.
+#[test]
+fn freestanding_arena_builds_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding arena build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_arena");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_arena"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding arena build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding arena image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
+/// The freestanding arena's boot: a `static mut [u8; 4096]` region carved into
+/// aligned allocations, written and read through the returned pointers, with
+/// the exhaustion and overflow answers, all read from QEMU's own serial output.
+#[test]
+fn freestanding_arena_boots_and_prints_its_lines() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding arena boot test: 'ld.lld' or 'qemu-system-riscv64' is \
+             not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_arena",
+        &project("freestanding_arena"),
+        &[
+            "p0 aligned 1",
+            "p1 aligned 1",
+            "ordered 1",
+            "used seen 1",
+            "remain seen 1",
+            "read 170",
+            "exhaust 1",
+            "wrap 1",
+            "reset 0",
+            "zero 0",
+        ],
+    );
+}
+
+/// The freestanding `try_alloc`'s build claim: with `[target] alloc`/`dealloc`
+/// naming the project's own bump allocator, no libc `malloc` is left behind.
+#[test]
+fn freestanding_try_alloc_builds_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding try_alloc build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_try_alloc");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_try_alloc"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding try_alloc build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding try_alloc image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}
+
+/// The freestanding `try_alloc`'s boot: a normal request comes back non-null,
+/// aligned and writable through the project allocator, and an absurd count comes
+/// back null. QEMU's serial output is the assertion, so this proves the hook was
+/// actually called.
+#[test]
+fn freestanding_try_alloc_boots_and_prints_its_lines() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the freestanding try_alloc boot test: 'ld.lld' or 'qemu-system-riscv64' \
+             is not on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "freestanding_try_alloc",
+        &project("freestanding_try_alloc"),
+        &["ptr 0", "align 0", "val 1234", "huge 1"],
+    );
+}
