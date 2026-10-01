@@ -32,7 +32,10 @@ same shape: one fixed name, one fixed signature, checked at the declaration.
   generated `kelp_drop_<T>` the type already had, so the user body is one extra call at the top
   and every existing drop point, container drop and recursive drop reaches it unchanged.
 - A moved-out value is not dropped, exactly as before: a destructor cannot run for a value that
-  has an owner somewhere else.
+  has an owner somewhere else. A *partial* move of a destructor-typed field or enum payload is
+  refused by name instead: the partial-move lowering zeroes the slot the value came from, and the
+  base's own drop would then run the destructor a second time on the empty slot. Take the value
+  whole (`val g = holder`), or use it through a borrow.
 - A `Drop` type is not `Copy`. User types are never `Copy` in v1, so the rule holds by
   construction, and the compiler enforces the consequence that matters: a type with a destructor
   is excluded from every derived-copy fixpoint (`clonable_types`, `keyable_types`), so
@@ -64,10 +67,17 @@ same shape: one fixed name, one fixed signature, checked at the declaration.
   `kelp_drop_<T>`: the C backend calls the mangled `kelp_<T>__drop(v)`, the LLVM backend calls
   the `LlvmFunction` `declare_functions` already declared for it. Nothing downstream of the
   drop points changes.
+- `borrowck.rs` refuses a partial move of a destructor-typed field or payload (`FieldAccess` and
+  `EnumField` whose `expr.ty` is a destructor type), which is the one move shape the generated
+  drop cannot make correct on its own.
 
 ## What the compiler does not check
 
 A destructor's body is not checked for running an operation that itself drops a value of the
 same type, for being idempotent, or for being panic-free. A destructor that panics is a panic
-from the drop point, with no unwinding to run the remaining drops of the frame. Nothing about
-the panic path is new: a value that a panic abandons leaks.
+from the drop point, with no unwinding to run the remaining drops of the frame. A destructor
+referenced by a passdown reads the generated global directly, the way `main` does, so it takes
+no hidden passdown parameter. A partial move of a *non*-destructor field out of a destructor
+type is still allowed when the field itself is not a destructor type (a `Copy` read, or a
+`String` field, whose zeroed slot drops as an empty value); only the destructor-typed slot is
+refused. Nothing about the panic path is new: a value that a panic abandons leaks.

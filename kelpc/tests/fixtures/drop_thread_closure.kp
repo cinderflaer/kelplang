@@ -1,0 +1,26 @@
+// Kernel stage 9, MK9-S6-M1: a `Guard` moved into a closure that crosses a
+// thread boundary. The closure's environment owns the guard, and the worker's
+// cleanup frees that environment, so the destructor runs on the worker side and
+// the join observes it. The counter is a `pd val` atomic, which the destructor
+// reads through its generated global.
+impl "std/thread"
+impl "std/result"
+impl "std/atomic"
+
+pd val DROPPED: AtomicI64 = AtomicI64.new(0)
+
+datac Guard(val id: i32)
+
+fun mut Guard.drop() {
+    DROPPED.fetch_add(value = 1, order = atomic.Ordering.SeqCst)
+}
+
+fun main() {
+    val g = Guard(id = 7)
+    val h = thread.spawn(fun(x: move i32).R: i32 = x + g.id, 2)
+    when thread.join(h) {
+        Ok(v) -> print(v)
+        Err(e) -> print(e.message)
+    }
+    print(DROPPED.load(order = atomic.Ordering.SeqCst))
+}

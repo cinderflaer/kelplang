@@ -1,0 +1,14 @@
+// Kernel stage 9, MK9-S6-M1: a partial move of a destructor-typed field is
+// refused. The partial move zeroes the slot it came from, and the base's own
+// drop would then run the destructor a second time on the empty slot, so the
+// value has to be moved whole or used through a borrow.
+datac Leaf(val tag: i32)
+
+fun mut Leaf.drop() { }
+
+datac Holder(val leaf: Leaf)
+
+fun main() {
+    val h = Holder(leaf = Leaf(tag = 1))
+    val taken = h.leaf
+}

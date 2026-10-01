@@ -835,6 +835,15 @@ pub fn user_drop_fn_name(type_name: &str) -> String {
     format!("kelp_{}", c_ident(&drop_method_key(type_name)))
 }
 
+/// Whether `ty` is a user type that declares its own destructor (kernel stage
+/// 9, MK9-S6-M1). A partial move of a field or payload of such a type is
+/// refused by `borrowck.rs`: the move zeroes the slot it came from and the
+/// base's own drop still calls the generated drop on the zero value, which for
+/// a destructor type would run the user body a second time.
+pub fn is_drop_type(ty: &Ty, drop_types: &std::collections::HashSet<String>) -> bool {
+    matches!(ty, Ty::Struct(name) if drop_types.contains(name))
+}
+
 /// Whether a value of `ty` has to be freed — the builtin owned types, or a
 /// `datac` that (transitively) holds one.
 pub fn needs_drop(ty: &Ty, owned_structs: &std::collections::HashSet<String>) -> bool {

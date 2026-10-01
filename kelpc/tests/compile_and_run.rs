@@ -4130,6 +4130,9 @@ fn heap_fixtures_are_double_free_and_leak_clean() {
         "drop_control_flow",
         "drop_container",
         "drop_enum",
+        // A guard owned by a thread closure's heap environment: a worker that
+        // never freed the environment would leave its box behind at exit.
+        "drop_thread_closure",
     ];
     for name in fixtures {
         let source = format!("tests/fixtures/{name}.kp");
@@ -11256,6 +11259,14 @@ fn a_destructor_type_owns_its_buffer_until_the_last_field_drop() {
     assert_compiles_and_runs("tests/fixtures/drop_owned_field.kp", "body\nnamed\n4\nnamed\n5\n");
 }
 
+/// A `Guard` moved into a closure that crosses a thread boundary is dropped on
+/// the worker side when the closure's environment is freed, and the join sees
+/// it.
+#[test]
+fn a_destructor_in_a_thread_closures_environment_runs_on_the_worker() {
+    assert_compiles_and_runs("tests/fixtures/drop_thread_closure.kp", "9\n1\n");
+}
+
 /// A destructor already runs when the value dies, so naming it explicitly would
 /// run it twice.
 #[test]
@@ -11312,6 +11323,17 @@ fn a_destructor_type_cannot_be_a_map_key() {
     assert_rejected_with(
         "tests/fixtures/drop_declared_key.kp",
         "a type with a destructor is not deep-copyable",
+    );
+}
+
+/// A partial move of a destructor-typed field zeroes the slot it came from, so
+/// the base's own drop would run the destructor a second time on the empty
+/// slot; the move is refused instead.
+#[test]
+fn a_partial_move_of_a_destructor_field_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/drop_partial_move.kp",
+        "it is a type with a destructor, and a partial move zeroes the slot",
     );
 }
 
