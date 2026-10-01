@@ -4,12 +4,12 @@
 //! case here runs `kelpc check` and needs neither `ld.lld` nor QEMU; a project
 //! that checks is never run, and the accepting cases assert exactly that.
 //!
-//! The cases are written as throwaway projects under `CARGO_TARGET_TMPDIR`
-//! rather than as `tests/projects/*` directories, because each one differs from
-//! its neighbours by a single manifest range or a single address and the shared
-//! freestanding target section, linker script and UART driver would otherwise be
-//! copied a dozen times. The range parser's own unit tests live in
-//! `stdlib.rs`.
+//! The cases are written as throwaway projects under the workspace's
+//! `target/mmio-tests` rather than as `tests/projects/*` directories, because
+//! each one differs from its neighbours by a single manifest range or a single
+//! address and the shared freestanding target section, linker script and UART
+//! driver would otherwise be copied a dozen times. The range parser's own unit
+//! tests live in `stdlib.rs`.
 //!
 //! An accepting case asserts the project checks and a refusing case asserts it
 //! does not and that the message names the address, the granted ranges or the
