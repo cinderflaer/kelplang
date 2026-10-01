@@ -1,0 +1,50 @@
+// Kernel stage 8 (MK9-S3-M3): per-CPU storage. `SLOT` is a `percpu static
+// mut`, so the compiler lays out `[target] cpus` copies (two here), each on its
+// own cache line in `.percpu`, and naming it indexes the copy for the CPU whose
+// index is in `tp`.
+//
+// Hart 0 sets `tp = 0`, writes 4 into its copy and prints it; then it sets
+// `tp = 1` by hand and reads the same name, which now resolves to the second
+// copy and still holds its initial value 7. `cpu_index()` reads `tp` and
+// `cpu_count()` is the manifest's `cpus`, so both intrinsics are shown against
+// the register the kernel set. The second hart is parked by the compiler's
+// `_start` stub before it touches memory, so this stage does not bring a
+// second hart up.
+impl "uart"
+
+percpu static mut SLOT: usize = 7
+
+fun digit(v: usize).R: u8 = 48 + v.to_u8()
+
+section(".text.boot") fun kmain() {
+    // The register is the kernel's to set: the compiler never writes it.
+    unsafe { asm("li tp, 0") }
+    unsafe { SLOT = 4 }
+
+    uart.puts("cpu0 ")
+    uart.putc(digit(unsafe { SLOT }))
+    uart.putc(10)
+
+    // Hand-set the index to 1: naming `SLOT` now reads the other copy, which
+    // no code has written.
+    unsafe { asm("li tp, 1") }
+
+    uart.puts("cpu1 ")
+    uart.putc(digit(unsafe { SLOT }))
+    uart.putc(10)
+
+    uart.puts("idx ")
+    uart.putc(digit(cpu_index()))
+    uart.putc(10)
+
+    uart.puts("count ")
+    uart.putc(digit(cpu_count()))
+    uart.putc(10)
+
+    uart.halt()
+}
+
+fun kp_panic(_msg: str) {
+    uart.puts("panic\n")
+    uart.halt()
+}

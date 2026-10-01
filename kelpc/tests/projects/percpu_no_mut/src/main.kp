@@ -1,0 +1,4 @@
+percpu static SLOT: usize = 0
+
+fun main() {
+}

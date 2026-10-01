@@ -1,0 +1,4 @@
+name = "percpu_no_mut"
+
+# Kernel stage 8: a `percpu` static must be `mut`; a read-only per-CPU is just
+# a `static`.

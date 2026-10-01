@@ -1,0 +1,7 @@
+name = "percpu_cpus_zero"
+
+# Kernel stage 8: `[target] cpus` is an integer in 1..=64, so 0 is refused by
+# the manifest reader.
+[target]
+mode = "hosted"
+cpus = 0

@@ -9943,6 +9943,26 @@ const RISCV64_QEMU: Emulator = Emulator {
     ],
 };
 
+/// The same riscv64 machine with a second hart (kernel stage 8). `-smp 2`
+/// makes QEMU start both harts at the entry with no firmware to park the
+/// second, which is what `examples/kernel0-percpu` proves the compiler's
+/// `_start` stub handles.
+const RISCV64_QEMU_SMP2: Emulator = Emulator {
+    binary: "qemu-system-riscv64",
+    args: &[
+        "-machine",
+        "virt",
+        "-bios",
+        "none",
+        "-smp",
+        "2",
+        "-nographic",
+        "-no-reboot",
+        "-serial",
+        "mon:stdio",
+    ],
+};
+
 /// QEMU's aarch64 `virt` machine, the one kernel stage 10 boots. `-cpu
 /// cortex-a57` is the core its target machine is built for; QEMU loads the
 /// `-kernel` ELF at 0x40000000 and starts it at the ELF entry, so no `-bios`
@@ -10102,6 +10122,57 @@ fn tool(name: &str, args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Builds one freestanding project with the LLVM backend and returns its object
+/// file (the `.o` the driver wrote beside the ELF), so a test can read the
+/// layout the object writer produced rather than the linked image.
+fn build_freestanding_object(name: &str, project_dir: &str) -> PathBuf {
+    let bin = out_path(name);
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project(project_dir))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding build of '{name}' failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    bin.with_extension("o")
+}
+
+/// One symbol's size from `llvm-nm -S` output (`addr size type name`, all hex
+/// except undefined symbols, which have no address).
+fn symbol_size(nm: &str, name: &str) -> u64 {
+    for line in nm.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() == 4 && fields[3] == name {
+            return u64::from_str_radix(fields[1], 16)
+                .unwrap_or_else(|_| panic!("unreadable size in '{line}'"));
+        }
+    }
+    panic!("symbol '{name}' is not in llvm-nm's output:\n{nm}");
+}
+
+/// The size column of one `llvm-readelf -S` line. The columns end
+/// `... ES Flg Lk Inf Al`, so the size is six fields from the end.
+fn percpu_section_size(line: &str) -> u64 {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    u64::from_str_radix(fields[fields.len() - 6], 16)
+        .unwrap_or_else(|_| panic!("unreadable size in '{line}'"))
+}
+
+/// The last (`Al`) column of one `llvm-readelf -S` line, in decimal.
+fn percpu_section_alignment(line: &str) -> u64 {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    fields[fields.len() - 1]
+        .parse()
+        .unwrap_or_else(|_| panic!("unreadable alignment in '{line}'"))
 }
 
 /// Kernel stage 4: `section("...")` on a `const` and on a `fun` changes where
@@ -10675,6 +10746,152 @@ fn kernel0_statics_boots_and_prints_its_counter() {
         "kernel0_statics",
         &fixture("../examples/kernel0-statics"),
         &["counter 3"],
+    );
+}
+
+/// Kernel stage 8 (MK9-S3-M3): `percpu` is a freestanding-only storage class,
+/// so a hosted project that declares one is refused by the front end, before
+/// either backend is named, which is why the oracle refuses it the same way.
+#[test]
+fn a_percpu_static_is_rejected_outside_freestanding() {
+    assert_rejected_with(
+        "tests/projects/percpu_hosted",
+        "only legal in a freestanding build",
+    );
+}
+
+/// A `percpu` static has to be `mut`: a per-CPU value nothing may write is an
+/// ordinary `static` with extra address space.
+#[test]
+fn a_percpu_static_without_mut_is_rejected() {
+    assert_rejected_with("tests/projects/percpu_no_mut", "must be 'mut'");
+}
+
+/// A `percpu` static is a `static mut` in every way, so naming it outside an
+/// `unsafe` block is the ordinary `static mut` error.
+#[test]
+fn a_percpu_static_named_outside_unsafe_is_rejected() {
+    assert_rejected_with("tests/projects/percpu_outside_unsafe", "'static mut SLOT'");
+}
+
+/// Its initializer is folded to a constant and replicated into every copy, so
+/// anything that would need code at startup is refused.
+#[test]
+fn a_percpu_static_with_a_non_constant_initializer_is_rejected() {
+    assert_rejected_with("tests/projects/percpu_initializer", "not constant");
+}
+
+/// `[target] cpus` is an integer in `1..=64`; both ends are refused by the
+/// manifest reader naming the key.
+#[test]
+fn a_cpu_count_outside_one_to_sixty_four_is_rejected() {
+    assert_rejected_with("tests/projects/percpu_cpus_zero", "'[target] cpus'");
+    assert_rejected_with("tests/projects/percpu_cpus_65", "'[target] cpus'");
+}
+
+/// Kernel stage 8's object-layout test: a `percpu` static is `cpus` copies of
+/// its type, each padded to a 64-byte cache line, in a 64-byte-aligned
+/// `.percpu`. At `cpus = 1` a `usize` is one 64-byte copy.
+///
+/// It needs `ld.lld`, `llvm-nm` and `llvm-readelf` from `dev-kernel.nix`.
+#[test]
+fn freestanding_percpu_static_is_one_cache_line_at_cpus_1() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding per-CPU layout test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let obj = build_freestanding_object("freestanding_percpu_1", "freestanding_percpu_1");
+    let path = obj.to_str().expect("the artifact path is utf-8");
+    assert_eq!(
+        symbol_size(&tool("llvm-nm", &["-S", path]), "kelp_SLOT"),
+        64,
+        "one usize copy should be padded to a 64-byte cache line"
+    );
+    let sections = tool("llvm-readelf", &["-S", path]);
+    let percpu: Vec<&str> = sections
+        .lines()
+        .filter(|line| line.contains("] .percpu"))
+        .collect();
+    assert_eq!(percpu.len(), 1, "expected one .percpu section:\n{sections}");
+    assert_eq!(
+        percpu_section_size(percpu[0]),
+        64,
+        "the .percpu section should be one 64-byte copy:\n{}",
+        percpu[0]
+    );
+    assert_eq!(
+        percpu_section_alignment(percpu[0]),
+        64,
+        "the .percpu section should be 64-byte aligned:\n{}",
+        percpu[0]
+    );
+}
+
+/// The same at `cpus = 4`, with one copy whose size fills a cache line exactly
+/// (`usize`, 8 bytes padded to 64) and one rounded up to the next multiple
+/// (`[u8; 100]`, 100 bytes padded to 128), so the size column checks both.
+#[test]
+fn freestanding_percpu_statics_are_four_aligned_copies_at_cpus_4() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding per-CPU layout test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let obj = build_freestanding_object("freestanding_percpu_4", "freestanding_percpu_4");
+    let path = obj.to_str().expect("the artifact path is utf-8");
+    let syms = tool("llvm-nm", &["-S", path]);
+    assert_eq!(
+        symbol_size(&syms, "kelp_SLOT"),
+        4 * 64,
+        "four usize copies at 64 bytes each:\n{syms}"
+    );
+    assert_eq!(
+        symbol_size(&syms, "kelp_TABLE"),
+        4 * 128,
+        "four [u8; 100] copies rounded up to 128 bytes each:\n{syms}"
+    );
+    let sections = tool("llvm-readelf", &["-S", path]);
+    let percpu: Vec<&str> = sections
+        .lines()
+        .filter(|line| line.contains("] .percpu"))
+        .collect();
+    assert!(!percpu.is_empty(), "no .percpu section:\n{sections}");
+    for line in &percpu {
+        assert_eq!(
+            percpu_section_alignment(line),
+            64,
+            "every .percpu section should be 64-byte aligned:\n{line}"
+        );
+    }
+}
+
+/// Kernel stage 8's acceptance boot: `examples/kernel0-percpu` runs on a
+/// two-hart riscv64 `virt` with no firmware, so the compiler's `_start` stub has
+/// to park the second hart before it touches memory. Hart 0 writes 4 into its
+/// own copy of the `percpu` static and prints it, then sets `tp = 1` by hand and
+/// reads the other copy, which still holds the initial 7; `cpu_index()` and
+/// `cpu_count()` print 1 and 2.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_percpu_boots_with_two_harts_and_shows_the_other_copy() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU_SMP2) {
+        println!(
+            "skipping the kernel0-percpu boot test: 'ld.lld' or 'qemu-system-riscv64' is not \
+             on PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU_SMP2,
+        "kernel0_percpu",
+        &fixture("../examples/kernel0-percpu"),
+        &["cpu0 4", "cpu1 7", "idx 1", "count 2"],
     );
 }
 

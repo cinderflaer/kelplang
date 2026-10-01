@@ -1,0 +1,4 @@
+name = "percpu_hosted"
+
+# Kernel stage 8: `percpu` is a freestanding-only storage class, so a hosted
+# project that writes one is refused before either backend is named.

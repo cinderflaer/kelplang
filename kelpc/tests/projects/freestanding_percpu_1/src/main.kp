@@ -1,0 +1,9 @@
+percpu static mut SLOT: usize = 7
+
+section(".text.boot") fun kmain() {
+    unsafe {
+        SLOT = SLOT + 1
+    }
+    while true {
+    }
+}

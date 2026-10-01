@@ -1,0 +1,12 @@
+percpu static mut SLOT: usize = 7
+percpu static mut TABLE: [u8; 100] = [3; 100]
+
+section(".text.boot") fun kmain() {
+    unsafe {
+        SLOT = SLOT + 1
+        val first = TABLE.get(i = 0)
+        TABLE.set(i = 0, v = first)
+    }
+    while true {
+    }
+}

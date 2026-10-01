@@ -1,0 +1,13 @@
+name = "freestandingpercpu1"
+
+# Kernel stage 8's object-layout test at `cpus = 1`: one `usize` copy padded to
+# a 64-byte cache line, in `.percpu`.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+cpus = 1
+
+[unsafe]
+modules = ["main"]
