@@ -1,0 +1,26 @@
+// Kernel 0: the smallest thing that boots on bare metal and says so. The
+// greeting is a `[u8; N]` value because a freestanding program has no `str`
+// length operation (std/str is refused: its body is `strlen`), and it is
+// written byte by byte through the UART driver.
+impl "uart"
+
+const GREETING: [u8; 16] = [104, 101, 108, 108, 111, 32, 102, 114, 111, 109, 32, 107, 101, 108, 112, 10]
+const PANIC_MSG: [u8; 6] = [112, 97, 110, 105, 99, 10]
+
+section(".text.boot") fun kmain() {
+    val greeting: [u8; 16] = GREETING
+    val bytes: Ptr<[u8; 16]> = Ptr.from_ref(&greeting)
+    uart.puts(bytes.cast<u8>(), greeting.len())
+    uart.halt()
+}
+
+// The handler `[target] panic` names: every bounds and overflow check the
+// compiler emits calls this with the static message the check was written
+// with. It prints `panic` and loops, because a check that fired has no
+// meaningful continuation.
+fun kp_panic(_msg: str) {
+    val msg: [u8; 6] = PANIC_MSG
+    val bytes: Ptr<[u8; 6]> = Ptr.from_ref(&msg)
+    uart.puts(bytes.cast<u8>(), msg.len())
+    uart.halt()
+}

@@ -91,6 +91,26 @@ calling-convention attributes are out of scope for this stage: a naked function 
 one `asm` covers a trap vector without them. `plan/inline-asm.md` is the design and
 `plan/kernel-ub-notes.md` carries the stage's undefined behaviour.
 
+**Kernel 0 boots.** The pieces above are now wired into `examples/kernel0`: a `[target]`
+freestanding riscv64 project whose `kmain` polls the NS16550 UART's LSR bit 5 and writes
+`hello from kelp` to THR through `Ptr<u8>` volatile stores, then halts on `wfi`;
+`examples/kernel0-trap` installs `mtvec` at a naked handler, takes an `ecall`, prints
+`trap: ecall` from the handler and `done` after `mret`. Both are built with `kelpc` and booted
+under `timeout 20 qemu-system-riscv64 -machine virt -bios none -nographic -no-reboot
+-serial mon:stdio -kernel <elf>`; `examples/kernel0/run.sh` and `examples/kernel0-trap/run.sh`
+read QEMU's own stdout and assert the expected lines, and
+`cargo test --test compile_and_run kernel0` runs both where the tools are present. No
+compiler change was needed. What the examples could not do is in `plan/kernel0-status.md`, in
+order: a libc-free `str` surface, an address-of-function form (plus the `interrupt` attribute
+stage 5 deferred), and a usable panic message.
+
+**What the next stages need.** The table's stages 6 to 11 are the remaining work:
+`defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),
+mapping and a syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and
+MMIO regions and IRQ lines as capabilities (row 11). The allocator is what anything running at
+boot needs first, and the panic semantics of row 10 are what turn a check that fires into a
+diagnostic instead of a bare `panic` byte.
+
 ## Two rules that keep the language honest
 
 1. **`unsafe` is auditable, not ambient.** A module may contain `unsafe` only if `coral.toml` lists it

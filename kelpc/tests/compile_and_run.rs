@@ -2,11 +2,12 @@
 //! binary, then either runs the resulting binary and checks its stdout, or
 //! (for fixtures that should be rejected) checks that `kelpc build` fails.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -9889,6 +9890,104 @@ fn have_ld_lld() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether `qemu-system-riscv64` is on PATH. Kernel stage 6's milestone is a
+/// real boot, so its acceptance test needs the emulator as well as `ld.lld`;
+/// like the freestanding tests, a shell without it prints a skip.
+fn have_qemu() -> bool {
+    Command::new("qemu-system-riscv64")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Kernel stage 6's acceptance harness: build a freestanding project and boot
+/// the ELF under QEMU until the last `expected` line has come out of the UART,
+/// then kill QEMU and check every expected line against what was captured. The
+/// kernel halts in a `wfi` loop, so nothing but reading the marker and killing
+/// the emulator keeps the test from waiting out the whole window.
+///
+/// The expected lines are compared whole, and they are QEMU's own stdout, not
+/// anything the project says it will print.
+fn boot_under_qemu(name: &str, target: &Path, expected: &[&str]) {
+    let bin = out_path(name);
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(target)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding build of '{name}' failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let mut child = Command::new("qemu-system-riscv64")
+        .arg("-machine")
+        .arg("virt")
+        .arg("-bios")
+        .arg("none")
+        .arg("-nographic")
+        .arg("-no-reboot")
+        .arg("-serial")
+        .arg("mon:stdio")
+        .arg("-kernel")
+        .arg(&bin)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn qemu-system-riscv64");
+
+    // A reader thread turns the pipe into a channel so the wait below has a
+    // deadline: without one a kernel that never prints would hang the suite.
+    let stdout = child.stdout.take().expect("qemu stdout was piped");
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            match line {
+                Ok(line) => {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let marker = expected.last().expect("at least one expected line");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut captured = String::new();
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(line) => {
+                captured.push_str(&line);
+                captured.push('\n');
+                if line == *marker {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+
+    for line in expected {
+        assert!(
+            captured.lines().any(|got| got == *line),
+            "the serial output of '{name}' has no line '{line}':\n{captured}"
+        );
+    }
+}
+
 /// Runs an external tool and returns its stdout, failing the test with the
 /// tool's stderr when it exits nonzero.
 fn tool(name: &str, args: &[&str]) -> String {
@@ -10165,5 +10264,48 @@ fn inline_asm_assembles_csrr_and_wfi_for_riscv64() {
     assert!(
         disassembly.contains("wfi"),
         "the asm's wfi is not in the image:\n{disassembly}"
+    );
+}
+
+/// Kernel stage 6's acceptance test: `examples/kernel0` is a complete Kelp
+/// kernel that boots on QEMU's riscv64 `virt` machine and writes one line to
+/// the NS16550 UART. The assertion is against what QEMU captured, so it proves
+/// the boot, the linker script's stack and the driver's polling, not that the
+/// source says `hello from kelp`.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`; a shell
+/// without them prints a skip.
+#[test]
+fn kernel0_boots_and_prints_its_greeting_over_the_uart() {
+    if !have_ld_lld() || !have_qemu() {
+        println!(
+            "skipping the kernel0 boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        "kernel0",
+        &fixture("../examples/kernel0"),
+        &["hello from kelp"],
+    );
+}
+
+/// The trap half of kernel stage 6: `mtvec` points at a naked function, an
+/// `ecall` reaches it, the handler prints and `mret`s back, and `kmain`
+/// finishes. Both lines have to come out of the UART in one boot.
+#[test]
+fn kernel0_handles_a_trap_and_continues_after_it() {
+    if !have_ld_lld() || !have_qemu() {
+        println!(
+            "skipping the kernel0 trap test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        "kernel0_trap",
+        &fixture("../examples/kernel0-trap"),
+        &["trap: ecall", "done"],
     );
 }

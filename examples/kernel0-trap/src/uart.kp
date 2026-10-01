@@ -1,0 +1,36 @@
+// The NS16550 UART QEMU's riscv64 `virt` machine puts at 0x10000000. THR
+// (offset 0) is the byte to send; LSR (offset 5) bit 5 is set while the
+// transmit holding register is empty, so a byte is written only after that bit
+// reads back set. Every access goes through `Ptr<u8>` and is volatile so the
+// compiler can neither merge, reorder nor elide it; the base, the offsets and
+// the bit are the driver's own claim about the hardware.
+const UART_BASE: usize = 0x10000000
+const LSR_OFFSET: usize = 5
+
+pub fun putc(c: u8) {
+    unsafe {
+        val lsr: Ptr<u8> = Ptr.from_addr(UART_BASE + LSR_OFFSET)
+        // v1 has no bitwise operators, so bit 5 of LSR is `(value / 32) % 2`.
+        while (lsr.read_volatile() / 32) % 2 == 0 {}
+        val thr: Ptr<u8> = Ptr.from_addr(UART_BASE)
+        thr.write_volatile(c)
+    }
+}
+
+pub fun puts(msg: Ptr<u8>, len: usize) {
+    var i: usize = 0
+    while i < len {
+        unsafe {
+            putc(msg.offset(i.to_isize()).read_volatile())
+        }
+        i = i + 1
+    }
+}
+
+pub fun halt() {
+    while true {
+        unsafe {
+            asm("wfi")
+        }
+    }
+}
