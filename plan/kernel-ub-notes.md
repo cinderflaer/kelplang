@@ -569,3 +569,55 @@ range is safe to write, or that the small code model's assumptions hold for the
 script's placement. It also still cannot check anything about a driver's
 register addresses, which remain `Ptr` writes the language marks `unsafe` and a
 manifest lists.
+
+## Stage 11 (kernel path row 8): per-CPU storage (MK9-S3-M3, roadmap B-11)
+
+**New ways to reach UB.** This stage adds one value the language reads but never
+produces, and it is the kernel's to get right:
+
+- **The CPU index register is trusted.** `cpu_index()` is whatever is in `tp`
+  (riscv64) or `TPIDR_EL1` (aarch64) at the moment it runs. The compiler never
+  sets it and never checks it in a release build, so a kernel that boots without
+  loading it, loads it with a value that is not the running hart's id, or lets a
+  context switch forget to swap it, indexes the per-CPU array with the wrong
+  number. What happens then is ordinary unsafe memory misbehaviour: a read or
+  write of another hart's copy, or of memory past the array when the value is
+  `>= cpus`, through a `Ptr` the compiler marks `unsafe`. In a debug build
+  (`-O0`) the value is compared against the manifest's `cpus` and the project's
+  panic handler runs with `cpu index out of range`; a release build carries no
+  check, so the misbehaviour is silent. Nothing ties the register to a hart id:
+  reading `mhartid` and loading `tp` from it is the kernel's own instruction
+  sequence.
+- **The register is per hart, and a value written under one hart's `tp` is not
+  visible to another's copy by itself.** There is no memory-ordering or
+  cache-coherency rule here beyond what the architecture and the `unsafe` code
+  do; the padded layout only stops false sharing of a cache line, it does not
+  synchronise. Two harts writing their own copies concurrently is fine; two
+  harts reaching one copy is a data race exactly as two `Ptr` writes to one
+  address always were.
+- **The initializer is replicated, not run.** All `N` copies start as the same
+  folded constant, so a `percpu` static cannot express a per-CPU initial value
+  that differs by index (a `[target] cpus` of 4 gives four copies of 7, not
+  0, 1, 2, 3). A kernel that wants that assigns it in its own boot code.
+- The `.percpu` section, its 64-byte alignment and the padding that makes each
+  copy start on a cache line are the compiler's layout, as reliable as any other
+  global's; what is not checked is where the linker script puts the section,
+  whether the image has room for it, and whether the address a `Ptr` is built
+  from is one of the copies at all.
+
+**What the compiler does check.** That a `percpu` static is `mut`; that it is
+declared in a freestanding build; that its initializer folds to a constant, so
+no code runs at startup to fill the copies; that naming it is inside
+`unsafe { ... }` or an `unsafe fun` in a module the manifest lists; that
+`[target] cpus` is an integer in `1..=64`; that `cpu_index()` and `cpu_count()`
+are called in a freestanding build with no arguments; and that `cpu_index()` is
+lowered for the manifest's triple (riscv64 and aarch64 say which register, any
+other triple is refused by name). The object writer sets the section, the
+64-byte alignment and the `round_up(size_of(T), 64)` stride, so the layout
+itself is not a promise the kernel makes.
+
+**What it does not check.** The value in the register, that it names the running
+hart, that it is below `cpus` (release only), or that the register survives a
+context switch. There is no per-CPU provenance model, so the compiler cannot tie
+a `ptr<T>` built from a `percpu` copy back to the copy, exactly as it cannot tie
+any `Ptr` to the object it came from (roadmap D-1).
