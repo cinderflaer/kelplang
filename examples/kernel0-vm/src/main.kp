@@ -1,0 +1,174 @@
+impl "uart"
+impl "vm"
+
+// Kernel stage 10, the address-space half: build Sv39 tables in machine mode,
+// identity-map what the kernel runs on and talks to, map one page at a high
+// virtual address to a fresh frame, drop to S-mode, turn the MMU on, and prove
+// that the high name and the physical name are the same bytes.
+//
+// The image is identity-mapped as one 4 MiB RWX span rather than by section:
+// splitting `.text`/`.rodata`/`.data` apart needs section bounds the language
+// cannot name yet, and the point of this stage is the walk, not W^X. The span
+// covers the image, its stack and the frame region below. What is *not* mapped
+// is everything else, which is what the fault example shows.
+const IMAGE_START: usize = 0x80000000
+const IMAGE_SPAN: usize = 4 * 1024 * 1024
+
+// The NS16550 the driver writes. After `mret` every byte of it goes through the
+// table, so the page is mapped before S-mode runs.
+const UART_BASE: usize = 0x10000000
+
+// One page below 2^38, which is Sv39's highest canonical low address. The root
+// index is 0xFF, so the mapping is nowhere near the kernel's own entries.
+const HIGH_VA: usize = 0x4000000000 - 4096
+
+const MAGIC: u64 = 0xC0FFEE
+
+// The root table has to survive the `mret`, so it lives at a fixed address the
+// S-mode entry reads rather than at a parameter S-mode cannot receive.
+static mut ROOT: usize = 0
+
+fun root_table().R: usize {
+    unsafe { ROOT }
+}
+
+// Leave machine mode. Three things are a machine-mode promise about the next
+// level and nothing the compiler can check: the PMP entry that makes any
+// S-mode access possible at all (with no matching entry every access faults),
+// the exception delegation that routes page faults to S-mode, and
+// `mstatus.MPP = S`. `mret` takes `mepc` and the new privilege from the CSRs,
+// so it is the whole transition.
+fun enter_supervisor(entry: usize) {
+    unsafe {
+        val pmpaddr: usize = 0x3FFFFFFFFFFFFF
+        val pmpcfg: usize = 0x1F
+        val delegated: usize = (1 << 12) | (1 << 13) | (1 << 15)
+        val none: usize = 0
+        asm("csrw pmpaddr0, {0}", in("r") pmpaddr)
+        asm("csrw pmpcfg0, {0}", in("r") pmpcfg)
+        asm("csrw medeleg, {0}", in("r") delegated)
+        asm("csrw mideleg, {0}", in("r") none)
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") (mstatus & 0xFFFFFFFFFFFFE7FF) | 0x800)
+        asm("csrw mepc, {0}", in("r") entry)
+        asm("mret")
+    }
+}
+
+fun smain() {
+    uart.puts("vm: s-mode")
+    uart.putc(10)
+
+    vm.enable_paging(root_table())
+    uart.puts("vm: paging on")
+    uart.putc(10)
+
+    // Write through the high virtual name, read it back the same way, then ask
+    // the walker for the physical address and read the same bytes through the
+    // identity map. Both paths reaching MAGIC is the alias.
+    val high: Ptr<u64> = Ptr.from_addr(HIGH_VA)
+    unsafe {
+        high.write_volatile(MAGIC)
+    }
+    val read_back: u64 = unsafe { high.read_volatile() }
+
+    var seen: u64 = 0
+    when vm.translate(root_table(), HIGH_VA) {
+        Some(pa) -> {
+            val physical: Ptr<u64> = Ptr.from_addr(pa)
+            seen = unsafe { physical.read_volatile() }
+        }
+        None -> {
+            uart.puts("vm: translate none")
+            uart.putc(10)
+        }
+    }
+
+    if read_back == MAGIC && seen == MAGIC {
+        uart.puts("vm: alias ok")
+        uart.putc(10)
+    } else {
+        uart.puts("vm: alias bad")
+        uart.putc(10)
+    }
+
+    // The other half of the mapping API: clear the leaf and the walker answers
+    // `None` for that address.
+    if vm.unmap_page(root_table(), HIGH_VA) {
+        vm.flush_tlb()
+    }
+    var still: bool = false
+    when vm.translate(root_table(), HIGH_VA) {
+        Some(_) -> {
+            still = true
+        }
+        None -> {
+            still = false
+        }
+    }
+    if still == false {
+        uart.puts("vm: unmap ok")
+        uart.putc(10)
+    } else {
+        uart.puts("vm: unmap bad")
+        uart.putc(10)
+    }
+    uart.halt()
+}
+
+section(".text.boot") fun kmain() {
+    uart.puts("vm: m-mode")
+    uart.putc(10)
+
+    val root: usize = vm.alloc_frame()
+    unsafe {
+        ROOT = root
+    }
+    if root == 0 {
+        uart.puts("vm: no root")
+        uart.putc(10)
+        uart.halt()
+    }
+    uart.puts("vm: root")
+    uart.putc(10)
+
+    if vm.map_range(root, IMAGE_START, IMAGE_START, IMAGE_SPAN, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        uart.puts("vm: identity failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    uart.puts("vm: identity")
+    uart.putc(10)
+
+    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
+        uart.puts("vm: uart failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    uart.puts("vm: uart page")
+    uart.putc(10)
+
+    val high_frame: usize = vm.alloc_frame()
+    if high_frame == 0 {
+        uart.puts("vm: no frame")
+        uart.putc(10)
+        uart.halt()
+    }
+    if vm.map_page(root, HIGH_VA, high_frame, vm.PTE_R | vm.PTE_W) == false {
+        uart.puts("vm: high failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    uart.puts("vm: high page")
+    uart.putc(10)
+
+    enter_supervisor(Ptr.from_fn(smain).addr())
+}
+
+// The handler `[target] panic` names: a check that fired has no meaningful
+// continuation, so it prints one line and halts.
+fun kp_panic(_msg: str) {
+    uart.puts("panic")
+    uart.putc(10)
+    uart.halt()
+}

@@ -670,3 +670,167 @@ idempotent, whether two destructors over one object are ordered safely, or
 anything on the panic path. The value is still live (borrowed exclusively) while
 the body runs, so the body cannot move out of it, but it can assign a field or
 read through a raw `Ptr` the value holds, with all of stage 1's consequences.
+## Stage 11: Sv39 address spaces (MK9-S4-M8, `plan/address-spaces.md`)
+
+**New ways to reach UB.** This stage adds no construct. Every line of
+`examples/kernel0-vm` is stage 1's `Ptr<u64>`, stage 7's `static mut`, stage 5's
+`asm` or ordinary arithmetic, so the compiler's whole check set is the one
+stages 1-10 already apply. What is new is that the machine state those unchecked
+writes build is the translation itself, and the ways to be wrong are the ways a
+page table can lie:
+
+- The frame region is a **linker-script promise** read with
+  `asm("la ...")`. A script that puts `__frames_start`/`__frames_end` outside
+  RAM, overlapping the image or the stack, or describes a region that is not
+  actually mapped lets `alloc_frame` hand out live memory as a fresh frame, and
+  the walker then writes PTEs over whatever was there. A script that omits the
+  two symbols is not UB but silence: both resolve to 0, `next + PAGE_SIZE >
+  frames_end()` is true immediately, and the allocator reports exhausted (which
+  the example turns into a panic line, not a link error).
+- `alloc_frame` returns a bare address. Nothing checks it is RAM, 4 KiB-aligned,
+  not already handed out, or that the `FRAME_CURSOR` arithmetic has not wrapped.
+  "Zeroed on allocation" is the allocator's own promise, and only the code that
+  reads a table before writing every entry depends on it.
+- Every PTE and `satp` value is the program's claim about the format. A wrong
+  PPN, a missing A or D, a leaf bit where a pointer entry belongs, an entry that
+  points at a device page instead of RAM, or a root that was never zeroed all
+  produce a translation the hardware acts on and the compiler cannot read. A
+  leaf written with a misaligned PPN silently becomes a 2 MiB or 1 GiB superpage
+  covering far more than the caller meant.
+- `enable_paging` writes `satp` and one `sfence.vma`. A store to a page-table
+  entry is not ordered against the MMU's own read of it, so a mapping change
+  without the flush leaves a stale translation, and the compiler emits none
+  itself. The root the CSR names is the caller's address, checked by nothing.
+- `map_page` does not check that the virtual address is canonical for Sv39
+  (bits 63:39 must equal bit 38). A non-canonical address builds an entry the
+  MMU will never use or faults on, and the failure is at the access, not the
+  call.
+- The drop to S-mode is four CSR writes and an `mret`. `pmpaddr0`/`pmpcfg0` are
+  the only reason S-mode can touch memory at all; `medeleg` decides which
+  exceptions reach the S-mode vector and which come back to machine mode, where
+  this kernel installs nothing; `mstatus.MPP` decides the privilege `mret`
+  returns to; and `mepc` is the address it jumps to. The compiler models none of
+  this: a wrong MPP returns to the wrong privilege, and a wrong `mepc` jumps
+  anywhere.
+- The S-mode handler is a naked function, so stage 8's register-save promise
+  and stage 6's handler assumptions apply verbatim. Its resume path advances
+  `sepc` by the faulting instruction's own length, read from the low bits; a
+  wrong length resumes mid-instruction, and resuming past a faulting load leaves
+  the destination register holding its old value while the compiler that emitted
+  the load assumes the loaded value is there. Using that value after a resumed
+  fault is the miscompile the handler cannot see.
+- `translate` walks the tables and returns a physical address. It says nothing
+  about whether the leaf's permissions allow the access a caller intends, and
+  nothing about whether the address is RAM or a device range: it is the walk's
+  answer, not an access check.
+
+**What the compiler does check.** Everything stages 1-11 apply: that `vm` and
+`main` are on the manifest's `[unsafe] modules` list; that a `Ptr<u64>` element
+has a machine-level layout; that `asm` operands are machine words inside
+`unsafe`; that a `static mut` read or write is inside `unsafe`; and the
+freestanding allowed set. It checks no new construct because the stage adds
+none.
+
+**What it does not check.** Anything about the linker script's frame region,
+the address `alloc_frame` returns, the PTE or `satp` encoding, the canonicality
+of a virtual address, the reachability of a physical one, the privilege
+transition, the handler's save list or resume length, or the meaning of a
+translation. This stage is the point where the kernel builds the machine's own
+view of memory with the language's unchecked tools, and the catalogue for those
+tools is stages 1, 5, 7 and 8.
+
+## Stage 12: user mode and the syscall ABI (MK9-S4-M9, `plan/syscall-abi.md`)
+
+**New ways to reach UB.** No new construct: `examples/kernel0-user` is stage 1's
+`Ptr`, stage 7's `static mut`, stage 5's `asm` and stage 11's page tables. What
+is new is that the kernel now hands the machine's control flow and its address
+translation to code it does not trust, and the ways to be wrong are the ways a
+privilege boundary and a trap frame can lie:
+
+- The trap frame's layout is a **convention between two languages**: the naked
+  entry hardcodes 0, 8, 248 and 256, and the `datac` the dispatcher reads says
+  the same in its field order. The compiler relates neither to the other, so a
+  field reordered in the `datac` saves or restores the wrong register. The
+  stage's two checks (`trap.frame_layout_ok` at boot, and
+  `tests/projects/trap_frame_layout` on both backends) pin the numbers, and
+  neither can see an asm offset typed as a different literal.
+- The slot block at the top of the trap stack is addressed by four more
+  hardcoded offsets. A wrong dispatch slot calls an arbitrary address with the
+  frame in `a0`; a wrong resume pair jumps to an arbitrary address with an
+  arbitrary stack. Nothing checks that the slots were ever written: a hart that
+  enters U-mode without `enter_user` has a stale dispatch address and a stale
+  resume pair.
+- `__trap_stack_top` is a linker-script promise read with `asm("la ...")`. A
+  script that omits it resolves it to 0, so the first trap swaps `sp` with 0 and
+  the entry faults on its own frame.
+- The entry swaps `sp` with `sscratch` **unconditionally**, because the only
+  trap source it installs is U-mode. The invariant is "`sscratch` holds this
+  hart's trap stack top whenever user code runs", and an S-mode fault breaks it
+  the same way a wrong `sscratch` value would: the handler runs on whatever
+  stack the swap produced, overwrites the frame it is building, and the resume
+  path restores the wrong `sp`. There is no check and no second stack to fall
+  back on.
+- The drop to U-mode is three CSR writes and an `sret`. `sstatus.SPP` decides
+  the privilege it returns to and `SPIE` what interrupt state that privilege
+  gets, `sepc` is the address it jumps to, and `satp` is the table the fetch
+  after it is translated by. The compiler models none of this: a wrong `satp`
+  enters a program under another program's tables, and one whose root does not
+  identity-map the kernel image faults on the instruction after the switch.
+- `enter_user`'s return path is a **jump into a saved stack frame**, not a
+  return. The resume slots hold the kernel's `sp` and `ra` from the call into
+  `drop_to_user`, and `trap_entry` restores them by hand. The compiler cannot
+  see the call or the jump, so nothing checks that the saved frame is still the
+  one on the stack, that the trap stack was not the stack it saved, or that the
+  program which ended is the program that started.
+- The dispatcher reads `a0`..`a5` and `a7` out of the frame at hardcoded
+  offsets, and writes the result back to `a0` and `sepc + 4` the same way. A
+  wrong offset passes the wrong argument to a syscall or puts the result in the
+  wrong register. The `+ 4` assumes the faulting instruction is a 4-byte
+  `ecall`, which is true of an `ecall` and of nothing else.
+- The untrusted-pointer check is deliberately **one purpose, not a type
+  system**. `vm.user_page_pa` demands U and R, so it answers for a page a user
+  may read; it says nothing about whether the page belongs to the program that
+  asked, whether two programs share it, whether the leaf is a superpage, or
+  whether the physical address it returns is RAM rather than a device. It also
+  answers about a snapshot: a remap between the walk and the copy would move
+  what the physical address means, and this kernel has one hart and a handler
+  that never remaps, which is the only reason the two steps are one.
+- The kernel dereferences the **physical** address the walk returned, not the
+  user address, and that is what makes the check meaningful. A leaf whose PPN
+  points at the kernel's own image, the trap stack or the UART makes `write`
+  read and print whatever is there while every check still passes.
+- The errno values are bit patterns a user program reads as negative numbers.
+  Writing `-14` in Kelp and converting it with the compiler's own `isize.to_u64`
+  is a **checked** conversion that panics on a negative value, which the first
+  boot did: the panic handler ran inside the trap handler and the kernel halted.
+  The ABI is therefore written as the two's complement constants. The same
+  checked arithmetic is why `write`'s range bound is `ptr > USER_LIMIT - len`
+  and not `ptr + len > USER_LIMIT`: an adversarial pointer near the top of the
+  address space would otherwise panic the kernel instead of earning `EFAULT`.
+- The user programs are a **section copied at runtime**. Nothing checks that the
+  section fits the page the loader maps, that the program is position
+  independent, that its own `la` references survive the copy, or that the
+  linker script's `__user1_start`/`__user1_end` (and the `__user2` pair) name the
+  sections they are supposed to. A script that omits them makes both bounds 0,
+  the copy moves nothing, and the program's code page is zeros: an illegal
+  instruction the kernel reports as a kill.
+- A program's address space is built once and never freed. A killed program's
+  frames stay allocated, and nothing marks a frame as belonging to a program, so
+  a second program's tables can point at the first's pages only if the builder is
+  changed to do so; there is no allocator state that would notice.
+
+**What the compiler does check.** Everything stages 1-12 apply: that every
+module here is on the manifest's `[unsafe] modules` list; that `asm` is inside
+`unsafe` and a naked body is exactly one `asm`; that `static mut` reads and
+writes are inside `unsafe`; that a `Ptr` element has a machine-level layout; and
+that a conversion that can lose a value is checked rather than silent (the point
+above, where the check is what the kernel had to design around). It checks no
+new construct because the stage adds none.
+
+**What it does not check.** The frame's offsets against the asm's, the slot
+block's, the trap stack's address, the value of `sscratch`, which privilege
+`sret` returns to, which table `satp` names, the saved kernel `sp`/`ra`, the
+register offsets the dispatcher uses, what a validated user pointer is
+*for*, what the physical address it names contains, or whether a copied program
+is still the program that was assembled. The catalogue for the unchecked tools
+is stages 1, 5, 7, 8 and 11.

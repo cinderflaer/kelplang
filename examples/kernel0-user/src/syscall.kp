@@ -1,0 +1,139 @@
+impl "uart"
+impl "vm"
+
+// The syscall layer: numbers, the two calls, and the copy that never reads a
+// user address. `trap_dispatch` reads the number and the arguments out of the
+// trap frame and calls `handle` (`plan/syscall-abi.md`).
+//
+// Every byte a syscall takes from a program goes through the kernel buffer, and
+// only after `vm.user_page_pa` has answered for the page the byte is on. That
+// check is the whole trust boundary: a program's `Ptr` is a number, and the
+// kernel's job is to decide what it names before it uses it.
+const SYS_WRITE: usize = 0
+const SYS_EXIT: usize = 1
+
+const STDOUT: usize = 1
+
+// The ABI's errors are the bit patterns of small negative errno values, and
+// that is what `a0` carries back: EBADF, EFAULT and ENOSYS as the register
+// holds them. They are written as patterns rather than as `-9`, `-14` and
+// `-38` because the compiler's own widening conversion from a negative `isize`
+// is a checked one and would panic the kernel on the error path.
+const EBADF: u64 = 0xFFFFFFFFFFFFFFF7
+const EFAULT: u64 = 0xFFFFFFFFFFFFFFF2
+const ENOSYS: u64 = 0xFFFFFFFFFFFFFFDA
+
+// One call copies at most one page, so the buffer it copies through is exactly
+// one frame and the length check is what makes that true.
+const MAX_COPY: usize = 4096
+
+// One past the highest canonical Sv39 low address. A user pointer at or above
+// it is not a user address, and a range that would reach past it is refused
+// before the addition that would wrap.
+const USER_LIMIT: usize = 0x4000000000
+
+// The buffer frame, handed over once at boot because a syscall has no allocator
+// to call and no place on the trap stack to keep 4 KiB.
+static mut BUFFER: usize = 0
+
+pub fun set_buffer(frame: usize) {
+    unsafe {
+        BUFFER = frame
+    }
+}
+
+fun buffer().R: usize {
+    unsafe { BUFFER }
+}
+
+// The syscall layer's whole address vocabulary: a byte at a physical address.
+// Everything it reads was named by a page-table walk, never by a user pointer.
+fun byte(addr: usize).R: Ptr<u8> {
+    Ptr.from_addr(addr)
+}
+
+pub fun is_exit(num: usize).R: bool {
+    num == SYS_EXIT
+}
+
+// `exit` never resumes the program, so it is not part of `handle`'s return
+// value: the dispatcher prints this and tells the trap entry to leave.
+pub fun exit(code: usize) {
+    uart.puts("user exited ")
+    uart.put_dec(code)
+    uart.putc(10)
+}
+
+// The calls that answer in `a0`. An unknown number is `ENOSYS`, not a fault;
+// the ABI names six argument registers, so the three calls no call uses are
+// passed and ignored rather than read at the call site.
+pub fun handle(root: usize, num: usize, a0: usize, a1: usize, a2: usize, _a3: usize, _a4: usize, _a5: usize).R: u64 {
+    if num == SYS_WRITE {
+        return write(root, a0, a1, a2)
+    }
+    return ENOSYS
+}
+
+// Print the demo's own line and answer `EFAULT`. The line is the acceptance
+// signal: it is what says the kernel saw the bad pointer instead of dying on it.
+fun efault().R: u64 {
+    uart.puts("user: efault ok")
+    uart.putc(10)
+    return EFAULT
+}
+
+// `write(fd, ptr, len)`: only stdout, at most one page, and only inside pages
+// the walk says a user may read.
+fun write(root: usize, fd: usize, ptr: usize, len: usize).R: u64 {
+    if fd != STDOUT {
+        return EBADF
+    }
+    if len > MAX_COPY {
+        return efault()
+    }
+    // The subtraction is the point: `ptr + len` is never computed before the
+    // range is known to fit, so the compiler's own overflow check cannot fire
+    // and turn a bad pointer into a panic.
+    if ptr > USER_LIMIT - len {
+        return efault()
+    }
+    val buf: usize = buffer()
+    if buf == 0 {
+        return EFAULT
+    }
+    var done: usize = 0
+    while done < len {
+        val uva: usize = ptr + done
+        var physical: usize = 0
+        var mapped: bool = false
+        when vm.user_page_pa(root, uva) {
+            Some(pa) -> {
+                physical = pa
+                mapped = true
+            }
+            None -> {
+                mapped = false
+            }
+        }
+        if mapped == false {
+            return efault()
+        }
+        // Up to the end of this page, and no further than the caller asked.
+        var chunk: usize = 4096 - vm.page_offset(uva)
+        if len - done < chunk {
+            chunk = len - done
+        }
+        var i: usize = 0
+        while i < chunk {
+            unsafe {
+                val source: Ptr<u8> = byte(physical + i)
+                val target: Ptr<u8> = byte(buf + i)
+                target.write_volatile(source.read_volatile())
+            }
+            i = i + 1
+        }
+        uart.puts_bytes(byte(buf), chunk)
+        done = done + chunk
+    }
+    return len.to_u64()
+}

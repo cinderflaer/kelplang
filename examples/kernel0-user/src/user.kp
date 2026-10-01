@@ -1,0 +1,99 @@
+// The two user programs, each a naked function whose whole body is the machine
+// code it runs, in a section of its own (`plan/syscall-abi.md`).
+//
+// They run at 0x10000 in their own address space, so the kernel copies the
+// section's bytes into the program's code page at boot. The copy works because
+// everything the programs reference is pc-relative: `la` and the numeric labels
+// are resolved inside the section, so the same bytes name their own strings
+// wherever they are placed. The code page is mapped `U|R|X`, not writable, so
+// the first program builds its marker line on its own stack instead of patching
+// the string in place.
+//
+// Neither function is ever called from Kelp: they are entered by `sret` from
+// `trap.enter_user`, which is the only thing `U|R|X` means.
+
+// The bounds of each section, so the loader has one contiguous range to copy.
+// The linker script defines the four symbols; a script that does not is the
+// usual unchecked promise.
+pub fun one_start().R: usize = unsafe {
+    asm("la {0}, __user1_start", out("r") _)
+}
+
+pub fun one_end().R: usize = unsafe {
+    asm("la {0}, __user1_end", out("r") _)
+}
+
+pub fun two_start().R: usize = unsafe {
+    asm("la {0}, __user2_start", out("r") _)
+}
+
+pub fun two_end().R: usize = unsafe {
+    asm("la {0}, __user2_end", out("r") _)
+}
+
+// Program one: the syscall path. It writes its greeting, takes the `EFAULT` a
+// kernel pointer earns, turns the errno back into a printable hex digit, writes
+// the marker line, and calls `exit(7)`.
+//
+// The marker's hex digit is `55 + (-a0)`: `-14` is `0xE`, so the line ends
+// `bad write -> E`. That is the program's own reading of the ABI's return
+// value, which is why it is the program and not the kernel that prints it.
+section(".user1") pub naked fun program_one() {
+    asm("
+            li a0, 1
+            la a1, 9f
+            li a2, 16
+            li a7, 0
+            ecall
+            li a0, 1
+            li a1, 1
+            slli a1, a1, 31
+            li a2, 16
+            li a7, 0
+            ecall
+            addi sp, sp, -32
+            la t2, 10f
+            mv t3, sp
+            li t4, 15
+        1:
+            lbu t5, 0(t2)
+            sb t5, 0(t3)
+            addi t2, t2, 1
+            addi t3, t3, 1
+            addi t4, t4, -1
+            bnez t4, 1b
+            neg t0, a0
+            addi t0, t0, 55
+            sb t0, 13(sp)
+            li a0, 1
+            mv a1, sp
+            li a2, 15
+            li a7, 0
+            ecall
+            li a0, 7
+            li a7, 1
+            ecall
+        2:
+            j 2b
+        9:
+            .ascii \"hello from user\\n\"
+        10:
+            .ascii \"bad write -> X\\n\"
+        ")
+}
+
+// Program two: the fatal path. `0x40000000` asks for the level-2 entry no leaf
+// fills in this program's address space, so the load is a page fault the kernel
+// cannot resume and the program is killed instead. `exit(9)` after it is the
+// line that would say the kernel had resumed a faulting program.
+section(".user2") pub naked fun program_two() {
+    asm("
+            li t0, 0x40000000
+            ld t1, 0(t0)
+            li a0, 9
+            li a7, 1
+            ecall
+        3:
+            j 3b
+        ")
+}

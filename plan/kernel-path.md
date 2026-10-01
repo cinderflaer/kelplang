@@ -36,7 +36,7 @@ compiler already links) builds the RISCV target, `lld` links it, and all three a
 | 6 | **MK9-S6-M1 `defer`, `Drop`** (B-8) | deterministic cleanup a kernel can point at | Releasing locks and frames on every exit path |
 | 7 | **MK9-S5 allocators** (B-7) | a global allocator hook, arenas, alignment, fallible allocation | The first frame allocator and a kernel heap |
 | 8 | **MK9-S3-M3 per-CPU storage** (B-11) | a per-CPU storage class | Per-CPU run queues, current-task pointers |
-| 9 | **MK9-S4-M4/M5** (B-12, B-13) | mapping/unmapping, page-table walks; a syscall ABI and untrusted-pointer validation | Userspace |
+| 9 | **MK9-S4-M4/M5/M8** (B-12, B-13) | mapping/unmapping and page-table walks (done: Sv39, `plan/address-spaces.md`); a syscall ABI and untrusted-pointer validation (done: `plan/syscall-abi.md`) | Userspace |
 | 10 | **MK9-S7-M2, MK9-S6-M2** (B-14, B-15) | stack guards and probing; panic semantics with no OS | A kernel that fails loudly instead of silently |
 | 11 | **MK10-S1** (C-3) | MMIO regions, IRQ lines, frames as *capabilities* | The safety story: a driver can only touch what it was granted |
 
@@ -172,13 +172,11 @@ reads the other copy by setting `tp = 1` by hand, and asserts the four lines
 from QEMU's stdout. A per-CPU allocator or run queue is still a kernel design,
 not this stage.
 
-**What the next stages need.** The table's stages 7 to 11 are the remaining work:
-`defer`/`Drop` (row 6) is done, so a global allocator hook and arenas (row 7), mapping and a
-syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and MMIO regions and
-IRQ lines as capabilities (row 11) are what remain. Row 7's hook is done
-(`plan/freestanding.md`) and row 8's per-CPU storage is done (`plan/percpu.md`); the allocator
-is what anything running at boot needs first, and the panic semantics of row 10 are what turn a
-check that fires into a diagnostic instead of a bare `panic` byte.
+**What the next stages need.** `defer`/`Drop` (row 6), the allocator hook (row 7), per-CPU
+storage (row 8) and mapping plus the syscall ABI (row 9) are all done. What remains is arenas and
+a fallible allocation surface (row 7), stack guards and panic semantics with no OS (row 10), the
+panic semantics being what turn a check that fires into a diagnostic instead of a bare `panic`
+byte, and MMIO regions and IRQ lines as capabilities (row 11).
 
 **Stage 10 (a second architecture) is done.** The `_start` stub and the target machine are now
 chosen by the manifest's `[target] triple` instead of assuming riscv64: `riscv64` keeps
@@ -192,6 +190,32 @@ flag) whose `kmain` prints `hello from kelp (aarch64)` and halts; it boots under
 `examples/kernel0-aarch64/run.sh` and two tests in `kelpc/tests/compile_and_run.rs` (an
 `llvm-readelf`/`llvm-nm`/`llvm-objdump` check of the ELF and the boot) cover it. The riscv64
 `examples/kernel0*` all still boot after the change.
+
+**Row 9's mapping half is done** (MK9-S4-M8, `plan/address-spaces.md`): `examples/kernel0-vm`
+builds Sv39 tables in Kelp (the PTE bits, the VPN split, the PTE and `satp` encoders, a zeroing
+frame allocator over the linker script's `__frames_start`..`__frames_end`, `map_page`,
+`map_range`, `unmap_page` and `translate`), identity-maps the image and the UART, maps a page at
+`0x3F_FFFF_F000`, drops from machine mode to supervisor mode through `pmpaddr0`/`medeleg`/`mstatus`
+and `mret`, turns the MMU on, and proves the high virtual name and the identity-mapped physical
+name are one frame. `examples/kernel0-vm-fault` takes a load page fault (13) and a store page
+fault (15) on purpose into a naked S-mode `stvec` handler that prints `scause` and `stval`. No
+compiler change was needed: the only thing the language could not spell is a linker-script symbol,
+and that is stage 5's `asm` with `la`. What this stage deliberately leaves out is TLB
+shootdown, ASIDs, huge-page *creation*, Sv48 and a per-section (W^X) identity map.
+
+**Row 9's other half is done too** (MK9-S4-M9, `plan/syscall-abi.md`):
+`examples/kernel0-user` adds the `TrapFrame` and the naked `trap_entry` that builds it on a
+per-hart trap stack (swapping `sp` with `sscratch`), the drop to U-mode through `sepc`,
+`sstatus.SPP` and `sret`, one Sv39 address space per program with its code page at `0x10000` and
+its stack page at `0x20000`, the `ecall` ABI (number in `a7`, arguments in `a0`..`a5`, result in
+`a0`, a negative result an error) with `write` and `exit`, and the untrusted-pointer check that
+makes `write` safe: a length cap, a range bound that cannot wrap before it is checked, and a
+page-table walk that demands the U and R bits on every page before a byte is copied through a
+kernel buffer. Two hand-written programs prove it, one ending in `exit(7)` and one dying on a
+load page fault while the kernel prints the cause and keeps running. No compiler change was
+needed, and what the stage leaves out is the process model: no scheduler, one process at a time,
+no preemption or timer interrupt, no `fork`, no TLB shootdown, no ASIDs, no huge-page *creation*,
+no Sv48 and no per-section (W^X) identity map.
 
 ## Two rules that keep the language honest
 

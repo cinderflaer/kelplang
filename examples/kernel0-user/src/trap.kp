@@ -1,0 +1,342 @@
+impl "syscall"
+impl "uart"
+impl "vm"
+
+// The trap frame, the naked entry that builds it, the dispatcher it calls and
+// the drop to U-mode (`plan/syscall-abi.md`).
+//
+// The register file's offsets: `xN` is at `(N - 1) * 8`, so the named argument
+// registers the ABI talks about are these six plus `a7`.
+const OFF_SEPC: usize = 248
+const OFF_SSTATUS: usize = 256
+const FRAME_BYTES: usize = 264
+const OFF_A0: usize = 72
+const OFF_A1: usize = 80
+const OFF_A2: usize = 88
+const OFF_A3: usize = 96
+const OFF_A4: usize = 104
+const OFF_A5: usize = 112
+const OFF_A7: usize = 128
+
+// `trap_entry` runs with `sp` at the trap stack top and then subtracts this, so
+// the frame starts here and the top 40 bytes above it are the hart's slot
+// block: the user `sp` the next `enter_user` will load, the kernel's resume
+// pair, and the dispatcher's address. The push keeps `sp` 16-byte aligned,
+// which is what the `jalr` to `trap_dispatch` needs.
+//
+// `SLOT_*_FROM_TOP` are the offsets `slot()` writes from the trap stack top;
+// the asm reads the same four words as `TRAP_RESERVE - SLOT_*_FROM_TOP` from the
+// frame base, which is 272, 280, 288 and 296 in the order below.
+const TRAP_RESERVE: usize = 304
+const SLOT_ENTRY_SP_FROM_TOP: usize = 32
+const SLOT_RESUME_RA_FROM_TOP: usize = 24
+const SLOT_RESUME_SP_FROM_TOP: usize = 16
+const SLOT_DISPATCH_FROM_TOP: usize = 8
+
+// `scause` 8 is the environment call from U-mode, the only trap a program makes
+// on purpose.
+const SCAUSE_ECALL_U: usize = 8
+
+static mut CURRENT_ROOT: usize = 0
+
+// The frame is a `repr(c)` datac of 33 words: x1..x31 in register order, then
+// `sepc` and `sstatus`. `x2` is the one field the hardware does not leave in a
+// register on trap: the entry reads the interrupted `sp` out of `sscratch`, and
+// the resume path puts it back the same way.
+//
+// The offsets in the asm below are the layout, and nothing in the compiler
+// checks them: `frame_layout_ok` is the check the boot runs, and
+// `kelpc/tests/projects/trap_frame_layout` pins the same numbers on both
+// backends.
+repr(c) datac TrapFrame(
+    val x1: u64,
+    val x2: u64,
+    val x3: u64,
+    val x4: u64,
+    val x5: u64,
+    val x6: u64,
+    val x7: u64,
+    val x8: u64,
+    val x9: u64,
+    val x10: u64,
+    val x11: u64,
+    val x12: u64,
+    val x13: u64,
+    val x14: u64,
+    val x15: u64,
+    val x16: u64,
+    val x17: u64,
+    val x18: u64,
+    val x19: u64,
+    val x20: u64,
+    val x21: u64,
+    val x22: u64,
+    val x23: u64,
+    val x24: u64,
+    val x25: u64,
+    val x26: u64,
+    val x27: u64,
+    val x28: u64,
+    val x29: u64,
+    val x30: u64,
+    val x31: u64,
+    val sepc: u64,
+    val sstatus: u64,
+)
+
+pub fun set_root(root: usize) {
+    unsafe {
+        CURRENT_ROOT = root
+    }
+}
+
+fun current_root().R: usize {
+    unsafe { CURRENT_ROOT }
+}
+
+// This hart's trap stack top, from the linker script the way `vm` reads the
+// frame region: a symbol the language cannot name outside an asm template.
+pub fun trap_stack_top().R: usize = unsafe {
+    asm("la {0}, __trap_stack_top", out("r") _)
+}
+
+// The slot block is addressed backwards from the trap stack top, because that
+// is the only address the entry has before it has built a frame.
+fun slot(back: usize).R: Ptr<u64> {
+    val top: usize = trap_stack_top()
+    Ptr.from_addr(top - back)
+}
+
+// One 64-bit word of the frame, at a byte offset the asm and this module agree
+// on. Everything in the frame is a machine word, so an aligned volatile load is
+// the whole access.
+fun word(addr: usize).R: Ptr<u64> {
+    Ptr.from_addr(addr)
+}
+
+fun frame_get(frame: Ptr<TrapFrame>, offset: usize).R: u64 {
+    unsafe {
+        word(frame.addr() + offset).read_volatile()
+    }
+}
+
+fun frame_set(frame: Ptr<TrapFrame>, offset: usize, value: u64) {
+    unsafe {
+        word(frame.addr() + offset).write_volatile(value)
+    }
+}
+
+// What the boot prints `user: frame ok` for: the four offsets the naked entry
+// hardcodes, the size the push reserves, the slot block's size, and the two
+// registers the dispatcher reads and writes.
+pub fun frame_layout_ok().R: bool {
+    if size_of<TrapFrame>() != FRAME_BYTES {
+        return false
+    }
+    if offset_of<TrapFrame>("x1") != 0 {
+        return false
+    }
+    if offset_of<TrapFrame>("x2") != 8 {
+        return false
+    }
+    if offset_of<TrapFrame>("x17") != OFF_A7 {
+        return false
+    }
+    if offset_of<TrapFrame>("sepc") != OFF_SEPC {
+        return false
+    }
+    if offset_of<TrapFrame>("sstatus") != OFF_SSTATUS {
+        return false
+    }
+    // The frame, one word of padding that keeps the frame base 16-byte aligned,
+    // and the four slots: if the `datac` grows, the asm's 304 and its four
+    // offsets are no longer the ones this module believes.
+    if TRAP_RESERVE != FRAME_BYTES + 8 + 4 * 8 {
+        return false
+    }
+    return true
+}
+
+// Install the trap vector and the hart's slot block. `stvec`'s low two bits are
+// the vector mode, so `trap_entry` carries `align(4)` and the linker script
+// places its section on a 4-byte boundary. The dispatch address lives in the
+// slot rather than in a register because the naked entry has no prologue in
+// which to compute it.
+pub fun install() {
+    unsafe {
+        asm("csrw stvec, {0}", in("r") Ptr.from_fn(trap_entry).addr())
+        slot(SLOT_DISPATCH_FROM_TOP).write_volatile(Ptr.from_fn(trap_dispatch).addr().to_u64())
+    }
+}
+
+// The body the naked entry calls with the frame in `a0`. Nonzero means resume
+// the program; zero means the kernel leaves and the entry jumps to the resume
+// slots instead of `sret`ing.
+fun trap_dispatch(frame: Ptr<TrapFrame>).R: isize {
+    val cause: usize = unsafe { asm("csrr {0}, scause", out("r") _) }
+    if cause == SCAUSE_ECALL_U {
+        val num: usize = frame_get(frame, OFF_A7).to_usize()
+        if syscall.is_exit(num) {
+            syscall.exit(frame_get(frame, OFF_A0).to_usize())
+            return 0
+        }
+        val result: u64 = syscall.handle(
+            current_root(),
+            num,
+            frame_get(frame, OFF_A0).to_usize(),
+            frame_get(frame, OFF_A1).to_usize(),
+            frame_get(frame, OFF_A2).to_usize(),
+            frame_get(frame, OFF_A3).to_usize(),
+            frame_get(frame, OFF_A4).to_usize(),
+            frame_get(frame, OFF_A5).to_usize(),
+        )
+        frame_set(frame, OFF_A0, result)
+        // An `ecall` is never the compressed form, so the next instruction is
+        // four bytes on.
+        frame_set(frame, OFF_SEPC, frame_get(frame, OFF_SEPC) + 4)
+        return 1
+    }
+    // Any other cause from U-mode is fatal for the program and nothing for the
+    // kernel: print the cause and leave. The kernel has no handler that could
+    // resume a page fault, and no way to fix the instruction that faulted.
+    uart.puts("user killed: scause ")
+    uart.put_dec(cause)
+    uart.putc(10)
+    return 0
+}
+
+// Enter user mode at `entry` with stack pointer `sp`, in the address space
+// `root`. It returns when the program exits or is killed.
+//
+// `satp` is switched first, and the kernel image, its stacks and the frame
+// region are identity-mapped in every program's root as non-user pages, which
+// is what lets the kernel keep executing across the switch and what lets the
+// trap entry run under the program's table.
+pub fun enter_user(root: usize, entry: usize, sp: usize) {
+    set_root(root)
+    unsafe {
+        slot(SLOT_ENTRY_SP_FROM_TOP).write_volatile(sp.to_u64())
+        asm("csrw satp, {0}", in("r") vm.satp_encode(root))
+        asm("sfence.vma zero, zero")
+        asm("csrw sepc, {0}", in("r") entry)
+        asm("csrw sscratch, {0}", in("r") trap_stack_top())
+        // SPP (bit 8) clear returns to U-mode and SPIE (bit 5) set re-enables
+        // interrupts on the way back; every other bit is left as it was.
+        val sstatus: usize = asm("csrr {0}, sstatus", out("r") _)
+        asm("csrw sstatus, {0}", in("r") (sstatus & 0xFFFFFFFFFFFFFEFF) | 0x20)
+    }
+    drop_to_user()
+}
+
+// The last step, and the reason it is naked: `sret` has to run with `sp` set to
+// the program's stack and nothing pushed. It leaves the kernel's own `sp` and
+// `ra` in the resume slots, so a program that exits or is killed lands back in
+// `enter_user` right here instead of returning to code that no longer exists.
+naked fun drop_to_user() {
+    asm("
+            la t0, __trap_stack_top
+            sd ra, -24(t0)
+            sd sp, -16(t0)
+            ld sp, -32(t0)
+            sret
+        ")
+}
+
+// The trap vector: `sscratch` holds this hart's trap stack top while user code
+// runs, so the first instruction puts `sp` there and the interrupted `sp` into
+// `sscratch`. The frame is built below the slot block, the dispatcher is called
+// through the slot, and the return value decides between the two exits.
+//
+// The leave path is a jump, not a `ret`: the resume slots hold the kernel's
+// `sp` and `ra` from the `call` into `drop_to_user`, and restoring them here
+// abandons the trap frame on purpose.
+section(".text.trap") align(4) naked fun trap_entry() {
+    asm("
+            csrrw sp, sscratch, sp
+            addi sp, sp, -304
+            sd x1, 0(sp)
+            sd x3, 16(sp)
+            sd x4, 24(sp)
+            sd x5, 32(sp)
+            sd x6, 40(sp)
+            sd x7, 48(sp)
+            sd x8, 56(sp)
+            sd x9, 64(sp)
+            sd x10, 72(sp)
+            sd x11, 80(sp)
+            sd x12, 88(sp)
+            sd x13, 96(sp)
+            sd x14, 104(sp)
+            sd x15, 112(sp)
+            sd x16, 120(sp)
+            sd x17, 128(sp)
+            sd x18, 136(sp)
+            sd x19, 144(sp)
+            sd x20, 152(sp)
+            sd x21, 160(sp)
+            sd x22, 168(sp)
+            sd x23, 176(sp)
+            sd x24, 184(sp)
+            sd x25, 192(sp)
+            sd x26, 200(sp)
+            sd x27, 208(sp)
+            sd x28, 216(sp)
+            sd x29, 224(sp)
+            sd x30, 232(sp)
+            sd x31, 240(sp)
+            csrr t0, sscratch
+            sd t0, 8(sp)
+            csrr t0, sepc
+            sd t0, 248(sp)
+            csrr t0, sstatus
+            sd t0, 256(sp)
+            ld t0, 296(sp)
+            mv a0, sp
+            jalr ra, t0, 0
+            beqz a0, 1f
+            ld t0, 248(sp)
+            csrw sepc, t0
+            ld t0, 256(sp)
+            csrw sstatus, t0
+            ld t0, 8(sp)
+            csrw sscratch, t0
+            ld x1, 0(sp)
+            ld x3, 16(sp)
+            ld x4, 24(sp)
+            ld x5, 32(sp)
+            ld x6, 40(sp)
+            ld x7, 48(sp)
+            ld x8, 56(sp)
+            ld x9, 64(sp)
+            ld x10, 72(sp)
+            ld x11, 80(sp)
+            ld x12, 88(sp)
+            ld x13, 96(sp)
+            ld x14, 104(sp)
+            ld x15, 112(sp)
+            ld x16, 120(sp)
+            ld x17, 128(sp)
+            ld x18, 136(sp)
+            ld x19, 144(sp)
+            ld x20, 152(sp)
+            ld x21, 160(sp)
+            ld x22, 168(sp)
+            ld x23, 176(sp)
+            ld x24, 184(sp)
+            ld x25, 192(sp)
+            ld x26, 200(sp)
+            ld x27, 208(sp)
+            ld x28, 216(sp)
+            ld x29, 224(sp)
+            ld x30, 232(sp)
+            ld x31, 240(sp)
+            addi sp, sp, 304
+            csrrw sp, sscratch, sp
+            sret
+        1:
+            ld t0, 288(sp)
+            ld t1, 280(sp)
+            mv sp, t0
+            jr t1
+        ")
+}

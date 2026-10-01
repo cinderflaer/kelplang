@@ -1,0 +1,123 @@
+impl "trap"
+impl "uart"
+impl "vm"
+
+// Kernel stage 10, the fault half: the same Sv39 setup as `kernel0-vm`, but
+// the two ways a page can be wrong are taken on purpose and the S-mode trap
+// handler is what proves the kernel sees them.
+//
+// Phase 0 loads from an address no leaf maps (a load page fault, `scause` 13);
+// phase 1 stores to a leaf that has R but not W (a store page fault, 15). The
+// handler prints `scause` and `stval`, resumes past the first fault and halts
+// on the second, so one boot shows both in order.
+const IMAGE_START: usize = 0x80000000
+const IMAGE_SPAN: usize = 4 * 1024 * 1024
+
+const UART_BASE: usize = 0x10000000
+
+// Bit 30 set: the root index is 1, and nothing installs a table there.
+const UNMAPPED_VA: usize = 0x40000000
+
+// One page below 2^38, Sv39's highest canonical low address.
+const HIGH_VA: usize = 0x4000000000 - 4096
+
+const MAGIC: u64 = 0xC0FFEE
+
+static mut ROOT: usize = 0
+
+fun root_table().R: usize {
+    unsafe { ROOT }
+}
+
+fun enter_supervisor(entry: usize) {
+    unsafe {
+        val pmpaddr: usize = 0x3FFFFFFFFFFFFF
+        val pmpcfg: usize = 0x1F
+        val delegated: usize = (1 << 12) | (1 << 13) | (1 << 15)
+        val none: usize = 0
+        asm("csrw pmpaddr0, {0}", in("r") pmpaddr)
+        asm("csrw pmpcfg0, {0}", in("r") pmpcfg)
+        asm("csrw medeleg, {0}", in("r") delegated)
+        asm("csrw mideleg, {0}", in("r") none)
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") (mstatus & 0xFFFFFFFFFFFFE7FF) | 0x800)
+        asm("csrw mepc, {0}", in("r") entry)
+        asm("mret")
+    }
+}
+
+fun smain() {
+    // Installed before the MMU is on, so a fault anywhere in the turn-on path
+    // is reported rather than silent.
+    trap.install()
+    vm.enable_paging(root_table())
+    uart.puts("fault: paging on")
+    uart.putc(10)
+
+    trap.arm(0)
+    var probe: u64 = 0
+    val unmapped: Ptr<u64> = Ptr.from_addr(UNMAPPED_VA)
+    probe = unsafe { unmapped.read_volatile() }
+    if probe == 0xDEADBEEF {
+        uart.puts("fault: impossible")
+        uart.putc(10)
+    }
+
+    trap.arm(1)
+    val readonly: Ptr<u64> = Ptr.from_addr(HIGH_VA)
+    unsafe {
+        readonly.write_volatile(MAGIC)
+    }
+
+    // The phase-1 handler halts, so this line is the failure signal.
+    uart.puts("fault: survived")
+    uart.putc(10)
+    uart.halt()
+}
+
+section(".text.boot") fun kmain() {
+    uart.puts("fault: m-mode")
+    uart.putc(10)
+
+    val root: usize = vm.alloc_frame()
+    unsafe {
+        ROOT = root
+    }
+    if root == 0 {
+        uart.puts("fault: no root")
+        uart.putc(10)
+        uart.halt()
+    }
+
+    if vm.map_range(root, IMAGE_START, IMAGE_START, IMAGE_SPAN, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        uart.puts("fault: identity failed")
+        uart.putc(10)
+        uart.halt()
+    }
+    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
+        uart.puts("fault: uart failed")
+        uart.putc(10)
+        uart.halt()
+    }
+
+    val ro_frame: usize = vm.alloc_frame()
+    if ro_frame == 0 {
+        uart.puts("fault: no frame")
+        uart.putc(10)
+        uart.halt()
+    }
+    // R without W is the read-only mapping the second fault writes to.
+    if vm.map_page(root, HIGH_VA, ro_frame, vm.PTE_R) == false {
+        uart.puts("fault: map failed")
+        uart.putc(10)
+        uart.halt()
+    }
+
+    enter_supervisor(Ptr.from_fn(smain).addr())
+}
+
+fun kp_panic(_msg: str) {
+    uart.puts("panic")
+    uart.putc(10)
+    uart.halt()
+}
