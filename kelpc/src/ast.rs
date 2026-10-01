@@ -230,6 +230,10 @@ pub struct FunctionDecl {
     pub body: FunctionBody,
     /// See `DatacDecl::module`.
     pub module: String,
+    /// `naked fun ...` (kernel stage 5): LLVM's `naked` and `noinline`, whose
+    /// body must be exactly one `asm(...)` statement, so no prologue or
+    /// epilogue is emitted around it.
+    pub naked: bool,
     /// The `section("<name>")` clause, when one was written (kernel stage 4):
     /// the object section this function's code is emitted in, so a linker
     /// script can place it. `None` is the target's default `.text`.
@@ -736,6 +740,23 @@ pub enum Expr {
         block: Block,
         span: Span,
     },
+    /// `asm("<template>", operands...)` (kernel stage 5): one target-assembler
+    /// instruction, legal only inside `unsafe`. The template is the target's
+    /// own text and the operands are the values that cross into and out of it;
+    /// `plan/inline-asm.md` is the design.
+    Asm {
+        template: String,
+        operands: Vec<AsmOperand>,
+        clobbers: Vec<String>,
+        /// `nomem`: the asm does not touch memory, so the default `~{memory}`
+        /// clobber is dropped.
+        nomem: bool,
+        /// `nostack`: accepted and recorded; neither LLVM's inline-asm IR nor
+        /// GCC's extended asm has a stack-clobber spelling, so it changes no
+        /// output (see `plan/inline-asm.md`).
+        nostack: bool,
+        span: Span,
+    },
     /// `when expr { Variant(bind) -> value ... }` — pattern matching over an
     /// `enum` scrutinee (A-1, `plan/syntax.md` §6.3). Distinct from the
     /// boolean `when`, which has no scrutinee and is desugared by the parser
@@ -766,6 +787,31 @@ pub enum Expr {
     /// `()` is not an expression at all, so a tuple literal always has at
     /// least two elements and its type is the elements' own, in order.
     TupleLit { elems: Vec<Expr>, span: Span },
+}
+
+/// One operand of an `asm(...)` expression (kernel stage 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsmOperandKind {
+    /// `in("...") expr`: read `expr` in.
+    In,
+    /// `out("...") place`: write the result into `place`, or `_` for the
+    /// anonymous output that is the expression's value.
+    Out,
+    /// `inout("...") place`: read `place` in and write the result back to it.
+    InOut,
+}
+
+/// One `in`/`out`/`inout` operand of an `asm(...)` expression (kernel stage 5).
+#[derive(Debug, Clone)]
+pub struct AsmOperand {
+    pub kind: AsmOperandKind,
+    /// The LLVM constraint name written, `"r"` for any general register or an
+    /// explicit one like `"rax"`; passed to the backend unchanged.
+    pub constraint: String,
+    /// For `in`, the value. For `out`/`inout`, the place written. `None` is the
+    /// anonymous `out("...") _` form, which is the expression's value.
+    pub operand: Option<Expr>,
+    pub span: Span,
 }
 
 /// One arm of the pattern form of `when`. `pattern` is `None` for an `else`
@@ -826,7 +872,8 @@ impl Expr {
             | Expr::When { span: s, .. }
             | Expr::ArrayLit { span: s, .. }
             | Expr::ArrayRepeat { span: s, .. }
-            | Expr::TupleLit { span: s, .. } => *s,
+            | Expr::TupleLit { span: s, .. }
+            | Expr::Asm { span: s, .. } => *s,
             Expr::Block(b) => b.span,
             Expr::Unsafe { span, .. } => *span,
         }
@@ -937,6 +984,10 @@ fn first_unsafe_in_block(block: &Block) -> Option<Span> {
 
 fn first_unsafe_in_expr(expr: &Expr) -> Option<Span> {
     match expr {
+        // An `asm(...)` is an unsafe operation (kernel stage 5): writing one is
+        // what puts its module in the manifest's audit list, exactly as an
+        // `unsafe` block does.
+        Expr::Asm { span, .. } => Some(*span),
         Expr::Unsafe { span, .. } => Some(*span),
         Expr::Unary { expr, .. } | Expr::Ref { expr, .. } | Expr::Try { expr, .. } | Expr::Deref { expr, .. } => {
             first_unsafe_in_expr(expr)

@@ -4838,6 +4838,7 @@ impl<'a> ConstEvaluator<'a> {
             ast::Expr::Deref { .. } => Err(self.unsupported(expr.span(), "a dereference")),
             ast::Expr::Ref { .. } => Err(self.unsupported(expr.span(), "a borrow")),
             ast::Expr::Unsafe { .. } => Err(self.unsupported(expr.span(), "an 'unsafe' block")),
+            ast::Expr::Asm { .. } => Err(self.unsupported(expr.span(), "an 'asm' expression")),
         }
     }
 
@@ -7074,6 +7075,15 @@ impl PdScan {
             // block: a passdown named inside one is still a passdown the
             // enclosing function has to receive.
             ast::Expr::Unsafe { block, .. } => self.scan_block(block),
+            // The operand expressions of an `asm(...)` are scanned for the same
+            // reason: a place or a value inside one may name a passdown.
+            ast::Expr::Asm { operands, .. } => {
+                for op in operands {
+                    if let Some(e) = &op.operand {
+                        self.scan_expr(e);
+                    }
+                }
+            }
         }
     }
 }
@@ -7469,6 +7479,53 @@ fn check_function(
     env: &TypeEnv,
     fns: &FuncEnv,
 ) -> Result<tir::Function> {
+    // A `naked fun` (kernel stage 5) is a declaration whose whole body is one
+    // `asm(...)`: nothing else can be emitted around it, so nothing else may be
+    // written. The check is here rather than in the parser because it is a
+    // property of the declaration the type checker already owns.
+    if f.naked {
+        if f.extern_ {
+            return Err(TypeError {
+                message: "a 'naked fun' cannot be 'extern': it has a body of its own".to_string(),
+                span: f.span,
+            });
+        }
+        if f.receiver.is_some() {
+            return Err(TypeError {
+                message: "a 'naked fun' cannot be a receiver method: it has no compiler-emitted prologue, so there is nothing that could pass the receiver".to_string(),
+                span: f.span,
+            });
+        }
+        if f.name == "main" {
+            return Err(TypeError {
+                message: "a 'naked fun' cannot be 'main': the compiler emits the hosted entry point's own C signature for it".to_string(),
+                span: f.span,
+            });
+        }
+        if !f.params.is_empty() {
+            return Err(TypeError {
+                message: "a 'naked fun' takes no parameters: the asm reads the incoming registers itself, and the compiler binds nothing".to_string(),
+                span: f.span,
+            });
+        }
+        let single_asm = match &f.body {
+            ast::FunctionBody::Block(b) => {
+                b.stmts.len() == 1
+                    && matches!(
+                        &b.stmts[0],
+                        ast::Stmt::Expr { expr: ast::Expr::Asm { .. }, .. }
+                    )
+            }
+            ast::FunctionBody::Expr(e) => matches!(e, ast::Expr::Asm { .. }),
+            ast::FunctionBody::Extern => false,
+        };
+        if !single_asm {
+            return Err(TypeError {
+                message: "a 'naked fun' body must be exactly one 'asm(...)' statement: nothing else can be emitted around it".to_string(),
+                span: f.span,
+            });
+        }
+    }
     let receiver_struct = f
         .receiver
         .as_ref()
@@ -7518,10 +7575,11 @@ fn check_function(
     ctx.ret_ty = sig.ret.clone();
     ctx.receiver_struct = receiver_struct;
     ctx.pd_global_borrow = key == "main";
-    // `unsafe fun` (MK9-S2 stage 1): the whole body is an unsafe context, so
-    // the unsafe-only pointer operations are legal without a block around
-    // them. Every other function starts at zero and needs an `unsafe { ... }`.
-    ctx.unsafe_depth = if f.unsafe_ { 1 } else { 0 };
+    // `unsafe fun` (MK9-S2 stage 1) and `naked fun` (kernel stage 5): the whole
+    // body is an unsafe context, so the unsafe-only pointer operations, and the
+    // `asm` a naked body must be, are legal without a block around them. Every
+    // other function starts at zero and needs an `unsafe { ... }`.
+    ctx.unsafe_depth = if f.unsafe_ || f.naked { 1 } else { 0 };
     ctx.own_hidden = hidden.iter().map(|pd| pd.hidden.clone()).collect();
     let wiring_key = ctx.wiring_key_of(key);
     ctx.fn_key = wiring_key;
@@ -7617,6 +7675,7 @@ fn check_function(
     if sig.ret != Ty::Unit
         && body.tail.is_some()
         && !tail_diverges
+        && !f.naked
         && !str_view_compatible(&body.ty(), &sig.ret)
     {
         return Err(TypeError {
@@ -7629,6 +7688,27 @@ fn check_function(
             span: f.span,
         });
     }
+
+    let body = if f.naked {
+        // The single `asm(...)` becomes a statement rather than the block's
+        // tail, so each backend emits it and then nothing: the asm itself is
+        // what returns, and a `return` of the declared type would be an
+        // instruction a naked function cannot have.
+        let mut body = body;
+        let asm = match body.tail.take() {
+            Some(e) => *e,
+            None => match body.stmts.pop() {
+                Some(tir::Stmt::Expr(e)) => e,
+                _ => unreachable!("a naked body is exactly one asm expression"),
+            },
+        };
+        tir::Block {
+            stmts: vec![tir::Stmt::Expr(asm)],
+            tail: None,
+        }
+    } else {
+        body
+    };
 
     Ok(tir::Function {
         name: key.to_string(),
@@ -7652,6 +7732,7 @@ fn check_function(
         // Only a `fun` literal that captured something has an environment;
         // a declaration never does (A-4 phase E).
         env: None,
+        naked: f.naked,
         section: f.section.clone(),
     })
 }
@@ -8242,6 +8323,7 @@ fn check_fn_literal(
         module: ctx.module.clone(),
         extern_: false,
         env,
+        naked: false,
         section: None,
     });
     let kind = match captures.is_empty() {
@@ -8810,6 +8892,17 @@ fn check_expr_inner(expr: &ast::Expr, ctx: &mut Ctx, expected: Option<&Ty>) -> R
                 span: *span,
             })
         }
+        // `asm(...)` (kernel stage 5): an unsafe operation in its own right,
+        // so it needs the `unsafe` context on top of the module's `[unsafe]`
+        // listing (which `ast::first_unsafe` already demanded).
+        ast::Expr::Asm {
+            template,
+            operands,
+            clobbers,
+            nomem,
+            nostack: _,
+            span,
+        } => check_asm(template, operands, clobbers, *nomem, *span, ctx, expected),
         ast::Expr::Try { expr: sub, span } => check_try(sub, *span, ctx),
         ast::Expr::Ref { mutable, expr: sub, span } => {
             let sub_t = check_expr(sub, ctx, None)?;
@@ -10246,6 +10339,182 @@ fn pd_place_hidden(expr: &tir::Expr) -> Option<&str> {
 /// Assignment targets: `Ident`, a `.field` chain rooted in one, or a
 /// dereferenced borrow (`*p`, `(*p).field`) — anything `is_ast_place`
 /// accepts.
+/// The two rules a written place obeys: it must be writable at all (`var`, an
+/// exclusive borrow, ...), and a field of a `datac` must be declared `var`.
+/// Shared by `=` and by an `asm` operand's `out`/`inout` place, so the two
+/// cannot drift.
+fn check_written_place(target: &tir::Expr, ctx: &Ctx) -> Result<()> {
+    check_target_writable(target, ctx)?;
+    // Only the *immediate* field being written needs to be `var`; fields merely
+    // read through on the way there do not.
+    if let tir::ExprKind::FieldAccess { base, field } = &target.kind {
+        let sname = struct_name_of(&base.ty)
+            .expect("field access base is always a struct type, guaranteed by check_expr");
+        let sdef = ctx
+            .struct_def(sname)
+            .expect("struct types are only produced for known structs");
+        let fdef = sdef.field(field).expect("field already resolved by check_expr");
+        if !fdef.mutable {
+            return Err(TypeError {
+                message: format!("cannot write to '{field}': declared 'val'"),
+                span: target.span,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `asm(...)` (kernel stage 5). The construct is an unsafe operation, so on top
+/// of the module's `[unsafe]` listing (`ast::first_unsafe`) the use site has to
+/// be inside `unsafe { ... }` or an `unsafe fun`, exactly as a raw pointer write
+/// does. The operand types are machine words; the constraint names are passed to
+/// the backend unchanged.
+fn check_asm(
+    template: &str,
+    operands: &[ast::AsmOperand],
+    clobbers: &[String],
+    nomem: bool,
+    span: Span,
+    ctx: &mut Ctx,
+    expected: Option<&Ty>,
+) -> Result<tir::Expr> {
+    if ctx.unsafe_depth == 0 {
+        return Err(TypeError {
+            message: "'asm' is an unsafe operation: it can only be used inside 'unsafe { ... }' or in a function declared 'unsafe fun'".to_string(),
+            span,
+        });
+    }
+    let mut checked: Vec<tir::AsmOperand> = Vec::new();
+    let mut value_out: Option<usize> = None;
+    let mut value_ty: Option<Ty> = None;
+    for (i, op) in operands.iter().enumerate() {
+        let operand = match op.kind {
+            ast::AsmOperandKind::In => {
+                let e = op
+                    .operand
+                    .as_ref()
+                    .expect("the parser requires an operand for 'in'");
+                let v = check_expr(e, ctx, None)?;
+                require_asm_operand_ty(&v.ty, op.span)?;
+                Some(v)
+            }
+            ast::AsmOperandKind::Out | ast::AsmOperandKind::InOut => match &op.operand {
+                Some(e) => {
+                    if !is_ast_place(e) {
+                        return Err(TypeError {
+                            message: format!(
+                                "a '{}' operand must be a place: the asm writes it back, so an arbitrary expression has nowhere to be written",
+                                asm_kind_word(op.kind)
+                            ),
+                            span: op.span,
+                        });
+                    }
+                    let p = check_expr(e, ctx, None)?;
+                    check_written_place(&p, ctx)?;
+                    require_asm_operand_ty(&p.ty, op.span)?;
+                    Some(p)
+                }
+                None => {
+                    if value_out.is_some() {
+                        return Err(TypeError {
+                            message: "an 'asm' expression has at most one anonymous output: name the others with a place ('out(\"r\") x')".to_string(),
+                            span: op.span,
+                        });
+                    }
+                    // An output is a machine word, so `i64` answers when the
+                    // context names no type; a written type wins.
+                    let ty = expected.cloned().unwrap_or(Ty::I64);
+                    require_asm_operand_ty(&ty, op.span)?;
+                    value_out = Some(i);
+                    value_ty = Some(ty);
+                    None
+                }
+            },
+        };
+        checked.push(tir::AsmOperand {
+            kind: op.kind,
+            constraint: op.constraint.clone(),
+            operand,
+        });
+    }
+    // A `{n}` that names no operand would be left in the template verbatim and
+    // read by the assembler as a brace, so it is refused here where the operands
+    // are known.
+    for n in asm_placeholders(template) {
+        if n >= operands.len() {
+            return Err(TypeError {
+                message: format!(
+                    "the asm template refers to operand {{{n}}}, but the asm has {} operand{}",
+                    operands.len(),
+                    if operands.len() == 1 { "" } else { "s" }
+                ),
+                span,
+            });
+        }
+    }
+    Ok(tir::Expr {
+        kind: tir::ExprKind::Asm(tir::AsmBlock {
+            template: template.to_string(),
+            operands: checked,
+            clobbers: clobbers.to_vec(),
+            nomem,
+            value_out,
+        }),
+        ty: value_ty.unwrap_or(Ty::Unit),
+        span,
+    })
+}
+
+/// Every `{n}` placeholder in an asm template, in the order they appear.
+fn asm_placeholders(template: &str) -> Vec<usize> {
+    let chars: Vec<char> = template.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' {
+            if let Some(close) = chars[i + 1..].iter().position(|&c| c == '}') {
+                if let Ok(n) = chars[i + 1..i + 1 + close]
+                    .iter()
+                    .collect::<String>()
+                    .parse::<usize>()
+                {
+                    out.push(n);
+                    i += close + 2;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// `in`, `out` or `inout`, for a diagnostic.
+fn asm_kind_word(kind: ast::AsmOperandKind) -> &'static str {    match kind {
+        ast::AsmOperandKind::In => "in",
+        ast::AsmOperandKind::Out => "out",
+        ast::AsmOperandKind::InOut => "inout",
+    }
+}
+
+/// An `asm` operand is one machine value: an integer, `bool`, `char`, `f32`/
+/// `f64`, a `Ptr<T>` or an `extern type` handle. Everything else (an owned
+/// buffer, a `datac`, an array, a borrow) has no single-register form, so it is
+/// refused by name rather than laid out implicitly.
+fn require_asm_operand_ty(ty: &Ty, span: Span) -> Result<()> {
+    if ty.is_numeric() || matches!(ty, Ty::Bool | Ty::Char | Ty::Ptr(_) | Ty::Handle(_)) {
+        Ok(())
+    } else {
+        Err(TypeError {
+            message: format!(
+                "'{}' cannot be an asm operand: an operand is one machine value (an integer, 'bool', 'char', 'f32'/'f64', a 'Ptr' or an 'extern type' handle)",
+                ty.display()
+            ),
+            span,
+        })
+    }
+}
+
 fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx) -> Result<tir::Expr> {
     if !is_ast_place(target) {
         return Err(TypeError {
@@ -10255,24 +10524,7 @@ fn check_assign(target: &ast::Expr, value: &ast::Expr, span: Span, ctx: &mut Ctx
     }
 
     let target_t = check_expr(target, ctx, None)?;
-    check_target_writable(&target_t, ctx)?;
-
-    // For a field target, writing it also requires the field itself be
-    // declared `var` in its `datac` — a `val` field is never reassignable,
-    // regardless of whether it's reached through a `var` local or an
-    // exclusive borrow. Only the *immediate* field being assigned needs to
-    // be `var`; fields merely read through on the way there do not.
-    if let tir::ExprKind::FieldAccess { base, field } = &target_t.kind {
-        let sname = struct_name_of(&base.ty).expect("field access base is always a struct type, guaranteed by check_expr");
-        let sdef = ctx.struct_def(sname).expect("struct types are only produced for known structs");
-        let fdef = sdef.field(field).expect("field already resolved by check_expr");
-        if !fdef.mutable {
-            return Err(TypeError {
-                message: format!("cannot assign to '{field}': declared 'val'"),
-                span: target_t.span,
-            });
-        }
-    }
+    check_written_place(&target_t, ctx)?;
 
     let value_t = check_expr(value, ctx, Some(&target_t.ty))?;
     if value_t.ty != target_t.ty {

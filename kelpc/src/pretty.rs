@@ -352,6 +352,38 @@ fn print_expr(out: &mut String, expr: &Expr) {
             print_block_stmts(out, block, 1);
             out.push('}');
         }
+        Expr::Asm {
+            template,
+            operands,
+            clobbers,
+            nomem,
+            nostack,
+            ..
+        } => {
+            write!(out, "asm({template:?}").unwrap();
+            for op in operands {
+                let word = match op.kind {
+                    AsmOperandKind::In => "in",
+                    AsmOperandKind::Out => "out",
+                    AsmOperandKind::InOut => "inout",
+                };
+                write!(out, ", {word}({:?}) ", op.constraint).unwrap();
+                match &op.operand {
+                    Some(e) => print_expr(out, e),
+                    None => out.push('_'),
+                }
+            }
+            for c in clobbers {
+                write!(out, ", clobber({c:?})").unwrap();
+            }
+            if *nomem {
+                out.push_str(", nomem");
+            }
+            if *nostack {
+                out.push_str(", nostack");
+            }
+            out.push(')');
+        }
         Expr::Ref { mutable, expr, .. } => {
             out.push('&');
             if *mutable {

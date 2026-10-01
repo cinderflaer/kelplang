@@ -445,6 +445,18 @@ impl Checker<'_> {
                 Ok(())
             }
             ExprKind::ArrayRepeat { value } => self.expr(value, module),
+            // Inline asm (kernel stage 5) is allowed: it is the reason this mode
+            // exists, and an operand is a machine word with no runtime behind
+            // it. The `asm` itself carries no type that the heap check above
+            // would have rejected.
+            ExprKind::Asm(block) => {
+                for op in &block.operands {
+                    if let Some(operand) = &op.operand {
+                        self.expr(operand, module)?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }

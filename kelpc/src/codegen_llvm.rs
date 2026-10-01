@@ -328,7 +328,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::ast::{BinOp, UnOp};
+use crate::ast::{AsmOperandKind, BinOp, UnOp};
+use crate::codegen_c::asm_operand_text;
 use crate::borrowck::{stmt_id, BindingId, DropPlan, DropTarget, Projection};
 use crate::llvm_ffi::{
     self, AtomicRmw, BasicBlock, Builder, Context, DataLayout, DebugBuilder, FloatBinOp, FnType,
@@ -1110,6 +1111,12 @@ impl<'a> Gen<'a> {
             // places its code where a linker script can find it.
             if let Some(section) = &f.section {
                 func.as_value().set_section(section);
+            }
+            // A `naked fun` (kernel stage 5): no prologue and no epilogue, and
+            // never inlined, because its body's asm is the whole ABI.
+            if f.naked {
+                func.mark_naked();
+                func.mark_noinline();
             }
             // A `mut` parameter is an exclusive borrow (`borrowck`), so no other
             // live pointer reaches the same object through the call and LLVM may
@@ -2182,6 +2189,10 @@ struct FnGen<'g, 'a> {
     /// right after it (`alloca`'s own doc comment) instead of always at the
     /// block's absolute start. `None` before the first one.
     alloca_after: Option<Value<'a>>,
+    /// `naked fun` (kernel stage 5): the body is one `asm` and the asm itself
+    /// returns, so no parameter slots, no `return` of the declared type, and an
+    /// `unreachable` terminator after the asm.
+    naked: bool,
 }
 
 impl<'g, 'a> FnGen<'g, 'a> {
@@ -2220,6 +2231,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             debug_scope: g.debug_scopes.get(&f.name).copied(),
             decl_span: Some(f.span),
             alloca_after: None,
+            naked: f.naked,
         })
     }
 
@@ -2259,6 +2271,7 @@ impl<'g, 'a> FnGen<'g, 'a> {
             debug_scope: g.pd_init_scope,
             decl_span: Some(pd.init.span),
             alloca_after: None,
+            naked: false,
         })
     }
 
@@ -2386,7 +2399,14 @@ impl<'g, 'a> FnGen<'g, 'a> {
         self.emit_block_body(body)?;
 
         if !self.terminated {
-            self.emit_fallthrough_return()?;
+            // A naked function's asm is what returns; a `return` of the
+            // declared type would be an instruction the attribute forbids.
+            if self.naked {
+                self.g.builder.build_unreachable();
+                self.terminated = true;
+            } else {
+                self.emit_fallthrough_return()?;
+            }
         }
         Ok(())
     }
@@ -2676,6 +2696,10 @@ impl<'g, 'a> FnGen<'g, 'a> {
             ExprKind::ArrayRepeat { value } => {
                 Ok(Some(self.emit_array_repeat(value, &e.ty)?))
             }
+            // `asm(...)` (kernel stage 5): one inline-asm call, with each
+            // output stored into its place (or, for the anonymous output, the
+            // call's own value).
+            ExprKind::Asm(block) => self.emit_asm(block, &e.ty),
             ExprKind::Assign { target, value } => {
                 self.emit_assign(target, value, e.span)?;
                 Ok(None)
@@ -4180,6 +4204,126 @@ impl<'g, 'a> FnGen<'g, 'a> {
         Ok(self.g.call(func, fty, &[v], "fill"))
     }
 
+    /// `asm(...)` (kernel stage 5): one inline-asm call. The outputs come first
+    /// in constraint order, then the inputs, and an `inout` contributes both (an
+    /// output and an input tied to it), which is the layout LLVM's constraint
+    /// string and its call arguments both use.
+    fn emit_asm(
+        &mut self,
+        block: &crate::tir::AsmBlock,
+        value_ty: &Ty,
+    ) -> Result<Option<Value<'a>>, String> {
+        // Outputs in appearance order: one LLVM return member each. The
+        // anonymous output's type is the asm expression's own.
+        let mut out_tys: Vec<Type<'a>> = Vec::new();
+        let mut out_places: Vec<Option<Value<'a>>> = Vec::new();
+        let mut numbers: Vec<usize> = vec![0; block.operands.len()];
+        for (i, op) in block.operands.iter().enumerate() {
+            if op.kind == AsmOperandKind::In {
+                continue;
+            }
+            match &op.operand {
+                Some(place) => {
+                    out_tys.push(self.lty(&place.ty)?);
+                    out_places.push(Some(self.place_of(place)?));
+                }
+                None => {
+                    out_tys.push(self.lty(value_ty)?);
+                    out_places.push(None);
+                }
+            }
+            numbers[i] = out_tys.len() - 1;
+        }
+        let out_count = out_tys.len();
+        // Inputs in appearance order: the call's arguments. An `inout` reads
+        // its place, exactly as an `in` reads its value.
+        let mut args: Vec<Value<'a>> = Vec::new();
+        let mut in_tys: Vec<Type<'a>> = Vec::new();
+        for (i, op) in block.operands.iter().enumerate() {
+            let value = match (op.kind, &op.operand) {
+                (AsmOperandKind::Out, _) => continue,
+                (_, Some(e)) => e,
+                (_, None) => unreachable!("only an 'out' may have no operand"),
+            };
+            // An `inout`'s template number is its own output's, which it already
+            // has; only an `in` takes a number after the outputs. LLVM counts
+            // an `inout`'s tied input as an operand of its own, which is why
+            // the counter here counts both.
+            if op.kind == AsmOperandKind::In {
+                numbers[i] = out_count + args.len();
+            }
+            args.push(self.value_of(value)?);
+            in_tys.push(self.lty(&value.ty)?);
+        }
+
+        // The constraint string: one output per out/inout, then one input per
+        // in/inout, with an `inout`'s input tied to its own output's index.
+        let mut constraints: Vec<String> = Vec::new();
+        for (i, op) in block.operands.iter().enumerate() {
+            if op.kind != AsmOperandKind::In {
+                constraints.push(format!("={}", op.constraint));
+            }
+        }
+        for (i, op) in block.operands.iter().enumerate() {
+            match op.kind {
+                AsmOperandKind::In => constraints.push(op.constraint.clone()),
+                // An `inout`'s input is tied to its own output's index.
+                AsmOperandKind::InOut => constraints.push(numbers[i].to_string()),
+                AsmOperandKind::Out => {}
+            }
+        }
+        for clobber in &block.clobbers {
+            constraints.push(format!("~{{{clobber}}}"));
+        }
+        if !block.nomem {
+            constraints.push("~{memory}".to_string());
+        }
+
+        let template = asm_operand_text(&block.template, &numbers, '$');
+        let ret = match out_count {
+            0 => self.g.ctx.void(),
+            1 => out_tys[0],
+            _ => self.g.ctx.literal_struct(&out_tys),
+        };
+        let fn_ty = self.g.ctx.fn_type(ret, &in_tys, false);
+        let intel = is_x86_triple(&self.g.module.triple());
+        let callee = self
+            .g
+            .ctx
+            .inline_asm(fn_ty, &template, &constraints.join(","), true, intel);
+        // A void instruction cannot carry a name in LLVM IR, and an asm with no
+        // output is void.
+        let call_name = if out_count == 1 { "asm.out" } else { "" };
+        let call = self
+            .g
+            .builder
+            .build_indirect_call(callee, fn_ty, &args, call_name);
+
+        if out_count == 0 {
+            return Ok(None);
+        }
+        let values: Vec<Value<'a>> = if out_count == 1 {
+            vec![call]
+        } else {
+            (0..out_count)
+                .map(|k| self.g.builder.build_extract_value(call, k as u32, "asm.out"))
+                .collect()
+        };
+        for (value, place) in values.iter().zip(out_places.iter()) {
+            if let Some(place) = place {
+                self.g.builder.build_store(*value, *place);
+            }
+        }
+        match block
+            .value_out
+            .and_then(|i| numbers.get(i).copied())
+            .and_then(|i| values.get(i).copied())
+        {
+            Some(value) => Ok(Some(value)),
+            None => Ok(None),
+        }
+    }
+
     /// Evaluate each argument a capability check reads, once, into a value the
     /// check and the call share. A checked argument is a `str` or `&str`
     /// (`stdlib::is_str_like_ty`), which is a bare pointer with no ownership, so
@@ -5664,6 +5808,17 @@ impl<'g, 'a> FnGen<'g, 'a> {
 // field, but it never crosses to C by value: the runtime helpers it calls take
 // a pointer (MK7 §3.3 and BUG-vN4tR).
 // ===========================================================================
+
+/// Whether a target triple is an x86 one, which is where the asm dialect is
+/// Intel rather than the target's default (kernel stage 5). Chosen per triple
+/// so one Kelp template reads destination-first on x86 and on riscv64 alike
+/// (`plan/inline-asm.md`).
+fn is_x86_triple(triple: &str) -> bool {
+    matches!(
+        triple.split('-').next().unwrap_or(""),
+        "x86_64" | "i386" | "i486" | "i586" | "i686"
+    )
+}
 
 /// The `(name, each field's type)` pairs of every declaration, for the derived
 /// clone/order fixpoints. The mirror of `codegen_c::type_decls`.
@@ -11405,6 +11560,7 @@ mod layout_tests {
                 module: "std/mem".to_string(),
                 extern_: true,
                 env: None,
+                naked: false,
                 section: None,
             }],
             caps: Vec::new(),
@@ -11821,6 +11977,7 @@ mod layout_tests {
             module: module.to_string(),
             extern_: true,
             env: None,
+            naked: false,
             section: None,
         };
         let program = Program {
@@ -11988,6 +12145,7 @@ mod layout_tests {
                 module: "std/time".to_string(),
                 extern_: true,
                 env: None,
+                naked: false,
                 section: None,
             }],
             caps: Vec::new(),

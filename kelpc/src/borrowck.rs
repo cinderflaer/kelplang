@@ -122,6 +122,7 @@
 
 use std::collections::HashMap;
 
+use crate::ast::AsmOperandKind;
 use crate::diag::Diagnostic;
 use crate::lexer::Span;
 use crate::tir;
@@ -1961,6 +1962,27 @@ fn check_value(expr: &tir::Expr, ctx: &mut Ctx) -> Result<()> {
                     message: "cannot move a value out through a dereferenced borrow".to_string(),
                     span: expr.span,
                 });
+            }
+            Ok(())
+        }
+        // `asm(...)` (kernel stage 5): an `in` operand reads its value exactly
+        // as any other read, and an `out`/`inout` operand writes its place, so
+        // that place is taken as a transient exclusive borrow. The operand
+        // types are machine words (`infer.rs` refuses anything else), so no
+        // move or drop bookkeeping is owed.
+        tir::ExprKind::Asm(block) => {
+            for op in &block.operands {
+                let Some(operand) = &op.operand else { continue };
+                match op.kind {
+                    AsmOperandKind::In => check_value(operand, ctx)?,
+                    _ => {
+                        check_place(operand, ctx)?;
+                        if let Some(root) = tir_root_ident(operand) {
+                            ctx.start_borrow(root, true, operand.span)?;
+                            ctx.end_borrow(root);
+                        }
+                    }
+                }
             }
             Ok(())
         }
