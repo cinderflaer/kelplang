@@ -279,7 +279,10 @@ const RERECORD_ENV: &str = "LLVM_BUILT_BASELINE_RERECORD";
 /// offsets). The corpus had grown to 305 buildable targets since the value
 /// above was last written down (a growth the one-sided ratchet reports rather
 /// than fails), so this records the live 311 rather than 282.
-const LLVM_BUILT_BASELINE: usize = 311;
+/// Raised from 311 to the live 344 by the first full sweep of the merged tree (kernel stages 1-6, TLS,
+/// variadics, scoped blocks, the bug pass, 2026-10-01): 344 of 614 corpus targets build on both backends,
+/// 0 refused, 0 mismatches, 0 crashes. The earlier recorded numbers lagged the corpus; this one is measured.
+const LLVM_BUILT_BASELINE: usize = 344;
 
 /// One compilable input, named the way the failure messages and the artifact
 /// paths name it.
