@@ -347,3 +347,46 @@ the function. `align(N)` is emitted but its result is not re-checked by the
 compiler at runtime, and `Ptr.from_fn` does not make the resulting pointer
 non-null, non-wrapping or unique.
 
+
+## Stage 9: the freestanding runtime essentials (`plan/kernel0-status.md` gap 4)
+
+**New ways to reach UB.** This stage puts two pieces of compiler-written
+bare-metal behaviour under a program that still cannot check either:
+
+- The `_start` clear loop zeroes `[__bss_start, __bss_end)` with an 8-byte
+  store, before `sp` is set up for anything but itself. Both bounds are
+  **linker-script promises**: the loop treats them as an aligned, ordered,
+  in-RAM pair, and a script that assigns them to a region that is not RAM, not
+  word-aligned, or overlapping the image, the stack or a device register range
+  makes the entry write outside its own clear range. A script that omits them
+  is not UB, it is silence: both resolve to 0 and the clear does nothing, so a
+  kernel that expected its statics zeroed reads indeterminate memory instead
+  (which *is* UB to read for anything but `u8`/`i8` under this language's
+  rules, though the compiler does not model initialisation at all).
+- The weak `memcpy`/`memmove`/`memset`/`memcmp`/`bcmp` bodies are ordinary code
+  once the linker resolves them. A program that defines its own symbol with one
+  of those names takes over every call LLVM emitted for that shape, so the
+  replacement has to implement the libc contract for the sizes the program
+  uses: a `memcpy` that does not copy, a `memcmp` that never returns a
+  negative, or a `bcmp` whose "different" answer is not nonzero is UB or
+  silently wrong wherever LLVM chose a library call. The overlap rule is the
+  sharp edge: `memmove` may overlap and `memcpy` may not, so a project that
+  replaces `memcpy` with an overlapping forward copy corrupts its own data.
+  Sizes are `i64` on every triple (the width `declare_libc` already used), and
+  a definition whose width does not match becomes a *different* symbol under
+  LLVM's renaming rather than an error.
+
+**What the compiler does check.** That the entry stub's two bounds are weak, so
+a script without them still links; that every `mem*` body is emitted with
+`nobuiltin`, so the target's loop-idiom pass cannot rewrite a loop into a call
+to the function it is already in; and that each is weak, so a strong
+definition elsewhere in the image wins. The clear loop's range, alignment and
+placement are *not* checked, because a linker script is not the compiler's to
+read.
+
+**What it does not check.** Anything about where the script put the two
+symbols, whether the cleared region is safe to write, whether the stack the
+stub loads immediately after overlaps it, or the semantics of a `mem*`
+replacement a project links in. The per-call contract is LLVM's to assume and
+the linker's to trust; the compiler supplies a definition that meets it, and
+nothing more.
