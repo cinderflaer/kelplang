@@ -1,0 +1,12 @@
+name = "freestandingstringfloat"
+
+# Kernel stage 12's rejection fixture: an allocator is configured, so `String`
+# is legal, but `str.from_f64` needs `snprintf`, so it is refused by name at the
+# call rather than left to fail at link.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"
+alloc = "alloc"
+dealloc = "dealloc"

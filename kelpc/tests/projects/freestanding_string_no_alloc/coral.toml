@@ -1,0 +1,10 @@
+name = "freestandingstringnoalloc"
+
+# Kernel stage 12's rejection fixture: `String` with no `[target]
+# alloc`/`dealloc`. The refusal names the two keys whose absence is why, the
+# same message `List` gets.
+[target]
+mode = "freestanding"
+triple = "riscv64-unknown-none-elf"
+entry = "kmain"
+linker_script = "kernel.ld"

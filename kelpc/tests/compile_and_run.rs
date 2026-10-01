@@ -11842,6 +11842,95 @@ fn kernel0_heap_boots_and_balances_its_allocations() {
     );
 }
 
+/// Kernel stage 12's acceptance build: `examples/kernel0-string` builds a
+/// `String` from a literal and through `str.concat`/`str.from_u64`, clones and
+/// grows it, and grows a `Bytes` past several doublings, all on the project's
+/// allocator. The `llvm-nm` line is the claim: no `strlen`, no `memcpy`, no
+/// `malloc`/`realloc`/`free` may appear as undefined, and the IR must call the
+/// project's own allocator and no libc allocation.
+///
+/// It needs `ld.lld` and `llvm-nm` from `dev-kernel.nix`.
+#[test]
+fn kernel0_string_builds_on_the_project_allocator_with_no_undefined_symbols() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the kernel0-string build test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("kernel0_string");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(fixture("../examples/kernel0-string"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the kernel0-string build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the kernel0-string image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+
+    let ir = std::fs::read_to_string(bin.with_extension("ll"))
+        .expect("the LLVM backend writes textual IR beside the object");
+    for symbol in ["@kelp_alloc(", "@kelp_realloc(", "@kelp_dealloc("] {
+        assert!(
+            ir.contains(symbol),
+            "the buffer bodies should call the project allocator through '{symbol}'"
+        );
+    }
+    for symbol in [
+        "call ptr @malloc",
+        "call ptr @realloc",
+        "call void @free",
+        "call i64 @strlen",
+    ] {
+        assert!(
+            !ir.contains(symbol),
+            "a freestanding build must not call libc's '{symbol}'"
+        );
+    }
+}
+
+/// Kernel stage 12's acceptance boot: `examples/kernel0-string` concatenates,
+/// formats an integer and grows a `Bytes`, prints four lines through the NS16550
+/// UART, and prints `balanced` only when every allocation reached a matching
+/// free. The lines are QEMU's own stdout, not the source's.
+///
+/// It needs `ld.lld` and `qemu-system-riscv64` from `dev-kernel.nix`.
+#[test]
+fn kernel0_string_boots_and_prints_its_text_over_the_uart() {
+    if !have_ld_lld() || !have_qemu(&RISCV64_QEMU) {
+        println!(
+            "skipping the kernel0-string boot test: 'ld.lld' or 'qemu-system-riscv64' is not on \
+             PATH (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    boot_under_qemu(
+        &RISCV64_QEMU,
+        "kernel0_string",
+        &fixture("../examples/kernel0-string"),
+        &["s: hello kelp!", "n: 12345", "b: 300", "balanced"],
+    );
+}
+
 /// `List` with no `[target] alloc`/`dealloc` is refused exactly as before, with
 /// a message that names the two keys whose absence is why.
 #[test]
@@ -11852,11 +11941,40 @@ fn a_freestanding_list_without_an_allocator_is_refused() {
     );
 }
 
-/// An allocator does not make `String` available: its storage still reaches the
-/// hosted runtime, and the refusal names it through `List<String>`.
+/// Without an allocator `String` stays refused, with the message that names the
+/// two manifest keys whose absence is why (kernel stage 12).
 #[test]
-fn a_freestanding_string_is_refused_even_with_an_allocator() {
-    assert_rejected_with("tests/projects/freestanding_alloc_string", "'String'");
+fn a_freestanding_string_without_an_allocator_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_string_no_alloc",
+        "'String', which is unavailable in a freestanding build",
+    );
+}
+
+/// An allocator makes `String` legal, but a method with no libc-free lowering
+/// is still refused by name at the call rather than left to the linker.
+#[test]
+fn a_freestanding_string_method_outside_the_libc_free_set_is_refused() {
+    assert_rejected_with(
+        "tests/projects/freestanding_alloc_string",
+        "needs the hosted runtime",
+    );
+}
+
+/// `str.from_f64`'s formatting is `snprintf`, so a float is refused by name
+/// even when the allocator makes `String` legal.
+#[test]
+fn a_freestanding_float_format_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/projects/freestanding_string_float",
+        "needs the hosted runtime",
+    );
+}
+
+/// `View` stays refused in a freestanding build, with or without an allocator.
+#[test]
+fn a_freestanding_view_is_refused() {
+    assert_rejected_with("tests/projects/freestanding_view", "'View'");
 }
 
 /// `alloc` and `dealloc` are required together: naming one alone is a manifest

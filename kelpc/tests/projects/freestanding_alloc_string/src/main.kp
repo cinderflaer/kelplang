@@ -1,4 +1,6 @@
-// `String` is refused with an allocator configured, and so is `List<String>`.
+// Kernel stage 12's rejection fixture: an allocator is configured, so `String`
+// and its libc-free operations are legal, but `String.char_count` is not one of
+// them, so the call is refused by name with "needs the hosted runtime".
 static mut ARENA: [u8; 128] = [0; 128]
 
 fun alloc(_size: usize, _align: usize).R: Ptr<u8> {
@@ -10,6 +12,8 @@ fun alloc(_size: usize, _align: usize).R: Ptr<u8> {
 fun dealloc(_p: Ptr<u8>, _size: usize, _align: usize) {}
 
 fun kmain() {
-    var xs: List<String> = List.empty()
-    xs.push(String.from_str("no"))
+    val s = String.from_str("no")
+    val n = s.char_count()
+    if n == 2 {
+    }
 }
