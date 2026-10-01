@@ -1,0 +1,209 @@
+impl "syscall"
+impl "trap"
+impl "uart"
+impl "user"
+impl "vm"
+
+// Kernel stage 11: run a program in user mode and take its `ecall`s.
+//
+// The boot is kernel stage 10's: build Sv39 tables in machine mode, identity-map
+// the image, the UART and the frame region, then drop to supervisor mode. On top
+// of that this kernel gives each program its own root table (the kernel
+// identity-mapped as non-user pages plus the program's `U|R|X` code page at
+// 0x10000 and `U|R|W` stack page at 0x20000), runs two of them one after the
+// other, and lets each end either through `exit` or through a trap the kernel
+// kills it for (`plan/syscall-abi.md`).
+const IMAGE_START: usize = 0x80000000
+const IMAGE_SPAN: usize = 4 * 1024 * 1024
+
+const UART_BASE: usize = 0x10000000
+
+// The addresses every program gets, and the stack pointer they start with.
+const USER_CODE_VA: usize = 0x10000
+const USER_STACK_VA: usize = 0x20000
+const USER_STACK_SP: usize = 0x21000
+
+// The root the kernel itself runs on before the first program switches `satp`.
+static mut KERNEL_ROOT: usize = 0
+
+fun kernel_root().R: usize {
+    unsafe { KERNEL_ROOT }
+}
+
+// Leave machine mode, as kernel stage 10 does, with one difference: `medeleg`
+// also grants S-mode the environment call from U-mode (bit 8), without which
+// every syscall would come back to machine mode, where this kernel installs
+// nothing.
+fun enter_supervisor(entry: usize) {
+    unsafe {
+        val pmpaddr: usize = 0x3FFFFFFFFFFFFF
+        val pmpcfg: usize = 0x1F
+        val delegated: usize = (1 << 8) | (1 << 12) | (1 << 13) | (1 << 15)
+        val none: usize = 0
+        asm("csrw pmpaddr0, {0}", in("r") pmpaddr)
+        asm("csrw pmpcfg0, {0}", in("r") pmpcfg)
+        asm("csrw medeleg, {0}", in("r") delegated)
+        asm("csrw mideleg, {0}", in("r") none)
+        val mstatus: usize = asm("csrr {0}, mstatus", out("r") _)
+        asm("csrw mstatus, {0}", in("r") (mstatus & 0xFFFFFFFFFFFFE7FF) | 0x800)
+        asm("csrw mepc, {0}", in("r") entry)
+        asm("mret")
+    }
+}
+
+// One program's address space. The kernel is mapped non-user in it, so a program
+// cannot read or write any of the kernel's memory and the trap entry can still
+// run after the switch; the UART is non-user too, so a program's only way to a
+// byte of output is the `write` syscall. The program's own pages are the only
+// ones with `PTE_U` set.
+fun build_space(code: usize, stack: usize).R: usize {
+    val root: usize = vm.alloc_frame()
+    if root == 0 {
+        return 0
+    }
+    if vm.map_range(root, IMAGE_START, IMAGE_START, IMAGE_SPAN, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        return 0
+    }
+    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
+        return 0
+    }
+    if vm.map_page(root, USER_CODE_VA, code, vm.PTE_R | vm.PTE_X | vm.PTE_U) == false {
+        return 0
+    }
+    if vm.map_page(root, USER_STACK_VA, stack, vm.PTE_R | vm.PTE_W | vm.PTE_U) == false {
+        return 0
+    }
+    return root
+}
+
+// Copy one user section into a fresh, zeroed frame: the program's code page.
+// The section holds the code and its string data together and every reference
+// inside is pc-relative, so the copy is the whole relocation.
+fun load_program(start: usize, end: usize).R: usize {
+    if end < start {
+        return 0
+    }
+    val size: usize = end - start
+    if size > 4096 {
+        return 0
+    }
+    val frame: usize = vm.alloc_frame()
+    if frame == 0 {
+        return 0
+    }
+    var i: usize = 0
+    while i < size {
+        unsafe {
+            val source: Ptr<u8> = Ptr.from_addr(start + i)
+            val target: Ptr<u8> = Ptr.from_addr(frame + i)
+            target.write_volatile(source.read_volatile())
+        }
+        i = i + 1
+    }
+    return frame
+}
+
+fun setup_failed(what: str) {
+    uart.puts("user: ")
+    uart.puts(what)
+    uart.putc(10)
+    uart.halt()
+}
+
+// Load one program, build its address space and enter it. It returns when the
+// program has exited or been killed, which is the whole of this kernel's
+// process lifetime: nothing frees the frames afterwards.
+fun start_program(start: usize, end: usize) {
+    val code: usize = load_program(start, end)
+    if code == 0 {
+        setup_failed("code load failed")
+    }
+    val stack: usize = vm.alloc_frame()
+    if stack == 0 {
+        setup_failed("no stack frame")
+    }
+    val root: usize = build_space(code, stack)
+    if root == 0 {
+        setup_failed("no page tables")
+    }
+    trap.enter_user(root, USER_CODE_VA, USER_STACK_SP)
+}
+
+fun smain() {
+    uart.puts("user: s-mode")
+    uart.putc(10)
+
+    // Installed while the kernel runs on the boot stack, so a fault in the rest
+    // of the boot is a trapped fault rather than a silent one. The handler runs
+    // on this hart's trap stack, which the linker script places in `.bss`.
+    trap.install()
+
+    vm.enable_paging(kernel_root())
+    uart.puts("user: paging on")
+    uart.putc(10)
+
+    // The frame offsets the naked entry hardcodes, checked before anything
+    // relies on them. A mismatch here is a wrong register saved or restored,
+    // which the compiler cannot see.
+    if trap.frame_layout_ok() == false {
+        uart.puts("user: frame bad")
+        uart.putc(10)
+        uart.halt()
+    }
+    uart.puts("user: frame ok")
+    uart.putc(10)
+
+    val buffer: usize = vm.alloc_frame()
+    if buffer == 0 {
+        setup_failed("no copy buffer")
+    }
+    syscall.set_buffer(buffer)
+
+    start_program(user.one_start(), user.one_end())
+    start_program(user.two_start(), user.two_end())
+
+    // Reached after the second program was killed. The kernel is still running,
+    // still under that program's `satp`, and its own memory is identity-mapped
+    // there, which is why it can say so.
+    uart.puts("kernel survived")
+    uart.putc(10)
+    uart.halt()
+}
+
+section(".text.boot") fun kmain() {
+    uart.puts("user: m-mode")
+    uart.putc(10)
+
+    // The copy sources, the stacks and the frame region all have to be inside
+    // the one identity-mapped span; a linker script that pushes the image past
+    // it would make the first access after the switch a fault.
+    if vm.frames_end() > IMAGE_START + IMAGE_SPAN {
+        setup_failed("image too big")
+    }
+
+    val root: usize = vm.alloc_frame()
+    unsafe {
+        KERNEL_ROOT = root
+    }
+    if root == 0 {
+        setup_failed("no root table")
+    }
+
+    if vm.map_range(root, IMAGE_START, IMAGE_START, IMAGE_SPAN, vm.PTE_R | vm.PTE_W | vm.PTE_X) == false {
+        setup_failed("identity failed")
+    }
+    if vm.map_page(root, UART_BASE, UART_BASE, vm.PTE_R | vm.PTE_W) == false {
+        setup_failed("uart failed")
+    }
+
+    enter_supervisor(Ptr.from_fn(smain).addr())
+}
+
+// The handler `[target] panic` names: a check that fired has no meaningful
+// continuation, so it prints one line and halts.
+fun kp_panic(msg: str) {
+    uart.puts("panic: ")
+    uart.puts(msg)
+    uart.putc(10)
+    uart.halt()
+}
