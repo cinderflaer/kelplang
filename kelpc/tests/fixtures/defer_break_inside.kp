@@ -1,0 +1,9 @@
+// `break` is not a statement, so it cannot appear in a deferred action either;
+// the parser's own refusal is what the program sees.
+fun main() {
+    while true {
+        defer {
+            break
+        }
+    }
+}

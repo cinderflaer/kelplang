@@ -193,3 +193,12 @@ or a native API taking a function pointer wants to hand over. It is safe
 close gap 4: a `Ptr<u8>` is one machine word with no signature and no
 environment, so it is not a `move closure(...)` and the native side still has
 to know the ABI itself.
+
+## What `defer` (MK9-S6-M1) changed for this list
+
+Nothing is closed. A `defer` action is an ordinary expression, so a deferred
+release of a bound native resource (`defer widget.destroy()`) is expressible the
+day gap 1's handle has such a method, and the same action is duplicated at every
+exit of its block. What it does not give a binding is a *drop*: a `defer` is
+written where the resource is taken, and a panic skips it, so the leak a native
+handle has when a frame panics is unchanged (`plan/defer.md`).

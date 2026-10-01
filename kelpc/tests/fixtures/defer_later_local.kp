@@ -1,0 +1,8 @@
+// A deferred action sees only the locals already in scope where the `defer` is
+// written, so naming one declared later in the block is refused: the action
+// would otherwise resolve it at the block's exit, against a binding the
+// `defer` never saw.
+fun main() {
+    defer print(x)
+    val x = 5
+}

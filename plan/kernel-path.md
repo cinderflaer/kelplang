@@ -124,6 +124,15 @@ and `plan/kernel-ub-notes.md` stage 8 is the UB catalogue for the new surface.
 The `interrupt`/calling-convention attributes stage 5 deferred are the remaining
 half of that hole.
 
+**Stage 6's `defer` half is done** (MK9-S6-M1, `plan/defer.md`): `defer EXPR` is a
+statement whose action runs when its block is left, on every ordinary exit, last-in-first-out
+against the block's other defers, by a lowering that duplicates the action at each exit before
+type checking so both backends run ordinary code. A `defer` and a `?` in one block is refused
+by name, a `return` inside a deferred action is refused, and a local moved before the exit is
+the ordinary use-of-a-moved-value error. Both a hosted fixture set and a freestanding riscv64
+project that releases a lock flag with a `defer` are in the suite. User `Drop`, the other half
+of the row, is not in this stage.
+
 **What the next stages need.** The table's stages 6 to 11 are the remaining work:
 `defer`/`Drop` (row 6), a global allocator hook and arenas (row 7), per-CPU storage (row 8),
 mapping and a syscall ABI (row 9), stack guards and panic semantics with no OS (row 10), and

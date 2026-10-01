@@ -1,0 +1,15 @@
+// A block that is used as a value keeps its value while its deferred actions
+// run: the block's tail is preserved through the cleanup, and a function whose
+// body is a block expression is the same case.
+fun f().R: i32 = {
+    defer print("f-out")
+    5
+}
+fun main() {
+    val v = {
+        defer print("block-out")
+        "text"
+    }
+    print(v)
+    print(f())
+}

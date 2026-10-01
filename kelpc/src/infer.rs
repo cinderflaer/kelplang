@@ -5975,6 +5975,14 @@ impl<'a> ConstEvaluator<'a> {
                         tail = Some(v);
                     }
                 }
+                // `defer` is lowered away before checking, so a constant
+                // initializer never contains one.
+                ast::Stmt::Defer { span, .. } => {
+                    return Err(TypeError {
+                        message: "internal error: a 'defer' reached the constant folder; it should have been lowered before checking".to_string(),
+                        span: *span,
+                    })
+                }
             }
             if scope.halted() {
                 break;
@@ -7625,6 +7633,7 @@ impl PdScan {
                 }
             }
             ast::Stmt::Expr { expr, .. } => self.scan_expr(expr),
+            ast::Stmt::Defer { expr, .. } => self.scan_expr(expr),
         }
     }
 
@@ -8718,6 +8727,13 @@ fn check_stmt(stmt: &ast::Stmt, ctx: &mut Ctx) -> Result<Vec<tir::Stmt>> {
             }
             Ok(vec![tir::Stmt::Expr(checked)])
         }
+        // `defer` is lowered away by `defer.rs` before this pass runs, so one
+        // reaching the checker is a compiler bug rather than a program error.
+        ast::Stmt::Defer { span, .. } => Err(TypeError {
+            message: "internal error: a 'defer' statement reached the type checker; it should have been lowered before checking"
+                .to_string(),
+            span: *span,
+        }),
     }
 }
 
@@ -8812,6 +8828,7 @@ fn stmt_span(stmt: &ast::Stmt) -> Span {
         ast::Stmt::While { span, .. } => *span,
         ast::Stmt::Return { span, .. } => *span,
         ast::Stmt::Expr { span, .. } => *span,
+        ast::Stmt::Defer { span, .. } => *span,
     }
 }
 

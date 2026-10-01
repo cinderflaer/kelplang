@@ -1,0 +1,18 @@
+// A `return` nested in an `if` inside a `while` leaves the loop body and the
+// function body, so the loop body's defer runs and then the function's, both
+// before the return.
+fun f(n: i32).R: i32 {
+    defer print("f-out")
+    var i = 0
+    while i < n {
+        defer print("loop-out")
+        if i == 2 {
+            return i * 10
+        }
+        i = i + 1
+    }
+    return -1
+}
+fun main() {
+    print(f(n = 5))
+}

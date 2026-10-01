@@ -4,6 +4,7 @@ mod borrowck;
 mod codegen_c;
 mod codegen_llvm;
 mod deprecated;
+mod defer;
 mod diag;
 mod driver;
 mod externs;

@@ -1634,7 +1634,23 @@ impl Parser {
             TokenKind::Val | TokenKind::Var => self.parse_let_stmt(),
             TokenKind::While => self.parse_while_stmt(),
             TokenKind::For => self.parse_for_stmt(),
+            TokenKind::Defer => self.parse_defer_stmt(),
             TokenKind::Return => self.parse_return_stmt(),
+            // `break` and `continue` are not keywords, so they reach here as
+            // ordinary names; a bare one is a statement that does not exist,
+            // and naming that beats the "cannot find 'break'" a resolution
+            // would give. Used as a name (`break + 1`, `break()`) they stay
+            // ordinary expressions.
+            TokenKind::Ident(name)
+                if (name == "break" || name == "continue") && self.statement_ends_here() =>
+            {
+                Err(ParseError {
+                    message: format!(
+                        "'{name}' is not a Kelp statement: the language has no 'break' or 'continue' (plan/syntax.md 11); a loop leaves through its own condition ('while i < xs.len() && !done') or walks a 'for' over the list"
+                    ),
+                    span: self.peek().span,
+                })
+            }
             // `pub` leads a declaration, and a declaration is not a statement,
             // so the message names the forms it can lead (A-13) rather than
             // reading the keyword as a start-of-expression.
@@ -1908,6 +1924,24 @@ impl Parser {
             expr: Expr::Block(Block { stmts, span }),
             span,
         })
+    }
+
+    /// Whether the token after the current one ends the statement: a newline,
+    /// the block's `}`, or the end of the file. Used to tell a bare `break`
+    /// statement (which the language does not have) from a name used in an
+    /// expression.
+    fn statement_ends_here(&self) -> bool {
+        matches!(
+            self.peek2_kind(),
+            TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof
+        )
+    }
+
+    fn parse_defer_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.expect(TokenKind::Defer, "'defer'")?.span;
+        let expr = self.parse_head_expr()?;
+        let span = start.to(expr.span());
+        Ok(Stmt::Defer { expr, span })
     }
 
     fn parse_return_stmt(&mut self) -> PResult<Stmt> {
@@ -4343,5 +4377,41 @@ mod tests {
         assert!(p.functions[0].naked);
         assert!(p.functions[0].unsafe_);
         assert!(p.functions[0].is_pub);
+    }
+
+    /// Kernel stage 6: `defer EXPR` is a statement, and a block or a call are
+    /// both expressions. `defer.rs` is what consumes the form, so the parser
+    /// only has to record it with the action's own span stitched on.
+    #[test]
+    fn parses_defer_with_a_call_and_with_a_block() {
+        let p = parse(
+            "fun main() {\n    defer unlock()\n    defer {\n        print(\"a\")\n        print(\"b\")\n    }\n}",
+        );
+        let body = match &p.functions[0].body {
+            FunctionBody::Block(b) => b,
+            _ => panic!("a body block"),
+        };
+        let Stmt::Defer { expr, span } = &body.stmts[0] else {
+            panic!("a defer statement");
+        };
+        assert!(matches!(expr, Expr::Call { callee, .. } if callee == "unlock"));
+        assert!(span.end > span.start);
+        let Stmt::Defer { expr, .. } = &body.stmts[1] else {
+            panic!("a defer statement");
+        };
+        assert!(matches!(expr, Expr::Block(b) if b.stmts.len() == 2));
+    }
+
+    /// `break` and `continue` are not Kelp statements (`plan/syntax.md` 11), so
+    /// a bare one is refused by name. Used as a name it stays an expression.
+    #[test]
+    fn a_bare_break_or_continue_is_refused_by_name() {
+        let e = parse_err("fun main() {\n    while true {\n        break\n    }\n}");
+        assert!(e.message.contains("'break' is not a Kelp statement"), "got: {}", e.message);
+        let e = parse_err("fun main() {\n    continue\n}");
+        assert!(e.message.contains("'continue' is not a Kelp statement"), "got: {}", e.message);
+        // A name, not a statement.
+        let p = parse("fun main() {\n    val break = 2\n    print(break)\n}");
+        assert_eq!(p.functions.len(), 1);
     }
 }

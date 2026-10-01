@@ -1,0 +1,7 @@
+// A panic never returns, so a deferred action does not run on the way out:
+// "after" is never printed. The compiler's own panic path ends the process.
+fun main() {
+    defer print("after")
+    print("before")
+    panic("stop")
+}

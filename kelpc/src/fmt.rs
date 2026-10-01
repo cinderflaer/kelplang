@@ -385,6 +385,7 @@ const RULES: &[Rule] = &[
             "extern_type",
             "extern_type_parent",
             "scoped_blocks",
+            "defer",
         ],
     },
 ];

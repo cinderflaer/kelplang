@@ -3741,6 +3741,17 @@ impl<'a> Gen<'a> {
             Stmt::Return { value, span } => {
                 let drops = self.drops_at_return(*span);
                 match value {
+                    // A `unit`-typed value has no C object to return (there is
+                    // no `void` temporary and no `void` declaration), so the
+                    // expression is run for its side effects and the return is
+                    // the bare `return;` a written `return` is. This is what
+                    // makes `return f()` legal when `f` returns `unit`.
+                    Some(v) if v.ty == Ty::Unit => {
+                        self.write_stmt_like_expr(v, depth);
+                        self.write_drops(&drops, depth);
+                        indent(&mut self.out, depth);
+                        self.out.push_str("return;\n");
+                    }
                     Some(v) if !drops.is_empty() => {
                         let tmp = self.write_temp_then_drops(v, &drops, depth);
                         indent(&mut self.out, depth);

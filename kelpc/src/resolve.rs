@@ -1191,9 +1191,14 @@ impl Loader<'_> {
         }
 
         let expanded = self.aliases.expand_file(&tokens, id)?;
-        let program = Parser::new(expanded)
+        let mut program = Parser::new(expanded)
             .parse_program()
             .map_err(|e| Diagnostic::new(e.message, e.span, id))?;
+        // `defer` is lowered away here, before resolution, the type checker,
+        // the borrow checker and both backends, so every deferred action is
+        // ordinary code by the time any of them sees the tree
+        // (`plan/defer.md`).
+        crate::defer::lower(&mut program, id)?;
 
         self.state.insert(id.to_string(), 1);
         self.stack.push(id.to_string());
@@ -2509,6 +2514,7 @@ pub(crate) fn is_keyword(s: &str) -> bool {
             | "else"
             | "while"
             | "when"
+            | "defer"
             | "return"
             | "true"
             | "false"

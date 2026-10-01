@@ -1,0 +1,21 @@
+// A freestanding `defer`: `with_lock` takes the static flag, and the deferred
+// action releases it on the way out of the block. The entry loops forever, so
+// the image is a build-and-link check with no undefined symbol: `ld.lld`
+// resolves every reference against the object alone.
+impl "std/atomic"
+
+static LOCK: Atomic<bool> = Atomic.new(false)
+
+fun with_lock().R: bool {
+    defer LOCK.store(value = false, order = atomic.Ordering.SeqCst)
+    LOCK.store(value = true, order = atomic.Ordering.SeqCst)
+    return LOCK.load(order = atomic.Ordering.SeqCst)
+}
+
+section(".text.boot") fun kmain() {
+    var i: u64 = 1
+    while true {
+        with_lock()
+        i = i * 3 + 1
+    }
+}

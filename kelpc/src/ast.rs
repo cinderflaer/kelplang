@@ -549,6 +549,18 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
+    /// `defer EXPR` (kernel stage 6): the action runs when the enclosing block
+    /// is left, on every ordinary exit, in last-in-first-out order against the
+    /// block's other defers (`plan/defer.md`). The parser only records it;
+    /// `defer.rs` rewrites it into ordinary code before name resolution, so
+    /// nothing after that pass sees this variant. The action's value is
+    /// discarded, and the span is the `defer` statement's, which is what a
+    /// spliced copy reports so a diagnostic names the `defer` and not the exit
+    /// it was placed before.
+    Defer {
+        expr: Expr,
+        span: Span,
+    },
     /// An expression used as a full statement. Whether it's the block's
     /// *tail* (value-producing) or purely a side-effecting statement is
     /// decided positionally — textually the block's last statement is the
@@ -1049,6 +1061,7 @@ fn first_unsafe_in_block(block: &Block) -> Option<Span> {
             first_unsafe_in_expr(cond).or_else(|| first_unsafe_in_block(body))
         }
         Stmt::Return { value, .. } => value.as_ref().and_then(first_unsafe_in_expr),
+        Stmt::Defer { expr, .. } => first_unsafe_in_expr(expr),
         Stmt::Expr { expr, .. } => first_unsafe_in_expr(expr),
     })
 }

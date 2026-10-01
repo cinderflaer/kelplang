@@ -1,0 +1,11 @@
+// `for` desugars to a `while` whose body is a block of its own, so a `defer`
+// written in the loop body runs once per iteration.
+fun main() {
+    var xs: List<i32> = List.empty()
+    xs.push(1)
+    xs.push(2)
+    for x in xs {
+        defer print("iter-end")
+        print(x)
+    }
+}

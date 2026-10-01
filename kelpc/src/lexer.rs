@@ -101,6 +101,10 @@ pub enum TokenKind {
     /// is read contextually, exactly as `let` is after `if`.
     For,
     When,
+    /// `defer EXPR` — a statement whose action runs when the enclosing block
+    /// is left (kernel stage 6, `plan/defer.md`). `defer.rs` rewrites it away
+    /// before name resolution, so no later pass knows this form exists.
+    Defer,
     Return,
     True,
     False,
@@ -832,6 +836,7 @@ impl<'a> Lexer<'a> {
                         "while" => TokenKind::While,
                         "for" => TokenKind::For,
                         "when" => TokenKind::When,
+                        "defer" => TokenKind::Defer,
                         "return" => TokenKind::Return,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,

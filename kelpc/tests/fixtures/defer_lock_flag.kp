@@ -1,0 +1,17 @@
+// The kernel pattern: the flag is set at the top, the `defer` releases it on
+// every way out, and the caller sees it clear after the function returns.
+impl "std/atomic"
+
+pd val flag: AtomicBool = AtomicBool.new(false)
+
+fun locked().R: bool {
+    defer flag.store(value = false, order = atomic.Ordering.SeqCst)
+    flag.store(value = true, order = atomic.Ordering.SeqCst)
+    print(flag.load(order = atomic.Ordering.SeqCst))
+    return true
+}
+
+fun main() {
+    print(locked())
+    print(flag.load(order = atomic.Ordering.SeqCst))
+}

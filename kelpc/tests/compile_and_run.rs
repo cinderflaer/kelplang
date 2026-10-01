@@ -10645,3 +10645,258 @@ fn a_private_static_is_not_reachable_from_another_module() {
         "'state.HIDDEN' is private",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Kernel stage 6 (MK9-S6-M1, roadmap B-8): `defer`. `defer.rs` lowers every
+// deferred action to ordinary code at each exit of its block, so the fixtures
+// below are ordinary programs by the time either backend sees them: LLVM is the
+// default and these run there, and the suite's `KELPC_ORACLE=c` pass runs the
+// same programs through the C oracle.
+// ---------------------------------------------------------------------------
+
+/// The deferred actions of one block run last-in-first-out, after the block's
+/// own statements, and the block form (`defer { ... }`) is one action.
+#[test]
+fn deferred_actions_run_last_in_first_out() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_lifo.kp",
+        "body\nthird-a\nthird-b\nsecond\nfirst\n",
+    );
+}
+
+/// A `return` nested in an `if` inside a `while` leaves the loop body and then
+/// the function body, so the loop body's defer runs and then the function's.
+#[test]
+fn a_return_inside_a_loop_runs_both_blocks_defers() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_return_in_loop.kp",
+        "loop-out\nloop-out\nloop-out\nf-out\n20\n",
+    );
+}
+
+/// Each block owns its own deferred actions, so an inner block's run when it is
+/// left and the outer block's wait for the outer exit.
+#[test]
+fn a_nested_blocks_defers_run_at_its_own_exit() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_nested_blocks.kp",
+        "inner-body\ninner-end\nouter-body\nouter-end\n",
+    );
+}
+
+/// A deferred action reads its locals at the block's exit, so a mutation after
+/// the `defer` statement is visible to it.
+#[test]
+fn a_deferred_action_sees_the_final_value_of_a_local() {
+    assert_compiles_and_runs("tests/fixtures/defer_sees_final_value.kp", "42\n");
+}
+
+/// The kernel pattern: a flag set at the top is released by a `defer`, and the
+/// caller sees it clear after the function returns.
+#[test]
+fn a_defer_releases_an_atomic_lock_flag_on_the_way_out() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_lock_flag.kp",
+        "true\ntrue\nfalse\n",
+    );
+}
+
+/// A function with a borrowed return type keeps its elided lifetime when its
+/// body has a `defer`, and a `panic` tail stays a diverging tail (so the
+/// deferred action does not run on it).
+#[test]
+fn a_defer_keeps_a_borrowed_return_and_a_panic_tail_working() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_borrow_return.kp",
+        "as_str-out\nhello\n",
+    );
+}
+
+/// A `defer` written in an `if` block belongs to that block, so the branch's
+/// action runs before the function body's.
+#[test]
+fn a_defer_in_a_branch_runs_before_the_function_body_defer() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_then_branch.kp",
+        "then\nout\n1\nout\n2\n",
+    );
+}
+
+/// `for` desugars to a `while`, so a `defer` in the loop body runs once per
+/// iteration.
+#[test]
+fn a_defer_in_a_for_body_runs_once_per_iteration() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_for_loop.kp",
+        "1\niter-end\n2\niter-end\n",
+    );
+}
+
+/// A block used as a value keeps that value while its deferred actions run,
+/// and a function whose body is a block expression is the same case.
+#[test]
+fn a_value_block_runs_its_defers_and_keeps_its_value() {
+    assert_compiles_and_runs(
+        "tests/fixtures/defer_value_block.kp",
+        "block-out\ntext\nf-out\n5\n",
+    );
+}
+
+/// The `?` refusal is about the block the `defer` is written in: a `?` inside a
+/// `fun` literal belongs to the closure and leaves the outer `defer` alone.
+#[test]
+fn a_defer_tolerates_a_question_mark_inside_a_closure() {
+    assert_compiles_and_runs("tests/fixtures/defer_closure_try.kp", "4\nout\n");
+}
+
+/// A panic never returns, so a deferred action does not run on the way out: the
+/// action's line is absent from stdout and the process still reports the panic.
+#[test]
+fn a_panic_does_not_run_a_deferred_action() {
+    let source = "tests/fixtures/defer_panic_skips_action.kp";
+    let bin = out_path("defer_panic_skips_action");
+    let build = kelpc()
+        .arg("build")
+        .arg(fixture(source))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "expected '{source}' to compile, but it failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&bin).output().expect("failed to run the binary");
+    assert!(
+        !run.status.success(),
+        "expected '{source}' to panic, but it exited successfully"
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("before"), "the program printed nothing before the panic:\n{stdout}");
+    assert!(
+        !stdout.contains("after"),
+        "a panic ran the deferred action:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("panic: stop"), "unexpected stderr:\n{stderr}");
+}
+
+/// `return f()` where `f` returns `unit` is legal: there is no value to carry,
+/// so both backends emit the call for its side effect and a bare return.
+#[test]
+fn returning_a_unit_valued_call_is_legal_on_both_backends() {
+    assert_compiles_and_runs("tests/fixtures/unit_return_value.kp", "said\n");
+}
+
+/// `?` leaves the enclosing function, which would skip the deferred action, so
+/// a `defer` and a `?` in one block are refused by name.
+#[test]
+fn a_defer_with_a_question_mark_exit_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/defer_try_exit.kp",
+        "defer with an early `?` exit is not supported yet",
+    );
+}
+
+/// A deferred action has no caller to return to, so a `return` inside one is
+/// refused rather than duplicated at every exit.
+#[test]
+fn a_return_inside_a_deferred_action_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/defer_return_inside.kp",
+        "a deferred action cannot contain 'return'",
+    );
+}
+
+/// A local moved out before the block's exit is a use of a moved value when the
+/// deferred action reads it, reported at the `defer`.
+#[test]
+fn a_deferred_action_reading_a_moved_local_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/defer_use_after_move.kp",
+        "use of moved value",
+    );
+}
+
+/// A deferred action sees only the locals already in scope where the `defer` is
+/// written, so naming one declared later in the block is refused.
+#[test]
+fn a_defer_naming_a_later_local_is_refused() {
+    assert_rejected_with(
+        "tests/fixtures/defer_later_local.kp",
+        "declared later in the block",
+    );
+}
+
+/// Kelp has no `break` or `continue` (`plan/syntax.md` 11), so the parser names
+/// that rather than reading either as an unknown identifier.
+#[test]
+fn a_break_statement_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/break_statement_is_refused.kp",
+        "'break' is not a Kelp statement",
+    );
+}
+
+/// The same refusal applies inside a deferred action, where an exit would be
+/// even less meaningful.
+#[test]
+fn a_break_inside_a_deferred_action_is_refused_by_name() {
+    assert_rejected_with(
+        "tests/fixtures/defer_break_inside.kp",
+        "'break' is not a Kelp statement",
+    );
+}
+
+/// Kernel stage 6's freestanding acceptance test: a project that releases a
+/// lock flag with a `defer` builds through LLVM and `ld.lld` into an ELF64
+/// RISC-V image that references no undefined symbol.
+///
+/// It needs `ld.lld`, `llvm-readelf`, `llvm-objdump` and `llvm-nm`, all from
+/// `dev-kernel.nix`; a shell without them prints a skip.
+#[test]
+fn a_freestanding_project_can_release_a_lock_with_a_defer() {
+    if !have_ld_lld() {
+        println!(
+            "skipping the freestanding defer test: 'ld.lld' is not on PATH \
+             (run the suite under dev-kernel.nix)"
+        );
+        return;
+    }
+    let bin = out_path("freestanding_defer");
+    let build = Command::new(kelpc_bin())
+        .env_remove("KELPC_BACKEND")
+        .env_remove("KELPC_ORACLE")
+        .arg("build")
+        .arg(project("freestanding_defer"))
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("failed to spawn kelpc");
+    assert!(
+        build.status.success(),
+        "the freestanding defer build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let path = bin.to_str().expect("the artifact path is utf-8");
+    let header = tool("llvm-readelf", &["-h", path]);
+    assert!(header.contains("ELF64"), "not an ELF64 image:\n{header}");
+    assert!(header.contains("RISC-V"), "not a RISC-V image:\n{header}");
+
+    let disassembly = tool("llvm-objdump", &["-d", path]);
+    assert!(disassembly.contains("_start"), "no _start in the image:\n{disassembly}");
+    assert!(disassembly.contains("wfi"), "the _start halt is missing:\n{disassembly}");
+
+    let symbols = tool("llvm-nm", &[path]);
+    let undefined: Vec<&str> = symbols
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("U"))
+        .collect();
+    assert!(
+        undefined.is_empty(),
+        "the freestanding defer image has undefined symbols:\n{}",
+        undefined.join("\n")
+    );
+}

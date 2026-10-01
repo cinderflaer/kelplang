@@ -1,0 +1,12 @@
+// Kernel stage 6: deferred actions of one block run last-in-first-out, after
+// the block's own statements and before its locals are freed. The block form
+// (`defer { ... }`) is one action too, and its own two statements run in order.
+fun main() {
+    defer print("first")
+    defer print("second")
+    defer {
+        print("third-a")
+        print("third-b")
+    }
+    print("body")
+}

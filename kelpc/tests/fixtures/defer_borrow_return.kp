@@ -1,0 +1,23 @@
+// A function with a borrowed return type keeps its elided lifetime when its
+// body has a `defer`: the tail is lowered through an explicit return, so the
+// borrow checker still sees the value as derived from the reference parameter.
+// The `panic` tail is left alone: a panic diverges and runs nothing.
+impl "std/str"
+
+enum J {
+    S(val x: String)
+    N
+}
+
+fun as_str(v: &J).R: &str {
+    defer print("as_str-out")
+    if let S(s) = v {
+        return s.as_str()
+    }
+    panic("not a string")
+}
+
+fun main() {
+    val a = J.S(x = String.from_str(s = "hello"))
+    print(as_str(v = a))
+}
